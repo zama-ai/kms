@@ -74,12 +74,15 @@ ml-kem.workspace = true
 nom.workspace = true
 observability = { workspace = true, optional = true }
 ordermap.workspace = true
+nsm-nitro-enclave-utils = { version = "0.1.2", features = ["pki"], optional = true }
+p384.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
 rasn.workspace = true
 rasn-cms.workspace = true
 rayon.workspace = true
 rcgen = { workspace = true, optional = true }
 rsa.workspace = true
+rustls-webpki = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde-wasm-bindgen.workspace = true
 signature.workspace = true
@@ -123,6 +126,8 @@ zeroize.workspace = true
 # Maintain alphabetical order
 assert_cmd.workspace = true
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
+# Self-import for integration tests
+kms = { workspace = true, features = ["insecure", "testing"] }
 proptest.workspace = true
 rstest.workspace = true
 serial_test.workspace = true
@@ -132,6 +137,7 @@ tests-utils = { path = "./tests-utils" }
 threshold-fhe = { workspace = true, default-features = false, features = [
     "testing", "malicious_strategies",
 ] }
+tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 tracing-test.workspace = true
 
 [features]
@@ -139,7 +145,6 @@ default = ["non-wasm"]
 testing = []
 non-wasm = [
     "threshold-fhe/non-wasm",
-    "threshold-fhe/testing", # this is needed to build CLI for generating testing keys
     "kms-grpc/non-wasm",
     "dep:aws-config",
     "dep:aws-nitro-enclaves-nsm-api",
@@ -150,6 +155,7 @@ non-wasm = [
     "dep:aws-smithy-types",
     "dep:hyper-rustls",
     "dep:observability",
+    "dep:rustls-webpki",
     "dep:rcgen",
     "dep:tokio",
     "dep:tokio-rustls",
@@ -163,4 +169,8 @@ non-wasm = [
 slow_tests = ["testing"]
 wasm_tests = ["testing"]
 s3_tests = ["testing"]
-insecure = ["kms-grpc/insecure"]
+insecure = [
+    "kms-grpc/insecure",
+    "threshold-fhe/testing",
+    "dep:nsm-nitro-enclave-utils"
+]

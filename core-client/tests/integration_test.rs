@@ -4,10 +4,10 @@ use kms_core_client::*;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::KeyId;
 use kms_grpc::RequestId;
-use kms_lib::backup::KMS_CUSTODIAN;
 use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::consts::SIGNING_KEY_ID;
 use serial_test::serial;
+use std::fs::create_dir_all;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Output;
@@ -170,6 +170,7 @@ async fn insecure_key_gen<T: DockerComposeContext>(ctx: &T, test_path: &Path) ->
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing insecure key-gen");
@@ -211,6 +212,7 @@ async fn crs_gen<T: DockerComposeContext>(
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing CRS-gen");
@@ -232,6 +234,7 @@ async fn real_preproc_and_keygen(config_path: &str, test_path: &Path) -> String 
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
     println!("Doing preprocessing");
     let mut preproc_result = execute_cmd(&config, test_path).await.unwrap();
@@ -248,6 +251,7 @@ async fn real_preproc_and_keygen(config_path: &str, test_path: &Path) -> String 
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
     println!("Doing key-gen");
     let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
@@ -272,6 +276,7 @@ async fn restore_from_backup<T: DockerComposeContext>(ctx: &T, test_path: &Path)
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing restore from backup");
@@ -296,6 +301,7 @@ async fn test_template<T: DockerComposeContext>(
             logs: true,
             max_iter: 500,
             expect_all_responses: true,
+            download_all: false,
         };
 
         let results = execute_cmd(&config, test_path).await.unwrap();
@@ -352,6 +358,7 @@ async fn test_template<T: DockerComposeContext>(
                 logs: true,
                 max_iter: 500,
                 expect_all_responses: true,
+                download_all: false,
             };
 
             //We query result on a single request id, so should get a single result
@@ -387,6 +394,7 @@ async fn new_custodian_context<T: DockerComposeContext>(
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing new custodian context");
@@ -402,34 +410,71 @@ async fn new_custodian_context<T: DockerComposeContext>(
 }
 
 async fn generate_custodian_keys_to_file(
-    root_path: &Path,
+    temp_dir: &Path,
     amount_custodians: usize,
+    threshold: bool,
 ) -> (Vec<String>, Vec<PathBuf>) {
     let mut seeds = Vec::new();
     let mut setup_msgs_paths = Vec::new();
+    // Use the first server to just play custodian in the tests
+    let container_name = if threshold {
+        "zama-core-threshold-custodian-dev-kms-core-1-1".to_string()
+    } else {
+        "zama-core-centralized-custodian-dev-kms-core-1".to_string()
+    };
     for cus_idx in 1..=amount_custodians {
-        let path = root_path
+        let cur_setup_path = temp_dir
             .join("CUSTODIAN")
             .join("setup-msg")
             .join(format!("setup-{}", cus_idx));
-        // NOTE the KMS Custodian is a separate binary needed for the full integration test flow.
-        // Ensure that it is compiled and up to date before running the test
-        let output = Command::cargo_bin(KMS_CUSTODIAN)
-            .unwrap()
-            .arg("generate")
-            .arg("--randomness")
-            .arg("123456")
-            .arg("--custodian-role")
-            .arg(cus_idx.to_string())
-            .arg("--custodian-name")
-            .arg(format!("skynet-{cus_idx}"))
-            .arg("--path")
-            .arg(path.to_str().unwrap())
+        // Ensure the dir exists locally
+        assert!(create_dir_all(cur_setup_path.parent().unwrap()).is_ok());
+        // Ensure the temp dir exists on docker as well. For simplicity we just use the same dir as locally
+        let mkdir_docker = Command::new("docker")
+            .arg("exec")
+            .arg(&container_name)
+            .arg("mkdir")
+            .arg("-p")
+            .arg(cur_setup_path.parent().unwrap()) // Use the parent since the path is to the specific file for this custodian
             .output()
             .unwrap();
-        let seed_phrase = extract_seed_phrase(output);
+        assert!(mkdir_docker.status.success());
+        // NOTE the KMS Custodian is a separate binary needed for the full integration test flow.
+        // Ensure that it is compiled and up to date before running the test
+        let args = [
+            "generate",
+            "--randomness",
+            "123456",
+            "--custodian-role",
+            &cus_idx.to_string(),
+            "--custodian-name",
+            &format!("skynet-{cus_idx}"),
+            "--path",
+            cur_setup_path.to_str().unwrap(),
+        ];
+        let cmd_output = Command::new("docker")
+            .arg("exec")
+            .arg(&container_name)
+            .arg("/app/kms/core/service/bin/kms-custodian")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(cmd_output.status.success());
+        let seed_phrase = extract_seed_phrase(cmd_output);
         seeds.push(seed_phrase);
-        setup_msgs_paths.push(path);
+        // Copy the files from docker to the local file system
+        let cp_output = Command::new("docker")
+            .arg("cp")
+            .arg(format!(
+                "{}:{}",
+                &container_name,
+                cur_setup_path.to_str().unwrap()
+            ))
+            .arg(cur_setup_path.to_str().unwrap())
+            .output()
+            .unwrap();
+        assert!(cp_output.status.success());
+        setup_msgs_paths.push(cur_setup_path);
     }
     (seeds, setup_msgs_paths)
 }
@@ -472,6 +517,7 @@ async fn custodian_backup_init<T: DockerComposeContext>(
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing backup init");
@@ -487,7 +533,7 @@ async fn custodian_backup_init<T: DockerComposeContext>(
 }
 
 async fn custodian_reencrypt(
-    root_path: &Path,
+    temp_dir: &Path,
     amount_operators: usize,
     amount_custodians: usize,
     backup_id: RequestId,
@@ -496,9 +542,42 @@ async fn custodian_reencrypt(
 ) -> Vec<PathBuf> {
     let mut response_paths = Vec::new();
     for operator_index in 1..=amount_operators {
+        let pub_prefix = if amount_operators == 1 {
+            "PUB".to_string()
+        } else {
+            format!("PUB-p{}", operator_index)
+        };
+        let container_name = if amount_operators > 1 {
+            format!("zama-core-threshold-custodian-dev-kms-core-{operator_index}-1")
+        } else {
+            "zama-core-centralized-custodian-dev-kms-core-1".to_string()
+        };
         let cur_recovery_path = &recovery_paths[operator_index - 1];
+        // Ensure the temp dir exists on docker as well. For simplicity we just use the same dir as locally
+        let mkdir_docker = Command::new("docker")
+            .arg("exec")
+            .arg(&container_name)
+            .arg("mkdir")
+            .arg("-p")
+            .arg(cur_recovery_path.parent().unwrap())
+            .output()
+            .unwrap();
+        assert!(mkdir_docker.status.success());
+        // Copy the previous responses from local to docker
+        let cp_output_local_resp = Command::new("docker")
+            .arg("cp")
+            .arg(cur_recovery_path.to_str().unwrap())
+            .arg(format!(
+                "{}:{}",
+                &container_name,
+                cur_recovery_path.to_str().unwrap()
+            ))
+            .output()
+            .unwrap();
+        assert!(cp_output_local_resp.status.success());
+
         for custodian_index in 1..=amount_custodians {
-            let cur_response_path = &root_path
+            let cur_response_path = &temp_dir
                 .join("CUSTODIAN")
                 .join("response")
                 .join(backup_id.to_string())
@@ -506,33 +585,78 @@ async fn custodian_reencrypt(
                     "recovery-response-{}-{}",
                     operator_index, custodian_index,
                 ));
-            let pub_prefix = if amount_operators == 1 {
-                "PUB".to_string()
-            } else {
-                format!("PUB-p{}", operator_index)
-            };
-            let operator_verf_path = root_path
-                .join(pub_prefix)
+            assert!(create_dir_all(cur_response_path.parent().unwrap()).is_ok());
+            // Ensure the temp dir exists on docker
+            let mkdir_docker = Command::new("docker")
+                .arg("exec")
+                .arg(&container_name)
+                .arg("mkdir")
+                .arg("-p")
+                .arg(cur_response_path.parent().unwrap())
+                .output()
+                .unwrap();
+            assert!(mkdir_docker.status.success());
+            let verf_path = temp_dir
+                .join(&pub_prefix)
                 .join(PubDataType::VerfKey.to_string())
                 .join(SIGNING_KEY_ID.to_string());
+            let mkdir_docker = Command::new("docker")
+                .arg("exec")
+                .arg(&container_name)
+                .arg("mkdir")
+                .arg("-p")
+                .arg(verf_path.parent().unwrap())
+                .output()
+                .unwrap();
+            assert!(mkdir_docker.status.success());
+            let cp_output = Command::new("docker")
+                .arg("cp")
+                .arg(verf_path.to_str().unwrap())
+                .arg(format!(
+                    "{}:{}",
+                    &container_name,
+                    verf_path.to_str().unwrap()
+                ))
+                .output()
+                .unwrap();
+            assert!(cp_output.status.success());
             // NOTE the KMS Custodian is a separate binary needed for the full integration test flow.
             // Ensure that it is compiled and up to date before running the test
-            let output = Command::cargo_bin(KMS_CUSTODIAN)
-                .unwrap()
-                .arg("decrypt")
-                .arg("--seed-phrase")
-                .arg(&seeds[custodian_index - 1])
-                .arg("--custodian-role")
-                .arg(custodian_index.to_string())
-                .arg("--operator-verf-key")
-                .arg(operator_verf_path.to_str().unwrap())
-                .arg("-b")
-                .arg(cur_recovery_path.to_str().unwrap())
-                .arg("-o")
+            // NOTE the KMS Custodian is a separate binary needed for the full integration test flow.
+            // Ensure that it is compiled and up to date before running the test
+            let args = [
+                "decrypt",
+                "--seed-phrase",
+                &seeds[custodian_index - 1],
+                "--custodian-role",
+                &custodian_index.to_string(),
+                "--operator-verf-key",
+                verf_path.to_str().unwrap(),
+                "-b",
+                cur_recovery_path.to_str().unwrap(),
+                "-o",
+                cur_response_path.to_str().unwrap(),
+            ];
+            let cmd_output = Command::new("docker")
+                .arg("exec")
+                .arg(&container_name)
+                .arg("/app/kms/core/service/bin/kms-custodian")
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(cmd_output.status.success());
+            // Copy the response files from docker to the local file system
+            let cp_output_resp = Command::new("docker")
+                .arg("cp")
+                .arg(format!(
+                    "{}:{}",
+                    &container_name,
+                    cur_response_path.to_str().unwrap()
+                ))
                 .arg(cur_response_path.to_str().unwrap())
                 .output()
                 .unwrap();
-            assert!(output.status.success());
+            assert!(cp_output_resp.status.success());
             response_paths.push(cur_response_path.to_owned());
         }
     }
@@ -556,6 +680,7 @@ async fn custodian_backup_recovery<T: DockerComposeContext>(
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing backup recovery");
@@ -615,21 +740,23 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
     let amount_custodians = 5;
     let custodian_threshold = 2;
     let temp_dir = tempfile::tempdir().unwrap();
-    let keys_folder = temp_dir.path();
+    let temp_path = temp_dir.path();
     let (seeds, setup_msg_paths) =
-        generate_custodian_keys_to_file(keys_folder, amount_custodians).await;
+        generate_custodian_keys_to_file(temp_path, amount_custodians, false).await;
     let cus_backup_id =
-        new_custodian_context(ctx, keys_folder, custodian_threshold, setup_msg_paths).await;
-    let operator_recovery_resp_path = keys_folder
+        new_custodian_context(ctx, temp_path, custodian_threshold, setup_msg_paths).await;
+    let operator_recovery_resp_path = temp_path
         .join("CUSTODIAN")
         .join("recovery")
         .join(&cus_backup_id)
         .join("central");
+    // Ensure the dir exists locally
+    assert!(create_dir_all(operator_recovery_resp_path.parent().unwrap()).is_ok());
     let init_backup_id =
-        custodian_backup_init(ctx, keys_folder, vec![operator_recovery_resp_path.clone()]).await;
+        custodian_backup_init(ctx, temp_path, vec![operator_recovery_resp_path.clone()]).await;
     assert_eq!(cus_backup_id, init_backup_id);
     let recovery_output_paths = custodian_reencrypt(
-        keys_folder,
+        temp_path,
         1,
         amount_custodians,
         init_backup_id.try_into().unwrap(),
@@ -639,13 +766,13 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
     .await;
     let recovery_backup_id = custodian_backup_recovery(
         ctx,
-        keys_folder,
+        temp_path,
         recovery_output_paths,
         RequestId::from_str(&cus_backup_id).unwrap(),
     )
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
-    let _ = restore_from_backup(ctx, keys_folder).await;
+    let _ = restore_from_backup(ctx, temp_path).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate the restore.
     // However we are testing this in the service/client tests. Hence this tests is mainly to ensure that the outer
     // end points, and content returned from the KMS to the custodians, work as expected.
@@ -682,8 +809,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
     // some commands are tested twice to see the cache in action
     let key_id = KeyId::from_str(&key_id).expect("CCCommand failed for KeyId");
     let commands = vec![
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(
-            CipherParameters {
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x1".to_string(),
             data_type: FheType::Ebool,
             no_compression: false,
@@ -693,8 +819,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             num_requests: 1,
             ciphertext_output_path: None,
         })),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(
-            CipherParameters{
+        CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x1".to_string(),
             data_type: FheType::Ebool,
             no_compression: false,
@@ -704,8 +829,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             num_requests: 1,
             ciphertext_output_path: None,
         })),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(
-            CipherParameters{
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x6F".to_string(),
             data_type: FheType::Euint8,
             no_compression: true,
@@ -715,8 +839,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             num_requests: 1,
             ciphertext_output_path: None,
         })),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(
-            CipherParameters{
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x6F".to_string(),
             data_type: FheType::Euint8,
             no_compression: false,
@@ -726,8 +849,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             num_requests: 1,
             ciphertext_output_path: None,
         })),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(
-            CipherParameters{
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0xFFFF".to_string(),
             data_type: FheType::Euint16,
             no_compression: false,
@@ -737,10 +859,10 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             num_requests: 1,
             ciphertext_output_path: None,
         })),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(
-            CipherParameters{
-            to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
-            data_type: FheType::Euint1024,
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0x96BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592B"
+                .to_string(),
+            data_type: FheType::Euint256,
             no_compression: false,
             no_precompute_sns: true,
             key_id,
@@ -748,10 +870,10 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             num_requests: 1,
             ciphertext_output_path: None,
         })),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(
-            CipherParameters{
-            to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
-            data_type: FheType::Euint1024,
+        CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D81CE14B95D225928E4E9B5305EC4592C"
+                .to_string(),
+            data_type: FheType::Euint256,
             no_compression: false,
             no_precompute_sns: true,
             key_id,
@@ -759,35 +881,31 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             num_requests: 1,
             ciphertext_output_path: None,
         })),
-        CCCommand::Encrypt(
-            CipherParameters{
-                to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
-                data_type: FheType::Euint1024,
-                no_compression: false,
-                no_precompute_sns: true,
-                key_id,
-                batch_size: 1,
-                num_requests: 1,
-                ciphertext_output_path: Some(ctxt_path.to_path_buf()),
-            }
-        ),
-        CCCommand::PublicDecrypt(CipherArguments::FromFile(
-            CipherFile {
-                input_path: ctxt_path.to_path_buf(),
-                batch_size: 1,
-                num_requests: 3,
+        CCCommand::Encrypt(CipherParameters {
+            to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF0395689B5305EC4592D"
+                .to_string(),
+            data_type: FheType::Euint256,
+            no_compression: false,
+            no_precompute_sns: true,
+            key_id,
+            batch_size: 1,
+            num_requests: 1,
+            ciphertext_output_path: Some(ctxt_path.to_path_buf()),
+        }),
+        CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
+            input_path: ctxt_path.to_path_buf(),
+            batch_size: 1,
+            num_requests: 3,
         })),
-        CCCommand::UserDecrypt(CipherArguments::FromFile(
-            CipherFile {
-                input_path: ctxt_path.to_path_buf(),
-                batch_size: 1,
-                num_requests: 3,
+        CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
+            input_path: ctxt_path.to_path_buf(),
+            batch_size: 1,
+            num_requests: 3,
         })),
     ];
 
     let commands_for_sns_precompute = vec![
-            CCCommand::PublicDecrypt(CipherArguments::FromArgs(
-            CipherParameters{
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x1".to_string(),
             data_type: FheType::Ebool,
             no_compression: true,
@@ -797,8 +915,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             num_requests: 1,
             ciphertext_output_path: None,
         })),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(
-            CipherParameters{
+        CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x78".to_string(),
             data_type: FheType::Euint8,
             no_compression: true,
@@ -808,8 +925,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             num_requests: 1,
             ciphertext_output_path: None,
         })),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(
-            CipherParameters{
+        CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x1".to_string(),
             data_type: FheType::Ebool,
             no_compression: true,
@@ -819,8 +935,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             num_requests: 1,
             ciphertext_output_path: None,
         })),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(
-            CipherParameters{
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x6F".to_string(),
             data_type: FheType::Euint8,
             no_compression: true,
@@ -830,10 +945,10 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             num_requests: 1,
             ciphertext_output_path: None,
         })),
-        CCCommand::PublicDecrypt(CipherArguments::FromArgs(
-            CipherParameters{
-            to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
-            data_type: FheType::Euint1024,
+        CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F7820"
+                .to_string(),
+            data_type: FheType::Euint256,
             no_compression: true,
             no_precompute_sns: false,
             key_id,
@@ -841,10 +956,10 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             num_requests: 1,
             ciphertext_output_path: None,
         })),
-        CCCommand::UserDecrypt(CipherArguments::FromArgs(
-            CipherParameters{
-            to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
-            data_type: FheType::Euint1024,
+        CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
+            to_encrypt: "0xC9BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592F"
+                .to_string(),
+            data_type: FheType::Euint256,
             no_compression: true,
             no_precompute_sns: false,
             key_id,
@@ -852,29 +967,26 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             num_requests: 1,
             ciphertext_output_path: None,
         })),
-        CCCommand::Encrypt(
-            CipherParameters{
-                to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F78D196BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC45921".to_string(),
-                data_type: FheType::Euint1024,
-                no_compression: true,
-                no_precompute_sns: false,
-                key_id,
-                batch_size: 1,
-                num_requests: 1,
-                ciphertext_output_path: Some(ctxt_with_sns_path.to_path_buf()),
-            }
-        ),
-        CCCommand::PublicDecrypt(CipherArguments::FromFile(
-            CipherFile {
-                input_path: ctxt_with_sns_path.to_path_buf(),
-                batch_size: 1,
-                num_requests: 3,
+        CCCommand::Encrypt(CipherParameters {
+            to_encrypt: "0xC958D835E4B1922CE9B13CA037D537E521CE14B95D225928E4E9B5305EC4592E"
+                .to_string(),
+            data_type: FheType::Euint256,
+            no_compression: true,
+            no_precompute_sns: false,
+            key_id,
+            batch_size: 1,
+            num_requests: 1,
+            ciphertext_output_path: Some(ctxt_with_sns_path.to_path_buf()),
+        }),
+        CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
+            input_path: ctxt_with_sns_path.to_path_buf(),
+            batch_size: 1,
+            num_requests: 3,
         })),
-        CCCommand::UserDecrypt(CipherArguments::FromFile(
-            CipherFile {
-                input_path: ctxt_with_sns_path.to_path_buf(),
-                batch_size: 1,
-                num_requests: 3,
+        CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
+            input_path: ctxt_with_sns_path.to_path_buf(),
+            batch_size: 1,
+            num_requests: 3,
         })),
     ];
 
@@ -973,27 +1085,28 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianCo
     let custodian_threshold = 2;
     let amount_operators = 4; // TODO should not be hardcoded but not sure how I can get it easily
     let temp_dir = tempfile::tempdir().unwrap();
-    let keys_folder = temp_dir.path();
+    let temp_path = temp_dir.path();
     let (seeds, setup_msg_paths) =
-        generate_custodian_keys_to_file(keys_folder, amount_custodians).await;
+        generate_custodian_keys_to_file(temp_path, amount_custodians, true).await;
     let cus_backup_id =
-        new_custodian_context(ctx, keys_folder, custodian_threshold, setup_msg_paths).await;
+        new_custodian_context(ctx, temp_path, custodian_threshold, setup_msg_paths).await;
     // Paths to where the results of the backup init will be stored
     let mut operator_recovery_resp_paths = Vec::new();
     for cur_op_idx in 1..=amount_operators {
-        operator_recovery_resp_paths.push(
-            keys_folder
-                .join("CUSTODIAN")
-                .join("recovery")
-                .join(&cus_backup_id)
-                .join(cur_op_idx.to_string()),
-        );
+        let cur_resp_path = temp_path
+            .join("CUSTODIAN")
+            .join("recovery")
+            .join(&cus_backup_id)
+            .join(cur_op_idx.to_string());
+        // Ensure the dir exists locally
+        assert!(create_dir_all(cur_resp_path.parent().unwrap()).is_ok());
+        operator_recovery_resp_paths.push(cur_resp_path);
     }
     let init_backup_id =
-        custodian_backup_init(ctx, keys_folder, operator_recovery_resp_paths.clone()).await;
+        custodian_backup_init(ctx, temp_path, operator_recovery_resp_paths.clone()).await;
     assert_eq!(cus_backup_id, init_backup_id);
     let recovery_output_paths = custodian_reencrypt(
-        keys_folder,
+        temp_path,
         amount_operators,
         amount_custodians,
         init_backup_id.try_into().unwrap(),
@@ -1003,13 +1116,13 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianCo
     .await;
     let recovery_backup_id = custodian_backup_recovery(
         ctx,
-        keys_folder,
+        temp_path,
         recovery_output_paths,
         RequestId::from_str(&cus_backup_id).unwrap(),
     )
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
-    let _ = restore_from_backup(ctx, keys_folder).await;
+    let _ = restore_from_backup(ctx, temp_path).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate recovery.
     // However we are testing this in the service/client. Hence this tests is mainly to ensure that the outer
     // end points and content returned from the KMS to the custodians work as expected.

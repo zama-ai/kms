@@ -4,7 +4,9 @@ package ddec_networking;
 
 service gnetworking {
     rpc SendValue(SendValueRequest) returns(SendValueResponse) {}
+    rpc HealthCheck(HealthCheckRequest) returns(HealthCheckResponse) {}
 }
+
 
 message SendValueRequest {
     bytes tag = 1;
@@ -12,3 +14,9 @@ message SendValueRequest {
 }
 
 message SendValueResponse {}
+
+message HealthCheckRequest {
+    bytes tag = 1;
+}
+
+message HealthCheckResponse {}

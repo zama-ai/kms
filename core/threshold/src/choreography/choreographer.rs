@@ -73,7 +73,7 @@ impl ChoreoRuntime {
             .iter()
             .map(|(role, host)| {
                 let endpoint: &Uri = host;
-                tracing::debug!("connecting to endpoint: {:?}", endpoint);
+                println!("connecting to endpoint: {:?}", endpoint);
                 let channel = Channel::builder(endpoint.clone())
                     .timeout(*NETWORK_TIMEOUT_LONG)
                     .connect_lazy();
@@ -103,15 +103,16 @@ impl ChoreoRuntime {
         ring: SupportedRing,
         threshold: u32,
         seed: Option<u64>,
+        malicious_roles: Vec<Role>,
     ) -> anyhow::Result<()> {
         let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
 
         let prss_params = bc2wrap::serialize(&PrssInitParams { session_id, ring })?;
 
         let mut join_set = JoinSet::new();
-        self.channels.values().for_each(|channel| {
+        self.channels.iter().for_each(|(role, channel)| {
             let mut client = self.new_client(channel.clone());
-
+            let role = *role;
             let request = PrssInitRequest {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
@@ -120,11 +121,18 @@ impl ChoreoRuntime {
             };
 
             join_set.spawn(
-                async move { client.prss_init(request).await }.instrument(tracing::Span::current()),
+                async move { (role, client.prss_init(request).await) }
+                    .instrument(tracing::Span::current()),
             );
         });
-        while let Some(response) = join_set.join_next().await {
-            response??;
+
+        while let Some(Ok((role, response))) = join_set.join_next().await {
+            if malicious_roles.contains(&role) {
+                println!("Malicious role {role} detected, skipping response.");
+                continue;
+            } else {
+                response?;
+            }
         }
 
         Ok(())
@@ -140,6 +148,7 @@ impl ChoreoRuntime {
         percentage_offline: u32,
         threshold: u32,
         seed: Option<u64>,
+        malicious_roles: Vec<Role>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
         let preproc_kg_params = bc2wrap::serialize(&PreprocKeyGenParams {
@@ -151,8 +160,9 @@ impl ChoreoRuntime {
         })?;
 
         let mut join_set = JoinSet::new();
-        self.channels.values().for_each(|channel| {
+        self.channels.iter().for_each(|(role, channel)| {
             let mut client = self.new_client(channel.clone());
+            let role = *role;
             let request = PreprocKeyGenRequest {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
@@ -161,14 +171,19 @@ impl ChoreoRuntime {
             };
 
             join_set.spawn(
-                async move { client.preproc_key_gen(request).await }
+                async move { (role, client.preproc_key_gen(request).await) }
                     .instrument(tracing::Span::current()),
             );
         });
 
         let mut responses: Vec<SessionId> = Vec::new();
-        while let Some(response) = join_set.join_next().await {
-            responses.push(bc2wrap::deserialize(&(response??.into_inner().request_id)).unwrap());
+        while let Some(Ok((role, response))) = join_set.join_next().await {
+            if malicious_roles.contains(&role) {
+                println!("Malicious role {role} detected, skipping response.");
+                continue;
+            } else {
+                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+            }
         }
 
         let ref_response = responses.first().unwrap();
@@ -187,6 +202,7 @@ impl ChoreoRuntime {
         session_id_preproc: Option<SessionId>,
         threshold: u32,
         seed: Option<u64>,
+        malicious_roles: Vec<Role>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
         let threshold_keygen_params = bc2wrap::serialize(&ThresholdKeyGenParams {
@@ -196,8 +212,9 @@ impl ChoreoRuntime {
         })?;
 
         let mut join_set = JoinSet::new();
-        self.channels.values().for_each(|channel| {
+        self.channels.iter().for_each(|(role, channel)| {
             let mut client = self.new_client(channel.clone());
+            let role = *role;
             let request = ThresholdKeyGenRequest {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
@@ -206,14 +223,19 @@ impl ChoreoRuntime {
             };
 
             join_set.spawn(
-                async move { client.threshold_key_gen(request).await }
+                async move { (role, client.threshold_key_gen(request).await) }
                     .instrument(tracing::Span::current()),
             );
         });
 
         let mut responses: Vec<SessionId> = Vec::new();
-        while let Some(response) = join_set.join_next().await {
-            responses.push(bc2wrap::deserialize(&(response??.into_inner().request_id)).unwrap());
+        while let Some(Ok((role, response))) = join_set.join_next().await {
+            if malicious_roles.contains(&role) {
+                println!("Malicious role {role} detected, skipping response.");
+                continue;
+            } else {
+                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+            }
         }
 
         let ref_response = responses.first().unwrap();
@@ -232,6 +254,7 @@ impl ChoreoRuntime {
         session_id: SessionId,
         dkg_params: Option<DkgParamsAvailable>,
         seed: Option<u64>,
+        malicious_roles: Vec<Role>,
     ) -> anyhow::Result<FhePubKeySet> {
         let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
 
@@ -241,23 +264,29 @@ impl ChoreoRuntime {
         })?;
 
         let mut join_set = JoinSet::new();
-        self.channels.values().for_each(|channel| {
+        self.channels.iter().for_each(|(role, channel)| {
             let mut client = self.new_client(channel.clone());
+            let role = *role;
             let request = ThresholdKeyGenResultRequest {
                 role_assignment: role_assignment.to_vec(),
                 params: threshold_keygen_result_params.to_vec(),
                 seed,
             };
             join_set.spawn(
-                async move { client.threshold_key_gen_result(request).await }
+                async move { (role, client.threshold_key_gen_result(request).await) }
                     .instrument(tracing::Span::current()),
             );
         });
 
         let mut responses = Vec::new();
-        while let Some(response) = join_set.join_next().await {
-            let response = response??.into_inner();
-            responses.push(response.pub_keyset);
+        while let Some(Ok((role, response))) = join_set.join_next().await {
+            if malicious_roles.contains(&role) {
+                println!("Malicious role {role} detected, skipping response.");
+                continue;
+            } else {
+                let response = response?.into_inner();
+                responses.push(response.pub_keyset);
+            }
         }
 
         //NOTE: Cant really assert here as keys dont implement eq trait, and cant assert eq on serialized data
@@ -280,6 +309,7 @@ impl ChoreoRuntime {
         ctxt_type: TfheType,
         threshold: u32,
         seed: Option<u64>,
+        malicious_roles: Vec<Role>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
         let preproc_decrypt_params = bc2wrap::serialize(&PreprocDecryptParams {
@@ -291,8 +321,9 @@ impl ChoreoRuntime {
         })?;
 
         let mut join_set = JoinSet::new();
-        self.channels.values().for_each(|channel| {
+        self.channels.iter().for_each(|(role, channel)| {
             let mut client = self.new_client(channel.clone());
+            let role = *role;
             let request = PreprocDecryptRequest {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
@@ -301,14 +332,19 @@ impl ChoreoRuntime {
             };
 
             join_set.spawn(
-                async move { client.preproc_decrypt(request).await }
+                async move { (role, client.preproc_decrypt(request).await) }
                     .instrument(tracing::Span::current()),
             );
         });
 
         let mut responses: Vec<SessionId> = Vec::new();
-        while let Some(response) = join_set.join_next().await {
-            responses.push(bc2wrap::deserialize(&(response??.into_inner().request_id)).unwrap());
+        while let Some(Ok((role, response))) = join_set.join_next().await {
+            if malicious_roles.contains(&role) {
+                println!("Malicious role {role} detected, skipping response.");
+                continue;
+            } else {
+                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+            }
         }
 
         let ref_response = responses.first().unwrap();
@@ -332,6 +368,7 @@ impl ChoreoRuntime {
         tfhe_type: TfheType,
         threshold: u32,
         seed: Option<u64>,
+        malicious_roles: Vec<Role>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
         let threshold_decrypt_params = bc2wrap::serialize(&ThresholdDecryptParams {
@@ -345,8 +382,9 @@ impl ChoreoRuntime {
         })?;
 
         let mut join_set = JoinSet::new();
-        self.channels.values().for_each(|channel| {
+        self.channels.iter().for_each(|(role, channel)| {
             let mut client = self.new_client(channel.clone());
+            let role = *role;
             let request = ThresholdDecryptRequest {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
@@ -355,14 +393,19 @@ impl ChoreoRuntime {
             };
 
             join_set.spawn(
-                async move { client.threshold_decrypt(request).await }
+                async move { (role, client.threshold_decrypt(request).await) }
                     .instrument(tracing::Span::current()),
             );
         });
 
         let mut responses: Vec<SessionId> = Vec::new();
-        while let Some(response) = join_set.join_next().await {
-            responses.push(bc2wrap::deserialize(&(response??.into_inner().request_id)).unwrap());
+        while let Some(Ok((role, response))) = join_set.join_next().await {
+            if malicious_roles.contains(&role) {
+                println!("Malicious role {role} detected, skipping response.");
+                continue;
+            } else {
+                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+            }
         }
 
         let ref_response = responses.first().unwrap();
@@ -377,24 +420,31 @@ impl ChoreoRuntime {
     pub async fn initiate_threshold_decrypt_result(
         &self,
         session_id: SessionId,
+        malicious_roles: Vec<Role>,
     ) -> anyhow::Result<Vec<Z64>> {
         let mut join_set = JoinSet::new();
         let serialized_sid = bc2wrap::serialize(&session_id)?;
-        self.channels.values().for_each(|channel| {
+        self.channels.iter().for_each(|(role, channel)| {
             let mut client = self.new_client(channel.clone());
+            let role = *role;
             let request = ThresholdDecryptResultRequest {
                 request_id: serialized_sid.to_vec(),
             };
 
             join_set.spawn(
-                async move { client.threshold_decrypt_result(request).await }
+                async move { (role, client.threshold_decrypt_result(request).await) }
                     .instrument(tracing::Span::current()),
             );
         });
 
         let mut responses: Vec<Vec<Z64>> = Vec::new();
-        while let Some(response) = join_set.join_next().await {
-            responses.push(bc2wrap::deserialize(&(response??.into_inner().plaintext))?);
+        while let Some(Ok((role, response))) = join_set.join_next().await {
+            if malicious_roles.contains(&role) {
+                println!("Malicious role {role} detected, skipping response.");
+                continue;
+            } else {
+                responses.push(bc2wrap::deserialize(&(response?.into_inner().plaintext))?);
+            }
         }
 
         let ref_response = responses.first().unwrap();
@@ -412,6 +462,7 @@ impl ChoreoRuntime {
         dkg_params: DkgParamsAvailable,
         threshold: u32,
         seed: Option<u64>,
+        malicious_roles: Vec<Role>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
         let witness_dim = compute_witness_dim(
@@ -428,8 +479,9 @@ impl ChoreoRuntime {
 
         let mut join_set = JoinSet::new();
 
-        self.channels.values().for_each(|channel| {
+        self.channels.iter().for_each(|(role, channel)| {
             let mut client = self.new_client(channel.clone());
+            let role = *role;
             let request = CrsGenRequest {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
@@ -439,13 +491,19 @@ impl ChoreoRuntime {
             };
 
             join_set.spawn(
-                async move { client.crs_gen(request).await }.instrument(tracing::Span::current()),
+                async move { (role, client.crs_gen(request).await) }
+                    .instrument(tracing::Span::current()),
             );
         });
 
         let mut responses: Vec<SessionId> = Vec::new();
-        while let Some(response) = join_set.join_next().await {
-            responses.push(bc2wrap::deserialize(&(response??.into_inner().request_id)).unwrap());
+        while let Some(Ok((role, response))) = join_set.join_next().await {
+            if malicious_roles.contains(&role) {
+                println!("Malicious role {role} detected, skipping response.");
+                continue;
+            } else {
+                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+            }
         }
 
         let ref_response = responses.first().unwrap();
@@ -460,24 +518,31 @@ impl ChoreoRuntime {
     pub async fn initiate_crs_gen_result(
         &self,
         session_id: SessionId,
+        malicious_roles: Vec<Role>,
     ) -> anyhow::Result<InternalPublicParameter> {
         let serialized_sid = bc2wrap::serialize(&session_id)?;
         let mut join_set = JoinSet::new();
-        self.channels.values().for_each(|channel| {
+        self.channels.iter().for_each(|(role, channel)| {
             let mut client = self.new_client(channel.clone());
+            let role = *role;
             let request = CrsGenResultRequest {
                 request_id: serialized_sid.to_vec(),
             };
 
             join_set.spawn(
-                async move { client.crs_gen_result(request).await }
+                async move { (role, client.crs_gen_result(request).await) }
                     .instrument(tracing::Span::current()),
             );
         });
 
         let mut responses: Vec<InternalPublicParameter> = Vec::new();
-        while let Some(response) = join_set.join_next().await {
-            responses.push(bc2wrap::deserialize(&(response??.into_inner()).crs).unwrap());
+        while let Some(Ok((role, response))) = join_set.join_next().await {
+            if malicious_roles.contains(&role) {
+                println!("Malicious role {role} detected, skipping response.");
+                continue;
+            } else {
+                responses.push(bc2wrap::deserialize(&(response?.into_inner()).crs).unwrap());
+            }
         }
 
         let ref_response = responses.first().unwrap();
@@ -495,6 +560,7 @@ impl ChoreoRuntime {
         new_key_sid: SessionId,
         session_type: SessionType,
         seed: Option<u64>,
+        malicious_roles: Vec<Role>,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
         let reshare_params_serialized = bc2wrap::serialize(&ReshareParams {
@@ -505,8 +571,9 @@ impl ChoreoRuntime {
 
         let mut join_set = JoinSet::new();
 
-        self.channels.values().for_each(|channel| {
+        self.channels.iter().for_each(|(role, channel)| {
             let mut client = self.new_client(channel.clone());
+            let role = *role;
             let request = ReshareRequest {
                 role_assignment: role_assignment.clone(),
                 threshold,
@@ -515,13 +582,19 @@ impl ChoreoRuntime {
             };
 
             join_set.spawn(
-                async move { client.reshare(request).await }.instrument(tracing::Span::current()),
+                async move { (role, client.reshare(request).await) }
+                    .instrument(tracing::Span::current()),
             );
         });
 
         let mut responses: Vec<SessionId> = Vec::new();
-        while let Some(response) = join_set.join_next().await {
-            responses.push(bc2wrap::deserialize(&(response??.into_inner()).request_id).unwrap());
+        while let Some(Ok((role, response))) = join_set.join_next().await {
+            if malicious_roles.contains(&role) {
+                println!("Malicious role {role} detected, skipping response.");
+                continue;
+            } else {
+                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+            }
         }
 
         let ref_response = responses.first().unwrap();
@@ -537,6 +610,7 @@ impl ChoreoRuntime {
         session_id: SessionId,
         retry: bool,
         interval: Duration,
+        malicious_roles: Vec<Role>,
     ) -> anyhow::Result<Vec<(Role, Status)>> {
         let mut join_set = JoinSet::new();
         let serialized_sid = bc2wrap::serialize(&session_id)?;
@@ -559,7 +633,11 @@ impl ChoreoRuntime {
                 result.push((role, status));
             }
 
-            if !retry || result.iter().all(|(_, status)| *status != Status::Ongoing) {
+            if !retry
+                || result.iter().all(|(role, status)| {
+                    *status != Status::Ongoing || malicious_roles.contains(role)
+                })
+            {
                 return Ok(result);
             } else {
                 println!("Status Check for Session ID {session_id} -- Still have running parties");

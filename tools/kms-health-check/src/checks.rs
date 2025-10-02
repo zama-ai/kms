@@ -1,4 +1,5 @@
 use anyhow::Result;
+use kms_grpc::kms::v1::RequestId;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -7,14 +8,22 @@ use crate::grpc_client::GrpcHealthClient;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthCheckResult {
-    pub overall_health: HealthStatus,
     pub config_valid: Option<ConfigValidation>,
     pub connectivity: Option<ConnectivityCheck>,
     pub key_material: Option<KeyMaterialCheck>,
     pub operator_key: Option<OperatorKeyCheck>,
-    pub peer_status: Option<Vec<PeerStatus>>,
-    pub node_info: Option<NodeInfo>,
+    pub context_info: Option<Vec<ContextStatus>>,
+    pub overall_health: HealthStatus,
     pub recommendations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextStatus {
+    pub context_id: Option<RequestId>, // A missing context id is an issue !
+    pub self_node_info: NodeInfo,
+    pub context_health: HealthStatus,
+    pub peers_status: Vec<PeerStatus>,
+    pub recommendation: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,10 +32,6 @@ pub struct PeerStatus {
     pub endpoint: String,
     pub reachable: bool,
     pub latency_ms: u32,
-    pub fhe_key_ids: Vec<String>,
-    pub crs_ids: Vec<String>,
-    pub preprocessing_key_ids: Vec<String>,
-    pub storage_info: String, // Storage backend info from peer
     pub error: Option<String>,
 }
 
@@ -86,10 +91,9 @@ pub async fn run_config_validation(config_path: &str) -> Result<HealthCheckResul
         connectivity: None,
         key_material: None,
         operator_key: None,
-        peer_status: None,
-        node_info: None,
-        overall_health: HealthStatus::Optimal,
         recommendations: Vec::new(),
+        overall_health: HealthStatus::Optimal,
+        context_info: None,
     };
 
     match config::parse_config(Path::new(config_path)).await {
@@ -289,110 +293,62 @@ async fn process_health_status(
         2 => "threshold",
         _ => "unknown",
     };
-    result.node_info = Some(NodeInfo {
-        node_type: node_type_str.to_string(),
-        my_party_id: health_status.my_party_id,
-        threshold_required: health_status.threshold_required,
-        nodes_reachable: health_status.nodes_reachable,
-    });
 
-    // Set peer status from health response
-    if !health_status.peers.is_empty() {
-        let mut peer_statuses = Vec::new();
-        for peer in &health_status.peers {
-            peer_statuses.push(PeerStatus {
+    let peers_status_for_all_contexts = &health_status.peers_from_all_contexts;
+    let mut contexts_status = Vec::new();
+    for result_peers_status in peers_status_for_all_contexts {
+        let mut peers_status = Vec::new();
+        let total_peers = result_peers_status.peers.len() as u32;
+        let num_peers_reachable = result_peers_status.nodes_reachable - 1; // Exclude self
+
+        // Set overall health based on server's assessment
+        let (context_health, recommendation) = match result_peers_status.status {
+            1 => (HealthStatus::Optimal, format!(
+                    "Optimal: All {} peers online and reachable",
+                    total_peers
+                )),   // HEALTH_STATUS_OPTIMAL
+            2 => (HealthStatus::Healthy, format!(
+                    "Healthy but not optimal: {}/{} peers reachable (sufficient majority but {} peers offline)",
+                    num_peers_reachable, total_peers, total_peers - num_peers_reachable
+                )),   // HEALTH_STATUS_HEALTHY
+            3 => (HealthStatus::Degraded, format!(
+                    "(!!!)  INVESTIGATE: Even with healthy status, explore why {} peers are offline. Check peer connectivity, network issues, or node failures to restore optimal fault tolerance.",
+                    total_peers - num_peers_reachable
+                )) , // HEALTH_STATUS_DEGRADED
+            4 => (HealthStatus::Unhealthy, format!(
+                    "Critical: Only {} peers reachable, but {} required nodes for threshold operations",
+                    num_peers_reachable, result_peers_status.threshold_required
+                )), // HEALTH_STATUS_UNHEALTHY
+            _ => return,                  // Keep current status for unspecified values
+        };
+
+        for peer in &result_peers_status.peers {
+            peers_status.push(PeerStatus {
                 peer_id: peer.peer_id,
                 endpoint: peer.endpoint.clone(),
                 reachable: peer.reachable,
                 latency_ms: peer.latency_ms,
-                fhe_key_ids: peer.fhe_key_ids.clone(),
-                crs_ids: peer.crs_ids.clone(),
-                preprocessing_key_ids: peer.preprocessing_key_ids.clone(),
-                storage_info: peer.storage_info.clone(),
-                error: if peer.error.is_empty() {
-                    None
-                } else {
-                    Some(peer.error.clone())
-                },
-            });
+                error: Some(peer.error.clone()),
+            })
         }
-        result.peer_status = Some(peer_statuses);
 
-        // Check threshold requirements if applicable
-        if health_status.node_type == 2 && health_status.threshold_required > 0 {
-            // NODE_TYPE_THRESHOLD - match the four-tier system from endpoint.rs
-            let total_nodes = health_status.peers.len() as u32 + 1; // peers + self (response excludes self)
+        let self_node_info = NodeInfo {
+            node_type: node_type_str.to_string(),
+            my_party_id: result_peers_status.my_party_id,
+            threshold_required: result_peers_status.threshold_required,
+            nodes_reachable: result_peers_status.nodes_reachable,
+        };
 
-            let min_nodes_for_healthy = (2 * total_nodes) / 3 + 1; // 2/3 majority + 1
-
-            if health_status.nodes_reachable >= total_nodes {
-                // All nodes online - optimal status
-                result.recommendations.push(format!(
-                    "Optimal: All {} nodes online and reachable",
-                    total_nodes
-                ));
-            } else if health_status.nodes_reachable >= min_nodes_for_healthy {
-                // Sufficient 2/3 majority but not all nodes - healthy but should investigate
-                result.overall_health = HealthStatus::Degraded;
-                result.recommendations.push(format!(
-                    "Healthy but not optimal: {}/{} nodes reachable (sufficient majority but {} nodes offline)",
-                    health_status.nodes_reachable, total_nodes, total_nodes - health_status.nodes_reachable
-                ));
-                result.recommendations.push(format!(
-                    "(!!!)  INVESTIGATE: Even with healthy status, explore why {} nodes are offline. Check peer connectivity, network issues, or node failures to restore optimal fault tolerance.",
-                    total_nodes - health_status.nodes_reachable
-                ));
-            } else if health_status.nodes_reachable > health_status.threshold_required {
-                // Above minimum threshold but below 2/3 - degraded
-                result.overall_health = HealthStatus::Degraded;
-                result.recommendations.push(format!(
-                    "Degraded: {}/{} nodes reachable (above threshold {} but below healthy majority {})",
-                    health_status.nodes_reachable, total_nodes, health_status.threshold_required, min_nodes_for_healthy
-                ));
-            } else {
-                // Below threshold - unhealthy
-                result.overall_health = HealthStatus::Unhealthy;
-                result.recommendations.push(format!(
-                    "Critical: Only {} nodes reachable, but {} required for threshold operations",
-                    health_status.nodes_reachable, health_status.threshold_required
-                ));
-            }
-        }
+        let context = ContextStatus {
+            context_id: result_peers_status.context_id.clone(),
+            self_node_info,
+            context_health,
+            peers_status,
+            recommendation,
+        };
+        contexts_status.push(context);
     }
-
-    // Set overall health based on server's assessment using direct 4-tier mapping
-    // Only override if server status is worse than what we determined locally
-    let server_status = match health_status.status {
-        1 => HealthStatus::Optimal,   // HEALTH_STATUS_OPTIMAL
-        2 => HealthStatus::Healthy,   // HEALTH_STATUS_HEALTHY
-        3 => HealthStatus::Degraded,  // HEALTH_STATUS_DEGRADED
-        4 => HealthStatus::Unhealthy, // HEALTH_STATUS_UNHEALTHY
-        _ => return,                  // Keep current status for unspecified values
-    };
-
-    // Use the worse of local assessment vs server assessment
-    if is_worse_status(&server_status, &result.overall_health) {
-        result.overall_health = server_status;
-    }
-}
-
-// Helper function to determine if one status is worse than another
-fn is_worse_status(status1: &HealthStatus, status2: &HealthStatus) -> bool {
-    let status1_rank = match status1 {
-        HealthStatus::Optimal => 0,
-        HealthStatus::Healthy => 1,
-        HealthStatus::Degraded => 2,
-        HealthStatus::Unhealthy => 3,
-    };
-
-    let status2_rank = match status2 {
-        HealthStatus::Optimal => 0,
-        HealthStatus::Healthy => 1,
-        HealthStatus::Degraded => 2,
-        HealthStatus::Unhealthy => 3,
-    };
-
-    status1_rank > status2_rank
+    result.context_info = Some(contexts_status);
 }
 
 // Helper function to check key material (fallback when health status not available)
@@ -463,10 +419,9 @@ pub async fn check_live(endpoint: &str, _config_path: Option<&Path>) -> Result<H
         connectivity: None,
         key_material: None,
         operator_key: None,
-        peer_status: None,
-        node_info: None,
         overall_health: HealthStatus::Healthy,
         recommendations: Vec::new(),
+        context_info: None,
     };
 
     let client = GrpcHealthClient::new(endpoint);

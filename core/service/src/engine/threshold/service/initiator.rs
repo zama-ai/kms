@@ -254,7 +254,7 @@ impl<
         self.init_prss(&request_id).await.map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
-                format!("PRSS initialization failed with error {e}"),
+                format!("PRSS initialization failed with error: {e}"),
             )
         })?;
         Ok(Response::new(Empty {}))
@@ -315,7 +315,6 @@ mod tests {
                         address: "dummy".to_string(),
                         mpc_identity: None,
                         port: 1,
-                        service_port: None,
                         tls_cert: None,
                     }]),
                     core_to_core_net: None,

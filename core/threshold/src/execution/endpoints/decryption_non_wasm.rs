@@ -1413,7 +1413,8 @@ mod tests {
         let key_shares =
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
                 .unwrap();
-        let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
+        let (ct, _id, _tag, _rerand_metadata) =
+            FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let roles = generate_fixed_roles(num_parties);
         //Assumes Sync because preprocessing is part of the task
@@ -1502,7 +1503,8 @@ mod tests {
         let key_shares =
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
                 .unwrap();
-        let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
+        let (ct, _id, _tag, _rerand_metadata) =
+            FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let roles = generate_fixed_roles(num_parties);
         //Assumes Sync because preprocessing is part of the task
@@ -1586,7 +1588,8 @@ mod tests {
         let key_shares =
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
                 .unwrap();
-        let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
+        let (ct, _id, _tag, _rerand_metadata) =
+            FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let roles = generate_fixed_roles(num_parties);
         //Assumes Sync because preprocessing is part of the task
@@ -1686,7 +1689,8 @@ mod tests {
         let key_shares =
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
                 .unwrap();
-        let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
+        let (ct, _id, _tag, _rerand_metadata) =
+            FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let roles = generate_fixed_roles(num_parties);
         //Assumes Sync because preprocessing is part of the task

@@ -58,14 +58,12 @@ use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::prelude::FheDecrypt;
 use tfhe::safe_serialization::safe_deserialize;
 #[cfg(feature = "non-wasm")]
-use tfhe::shortint::ClassicPBSParameters;
-#[cfg(feature = "non-wasm")]
 use tfhe::zk::CompactPkeCrs;
 #[cfg(feature = "non-wasm")]
 use tfhe::Seed;
 use tfhe::{
-    ClientKey, ConfigBuilder, FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048,
-    FheUint256, FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, FheUint80,
+    ClientKey, FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256,
+    FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, FheUint80,
 };
 use tfhe::{FheTypes, ServerKey};
 #[cfg(feature = "non-wasm")]
@@ -154,13 +152,13 @@ where
     storage.refresh_centralized_fhe_keys(keyset2_id).await?;
 
     // we need the private glwe key from keyset 2
-    let (client_key_2, _, _, _, _, _) = storage
+    let (client_key_2, _, _, _, _, _, _) = storage
         .read_cloned_centralized_fhe_keys_from_cache(keyset2_id)
         .await?
         .client_key
         .into_raw_parts();
     // we need the private compression key from keyset 1
-    let (_, _, compression_private_key_1, _, _, _) = storage
+    let (_, _, compression_private_key_1, _, _, _, _) = storage
         .read_cloned_centralized_fhe_keys_from_cache(keyset1_id)
         .await?
         .client_key
@@ -216,6 +214,7 @@ where
         compression_private_key,
         sns_private_key,
         _sns_compression_private_key,
+        rerandomization_key,
         client_tag,
     ) = client_key.into_raw_parts();
 
@@ -253,6 +252,7 @@ where
         compression_private_key,
         sns_private_key,
         Some(int_sns_compression_private_key),
+        rerandomization_key,
         client_tag,
     );
 
@@ -276,6 +276,7 @@ where
         old_parts.4,
         Some(int_sns_compression_key),
         old_parts.6,
+        old_parts.7,
     );
 
     let pks = FhePubKeySet {
@@ -342,9 +343,9 @@ pub fn generate_fhe_keys(
                         // we generate the client key as usual,
                         // but we replace the compression private key using an existing compression private key
                         let client_key = generate_client_fhe_key(params, seed);
-                        let (client_key, dedicated_compact_private_key, _, _, _, tag) = client_key.into_raw_parts();
-                        let (_, _, existing_compression_private_key, noise_squashing_key, noise_squashing_compression_key, _) = key_handle.client_key.into_raw_parts();
-                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, noise_squashing_key,noise_squashing_compression_key, tag)
+                        let (client_key, dedicated_compact_private_key, _, _, _, _, tag) = client_key.into_raw_parts();
+                        let (_, _, existing_compression_private_key, noise_squashing_key, noise_squashing_compression_key, rerand_key_params, _) = key_handle.client_key.into_raw_parts();
+                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, noise_squashing_key,noise_squashing_compression_key,rerand_key_params, tag)
                     },
                     None => anyhow::bail!("existing key handle is required when using existing compression key for keygen")
                 }
@@ -362,6 +363,7 @@ pub fn generate_fhe_keys(
             server_key.4,
             server_key.5,
             server_key.6,
+            server_key.7,
         );
         let public_key = FhePublicKey::new(&client_key);
         let pks = FhePubKeySet {
@@ -389,39 +391,7 @@ pub fn generate_fhe_keys(
 
 #[cfg(feature = "non-wasm")]
 pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientKey {
-    let pbs_params: ClassicPBSParameters = params
-        .get_params_basics_handle()
-        .to_classic_pbs_parameters();
-    let compression_params = params
-        .get_params_basics_handle()
-        .get_compression_decompression_params();
-    let sns_params = match params {
-        DKGParams::WithoutSnS(_) => None,
-        DKGParams::WithSnS(dkg_sns) => Some((dkg_sns.sns_params, dkg_sns.sns_compression_params)),
-    };
-    let config = ConfigBuilder::with_custom_parameters(pbs_params);
-    let config = if let Some(dedicated_pk_params) =
-        params.get_params_basics_handle().get_dedicated_pk_params()
-    {
-        config.use_dedicated_compact_public_key_parameters(dedicated_pk_params)
-    } else {
-        config
-    };
-    let config = if let Some(params) = compression_params {
-        config.enable_compression(params.raw_compression_parameters)
-    } else {
-        config
-    };
-    let config = if let Some((params, compression_params)) = sns_params {
-        let config = config.enable_noise_squashing(params);
-        if let Some(compression_params) = compression_params {
-            config.enable_noise_squashing_compression(compression_params)
-        } else {
-            config
-        }
-    } else {
-        config
-    };
+    let config = params.to_tfhe_config();
     match seed {
         Some(seed) => ClientKey::generate_with_seed(config, seed),
         None => ClientKey::generate(config),
@@ -972,7 +942,7 @@ impl<
         public_storage: PubS,
         private_storage: PrivS,
         backup_vault: Option<Vault>,
-        security_module: Option<SecurityModuleProxy>,
+        security_module: Option<Arc<SecurityModuleProxy>>,
         sk: PrivateSigKey,
         rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> anyhow::Result<(RealCentralizedKms<PubS, PrivS>, HealthServer<impl Health>)> {
@@ -995,7 +965,14 @@ impl<
         let crs_info: HashMap<RequestId, CrsGenMetadata> =
             read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
         let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
-            read_all_data_versioned(&public_storage, &PubDataType::Commitments.to_string()).await?;
+            read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
+                .await?;
+        let verf_key = PublicSigKey::from_sk(&sk);
+        for (cur_req_id, rec_material) in validation_material.iter() {
+            if !rec_material.validate(&verf_key) {
+                anyhow::bail!("Invalid recovery validation material for key id {cur_req_id}");
+            }
+        }
         let custodian_context = validation_material
             .into_iter()
             .map(|(r, com)| (r, com.custodian_context().to_owned()))

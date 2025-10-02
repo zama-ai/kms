@@ -12,7 +12,7 @@ use threshold_fhe::{
         },
         small_execution::prss::{DerivePRSSState, PRSSSetup},
     },
-    networking::{grpc::GrpcNetworkingManager, NetworkMode},
+    networking::{grpc::GrpcNetworkingManager, health_check::HealthCheckSession, NetworkMode},
     session_id::SessionId,
     thread_handles::spawn_compute_bound,
 };
@@ -90,6 +90,21 @@ impl SessionPreparerGetter {
                 context_id
             )),
         }
+    }
+
+    // Returns the an health check session per context.
+    pub async fn get_healthcheck_session_all_contexts(
+        &self,
+    ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession>> {
+        let guarded_session_preparer = self.session_preparer.read().await;
+        let mut health_check_sessions = HashMap::new();
+        for (context_id, session_preparer) in guarded_session_preparer.iter() {
+            health_check_sessions.insert(
+                *context_id,
+                session_preparer.get_healthcheck_session(context_id).await?,
+            );
+        }
+        Ok(health_check_sessions)
     }
 
     pub fn name(&self) -> &str {
@@ -170,6 +185,17 @@ impl SessionPreparer {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
             .own_identity()
+            .await
+    }
+
+    async fn get_healthcheck_session(
+        &self,
+        context_id: &ContextId,
+    ) -> anyhow::Result<HealthCheckSession> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .get_healthcheck_session(context_id)
             .await
     }
 
@@ -304,6 +330,19 @@ impl InnerSessionPreparer {
             "Could not find my own identity in role assignments".to_string(),
         )?;
         Ok(id.to_owned())
+    }
+
+    async fn get_healthcheck_session(
+        &self,
+        context_id: &ContextId,
+    ) -> anyhow::Result<HealthCheckSession> {
+        let context_id = context_id.derive_session_id()?;
+        let nm = self.networking_manager.read().await;
+
+        let health_check_session = nm
+            .make_healthcheck_session(context_id, &self.role_assignment, self.my_role)
+            .await?;
+        Ok(health_check_session)
     }
 
     async fn get_networking(

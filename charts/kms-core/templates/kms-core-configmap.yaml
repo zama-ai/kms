@@ -153,6 +153,7 @@ data:
         {{ range .Values.kmsCore.thresholdMode.peersList }}
     [[threshold.peers]]
     party_id = {{ int .id }}
+    mpc_identity = {{ .host | quote }}
           {{- if $.Values.kmsCore.nitroEnclave.enabled }}
             {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
     address = {{ .host | quote }}
@@ -176,6 +177,7 @@ data:
         {{ range $i := $peersIDList }}
     [[threshold.peers]]
     party_id = {{ int $i }}
+    mpc_identity = {{ .host | quote }}
           {{- if $.Values.kmsCore.nitroEnclave.enabled }}
             {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
     address = {{ (printf "%s-%d" $kmsCoreName $i) | quote }}

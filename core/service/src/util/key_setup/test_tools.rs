@@ -17,9 +17,9 @@ use tfhe::prelude::SquashNoise;
 use tfhe::prelude::Tagged;
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::{
-    FheBool, FheTypes, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256,
-    FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, FheUint80, HlCompactable, HlCompressible,
-    HlExpandable, HlSquashedNoiseCompressible, ServerKey, Unversionize, Versionize,
+    FheBool, FheTypes, FheUint128, FheUint16, FheUint160, FheUint256, FheUint32, FheUint64,
+    FheUint8, HlCompactable, HlCompressible, HlExpandable, HlSquashedNoiseCompressible, ServerKey,
+    Unversionize, Versionize,
 };
 use threshold_fhe::execution::{runtime::party::Role, tfhe_internals::utils::expanded_encrypt};
 
@@ -27,7 +27,6 @@ fn enc_and_serialize_ctxt<M, T>(
     msg: M,
     num_bits: usize,
     pk: &FhePublicKey,
-    server_key: Option<&ServerKey>,
     enc_config: EncryptionConfig,
 ) -> (Vec<u8>, CiphertextFormat)
 where
@@ -49,8 +48,6 @@ where
             (serialized_ct, ct_format)
         }
         CiphertextFormat::BigCompressed => {
-            let server_key = server_key.unwrap().clone();
-            tfhe::set_server_key(server_key);
             let squashed = ct.squash_noise().unwrap();
             let ct_list = tfhe::CompressedSquashedNoiseCiphertextListBuilder::new()
                 .push(squashed)
@@ -66,8 +63,6 @@ where
             (serialized_ct, ct_format)
         }
         CiphertextFormat::BigExpanded => {
-            let server_key = server_key.unwrap().clone();
-            tfhe::set_server_key(server_key);
             let squashed = ct.squash_noise().unwrap();
             let mut serialized_ct = Vec::new();
             safe_serialize(
@@ -112,97 +107,30 @@ pub fn compute_cipher(
 
     let fhe_type = msg.into();
     let (ct_buf, ct_format) = match msg {
-        TestingPlaintext::Bool(x) => enc_and_serialize_ctxt::<_, FheBool>(
-            x as u8,
-            FheBool::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U4(x) => enc_and_serialize_ctxt::<_, FheUint4>(
-            x,
-            FheUint4::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U8(x) => enc_and_serialize_ctxt::<_, FheUint8>(
-            x,
-            FheUint8::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U16(x) => enc_and_serialize_ctxt::<_, FheUint16>(
-            x,
-            FheUint16::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U32(x) => enc_and_serialize_ctxt::<_, FheUint32>(
-            x,
-            FheUint32::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U64(x) => enc_and_serialize_ctxt::<_, FheUint64>(
-            x,
-            FheUint64::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U80(x) => enc_and_serialize_ctxt::<_, FheUint80>(
-            x,
-            FheUint80::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U128(x) => enc_and_serialize_ctxt::<_, FheUint128>(
-            x,
-            FheUint128::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U160(x) => enc_and_serialize_ctxt::<_, FheUint160>(
-            x,
-            FheUint160::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U256(x) => enc_and_serialize_ctxt::<_, FheUint256>(
-            x,
-            FheUint256::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U512(x) => enc_and_serialize_ctxt::<_, FheUint512>(
-            x,
-            FheUint512::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U1024(x) => enc_and_serialize_ctxt::<_, FheUint1024>(
-            x,
-            FheUint1024::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U2048(x) => enc_and_serialize_ctxt::<_, FheUint2048>(
-            x,
-            FheUint2048::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
+        TestingPlaintext::Bool(x) => {
+            enc_and_serialize_ctxt::<_, FheBool>(x as u8, FheBool::num_bits(), pk, enc_config)
+        }
+        TestingPlaintext::U8(x) => {
+            enc_and_serialize_ctxt::<_, FheUint8>(x, FheUint8::num_bits(), pk, enc_config)
+        }
+        TestingPlaintext::U16(x) => {
+            enc_and_serialize_ctxt::<_, FheUint16>(x, FheUint16::num_bits(), pk, enc_config)
+        }
+        TestingPlaintext::U32(x) => {
+            enc_and_serialize_ctxt::<_, FheUint32>(x, FheUint32::num_bits(), pk, enc_config)
+        }
+        TestingPlaintext::U64(x) => {
+            enc_and_serialize_ctxt::<_, FheUint64>(x, FheUint64::num_bits(), pk, enc_config)
+        }
+        TestingPlaintext::U128(x) => {
+            enc_and_serialize_ctxt::<_, FheUint128>(x, FheUint128::num_bits(), pk, enc_config)
+        }
+        TestingPlaintext::U160(x) => {
+            enc_and_serialize_ctxt::<_, FheUint160>(x, FheUint160::num_bits(), pk, enc_config)
+        }
+        TestingPlaintext::U256(x) => {
+            enc_and_serialize_ctxt::<_, FheUint256>(x, FheUint256::num_bits(), pk, enc_config)
+        }
     };
     (ct_buf, ct_format, fhe_type)
 }
@@ -211,41 +139,31 @@ pub fn compute_cipher(
 /// i.e., it should only be available when we use cfg(test) or cfg(feature = "testing").
 /// It is a convenient wrapper around the native types
 /// and lets us convert to it to the grpc plaintext type.
-// TODO not sure how to deal with that clippy warning
-#[allow(clippy::large_enum_variant)]
+/// It should match what is supported by the FHEVM. A full list can be found here:
+/// https://github.com/zama-ai/fhevm/blob/main/host-contracts/contracts/FHEVMExecutor.sol#L627-L634
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TestingPlaintext {
     Bool(bool),
     U8(u8),
-    U4(u8),
     U16(u16),
     U32(u32),
     U64(u64),
-    U80(u128),
     U128(u128),
     U160(tfhe::integer::bigint::U256),
     U256(tfhe::integer::bigint::U256),
-    U512(tfhe::integer::bigint::U512),
-    U1024(tfhe::integer::bigint::U1024),
-    U2048(tfhe::integer::bigint::U2048),
 }
 
 impl From<TestingPlaintext> for FheTypes {
     fn from(val: TestingPlaintext) -> FheTypes {
         match val {
             TestingPlaintext::Bool(_) => FheTypes::Bool,
-            TestingPlaintext::U4(_) => FheTypes::Uint4,
             TestingPlaintext::U8(_) => FheTypes::Uint8,
             TestingPlaintext::U16(_) => FheTypes::Uint16,
             TestingPlaintext::U32(_) => FheTypes::Uint32,
             TestingPlaintext::U64(_) => FheTypes::Uint64,
-            TestingPlaintext::U80(_) => FheTypes::Uint80,
             TestingPlaintext::U128(_) => FheTypes::Uint128,
             TestingPlaintext::U160(_) => FheTypes::Uint160,
             TestingPlaintext::U256(_) => FheTypes::Uint256,
-            TestingPlaintext::U512(_) => FheTypes::Uint512,
-            TestingPlaintext::U1024(_) => FheTypes::Uint1024,
-            TestingPlaintext::U2048(_) => FheTypes::Uint2048,
         }
     }
 }
@@ -254,18 +172,13 @@ impl From<TestingPlaintext> for TypedPlaintext {
     fn from(val: TestingPlaintext) -> TypedPlaintext {
         match val {
             TestingPlaintext::Bool(x) => TypedPlaintext::from_bool(x),
-            TestingPlaintext::U4(x) => TypedPlaintext::from_u4(x),
             TestingPlaintext::U8(x) => TypedPlaintext::from_u8(x),
             TestingPlaintext::U16(x) => TypedPlaintext::from_u16(x),
             TestingPlaintext::U32(x) => TypedPlaintext::from_u32(x),
             TestingPlaintext::U64(x) => TypedPlaintext::from_u64(x),
-            TestingPlaintext::U80(x) => TypedPlaintext::from_u80(x),
             TestingPlaintext::U128(x) => TypedPlaintext::from_u128(x),
             TestingPlaintext::U160(x) => TypedPlaintext::from_u160(x),
             TestingPlaintext::U256(x) => TypedPlaintext::from_u256(x),
-            TestingPlaintext::U512(x) => TypedPlaintext::from_u512(x),
-            TestingPlaintext::U1024(x) => TypedPlaintext::from_u1024(x),
-            TestingPlaintext::U2048(x) => TypedPlaintext::from_u2048(x),
         }
     }
 }
@@ -275,18 +188,13 @@ impl TestingPlaintext {
     pub fn bits(&self) -> usize {
         match self {
             TestingPlaintext::Bool(_) => 1,
-            TestingPlaintext::U4(_) => 4,
             TestingPlaintext::U8(_) => 8,
             TestingPlaintext::U16(_) => 16,
             TestingPlaintext::U32(_) => 32,
             TestingPlaintext::U64(_) => 64,
-            TestingPlaintext::U80(_) => 80,
             TestingPlaintext::U128(_) => 128,
             TestingPlaintext::U160(_) => 160,
             TestingPlaintext::U256(_) => 256,
-            TestingPlaintext::U512(_) => 512,
-            TestingPlaintext::U1024(_) => 1024,
-            TestingPlaintext::U2048(_) => 2048,
         }
     }
 
@@ -300,18 +208,13 @@ impl TryFrom<TypedPlaintext> for TestingPlaintext {
     fn try_from(value: TypedPlaintext) -> anyhow::Result<Self> {
         match value.fhe_type()? {
             FheTypes::Bool => Ok(TestingPlaintext::Bool(value.as_bool())),
-            FheTypes::Uint4 => Ok(TestingPlaintext::U4(value.as_u4())),
             FheTypes::Uint8 => Ok(TestingPlaintext::U8(value.as_u8())),
             FheTypes::Uint16 => Ok(TestingPlaintext::U16(value.as_u16())),
             FheTypes::Uint32 => Ok(TestingPlaintext::U32(value.as_u32())),
             FheTypes::Uint64 => Ok(TestingPlaintext::U64(value.as_u64())),
-            FheTypes::Uint80 => Ok(TestingPlaintext::U80(value.as_u80())),
             FheTypes::Uint128 => Ok(TestingPlaintext::U128(value.as_u128())),
             FheTypes::Uint160 => Ok(TestingPlaintext::U160(value.as_u160())),
             FheTypes::Uint256 => Ok(TestingPlaintext::U256(value.as_u256())),
-            FheTypes::Uint512 => Ok(TestingPlaintext::U512(value.as_u512())),
-            FheTypes::Uint1024 => Ok(TestingPlaintext::U1024(value.as_u1024())),
-            FheTypes::Uint2048 => Ok(TestingPlaintext::U2048(value.as_u2048())),
             unsupported_fhe_type => {
                 anyhow::bail!("Unsupported fhe_type in TypledPlaintext {unsupported_fhe_type:?}")
             }
@@ -647,7 +550,8 @@ pub async fn purge_recovery_info(path: Option<&Path>, amount_parties: usize) {
         let _ = tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryRequest.to_string()))
             .await;
         let _ =
-            tokio::fs::remove_dir_all(&base_dir.join(PubDataType::Commitments.to_string())).await;
+            tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryMaterial.to_string()))
+                .await;
     } else {
         for cur_party in 1..=amount_parties {
             // Next purge recovery info
@@ -661,8 +565,10 @@ pub async fn purge_recovery_info(path: Option<&Path>, amount_parties: usize) {
             let _ =
                 tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryRequest.to_string()))
                     .await;
-            let _ = tokio::fs::remove_dir_all(&base_dir.join(PubDataType::Commitments.to_string()))
-                .await;
+            let _ = tokio::fs::remove_dir_all(
+                &base_dir.join(PubDataType::RecoveryMaterial.to_string()),
+            )
+            .await;
         }
     }
 }
@@ -862,6 +768,7 @@ pub(crate) mod setup {
             ThresholdSigningKeyConfig::AllParties(
                 (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
             ),
+            false,
         )
         .await;
         ensure_threshold_keys_exist(

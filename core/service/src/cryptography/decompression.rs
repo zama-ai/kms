@@ -24,7 +24,7 @@ where
     T: Expandable + Named + Versionize + Unversionize + DeserializeOwned,
 {
     let list = tfhe_safe_deserialize::<HLCompressedCiphertextList>(bytes)?;
-    let (list, _tag) = list.into_raw_parts();
+    let (list, _tag, _rerand_metadata) = list.into_raw_parts();
     if list.len() != 1 {
         let msg = format!("Unexpected size of compressed list: {}.", list.len());
         return Err(anyhow_error_and_log(msg));
@@ -247,7 +247,7 @@ mod test {
         .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
         .build();
         let (client_key, server_key) = generate_keys(config);
-        let (_, _, compression_key, decompression_key, _, _, _) =
+        let (_, _, compression_key, decompression_key, _, _, _, _) =
             server_key.clone().into_raw_parts();
         assert!(compression_key.is_some());
         assert!(decompression_key.is_some());

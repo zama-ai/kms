@@ -468,10 +468,12 @@ pub(crate) async fn round_2<
         })
         .try_collect()?;
 
-    tracing::debug!(
-        "Corrupt set before round2 broadcast is {:?}",
-        session.corrupt_roles()
-    );
+    if !session.corrupt_roles().is_empty() {
+        tracing::warn!(
+            "Corrupt set before round2 broadcast is {:?}",
+            session.corrupt_roles()
+        );
+    }
 
     let bcast_data = broadcast
         .broadcast_from_all_w_corrupt_set_update(
@@ -563,18 +565,22 @@ pub(crate) async fn round_3<
     let potentially_unhappy =
         find_potential_conflicts_for_all_roles(verification_map, session.get_all_sorted_roles());
 
-    tracing::info!(
-        "I am {own_role} and Potentially unhappy with {:?}",
-        potentially_unhappy
-    );
+    if !potentially_unhappy.is_empty() {
+        tracing::warn!(
+            "I am {own_role} and Potentially unhappy with {:?}",
+            potentially_unhappy
+        );
+    }
 
     //Using BTreeMap instead of HashMap to send to network, BroadcastValue requires the Hash trait.
     let msg = answer_to_potential_conflicts(&potentially_unhappy, &own_role, vss)?;
 
-    tracing::info!(
-        "Corrupt set before unhappy broadcast is {:?}",
-        session.corrupt_roles()
-    );
+    if !session.corrupt_roles().is_empty() {
+        tracing::warn!(
+            "Corrupt set before unhappy broadcast is {:?}",
+            session.corrupt_roles()
+        );
+    }
 
     //Broadcast the potential conflicts only if there is a potentially unhappy set
     //wont cause sync issue on round number since all honest parties agree on this set
@@ -594,8 +600,6 @@ pub(crate) async fn round_3<
         bcast_settlements,
         num_parties,
     );
-
-    tracing::info!("I am {own_role} and def. unhappy with {:?}", unhappy_vec);
 
     // Add the parties that have broadcast something obviously wrong
     for malicious_party in malicious_bcast.into_iter() {
@@ -649,10 +653,13 @@ pub(crate) async fn round_4<
     //Broadcast_with_corruption uses broadcast_all,
     //but here we dont expect parties that are in unhappy in all vss to participate
     //For now let's just have everyone broadcast
-    tracing::debug!(
-        "Corrupt set before round4 broadcast is {:?}",
-        session.corrupt_roles()
-    );
+    if !session.corrupt_roles().is_empty() {
+        tracing::warn!(
+            "Corrupt set before round4 broadcast is {:?}",
+            session.corrupt_roles()
+        );
+    }
+
     let unhappy_vec_is_empty = unhappy_vec
         .iter()
         .map(|unhappy_set| unhappy_set.is_empty())
@@ -988,10 +995,20 @@ fn find_real_conflicts<Z: Ring>(
             });
 
         if pi_resolve != sender_resolve {
+            tracing::warn!(
+                "Party {:?} is unhappy with dealer {:?}",
+                role_pi,
+                dealer_role
+            );
             unhappy_vec[dealer_role].insert(*role_pi);
         }
 
         if pj_resolve != sender_resolve {
+            tracing::warn!(
+                "Party {:?} is unhappy with dealer {:?}",
+                role_pj,
+                dealer_role
+            );
             unhappy_vec[dealer_role].insert(*role_pj);
         }
     }

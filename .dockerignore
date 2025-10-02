@@ -25,3 +25,5 @@ target-analyzer/
 **/keys
 **/temp
 /core-client/artifacts
+
+docker-compose-*

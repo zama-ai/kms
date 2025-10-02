@@ -677,7 +677,7 @@ mod kms_custodian_binary_tests {
         let mut ephemeral_dec_keys = Vec::new();
         let mut backup_dec_keys = Vec::new();
         for operator_index in 1..=amount_operators {
-            let (cur_commitments, operator, ephemeral_dec, backup_dec) = make_backup(
+            let (cur_commitments, operator, ephemeral_dec, backup_dec) = make_backup_sunshine(
                 temp_dir.path(),
                 threshold,
                 Role::indexed_from_one(operator_index),
@@ -771,7 +771,7 @@ mod kms_custodian_binary_tests {
         (seed_phrase.to_string(), setup_msg)
     }
 
-    async fn make_backup(
+    async fn make_backup_sunshine(
         root_path: &Path,
         threshold: usize,
         operator_role: Role,
@@ -799,6 +799,7 @@ mod kms_custodian_binary_tests {
             setup_msgs.clone(),
             signing_key.clone(),
             threshold,
+            setup_msgs.len(),
         )
         .unwrap();
         let (backup_pke, backup_ske) = backup_pke::keygen(&mut rng).unwrap();
@@ -857,7 +858,7 @@ mod kms_custodian_binary_tests {
         root_path: &Path,
         amount_custodians: usize,
         operator: &Operator,
-        commitment: &RecoveryValidationMaterial,
+        recovery_material: &RecoveryValidationMaterial,
         backup_id: RequestId,
         dec_key: &BackupPrivateKey,
     ) -> Vec<u8> {
@@ -874,7 +875,7 @@ mod kms_custodian_binary_tests {
             outputs.push(payload);
         }
         operator
-            .verify_and_recover(&outputs, commitment, backup_id, dec_key)
+            .verify_and_recover(&outputs, recovery_material, backup_id, dec_key)
             .unwrap()
     }
 }

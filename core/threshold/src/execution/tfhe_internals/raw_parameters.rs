@@ -7,8 +7,9 @@ use tfhe::{
     core_crypto::commons::ciphertext_modulus::CiphertextModulus,
     shortint::{
         parameters::{
-            CompactCiphertextListExpansionKind, CompactPublicKeyEncryptionParameters,
-            NoiseSquashingParameters, ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme,
+            noise_squashing::NoiseSquashingClassicParameters, CompactCiphertextListExpansionKind,
+            CompactPublicKeyEncryptionParameters, NoiseSquashingParameters,
+            ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme,
         },
         prelude::*,
     },
@@ -61,7 +62,7 @@ pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M12
 
 // Parameters for SwitchSquash
 pub const NIST_PARAMS_NOISE_SQUASHING_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128:
-    NoiseSquashingParameters = NoiseSquashingParameters {
+    NoiseSquashingParameters = NoiseSquashingParameters::Classic(NoiseSquashingClassicParameters {
     glwe_dimension: GlweDimension(4),
     glwe_noise_distribution: DynamicDistribution::new_t_uniform(27),
     polynomial_size: PolynomialSize(1024),
@@ -71,7 +72,7 @@ pub const NIST_PARAMS_NOISE_SQUASHING_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128:
     modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
     message_modulus: MessageModulus(2),
     carry_modulus: CarryModulus(2),
-};
+});
 
 // **********************************
 
@@ -119,7 +120,7 @@ pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M12
 
 // Parameters for SwitchSquash
 pub const NIST_PARAMS_NOISE_SQUASHING_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128:
-    NoiseSquashingParameters = NoiseSquashingParameters {
+    NoiseSquashingParameters = NoiseSquashingParameters::Classic(NoiseSquashingClassicParameters {
     glwe_dimension: GlweDimension(1),
     glwe_noise_distribution: DynamicDistribution::new_t_uniform(27),
     polynomial_size: PolynomialSize(4096),
@@ -129,7 +130,7 @@ pub const NIST_PARAMS_NOISE_SQUASHING_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128:
     modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
     message_modulus: MessageModulus(4),
     carry_modulus: CarryModulus(4),
-};
+});
 
 // **********************************
 
@@ -179,7 +180,7 @@ pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M12
 
 // Parameters for SwitchSquash
 pub const NIST_PARAMS_NOISE_SQUASHING_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128:
-    NoiseSquashingParameters = NoiseSquashingParameters {
+    NoiseSquashingParameters = NoiseSquashingParameters::Classic(NoiseSquashingClassicParameters {
     glwe_dimension: GlweDimension(4),
     glwe_noise_distribution: DynamicDistribution::new_t_uniform(27),
     polynomial_size: PolynomialSize(1024),
@@ -189,7 +190,7 @@ pub const NIST_PARAMS_NOISE_SQUASHING_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128:
     modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
     message_modulus: MessageModulus(2),
     carry_modulus: CarryModulus(2),
-};
+});
 
 // **********************************
 
@@ -237,7 +238,7 @@ pub const NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M12
 
 // Parameters for SwitchSquash
 pub const NIST_PARAMS_NOISE_SQUASHING_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128:
-    NoiseSquashingParameters = NoiseSquashingParameters {
+    NoiseSquashingParameters = NoiseSquashingParameters::Classic(NoiseSquashingClassicParameters {
     glwe_dimension: GlweDimension(1),
     glwe_noise_distribution: DynamicDistribution::new_t_uniform(27),
     polynomial_size: PolynomialSize(4096),
@@ -247,4 +248,4 @@ pub const NIST_PARAMS_NOISE_SQUASHING_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128:
     modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
     message_modulus: MessageModulus(4),
     carry_modulus: CarryModulus(4),
-};
+});

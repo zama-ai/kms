@@ -45,6 +45,7 @@ use serial_test::serial;
 #[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
+#[case(7, 3)]
 #[case(5, 2)]
 #[case(3, 1)]
 #[serial]
@@ -123,6 +124,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
+#[case(7, 3)]
 #[case(5, 2)]
 #[case(3, 1)]
 #[serial]
@@ -231,6 +233,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
 #[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
+#[case(7, 3)]
 #[case(5, 2)]
 #[case(3, 1)]
 #[serial]
@@ -311,7 +314,6 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     // Purge the private storage to tests the backup
     purge_priv(test_path).await;
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Reboot the servers
     let (kms_servers, kms_clients, internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
@@ -384,6 +386,135 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         test_path,
     )
     .await;
+}
+
+#[cfg(feature = "insecure")]
+#[tracing_test::traced_test]
+#[tokio::test]
+#[serial]
+async fn test_decrypt_after_recovery_threshold_negative() {
+    decrypt_after_recovery_negative(5, 2).await;
+    assert!(logs_contain(
+        "Could not verify recovery validation material signature for custodian role 1"
+    ));
+    assert!(logs_contain(
+        "Could not verify recovery validation material signature for custodian role 3"
+    ));
+}
+
+#[cfg(feature = "insecure")]
+async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u32) {
+    let amount_parties = 4;
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+    let req_new_cus: RequestId = derive_request_id(&format!(
+        "test_decrypt_after_recovery_threshold_negative_{amount_parties}"
+    ))
+    .unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
+
+    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
+        *dkg_param,
+        amount_parties,
+        true,
+        false,
+        None,
+        None,
+        test_path,
+    )
+    .await;
+    let mnemnonics = run_new_cus_context(
+        &kms_clients,
+        &mut internal_client,
+        &req_new_cus,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+
+    // Shut down the servers
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
+    }
+    drop(kms_clients);
+    drop(internal_client);
+
+    let mut sig_keys = Vec::new();
+    // Read the private signing keys for reference
+    for i in 1..=amount_parties {
+        let cur_role = Role::indexed_from_one(i);
+        let cur_priv_store =
+            FileStorage::new(test_path, StorageType::PRIV, Some(cur_role)).unwrap();
+        let cur_sk: PrivateSigKey = read_versioned_at_request_id(
+            &cur_priv_store,
+            &SIGNING_KEY_ID,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+        sig_keys.push(cur_sk);
+    }
+    // Purge the private storage to tests the backup
+    purge_priv(test_path).await;
+
+    // Reboot the servers
+    let (_kms_servers, kms_clients, _internal_client) = threshold_handles_custodian_backup(
+        *dkg_param,
+        amount_parties,
+        true,
+        false,
+        None,
+        None,
+        test_path,
+    )
+    .await;
+    // Purge the private storage again to delete the signing key
+    purge_priv(test_path).await;
+
+    // Execute the backup restoring
+    let mut rng = AesRng::seed_from_u64(13);
+    let recovery_req_resp = run_custodian_recovery_init(&kms_clients).await;
+    assert_eq!(recovery_req_resp.len(), amount_parties);
+    let mut cus_out = emulate_custodian(&mut rng, recovery_req_resp, mnemnonics, test_path).await;
+
+    // Change a bit in two of the custodians contribution to the recover requests to make them invalid
+    for (_cur_op_idx, cur_payload) in cus_out.iter_mut() {
+        // First custodian 1
+        cur_payload
+            .custodian_recovery_outputs
+            .get_mut(0)
+            .unwrap()
+            // Flip a bit in the 11th byte
+            .ciphertext[11] ^= 1;
+        // Then in custodian 3
+        cur_payload
+            .custodian_recovery_outputs
+            .get_mut(2)
+            .unwrap()
+            // Flip a bit in the 7th byte
+            .ciphertext[7] ^= 1;
+    }
+
+    let recovery_output = run_custodian_backup_recovery(&kms_clients, &cus_out).await;
+    assert_eq!(recovery_output.len(), amount_parties);
+    let res = run_restore_from_backup(&kms_clients).await;
+    assert_eq!(res.len(), amount_parties);
+
+    // Check that the key material is back
+    for i in 1..=amount_parties {
+        let cur_role = Role::indexed_from_one(i);
+        let cur_priv_store =
+            FileStorage::new(test_path, StorageType::PRIV, Some(cur_role)).unwrap();
+        let cur_sk: PrivateSigKey = read_versioned_at_request_id(
+            &cur_priv_store,
+            &SIGNING_KEY_ID,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+        // Check the data is correctly recovered
+        assert_eq!(cur_sk, sig_keys[i - 1]);
+    }
 }
 
 // Right now only used by insecure tests

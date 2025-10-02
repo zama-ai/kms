@@ -44,7 +44,6 @@ USER root
 # Install required runtime dependencies
 RUN apk update && apk add --no-cache \
     libssl3 \
-    ca-certificates \
     socat \
     net-tools \
     libgcc \
