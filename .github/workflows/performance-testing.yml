@@ -392,7 +392,6 @@ jobs:
               --namespace "${NAMESPACE}" \
               --version "${KMS_CHART_VERSION}" \
               --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-"${PATH_SUFFIX}".yaml \
-              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-centralized-"${PATH_SUFFIX}".yaml \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}"
 
@@ -406,7 +405,6 @@ jobs:
               --namespace "${NAMESPACE}" \
               --version "${KMS_CHART_VERSION}" \
               --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-"${PATH_SUFFIX}".yaml \
-              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-centralized-"${PATH_SUFFIX}".yaml \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
               --wait \
@@ -429,51 +427,53 @@ jobs:
             done
           fi
 
+          if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
           ###################################################################
           # Deploy KMS Core initialization job
           ###################################################################
-          echo "Deploying KMS Core initialization job..."
-          helm upgrade --install kms-core-init \
-            oci://ghcr.io/zama-ai/kms/charts/kms-core \
-            --namespace "${NAMESPACE}" \
-            --version "${KMS_CHART_VERSION}" \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-init-"${PATH_SUFFIX}".yaml \
-            --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-            --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
-            --wait \
-            --wait-for-jobs \
-            --timeout=1200s
+            echo "Deploying KMS Core initialization job..."
+            helm upgrade --install kms-core-init \
+              oci://ghcr.io/zama-ai/kms/charts/kms-core \
+              --namespace "${NAMESPACE}" \
+              --version "${KMS_CHART_VERSION}" \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-init-"${PATH_SUFFIX}".yaml \
+              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+              --wait \
+              --wait-for-jobs \
+              --timeout=1200s
 
-          ###################################################################
-          # Wait for KMS Core initialization to complete
-          ###################################################################
-          echo "Waiting for KMS Core initialization to complete..."
-          sleep 30
-          kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
-            -n "${NAMESPACE}" --timeout=600s
+            ###################################################################
+            # Wait for KMS Core initialization to complete
+            ###################################################################
+            echo "Waiting for KMS Core initialization to complete..."
+            sleep 30
+            kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
+              -n "${NAMESPACE}" --timeout=600s
 
-          ###################################################################
-          # Deploy KMS Core key generation job
-          ###################################################################
-          echo "Deploying KMS Core key generation job..."
-          helm upgrade --install kms-core-gen-keys \
-            oci://ghcr.io/zama-ai/kms/charts/kms-core \
-            --namespace "${NAMESPACE}" \
-            --version "${KMS_CHART_VERSION}" \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-gen-keys-"${PATH_SUFFIX}".yaml \
-            --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-            --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
-            --wait \
-            --wait-for-jobs \
-            --timeout=2400s
+            ###################################################################
+            # Deploy KMS Core key generation job
+            ###################################################################
+            echo "Deploying KMS Core key generation job..."
+            helm upgrade --install kms-core-gen-keys \
+              oci://ghcr.io/zama-ai/kms/charts/kms-core \
+              --namespace "${NAMESPACE}" \
+              --version "${KMS_CHART_VERSION}" \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-gen-keys-"${PATH_SUFFIX}".yaml \
+              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+              --wait \
+              --wait-for-jobs \
+              --timeout=2400s
 
-          ###################################################################
-          # Wait for key generation to complete
-          ###################################################################
-          echo "Waiting for key generation to complete..."
-          sleep 30
-          kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys \
-            -n "${NAMESPACE}" --timeout=600s
+            ###################################################################
+            # Wait for key generation to complete
+            ###################################################################
+            echo "Waiting for key generation to complete..."
+            sleep 30
+            kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys \
+              -n "${NAMESPACE}" --timeout=600s
+          fi
 
       # ======================================================================
       # PERFORMANCE TESTING
