@@ -27,6 +27,12 @@ use test_context::{test_context, AsyncTestContext};
 // ```
 // Any issue might be related to the fact that some obsolete Docker images exist.
 
+// We use the following naming convention:
+// - centralized tests have "centralized" in their name
+// - threshold tests have "threshold" in their name
+// - nightly tests are marked with "nightly_tests" in their name.
+// We use this to filter tests in CI runs.
+
 trait DockerComposeContext {
     fn root_path(&self) -> PathBuf;
     fn config_path(&self) -> &str;
