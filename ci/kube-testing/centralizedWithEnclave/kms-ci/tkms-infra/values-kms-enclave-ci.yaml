@@ -40,6 +40,11 @@ kmsParties:
     # This is the k8s label of the public bucket vault that will be used to reference
     matchLabels:
       environment: kms-enclave-ci
+
+  # RDS Connector database configuration
+  connectorDatabase:
+    enabled: false
+
   # Enclave is only enabled for thresholdWithEnclave deployment type
   awsKms:
     keySpecification: SYMMETRIC_DEFAULT

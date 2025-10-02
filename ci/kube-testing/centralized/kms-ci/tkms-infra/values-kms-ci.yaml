@@ -41,32 +41,7 @@ kmsParties:
     # This is the k8s label of the public bucket vault that will be used to reference
     matchLabels:
       environment: kms-enclave-ci
-  # Enclave is only enabled for thresholdWithEnclave deployment type
-  awsKms:
-    keySpecification: SYMMETRIC_DEFAULT
-    # This is the SHA384 hash of the image that will be used to attest the recipient
-    recipientAttestationImageSHA384: 0d08c129713aeaf2961029e2123c7e7e001c20e905057fc0117d8d145432b5ad70a42a802ad00499f896767723cce7a7
-    deletionWindowInDays: 7
-    deletionPolicy: Delete
-    # if adminArn is not set, only the root user can be autorized to interact with the KMS key
-    # adminArn: ""
-  # Create EKS node group
-  enclaveNodeGroup:
-    enabled: true
-    instanceType: c7a.16xlarge
-    amiType: AL2023_x86_64_STANDARD
-    capacityType: ON_DEMAND
-    deletionPolicy: Delete
-    # Override resources spec for the enclave node group
-    resources:
-      cpuAllocatable: 48
-      memoryAllocatableInGiB: 96
-    # Find the release version here: https://github.com/awslabs/amazon-eks-ami/releases
-    releaseVersion: "1.32.3-20250620"
-    version: "1.32"
-    additionalManagedPolicyArns:
-      - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-    taint:
-      - key: "app"
-        value: "kms-enclave-ci"
-        effect: NO_SCHEDULE
+
+  # RDS Connector database configuration
+  connectorDatabase:
+    enabled: false
