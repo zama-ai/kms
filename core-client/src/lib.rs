@@ -1081,6 +1081,7 @@ fn check_external_decryption_signature(
 /// sim_conf: the core client configuration
 /// destination_prefix: the local folder to store the fetched elements
 /// download_all: whether to download from all cores or just the first one
+/// returns: the party IDs of the cores that were successfully contacted, unsorted
 async fn fetch_elements(
     element_id: &str,
     element_types: &[PubDataType],
@@ -1089,7 +1090,7 @@ async fn fetch_elements(
     download_all: bool,
 ) -> anyhow::Result<Vec<usize>> {
     tracing::info!("Fetching {:?} with id {element_id}", element_types);
-    let mut core_ids = HashSet::new();
+
     let cores_to_fetch = if download_all {
         // fetch from all cores in the config
         tracing::warn!("Downloading from all cores in the configuration. This may take some time.");
@@ -1105,12 +1106,10 @@ async fn fetch_elements(
     };
 
     // set of core ids, to track which cores we successfully contacted
-    for cur_core in cores_to_fetch {
-        core_ids.insert(cur_core.party_id);
-    }
+    let mut core_ids: Option<HashSet<usize>> = None;
 
     for object_name in element_types {
-        let mut inner_successfull_core_ids = HashSet::new();
+        let mut inner_successful_core_ids = HashSet::new();
         for cur_core in cores_to_fetch {
             if fetch_global_pub_object_and_write_to_file(
                 destination_prefix,
@@ -1124,21 +1123,27 @@ async fn fetch_elements(
             {
                 tracing::warn!("Could not fetch object {object_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
             } else {
-                inner_successfull_core_ids.insert(cur_core.party_id);
+                inner_successful_core_ids.insert(cur_core.party_id);
             }
         }
         // update successful core ids with the intersection of the previous successful core ids, such that in the end we are sure to have at least one core that has all requested elements
-        core_ids = core_ids
-            .intersection(&inner_successfull_core_ids)
-            .cloned()
-            .collect();
+        // Initialize or refine the intersection
+        core_ids = Some(match core_ids {
+            None => inner_successful_core_ids,
+            Some(mut acc) => {
+                acc.retain(|id| inner_successful_core_ids.contains(id));
+                acc
+            }
+        });
     }
-    if core_ids.is_empty() {
+
+    let final_ids = core_ids.unwrap_or_default();
+    if final_ids.is_empty() {
         Err(anyhow::anyhow!(
                 "Could not fetch all of [{element_types:?}] with id {element_id} from any core. At least one core is required to proceed."
             ))
     } else {
-        Ok(core_ids.into_iter().collect())
+        Ok(final_ids.into_iter().collect())
     }
 }
 
