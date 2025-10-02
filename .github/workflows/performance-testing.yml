@@ -26,6 +26,8 @@ on:
         options:
           - "threshold"
           - "thresholdWithEnclave"
+          - "centralized"
+          - "centralizedWithEnclave"
       kmsChartVersion:
         description: "KMS chart version"
         required: true
@@ -282,7 +284,7 @@ jobs:
             oci://ghcr.io/zama-zws/helm-charts/sync-secrets \
             --namespace "${NAMESPACE}" \
             --version "${SYNC_SECRETS_CHART_VERSION:-"0.2.1"}" \
-            --values ./ci/kube-testing/threshold/kms-ci/registry-credential/values-kms-ci.yaml
+            --values ./ci/kube-testing/registry-credential/values-kms-ci.yaml
 
       # ======================================================================
       # TKMS INFRASTRUCTURE DEPLOYMENT
@@ -292,16 +294,16 @@ jobs:
           ###################################################################
           # Deploy TKMS infrastructure based on deployment type
           ###################################################################
-          if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
-            echo "Deploying standard threshold infrastructure..."
+          if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
+            echo "Deploying standard "${DEPLOYMENT_TYPE}" infrastructure..."
             helm upgrade --install tkms-infra \
               oci://ghcr.io/zama-zws/crossplane/tkms-infra \
               --namespace "${NAMESPACE}" \
               --version "${TKMS_INFRA_CHART_VERSION}" \
-              --values ./ci/kube-testing/threshold/kms-ci/tkms-infra/values-"${PATH_SUFFIX}".yaml
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/tkms-infra/values-"${PATH_SUFFIX}".yaml
 
-          elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            echo "Deploying threshold infrastructure with enclave support..."
+          elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            echo "Deploying "${DEPLOYMENT_TYPE}" infrastructure with enclave support..."
             helm upgrade --install tkms-infra \
               oci://ghcr.io/zama-zws/crossplane/tkms-infra \
               --namespace "${NAMESPACE}" \
@@ -316,13 +318,19 @@ jobs:
           # Wait for TKMS infrastructure components to be ready
           ###################################################################
           echo "Waiting for KMS parties to be ready..."
-          for i in {1..13}; do
-            kubectl wait --for=condition=ready Kmsparties kms-party-"${PATH_SUFFIX}"-"${i}" \
+          if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            kubectl wait --for=condition=ready Kmsparties kms-party-"${PATH_SUFFIX}" \
               -n "${NAMESPACE}" --timeout=120s
-          done
 
-          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            echo "Waiting for enclave node groups to be ready..."
+          elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            for i in {1..13}; do
+              kubectl wait --for=condition=ready Kmsparties kms-party-"${PATH_SUFFIX}"-"${i}" \
+                -n "${NAMESPACE}" --timeout=120s
+            done
+          fi
+
+          echo "Waiting for enclave nodegroups to be ready..."
+          if [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             kubectl wait --for=condition=ready enclavenodegroup \
               kms-party-"${PATH_SUFFIX}"\
               -n "${NAMESPACE}" --timeout=1200s
@@ -372,6 +380,37 @@ jobs:
                 --wait-for-jobs \
                 --timeout=1200s & # <=====================CHANGE HERE
             done
+
+          ###################################################################
+          # Deploy KMS Core in centralized mode
+          ###################################################################
+          elif [[ "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
+            echo "Deploying KMS Core in centralized mode..."
+            helm upgrade --install kms-service-centralized-"${PATH_SUFFIX}" \
+              oci://ghcr.io/zama-ai/kms/charts/kms-core \
+              --namespace "${NAMESPACE}" \
+              --version "${KMS_CHART_VERSION}" \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-"${PATH_SUFFIX}".yaml \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-centralized-"${PATH_SUFFIX}".yaml \
+              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}"
+
+          ###################################################################
+          # Deploy KMS Core in centralized mode with enclave
+          ###################################################################
+          elif [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            echo "Deploying KMS Core in centralized mode with enclave..."
+            helm upgrade --install  kms-service-centralized-"${PATH_SUFFIX}" \
+              oci://ghcr.io/zama-ai/kms/charts/kms-core \
+              --namespace "${NAMESPACE}" \
+              --version "${KMS_CHART_VERSION}" \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-"${PATH_SUFFIX}".yaml \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-centralized-"${PATH_SUFFIX}".yaml \
+              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+              --wait \
+              --wait-for-jobs \
+              --timeout=1200s
           fi
 
           sleep 90
@@ -379,10 +418,14 @@ jobs:
           # Wait for KMS Core deployment to be ready
           ###################################################################
           echo "Waiting for KMS Core pods to be ready..."
-          for i in {1..13}; do
-            kubectl wait --for=condition=ready pod kms-service-threshold-"${i}"-"${PATH_SUFFIX}"-core-"${i}" \
+          if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            kubectl wait --for=condition=ready pod kms-service-centralized-"${PATH_SUFFIX}"-core \
               -n "${NAMESPACE}" --timeout=600s
-          done
+          elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            for i in {1..13}; do
+              kubectl wait --for=condition=ready pod kms-service-threshold-"${i}"-"${PATH_SUFFIX}"-core-"${i}" \
+                -n "${NAMESPACE}" --timeout=600s
+            done
 
           ###################################################################
           # Deploy KMS Core initialization job
@@ -394,15 +437,18 @@ jobs:
             --version "${KMS_CHART_VERSION}" \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-init-"${PATH_SUFFIX}".yaml \
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-            --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}"
+            --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+            --wait \
+            --wait-for-jobs \
+            --timeout=1200s
 
-          sleep 240
           ###################################################################
           # Wait for KMS Core initialization to complete
           ###################################################################
-          # echo "Waiting for KMS Core initialization to complete..."
-          # kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
-          #   -n "${NAMESPACE}" --timeout=600s
+          echo "Waiting for KMS Core initialization to complete..."
+          sleep 30
+          kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
+            -n "${NAMESPACE}" --timeout=600s
 
           ###################################################################
           # Deploy KMS Core key generation job
@@ -417,14 +463,15 @@ jobs:
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
             --wait \
             --wait-for-jobs \
-            --timeout=1200s
+            --timeout=2400s
 
           ###################################################################
           # Wait for key generation to complete
           ###################################################################
-          # echo "Waiting for key generation to complete..."
-          # kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys \
-          #   -n "${NAMESPACE}" --timeout=600s
+          echo "Waiting for key generation to complete..."
+          sleep 30
+          kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys \
+            -n "${NAMESPACE}" --timeout=600s
 
       # ======================================================================
       # PERFORMANCE TESTING
@@ -514,6 +561,7 @@ jobs:
           echo "Cleaning up Jobs..."
           kubectl delete job -l app=kms-core -n "${NAMESPACE}" || true
           kubectl delete job -l app=kms-threshold-init-job -n "${NAMESPACE}" || true
+          kubectl delete job -l app=kms-core-client-gen-keys -n "${NAMESPACE}" || true
 
           # Uninstall Helm releases
           echo "Uninstalling Helm releases..."

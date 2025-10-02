@@ -70,18 +70,18 @@ kmsGenKeys:
     name: kms-keys
   resources:
     requests:
-      memory: 6Gi
+      memory: 16Gi
       cpu: 3
     limits:
-      memory: 6Gi
+      memory: 16Gi
       cpu: 3
   nodeSelector:
-    karpenter.sh/nodepool: kms-pool
+    karpenter.sh/nodepool: zws-pool
   tolerations:
     - key: karpenter.sh/nodepool
       effect: NoSchedule
       operator: Equal
-      value: kms-pool
+      value: zws-pool
 
 kmsGenCertAndKeys:
   enabled: false

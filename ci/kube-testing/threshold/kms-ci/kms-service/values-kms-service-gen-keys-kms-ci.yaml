@@ -5,18 +5,6 @@ kmsCore:
       name: kms-ci-1
   thresholdMode:
     enabled: true
-    tls:
-      enabled: false
-    thresholdValue: 4 # 1 if 4 parties or 4 if 13 parties
-    numSessionsPreproc: 72
-    multiplier: 2.0
-    maxInterval: 60
-    initialIntervalMs: 100
-    cleanupIntervalSecs: 2
-    rayonNumThreads: 40
-    tokioWorkerThreads: 24
-    initializationScript:
-      enabled: true
     peersList:
       - id: 1
         host: kms-service-threshold-1-kms-ci-core-1
@@ -80,13 +68,20 @@ kmsGenKeys:
   crsGenArgs: "insecure-crs-gen --max-num-bits 2048"
   configmap:
     name: kms-keys
+  resources:
+    requests:
+      memory: 16Gi
+      cpu: 3
+    limits:
+      memory: 16Gi
+      cpu: 3
   nodeSelector:
-    karpenter.sh/nodepool: kms-pool
+    karpenter.sh/nodepool: zws-pool
   tolerations:
     - key: karpenter.sh/nodepool
       effect: NoSchedule
       operator: Equal
-      value: kms-pool
+      value: zws-pool
 
 kmsGenCertAndKeys:
   enabled: false
