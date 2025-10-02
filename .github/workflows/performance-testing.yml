@@ -295,7 +295,7 @@ jobs:
           # Deploy TKMS infrastructure based on deployment type
           ###################################################################
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
-            echo "Deploying standard "${DEPLOYMENT_TYPE}" infrastructure..."
+            echo "Deploying standard infrastructure..."
             helm upgrade --install tkms-infra \
               oci://ghcr.io/zama-zws/crossplane/tkms-infra \
               --namespace "${NAMESPACE}" \
@@ -303,7 +303,7 @@ jobs:
               --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/tkms-infra/values-"${PATH_SUFFIX}".yaml
 
           elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-            echo "Deploying "${DEPLOYMENT_TYPE}" infrastructure with enclave support..."
+            echo "Deploying infrastructure with enclave support..."
             helm upgrade --install tkms-infra \
               oci://ghcr.io/zama-zws/crossplane/tkms-infra \
               --namespace "${NAMESPACE}" \
@@ -379,6 +379,7 @@ jobs:
                 --wait \
                 --wait-for-jobs \
                 --timeout=1200s &
+              wait
             done
 
           ###################################################################
