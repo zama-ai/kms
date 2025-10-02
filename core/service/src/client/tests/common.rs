@@ -90,18 +90,13 @@ pub(crate) fn assert_plaintext(expected: &TestingPlaintext, plaintext: &TypedPla
     assert_eq!(expected.fhe_type(), plaintext.fhe_type().unwrap());
     match expected {
         TestingPlaintext::Bool(x) => assert_eq!(*x, plaintext.as_bool()),
-        TestingPlaintext::U4(x) => assert_eq!(*x, plaintext.as_u4()),
         TestingPlaintext::U8(x) => assert_eq!(*x, plaintext.as_u8()),
         TestingPlaintext::U16(x) => assert_eq!(*x, plaintext.as_u16()),
         TestingPlaintext::U32(x) => assert_eq!(*x, plaintext.as_u32()),
         TestingPlaintext::U64(x) => assert_eq!(*x, plaintext.as_u64()),
-        TestingPlaintext::U80(x) => assert_eq!(*x, plaintext.as_u80()),
         TestingPlaintext::U128(x) => assert_eq!(*x, plaintext.as_u128()),
         TestingPlaintext::U160(x) => assert_eq!(*x, plaintext.as_u160()),
         TestingPlaintext::U256(x) => assert_eq!(*x, plaintext.as_u256()),
-        TestingPlaintext::U512(x) => assert_eq!(*x, plaintext.as_u512()),
-        TestingPlaintext::U1024(x) => assert_eq!(*x, plaintext.as_u1024()),
-        TestingPlaintext::U2048(x) => assert_eq!(*x, plaintext.as_u2048()),
     }
 }
 

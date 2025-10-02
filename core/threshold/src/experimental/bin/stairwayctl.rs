@@ -325,6 +325,7 @@ async fn threshold_decrypt_result_command(
 
 async fn status_check_command(
     runtime: ChoreoRuntime,
+    choreo_conf: ChoreoConf,
     params: StatusCheckArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let session_id = SessionId::from(params.session_id);
@@ -333,7 +334,12 @@ async fn status_check_command(
         .interval
         .map_or_else(|| Duration::from_secs(10), Duration::from_secs);
     let mut results = runtime
-        .initiate_status_check(session_id, retry, interval)
+        .initiate_status_check(
+            session_id,
+            retry,
+            interval,
+            choreo_conf.malicious_roles.unwrap_or_default(),
+        )
         .await?;
 
     results.sort_by_key(|(role, _)| role.one_based());
@@ -383,7 +389,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             threshold_decrypt_result_command(runtime, params).await?;
         }
         Commands::StatusCheck(params) => {
-            status_check_command(runtime, params).await?;
+            status_check_command(runtime, conf, params).await?;
         }
     };
 

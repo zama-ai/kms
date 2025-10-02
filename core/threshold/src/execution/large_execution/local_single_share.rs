@@ -193,7 +193,6 @@ pub(crate) async fn verify_sharing<
     let my_role = session.my_role();
     //TODO: Could be done in parallel (to minimize round complexity)
     for g in 0..m {
-        tracing::warn!("I AM {my_role} DOING LOOP OF LSL {g} out of {m}");
         let map_challenges =
             Z::derive_challenges_from_coinflip(x, g.try_into()?, l, session.roles());
 
@@ -262,13 +261,11 @@ pub(crate) async fn verify_sharing<
             should_return |= session.add_corrupt(role_pi);
         }
 
-        tracing::error!("RESTARTING EVERYTHING AS WE DETECTED MALICIOUS BEHAVIOUR");
-        if should_return {
-            return Ok(false);
-        }
-
         //Returns as soon as we have a new dispute
-        if !look_for_disputes(&bcast_output, session)? {
+        if should_return || !look_for_disputes(&bcast_output, session)? {
+            tracing::warn!(
+                "RESTARTING LocalSingleShare as we detected a new dispute or corrupt party"
+            );
             return Ok(false);
         }
     }

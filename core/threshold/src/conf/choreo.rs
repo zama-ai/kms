@@ -29,7 +29,11 @@ impl From<&ChoreoParty> for Role {
 
 impl From<&ChoreoParty> for Identity {
     fn from(party: &ChoreoParty) -> Identity {
-        Identity::new(party.logical_address.clone(), party.logical_port, None)
+        Identity::new(
+            party.logical_address.clone(),
+            party.logical_port,
+            Some(party.logical_address.clone()),
+        )
     }
 }
 
@@ -100,6 +104,7 @@ impl ThresholdTopology {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct ChoreoConf {
     pub threshold_topology: ThresholdTopology,
+    pub malicious_roles: Option<Vec<Role>>,
     pub telemetry: Option<TelemetryConfig>,
 
     pub cert_file: Option<String>,

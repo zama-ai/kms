@@ -170,6 +170,7 @@ async fn insecure_key_gen<T: DockerComposeContext>(ctx: &T, test_path: &Path) ->
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing insecure key-gen");
@@ -211,6 +212,7 @@ async fn crs_gen<T: DockerComposeContext>(
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing CRS-gen");
@@ -232,6 +234,7 @@ async fn real_preproc_and_keygen(config_path: &str, test_path: &Path) -> String 
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
     println!("Doing preprocessing");
     let mut preproc_result = execute_cmd(&config, test_path).await.unwrap();
@@ -248,6 +251,7 @@ async fn real_preproc_and_keygen(config_path: &str, test_path: &Path) -> String 
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
     println!("Doing key-gen");
     let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
@@ -272,6 +276,7 @@ async fn restore_from_backup<T: DockerComposeContext>(ctx: &T, test_path: &Path)
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing restore from backup");
@@ -296,6 +301,7 @@ async fn test_template<T: DockerComposeContext>(
             logs: true,
             max_iter: 500,
             expect_all_responses: true,
+            download_all: false,
         };
 
         let results = execute_cmd(&config, test_path).await.unwrap();
@@ -352,6 +358,7 @@ async fn test_template<T: DockerComposeContext>(
                 logs: true,
                 max_iter: 500,
                 expect_all_responses: true,
+                download_all: false,
             };
 
             //We query result on a single request id, so should get a single result
@@ -387,6 +394,7 @@ async fn new_custodian_context<T: DockerComposeContext>(
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing new custodian context");
@@ -509,6 +517,7 @@ async fn custodian_backup_init<T: DockerComposeContext>(
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing backup init");
@@ -671,6 +680,7 @@ async fn custodian_backup_recovery<T: DockerComposeContext>(
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing backup recovery");
