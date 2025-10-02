@@ -125,7 +125,7 @@ jobs:
       - name: Check if docker build succeeded
         if: ${{ needs.docker-build.result == 'success' }}
         env:
-          DEPLOYMENT_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploymentType || 'thresholdWithEnclave' }}
+          DEPLOYMENT_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploymentType || 'centralizedWithEnclave' }}
           # KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
           KMS_CORE_IMAGE_TAG: 16be27d
           # KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
@@ -144,7 +144,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
           # For enclave deployments, extract PCR measurements
-          if [[ ${DEPLOYMENT_TYPE} == "thresholdWithEnclave" ]]; then
+          if [[ ${DEPLOYMENT_TYPE} == "thresholdWithEnclave" || ${DEPLOYMENT_TYPE} == "centralizedWithEnclave" ]]; then
             echo "Extracting PCR measurements for enclave attestation..."
             docker pull ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
             PCR0=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
@@ -177,7 +177,7 @@ jobs:
             echo "KMS_CORE_CLIENT_IMAGE_TAG=${KMS_CORE_CLIENT_IMAGE_TAG}"
           } >> "$GITHUB_ENV"
 
-          if [[ ${DEPLOYMENT_TYPE} == "thresholdWithEnclave" ]]; then
+          if [[ ${DEPLOYMENT_TYPE} == "thresholdWithEnclave" || ${DEPLOYMENT_TYPE} == "centralizedWithEnclave" ]]; then
             echo "Extracting PCR measurements for provided enclave image..."
             docker pull ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
             PCR0=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
@@ -195,7 +195,7 @@ jobs:
           ###################################################################
           # Set up path suffix based on deployment type
           ###################################################################
-          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
             echo "Using enclave-enabled configuration..."
             echo "PATH_SUFFIX=kms-enclave-ci" >> "$GITHUB_ENV"
           else
@@ -486,8 +486,8 @@ jobs:
           echo "Starting performance testing workflow..."
 
           # Update the workflow template with the current image tag
-          echo "Updating workflow template with image tag: ${IMAGE_TAG}"
-          sed -i "s/<version>/${IMAGE_TAG}/g" \
+          echo "Updating workflow template with image tag: ${KMS_CORE_IMAGE_TAG}"
+          sed -i "s/<version>/${KMS_CORE_IMAGE_TAG}/g" \
             ./ci/kube-testing/argo-workflow/test-suite-workflow-"${PATH_SUFFIX}"-req-by-step.yaml
 
           echo "Submitting Argo workflow..."
@@ -496,6 +496,8 @@ jobs:
 
           echo "Streaming workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}"
+
+          echo "Workflow completed."
 
       # ======================================================================
       # LOG COLLECTION

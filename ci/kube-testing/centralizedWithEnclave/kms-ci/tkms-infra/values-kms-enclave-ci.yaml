@@ -18,8 +18,7 @@ publicBucketVault:
   labels:
     environment: kms-enclave-ci
   configMapTargetRef:
-    enabled: true
-    name: kms-bucket-vault
+    enabled: false
   tags:
     Environment: zws-dev
     ManagedBy: zama
