@@ -1093,7 +1093,7 @@ async fn fetch_elements(
 
     let cores_to_fetch = if download_all {
         // fetch from all cores in the config
-        tracing::warn!("Downloading from all cores in the configuration. This may take some time.");
+        tracing::info!("Downloading from all cores in the configuration. This may take some time.");
         &sim_conf.cores
     } else {
         // fetch from just the first core in the config
