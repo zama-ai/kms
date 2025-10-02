@@ -110,7 +110,7 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
      - Focus: `default_user_decryption_threshold`
   2. Threshold Tests
      - Features: `slow_tests`, `s3_tests`, `insecure`
-     - Excludes: Default user decryption and verify proven CT
+     - Excludes: Default user decryption
   3. Base Tests
      - Features: `slow_tests`, `s3_tests`, `insecure`
      - Excludes: Threshold tests

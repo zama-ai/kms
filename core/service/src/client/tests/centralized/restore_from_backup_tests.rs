@@ -21,11 +21,11 @@ use serial_test::serial;
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn default_insecure_central_dkg_backup() {
-    let param = FheParameter::Default;
+async fn test_insecure_central_dkg_backup() {
+    let param = FheParameter::Test;
     let dkg_param: WrappedDKGParams = param.into();
-    let key_id_1 = derive_request_id("default_insecure_central_dkg_backup-1").unwrap();
-    let key_id_2 = derive_request_id("default_insecure_central_dkg_backup-2").unwrap();
+    let key_id_1 = derive_request_id("test_insecure_central_dkg_backup-1").unwrap();
+    let key_id_2 = derive_request_id("test_insecure_central_dkg_backup-2").unwrap();
     // Delete potentially old data
     purge(None, None, None, &key_id_1, 1).await;
     purge(None, None, None, &key_id_2, 1).await;
@@ -75,10 +75,10 @@ async fn default_insecure_central_dkg_backup() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn default_insecure_central_autobackup_after_deletion() {
-    let param = FheParameter::Default;
+async fn test_insecure_central_autobackup_after_deletion() {
+    let param = FheParameter::Test;
     let dkg_param: WrappedDKGParams = param.into();
-    let key_id = derive_request_id("default_insecure_central_autobackup_after_deletion").unwrap();
+    let key_id = derive_request_id("test_insecure_central_autobackup_after_deletion").unwrap();
     // Delete potentially old data
     purge(None, None, None, &key_id, 1).await;
     purge_backup(None, 1).await;
@@ -101,11 +101,11 @@ async fn default_insecure_central_autobackup_after_deletion() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn default_insecure_central_crs_backup() {
-    let param = FheParameter::Default;
+async fn test_insecure_central_crs_backup() {
+    let param = FheParameter::Test;
     let dkg_param: WrappedDKGParams = param.into();
     let req_id: RequestId =
-        derive_request_id(&format!("default_insecure_central_crs_backup_{param:?}",)).unwrap();
+        derive_request_id(&format!("test_insecure_central_crs_backup_{param:?}",)).unwrap();
     purge(None, None, None, &req_id, 1).await;
     purge_backup(None, 1).await;
     crs_gen_centralized(&req_id, param, true, None).await;

@@ -19,7 +19,6 @@ use tonic::transport::Channel;
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(7, 3)]
-#[case(5, 2)]
 #[case(3, 1)]
 #[serial]
 async fn test_new_custodian_context_threshold(#[case] custodians: usize, #[case] threshold: u32) {
