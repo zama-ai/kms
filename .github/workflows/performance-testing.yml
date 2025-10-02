@@ -13,7 +13,6 @@
 name: performance-testing
 
 on:
-  pull_request:
   schedule:
     - cron: "0 0 * * 1-5" # Runs at midnight UTC (1 AM CET) Monday-Friday
   workflow_dispatch:
@@ -62,7 +61,7 @@ jobs:
   # Builds and publishes the Docker images required for testing
   ############################################################################
   docker-build:
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.dockerBuild == true) || github.event_name == 'pull_request'
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.dockerBuild == true)
     name: docker-build
     permissions:
       actions: read # Required to read workflow run information
