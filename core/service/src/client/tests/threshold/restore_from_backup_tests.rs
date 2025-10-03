@@ -57,6 +57,7 @@ async fn default_insecure_threshold_dkg_backup() {
         None,
         true,
         test_path,
+        0,
     )
     .await;
 
@@ -70,6 +71,7 @@ async fn default_insecure_threshold_dkg_backup() {
         None,
         true,
         test_path,
+        0,
     )
     .await;
 
@@ -172,6 +174,7 @@ async fn default_insecure_threshold_autobackup_after_deletion() {
         None,
         true,
         test_path,
+        0,
     )
     .await;
 

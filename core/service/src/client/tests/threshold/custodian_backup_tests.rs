@@ -286,6 +286,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         None,
         true,
         test_path,
+        0,
     )
     .await;
 
