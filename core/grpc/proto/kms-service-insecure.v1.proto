@@ -44,6 +44,10 @@ service CoreServiceEndpoint {
 
   rpc DestroyKmsContext(kms.v1.DestroyKmsContextRequest) returns (kms.v1.Empty);
 
+  rpc InitiateResharing(kms.v1.InitiateResharingRequest) returns (kms.v1.InitiateResharingResponse);
+
+  rpc GetResharingStatus(kms.v1.ResharingStatusRequest) returns (kms.v1.ResharingStatusResponse);
+
   rpc NewCustodianContext(kms.v1.NewCustodianContextRequest) returns (kms.v1.Empty);
 
   rpc DestroyCustodianContext(kms.v1.DestroyCustodianContextRequest) returns (kms.v1.Empty);

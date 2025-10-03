@@ -67,6 +67,8 @@ pub(crate) enum RequestIdParsingErr {
     UserDecResponse,
     PublicDecResponse,
 
+    ReshareRequest,
+
     CustodianContext,
     BackupRecovery,
 }
@@ -77,7 +79,6 @@ impl std::fmt::Display for RequestIdParsingErr {
             RequestIdParsingErr::Other(msg) => write!(f, "Other request ID error: {msg}"),
             RequestIdParsingErr::Context => write!(f, "Invalid context ID"),
             RequestIdParsingErr::Init => write!(f, "Invalid init ID"),
-
             RequestIdParsingErr::CrsGenRequest => write!(f, "Invalid CRS generation request ID"),
             RequestIdParsingErr::PreprocRequest => write!(f, "Invalid pre-processing request ID"),
             RequestIdParsingErr::KeyGenRequest => write!(f, "Invalid key generation request ID"),
@@ -91,7 +92,6 @@ impl std::fmt::Display for RequestIdParsingErr {
             RequestIdParsingErr::PublicDecRequestBadKeyId => {
                 write!(f, "Invalid key ID in public decryption request")
             }
-
             RequestIdParsingErr::CrsGenResponse => {
                 write!(f, "Invalid get CRS generation result request ID")
             }
@@ -112,6 +112,9 @@ impl std::fmt::Display for RequestIdParsingErr {
             }
             RequestIdParsingErr::BackupRecovery => {
                 write!(f, "Invalid new backup recovery result response ID")
+            }
+            RequestIdParsingErr::ReshareRequest => {
+                write!(f, "Invalid reshare request ID")
             }
         }
     }
