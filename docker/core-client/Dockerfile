@@ -10,7 +10,11 @@ ARG APP_CACHE_DIR=kms-core-client
 WORKDIR /app/kms-core-client
 
 # Copy entire project for workspace support
+COPY ./backward-compatibility ./backward-compatibility
+COPY ./bc2wrap ./bc2wrap
+COPY ./core ./core
 COPY ./core-client ./core-client
+COPY ./observability ./observability
 COPY ./tools ./tools
 COPY ./Cargo.lock ./Cargo.lock
 COPY ./Cargo.toml ./Cargo.toml
