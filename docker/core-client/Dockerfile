@@ -10,7 +10,10 @@ ARG APP_CACHE_DIR=kms-core-client
 WORKDIR /app/kms-core-client
 
 # Copy entire project for workspace support
-COPY . .
+COPY ./core-client ./core-client
+COPY ./tools ./tools
+COPY ./Cargo.lock ./Cargo.lock
+COPY ./Cargo.toml ./Cargo.toml
 
 # Build using cargo install with caching
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
