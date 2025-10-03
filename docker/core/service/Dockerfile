@@ -11,15 +11,16 @@ ARG APP_CACHE_DIR=kms
 
 # Fetch dependencies and build binaries
 WORKDIR /app/kms
-COPY ./backward-compatibility ./backward-compatibility
-COPY ./bc2wrap ./bc2wrap
-COPY ./core ./core
-COPY ./core-client ./core-client
-COPY ./observability ./observability
-COPY ./tools ./tools
-COPY ./.cargo ./.cargo
-COPY ./Cargo.lock ./Cargo.lock
-COPY ./Cargo.toml ./Cargo.toml
+COPY . .
+# COPY ./backward-compatibility ./backward-compatibility
+# COPY ./bc2wrap ./bc2wrap
+# COPY ./core ./core
+# COPY ./core-client ./core-client
+# COPY ./observability ./observability
+# COPY ./tools ./tools
+# COPY ./.cargo ./.cargo
+# COPY ./Cargo.lock ./Cargo.lock
+# COPY ./Cargo.toml ./Cargo.toml
 
 RUN mkdir -p /app/kms/core/service/bin
 
@@ -55,12 +56,13 @@ ARG APP_CACHE_DIR=kms
 
 # Fetch dependencies and build binaries
 WORKDIR /app/kms
-COPY ./backwards-compatibility ./backwards-compatibility
-COPY ./bc2wrap ./bc2wrap
-COPY ./core ./core
-COPY ./observability ./observability
-COPY ./Cargo.lock ./Cargo.lock
-COPY ./Cargo.toml ./Cargo.toml
+COPY . .
+# COPY ./backwards-compatibility ./backwards-compatibility
+# COPY ./bc2wrap ./bc2wrap
+# COPY ./core ./core
+# COPY ./observability ./observability
+# COPY ./Cargo.lock ./Cargo.lock
+# COPY ./Cargo.toml ./Cargo.toml
 
 RUN mkdir -p /app/kms/core/service/bin
 
