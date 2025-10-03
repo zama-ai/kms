@@ -11,7 +11,7 @@ ARG APP_CACHE_DIR=kms
 
 # Fetch dependencies and build binaries
 WORKDIR /app/kms
-COPY ./backwards-compatibility ./backwards-compatibility
+COPY ./backward-compatibility ./backward-compatibility
 COPY ./bc2wrap ./bc2wrap
 COPY ./core ./core
 COPY ./observability ./observability
