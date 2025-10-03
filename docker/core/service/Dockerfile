@@ -17,6 +17,7 @@ COPY ./core ./core
 COPY ./core-client ./core-client
 COPY ./observability ./observability
 COPY ./tools ./tools
+COPY ./.cargo ./.cargo
 COPY ./Cargo.lock ./Cargo.lock
 COPY ./Cargo.toml ./Cargo.toml
 
