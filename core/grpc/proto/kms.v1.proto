@@ -697,3 +697,37 @@ message HealthStatusResponse {
   NodeType node_type = 6;
 
 }
+
+message InitiateResharingRequest {
+  // The request id of this resharing request (use to derive the session IDs and get the status)
+  RequestId request_id = 1;
+  // The active KMS context, must be non-empty
+  RequestId current_context = 2;
+  // NOTE: For now the current and new context must be the same
+  // The new KMS context
+  RequestId new_context = 3;
+  // The Key ID of the key to be reshared
+  RequestId key_id = 4;
+  // The parameters of the key to be reshared, must match the parameters of the original key
+  FheParameter key_parameters = 5;
+
+}
+
+message InitiateResharingResponse {
+  // The resharing operation ID
+  RequestId resharing_operation_id = 1;
+}
+
+message ResharingStatusRequest {
+  // The resharing operation ID
+  RequestId resharing_operation_id = 1;
+}
+
+message ResharingStatusResponse {
+  // The resharing operation ID
+  RequestId resharing_operation_id = 1;
+  // Whether the resharing operation has completed
+  bool completed = 2;
+  // The new context ID if the resharing has completed
+  RequestId new_context_id = 3;
+}

@@ -305,6 +305,11 @@ service CoreServiceEndpoint {
   // ## Post-condition: -
   rpc DestroyKmsContext(kms.v1.DestroyKmsContextRequest) returns (kms.v1.Empty);
 
+
+  rpc InitiateResharing(kms.v1.InitiateResharingRequest) returns (kms.v1.InitiateResharingResponse);
+
+  rpc GetResharingStatus(kms.v1.ResharingStatusRequest) returns (kms.v1.ResharingStatusResponse);
+
   // Contructs a new custodian context.
   //
   // # Parameters

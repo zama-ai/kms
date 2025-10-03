@@ -86,3 +86,15 @@ pub trait InsecureCrsGenerator {
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status>;
 }
+
+#[tonic::async_trait]
+pub trait Resharer {
+    async fn initiate_resharing(
+        &self,
+        request: Request<InitiateResharingRequest>,
+    ) -> Result<Response<InitiateResharingResponse>, Status>;
+    async fn get_resharing_status(
+        &self,
+        request: Request<ResharingStatusRequest>,
+    ) -> Result<Response<ResharingStatusResponse>, Status>;
+}

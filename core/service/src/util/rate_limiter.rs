@@ -23,6 +23,8 @@ pub struct RateLimiterConfig {
     pub preproc: u32,
     #[validate(range(min = 1))]
     pub keygen: u32,
+    #[validate(range(min = 1))]
+    pub reshare: u32,
 }
 
 impl Default for RateLimiterConfig {
@@ -34,6 +36,7 @@ impl Default for RateLimiterConfig {
             crsgen: 100,
             preproc: 25000,
             keygen: 1000,
+            reshare: 500,
         }
     }
 }
@@ -116,6 +119,7 @@ impl RateLimiter {
     impl_rate_limiter_for!(start_crsgen, crsgen, "crsgen");
     impl_rate_limiter_for!(start_preproc, preproc, "preproc");
     impl_rate_limiter_for!(start_keygen, keygen, "keygen");
+    impl_rate_limiter_for!(start_reshare, reshare, "reshare");
 }
 
 #[cfg(test)]

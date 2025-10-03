@@ -56,6 +56,7 @@ use crate::{
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
+                resharer::RealResharer,
                 session::{SessionPreparer, SessionPreparerManager},
                 user_decryptor::SecureNoiseFloodPartialDecryptor,
             },
@@ -208,6 +209,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
     RealContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
+    RealResharer<PubS, PrivS>,
 >;
 
 #[allow(clippy::too_many_arguments)]
@@ -551,6 +553,14 @@ where
         crypto_storage.inner.clone(),
         security_module,
     );
+
+    let resharer = RealResharer {
+        base_kms: base_kms.new_instance().await,
+        crypto_storage: crypto_storage.clone(),
+        session_preparer_getter: session_preparer_getter.clone(),
+        tracker: Arc::clone(&tracker),
+        rate_limiter: rate_limiter.clone(),
+    };
     // Update backup vault if it exists
     // This ensures that all files in the private storage are also in the backup vault
     // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
@@ -570,6 +580,7 @@ where
         insecure_crs_generator,
         context_manager,
         backup_operator,
+        resharer,
         session_preparer_getter,
         Arc::clone(&tracker),
         thread_core_health_reporter,

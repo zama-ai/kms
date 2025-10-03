@@ -758,6 +758,7 @@ pub(crate) async fn preproc_and_keygen(
         crsgen: 1,
         preproc: 100,
         keygen: 100,
+        reshare: 1,
     };
 
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
