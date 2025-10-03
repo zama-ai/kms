@@ -40,7 +40,7 @@ use kms_lib::DecryptionMode;
 use observability::conf::Settings;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Once};
@@ -634,9 +634,12 @@ pub struct CmdConfig {
     #[clap(long, default_value = "30")]
     #[validate(range(min = 1))]
     pub max_iter: usize,
-    /// Should we expect a response from every KMS core or not
+    /// Set this if you expect a response from every KMS core
     #[clap(long, short = 'a', default_value_t = false)]
     pub expect_all_responses: bool,
+    /// Set this if you want to download the generated keys/CRSes from all KMS cores
+    #[clap(long, short = 'd', default_value_t = false)]
+    pub download_all: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString, Display)]
@@ -776,11 +779,15 @@ fn join_vars(args: &[&str]) -> String {
 }
 
 // TODO: handle auth
-// TODO: add option to either use local  key or remote key
-pub async fn fetch_object(endpoint: &str, folder: &str, object_id: &str) -> anyhow::Result<Bytes> {
-    let object_key = object_id.to_string();
+// TODO: add option to either use local key or remote key
+pub async fn fetch_element(
+    endpoint: &str,
+    folder: &str,
+    element_id: &str,
+) -> anyhow::Result<Bytes> {
+    let element_key = element_id.to_string();
     // Construct the URL
-    let url = join_vars(&[endpoint, folder, object_key.as_str()]);
+    let url = join_vars(&[endpoint, folder, element_key.as_str()]);
 
     // If URL we fetch it
     if url.starts_with("http") {
@@ -790,7 +797,7 @@ pub async fn fetch_object(endpoint: &str, folder: &str, object_id: &str) -> anyh
 
         if response.status().is_success() {
             let bytes = response.bytes().await?;
-            tracing::info!("Successfully downloaded {} bytes for object {object_id} from endpoint {endpoint}/{folder}", bytes.len());
+            tracing::info!("Successfully downloaded {} bytes for element {element_id} from endpoint {endpoint}/{folder}", bytes.len());
             // Here you can process the bytes as needed
             Ok(bytes)
         } else {
@@ -799,12 +806,12 @@ pub async fn fetch_object(endpoint: &str, folder: &str, object_id: &str) -> anyh
             tracing::error!("Error: {}", response_status);
             tracing::error!("Response: {}", response_content);
             Err(anyhow::anyhow!(format!(
-                "Couldn't fetch object {object_id} from endpoint {endpoint}/{folder}\nStatus: {}\nResponse: {}",
+                "Couldn't fetch element {element_id} from endpoint {endpoint}/{folder}\nStatus: {}\nResponse: {}",
                 response_status, response_content
             ),))
         }
     } else {
-        let key_path = Path::new(endpoint).join(folder).join(object_id);
+        let key_path = Path::new(endpoint).join(folder).join(element_id);
         let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
             anyhow!(
                 "Failed to read byte file at {:?} with error: {e}",
@@ -861,22 +868,22 @@ pub fn setup_logging() {
 
 /// This fetches material which is global
 /// i.e. everything related to CRS and FHE public materials
-async fn fetch_global_pub_object_and_write_to_file(
+async fn fetch_global_pub_element_and_write_to_file(
     destination_prefix: &Path,
     s3_endpoint: &str,
-    object_id: &str,
-    object_name: &str,
-    object_folder: &str,
+    element_id: &str,
+    element_name: &str,
+    element_folder: &str,
 ) -> anyhow::Result<()> {
     // Fetch pub-key from storage and dump it for later use
-    let folder = destination_prefix.join(object_folder).join(object_name);
-    let content = fetch_object(
+    let folder = destination_prefix.join(element_folder).join(element_name);
+    let content = fetch_element(
         s3_endpoint,
-        &format!("{object_folder}/{object_name}"),
-        object_id,
+        &format!("{element_folder}/{element_name}"),
+        element_id,
     )
     .await?;
-    write_bytes_to_file(&folder, object_id, content.as_ref()).await
+    write_bytes_to_file(&folder, element_id, content.as_ref()).await
 }
 
 /// This fetches the kms ethereum address from local storage
@@ -887,7 +894,7 @@ async fn fetch_kms_addresses(
     let mut addr_bytes = Vec::with_capacity(sim_conf.cores.len());
 
     for cur_core in &sim_conf.cores {
-        let content = fetch_object(
+        let content = fetch_element(
             &cur_core.s3_endpoint.clone(),
             &format!(
                 "{}/{}",
@@ -1070,41 +1077,63 @@ fn check_external_decryption_signature(
     Ok(())
 }
 
-/// Fetch all remote objects and store them locally for the core client
+/// Fetch all remote elements and store them locally for the core client
 /// Return the server IDs of all servers that were successfully contacted
 /// or an error if no server could be contacted
+/// element_id: the id of the element to fetch (key id or crs id)
+/// element_types: the types of elements to fetch (e.g. public key, server key, CRS)
+/// sim_conf: the core client configuration
+/// destination_prefix: the local folder to store the fetched elements
+/// download_all: whether to download from all cores or just the first one
+/// returns: the party IDs of the cores that were successfully contacted, unsorted
 async fn fetch_elements(
     element_id: &str,
     element_types: &[PubDataType],
     sim_conf: &CoreClientConfig,
     destination_prefix: &Path,
+    download_all: bool,
 ) -> anyhow::Result<Vec<usize>> {
-    tracing::info!("Fetching public key, server key and sns key with id {element_id}");
-    let mut successfull_core_ids = Vec::new();
-    for object_name in element_types {
-        for cur_core in &sim_conf.cores {
-            if fetch_global_pub_object_and_write_to_file(
+    tracing::info!("Fetching {:?} with id {element_id}", element_types);
+
+    // set of core ids, to track which cores we successfully contacted
+    let mut successful_core_ids: HashSet<usize> = HashSet::new();
+
+    // go over list of cores to retrieve the public elements from
+    'cores: for cur_core in &sim_conf.cores {
+        let mut all_elements = true;
+        // try to fetch all elements from this core
+        'elements: for element_name in element_types {
+            if fetch_global_pub_element_and_write_to_file(
                 destination_prefix,
                 cur_core.s3_endpoint.as_str(),
                 element_id,
-                &object_name.to_string(),
+                &element_name.to_string(),
                 &cur_core.object_folder,
             )
             .await
             .is_err()
             {
-                tracing::warn!("Could not fetch object {object_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
-            } else {
-                successfull_core_ids.push(cur_core.party_id);
+                tracing::warn!("Could not fetch element {element_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
+                all_elements = false;
+                break 'elements;
+            }
+        }
+        // if we were able to retrieve all elements, add the core id to the set of successful nodes
+        if all_elements {
+            successful_core_ids.insert(cur_core.party_id);
+            // if we only want to download from one core, break here
+            if !download_all {
+                break 'cores;
             }
         }
     }
-    if successfull_core_ids.is_empty() {
+
+    if successful_core_ids.is_empty() {
         Err(anyhow::anyhow!(
-                "Could not fetch key with id {element_id} from any core. At least one core is required to proceed."
+                "Could not fetch all of [{element_types:?}] with id {element_id} from any core. At least one core is required to proceed."
             ))
     } else {
-        Ok(successfull_core_ids)
+        Ok(successful_core_ids.into_iter().collect())
     }
 }
 
@@ -1204,6 +1233,7 @@ async fn do_keygen(
         req_id,
         domain,
         resp_response_vec,
+        cmd_conf.download_all,
     )
     .await?;
 
@@ -1285,6 +1315,7 @@ async fn do_crsgen(
         req_id,
         domain,
         resp_response_vec,
+        cmd_conf.download_all,
     )
     .await?;
 
@@ -1547,6 +1578,7 @@ pub async fn execute_cmd(
             &public_verf_types,
             &cc_conf,
             destination_prefix,
+            true, // we always need all verification keys
         )
         .await?;
 
@@ -1667,14 +1699,13 @@ pub async fn execute_cmd(
 
     let kms_addrs = Arc::new(fetch_kms_addresses(&cc_conf).await?);
 
-    let command_timer_start = tokio::time::Instant::now();
-
-    // if it's a encryption or public/user decryption, also fetch server keys
     let key_types = vec![
         PubDataType::PublicKey,
         PubDataType::PublicKeyMetadata,
         PubDataType::ServerKey,
     ];
+
+    let command_timer_start = tokio::time::Instant::now();
     // Execute the command
     let res = match command {
         CCCommand::PublicDecrypt(cipher_args) => {
@@ -1695,12 +1726,13 @@ pub async fn execute_cmd(
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    tracing::info!("Fetching computation keys. ({command:?})");
+                    tracing::info!("Fetching keys {key_types:?}. ({command:?})");
                     let party_ids = fetch_elements(
                         &cipher_parameters.key_id.as_str(),
                         &key_types,
                         &cc_conf,
                         destination_prefix,
+                        false,
                     )
                     .await?;
                     encrypt(
@@ -1825,12 +1857,13 @@ pub async fn execute_cmd(
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    tracing::info!("Fetching computation keys. ({command:?})");
+                    tracing::info!("Fetching keys {key_types:?}. ({command:?})");
                     let party_ids = fetch_elements(
                         &cipher_parameters.key_id.as_str(),
                         &key_types,
                         &cc_conf,
                         destination_prefix,
+                        false,
                     )
                     .await?;
                     encrypt(
@@ -1979,12 +2012,13 @@ pub async fn execute_cmd(
             vec![(None, String::new())]
         }
         CCCommand::Encrypt(cipher_parameters) => {
-            tracing::info!("Fetching computation keys. ({command:?})");
+            tracing::info!("Fetching keys {key_types:?}. ({command:?})");
             let party_ids = fetch_elements(
                 &cipher_parameters.key_id.as_str(),
                 &key_types,
                 &cc_conf,
                 destination_prefix,
+                false,
             )
             .await?;
             encrypt(
@@ -2026,6 +2060,7 @@ pub async fn execute_cmd(
                 req_id,
                 dummy_domain(),
                 resp_response_vec,
+                cmd_config.download_all,
             )
             .await?;
             vec![(Some(req_id), "keygen result queried".to_string())]
@@ -2056,6 +2091,7 @@ pub async fn execute_cmd(
                 req_id,
                 dummy_domain(),
                 resp_response_vec,
+                cmd_config.download_all,
             )
             .await?;
             vec![(Some(req_id), "insecure keygen result queried".to_string())]
@@ -2108,6 +2144,7 @@ pub async fn execute_cmd(
                 req_id,
                 dummy_domain(),
                 resp_response_vec,
+                cmd_config.download_all,
             )
             .await?;
             vec![(Some(req_id), "crs gen result queried".to_string())]
@@ -2138,6 +2175,7 @@ pub async fn execute_cmd(
                 req_id,
                 dummy_domain(),
                 resp_response_vec,
+                cmd_config.download_all,
             )
             .await?;
             vec![(Some(req_id), "insecure crs gen result queried".to_string())]
@@ -2222,7 +2260,7 @@ pub async fn execute_cmd(
 
 // Prints the timings for the command execution, showing latency and throughput based on the measured durations.
 fn print_timings(cmd: &str, durations: &mut [tokio::time::Duration], start: tokio::time::Instant) {
-    // compute total time that is elapsed since we send the first request
+    // compute total time that is elapsed since we sent the first request
     let total_elapsed = start.elapsed();
 
     // compute latency values
@@ -2509,7 +2547,7 @@ async fn get_public_decrypt_responses(
         .map(|(_, resp)| resp)
         .collect();
 
-    //If an expected answer is provided consider it,
+    //If an expected answer is provided, then consider it,
     //otherwise consider the first answer
     let ptxt = expected_answer.unwrap_or_else(|| {
         resp_response_vec
@@ -2777,6 +2815,7 @@ async fn get_crsgen_responses(
     Ok(resp_response_vec)
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn fetch_and_check_keygen(
     num_expected_responses: usize,
     cc_conf: &CoreClientConfig,
@@ -2785,6 +2824,7 @@ async fn fetch_and_check_keygen(
     request_id: RequestId,
     domain: Eip712Domain,
     responses: Vec<KeyGenResult>,
+    download_all: bool,
 ) -> anyhow::Result<()> {
     assert!(
         responses.len() >= num_expected_responses,
@@ -2793,8 +2833,7 @@ async fn fetch_and_check_keygen(
         responses.len()
     );
 
-    // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
-    // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
+    // Download the generated keys.
     let key_types = vec![
         PubDataType::PublicKey,
         PubDataType::PublicKeyMetadata,
@@ -2805,8 +2844,13 @@ async fn fetch_and_check_keygen(
         &key_types,
         cc_conf,
         destination_prefix,
+        download_all,
     )
     .await?;
+
+    // Even if we did not download all keys, we still check that they are identical
+    // by checking all signatures against the first downloaded keyset.
+    // If all signatures match, then all keys must be identical.
     let public_key = load_pk_from_storage(
         Some(destination_prefix),
         &request_id,
@@ -2850,6 +2894,7 @@ async fn fetch_and_check_keygen(
     Ok(())
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn fetch_and_check_crsgen(
     num_expected_responses: usize,
     cc_conf: &CoreClientConfig,
@@ -2858,6 +2903,7 @@ async fn fetch_and_check_crsgen(
     request_id: RequestId,
     domain: Eip712Domain,
     responses: Vec<CrsGenResult>,
+    download_all: bool,
 ) -> anyhow::Result<()> {
     assert!(
         responses.len() >= num_expected_responses,
@@ -2866,15 +2912,19 @@ async fn fetch_and_check_crsgen(
         responses.len()
     );
 
-    // Download the generated CRS. We do this just once, to save time, assuming that all generated keys are indentical.
-    // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
+    // Download the generated CRS.
     let party_ids = fetch_elements(
         &request_id.to_string(),
         &[PubDataType::CRS],
         cc_conf,
         destination_prefix,
+        download_all,
     )
     .await?;
+
+    // Even if we did not download all CRSes, we still check that they are identical
+    // by checking all signatures against the first downloaded CRS.
+    // If all signatures match, then all CRSes must be identical.
     let crs: CompactPkeCrs = load_material_from_storage(
         Some(destination_prefix),
         &request_id,

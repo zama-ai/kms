@@ -186,6 +186,7 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 {
+    /// Observe that in case a custodian is missing or something bad is detected in the data then the function will fail
     async fn inner_new_custodian_context(&self, context: CustodianContext) -> anyhow::Result<()> {
         let backup_vault = match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => backup_vault,
@@ -316,6 +317,8 @@ async fn gen_recovery_request_payload(
             .collect_vec(),
         (*sig_key).clone(),
         custodian_context.threshold as usize,
+        // the amount of custodians are defined by the initial context
+        custodian_context.custodian_nodes.len(),
     )?;
     let mut serialized_priv_key = Vec::new();
     safe_serialize(

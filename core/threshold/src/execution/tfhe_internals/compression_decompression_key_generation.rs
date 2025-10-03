@@ -27,11 +27,8 @@ use tfhe::{
         par_convert_standard_lwe_bootstrap_key_to_fourier, FourierLweBootstrapKey, LweBootstrapKey,
         ParallelByteRandomGenerator, SeededLweBootstrapKey,
     },
-    shortint::{
-        list_compression::{
-            CompressedCompressionKey, CompressedDecompressionKey, CompressionKey, DecompressionKey,
-        },
-        server_key::{ModulusSwitchConfiguration, ShortintBootstrappingKey},
+    shortint::list_compression::{
+        CompressedCompressionKey, CompressedDecompressionKey, CompressionKey, DecompressionKey,
     },
 };
 use tfhe_csprng::generators::SoftwareRandomGenerator;
@@ -77,13 +74,8 @@ where
     // Conversion to fourier domain
     par_convert_standard_lwe_bootstrap_key_to_fourier(&blind_rotate_key, &mut fourier_bsk);
 
-    let blind_rotate_key = ShortintBootstrappingKey::Classic {
-        bsk: fourier_bsk,
-        modulus_switch_noise_reduction_key: ModulusSwitchConfiguration::Standard,
-    };
-
     Ok(DecompressionKey {
-        blind_rotate_key,
+        blind_rotate_key: fourier_bsk,
         lwe_per_glwe: params.raw_compression_parameters.lwe_per_glwe,
     })
 }

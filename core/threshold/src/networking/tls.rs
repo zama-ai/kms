@@ -2,7 +2,7 @@ use crate::session_id::SessionId;
 
 use anyhow::{anyhow, bail, ensure};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256, Sha384};
+use sha2::{Digest, Sha384};
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
@@ -119,10 +119,15 @@ pub struct AttestedVerifier {
     // TLS identity is based on the decryption signing key, and no traditional
     // PKI is used.
     pcr8_expected: bool,
+    #[cfg(feature = "testing")]
+    mock_enclave: bool,
 }
 
 impl AttestedVerifier {
-    pub fn new(pcr8_expected: bool) -> anyhow::Result<Self> {
+    pub fn new(
+        pcr8_expected: bool,
+        #[cfg(feature = "testing")] mock_enclave: bool,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             root_hint_subjects: Vec::new(),
             supported_algs: CryptoProvider::get_default()
@@ -133,6 +138,8 @@ Crypto provider should exist at this point"
                 .signature_verification_algorithms,
             contexts: RwLock::new(HashMap::new()),
             pcr8_expected,
+            #[cfg(feature = "testing")]
+            mock_enclave,
         })
     }
 
@@ -180,6 +187,7 @@ Crypto provider should exist at this point"
         let context_id =
             extract_context_id_from_cert(cert).map_err(|e| Error::General(e.to_string()))?;
         let subject = extract_subject_from_cert(cert).map_err(|e| Error::General(e.to_string()))?;
+        tracing::debug!("Getting context and verifiers for {subject}");
 
         let contexts = self
             .contexts
@@ -236,25 +244,32 @@ impl ServerCertVerifier for AttestedVerifier {
         let (context, _, server_verifier) = self.get_context_and_verifiers_for_x509_cert(&cert)?;
         // check the enclave-generated certificate used for the TLS session as
         // usual (however, we expect it to be self-signed)
+        tracing::debug!("Verifying certificate for server {:?}", server_name,);
         server_verifier
             .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
             .inspect_err(|e| {
                 tracing::error!("server verifier validation error: {e}");
             })?;
         // check the bundled attestation document and EIF signing certificate
+        #[cfg(feature = "testing")]
+        let do_validation = !&self.mock_enclave;
+        #[cfg(not(feature = "testing"))]
+        let do_validation = true;
         if let Some(release_pcrs) = &context.release_pcrs {
-            validate_wrapped_cert(
-                &cert,
-                release_pcrs,
-                self.pcr8_expected,
-                CertVerifier::Server(server_verifier.clone(), server_name, ocsp_response),
-                intermediates,
-                now,
-            )
-            .map_err(|e| {
-                tracing::error!("bundled attestation document validation error: {e}");
-                Error::General(e.to_string())
-            })?;
+            if do_validation {
+                validate_wrapped_cert(
+                    &cert,
+                    release_pcrs,
+                    self.pcr8_expected,
+                    CertVerifier::Server(server_verifier.clone(), server_name, ocsp_response),
+                    intermediates,
+                    now,
+                )
+                .map_err(|e| {
+                    tracing::error!("bundled attestation document validation error: {e}");
+                    Error::General(e.to_string())
+                })?;
+            }
         }
         Ok(ServerCertVerified::assertion())
     }
@@ -327,19 +342,25 @@ impl ClientCertVerifier for AttestedVerifier {
             })?;
 
         // check the bundled attestation document and EIF signing certificate
+        #[cfg(feature = "testing")]
+        let do_validation = !&self.mock_enclave;
+        #[cfg(not(feature = "testing"))]
+        let do_validation = true;
         if let Some(release_pcrs) = &context.release_pcrs {
-            validate_wrapped_cert(
-                &cert,
-                release_pcrs,
-                self.pcr8_expected,
-                CertVerifier::Client(client_verifier.clone()),
-                intermediates,
-                now,
-            )
-            .map_err(|e| {
-                tracing::error!("bundled attestation document validation error: {e}");
-                Error::General(e.to_string())
-            })?;
+            if do_validation {
+                validate_wrapped_cert(
+                    &cert,
+                    release_pcrs,
+                    self.pcr8_expected,
+                    CertVerifier::Client(client_verifier.clone()),
+                    intermediates,
+                    now,
+                )
+                .map_err(|e| {
+                    tracing::error!("bundled attestation document validation error: {e}");
+                    Error::General(e.to_string())
+                })?;
+            }
         }
 
         Ok(ClientCertVerified::assertion())
@@ -402,19 +423,16 @@ fn validate_wrapped_cert(
     };
     let attestation_doc =
         attestation_doc_validation::validate_and_parse_attestation_doc(attestation_doc.value)
-            .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))?;
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("AWS Nitro attestation failed: {e}"),
+                )
+            })?;
     let Some(attested_pk) = attestation_doc.public_key else {
         bail!("Bad certificate: public key not present in attestation document")
     };
-    if cert.public_key().raw != attested_pk.as_slice() {
-        let mut cert_pk_hasher = Sha256::new();
-        cert_pk_hasher.update(cert.public_key().raw);
-        let cert_pk_hash = hex::encode(cert_pk_hasher.finalize().as_slice());
-        let mut att_pk_hasher = Sha256::new();
-        att_pk_hasher.update(attested_pk.as_slice());
-        let att_pk_hash = hex::encode(att_pk_hasher.finalize().as_slice());
-        bail!("Bad certificate: subject public key with hash {} does not match attestation document public key with hash {}", cert_pk_hash, att_pk_hash)
-    };
+    ensure!(*cert.public_key().raw == *attested_pk.as_slice(), "Bad certificate: subject public key info {} does not match attestation document public key info {}", hex::encode(cert.public_key().raw), hex::encode(attested_pk.as_slice()));
 
     // check software release hashes
     let Some(pcr0) = attestation_doc.pcrs.get(&0) else {
@@ -492,10 +510,10 @@ pub fn extract_context_id_from_cert(cert: &X509Certificate) -> anyhow::Result<Se
     // Note that `cert.serial` is a BigInt, so we need to convert it to
     // bytes and then convert it to u128. As such, it does not matter
     // what endianess we use for the conversion, as long as we are
-    // consistent on both sides. Here we use little-endian.
-    let context_id = SessionId::from(u128::from_le_bytes(
+    // consistent on both sides. Here we use big-endian.
+    let context_id = SessionId::from(u128::from_be_bytes(
         cert.serial
-            .to_bytes_le()
+            .to_bytes_be()
             .try_into()
             .or(Err(anyhow!("Invalid context ID length")))?,
     ));

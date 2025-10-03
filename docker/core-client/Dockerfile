@@ -38,6 +38,7 @@ WORKDIR /app/kms-core-client
 # Copy binaries
 COPY --from=builder /app/kms-core-client/core-client/bin/ /app/kms-core-client/bin/
 COPY --from=builder /app/kms-core-client/tools/kms-health-check/bin/ /app/kms-core-client/bin/
+COPY --from=builder /app/kms-core-client/tools/service/bin/ /app/kms-core-client/bin/
 
 # Change user to limit root access
 RUN addgroup -S kms --gid 10002 && \

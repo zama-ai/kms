@@ -6,10 +6,10 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use super::gen::gnetworking_client::GnetworkingClient;
 use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
 use backoff::SystemClock;
-use gen::gnetworking_client::GnetworkingClient;
 use hyper_rustls_ring::{FixedServerNameResolver, HttpsConnectorBuilder};
 use observability::telemetry::ContextPropagator;
 use tokio::{
@@ -36,11 +36,7 @@ use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
 use super::{NetworkMode, Networking};
 use crate::thread_handles::ThreadHandleGroup;
 
-mod gen {
-    #![allow(clippy::derive_partial_eq_without_eq)]
-    tonic::include_proto!("ddec_networking");
-}
-use self::gen::SendValueRequest;
+use super::gen::SendValueRequest;
 
 pub struct ArcSendValueRequest {
     tag: Arc<Vec<u8>>,
@@ -98,7 +94,7 @@ pub struct GrpcSendingService {
 impl GrpcSendingService {
     /// Create the network channel between self and the grpc server of the other party
     /// or retrieve it if one already exists
-    async fn connect_to_party(
+    pub(crate) async fn connect_to_party(
         &self,
         receiver: Identity,
     ) -> anyhow::Result<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>> {
@@ -130,7 +126,14 @@ impl GrpcSendingService {
                         receiver.hostname()
                     )));
                 }
-                let domain_name = ServerName::try_from(receiver.hostname())?.to_owned();
+                let domain_name = ServerName::try_from(receiver.hostname().to_string())
+                    .map_err(|_e| {
+                        anyhow_error_and_log(format!(
+                            "The MPC party hostname {} is not a valid DNS name",
+                            receiver.hostname()
+                        ))
+                    })?
+                    .to_owned();
 
                 // If we have a list of trusted software hashes, we're running
                 // within the AWS Nitro enclave and we have to use vsock proxies
@@ -147,6 +150,12 @@ impl GrpcSendingService {
                 } else {
                     endpoint
                 };
+
+                tracing::debug!(
+                    "Attempting TLS connection to address {:?} with MPC identity {:?}",
+                    endpoint,
+                    domain_name
+                );
 
                 let endpoint = Channel::builder(endpoint).http2_adaptive_window(true);
                 // we have to pass a custom TLS connector to
@@ -346,8 +355,9 @@ impl Drop for GrpcSendingService {
 /// It also deals with the network round and timeouts
 #[derive(Debug)]
 pub struct NetworkSession {
+    /// My own [`Identity`]
     pub(crate) owner: Identity,
-    /// Sessin id of this Network session
+    /// [`SessionId`] of this Network session
     pub(crate) session_id: SessionId,
     pub(crate) context_id: SessionId,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`]

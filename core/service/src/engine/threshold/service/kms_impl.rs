@@ -43,18 +43,22 @@ use crate::{
     anyhow_error_and_log,
     backup::{custodian::InternalCustodianContext, operator::RecoveryValidationMaterial},
     conf::threshold::ThresholdPartyConf,
-    consts::DEFAULT_MPC_CONTEXT,
-    consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
-    cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::PrivateSigKey},
+    consts::{DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
+    cryptography::{
+        attestation::SecurityModuleProxy,
+        internal_crypto_types::{PrivateSigKey, PublicSigKey},
+    },
     engine::{
         backup_operator::RealBackupOperator,
         base::{BaseKmsStruct, CrsGenMetadata, KeyGenMetadata},
         context_manager::RealContextManager,
         prepare_shutdown_signals,
         threshold::{
-            service::public_decryptor::SecureNoiseFloodDecryptor,
-            service::session::{SessionPreparer, SessionPreparerManager},
-            service::user_decryptor::SecureNoiseFloodPartialDecryptor,
+            service::{
+                public_decryptor::SecureNoiseFloodDecryptor,
+                session::{SessionPreparer, SessionPreparerManager},
+                user_decryptor::SecureNoiseFloodPartialDecryptor,
+            },
             threshold_kms::ThresholdKms,
         },
     },
@@ -212,7 +216,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     public_storage: PubS,
     private_storage: PrivS,
     backup_storage: Option<Vault>,
-    security_module: Option<SecurityModuleProxy>,
+    security_module: Option<Arc<SecurityModuleProxy>>,
     mpc_listener: TcpListener,
     sk: PrivateSigKey,
     tls_config: Option<(ServerConfig, ClientConfig)>,
@@ -236,7 +240,14 @@ where
     let mut public_key_info = HashMap::new();
     let mut pk_map = HashMap::new();
     let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
-        read_all_data_versioned(&public_storage, &PubDataType::Commitments.to_string()).await?;
+        read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
+            .await?;
+    let verf_key = PublicSigKey::from_sk(&sk);
+    for (cur_req_id, cur_rec_material) in &validation_material {
+        if !cur_rec_material.validate(&verf_key) {
+            anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
+        }
+    }
     let custodian_context: HashMap<RequestId, InternalCustodianContext> = validation_material
         .into_iter()
         .map(|(r, com)| (r, com.custodian_context().to_owned()))
@@ -517,7 +528,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         crs_meta_store,
-        session_preparer_getter,
+        session_preparer_getter: session_preparer_getter.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
@@ -559,7 +570,7 @@ where
         insecure_crs_generator,
         context_manager,
         backup_operator,
-        Arc::new(config.clone()),
+        session_preparer_getter,
         Arc::clone(&tracker),
         thread_core_health_reporter,
         abort_handle,
@@ -593,6 +604,7 @@ mod tests {
                 decompression_key,
                 sns_key,
                 _sns_compression_key,
+                _rerand_key,
                 _tag,
             ) = keyset.public_keys.server_key.into_raw_parts();
 

@@ -1,5 +1,7 @@
 # See default_1.toml for the documentation.
 
+mock_enclave = true
+
 [service]
 listen_address = "0.0.0.0"
 listen_port = 50200
@@ -36,16 +38,16 @@ num_sessions_preproc = 2
 
 decryption_mode = "NoiseFloodSmall"
 
-[threshold.tls.manual]
-cert.path = "certs/cert_dev-kms-core-2.com.pem"
-key.path = "certs/key_dev-kms-core-2.com.pem"
+[[threshold.tls.full_auto.trusted_releases]]
+pcr0 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+pcr1 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+pcr2 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 
 [[threshold.peers]]
 party_id = 1
 address = "abcd.dev-kms-core-1.com"
 mpc_identity = "dev-kms-core-1.com"
 port = 50001
-service_port = 50100
 tls_cert.path = "certs/cert_dev-kms-core-1.com.pem"
 
 [[threshold.peers]]
@@ -53,7 +55,6 @@ party_id = 2
 address = "abcd.dev-kms-core-2.com"
 mpc_identity = "dev-kms-core-2.com"
 port = 50002
-service_port = 50200
 tls_cert.path = "certs/cert_dev-kms-core-2.com.pem"
 
 [[threshold.peers]]
@@ -61,7 +62,6 @@ party_id = 3
 address = "abcd.dev-kms-core-3.com"
 mpc_identity = "dev-kms-core-3.com"
 port = 50003
-service_port = 50300
 tls_cert.path = "certs/cert_dev-kms-core-3.com.pem"
 
 [[threshold.peers]]
@@ -69,7 +69,6 @@ party_id = 4
 address = "abcd.dev-kms-core-4.com"
 mpc_identity = "dev-kms-core-4.com"
 port = 50004
-service_port = 50400
 tls_cert.path = "certs/cert_dev-kms-core-4.com.pem"
 
 [threshold.core_to_core_net]

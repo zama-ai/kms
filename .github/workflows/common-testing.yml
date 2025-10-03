@@ -183,11 +183,11 @@ jobs:
           toolchain: ${{ env.RUST_IMAGE_VERSION }}
           components: rustfmt, clippy, llvm-tools-preview, llvm-tools
           cache: false
-
-      - name: Install cargo-llvm-cov & nextest
-        uses: taiki-e/install-action@1dd4d60a583436c5738af3d204f159f44d92f704 # v2.61.0
-        with:
-          tool: cargo-llvm-cov,nextest,grcov
+          
+      - name: Install nextest and grcov
+        run: |
+          cargo install cargo-nextest --locked
+          cargo install grcov --locked
 
       ############################################################################
       # Setup cache for dockerfile and inject in docker
@@ -321,12 +321,21 @@ jobs:
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
         run: |
-          echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> "$GITHUB_ENV"
-          cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit.xml # zizmor: ignore[template-injection]
+          if find "${GITHUB_WORKSPACE}"/target/nextest/ci -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
+            echo "Files found in ${GITHUB_WORKSPACE}/target/nextest/ci"
+            ls -R "${GITHUB_WORKSPACE}"/target/nextest/ci
+            echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> "$GITHUB_ENV"
+            cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit.xml # zizmor: ignore[template-injection]
+            echo "EXIT_CODE=0" >> "$GITHUB_ENV"
+          else
+            echo "No junit test files found in ${GITHUB_WORKSPACE}/target/nextest/ci"
+            echo "EXIT_CODE=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
         shell: bash
 
       - name: Upload Test Results
-        if: (!cancelled() || !failure() && github.event_name == 'pull_request')
+        if: ((!cancelled() || !failure() && github.event_name == 'pull_request') && env.EXIT_CODE == 0)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}
