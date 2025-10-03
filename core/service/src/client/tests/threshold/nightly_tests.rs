@@ -292,7 +292,16 @@ async fn secure_threshold_concurrent_crs_default(#[case] amount_parties: usize) 
 #[case(DEFAULT_AMOUNT_PARTIES)]
 #[serial]
 async fn secure_threshold_sequential_keygen_test(#[case] amount_parties: usize) {
-    preproc_and_keygen(amount_parties, FheParameter::Test, false, 2, false).await;
+    preproc_and_keygen(
+        amount_parties,
+        FheParameter::Test,
+        false,
+        2,
+        false,
+        None,
+        None,
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -302,7 +311,16 @@ async fn secure_threshold_sequential_keygen_test(#[case] amount_parties: usize) 
 #[case(DEFAULT_AMOUNT_PARTIES)]
 #[serial]
 async fn secure_threshold_concurrent_keygen_test(#[case] amount_parties: usize) {
-    preproc_and_keygen(amount_parties, FheParameter::Test, false, 2, true).await;
+    preproc_and_keygen(
+        amount_parties,
+        FheParameter::Test,
+        false,
+        2,
+        true,
+        None,
+        None,
+    )
+    .await;
 }
 
 #[cfg(feature = "slow_tests")]
