@@ -480,7 +480,6 @@ jobs:
     permissions:
       checks: write # Required to create GitHub checks for test results
       packages: read # Required to read GitHub packages/container registry
-      issues: write # Required to create comments on issues
       pull-requests: write # Required to create comments on pull requests
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
