@@ -142,7 +142,7 @@ tracing-test.workspace = true
 
 [features]
 default = ["non-wasm"]
-testing = ["threshold-fhe/testing"]
+testing = []
 non-wasm = [
     "threshold-fhe/non-wasm",
     "kms-grpc/non-wasm",
