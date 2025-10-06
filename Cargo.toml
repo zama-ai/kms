@@ -115,6 +115,8 @@ hyper-rustls = { version = "=0.24.2" }  # TLS for hyper HTTP client - LOW RISK: 
 hyper-rustls-ring = { package = "hyper-rustls", version = "=0.27.7", default-features = false, features = ["http2", "ring"] }  # TLS for hyper (newer version) - LOW RISK: rustls team, uses ring backend
 itertools = "=0.14.0"  # Iterator utilities - LOW RISK: bluss/rust-itertools, 100M+ downloads
 k256 = "=0.13.4"  # secp256k1 elliptic curve - LOW RISK: RustCrypto org, 33M+ downloads
+kube = { version = "2.0.1", features = ["runtime", "derive"] } # Kubernetes client - LOW RISK: rust-lang team, 100M+ downloads
+k8s-openapi = { version = "0.26.0", features = ["latest", "schemars"] } # Kubernetes OpenAPI - LOW RISK: rust-lang team, 100M+ downloads
 lazy_static = "=1.5.0"  # Lazy static initialization - LOW RISK: rust-lang-nursery, 100M+ downloads
 minijinja = { version = "=2.11.0", features = ["loader"] }  # Template engine - HIGH RISK: Individual maintainer (mitsuhiko), despite exceptional track record
 ml-kem = "=0.2.1"  # ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: New standard implementation, needs security audit
