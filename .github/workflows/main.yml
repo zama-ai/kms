@@ -456,7 +456,6 @@ jobs:
       working-directory: "./core/service"
       args-tests: ${{ matrix.args-tests }}
       run-minio: true
-      run-wasm: true
       package-name: "kms"
       slab-backend: "big-instance-service"
       app-cache-dir: "kms"
@@ -474,6 +473,28 @@ jobs:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  test-wasm:
+    name: main/test-wasm
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs:
+      - check-changes
+    if: >-
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      github.ref == 'refs/heads/main' ||
+      needs.check-changes.outputs.changes-ci == 'true'
+    uses: ./.github/workflows/wasm-testing.yml
+    with:
+      working-directory: "./core/service"
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # Builds the core service Docker image
   # Only runs on main/release branches after successful tests
