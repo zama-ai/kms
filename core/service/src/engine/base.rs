@@ -909,6 +909,11 @@ pub struct CrsGenMetadataInner {
     pub(crate) external_signature: Vec<u8>,
 }
 
+impl Named for CrsGenMetadataInner {
+    /// Returns the type name for versioning and serialization
+    const NAME: &'static str = "CrsGenMetadataInner";
+}
+
 #[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum CrsGenMetadataVersioned {
@@ -920,7 +925,7 @@ pub enum CrsGenMetadataVersioned {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(CrsGenMetadataVersioned)]
 pub enum CrsGenMetadata {
-    Current(CrsGenMetadataInner),
+    Current(CrsGenMetadataInner), //  TODO order should be switched
     LegacyV0(SignedPubDataHandleInternal),
 }
 
@@ -929,6 +934,21 @@ impl Upgrade<CrsGenMetadata> for CrsGenSignedPubDataHandleInternalWrapper {
     type Error = std::convert::Infallible;
     fn upgrade(self) -> Result<CrsGenMetadata, Self::Error> {
         Ok(CrsGenMetadata::LegacyV0(self.0))
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+impl Upgrade<CrsGenMetadataInner> for SignedPubDataHandleInternal {
+    type Error = std::convert::Infallible;
+    fn upgrade(self) -> Result<CrsGenMetadataInner, Self::Error> {
+        use threshold_fhe::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS;
+        println!("Upgrading old SignedPubDataHandleInternal to CrsGenMetadataInner");
+        Ok(CrsGenMetadataInner {
+            crs_id: self.key_handle.try_into().expect("invalid RequestId for CRS when trying to convert old SignedPubDataHandleInternal to CrsGenMetadataInner"),
+            crs_digest: Vec::new(), // old version does not have a digest
+            max_num_bits: ZK_DEFAULT_MAX_NUM_BITS as u32, // old version does not have max_num_bits, use default
+            external_signature: self.external_signature,
+        })
     }
 }
 
@@ -976,6 +996,8 @@ pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, Vec<u8
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::panic;
+
     use super::{deserialize_to_low_level, TypedPlaintext};
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
@@ -985,7 +1007,7 @@ pub(crate) mod tests {
             base::{
                 compute_external_signature_preprocessing, compute_info_standard_keygen,
                 compute_pt_message_hash, hash_sol_struct, safe_serialize_hash_element_versioned,
-                DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
+                CrsGenMetadata, CrsGenMetadataInner, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
             },
             centralized::central_kms::{
                 gen_centralized_crs, generate_client_fhe_key, generate_fhe_keys,
@@ -997,15 +1019,23 @@ pub(crate) mod tests {
     use alloy_dyn_abi::Eip712Domain;
     use alloy_primitives::Address;
     use alloy_sol_types::SolStruct;
+    use kms_grpc::rpc_types::{
+        CrsGenSignedPubDataHandleInternalWrapper, SignedPubDataHandleInternal,
+        SignedPubDataHandleInternalVersioned,
+    };
     use kms_grpc::{
         kms::v1::CiphertextFormat,
         solidity_types::{CrsgenVerification, KeygenVerification, PrepKeygenVerification},
         RequestId,
     };
+    use kms_lib::engine::base::derive_request_id;
     use rand::{RngCore, SeedableRng};
     use tfhe::{
-        prelude::SquashNoise, safe_serialization::safe_serialize, FheTypes, FheUint32, Seed,
+        prelude::SquashNoise,
+        safe_serialization::{safe_deserialize, safe_serialize},
+        FheTypes, FheUint32, Seed, Unversionize, Versionize,
     };
+    use tfhe_versionable::Upgrade;
     use threshold_fhe::execution::{
         keyset_config::StandardKeySetConfig,
         tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
@@ -1723,5 +1753,47 @@ pub(crate) mod tests {
             let sol_struct = PrepKeygenVerification::new(&preproc_id);
             assert_ne!(recover_address(sol_struct, &domain, &sig), actual_address);
         }
+    }
+
+    #[test]
+    fn test_bug_2776_bad_deserialization_crs_metadata() {
+        let old_data = SignedPubDataHandleInternal {
+            key_handle: derive_request_id("Test").unwrap().to_string(),
+            signature: [0u8; 65].to_vec(), // Dummy signatures
+            external_signature: [1u8; 65].to_vec(),
+        };
+        let asd = CrsGenMetadata::LegacyV0(old_data.clone());
+        let wrapper = CrsGenSignedPubDataHandleInternalWrapper(old_data.clone());
+        let mut serialized_old = Vec::new();
+        // let versioned = old_data.versionize();
+        // let ser_data = bc2wrap::serialize(&versioned).unwrap();
+
+        safe_serialize(&old_data, &mut serialized_old, SAFE_SER_SIZE_LIMIT).unwrap();
+        // Current failing apporach
+        let old_res = panic::catch_unwind(|| {
+            let _new_data: CrsGenMetadata =
+                safe_deserialize(std::io::Cursor::new(&serialized_old), SAFE_SER_SIZE_LIMIT)
+                    .unwrap();
+        });
+        // assert!(old_res.is_err());
+        // Should be
+        // let versioned: SignedPubDataHandleInternalVersioned =
+        //     serde::Deserialize::deserialize(serialized_old)?;
+        // let thing = SignedPubDataHandleInternal::unversionize(versioned)?;
+        // let new = thing.upgrade();
+
+        let correct_new_data: CrsGenMetadataInner = safe_deserialize(
+            //)::<SignedPubDataHandleInternal>(
+            std::io::Cursor::new(&serialized_old),
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        // .upgrade()
+        // .unwrap();
+        assert_eq!(
+            &correct_new_data.external_signature,
+            &old_data.external_signature
+        );
+        assert_eq!(&correct_new_data.crs_id.to_string(), &old_data.key_handle);
     }
 }
