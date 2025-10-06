@@ -187,7 +187,7 @@ async fn secure_threshold_keygen_test_crash_online() {
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn secure_threshold_keygen_test_crash_offline() {
+async fn secure_threshold_keygen_test_crash_preprocessing() {
     preproc_and_keygen(4, FheParameter::Test, false, 1, false, Some(vec![3]), None).await;
 }
 
@@ -761,7 +761,7 @@ pub(crate) async fn preproc_and_keygen(
     };
 
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (mut kms_servers, mut kms_clients, internal_client) = threshold_handles(
+    let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
         *dkg_param,
         amount_parties,
         true,
@@ -904,6 +904,11 @@ pub(crate) async fn preproc_and_keygen(
             expected_num_parties_crashed += 1;
         }
         for i in 0..iterations {
+            use crate::{
+                client::tests::threshold::public_decryption_tests::run_decryption_threshold,
+                util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
+            };
+
             let key_id: RequestId =
                 derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameter:?}_{i}"))
                     .unwrap();
@@ -923,6 +928,24 @@ pub(crate) async fn preproc_and_keygen(
             // blockchain parameters always have mod switch noise reduction key
             let (client_key, _, server_key) = keyset.get_standard();
             crate::client::key_gen::tests::check_conformance(server_key, client_key);
+
+            // Run a DDec
+            run_decryption_threshold(
+                amount_parties,
+                &mut kms_servers,
+                &mut kms_clients,
+                &mut internal_client,
+                &key_id,
+                vec![TestingPlaintext::U8(u8::MAX)],
+                EncryptionConfig {
+                    compression: true,
+                    precompute_sns: true,
+                },
+                None,
+                1,
+                None,
+            )
+            .await;
         }
         tracing::info!("Finished sequential preproc and keygen");
     }

@@ -373,6 +373,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         )
         .await;
     run_decryption_threshold(
+        amount_parties,
         &mut kms_servers,
         &mut kms_clients,
         &mut internal_client,
