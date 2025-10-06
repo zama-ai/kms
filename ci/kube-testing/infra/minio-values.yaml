@@ -1,0 +1,24 @@
+fullnameOverride: minio
+mode: standalone
+rootUser: minio-admin
+rootPassword: minio-admin
+replicas: 1
+buckets:
+  - name: kms-public
+    policy: public
+    purge: false
+  - name: kms-private
+    policy: private
+    purge: false
+  - name: coprocessor
+    policy: public
+    purge: false
+customCommands:
+  - command: "admin accesskey create myminio/ --access-key kms-access-key-id --secret-key kms-secret-access-key"
+resources:
+  requests:
+    memory: 1Gi
+    cpu: 250m
+  limits:
+    memory: 1Gi
+    cpu: 250m

@@ -376,6 +376,17 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
+              {{- end }}
+              {{- else }}
+            - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
+              value: {{ .Values.kmsCore.privateVault.s3.bucket | quote }}
+            - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
+              value: {{ .Values.kmsCore.publicVault.s3.bucket | quote }}
+            {{- if .Values.kmsCore.privateVault.awskms.enabled }}
+            - name: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
+              value: {{ .Values.kmsCore.privateVault.awskms.rootKeySpec | quote }}
+            - name: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
+              value: {{ .Values.kmsCore.privateVault.awskms.rootKeyId | quote }}
             {{- end }}
           {{- end }}
           {{- if not .Values.kmsCore.privateVault.s3.enabled }}

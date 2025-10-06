@@ -1,0 +1,315 @@
+name: kind-testing
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  ############################################################################
+  # Start EC2 Runner Job
+  # Initializes a self-hosted runner for running Kubernetes tests
+  ############################################################################
+  start-runner:
+    name: kind-testing/start-runner
+    runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.start-ec2-runner.outputs.label }}
+    steps:
+      - name: Start EC2 runner
+        id: start-ec2-runner
+        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
+        with:
+          mode: start
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          backend: aws
+          profile: "big-instance-service" # Uses big instances for resource-intensive tests
+
+  ############################################################################
+  # Docker Build Job (Commented Out)
+  # This job is currently disabled but can be used to build and publish Docker images
+  # for testing purposes when needed.
+  ############################################################################
+  # docker-build:
+  #   if: github.event_name == 'pull_request'
+  #   name: docker-build
+  #   permissions:
+  #     actions: read        # Read workflow run information
+  #     contents: write      # Checkout repository code
+  #     id-token: write      # OIDC authentication
+  #     pull-requests: read  # Access pull request information
+  #     packages: write      # Publish Docker images
+  #     attestations: write  # Create build attestations
+  #   uses: ./.github/workflows/docker-build.yml
+  #   secrets:
+  #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+  #     AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+  #     AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+  #     SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+  #     SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+  #     JOB_SECRET: ${{ secrets.JOB_SECRET }}
+  #     CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+  #     CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  ############################################################################
+  # Kind Testing Job
+  # Main job that sets up a Kubernetes cluster using Kind and runs the tests
+  ############################################################################
+  kind-testing:
+    name: kind-testing
+    needs: start-runner
+    runs-on: ${{ needs.start-runner.outputs.label }}
+
+    # Environment variables for Kubernetes configuration
+    env:
+      KUBECONFIG: "/home/ubuntu/.kube/config" # Path to kubeconfig
+      KUBE_CONTEXT: kind-kind # Kubernetes context name for the Kind cluster
+      NAMESPACE: kms-test
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: true
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: true
+
+      - name: Get Rust version
+        env:
+          GH_WORKSPACE: ${{ github.workspace }}
+        run: |
+          version="$(cat "$GH_WORKSPACE/toolchain.txt")"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Setup Home
+        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
+
+      # ==========================================================================
+      # Git LFS Setup
+      # Required for handling large files in tests, especially for backward compatibility
+      # ==========================================================================
+      - name: Setup Git LFS
+        env:
+          GIT_LFS_VERSION: "3.6.1" # Pinned version for reproducibility
+        run: |
+          # Download and install Git LFS
+          wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
+          tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
+          "./git-lfs-${GIT_LFS_VERSION}/install.sh"
+          # Pull LFS files after installation
+          git lfs pull
+
+      # ==========================================================================
+      # Docker Buildx Setup
+      # Configures Docker Buildx for building multi-platform images
+      #
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v3.3.0
+        with:
+          platforms: linux/amd64 # Target platform for builds
+          buildkitd-flags: --debug # Enable debug logging for BuildKit
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl.sha256"
+          check_sum=$(echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check)
+          if [ "$check_sum" != "kubectl: OK" ]; then
+            echo "kubectl checksum does not match"
+            exit 1
+          fi
+          install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+          chmod +x kubectl
+          mkdir -p ~/.local/bin
+          mv ./kubectl ~/.local/bin/kubectl
+          export PATH=$PATH:~/.local/bin
+          kubectl version --client
+
+      - name: Install KIND
+        run: |
+          # For AMD64 / x86_64
+          [ "$(uname -m)" = "x86_64" ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64
+          # For ARM64
+          [ "$(uname -m)" = "aarch64" ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-arm64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind create cluster \
+            --config ./ci/kube-testing/infra/kind-config.yaml \
+            --kubeconfig "${HOME}/.kube/config"
+
+      - name: Install Helm
+        run: |
+          curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+          chmod 700 get_helm.sh
+          ./get_helm.sh
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+          aws-region: eu-west-3
+
+      # Needed to be able to pull some docker images for the simulator test
+      - name: Login to zws GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.ZWS_BOT_TOKEN }}
+
+      # ==========================================================================
+      # Rust toolchain setup
+      #
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8 # v1.10.1
+        with:
+          toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          components: rustfmt, clippy, llvm-tools-preview, llvm-tools
+          cache: false
+
+      # ==========================================================================
+      # Setup cache for dockerfile and inject in docker
+      #
+      - name: Setup Cache
+        uses: runs-on/cache@197b09d6da1bf42f673fee18769c794b789a0c7d # v4
+        id: cache
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
+          RUNS_ON_AWS_REGION: eu-west-3
+        with:
+          path: |
+            /home/ubuntu/.cargo/bin/
+            /home/ubuntu/.cargo/registry/index/
+            /home/ubuntu/.cargo/registry/cache/
+            /home/ubuntu/.cargo/git/db/
+            ${{ github.workspace }}/target
+          key: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "26.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
+
+      - name: Setup cargo nextest and grcov
+        run: |
+          cargo install cargo-nextest grcov --locked --force
+
+      - name: Setup cargo dylint
+        run: |
+          cargo install cargo-dylint dylint-link --force
+
+      - name: clippy and rustfmt versions
+        run: |
+          cargo clippy -V && cargo fmt --version
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Linting default features
+        env:
+          PACKAGE_NAME: "kms-core-client"
+        run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
+
+      - name: Linting All features
+        env:
+          PACKAGE_NAME: "kms-core-client"
+        run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings
+
+      - name: Linting dylint
+        run: cargo dylint --all
+
+      # ==========================================================================
+      # Test Execution
+      # Runs the Kubernetes integration tests using the configured environment
+      #
+      - name: Setup registry credentials
+        run: |
+          kubectl config get-contexts --kubeconfig "${KUBECONFIG}"
+          kubectl config use-context kind-kind --kubeconfig "${KUBECONFIG}"
+          kubectl get nodes
+          kubectl create namespace "${NAMESPACE}"
+          kubectl get namespace
+          # Create dockerconfigjson for ghcr.io authentication
+          DOCKER_CONFIG_JSON=$(cat <<JSON | base64 -w 0
+          {
+            "auths": {
+              "ghcr.io": {
+                "auth": "$(echo -n "zws-bot:${{ secrets.ZWS_BOT_TOKEN }}" | base64 -w 0)"
+              }
+            }
+          }
+          JSON
+          )
+
+          # Apply the secret to Kubernetes
+          cat <<EOF | kubectl apply -f - --namespace "${NAMESPACE}"
+          apiVersion: v1
+          data:
+            .dockerconfigjson: ${DOCKER_CONFIG_JSON}
+          kind: Secret
+          metadata:
+            name: registry-credentials
+          type: kubernetes.io/dockerconfigjson
+          EOF
+          kubectl get secrets registry-credentials -n "${NAMESPACE}" -o yaml
+
+      - name: Run Kubernetes Tests
+        id: tests
+        env:
+          # Kubernetes and Helm configuration
+          KMS_RELEASE_NAME: kms
+          KMS_CHART_VERSION: 1.4.1
+          KMS_CHART_REGISTRY_URL: oci://ghcr.io/zama-ai/kms/charts/kms-core
+
+          # Paths to Helm values files for different test scenarios
+          KMS_THRESHOLD_VALUES_FILE: ci/kube-testing/kms/values-ci-threshold.yaml
+          KMS_THRESHOLD_CUSTODIAN_VALUES_FILE: ci/kube-testing/kms/values-ci-threshold-custodian.yaml
+          KMS_CENTRALIZED_CUSTODIAN_VALUES_FILE: ci/kube-testing/kms/values-ci-centralized-custodian.yaml
+          KMS_CENTRALIZED_VALUES_FILE: ci/kube-testing/kms/values-ci-centralized.yaml
+
+          # Infrastructure configuration
+          MINIO_VALUES_FILE: ci/kube-testing/infra/minio-values.yaml
+
+          # Secret management
+          SYNC_SECRET_VALUES_FILE: ci/kube-testing/infra/registry-credentials-values.yaml
+          SYNC_SECRETS_CHART_VERSION: 0.2.1
+
+        # Execute the Kubernetes integration tests
+        run: |
+          cargo test --test kubernetes_test
+
+      - name: Upload kms-core logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kms-core-logs
+          path: kms-core-*.txt
+          retention-days: 7 # Keep logs for 7 days
+          if-no-files-found: warn # Only warn if no log files are found
+
+  ############################################################################
+  # Stop EC2 Runner Job
+  # Cleans up the EC2 runner after tests complete or fail
+  ############################################################################
+  stop-runner:
+    name: kind-testing/stop-runner
+    needs:
+      - start-runner
+      - kind-testing
+    runs-on: ubuntu-latest
+    # Always run this job, even if previous jobs failed
+    if: ${{ always() }}
+
+    steps:
+      - name: Stop EC2 runner
+        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
+        with:
+          mode: stop
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          label: ${{ needs.start-runner.outputs.label }} # Matches the label from start-runner
