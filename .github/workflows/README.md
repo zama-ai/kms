@@ -126,7 +126,7 @@ Our CI uses intelligent change detection to only run tests for modified componen
 | 🎯 Main | ✅ | On core/service/** changes |
 
 ##### Test Matrix Configuration
-- 🌙 **Nightly Tests**: `--release -F slow_tests -F s3_tests -F insecure nightly_tests`
+- 🌙 **Nightly Tests**: `--release -F slow_tests -F s3_tests -F insecure nightly`
 - 🔍 **PR/Main Tests** (4 parallel jobs):
   1. **Library Tests**: `-F testing --lib`
   2. **Default User Decryption**: `-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold`
