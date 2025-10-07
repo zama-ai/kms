@@ -386,29 +386,43 @@ impl KubernetesCmd {
             KMSMode::Centralized => (&std::env::var("KMS_CENTRALIZED_VALUES_FILE").unwrap(), 1),
         };
 
-        let helm_upgrade = Command::new("helm")
-            .args([
-                "upgrade",
-                "--install",
-                &std::env::var("KMS_RELEASE_NAME").unwrap(),
-                // "--version",
-                // &std::env::var("KMS_CHART_VERSION").unwrap(),
-                // &std::env::var("KMS_CHART_REGISTRY_URL").unwrap(),
-                self.root_path.join("charts/kms-core").to_str().unwrap(),
-                "--namespace",
-                &std::env::var("NAMESPACE").unwrap(),
-                "--create-namespace",
-                "--wait",
-                "-f",
-                self.root_path.join(values_file).to_str().unwrap(),
-                "--set",
-                "kmsCore.image.tag=v0.12.0",
-                "--set",
-                "kmsCoreClient.image.tag=v0.12.0",
-            ])
-            .stdout(Stdio::inherit()) // Show stdout in real-time
-            .stderr(Stdio::inherit()) // Show stderr in real-time
-            .output()?;
+        for i in 1..kms_nb_pod {
+            let helm_upgrade_kms = Command::new("helm")
+                .args([
+                    "upgrade",
+                    "--install",
+                    &std::env::var("KMS_RELEASE_NAME").unwrap(),
+                    // "--version",
+                    // &std::env::var("KMS_CHART_VERSION").unwrap(),
+                    // &std::env::var("KMS_CHART_REGISTRY_URL").unwrap(),
+                    self.root_path.join("charts/kms-core").to_str().unwrap(),
+                    "--namespace",
+                    &std::env::var("NAMESPACE").unwrap(),
+                    "--create-namespace",
+                    "-f",
+                    self.root_path
+                        .join("./ci/kube-testing/kms/values-kms-test.yaml")
+                        .to_str()
+                        .unwrap(),
+                    "-f",
+                    self.root_path
+                        .join(format!(
+                            "./ci/kube-testing/kms/values-kms-service-threshold-{}-kms-test.yaml",
+                            i
+                        ))
+                        .to_str()
+                        .unwrap(),
+                    "--set",
+                    "kmsCore.image.tag=v0.12.0",
+                    "--set",
+                    "kmsCoreClient.image.tag=v0.12.0",
+                    "--wait",
+                    "--timeout=1200s",
+                ])
+                .stdout(Stdio::inherit()) // Show stdout in real-time
+                .stderr(Stdio::inherit()) // Show stderr in real-time
+                .output()?;
+        }
 
         let kubectl_describe_pods = Command::new("kubectl")
             .args([
@@ -427,8 +441,113 @@ impl KubernetesCmd {
             String::from_utf8_lossy(&kubectl_describe_pods.stdout)
         );
 
-        if !helm_upgrade.status.success() {
-            let stderr = String::from_utf8_lossy(&helm_upgrade.stderr);
+        eprintln!("Waiting for KMS Core to be ready...");
+        for i in 1..kms_nb_pod {
+            let kms_core_wait = Command::new("kubectl")
+                .args([
+                    "wait",
+                    "--for=condition=ready",
+                    "pod",
+                    format!("kms-core-{}", i),
+                    "-n",
+                    &std::env::var("NAMESPACE").unwrap(),
+                    "--timeout=600s",
+                ])
+                .stdout(Stdio::inherit()) // Show stdout in real-time
+                .stderr(Stdio::inherit()) // Show stderr in real-time
+                .output()?;
+        }
+
+        eprintln!("Waiting for KMS Core initialization to complete...");
+        let helm_upgrade_kms_init = Command::new("helm")
+            .args([
+                "upgrade",
+                "--install",
+                "kms-core-init",
+                // "--version",
+                // &std::env::var("KMS_CHART_VERSION").unwrap(),
+                // &std::env::var("KMS_CHART_REGISTRY_URL").unwrap(),
+                self.root_path.join("charts/kms-core").to_str().unwrap(),
+                "--namespace",
+                &std::env::var("NAMESPACE").unwrap(),
+                "--create-namespace",
+                "-f",
+                self.root_path
+                    .join("./ci/kube-testing/kms/values-kms-service-init-kms-test.yaml")
+                    .to_str()
+                    .unwrap(),
+                "--set",
+                "kmsCore.image.tag=v0.12.0",
+                "--set",
+                "kmsCoreClient.image.tag=v0.12.0",
+                "--wait-for-jobs",
+                "--timeout=1200s",
+            ])
+            .stdout(Stdio::inherit()) // Show stdout in real-time
+            .stderr(Stdio::inherit()) // Show stderr in real-time
+            .output()?;
+
+        eprintln!("Waiting for KMS Core initialization to complete...");
+        let kms_init_wait = Command::new("kubectl")
+            .args([
+                "wait",
+                "--for=condition=complete",
+                "job",
+                "-l app=kms-threshold-init-job",
+                "-n",
+                &std::env::var("NAMESPACE").unwrap(),
+                "--timeout=600s",
+            ])
+            .stdout(Stdio::inherit()) // Show stdout in real-time
+            .stderr(Stdio::inherit()) // Show stderr in real-time
+            .output()?;
+
+        let helm_upgrade_kms_gen_keys = Command::new("helm")
+            .args([
+                "upgrade",
+                "--install",
+                "kms-core-gen-keys",
+                // "--version",
+                // &std::env::var("KMS_CHART_VERSION").unwrap(),
+                // &std::env::var("KMS_CHART_REGISTRY_URL").unwrap(),
+                self.root_path.join("charts/kms-core").to_str().unwrap(),
+                "--namespace",
+                &std::env::var("NAMESPACE").unwrap(),
+                "--create-namespace",
+                "-f",
+                self.root_path
+                    .join("./ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml")
+                    .to_str()
+                    .unwrap(),
+                "--set",
+                "kmsCore.image.tag=v0.12.0",
+                "--set",
+                "kmsCoreClient.image.tag=v0.12.0",
+                "--wait",
+                "--wait-for-jobs",
+                "--timeout=2400s",
+            ])
+            .stdout(Stdio::inherit()) // Show stdout in real-time
+            .stderr(Stdio::inherit()) // Show stderr in real-time
+            .output()?;
+
+        eprintln!("Waiting for KMS Core gen keys to complete...");
+        let kms_gen_keys_wait = Command::new("kubectl")
+            .args([
+                "wait",
+                "--for=condition=complete",
+                "job",
+                "-l app=kms-core-client-gen-keys",
+                "-n",
+                &std::env::var("NAMESPACE").unwrap(),
+                "--timeout=600s",
+            ])
+            .stdout(Stdio::inherit()) // Show stdout in real-time
+            .stderr(Stdio::inherit()) // Show stderr in real-time
+            .output()?;
+
+        if !helm_upgrade_kms.status.success() {
+            let stderr = String::from_utf8_lossy(&helm_upgrade_kms.stderr);
             println!("Error: Failed to install/upgrade Helm chart: {}", stderr);
             self.down();
         }
