@@ -13,6 +13,7 @@ use std::sync::Arc;
 use strum::Display;
 use tfhe::named::Named;
 use tfhe::safe_serialization::safe_deserialize;
+use tfhe::FheTypes;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::hashing::DomainSep;
@@ -775,6 +776,26 @@ pub trait Designcrypt {
         &self,
         dsep: &DomainSep,
         cipher: &UnifiedSigncryption,
+    ) -> Result<Vec<u8>, CryptographyError>;
+}
+
+pub trait SigncryptFHEPlaintext: Signcrypt {
+    fn signcrypt_plaintext(
+        &self,
+        rng: &mut (impl CryptoRng + RngCore),
+        dsep: &DomainSep,
+        plaintext: Vec<u8>,
+        fhe_type: FheTypes,
+        link: Vec<u8>,
+    ) -> Result<UnifiedSigncryption, CryptographyError>;
+}
+
+pub trait DesigncryptFHEPlaintext: Designcrypt {
+    fn designcrypt_plaintext(
+        &self,
+        dsep: &DomainSep,
+        signcryption: &UnifiedSigncryption,
+        link: Vec<u8>,
     ) -> Result<Vec<u8>, CryptographyError>;
 }
 

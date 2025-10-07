@@ -16,14 +16,16 @@ use crate::cryptography::hybrid_ml_kem;
 #[cfg(test)]
 use crate::cryptography::internal_crypto_types::{CryptoRand, UnifiedSigncryptionKeyPairOwned};
 use crate::cryptography::internal_crypto_types::{
-    Designcrypt, Signcrypt, UnifiedDesigncryptionKey, UnifiedPrivateDecKey, UnifiedPublicEncKey,
-    UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedSigncryptionKeyPair,
+    Designcrypt, DesigncryptFHEPlaintext, Signcrypt, SigncryptFHEPlaintext,
+    UnifiedDesigncryptionKey, UnifiedPrivateDecKey, UnifiedPublicEncKey, UnifiedSigncryption,
+    UnifiedSigncryptionKey, UnifiedSigncryptionKeyPair,
 };
 use crate::{anyhow_tracked, consts::SIG_SIZE};
 use ::signature::{Signer, Verifier};
 use kms_grpc::kms::v1::TypedPlaintext;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
+use tfhe::FheTypes;
 use threshold_fhe::hashing::{serialize_hash_element, DomainSep, DIGEST_BYTES};
 
 const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";
@@ -164,6 +166,23 @@ impl Signcrypt for UnifiedSigncryptionKey {
     }
 }
 
+impl SigncryptFHEPlaintext for UnifiedSigncryptionKey {
+    fn signcrypt_plaintext(
+        &self,
+        rng: &mut (impl CryptoRng + RngCore),
+        dsep: &DomainSep,
+        plaintext: Vec<u8>,
+        fhe_type: FheTypes,
+        link: Vec<u8>,
+    ) -> Result<UnifiedSigncryption, CryptographyError> {
+        let signcryption_msg = SigncryptionPayload {
+            plaintext: TypedPlaintext::from_bytes(plaintext, fhe_type),
+            link: link.clone(),
+        };
+        self.signcrypt(rng, dsep, &bc2wrap::serialize(&signcryption_msg)?)
+    }
+}
+
 impl Designcrypt for UnifiedDesigncryptionKey {
     /// Validate a signcryption and decrypt the payload if everything validates correctly.
     ///
@@ -187,6 +206,26 @@ impl Designcrypt for UnifiedDesigncryptionKey {
         let (msg, sig) = parse_msg(decrypted_plaintext, &self.sender_verf_key)?;
         check_format_and_signature(dsep, msg.clone(), &sig, self)?;
         Ok(msg)
+    }
+}
+
+impl DesigncryptFHEPlaintext for UnifiedDesigncryptionKey {
+    fn designcrypt_plaintext(
+        &self,
+        dsep: &DomainSep,
+        signcryption: &UnifiedSigncryption,
+        link: Vec<u8>,
+    ) -> Result<Vec<u8>, CryptographyError> {
+        let decrypted_signcryption = self.designcrypt(dsep, signcryption)?;
+
+        let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize(&decrypted_signcryption)
+            .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
+        if link != signcrypted_msg.link {
+            return Err(CryptographyError::VerificationError(
+                "signcryption link does not match!".to_string(),
+            ));
+        }
+        Ok(signcrypted_msg.plaintext.bytes) // TODO continue
     }
 }
 
