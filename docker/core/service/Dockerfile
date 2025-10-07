@@ -28,7 +28,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
     cargo build  --locked --profile=${LTO_RELEASE} -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init && \
-    cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-gen-keys --bin kms-custodian -F testing && \
+    cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-gen-keys --bin kms-custodian -F testing -F threshold-fhe/testing && \
     cp /app/kms/target/${LTO_RELEASE}/kms-server \
        /app/kms/target/${LTO_RELEASE}/kms-gen-tls-certs \
        /app/kms/target/${LTO_RELEASE}/kms-init \
@@ -72,7 +72,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
     cargo build  --locked --profile=${LTO_RELEASE} -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init -F insecure && \
-    cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-gen-keys --bin kms-custodian -F testing -F insecure && \
+    cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-gen-keys --bin kms-custodian -F testing -F insecure -F threshold-fhe/testing && \
     cp /app/kms/target/${LTO_RELEASE}/kms-server \
        /app/kms/target/${LTO_RELEASE}/kms-gen-tls-certs \
        /app/kms/target/${LTO_RELEASE}/kms-init \
@@ -173,7 +173,7 @@ COPY ./core/service/config/ /app/kms/core/service/config
 # Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="/app/kms/core/service/bin:$PATH"
 # Copy the binaries from the kms-core and go-runtime stages
-COPY --from=kms-core /app/kms/core/service/bin/ ./bin/
+COPY --from=kms-core-insecure /app/kms/core/service/bin/ ./bin/
 
 # Copy parent-side and enclave-side init scripts
 COPY ./docker/core/service/start_parent_proxies.sh ./bin/

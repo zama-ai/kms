@@ -14,7 +14,7 @@ crate-type = ["lib", "cdylib"]
 [[bin]] # Bin to generate keys
 name = "kms-gen-keys"
 path = "src/bin/kms-gen-keys.rs"
-required-features = ["testing"]
+required-features = ["testing", "threshold-fhe/testing"]
 
 [[bin]] # Bin to generate TLS certificates for the service
 name = "kms-gen-tls-certs"

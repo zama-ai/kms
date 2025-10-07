@@ -41,6 +41,15 @@ pub struct FhePubKeySet {
     pub server_key: tfhe::ServerKey,
 }
 
+impl std::fmt::Debug for FhePubKeySet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PubKeySet")
+            .field("public_key", &self.public_key)
+            .field("server_key", &"ommitted")
+            .finish()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum ReRandomizationRawKeySwitchingKey {
     UseCPKEncryptionKSK,
