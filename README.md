@@ -16,7 +16,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-BSD--3--Clause--Clear-%23ffb243?style=flat-square"></a>
   <a href="https://github.com/zama-ai/bounty-program"><img src="https://img.shields.io/badge/Contribute-Zama%20Bounty%20Program-%23ffd208?style=flat-square"></a>
   <a href="https://github.com/zama-ai/kms/pkgs/container/kms-service"><img src="https://github.com/zama-ai/kms/actions/workflows/main.yml/badge.svg?branch=main"></a>
-  <!-- TODO: add release badge once we made a public release -->
+  <a href="https://github.com/zama-ai/kms/releases"><img src="https://img.shields.io/github/v/release/zama-ai/kms?style=flat-square"></a>
 </p>
 
 ## About
@@ -45,11 +45,11 @@ The following describes how the KMS is used in conjunction with fhevm Gateway, i
 While the KMS can be used with multiple L1 EVM host chains, for simplicity, we will in the following document assume there is only a single L1 host chain.
 
 At the highest level, the system consists of multiple subsystems: a *host chain*, an *fhevm Gateway* and a *KMS*.
-The KMS is in turn composed of the following components, which we illustrate in the pictures below.
+The KMS is in turn composed of the following components, which we illustrate in the pictures below:
 
 ![KMS system](./docs/getting-started/overview.png)
 
-We observe that while the standard deployment of the KMS system is in a threshold setting. It can also be deployed in a centralized manner, where it will consist of a single logical Connector, Core and Keychain DA.
+We observe that while the standard deployment of the KMS system is in a threshold setting, it can also be deployed in a centralized manner, where it will consist of a single logical Connector, Core and Keychain DA.
 
 
 ## Installation
@@ -99,7 +99,7 @@ docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-thres
 
 This will start 4 KMS servers that interact with each other
 to perform threshold operations.
-Note: The yml files above do NOT use custodian based backup! If this is needed, use instead `docker-compose-core-threshold-custodian.yml` and `docker-compose-core-centralized-custodian.yml` respectively.
+Note: The yml files above do NOT use custodian-based backup! If this is needed, use instead `docker-compose-core-threshold-custodian.yml` and `docker-compose-core-centralized-custodian.yml` respectively.
 
 It is possible to run the centralized version by replacing `docker-compose-core-threshold.yml` with `docker-compose-core-centralized.yml`.
 
@@ -146,7 +146,7 @@ For more high-level information about using and deploying the code, check out [t
 ### Disclaimers
 
 #### Parameters
-The default parameters for the Zama KMS are chosen to ensure a failure probability of 2^-128 and symmetric equivalent security of 128 bits.
+The default parameters for the Zama KMS are chosen to ensure a failure probability of $2^{-128}$ and symmetric equivalent security of 128 bits.
 
 #### Side-channel attacks
 
@@ -173,7 +173,7 @@ This software is distributed under the **BSD-3-Clause-Clear** license. Read [thi
 >Everything we do is open source and we are very transparent on what it means for our users, you can read more about how we monetize our open source products at Zama in [this blog post](https://www.zama.ai/post/open-source).
 
 **What do I need to do if I want to use Zama’s technology for commercial purposes?**
->To commercially use Zama’s technology you need to be granted Zama’s patent license. Please contact us hello@zama.ai for more information.
+>To commercially use Zama’s technology you need to be granted Zama’s patent license. Please contact us at hello@zama.ai for more information.
 
 **Do you file IP on your technology?**
 >Yes, all Zama’s technologies are patented.
