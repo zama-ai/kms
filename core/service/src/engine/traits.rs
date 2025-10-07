@@ -23,7 +23,6 @@ use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::cryptography::internal_crypto_types::PublicSigKey;
 use crate::cryptography::internal_crypto_types::Signature;
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
-use crate::cryptography::internal_crypto_types::UnifiedPublicVerfKey;
 
 use super::base::KmsFheKeyHandles;
 
@@ -39,7 +38,6 @@ pub trait BaseKms {
         dsep: &DomainSep,
         msg: &T,
     ) -> anyhow::Result<Signature>;
-    fn get_serialized_verf_key(&self) -> Vec<u8>;
     fn digest<T: ?Sized + AsRef<[u8]>>(
         domain_separator: &DomainSep,
         msg: &T,
@@ -63,7 +61,7 @@ pub trait Kms: BaseKms {
         ct_format: CiphertextFormat,
         digest_link: &[u8],
         enc_key: &UnifiedPublicEncKey,
-        client_address: &UnifiedPublicVerfKey, // todo designcryption key
+        client_address: &[u8], // todo designcryption key
     ) -> anyhow::Result<Vec<u8>>;
 }
 

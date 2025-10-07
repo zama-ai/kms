@@ -1,8 +1,7 @@
 use crate::client::client_wasm::Client;
 use crate::cryptography::internal_crypto_types::{
-    PublicSigKey, UnifiedDesigncryptionKey, UnifiedPrivateDecKey, UnifiedPrivateSignKey,
-    UnifiedPublicVerfKey, UnifiedSigncryption, UnifiedSigncryptionKeyPair,
-    UnifiedSigncryptionKeyPairOwned,
+    PublicSigKey, UnifiedDesigncryptionKey, UnifiedPrivateDecKey, UnifiedSigncryptionKey,
+    UnifiedSigncryptionKeyPair, UnifiedSigncryptionKeyPairOwned,
 };
 use crate::cryptography::internal_crypto_types::{Signature, UnifiedPublicEncKey};
 use crate::cryptography::signcryption::{
@@ -63,15 +62,17 @@ impl Client {
                     "missing client signing key".to_string(),
                 ));
             }
-        };
+        }; // todo ensure proper keys are used
         let owned_client_keys = UnifiedSigncryptionKeyPairOwned {
-            signcrypt_key: UnifiedSigncryption {
-                signing_key: UnifiedPrivateSignKey::Ecdsa256k1(sig_sk.clone()),
-                encryption_key: enc_pk.clone(),
+            signcrypt_key: UnifiedSigncryptionKey {
+                signing_key: sig_sk.clone(),
+                receiver_enc_key: enc_pk.clone(),
+                receiver_id: self.client_address.to_vec(),
             },
             designcrypt_key: UnifiedDesigncryptionKey {
-                sender_verf_key: UnifiedPublicVerfKey::Ecdsa256k1(PublicSigKey::from_sk(sig_sk)),
+                sender_verf_key: PublicSigKey::from_sk(sig_sk),
                 decryption_key: enc_sk.clone(),
+                encryption_key: enc_pk.clone(),
             },
         };
         let client_keys = owned_client_keys.reference();
@@ -123,12 +124,14 @@ impl Client {
             }
         };
         let owned_client_keys = UnifiedSigncryptionKeyPairOwned {
-            signcrypt_key: UnifiedSigncryption {
-                signing_key: UnifiedPrivateSignKey::Ecdsa256k1(sig_sk.clone()),
-                decryption_key: enc_sk.clone(),
+            signcrypt_key: UnifiedSigncryptionKey {
+                signing_key: sig_sk.clone(),
+                receiver_enc_key: enc_pk.clone(),
+                receiver_id: self.client_address.to_vec(),
             },
             designcrypt_key: UnifiedDesigncryptionKey {
-                sender_verf_key: UnifiedPublicVerfKey::Ecdsa256k1(PublicSigKey::from_sk(sig_sk)),
+                sender_verf_key: PublicSigKey::from_sk(sig_sk),
+                decryption_key: enc_sk.clone(),
                 encryption_key: enc_pk.clone(),
             },
         };

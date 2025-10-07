@@ -105,7 +105,16 @@ pub async fn user_decrypt_impl<
         (TAG_PUBLIC_DECRYPTION_KIND, "centralized".to_string()),
     ];
 
-    let server_verf_key = service.base_kms.get_serialized_verf_key();
+    let server_verf_key = service
+        .base_kms
+        .sig_key
+        .verf_key()
+        .get_serialized_verf_key()
+        .map_err(|e| {
+            Status::internal(format!(
+                "Failed to serialize server verification key: {e:?}"
+            ))
+        })?;
 
     let handle = tokio::spawn(
         async move {
@@ -445,7 +454,16 @@ pub async fn get_public_decryption_result_impl<
         external_signature
     );
 
-    let server_verf_key = service.get_serialized_verf_key();
+    let server_verf_key = service
+        .base_kms
+        .sig_key
+        .verf_key()
+        .get_serialized_verf_key()
+        .map_err(|e| {
+            Status::internal(format!(
+                "Failed to serialize server verification key: {e:?}"
+            ))
+        })?;
 
     // the payload to be signed for verification inside the KMS
     let kms_sig_payload = PublicDecryptionResponsePayload {

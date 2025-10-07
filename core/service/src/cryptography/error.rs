@@ -25,4 +25,6 @@ pub enum CryptographyError {
     SigningError(String),
     #[error("Verification error: {0}")]
     VerificationError(String),
+    #[error("Other: {0}")]
+    Other(String),
 }

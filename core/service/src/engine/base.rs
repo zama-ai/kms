@@ -16,7 +16,6 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
-use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, TypedPlaintext, UserDecryptionResponsePayload,
 };
@@ -600,19 +599,14 @@ pub fn compute_external_pubdata_signature<D: SolStruct>(
 pub struct BaseKmsStruct {
     pub(crate) kms_type: KMSType,
     pub(crate) sig_key: Arc<PrivateSigKey>,
-    pub(crate) serialized_verf_key: Arc<Vec<u8>>,
     pub(crate) rng: Arc<Mutex<AesRng>>,
 }
 
 impl BaseKmsStruct {
     pub fn new(kms_type: KMSType, sig_key: PrivateSigKey) -> anyhow::Result<Self> {
-        let serialized_verf_key = Arc::new(bc2wrap::serialize(&PublicSigKey::new(
-            SigningKey::verifying_key(sig_key.sk()).to_owned(),
-        ))?);
         Ok(BaseKmsStruct {
             kms_type,
             sig_key: Arc::new(sig_key),
-            serialized_verf_key,
             rng: Arc::new(Mutex::new(AesRng::from_entropy())),
         })
     }
@@ -622,7 +616,6 @@ impl BaseKmsStruct {
         Self {
             kms_type: self.kms_type,
             sig_key: self.sig_key.clone(),
-            serialized_verf_key: self.serialized_verf_key.clone(),
             rng: Arc::new(Mutex::new(self.new_rng().await)),
         }
     }
@@ -661,10 +654,6 @@ impl BaseKms for BaseKmsStruct {
         T: Serialize + AsRef<[u8]>,
     {
         crate::cryptography::signcryption::internal_sign(dsep, msg, &self.sig_key)
-    }
-
-    fn get_serialized_verf_key(&self) -> Vec<u8> {
-        self.serialized_verf_key.as_ref().clone()
     }
 
     fn digest<T>(domain_separator: &DomainSep, msg: &T) -> anyhow::Result<Vec<u8>>

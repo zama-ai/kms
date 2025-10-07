@@ -6,9 +6,10 @@ use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::decompression;
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 #[cfg(feature = "non-wasm")]
-use crate::cryptography::internal_crypto_types::{UnifiedPublicEncKey, UnifiedPublicVerfKey};
+use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::internal_crypto_types::{Signcrypt, UnifiedSigncryptionKey};
 use crate::cryptography::signcryption::SigncryptionPayload;
 #[cfg(feature = "non-wasm")]
 use crate::engine::backup_operator::RealBackupOperator;
@@ -606,8 +607,6 @@ pub async fn async_user_decrypt<
 
     let mut all_signcrypted_cts = vec![];
     for typed_ciphertext in typed_ciphertexts {
-        use crate::cryptography::internal_crypto_types::Eip712VerfKey;
-
         let mut inner_timer = metrics::METRICS
             .time_operation(OP_USER_DECRYPT_INNER)
             .tags(metric_tags.clone())
@@ -618,8 +617,6 @@ pub async fn async_user_decrypt<
         inner_timer.tag(TAG_TFHE_TYPE, fhe_type_string);
         let ct_format = typed_ciphertext.ciphertext_format();
         let external_handle = typed_ciphertext.external_handle.clone();
-        let client_verf_key =
-            UnifiedPublicVerfKey::Eip712(Eip712VerfKey::new(client_address.clone()));
         let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS>::user_decrypt(
             keys,
             sig_key,
@@ -629,7 +626,7 @@ pub async fn async_user_decrypt<
             ct_format,
             req_digest,
             client_enc_key,
-            &client_verf_key,
+            client_address.as_ref(),
         )?;
         all_signcrypted_cts.push(TypedSigncryptedCiphertext {
             fhe_type: fhe_type as i32,
@@ -698,10 +695,6 @@ impl<
         msg: &T,
     ) -> anyhow::Result<crate::cryptography::internal_crypto_types::Signature> {
         self.base_kms.sign(dsep, msg)
-    }
-
-    fn get_serialized_verf_key(&self) -> Vec<u8> {
-        self.base_kms.get_serialized_verf_key()
     }
 
     fn digest<T: ?Sized + AsRef<[u8]>>(
@@ -948,8 +941,13 @@ impl<
         ct_format: CiphertextFormat,
         link: &[u8],
         client_enc_key: &UnifiedPublicEncKey,
-        client_address: &UnifiedPublicVerfKey,
+        client_id: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
+        let signcryption_key = UnifiedSigncryptionKey::new(
+            sig_key.clone(),
+            client_enc_key.clone(),
+            client_id.to_vec(),
+        );
         let plaintext = Self::public_decrypt(keys, ct, fhe_type, ct_format)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
@@ -958,15 +956,7 @@ impl<
             link: link.to_vec(),
         };
         let serialized_msg = bc2wrap::serialize(&signcryption_msg)?;
-
-        let enc_res = signcrypt(
-            rng,
-            &DSEP_USER_DECRYPTION,
-            &serialized_msg,
-            client_enc_key,
-            client_address,
-            sig_key,
-        )?;
+        let enc_res = signcryption_key.signcrypt(rng, &DSEP_USER_DECRYPTION, &serialized_msg)?;
         let res = bc2wrap::serialize(&enc_res)?;
         tracing::info!("Completed user decryption of ciphertext");
 
@@ -1173,9 +1163,7 @@ pub(crate) mod tests {
     };
     use crate::consts::{DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
-    use crate::cryptography::internal_crypto_types::{
-        gen_sig_keys, PrivateSigKey, UnifiedPublicEncKey,
-    };
+    use crate::cryptography::internal_crypto_types::{gen_sig_keys, PrivateSigKey};
     use crate::cryptography::signcryption::{
         decrypt_signcryption_with_link, ephemeral_signcryption_key_generation,
     };
@@ -1672,11 +1660,15 @@ pub(crate) mod tests {
             inner
         };
         let link = vec![42_u8, 42, 42];
-        let (_client_verf_key, client_sig_key) = gen_sig_keys(&mut rng);
+        let (_client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
         let client_key_pair = {
-            let mut keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
+            let mut keys =
+                ephemeral_signcryption_key_generation(&mut rng, &kms.base_kms.sig_key.verf_key());
             if sim_type == SimulationType::BadEphemeralKey {
-                let bad_keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
+                let bad_keys = ephemeral_signcryption_key_generation(
+                    &mut rng,
+                    &kms.base_kms.sig_key.verf_key(),
+                );
                 keys.signcrypt_key = bad_keys.signcrypt_key;
             }
             keys
@@ -1695,7 +1687,10 @@ pub(crate) mod tests {
             ct_format,
             &link,
             &unified_client_keys,
-            &client_key_pair.designcrypt_key.sender_verf_key,
+            &client_key_pair
+                .designcrypt_key
+                .sender_verf_key
+                .verf_key_id(),
         );
         // if bad FHE key is used, then it *might* panic
         let raw_cipher = if sim_type == SimulationType::BadFheKey {

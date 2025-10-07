@@ -190,5 +190,28 @@ mod tests {
             let err = dec::<ml_kem::MlKem512>(ct, &sk).unwrap_err();
             assert!(matches!(err, CryptographyError::AesGcmError(..)));
         }
+
+        #[test]
+        fn pke_wrong_nonce(msg: Vec<u8>) {
+            let mut rng = OsRng;
+            let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng, );
+            let mut ct = enc::<ml_kem::MlKem512, _>(&mut rng, &msg, &pk).unwrap();
+            assert_eq!(ct.kem_ct.len(), ML_KEM_512_CT_LENGTH);
+            ct.nonce[ct.nonce.len()-1] ^= 1;
+            let err = dec::<ml_kem::MlKem512>(ct, &sk).unwrap_err();
+            assert!(matches!(err, CryptographyError::AesGcmError(..)));
+        }
+
+        #[test]
+        fn pke_wrong_kem(msg: Vec<u8>) {
+            let mut rng = OsRng;
+            let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng, );
+            let mut ct = enc::<ml_kem::MlKem512, _>(&mut rng, &msg, &pk).unwrap();
+            assert_eq!(ct.kem_ct.len(), ML_KEM_512_CT_LENGTH);
+            let len = ct.kem_ct.len();
+            ct.kem_ct[len - 1] ^= 1;
+            let err = dec::<ml_kem::MlKem512>(ct, &sk).unwrap_err();
+            assert!(matches!(err, CryptographyError::AesGcmError(..)));
+        }
     }
 }

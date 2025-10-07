@@ -55,7 +55,8 @@ use crate::{
     anyhow_error_and_log,
     consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
-        internal_crypto_types::{PrivateSigKey, UnifiedPublicEncKey},
+        error::CryptographyError,
+        internal_crypto_types::{Signcrypt, UnifiedSigncryptionKey},
         signcryption::SigncryptionPayload,
     },
     engine::{
@@ -177,11 +178,8 @@ impl<
         rng: impl CryptoRng + RngCore + Send + 'static,
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
-        client_enc_key: UnifiedPublicEncKey,
-        client_address: alloy_primitives::Address,
-        sig_key: Arc<PrivateSigKey>,
+        signcryption_key: Arc<UnifiedSigncryptionKey>,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
-        server_verf_key: Vec<u8>,
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
         metric_tags: Vec<(&'static str, String)>,
@@ -191,9 +189,6 @@ impl<
         let mut all_signcrypted_cts = vec![];
 
         let rng = Arc::new(Mutex::new(rng));
-        let client_enc_key = Arc::new(client_enc_key);
-        let client_address = Arc::new(client_address);
-
         // TODO: Each iteration of this loop should probably happen
         // inside its own tokio task
         for (ctr, typed_ciphertext) in typed_ciphertexts.into_iter().enumerate() {
@@ -326,21 +321,16 @@ impl<
                     };
 
                     let rng = rng.clone();
-                    let sig_key = sig_key.clone();
-                    let client_enc_key = client_enc_key.clone();
-                    let client_address = client_address.clone();
+                    let signcryption_key_clone = signcryption_key.clone();
 
                     let enc_res = spawn_compute_bound(move || {
-                        let mut rng = rng
-                            .lock()
-                            .map_err(|_| anyhow_error_and_log("Poisoned mutex guard"))?;
-                        signcrypt(
+                        let mut rng = rng.lock().map_err(|_| {
+                            CryptographyError::Other("Poisoned mutex guard".to_string())
+                        })?;
+                        signcryption_key_clone.signcrypt(
                             rng.deref_mut(),
                             &DSEP_USER_DECRYPTION,
                             &bc2wrap::serialize(&signcryption_msg)?,
-                            &client_enc_key,
-                            &client_address,
-                            &sig_key,
                         )
                     })
                     .await??;
@@ -368,7 +358,10 @@ impl<
         let payload = UserDecryptionResponsePayload {
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
-            verification_key: server_verf_key,
+            verification_key: signcryption_key
+                .signing_key
+                .verf_key()
+                .get_serialized_verf_key()?,
             party_id: session_prep.my_role()?.one_based() as u32,
             degree: session_prep.threshold()? as u32,
         };
@@ -376,10 +369,10 @@ impl<
         // NOTE: extra_data is not used in the current implementation
         let extra_data = vec![];
         let external_signature = compute_external_user_decrypt_signature(
-            &sig_key,
+            &signcryption_key.signing_key,
             &payload,
             domain,
-            &client_enc_key,
+            &signcryption_key.receiver_enc_key,
             extra_data.clone(),
         )?;
         Ok((payload, external_signature, extra_data))
@@ -555,8 +548,6 @@ impl<
             ),
         ];
 
-        let server_verf_key = self.base_kms.get_serialized_verf_key();
-
         // the result of the computation is tracked the tracker
         self.tracker.spawn(
             async move {
@@ -564,6 +555,12 @@ impl<
                 let _timer = timer;
                 // explicitly move the rate limiter context
                 let _permit = permit;
+                let signcryption_key = Arc::new(UnifiedSigncryptionKey::new(
+                    (*sig_key).clone(),
+                    client_enc_key.clone(),
+                    client_address.to_vec(),
+                ));
+
                 // Note that we'll hold a read lock for some time
                 // but this should be ok since write locks
                 // happen rarely as keygen is a rare event.
@@ -579,11 +576,8 @@ impl<
                             rng,
                             typed_ciphertexts,
                             link.clone(),
-                            client_enc_key,
-                            client_address,
-                            sig_key,
+                            signcryption_key,
                             k,
-                            server_verf_key,
                             dec_mode,
                             &domain,
                             metric_tags,

@@ -16,19 +16,13 @@ use crate::cryptography::hybrid_ml_kem;
 #[cfg(test)]
 use crate::cryptography::internal_crypto_types::{CryptoRand, UnifiedSigncryptionKeyPairOwned};
 use crate::cryptography::internal_crypto_types::{
-    Designcrypt, Signcrypt, UnifiedCipher, UnifiedDesigncryptionKey, UnifiedPrivateDecKey,
-    UnifiedPrivateSignKey, UnifiedPublicEncKey, UnifiedPublicVerfKey, UnifiedSigncryption,
-    UnifiedSigncryptionKey, UnifiedSigncryptionKeyPair,
+    Designcrypt, Signcrypt, UnifiedDesigncryptionKey, UnifiedPrivateDecKey, UnifiedPublicEncKey,
+    UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedSigncryptionKeyPair,
 };
 use crate::{anyhow_tracked, consts::SIG_SIZE};
 use ::signature::{Signer, Verifier};
-use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::TypedPlaintext;
-#[cfg(test)]
-use ml_kem::KemCore;
-use nom::AsBytes;
 use rand::{CryptoRng, RngCore};
-use rasn::de;
 use serde::{Deserialize, Serialize};
 use threshold_fhe::hashing::{serialize_hash_element, DomainSep, DIGEST_BYTES};
 
@@ -134,48 +128,23 @@ impl Signcrypt for UnifiedSigncryptionKey {
                     .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
             }
         };
-        let to_sign = [
-            msg.as_ref(),
-            &self.signing_key.verf_key().verf_key_id(),
-            &serialized_enc_key,
-        ]
-        .concat();
-        let sig = match &self.signing_key {
-            crate::cryptography::internal_crypto_types::UnifiedPrivateSignKey::Ecdsa256k1(
-                private_sig_key,
-            ) => {
-                internal_sign(dsep, &to_sign, &private_sig_key)
-                    .map_err(|e| CryptographyError::SigningError(e.to_string()))?
-                    .sig
-            }
-            crate::cryptography::internal_crypto_types::UnifiedPrivateSignKey::Eip712(
-                eip712_sig_key,
-            ) => {
-                // TODO be careful! IN the legacy code only `internal_sign` was used for signing! Ensure that in legacy code only ecdsa256k1 was used!
-                // sign_eip712(&to_sign, &eip712_sig_key.domain(), eip712_sig_key.sk())?.sig
-                unimplemented!("Eip712 signing in signcryption is not implemented yet")
-            }
-        };
+        let to_sign = [msg.as_ref(), &self.receiver_id, &serialized_enc_key].concat();
+        let sig = internal_sign(dsep, &to_sign, &self.signing_key)
+            .map_err(|e| CryptographyError::SigningError(e.to_string()))?
+            .sig;
 
         // Encrypt msg || sig || H(server_verification_key) || H(server_enc_pub_key)
         // OBSERVE: serialization is simply r concatenated with s. That is NOT an Ethereum compatible
         // signature since we preclude the v value.
         // The verification key is serialized based on the SEC1 standard.
-        let verf_key_hash = match &self.signing_key {
-            UnifiedPrivateSignKey::Ecdsa256k1(private_sig_key) => &serialize_hash_element(
-                &DSEP_SIGNCRYPTION,
-                // TODO this is horrible! We are using address above be here we use digest! This should be changed to use  &self.signing_key.verf_key().verf_key_id(),
-                // Idem below
-                &PublicSigKey::from_sk(&private_sig_key),
-            )
-            .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?,
-            UnifiedPrivateSignKey::Eip712(eip712_sig_key) => &serialize_hash_element(
-                &DSEP_SIGNCRYPTION,
-                &PublicSigKey::from_sk(&eip712_sig_key.sk()),
-            )
-            .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?,
-        };
-        let to_encrypt = [msg.as_ref(), &sig.to_bytes(), &verf_key_hash].concat();
+        let verf_key_hash = &serialize_hash_element(
+            &DSEP_SIGNCRYPTION,
+            // TODO this is horrible! We are using address above be here we use digest! This should be changed to use  &self.signing_key.verf_key().verf_key_id(),
+            // Idem below
+            &PublicSigKey::from_sk(&self.signing_key),
+        )
+        .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?;
+        let to_encrypt = [msg.as_ref(), &sig.to_bytes(), verf_key_hash].concat();
 
         let ciphertext = match &self.receiver_enc_key {
             UnifiedPublicEncKey::MlKem512(public_enc_key) => {
@@ -215,17 +184,9 @@ impl Designcrypt for UnifiedDesigncryptionKey {
                 hybrid_ml_kem::dec::<ml_kem::MlKem1024>(cipher.0, &dec_key.0)
             }
         }?;
-        let verf_key = match &self.sender_verf_key {
-            crate::cryptography::internal_crypto_types::UnifiedPublicVerfKey::Ecdsa256k1(
-                public_verf_key,
-            ) => public_verf_key,
-            crate::cryptography::internal_crypto_types::UnifiedPublicVerfKey::Eip712(
-                eip712_verf_key,
-            ) => unimplemented!("Eip712 verification in signcryption is not implemented yet"),
-        };
-        let (msg, sig) = parse_msg(decrypted_plaintext, &verf_key)?;
+        let (msg, sig) = parse_msg(decrypted_plaintext, &self.sender_verf_key)?;
 
-        check_format_and_signature(dsep, msg.clone(), &sig, &self)?;
+        check_format_and_signature(dsep, msg.clone(), &sig, self)?;
         Ok(msg)
     }
 }
@@ -296,15 +257,11 @@ fn check_format_and_signature(
     // Check that the signature is normalized
     check_normalized(sig)?;
     // Verify signature
-    match &designcryption_key.sender_verf_key {
-        UnifiedPublicVerfKey::Eip712(inner_verf) => {
-            unimplemented!("Eip712 verification in signcryption is not implemented yet");
-        }
-        UnifiedPublicVerfKey::Ecdsa256k1(inner_verf) => inner_verf
-            .pk()
-            .verify(&[dsep.as_slice(), &msg_signed].concat(), &sig.sig)
-            .map_err(|e| CryptographyError::VerificationError(e.to_string())),
-    }
+    designcryption_key
+        .sender_verf_key
+        .pk()
+        .verify(&[dsep.as_slice(), &msg_signed].concat(), &sig.sig)
+        .map_err(|e| CryptographyError::VerificationError(e.to_string()))
 }
 
 /// Check if a signature is normalized in "low S" form as described in
@@ -329,10 +286,16 @@ pub fn decrypt_signcryption_with_link(
     cipher: &[u8],
     link: &[u8],
     client_keys: &UnifiedSigncryptionKeyPair,
-    server_verf_key: &PublicSigKey,
+    _server_verf_key: &PublicSigKey, // TODO client key should be setup correctly
 ) -> anyhow::Result<TypedPlaintext> {
-    let cipher: Cipher = bc2wrap::deserialize(cipher)?;
-    let decrypted_signcryption = validate_and_decrypt(dsep, &cipher, client_keys, server_verf_key)?;
+    let signcryption_cipher = UnifiedSigncryption::new(
+        cipher.to_vec(), //todo check the type is right
+        (&client_keys.designcryption_key.decryption_key).into(),
+        (&client_keys.signcrypt_key.signing_key).into(),
+    );
+    let decrypted_signcryption = client_keys
+        .designcryption_key
+        .designcrypt(dsep, &signcryption_cipher)?;
 
     let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize(&decrypted_signcryption)?;
     if link != signcrypted_msg.link {
@@ -378,91 +341,65 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
 #[cfg(test)]
 pub(crate) fn ephemeral_signcryption_key_generation(
     rng: &mut impl CryptoRand,
-    sig_key: &PrivateSigKey,
+    server_verf_key: &PublicSigKey,
 ) -> UnifiedSigncryptionKeyPairOwned {
     use crate::cryptography::internal_crypto_types::{
-        Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateSignKey,
-        UnifiedPublicVerfKey,
+        gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
     };
-
-    let verification_key = PublicSigKey::new(*SigningKey::verifying_key(sig_key.sk()));
+    let (client_verf_key, client_sig_key) = gen_sig_keys(rng);
     let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, rng);
     let (dec_key, enc_key) = encryption.keygen().unwrap();
     UnifiedSigncryptionKeyPairOwned {
         signcrypt_key: UnifiedSigncryptionKey::new(
-            UnifiedPrivateSignKey::new(None, sig_key.clone()),
+            client_sig_key.clone(),
             enc_key.clone(),
+            client_verf_key.verf_key_id(),
         ),
-        designcrypt_key: UnifiedDesigncryptionKey::new(
-            dec_key,
-            enc_key,
-            UnifiedPublicVerfKey::new(verification_key, false),
-        ),
+        designcrypt_key: UnifiedDesigncryptionKey::new(dec_key, enc_key, server_verf_key.clone()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        decrypt_signcryption_with_link, ephemeral_signcryption_key_generation, PrivateSigKey,
-        PublicSigKey, SigncryptionPayload,
+        decrypt_signcryption_with_link, ephemeral_signcryption_key_generation, PublicSigKey,
+        SigncryptionPayload,
     };
-    use crate::cryptography::internal_crypto_types::{Signature, UnifiedSigncryptionKeyPairOwned};
+    use crate::cryptography::internal_crypto_types::{
+        gen_sig_keys, Designcrypt, EncryptionSchemeType, Signature, Signcrypt,
+        UnifiedDesigncryptionKey, UnifiedSigncryption, UnifiedSigncryptionKeyPairOwned,
+    };
     use crate::cryptography::signcryption::{
         check_format_and_signature, internal_sign, internal_verify_sig, parse_msg, DIGEST_BYTES,
         DSEP_SIGNCRYPTION, SIG_SIZE,
     };
     use aes_prng::AesRng;
-    use core::panic;
-    use k256::ecdsa::SigningKey;
     use kms_grpc::kms::v1::TypedPlaintext;
-    use rand::{CryptoRng, RngCore, SeedableRng};
+    use rand::SeedableRng;
     use threshold_fhe::hashing::serialize_hash_element;
-    use tracing_test::traced_test;
-
-    /// Helper method for generating keys for digital signatures
-    fn signing_key_generation(
-        rng: &mut (impl CryptoRng + RngCore),
-    ) -> (PublicSigKey, PrivateSigKey) {
-        let sk = SigningKey::random(rng);
-        let pk = SigningKey::verifying_key(&sk);
-        (PublicSigKey::new(*pk), PrivateSigKey::new(sk))
-    }
 
     /// Helper method that creates an rng, a valid client request (on a dummy fhe cipher) and client
     /// signcryption keys SigncryptionPair Returns the rng, client request, client signcryption
     /// keys and the dummy fhe cipher the request is made for.
     fn test_setup() -> (AesRng, UnifiedSigncryptionKeyPairOwned) {
         let mut rng = AesRng::seed_from_u64(1);
-        let client_sig_key = PrivateSigKey::new(SigningKey::random(&mut rng));
-        let keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
+        let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
+        let keys = ephemeral_signcryption_key_generation(&mut rng, &client_verf_key);
         (rng, keys)
     }
 
     #[test]
     fn sunshine() {
         let (mut rng, client_signcryption_keys) = test_setup();
-        let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "A relatively long message that we wish to be able to later validate".as_bytes();
-        let cipher = signcrypt(
-            &mut rng,
-            b"TESTTEST",
-            &msg,
-            &client_signcryption_keys
-                .designcrypt_key
-                .enc_key
-                .to_unified(),
-            &client_signcryption_keys.designcrypt_key.client_address,
-            &server_sig_key,
-        )
-        .unwrap();
-        let decrypted_msg = validate_and_decrypt(
-            b"TESTTEST",
-            &cipher,
-            &client_signcryption_keys,
-            &server_verf_key,
-        )
-        .unwrap();
+        let cipher = client_signcryption_keys
+            .signcrypt_key
+            .signcrypt(&mut rng, b"TESTTEST", &msg)
+            .unwrap();
+        let decrypted_msg = client_signcryption_keys
+            .designcrypt_key
+            .designcrypt(b"TESTTEST", &cipher)
+            .unwrap();
         assert_eq!(msg, decrypted_msg);
     }
 
@@ -470,43 +407,41 @@ mod tests {
     fn sunshine_encoding_decoding() {
         // test the bincode serialization because that is what we use for all of kms
         let (mut rng, client_signcryption_keys) = test_setup();
-        let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "A relatively long message that we wish to be able to later validate".as_bytes();
-        let cipher = signcrypt(
-            &mut rng,
-            b"TESTTEST",
-            &msg,
-            &client_signcryption_keys
-                .designcrypt_key
-                .enc_key
-                .to_unified(),
-            &client_signcryption_keys.designcrypt_key.client_address,
-            &server_sig_key,
-        )
-        .unwrap();
-
+        let cipher = client_signcryption_keys
+            .signcrypt_key
+            .signcrypt(&mut rng, b"TESTTEST", &msg)
+            .unwrap();
         let serialized_cipher = bc2wrap::serialize(&cipher).unwrap();
-        let deserialized_cipher: crate::cryptography::internal_crypto_types::Cipher =
+        let deserialized_cipher: UnifiedSigncryption =
             bc2wrap::deserialize(&serialized_cipher).unwrap();
 
-        let serialized_server_verf_key = bc2wrap::serialize(&server_verf_key).unwrap();
+        let serialized_server_verf_key =
+            bc2wrap::serialize(&client_signcryption_keys.designcrypt_key.sender_verf_key).unwrap();
         let deserialized_server_verf_key: PublicSigKey =
             bc2wrap::deserialize(&serialized_server_verf_key).unwrap();
 
-        let decrypted_msg = validate_and_decrypt(
-            b"TESTTEST",
-            &deserialized_cipher,
-            &client_signcryption_keys,
-            &deserialized_server_verf_key,
-        )
-        .unwrap();
+        let new_keys = UnifiedDesigncryptionKey::new(
+            client_signcryption_keys
+                .designcrypt_key
+                .decryption_key
+                .clone(),
+            client_signcryption_keys
+                .designcrypt_key
+                .encryption_key
+                .clone(),
+            deserialized_server_verf_key.clone(),
+        );
+        let decrypted_msg = new_keys
+            .designcrypt(b"TESTTEST", &deserialized_cipher)
+            .unwrap();
         assert_eq!(msg, decrypted_msg);
     }
 
     #[test]
     fn plain_signing() {
         let mut rng = AesRng::seed_from_u64(1);
-        let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
+        let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
         let msg = "A relatively long message that we wish to be able to later validate".as_bytes();
         let sig = internal_sign(b"TESTTEST", &msg, &server_sig_key).unwrap();
         assert!(internal_verify_sig(b"TESTTEST", &msg.to_vec(), &sig, &server_verf_key).is_ok());
@@ -515,148 +450,86 @@ mod tests {
     #[test]
     fn bad_signcryption() {
         let (mut rng, client_signcryption_keys) = test_setup();
-        let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "A relatively long message that we wish to be able to later validate".as_bytes();
-        let correct_cipher = signcrypt(
-            &mut rng,
-            b"TESTTEST",
-            &msg,
-            &client_signcryption_keys
-                .designcrypt_key
-                .enc_key
-                .to_unified(),
-            &client_signcryption_keys.designcrypt_key.client_address,
-            &server_sig_key,
-        )
-        .unwrap();
+        let correct_cipher = client_signcryption_keys
+            .signcrypt_key
+            .signcrypt(&mut rng, b"TESTTEST", &msg)
+            .unwrap();
 
         // flip a bit in the payload
         {
             let mut cipher = correct_cipher.clone();
-            cipher.0.payload_ct[0] ^= 1;
+            cipher.payload[0] ^= 1;
 
-            assert!(validate_and_decrypt(
-                b"TESTTEST",
-                &cipher,
-                &client_signcryption_keys,
-                &server_verf_key,
-            )
-            .is_err());
+            assert!(client_signcryption_keys
+                .designcrypt_key
+                .designcrypt(b"TESTTEST", &cipher)
+                .is_err());
         }
 
-        // flip a bit in the nonce
+        // wrong scheme
         {
             let mut cipher = correct_cipher.clone();
-            cipher.0.nonce[0] ^= 1;
-
-            assert!(validate_and_decrypt(
-                b"TESTTEST",
-                &cipher,
-                &client_signcryption_keys,
-                &server_verf_key,
-            )
-            .is_err());
+            cipher.encryption_type = EncryptionSchemeType::MlKem1024;
+            assert!(client_signcryption_keys
+                .designcrypt_key
+                .designcrypt(b"TESTTEST", &cipher)
+                .is_err());
         }
 
         // use the wrong client signcryption key
         {
             let mut rng = AesRng::seed_from_u64(2);
-            let client_sig_key = PrivateSigKey::new(SigningKey::random(&mut rng));
-            let client_signcryption_keys =
-                ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
-            assert!(validate_and_decrypt(
-                b"TESTTEST",
-                &correct_cipher,
-                &client_signcryption_keys,
-                &server_verf_key,
-            )
-            .is_err());
+            let wrong_keys = ephemeral_signcryption_key_generation(
+                &mut rng,
+                &client_signcryption_keys.designcrypt_key.sender_verf_key,
+            );
+            assert!(wrong_keys
+                .designcrypt_key
+                .designcrypt(b"TESTTEST", &correct_cipher)
+                .is_err());
         }
 
         // use the wrong server key
         {
             let mut rng = AesRng::seed_from_u64(2);
-            let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
-
-            assert!(validate_and_decrypt(
-                b"TESTTEST",
-                &correct_cipher,
-                &client_signcryption_keys,
-                &server_verf_key,
-            )
-            .is_err());
+            let (wrong_verf_key, _) = gen_sig_keys(&mut rng);
+            let wrong_keys = UnifiedDesigncryptionKey::new(
+                client_signcryption_keys
+                    .designcrypt_key
+                    .decryption_key
+                    .clone(),
+                client_signcryption_keys
+                    .designcrypt_key
+                    .encryption_key
+                    .clone(),
+                wrong_verf_key,
+            );
+            assert!(wrong_keys
+                .designcrypt(b"TESTTEST", &correct_cipher)
+                .is_err());
         }
 
         // use bad domain separator
         {
-            let mut rng = AesRng::seed_from_u64(2);
-            let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
-
-            assert!(validate_and_decrypt(
-                b"blahblah",
-                &correct_cipher,
-                &client_signcryption_keys,
-                &server_verf_key
-            )
-            .is_err());
+            assert!(client_signcryption_keys
+                .designcrypt_key
+                .designcrypt(b"blahblah", &correct_cipher)
+                .is_err());
         }
 
         // happy path should still work at the end
-        let decrypted_msg = validate_and_decrypt(
-            b"TESTTEST",
-            &correct_cipher,
-            &client_signcryption_keys,
-            &server_verf_key,
-        )
-        .unwrap();
+        let decrypted_msg = client_signcryption_keys
+            .designcrypt_key
+            .designcrypt(b"TESTTEST", &correct_cipher)
+            .unwrap();
         assert_eq!(msg, decrypted_msg);
-    }
-
-    #[traced_test]
-    #[test]
-    fn wrong_decryption_nonce() {
-        let (mut rng, client_signcryption_keys) = test_setup();
-        let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
-        let msg = "A message".as_bytes();
-        let mut cipher = signcrypt(
-            &mut rng,
-            b"TESTTEST",
-            &msg,
-            &client_signcryption_keys
-                .designcrypt_key
-                .enc_key
-                .to_unified(),
-            &client_signcryption_keys.designcrypt_key.client_address,
-            &server_sig_key,
-        )
-        .unwrap();
-        // Flip a bit in the nonce
-        cipher.0.nonce[0] ^= 1;
-        let decrypted_msg = validate_and_decrypt(
-            b"TESTTEST",
-            &cipher,
-            &client_signcryption_keys,
-            &server_verf_key,
-        );
-        // unwrapping fails
-        assert!(decrypted_msg.is_err());
-
-        // flip it back and all should pass
-        cipher.0.nonce[0] ^= 1;
-        let decrypted_msg = validate_and_decrypt(
-            b"TESTTEST",
-            &cipher,
-            &client_signcryption_keys,
-            &server_verf_key,
-        )
-        .unwrap();
-        assert_eq!(decrypted_msg, msg);
     }
 
     #[test]
     fn incorrect_server_verf_key() {
         let mut rng = AesRng::seed_from_u64(42);
-        let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
+        let (server_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
         let to_encrypt = [0_u8; 1 + DIGEST_BYTES + SIG_SIZE];
         let res = parse_msg(to_encrypt.to_vec(), &server_verf_key);
         // unwrapping fails
@@ -670,7 +543,7 @@ mod tests {
     #[test]
     fn bad_signature() {
         let mut rng = AesRng::seed_from_u64(42);
-        let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
+        let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
         let msg = "Some message".as_bytes();
         let sig = internal_sign(b"TESTTEST", &msg, &server_sig_key).unwrap();
         let wrong_msg = "Some message...longer".as_bytes();
@@ -682,7 +555,7 @@ mod tests {
     #[test]
     fn bad_dsep() {
         let mut rng = AesRng::seed_from_u64(42);
-        let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
+        let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
         let msg = "Some message".as_bytes();
         let sig = internal_sign(b"TESTTEST", &msg, &server_sig_key).unwrap();
         let res = internal_verify_sig(
@@ -697,18 +570,28 @@ mod tests {
 
     #[test]
     fn unnormalized_signature() {
-        let mut rng = AesRng::seed_from_u64(1);
-        let msg = "some message".as_bytes();
-        let client_sig_key = PrivateSigKey::new(SigningKey::random(&mut rng));
-        let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
+        let (_rng, client_signcryption_keys) = test_setup();
+        let msg = "Some message".as_bytes();
+
         let to_sign = [
             msg,
-            client_signcryption_keys.pk.client_address.as_slice(),
-            &serialize_hash_element(&DSEP_SIGNCRYPTION, &client_signcryption_keys.pk.enc_key)
-                .unwrap(),
+            &client_signcryption_keys
+                .designcrypt_key
+                .sender_verf_key
+                .verf_key_id(),
+            &serialize_hash_element(
+                &DSEP_SIGNCRYPTION,
+                &client_signcryption_keys.signcrypt_key.receiver_enc_key,
+            )
+            .unwrap(),
         ]
         .concat();
-        let sig = internal_sign(b"TESTTEST", &to_sign, &server_sig_key).unwrap();
+        let sig = internal_sign(
+            b"TESTTEST",
+            &to_sign,
+            &client_signcryption_keys.signcrypt_key.signing_key,
+        )
+        .unwrap();
         // Ensure the signature is normalized
         let internal_sig = sig.sig.normalize_s().unwrap_or(sig.sig);
         // Ensure the signature is ok
@@ -716,8 +599,7 @@ mod tests {
             b"TESTTEST",
             msg.to_vec(),
             &Signature { sig: internal_sig },
-            &server_verf_key,
-            &client_signcryption_keys.pk,
+            &client_signcryption_keys.designcrypt_key,
         )
         .is_ok());
         // Undo normalization
@@ -728,8 +610,7 @@ mod tests {
             b"TESTTEST",
             msg.to_vec(),
             &Signature { sig: bad_sig },
-            &server_verf_key,
-            &client_signcryption_keys.pk,
+            &client_signcryption_keys.designcrypt_key,
         );
         // unwrapping fails
         assert!(res.is_err());
@@ -739,7 +620,6 @@ mod tests {
     #[test]
     fn signcryption_with_bad_link() {
         let (mut rng, client_signcryption_keys) = test_setup();
-        let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let link = [0, 1, 2, 3u8];
         let msg = TypedPlaintext {
             bytes: b"A relatively long message that we wish to be able to later validate".to_vec(),
@@ -750,18 +630,10 @@ mod tests {
             link: link.into(),
         })
         .unwrap();
-        let cipher = signcrypt(
-            &mut rng,
-            b"TESTTEST",
-            &payload,
-            &client_signcryption_keys
-                .designcrypt_key
-                .enc_key
-                .to_unified(),
-            &client_signcryption_keys.designcrypt_key.client_address,
-            &server_sig_key,
-        )
-        .unwrap();
+        let cipher = client_signcryption_keys
+            .signcrypt_key
+            .signcrypt(&mut rng, b"TESTTEST", &payload)
+            .unwrap();
 
         let cipher = bc2wrap::serialize(&cipher).unwrap();
 
@@ -770,8 +642,8 @@ mod tests {
             b"TESTTEST",
             &cipher,
             &bad_link,
-            &client_signcryption_keys,
-            &server_verf_key,
+            &client_signcryption_keys.reference(),
+            &client_signcryption_keys.designcrypt_key.sender_verf_key,
         )
         .unwrap_err();
     }

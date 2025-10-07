@@ -115,7 +115,7 @@ impl Client {
                 epoch_id: None,
             },
             enc_pk,
-            UnifiedPrivateDecKey::MlKem1024(enc_sk),
+            enc_sk,
         ))
     }
 }
