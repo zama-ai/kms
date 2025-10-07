@@ -371,7 +371,7 @@ impl KubernetesCmd {
         );
 
         eprintln!("Installing KMS");
-        let (values_file, kms_nb_pod) = match self.mode {
+        let (_values_file, kms_nb_pod) = match self.mode {
             KMSMode::ThresholdDefaultParameter | KMSMode::ThresholdTestParameter => {
                 (&std::env::var("KMS_THRESHOLD_VALUES_FILE").unwrap(), 4)
             }
@@ -422,6 +422,12 @@ impl KubernetesCmd {
                 .stdout(Stdio::inherit()) // Show stdout in real-time
                 .stderr(Stdio::inherit()) // Show stderr in real-time
                 .output()?;
+
+            if !helm_upgrade_kms.status.success() {
+                let stderr = String::from_utf8_lossy(&helm_upgrade_kms.stderr);
+                println!("Error: Failed to install/upgrade Helm chart: {}", stderr);
+                self.down();
+            }
         }
 
         let kubectl_describe_pods = Command::new("kubectl")
@@ -443,12 +449,12 @@ impl KubernetesCmd {
 
         eprintln!("Waiting for KMS Core to be ready...");
         for i in 1..kms_nb_pod {
-            let kms_core_wait = Command::new("kubectl")
+            let _kms_core_wait = Command::new("kubectl")
                 .args([
                     "wait",
                     "--for=condition=ready",
                     "pod",
-                    format!("kms-core-{}", i),
+                    &format!("kms-core-{}", i),
                     "-n",
                     &std::env::var("NAMESPACE").unwrap(),
                     "--timeout=600s",
@@ -459,7 +465,7 @@ impl KubernetesCmd {
         }
 
         eprintln!("Waiting for KMS Core initialization to complete...");
-        let helm_upgrade_kms_init = Command::new("helm")
+        let _helm_upgrade_kms_init = Command::new("helm")
             .args([
                 "upgrade",
                 "--install",
@@ -488,7 +494,7 @@ impl KubernetesCmd {
             .output()?;
 
         eprintln!("Waiting for KMS Core initialization to complete...");
-        let kms_init_wait = Command::new("kubectl")
+        let _kms_init_wait = Command::new("kubectl")
             .args([
                 "wait",
                 "--for=condition=complete",
@@ -502,7 +508,7 @@ impl KubernetesCmd {
             .stderr(Stdio::inherit()) // Show stderr in real-time
             .output()?;
 
-        let helm_upgrade_kms_gen_keys = Command::new("helm")
+        let _helm_upgrade_kms_gen_keys = Command::new("helm")
             .args([
                 "upgrade",
                 "--install",
@@ -532,7 +538,7 @@ impl KubernetesCmd {
             .output()?;
 
         eprintln!("Waiting for KMS Core gen keys to complete...");
-        let kms_gen_keys_wait = Command::new("kubectl")
+        let _kms_gen_keys_wait = Command::new("kubectl")
             .args([
                 "wait",
                 "--for=condition=complete",
@@ -545,12 +551,6 @@ impl KubernetesCmd {
             .stdout(Stdio::inherit()) // Show stdout in real-time
             .stderr(Stdio::inherit()) // Show stderr in real-time
             .output()?;
-
-        if !helm_upgrade_kms.status.success() {
-            let stderr = String::from_utf8_lossy(&helm_upgrade_kms.stderr);
-            println!("Error: Failed to install/upgrade Helm chart: {}", stderr);
-            self.down();
-        }
 
         eprintln!("Waiting for job to be complete...");
         let _ = Command::new("kubectl")
