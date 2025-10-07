@@ -1660,7 +1660,6 @@ pub(crate) mod tests {
             inner
         };
         let link = vec![42_u8, 42, 42];
-        let (_client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
         let client_key_pair = {
             let mut keys =
                 ephemeral_signcryption_key_generation(&mut rng, &kms.base_kms.sig_key.verf_key());
@@ -1708,8 +1707,7 @@ pub(crate) mod tests {
             &DSEP_USER_DECRYPTION,
             &raw_cipher,
             &link,
-            &client_key_pair.reference(),
-            &keys.centralized_kms_keys.sig_pk,
+            &client_key_pair.designcrypt_key,
         );
         if sim_type == SimulationType::BadEphemeralKey {
             assert!(decrypted.is_err());

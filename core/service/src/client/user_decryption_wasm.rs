@@ -52,33 +52,12 @@ impl Client {
         client_request: &ParsedUserDecryptionRequest,
         eip712_domain: &Eip712Domain,
         agg_resp: &[UserDecryptionResponse],
-        enc_pk: &UnifiedPublicEncKey,
-        enc_sk: &UnifiedPrivateDecKey,
+        enc_key: &UnifiedPublicEncKey,
+        dec_key: &UnifiedPrivateDecKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        let sig_sk = match &self.client_sk {
-            Some(sk) => sk,
-            None => {
-                return Err(anyhow_error_and_log(
-                    "missing client signing key".to_string(),
-                ));
-            }
-        }; // todo ensure proper keys are used
-        let owned_client_keys = UnifiedSigncryptionKeyPairOwned {
-            signcrypt_key: UnifiedSigncryptionKey {
-                signing_key: sig_sk.clone(),
-                receiver_enc_key: enc_pk.clone(),
-                receiver_id: self.client_address.to_vec(),
-            },
-            designcrypt_key: UnifiedDesigncryptionKey {
-                sender_verf_key: PublicSigKey::from_sk(sig_sk),
-                decryption_key: enc_sk.clone(),
-                encryption_key: enc_pk.clone(),
-            },
-        };
-        let client_keys = owned_client_keys.reference();
-
         // The condition below decides whether we'll parse the response
-        // in the centralized mode or threshold mode.        //
+        // in the centralized mode or threshold mode.
+        //
         // It's important to check both the length of the server identities
         // and the number of responses at the start to avoid "falling back"
         // to the centralized mode by mistake since the checks that happen
@@ -93,14 +72,16 @@ impl Client {
                 client_request,
                 eip712_domain,
                 agg_resp,
-                &client_keys,
+                enc_key,
+                dec_key,
             )
         } else {
             self.threshold_user_decryption_resp(
                 client_request,
                 eip712_domain,
                 agg_resp,
-                &client_keys,
+                enc_key,
+                dec_key,
             )
         }
     }
@@ -151,7 +132,8 @@ impl Client {
         request: &ParsedUserDecryptionRequest,
         eip712_domain: &Eip712Domain,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedSigncryptionKeyPair,
+        enc_key: &UnifiedPublicEncKey,
+        dec_key: &UnifiedPrivateDecKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
@@ -217,7 +199,8 @@ impl Client {
                 tracing::warn!("signature on received response is not valid ({})", e)
             })?;
         }
-
+        let design_key =
+            UnifiedDesigncryptionKey::new(dec_key.to_owned(), enc_key.to_owned(), cur_verf_key);
         payload
             .signcrypted_ciphertexts
             .into_iter()
@@ -226,8 +209,7 @@ impl Client {
                     &DSEP_USER_DECRYPTION,
                     &ct.signcrypted_ciphertext,
                     &link,
-                    client_keys,
-                    &cur_verf_key,
+                    &design_key,
                 )
             })
             .collect()
@@ -262,7 +244,8 @@ impl Client {
         client_request: &ParsedUserDecryptionRequest,
         eip712_domain: &Eip712Domain,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedSigncryptionKeyPair,
+        enc_key: &UnifiedPublicEncKey,
+        dec_key: &UnifiedPrivateDecKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let validated_resps = some_or_err(
             validate_user_decrypt_responses_against_request(
@@ -301,7 +284,8 @@ impl Client {
         let res = match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
                 // Note: We will create way too many shares here, if we use BitDec kind of decryption we can actually fit 4*64 bits of actual data in a single share.
-                let all_sharings = self.recover_sharings::<Z64>(&validated_resps, client_keys)?;
+                let all_sharings =
+                    self.recover_sharings::<Z64>(&validated_resps, enc_key, dec_key)?;
 
                 let mut out = vec![];
                 for (fhe_type, packing_factor, sharings, recovery_errors) in all_sharings {
@@ -354,7 +338,8 @@ impl Client {
                 out
             }
             DecryptionMode::NoiseFloodSmall => {
-                let all_sharings = self.recover_sharings::<Z128>(&validated_resps, client_keys)?;
+                let all_sharings =
+                    self.recover_sharings::<Z128>(&validated_resps, enc_key, dec_key)?;
 
                 let mut out = vec![];
                 for (fhe_type, packing_factor, sharings, recovery_errors) in all_sharings {
@@ -646,7 +631,8 @@ impl Client {
     fn recover_sharings<Z: BaseRing>(
         &self,
         agg_resp: &[UserDecryptionResponsePayload],
-        client_keys: &UnifiedSigncryptionKeyPair,
+        enc_key: &UnifiedPublicEncKey,
+        dec_key: &UnifiedPrivateDecKey,
     ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ShamirSharings<ResiduePolyF4<Z>>>, usize)>> {
         let batch_count = agg_resp
             .first()
@@ -692,12 +678,16 @@ impl Client {
                 // Also it's ok to use [cur_resp.digest] as the link since we already checked
                 // that it matches with the original request
                 let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&cur_resp.verification_key)?;
+                let design_key = UnifiedDesigncryptionKey::new(
+                    dec_key.to_owned(),
+                    enc_key.to_owned(),
+                    cur_verf_key,
+                );
                 match decrypt_signcryption_with_link(
                     &DSEP_USER_DECRYPTION,
                     &cur_resp.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
                     &cur_resp.digest,
-                    client_keys,
-                    &cur_verf_key,
+                    &design_key,
                 ) {
                     Ok(decryption_share) => {
                         let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =

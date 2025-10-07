@@ -285,17 +285,14 @@ pub fn decrypt_signcryption_with_link(
     dsep: &DomainSep,
     cipher: &[u8],
     link: &[u8],
-    client_keys: &UnifiedSigncryptionKeyPair,
-    _server_verf_key: &PublicSigKey, // TODO client key should be setup correctly
+    design_key: &UnifiedDesigncryptionKey,
 ) -> anyhow::Result<TypedPlaintext> {
     let signcryption_cipher = UnifiedSigncryption::new(
         cipher.to_vec(), //todo check the type is right
-        (&client_keys.designcryption_key.decryption_key).into(),
-        (&client_keys.signcrypt_key.signing_key).into(),
+        (&design_key.decryption_key).into(),
+        (&design_key.sender_verf_key).into(),
     );
-    let decrypted_signcryption = client_keys
-        .designcryption_key
-        .designcrypt(dsep, &signcryption_cipher)?;
+    let decrypted_signcryption = design_key.designcrypt(dsep, &signcryption_cipher)?;
 
     let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize(&decrypted_signcryption)?;
     if link != signcrypted_msg.link {
@@ -383,8 +380,8 @@ mod tests {
     /// keys and the dummy fhe cipher the request is made for.
     fn test_setup() -> (AesRng, UnifiedSigncryptionKeyPairOwned) {
         let mut rng = AesRng::seed_from_u64(1);
-        let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
-        let keys = ephemeral_signcryption_key_generation(&mut rng, &client_verf_key);
+        let (server_verf_key, _) = gen_sig_keys(&mut rng);
+        let keys = ephemeral_signcryption_key_generation(&mut rng, &server_verf_key);
         (rng, keys)
     }
 
@@ -642,8 +639,7 @@ mod tests {
             b"TESTTEST",
             &cipher,
             &bad_link,
-            &client_signcryption_keys.reference(),
-            &client_signcryption_keys.designcrypt_key.sender_verf_key,
+            &client_signcryption_keys.designcrypt_key,
         )
         .unwrap_err();
     }
