@@ -23,7 +23,7 @@
 
 ### What is the KMS
 
-The Zama KMS is a fully decentralized key management solution for TFHE, based on a maliciously secure and robust [MPC protocol](https://eprint.iacr.org/2023/815) based on secret sharing,
+The Zama KMS is a fully decentralized key management solution for TFHE, based on a maliciously secure and robust [MPC protocol](https://eprint.iacr.org/2023/815) utilizing secret sharing,
 primarily for threshold key generation and threshold decryption.
 We also made the [full specification](https://github.com/zama-ai/threshold-fhe/blob/main/docs/CryptographicDocumentation.pdf)
 available to the public.
@@ -41,10 +41,10 @@ Interaction with the KMS can either happen via a gRPC interface, or in its deplo
 
 ### Using the KMS
 
-The following describes how the KMS is used in conjunction with fhevm Gateway, including the external components needed.
-While the KMS can be used with multiple L1 EVM host chains, for simplicity, we will in the following document assume there is only a single L1 host chain.
+The following describes how the KMS is used in conjunction with FHEVM Gateway, including the external components needed.
+While the KMS can be used with multiple L1 EVM host chains, for simplicity, in this document we assume that there is only a single L1 host chain.
 
-At the highest level, the system consists of multiple subsystems: a *host chain*, an *fhevm Gateway* and a *KMS*.
+At the highest level, the system consists of multiple subsystems: a *host chain*, an *FHEVM Gateway* and a *KMS*.
 The KMS is in turn composed of the following components, which we illustrate in the pictures below:
 
 ![KMS system](./docs/getting-started/overview.png)
@@ -61,7 +61,7 @@ Ensure that these are installed on your system.
 
 ### Building and testing
 
-For local development, the project can be build with:
+For local development, the project can be built with:
 ```bash
 cargo build
 ```
@@ -120,7 +120,7 @@ cargo run -- --help
 ### Running the KMS as a service
 
 Docker images that are ready for use can be found [here](https://github.com/zama-ai/kms/packages).
-But to deploy the KMS securely, we recommend the documentation on [on-prem deployment](docs/guides/on_prem_installation.md).
+But to deploy the KMS securely, we recommend the documentation on [on-premise deployment](docs/guides/on_prem_installation.md).
 
 
 ### More information
@@ -139,7 +139,7 @@ For more high-level information about using and deploying the code, check out [t
 
 ### Docker images and high level usage
 - [Docker images](https://github.com/zama-ai/kms/pkgs/container/kms-service)
-- [fhevm Integration](https://github.com/zama-ai/fhevm)
+- [FHEVM Integration](https://github.com/zama-ai/fhevm)
 
 ## Working with the KMS
 
@@ -150,7 +150,7 @@ The default parameters for the Zama KMS are chosen to ensure a failure probabili
 
 #### Side-channel attacks
 
-Mitigation for side-channel attacks has not been implemented directly in the Zama KMS. The smart contract of the blockchain from which calls originate is responsible to ensure the validity of calls. In particular that new ciphertexts are correctly constructed (through a proof-of-knowledge).
+Mitigation for side-channel attacks has not been implemented directly in the Zama KMS. The smart contract of the blockchain from which calls originate is responsible to ensure the validity of calls. In particular that new ciphertexts are correctly constructed (through a proof of knowledge).
 
 ### Citations
 To cite KMS in academic papers, please use the following entry:
