@@ -423,29 +423,29 @@ impl KubernetesCmd {
                 .stderr(Stdio::inherit()) // Show stderr in real-time
                 .output()?;
 
+            let kubectl_describe_pods = Command::new("kubectl")
+                .args([
+                    "describe",
+                    "pod",
+                    &format!("kms-core-{}", i),
+                    "--namespace",
+                    &std::env::var("NAMESPACE").unwrap(),
+                ])
+                .stdout(Stdio::inherit()) // Show stdout in real-time
+                .stderr(Stdio::inherit()) // Show stderr in real-time
+                .output()?;
+
+            eprintln!(
+                "Describe pod: {:?}",
+                String::from_utf8_lossy(&kubectl_describe_pods.stdout)
+            );
+
             if !helm_upgrade_kms.status.success() {
                 let stderr = String::from_utf8_lossy(&helm_upgrade_kms.stderr);
                 println!("Error: Failed to install/upgrade Helm chart: {}", stderr);
                 self.down();
             }
         }
-
-        let kubectl_describe_pods = Command::new("kubectl")
-            .args([
-                "describe",
-                "pod",
-                "kms-core-1",
-                "--namespace",
-                &std::env::var("NAMESPACE").unwrap(),
-            ])
-            .stdout(Stdio::inherit()) // Show stdout in real-time
-            .stderr(Stdio::inherit()) // Show stderr in real-time
-            .output()?;
-
-        eprintln!(
-            "Describe pod: {:?}",
-            String::from_utf8_lossy(&kubectl_describe_pods.stdout)
-        );
 
         eprintln!("Waiting for KMS Core to be ready...");
         for i in 1..kms_nb_pod {
