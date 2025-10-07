@@ -500,7 +500,7 @@ impl PublicSigKey {
     pub fn verf_key_id(&self) -> Vec<u8> {
         // Let the ID of both a normal ecdsa256k1 key and an eip712 key be the Ethereum address
         let addr = alloy_primitives::Address::from_public_key(self.pk());
-        addr.as_bytes().to_vec()
+        addr.to_vec()
     }
 
     /// DEPRECATED legacy code since this is not the right way to serialize as it is not versioned
@@ -836,6 +836,7 @@ pub struct UnifiedDesigncryptionKey {
     pub decryption_key: UnifiedPrivateDecKey,
     pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
     pub sender_verf_key: PublicSigKey,
+    pub receiver_id: Vec<u8>, // Identifier for the receiver's encryption key, e.g. blockchain address
 }
 
 impl UnifiedDesigncryptionKey {
@@ -843,11 +844,13 @@ impl UnifiedDesigncryptionKey {
         decryption_key: UnifiedPrivateDecKey,
         encryption_key: UnifiedPublicEncKey,
         sender_verf_key: PublicSigKey,
+        receiver_id: Vec<u8>,
     ) -> Self {
         Self {
             sender_verf_key,
             decryption_key,
             encryption_key,
+            receiver_id,
         }
     }
 }

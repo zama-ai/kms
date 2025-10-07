@@ -185,7 +185,6 @@ impl Designcrypt for UnifiedDesigncryptionKey {
             }
         }?;
         let (msg, sig) = parse_msg(decrypted_plaintext, &self.sender_verf_key)?;
-
         check_format_and_signature(dsep, msg.clone(), &sig, self)?;
         Ok(msg)
     }
@@ -239,22 +238,21 @@ fn check_format_and_signature(
     // What should be signed is dsep || msg || H(client_verification_key) || H(client_enc_key)
     let serialized_enc_key = match &designcryption_key.encryption_key {
         UnifiedPublicEncKey::MlKem512(public_enc_key) => {
-            serialize_hash_element(&DSEP_SIGNCRYPTION, &public_enc_key)
+            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
                 .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
         }
         UnifiedPublicEncKey::MlKem1024(public_enc_key) => {
-            serialize_hash_element(&DSEP_SIGNCRYPTION, &public_enc_key)
+            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
                 .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
         }
     };
     let msg_signed = [
         dsep.to_vec(),
         msg,
-        designcryption_key.sender_verf_key.verf_key_id(),
+        designcryption_key.receiver_id.clone(),
         serialized_enc_key,
     ]
     .concat();
-
     // Check that the signature is normalized
     check_normalized(sig)?;
     // Verify signature
@@ -354,7 +352,12 @@ pub(crate) fn ephemeral_signcryption_key_generation(
             enc_key.clone(),
             client_verf_key.verf_key_id(),
         ),
-        designcrypt_key: UnifiedDesigncryptionKey::new(dec_key, enc_key, server_verf_key.clone()),
+        designcrypt_key: UnifiedDesigncryptionKey::new(
+            dec_key,
+            enc_key,
+            server_verf_key.clone(),
+            client_verf_key.verf_key_id(),
+        ),
     }
 }
 
@@ -430,6 +433,7 @@ mod tests {
                 .encryption_key
                 .clone(),
             deserialized_server_verf_key.clone(),
+            client_signcryption_keys.designcrypt_key.receiver_id.clone(),
         );
         let decrypted_msg = new_keys
             .designcrypt(b"TESTTEST", &deserialized_cipher)
@@ -503,6 +507,7 @@ mod tests {
                     .encryption_key
                     .clone(),
                 wrong_verf_key,
+                client_signcryption_keys.designcrypt_key.receiver_id.clone(),
             );
             assert!(wrong_keys
                 .designcrypt(b"TESTTEST", &correct_cipher)

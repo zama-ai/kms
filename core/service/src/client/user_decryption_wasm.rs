@@ -114,6 +114,7 @@ impl Client {
                 sender_verf_key: PublicSigKey::from_sk(sig_sk),
                 decryption_key: enc_sk.clone(),
                 encryption_key: enc_pk.clone(),
+                receiver_id: self.client_address.to_vec(),
             },
         };
         let client_keys = owned_client_keys.reference();
@@ -199,8 +200,12 @@ impl Client {
                 tracing::warn!("signature on received response is not valid ({})", e)
             })?;
         }
-        let design_key =
-            UnifiedDesigncryptionKey::new(dec_key.to_owned(), enc_key.to_owned(), cur_verf_key);
+        let design_key = UnifiedDesigncryptionKey::new(
+            dec_key.to_owned(),
+            enc_key.to_owned(),
+            cur_verf_key,
+            self.client_address.to_vec(),
+        );
         payload
             .signcrypted_ciphertexts
             .into_iter()
@@ -682,6 +687,7 @@ impl Client {
                     dec_key.to_owned(),
                     enc_key.to_owned(),
                     cur_verf_key,
+                    self.client_address.to_vec(),
                 );
                 match decrypt_signcryption_with_link(
                     &DSEP_USER_DECRYPTION,
