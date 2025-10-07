@@ -440,6 +440,23 @@ impl KubernetesCmd {
                 String::from_utf8_lossy(&kubectl_describe_pods.stdout)
             );
 
+            let kubernetes_logs_output = Command::new("kubectl")
+                .args([
+                    "logs",
+                    &format!("kms-core-{}", i),
+                    "-c",
+                    "kms-core",
+                    "-n",
+                    &std::env::var("NAMESPACE").unwrap(),
+                ])
+                .output()
+                .expect("Failed to get pod logs");
+
+            // Also write to stdout
+            std::io::stdout()
+                .write_all(&kubernetes_logs_output.stdout)
+                .expect("Failed to write logs to stdout");
+
             if !helm_upgrade_kms.status.success() {
                 let stderr = String::from_utf8_lossy(&helm_upgrade_kms.stderr);
                 println!("Error: Failed to install/upgrade Helm chart: {}", stderr);
