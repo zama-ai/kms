@@ -1,0 +1,45 @@
+kmsInit:
+  enabled: true
+
+kmsCore:
+  enabled: false
+  thresholdMode:
+    enabled: true
+    initializationScript:
+      enabled: true
+    peersList:
+      - id: 1
+        host: kms-core-1
+        port: 50001
+      - id: 2
+        host: kms-core-2
+        port: 50001
+      - id: 3
+        host: kms-core-3
+        port: 50001
+      - id: 4
+        host: kms-core-4
+        port: 50001
+
+kmsCoreClient:
+  enabled: true
+  nameOverride: kms-core-client-threshold
+  image:
+    name: ghcr.io/zama-ai/kms/core-client
+    tag:
+  num_majority: 2 # 2 when 4 parties and 5 when 13 parties
+  num_reconstruct: 3 # 3 when 4 parties and 9 when 13 parties
+  decryption_mode: NoiseFloodSmall
+  fhe_parameter: Default
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: 1
+    limits:
+      memory: 4Gi
+      cpu: 1
+
+kmsGenKeys:
+  enabled: false
+kmsGenCertAndKeys:
+  enabled: false
