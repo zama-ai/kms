@@ -7,33 +7,36 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-axum = { version = "=0.8.4", features = ["tokio"] }
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
 anyhow.workspace = true
-config = "=0.15.11"
+axum.workspace = true
+config.workspace = true
 http.workspace = true
 lazy_static.workspace = true
 opentelemetry = { workspace = true, features = ["metrics"] }
-opentelemetry-http = "=0.29.0"
-opentelemetry-otlp = { version = "=0.29.0", features = ["tokio", "grpc-tonic"] }
-opentelemetry-prometheus = "=0.29.1"
-opentelemetry-semantic-conventions = "=0.29.0"
-opentelemetry-stdout = { version = "=0.29.0", features = ["trace"] }
-opentelemetry_sdk = { version = "=0.29.0", features = ["rt-tokio", "logs", "metrics"] }
-prometheus = { version = "=0.14.0", features = ["process"] }
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net"] }
+opentelemetry-http.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry-prometheus.workspace = true
+opentelemetry-semantic-conventions.workspace = true
+opentelemetry-stdout.workspace = true
+opentelemetry_sdk.workspace = true
+prometheus.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 strum.workspace = true
 strum_macros.workspace = true
-sysinfo = "0.36.1"
+sysinfo.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net"] }
 tonic.workspace = true
 tracing = { workspace = true, features = ["log", "async-await"] }
+tracing-appender.workspace = true
 tracing-opentelemetry.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
-tracing-appender = "=0.2.3"
-tracing-test = "0.2"
-typed-builder = "=0.21.0"
-uuid = { version = "=1.16.0", features = ["v4", "fast-rng"] }
+tracing-test.workspace = true
+typed-builder.workspace = true
+uuid.workspace = true
 validator.workspace = true
 
 [package.metadata.cargo-machete]

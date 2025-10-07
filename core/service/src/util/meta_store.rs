@@ -172,7 +172,6 @@ impl<T: Clone> MetaStore<T> {
     /// Deletes an element from the meta store and returns the value.
     /// Warning: This is a slow operation if the request_id has been completed
     /// and should be avoided if possible, since values are automatically removed when running out of space
-    #[allow(dead_code)]
     pub fn delete(&mut self, request_id: &RequestId) -> Option<Arc<AsyncCell<Result<T, String>>>> {
         match self.storage.remove(request_id) {
             Some(handle) => {

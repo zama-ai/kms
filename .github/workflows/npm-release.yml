@@ -1,4 +1,4 @@
-name: Publish npm release
+name: npm-release
 
 on:
   release:
@@ -8,18 +8,23 @@ permissions: {}
 
 jobs:
   start-runner:
+    name: npm-release/start-runner
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
-      working-directory: './core/service'
-      args-tests: '-F testing --lib'
+      working-directory: "./core/service"
+      args-tests: "-F testing --lib"
       run-wasm: true
-      package-name: 'kms'
+      package-name: "kms"
       npm-release: true
-      app-cache-dir: 'kms'
+      app-cache-dir: "kms"
     permissions:
-      packages: read
-      contents: read
-      id-token: write
+      actions: read # Required to read workflow run information and download artifacts
+      checks: write # Required to create GitHub checks for test results
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
+      issues: write # Required to create comments on issues
+      packages: read # Required to read GitHub packages/container registry
+      pull-requests: write # Required to create comments on pull requests
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -29,3 +34,8 @@ jobs:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}

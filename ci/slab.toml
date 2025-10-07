@@ -6,7 +6,12 @@ instance_type = "m6i.4xlarge"
 [backend.aws.big-instance-service]
 region = "eu-west-1"
 image_id = "ami-04f62ae93462b459a"
-instance_type = "c7i.8xlarge"
+instance_type = "c7i.16xlarge"
+
+[backend.aws.big-instance-service_fallback]
+region = "eu-west-1"
+image_id = "ami-04f62ae93462b459a"
+instance_type = "c7a.16xlarge"
 
 [backend.aws.docker-big-instance]
 region = "eu-west-3"

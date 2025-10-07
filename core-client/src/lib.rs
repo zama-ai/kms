@@ -4,22 +4,32 @@
 /// This library also includes an associated CLI.
 use aes_prng::AesRng;
 use alloy_primitives::Signature;
-use alloy_sol_types::Eip712Domain;
+use alloy_sol_types::{Eip712Domain, SolStruct};
 use anyhow::anyhow;
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, CrsGenResult, FheParameter, KeyGenPreprocResult, KeyGenResult,
-    PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext, TypedPlaintext,
+    CiphertextFormat, CrsGenResult, CustodianContext, CustodianRecoveryOutput,
+    CustodianRecoveryRequest, Empty, FheParameter, KeyGenPreprocResult, KeyGenResult,
+    NewCustodianContextRequest, PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext,
+    TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
+use kms_grpc::rpc_types::{protobuf_to_alloy_domain, InternalCustodianRecoveryOutput, PubDataType};
+use kms_grpc::solidity_types::{CrsgenVerification, KeygenVerification};
 use kms_grpc::{KeyId, RequestId};
-use kms_lib::client::{Client, ParsedUserDecryptionRequest};
+use kms_lib::backup::custodian::InternalCustodianSetupMessage;
+use kms_lib::backup::operator::InternalRecoveryRequest;
+use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
-use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
-use kms_lib::util::file_handling::{read_element, write_element};
+use kms_lib::engine::base::compute_pt_message_hash;
+use kms_lib::engine::base::{
+    hash_sol_struct, safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
+};
+use kms_lib::util::file_handling::{
+    read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
+};
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, load_crs_from_storage, load_pk_from_storage,
@@ -35,9 +45,10 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Once};
 use strum_macros::{Display, EnumString};
-use tfhe::named::Named;
-use tfhe::Versionize;
+use tfhe::zk::CompactPkeCrs;
+use tfhe::{CompactPublicKey, ServerKey};
 use threshold_fhe::execution::runtime::party::Role;
+use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
 use threshold_fhe::hashing::{hash_element, DomainSep};
 use tokio::sync::RwLock;
 use tokio::task::JoinSet;
@@ -497,9 +508,25 @@ pub struct CrsParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct NewCustodianContextParameters {
+    #[clap(long, short = 't')]
+    pub threshold: u32,
+    #[clap(long, short = 'm')]
+    pub setup_msg_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct ResultParameters {
     #[clap(long, short = 'i')]
     pub request_id: RequestId,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct RecoveryParameters {
+    #[clap(long, short = 'i')]
+    pub custodian_context_id: RequestId,
+    #[clap(long, short = 'r')]
+    pub custodian_recovery_outputs: Vec<PathBuf>, // TODO(#2748) should this just be a root directory with everything in?
 }
 
 #[derive(Debug, Subcommand, Clone)]
@@ -520,8 +547,11 @@ pub enum CCCommand {
     CrsGenResult(ResultParameters),
     InsecureCrsGen(CrsParameters),
     InsecureCrsGenResult(ResultParameters),
+    NewCustodianContext(NewCustodianContextParameters),
     GetOperatorPublicKey(NoParameters),
-    CustodianBackupRestore(NoParameters),
+    CustodianRecoveryInit(NoParameters),
+    CustodianBackupRecovery(RecoveryParameters),
+    BackupRestore(NoParameters),
     DoNothing(NoParameters),
 }
 
@@ -858,13 +888,11 @@ async fn fetch_kms_addresses(
     Ok(kms_addrs)
 }
 
-/// check that the external signature on the CRS or pubkey is valid, i.e. was made by one of the supplied addresses
-fn check_ext_pubdata_signature<D: Serialize + Versionize + Named>(
-    data: &D,
-    external_sig: &[u8],
+fn recover_address_from_ext_signature<S: SolStruct>(
+    data: &S,
     domain: &Eip712Domain,
-    kms_addrs: &[alloy_primitives::Address],
-) -> anyhow::Result<()> {
+    external_sig: &[u8],
+) -> anyhow::Result<alloy_primitives::Address> {
     // convert received data into proper format for EIP-712 verification
     if external_sig.len() != 65 {
         return Err(anyhow!(
@@ -879,17 +907,60 @@ fn check_ext_pubdata_signature<D: Serialize + Versionize + Named>(
     tracing::debug!("ext. signature: {:?}", sig);
     tracing::debug!("EIP-712 domain: {:?}", domain);
 
-    let hash = compute_external_pubdata_message_hash(data, domain)?;
+    let hash = hash_sol_struct(data, domain)?;
 
     let addr = sig.recover_address_from_prehash(&hash)?;
     tracing::info!("reconstructed address: {}", addr);
+
+    Ok(addr)
+}
+
+/// check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
+fn check_standard_keyset_ext_signature(
+    public_key: &CompactPublicKey,
+    server_key: &ServerKey,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    external_sig: &[u8],
+    domain: &Eip712Domain,
+    kms_addrs: &[alloy_primitives::Address],
+) -> anyhow::Result<()> {
+    let server_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
+    let public_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
+
+    let sol_type = KeygenVerification::new(prep_id, key_id, server_key_digest, public_key_digest);
+    let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
     // check that the address is in the list of known KMS addresses
     if kms_addrs.contains(&addr) {
         Ok(())
     } else {
         Err(anyhow!(
-            "External crs/pubkey signature verification failed!"
+            "External signature verification failed for keygen as it does not contain the right address!"
+        ))
+    }
+}
+
+/// check that the external signature on the CRS is valid, i.e. was made by one of the supplied addresses
+fn check_crsgen_ext_signature(
+    crs: &CompactPkeCrs,
+    crs_id: &RequestId,
+    external_sig: &[u8],
+    domain: &Eip712Domain,
+    kms_addrs: &[alloy_primitives::Address],
+) -> anyhow::Result<()> {
+    let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, crs)?;
+
+    let max_num_bits = max_num_bits_from_crs(crs);
+    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest);
+    let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
+
+    // check that the address is in the list of known KMS addresses
+    if kms_addrs.contains(&addr) {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "External signature verification failed for crsgen as it does not contain the right address!"
         ))
     }
 }
@@ -919,7 +990,7 @@ fn check_ext_pt_signature(
     tracing::debug!("PTs: {:?}", plaintexts);
     tracing::debug!("ext. handles: {:?}", external_handles);
 
-    let hash = compute_pt_message_hash(external_handles, plaintexts, domain, extra_data);
+    let hash = compute_pt_message_hash(external_handles, plaintexts, domain, extra_data)?;
 
     let addr = sig.recover_address_from_prehash(&hash)?;
     tracing::info!("recovered address: {}", addr);
@@ -943,7 +1014,7 @@ fn check_external_decryption_signature(
     for response in responses {
         let payload = response.payload.as_ref().unwrap();
         check_ext_pt_signature(
-            response.external_signature(),
+            &response.external_signature,
             &payload.plaintexts,
             external_handles.to_owned(),
             domain.clone(),
@@ -1044,7 +1115,7 @@ async fn do_keygen(
     num_parties: usize,
     kms_addrs: &[alloy_primitives::Address],
     param: FheParameter,
-    preproc_id: Option<RequestId>,
+    preproc_id: RequestId,
     insecure: bool,
     shared_config: &SharedKeyGenParameters,
     destination_prefix: &Path,
@@ -1074,11 +1145,11 @@ async fn do_keygen(
         .map(kms_grpc::kms::v1::KeySetAddedInfo::from);
     let dkg_req = internal_client.key_gen_request(
         &req_id,
-        preproc_id,
+        &preproc_id,
         Some(param),
         keyset_config,
         keyset_added_info,
-        Some(dummy_domain()),
+        dummy_domain(),
     )?;
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
@@ -1159,12 +1230,8 @@ async fn do_crsgen(
         cc_conf.num_majority
     };
 
-    let crs_req = internal_client.crs_gen_request(
-        &req_id,
-        max_num_bits,
-        Some(param),
-        Some(dummy_domain()),
-    )?;
+    let crs_req =
+        internal_client.crs_gen_request(&req_id, max_num_bits, Some(param), &dummy_domain())?;
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
     //we have an issue in the (Insecure)CrsGenResult commands
@@ -1233,7 +1300,10 @@ async fn do_preproc(
     let req_id = RequestId::new_random(rng);
 
     let max_iter = cmd_conf.max_iter;
-    let pp_req = internal_client.preproc_request(&req_id, Some(param), None)?; //TODO keyset config
+    // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
+    // this function is only used for testing.
+    let domain = dummy_domain();
+    let pp_req = internal_client.preproc_request(&req_id, Some(param), None, &domain)?; //TODO keyset config
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -1254,7 +1324,10 @@ async fn do_preproc(
     }
     assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
-    let _ = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    for response in responses {
+        internal_client.process_preproc_response(&req_id, &domain, &response)?;
+    }
 
     Ok(req_id)
 }
@@ -1296,7 +1369,108 @@ async fn do_get_operator_pub_keys(
     Ok(backup_pks)
 }
 
-async fn do_custodian_backup_restore(
+async fn do_new_custodian_context(
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    rng: &mut AesRng,
+    threshold: u32,
+    custodian_setup_msg: Vec<InternalCustodianSetupMessage>,
+) -> anyhow::Result<RequestId> {
+    let context_id = RequestId::new_random(rng);
+    let mut req_tasks = JoinSet::new();
+    let mut custodian_nodes = Vec::new();
+    for cur_setup in custodian_setup_msg {
+        custodian_nodes.push(cur_setup.try_into()?);
+    }
+    let new_context = CustodianContext {
+        custodian_nodes,
+        context_id: Some(context_id.into()),
+        previous_context_id: None, // TODO(#2748) not really used now, should be refactored
+        threshold,
+    };
+    for ce in core_endpoints.iter_mut() {
+        let mut cur_client = ce.clone();
+        let new_context_cloned = new_context.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .new_custodian_context(tonic::Request::new(NewCustodianContextRequest {
+                    active_context: None, // TODO(#2748) not really used now, should be refactored
+                    new_context: Some(new_context_cloned),
+                }))
+                .await
+        });
+    }
+    while let Some(inner) = req_tasks.join_next().await {
+        let _ = inner??;
+    }
+
+    Ok(context_id)
+}
+
+async fn do_custodian_recovery_init(
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+) -> anyhow::Result<Vec<InternalRecoveryRequest>> {
+    let mut req_tasks = JoinSet::new();
+    for ce in core_endpoints.iter_mut() {
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .custodian_recovery_init(tonic::Request::new(Empty {}))
+                .await
+        });
+    }
+
+    let mut res = Vec::new();
+    while let Some(inner) = req_tasks.join_next().await {
+        let cur_rec_req = inner??;
+        let cur_inner_rec = cur_rec_req.into_inner();
+        res.push(cur_inner_rec.try_into()?);
+    }
+
+    Ok(res)
+}
+
+async fn do_custodian_backup_recovery(
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    custodian_context_id: RequestId,
+    custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
+) -> anyhow::Result<()> {
+    let mut req_tasks = JoinSet::new();
+    for (op_idx, ce) in core_endpoints.iter_mut().enumerate() {
+        let mut cur_client = ce.clone();
+        // We assume the core client endpoints are ordered by the server identity
+        let mut cur_recoveries = Vec::new();
+        for cur_recover in custodian_recovery_outputs.iter() {
+            // Find the recoveries designated for the correct server
+            // Observe that in real world deployments this would mean everyone since
+            // if each KMS nodes has knowledge of _all_ the recoveries for all parites, then
+            // they can trivially recover the secret key!
+            if cur_recover.operator_role == Role::indexed_from_zero(op_idx) {
+                cur_recoveries.push(CustodianRecoveryOutput {
+                    signature: cur_recover.signature.clone(),
+                    ciphertext: cur_recover.ciphertext.clone(),
+                    custodian_role: cur_recover.custodian_role.one_based() as u64,
+                    operator_role: cur_recover.operator_role.one_based() as u64,
+                });
+            }
+        }
+        req_tasks.spawn(async move {
+            cur_client
+                .custodian_backup_recovery(tonic::Request::new(CustodianRecoveryRequest {
+                    custodian_context_id: Some(custodian_context_id.into()),
+                    custodian_recovery_outputs: cur_recoveries,
+                }))
+                .await
+        });
+    }
+
+    while let Some(inner) = req_tasks.join_next().await {
+        let _ = inner??;
+    }
+
+    Ok(())
+}
+
+async fn do_restore_from_backup(
     core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
@@ -1304,7 +1478,7 @@ async fn do_custodian_backup_restore(
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client
-                .custodian_backup_restore(tonic::Request::new(kms_grpc::kms::v1::Empty {}))
+                .restore_from_backup(tonic::Request::new(Empty {}))
                 .await
         });
     }
@@ -1358,7 +1532,11 @@ pub async fn execute_cmd(
         | CCCommand::InsecureKeyGen(_)
         | CCCommand::CrsGen(_)
         | CCCommand::InsecureCrsGen(_)
-        | CCCommand::PreprocKeyGen(_) => {
+        | CCCommand::PreprocKeyGen(_)
+        | CCCommand::BackupRestore(_)
+        | CCCommand::NewCustodianContext(_)
+        | CCCommand::CustodianRecoveryInit(_)
+        | CCCommand::CustodianBackupRecovery(_) => {
             tracing::info!("Fetching verification keys. ({command:?})");
             fetch_verf_keys(&cc_conf, destination_prefix).await?;
         }
@@ -1681,7 +1859,7 @@ pub async fn execute_cmd(
                 num_parties,
                 &kms_addrs,
                 param,
-                Some(*preproc_id),
+                *preproc_id,
                 false,
                 shared_args,
                 destination_prefix,
@@ -1696,6 +1874,7 @@ pub async fn execute_cmd(
                 "Insecure key generation with parameter {}.",
                 param.as_str_name()
             );
+            let dummy_preproc_id = RequestId::new_random(&mut rng);
             let req_id = do_keygen(
                 &mut internal_client,
                 &mut core_endpoints_req,
@@ -1705,7 +1884,7 @@ pub async fn execute_cmd(
                 num_parties,
                 &kms_addrs,
                 param,
-                None,
+                dummy_preproc_id,
                 true,
                 shared_args,
                 destination_prefix,
@@ -1927,13 +2106,69 @@ pub async fn execute_cmd(
             .await?;
             vec![(Some(req_id), "insecure crs gen result queried".to_string())]
         }
+        CCCommand::NewCustodianContext(new_custodian_context_parameters) => {
+            let mut setup_msgs = Vec::new();
+            for cur_path in &new_custodian_context_parameters.setup_msg_paths {
+                let cur_setup: InternalCustodianSetupMessage =
+                    safe_read_element_versioned(cur_path).await?;
+                setup_msgs.push(cur_setup);
+            }
+            let context_id = do_new_custodian_context(
+                &mut core_endpoints_req,
+                &mut rng,
+                new_custodian_context_parameters.threshold,
+                setup_msgs,
+            )
+            .await?;
+            vec![(
+                Some(context_id),
+                "new custodian context created".to_string(),
+            )]
+        }
         CCCommand::GetOperatorPublicKey(NoParameters {}) => {
             let pks = do_get_operator_pub_keys(&mut core_endpoints_req).await?;
             pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
         }
-        CCCommand::CustodianBackupRestore(NoParameters {}) => {
-            do_custodian_backup_restore(&mut core_endpoints_req).await?;
-            vec![(None, "custodian backup restore complete".to_string())]
+        CCCommand::CustodianRecoveryInit(NoParameters {}) => {
+            // TODO(#2748) should have path as a parameter
+            let res = do_custodian_recovery_init(&mut core_endpoints_req).await?;
+            for cur_rec_req in &res {
+                let path = destination_prefix
+                    .join("CUSTODIAN")
+                    .join("recovery")
+                    .join(cur_rec_req.backup_id().to_string())
+                    .join(cur_rec_req.operator_role().to_string());
+                safe_write_element_versioned(path, cur_rec_req).await?;
+            }
+            vec![(
+                Some(res[0].backup_id()),
+                "custodian recovery init queried and recovery request stored".to_string(),
+            )]
+        }
+        CCCommand::CustodianBackupRecovery(RecoveryParameters {
+            custodian_context_id,
+            custodian_recovery_outputs,
+        }) => {
+            let mut custodian_outputs = Vec::new();
+            for recovery_path in custodian_recovery_outputs {
+                let read_recovery: InternalCustodianRecoveryOutput =
+                    safe_read_element_versioned(&recovery_path).await?;
+                custodian_outputs.push(read_recovery);
+            }
+            do_custodian_backup_recovery(
+                &mut core_endpoints_req,
+                *custodian_context_id,
+                custodian_outputs,
+            )
+            .await?;
+            vec![(
+                Some(*custodian_context_id),
+                "custodian backup restore complete".to_string(),
+            )]
+        }
+        CCCommand::BackupRestore(NoParameters {}) => {
+            do_restore_from_backup(&mut core_endpoints_req).await?;
+            vec![(None, "backup restore complete".to_string())]
         }
     };
 
@@ -1954,7 +2189,7 @@ fn print_timings(cmd: &str, durations: &mut [tokio::time::Duration], start: toki
     // compute latency values
     let avg = durations.iter().sum::<tokio::time::Duration>() / durations.len() as u32;
     durations.sort();
-    let median = if durations.len() % 2 == 0 {
+    let median = if durations.len().is_multiple_of(2) {
         (durations[durations.len() / 2 - 1] + durations[durations.len() / 2]) / 2
     } else {
         durations[durations.len() / 2]
@@ -2518,8 +2753,8 @@ async fn fetch_and_check_keygen(
     // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
     // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
     fetch_key(&request_id.to_string(), cc_conf, destination_prefix).await?;
-    let pk = load_pk_from_storage(Some(destination_prefix), &request_id).await;
-    let sk = load_server_key_from_storage(Some(destination_prefix), &request_id).await;
+    let public_key = load_pk_from_storage(Some(destination_prefix), &request_id).await;
+    let server_key = load_server_key_from_storage(Some(destination_prefix), &request_id).await;
 
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;
@@ -2530,25 +2765,20 @@ async fn fetch_and_check_keygen(
             "Request ID of response does not match the transaction"
         );
 
-        let extpksig = if let Some(spdh) = response
-            .key_results
-            .get(&PubDataType::PublicKey.to_string())
-        {
-            &spdh.external_signature
-        } else {
-            return Err(anyhow!("No external pubkey signature in response"));
-        };
-        check_ext_pubdata_signature(&pk, extpksig, &domain, kms_addrs)?;
-
-        let extsksig = if let Some(spdh) = response
-            .key_results
-            .get(&PubDataType::ServerKey.to_string())
-        {
-            &spdh.external_signature
-        } else {
-            return Err(anyhow!("No external pubkey signature in response"));
-        };
-        check_ext_pubdata_signature(&sk, extsksig, &domain, kms_addrs)?;
+        let external_signature = response.external_signature;
+        let prep_id = response.preprocessing_id.ok_or(anyhow!(
+            "No preprocessing ID in keygen response, cannot verify external signature"
+        ))?;
+        check_standard_keyset_ext_signature(
+            &public_key,
+            &server_key,
+            &prep_id.try_into()?,
+            &request_id,
+            &external_signature,
+            &domain,
+            kms_addrs,
+        )
+        .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
 
         tracing::info!("EIP712 verification of Public Key and Server Key successful.");
     }
@@ -2584,13 +2814,10 @@ async fn fetch_and_check_crsgen(
             request_id, resp_req_id,
             "Request ID of response does not match the transaction"
         );
+        let external_signature = response.external_signature;
 
-        let extpksig = if let Some(spdh) = response.crs_results {
-            spdh.external_signature
-        } else {
-            return Err(anyhow!("No external CRS signature in response"));
-        };
-        check_ext_pubdata_signature(&crs, &extpksig, &domain, kms_addrs)?;
+        check_crsgen_ext_signature(&crs, &request_id, &external_signature, &domain, kms_addrs)
+            .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
 
         tracing::info!("EIP712 verification of CRS successful.");
     }
@@ -2611,6 +2838,7 @@ mod tests {
     };
     use std::{env, str::FromStr};
     use tfhe::zk::CompactPkeCrs;
+    use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
 
     #[test]
     fn test_parse_hex() {
@@ -2677,17 +2905,18 @@ mod tests {
         .await;
 
         // compute a small CRS for testing
+        let crs_id = &TEST_CENTRAL_CRS_ID;
         ensure_central_crs_exists(
             &mut pub_storage,
             &mut priv_storage,
             TEST_PARAM,
-            &TEST_CENTRAL_CRS_ID,
+            crs_id,
             true,
         )
         .await;
         let crs: CompactPkeCrs = read_versioned_at_request_id(
             &pub_storage,
-            &RequestId::from_str(&TEST_CENTRAL_CRS_ID.to_string()).unwrap(),
+            &RequestId::from_str(&crs_id.to_string()).unwrap(),
             &PubDataType::CRS.to_string(),
         )
         .await
@@ -2713,16 +2942,21 @@ mod tests {
             // No salt
         );
 
+        let max_num_bits = max_num_bits_from_crs(&crs);
+        let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
+        let crs_sol_struct = CrsgenVerification::new(crs_id, max_num_bits, crs_digest);
+
         // sign with EIP712
-        let sig = compute_external_pubdata_signature(&sk, &crs, &domain).unwrap();
+        let external_sig =
+            compute_external_pubdata_signature(&sk, &crs_sol_struct, &domain).unwrap();
 
         // check that the signature verifies and unwraps without error
-        check_ext_pubdata_signature(&crs, &sig, &domain, &[addr]).unwrap();
+        check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, &[addr]).unwrap();
 
         // check that verification fails for a wrong address
         let wrong_address = alloy_primitives::address!("0EdA6bf26964aF942Eed9e03e53442D37aa960EE");
         assert!(
-            check_ext_pubdata_signature(&crs, &sig, &domain, &[wrong_address])
+            check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, &[wrong_address])
                 .unwrap_err()
                 .to_string()
                 .contains("External crs/pubkey signature verification failed!")
@@ -2731,7 +2965,7 @@ mod tests {
         // check that verification fails for signature that is too short
         let short_sig = [0_u8; 37];
         assert!(
-            check_ext_pubdata_signature(&crs, &short_sig, &domain, &[addr])
+            check_crsgen_ext_signature(&crs, crs_id, &short_sig, &domain, &[addr])
                 .unwrap_err()
                 .to_string()
                 .contains("Expected external signature of length 65 Bytes, but got 37")
@@ -2740,7 +2974,7 @@ mod tests {
         // check that verification fails for a byte string that is not a signature
         let malformed_sig = [23_u8; 65];
         assert!(
-            check_ext_pubdata_signature(&crs, &malformed_sig, &domain, &[addr])
+            check_crsgen_ext_signature(&crs, crs_id, &malformed_sig, &domain, &[addr])
                 .unwrap_err()
                 .to_string()
                 .contains("signature error")
@@ -2749,7 +2983,7 @@ mod tests {
         // check that verification fails for a signature that does not match the message
         let wrong_sig = hex::decode("cf92fe4c0b7c72fd8571c9a6680f2cd7481ebed7a3c8c7c7a6e6eaf27f5654f36100c146e609e39950953602ed73a3c10c1672729295ed8b33009b375813e5801b").unwrap();
         assert!(
-            check_ext_pubdata_signature(&crs, &wrong_sig, &domain, &[addr])
+            check_crsgen_ext_signature(&crs, crs_id, &wrong_sig, &domain, &[addr])
                 .unwrap_err()
                 .to_string()
                 .contains("External crs/pubkey signature verification failed!")

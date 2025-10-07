@@ -1,17 +1,20 @@
+use crate::kms::v1::UserDecryptionResponsePayload;
 use crate::kms::v1::{
-    Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
+    CustodianRecoveryOutput, CustodianRecoveryRequest, Eip712DomainMsg, TypedCiphertext,
+    TypedPlaintext, TypedSigncryptedCiphertext,
 };
-use crate::kms::v1::{SignedPubDataHandle, UserDecryptionResponsePayload};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::fmt::{self};
+use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{FheTypes, Versionize};
-use tfhe_versionable::VersionsDispatch;
+use tfhe_versionable::{Version, VersionsDispatch};
+use threshold_fhe::execution::runtime::party::Role;
 
 pub use crate::identifiers::{KeyId, RequestId, ID_LENGTH};
 
@@ -36,75 +39,84 @@ pub static USER_DECRYPT_REQUEST_NAME: &str = "user_decrypt_request";
 
 static UNSUPPORTED_FHE_TYPE_STR: &str = "UnsupportedFheType";
 
-alloy_sol_types::sol! {
-    struct UserDecryptResponseVerification {
-        bytes publicKey;
-        bytes32[] ctHandles;
-        bytes userDecryptedShare;
-        bytes extraData;
-    }
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, Copy)]
+pub enum KMSType {
+    Centralized,
+    Threshold,
 }
-
-// This is used internally to link a request and a response.
-alloy_sol_types::sol! {
-    struct UserDecryptionLinker {
-        bytes publicKey;
-        bytes32[] handles;
-        address userAddress;
-    }
-}
-
-// Solidity struct for decryption result signature
-// Struct needs to match what is in
-// https://github.com/zama-ai/gateway-l2/blob/main/contracts/DecryptionManager.sol#L18
-// and the name must be what is defined under `EIP712_PUBLIC_DECRYPT_TYPE`
-alloy_sol_types::sol! {
-    struct PublicDecryptVerification {
-        bytes32[] ctHandles;
-        bytes decryptedResult;
-        bytes extraData;
-    }
-}
-
-// Solidity struct for signing the FHE public key
-alloy_sol_types::sol! {
-    struct FhePubKey {
-        bytes pubkey;
-    }
-}
-
-// Solidity struct for signing the FHE server key
-alloy_sol_types::sol! {
-    struct FheServerKey {
-        bytes server_key;
-    }
-}
-
-// Solidity struct for signing the CRS
-alloy_sol_types::sol! {
-    struct CRS {
-        bytes crs;
-    }
-}
-
-pub fn protobuf_to_alloy_domain_option(
-    domain_ref: Option<&Eip712DomainMsg>,
-) -> Option<Eip712Domain> {
-    if let Some(domain) = domain_ref {
-        match protobuf_to_alloy_domain(domain) {
-            Ok(domain) => Some(domain),
-            Err(e) => {
-                tracing::warn!(
-                    "Could not turn domain to alloy: {:?}. Error: {:?}. Returning None.",
-                    domain,
-                    e
-                );
-                None
-            }
+impl fmt::Display for KMSType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            KMSType::Centralized => write!(f, "Centralized KMS"),
+            KMSType::Threshold => write!(f, "Threshold KMS"),
         }
-    } else {
-        None
     }
+}
+
+/// The format of what will be stored, and returned in gRPC, as a result of CRS generation in the KMS
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
+pub enum SignedPubDataHandleInternalVersioned {
+    V0(SignedPubDataHandleInternal),
+}
+
+/// This type is the internal type that corresponds to
+/// the generate protobuf type `SignedPubDataHandle`.
+///
+/// It's needed because we are not able to derive versioned
+/// for the protobuf type.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(SignedPubDataHandleInternalVersioned)]
+pub struct SignedPubDataHandleInternal {
+    // Digest (the 256-bit hex-encoded value, computed using compute_info/handle)
+    // This lower-case hex values without the 0x prefix.
+    pub key_handle: String,
+    // The signature on the handle
+    // OBSOLETE: no longer in use, but cannot be removed because of backwards compatibility
+    pub signature: Vec<u8>,
+    // The signature on the key for the external recipient
+    // (e.g. using EIP712 for fhevm)
+    pub external_signature: Vec<u8>,
+}
+
+impl Named for SignedPubDataHandleInternal {
+    const NAME: &'static str = "SignedPubDataHandleInternal";
+}
+
+impl SignedPubDataHandleInternal {
+    pub fn new(
+        key_handle: String,
+        signature: Vec<u8>,
+        external_signature: Vec<u8>,
+    ) -> SignedPubDataHandleInternal {
+        SignedPubDataHandleInternal {
+            key_handle,
+            signature,
+            external_signature,
+        }
+    }
+}
+
+/// Wrapper struct to allow upgrading of CrsGenMetadata.
+/// This is needed because `SignedPubDataHandleInternal`
+/// still need to be supported for other types so it cannot derive Version.
+/// See https://github.com/zama-ai/tfhe-rs/blob/main/utils/tfhe-versionable/examples/transparent_then_not.rs
+/// for more details.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Version)]
+#[repr(transparent)]
+pub struct CrsGenSignedPubDataHandleInternalWrapper(pub SignedPubDataHandleInternal);
+
+// This function needs to use the non-wasm feature because tonic is not available in wasm builds.
+#[cfg(feature = "non-wasm")]
+pub fn optional_protobuf_to_alloy_domain(
+    domain_ref: Option<&Eip712DomainMsg>,
+) -> Result<Eip712Domain, crate::utils::tonic_result::BoxedStatus> {
+    let inner = domain_ref.ok_or(tonic::Status::invalid_argument("missing domain"))?;
+    let out = protobuf_to_alloy_domain(inner).map_err(|e| {
+        tonic::Status::invalid_argument(format!(
+            "failed to convert protobuf domain to alloy domain: {e}"
+        ))
+    })?;
+    Ok(out)
 }
 
 pub fn protobuf_to_alloy_domain(pb_domain: &Eip712DomainMsg) -> anyhow::Result<Eip712Domain> {
@@ -166,66 +178,6 @@ pub fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712D
     Ok(domain_msg)
 }
 
-/// The format of what will be stored, and returned in gRPC, as a result of CRS generation in the KMS
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
-pub enum SignedPubDataHandleInternalVersioned {
-    V0(SignedPubDataHandleInternal),
-}
-
-/// This type is the internal type that corresponds to
-/// the generate protobuf type `SignedPubDataHandle`.
-///
-/// It's needed because we are not able to derive versioned
-/// for the protobuf type.
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(SignedPubDataHandleInternalVersioned)]
-pub struct SignedPubDataHandleInternal {
-    // Digest (the 256-bit hex-encoded value, computed using compute_info/handle)
-    pub key_handle: String,
-    // The signature on the handle
-    pub signature: Vec<u8>,
-    // The signature on the key for the external recipient
-    // (e.g. using EIP712 for fhevm)
-    pub external_signature: Vec<u8>,
-}
-
-impl Named for SignedPubDataHandleInternal {
-    const NAME: &'static str = "SignedPubDataHandleInternal";
-}
-
-impl SignedPubDataHandleInternal {
-    pub fn new(
-        key_handle: String,
-        signature: Vec<u8>,
-        external_signature: Vec<u8>,
-    ) -> SignedPubDataHandleInternal {
-        SignedPubDataHandleInternal {
-            key_handle,
-            signature,
-            external_signature,
-        }
-    }
-}
-
-impl From<SignedPubDataHandle> for SignedPubDataHandleInternal {
-    fn from(handle: SignedPubDataHandle) -> Self {
-        SignedPubDataHandleInternal {
-            key_handle: handle.key_handle,
-            signature: handle.signature,
-            external_signature: handle.external_signature,
-        }
-    }
-}
-impl From<SignedPubDataHandleInternal> for SignedPubDataHandle {
-    fn from(crs: SignedPubDataHandleInternal) -> Self {
-        SignedPubDataHandle {
-            key_handle: crs.key_handle,
-            signature: crs.signature,
-            external_signature: crs.external_signature,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum PubDataTypeVersioned {
     V0(PubDataType),
@@ -247,9 +199,9 @@ pub enum PubDataType {
     VerfKey,     // Type for the servers public verification keys
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
-    CACert,                // Certificate that signs TLS certificates used by MPC nodes
-    CustodianSetupMessage, // Backup custodian public keys (self-signed)
-    PublicEncKey,          // Classical non-FHE Public encryption key, e.g. used for backup
+    CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
+    RecoveryRequest, // Recovery request for backup vault TODO(#2748) ensure that data gets validated at read, since we cannot fully trust the public storage
+    Commitments, // Commitments for the backup vault TODO(#2748) rename since it also contains custodian context. it could also be combined with the recovery request. We should consider this to be stored in the backup vault instead
 }
 
 impl fmt::Display for PubDataType {
@@ -263,10 +215,15 @@ impl fmt::Display for PubDataType {
             PubDataType::VerfAddress => write!(f, "VerfAddress"),
             PubDataType::DecompressionKey => write!(f, "DecompressionKey"),
             PubDataType::CACert => write!(f, "CACert"),
-            PubDataType::CustodianSetupMessage => write!(f, "CustodianSetupMessage"),
-            PubDataType::PublicEncKey => write!(f, "PublicEncKey"),
+            PubDataType::RecoveryRequest => write!(f, "RecoveryRequest"),
+            PubDataType::Commitments => write!(f, "Commitments"),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum PrivDataTypeVersioned {
+    V0(PrivDataType),
 }
 
 /// PrivDataType
@@ -276,10 +233,15 @@ impl fmt::Display for PubDataType {
 /// signatures. Data of this type is supposed to only be readable, writable and modifiable by a
 /// single entity and stored on a medium that is not readable, writable or modifiable by any other
 /// entity (without detection).
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
+///
+/// Data stored with this type either need to be kept secret and/or need to be kept authentic.
+/// Thus some data may indeed be safe to release publicly, but a malicious replacement could completely
+/// compromise the entire system.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Versionize)]
+#[versionize(PrivDataTypeVersioned)]
 pub enum PrivDataType {
     SigningKey,
-    FheKeyInfo,
+    FheKeyInfo, // Only for the threshold case
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,
@@ -295,6 +257,40 @@ impl fmt::Display for PrivDataType {
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
             PrivDataType::ContextInfo => write!(f, "Context"),
+        }
+    }
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for PrivDataType {
+    fn default() -> Self {
+        PrivDataType::FheKeyInfo // Default is private FHE key material
+    }
+}
+
+impl TryFrom<&str> for PrivDataType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        for priv_data_type in PrivDataType::iter() {
+            if value.to_ascii_lowercase().trim()
+                == priv_data_type.to_string().to_ascii_lowercase().trim()
+            {
+                return Ok(priv_data_type);
+            }
+        }
+        Err(anyhow::anyhow!("Unknown PrivDataType: {}", value))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
+pub enum BackupDataType {
+    PrivData(PrivDataType), // Backup of a piece of private data
+}
+impl fmt::Display for BackupDataType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BackupDataType::PrivData(data_type) => write!(f, "PrivData({data_type})"),
         }
     }
 }
@@ -381,6 +377,8 @@ impl crate::kms::v1::UserDecryptionRequest {
     /// to the user *and* to the KMS.
     /// So we can only use these information to link the request and the response.
     pub fn compute_link_checked(&self) -> anyhow::Result<(Vec<u8>, alloy_sol_types::Eip712Domain)> {
+        use crate::solidity_types::UserDecryptionLinker;
+
         let domain = protobuf_to_alloy_domain(
             self.domain
                 .as_ref()
@@ -390,8 +388,19 @@ impl crate::kms::v1::UserDecryptionRequest {
         let handles = self
             .typed_ciphertexts
             .iter()
-            .map(|x| alloy_primitives::FixedBytes::<32>::left_padding_from(&x.external_handle))
-            .collect::<Vec<_>>();
+            .enumerate()
+            .map(|(idx, c)| {
+                if c.external_handle.len() > 32 {
+                    anyhow::bail!(
+                        "external_handle at index {idx} too long: {} bytes (max 32)",
+                        c.external_handle.len()
+                    );
+                }
+                Ok(alloy_primitives::FixedBytes::<32>::left_padding_from(
+                    &c.external_handle,
+                ))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         if handles.is_empty() {
             anyhow::bail!(ERR_THERE_ARE_NO_HANDLES);
@@ -919,6 +928,98 @@ impl From<(String, FheTypes)> for TypedPlaintext {
         }
     }
 }
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum CustodianRecoveryOutputVersioned {
+    V0(InternalCustodianRecoveryOutput),
+}
+
+/// This is the message that a custodian sends to an operator after starting recovery.
+/// TODO this should be changed to use proper signcryption to ensure that the operator role is signed as well
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(CustodianRecoveryOutputVersioned)]
+pub struct InternalCustodianRecoveryOutput {
+    pub signature: Vec<u8>,  // sigt_i_j
+    pub ciphertext: Vec<u8>, // st_i_j
+    pub custodian_role: Role,
+    pub operator_role: Role,
+}
+
+impl Named for InternalCustodianRecoveryOutput {
+    const NAME: &'static str = "backup::CustodianRecoveryOutput";
+}
+
+impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
+    type Error = anyhow::Error;
+
+    fn try_from(value: CustodianRecoveryOutput) -> Result<Self, Self::Error> {
+        if value.custodian_role == 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid custodian role in CustodianRecoveryOutput"
+            ));
+        }
+        if value.operator_role == 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid operator role in CustodianRecoveryOutput"
+            ));
+        }
+        Ok(InternalCustodianRecoveryOutput {
+            signature: value.signature.to_vec(),
+            ciphertext: value.ciphertext,
+            custodian_role: Role::indexed_from_one(value.custodian_role as usize),
+            operator_role: Role::indexed_from_one(value.operator_role as usize),
+        })
+    }
+}
+
+impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
+    type Error = anyhow::Error;
+
+    fn try_from(value: InternalCustodianRecoveryOutput) -> Result<Self, Self::Error> {
+        Ok(CustodianRecoveryOutput {
+            signature: value.signature,
+            ciphertext: value.ciphertext,
+            custodian_role: value.custodian_role.one_based() as u64,
+            operator_role: value.operator_role.one_based() as u64,
+        })
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum InternalCustodianRecoveryRequestVersioned {
+    V0(InternalCustodianRecoveryRequest),
+}
+
+/// This is the internal representation of the custodian context.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
+#[versionize(InternalCustodianRecoveryRequestVersioned)]
+pub struct InternalCustodianRecoveryRequest {
+    pub custodian_context_id: RequestId,
+    pub custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
+}
+
+impl Named for InternalCustodianRecoveryRequest {
+    const NAME: &'static str = "backup::BackupRestoreRequest";
+}
+
+impl TryFrom<CustodianRecoveryRequest> for InternalCustodianRecoveryRequest {
+    type Error = anyhow::Error;
+
+    fn try_from(value: CustodianRecoveryRequest) -> Result<Self, Self::Error> {
+        Ok(InternalCustodianRecoveryRequest {
+            custodian_context_id: value
+                .custodian_context_id
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Missing custodian context ID in BackupRestoreRequest")
+                })?
+                .try_into()?,
+            custodian_recovery_outputs: value
+                .custodian_recovery_outputs
+                .into_iter()
+                .map(InternalCustodianRecoveryOutput::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1053,6 +1154,9 @@ mod tests {
         let key_id =
             RequestId::from_str("2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40")
                 .unwrap();
+        let context_id =
+            RequestId::from_str("4142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f60")
+                .unwrap();
 
         let alloy_domain = alloy_sol_types::eip712_domain!(
             name: "Authorization token",
@@ -1083,6 +1187,8 @@ mod tests {
                 enc_key: vec![],
                 domain: None,
                 extra_data: vec![],
+                context_id: Some(context_id.into()),
+                epoch_id: None,
             };
             assert!(req
                 .compute_link_checked()
@@ -1101,6 +1207,8 @@ mod tests {
                 enc_key: vec![],
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                context_id: Some(context_id.into()),
+                epoch_id: None,
             };
             assert!(req
                 .compute_link_checked()
@@ -1122,6 +1230,8 @@ mod tests {
                 enc_key: vec![],
                 domain: Some(bad_domain),
                 extra_data: vec![],
+                context_id: Some(context_id.into()),
+                epoch_id: None,
             };
 
             assert!(req
@@ -1141,6 +1251,8 @@ mod tests {
                 enc_key: vec![],
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                context_id: Some(context_id.into()),
+                epoch_id: None,
             };
             assert!(req.compute_link_checked().is_ok());
         }

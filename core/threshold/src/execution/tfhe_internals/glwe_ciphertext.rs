@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use tfhe::{
-    core_crypto::commons::traits::ByteRandomGenerator, shortint::parameters::PolynomialSize,
+    core_crypto::commons::traits::ParallelByteRandomGenerator, shortint::parameters::PolynomialSize,
 };
 
 use crate::algebra::{
@@ -79,7 +79,7 @@ pub fn encrypt_glwe_ciphertext_assign<Gen, Z, const EXTENSION_DEGREE: usize>(
     output: &mut GlweCiphertextShare<Z, EXTENSION_DEGREE>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) where
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
@@ -102,7 +102,7 @@ pub fn encrypt_glwe_ciphertext<Gen, Z, const EXTENSION_DEGREE: usize>(
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     encryption_type: EncryptionType,
 ) where
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
@@ -126,7 +126,7 @@ pub(crate) fn encrypt_glwe_ciphertext_list<Gen, Z, const EXTENSION_DEGREE: usize
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     encryption_type: EncryptionType,
 ) where
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
@@ -157,7 +157,7 @@ fn fill_glwe_mask_and_body_for_encryption_assign<Z, Gen, const EXTENSION_DEGREE:
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     encryption_type: EncryptionType,
 ) where
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
@@ -206,7 +206,7 @@ mod tests {
             CiphertextModulus,
         },
     };
-    use tfhe_csprng::generators::SoftwareRandomGenerator;
+    use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 
     use crate::{
         algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
@@ -239,9 +239,9 @@ mod tests {
     use crate::execution::sharing::shamir::InputOp;
 
     //Test that we can encrypt with our code and decrypt with TFHE-rs
-    #[test]
+    #[tokio::test]
     #[ignore] //Fails on CI due to timeout
-    fn test_glwe_encryption() {
+    async fn test_glwe_encryption() {
         //Testing with NIST params P=8
         let polynomial_size = 512_usize;
         let polynomial_size = PolynomialSize(polynomial_size);
@@ -256,6 +256,7 @@ mod tests {
         let num_key_bits = glwe_dimension * polynomial_size.0;
 
         let mut task = |mut session: LargeSession| async move {
+            let xof_seed = XofSeed::new_u128(seed, *b"TEST_GEN");
             let my_role = session.my_role();
             let encoded_message = (0..polynomial_size.0)
                 .map(|idx| {
@@ -297,7 +298,7 @@ mod tests {
             .collect_vec();
 
             let mut mpc_encryption_rng = MPCEncryptionRandomGenerator {
-                mask: MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(seed),
+                mask: MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(xof_seed),
                 noise: MPCNoiseRandomGenerator {
                     vec: vec_tuniform_noise,
                 },
@@ -335,7 +336,8 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
-        );
+        )
+        .await;
 
         let mut glwe_ctxt_shares: HashMap<Role, Vec<Share<_>>> = HashMap::new();
         let mut glwe_key_shares: HashMap<Role, Vec<Share<_>>> = HashMap::new();

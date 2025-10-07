@@ -4,8 +4,8 @@ use redis::{Cmd, ConnectionLike};
 use std::num::Wrapping;
 use threshold_fhe::algebra::base_ring::{Z128, Z64};
 use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4;
-use threshold_fhe::execution::online::preprocessing::create_redis_factory;
 use threshold_fhe::execution::online::preprocessing::redis::RedisConf;
+use threshold_fhe::execution::online::preprocessing::{create_redis_factory, PreprocessorFactory};
 use threshold_fhe::execution::online::triple::Triple;
 use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::sharing::share::Share;
@@ -15,7 +15,7 @@ use threshold_fhe::{
     execution::{
         endpoints::keygen::SecureOnlineDistributedKeyGen,
         online::preprocessing::orchestration::producer_traits::SecureLargeProducerFactory,
-        runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+        runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
         tfhe_internals::parameters::DKGParams,
     },
     session_id::SessionId,
@@ -40,8 +40,8 @@ macro_rules! test_triples {
         paste! {
 
 
-            #[test]
-            fn [<test_redis_preprocessing $z:lower>]() {
+            #[tokio::test]
+            async fn [<test_redis_preprocessing $z:lower>]() {
                 let test_key_prefix = format!("test_redis_preprocessing_{}",stringify!($z));
                 let redis_conf = RedisConf::default();
                 let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -81,8 +81,8 @@ macro_rules! test_triples {
     };
 }
 
-#[test]
-fn test_store_fetch_100_triples() {
+#[tokio::test]
+async fn test_store_fetch_100_triples() {
     let test_key_prefix = "test_store_fetch_100_triples".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -118,8 +118,8 @@ fn test_store_fetch_100_triples() {
     assert_eq!(triples, fetched_triples);
 }
 
-#[test]
-fn test_store_fetch_100_randoms() {
+#[tokio::test]
+async fn test_store_fetch_100_randoms() {
     let test_key_prefix = "test_store_fetch_100_randoms".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -141,8 +141,8 @@ fn test_store_fetch_100_randoms() {
     assert_eq!(randoms, fetched_shares);
 }
 
-#[test]
-fn test_store_fetch_100_bits() {
+#[tokio::test]
+async fn test_store_fetch_100_bits() {
     let test_key_prefix = "test_store_fetch_100_bits".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -164,8 +164,8 @@ fn test_store_fetch_100_bits() {
     assert_eq!(bits, fetched_bits);
 }
 
-#[test]
-fn test_fetch_more_than_stored() {
+#[tokio::test]
+async fn test_fetch_more_than_stored() {
     let store_count = 100;
     let fetch_count = 101;
 
@@ -189,6 +189,43 @@ fn test_fetch_more_than_stored() {
         .unwrap_err()
         .to_string()
         .contains("Pop length error."));
+}
+
+#[tokio::test]
+async fn test_cleanup_on_drop() {
+    let test_key_prefix = "test_cleanup_on_drop".to_string();
+    let redis_conf = RedisConf::default();
+    let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
+    let mut bit_redis_preprocessing = redis_factory.create_bit_preprocessing_residue_64();
+    let mut random_redis_preprocessing = redis_factory.create_base_preprocessing_residue_64();
+
+    // Create a new factory because we want to have the exact same key prefix (i.e. no counter increase)
+    let mut redis_factory_bis: Box<dyn PreprocessorFactory<4>> =
+        create_redis_factory(test_key_prefix.clone(), &redis_conf);
+    let bit_redis_preprocessing_bis = redis_factory_bis.create_bit_preprocessing_residue_64();
+
+    let share = Share::new(
+        Role::indexed_from_one(1),
+        ResiduePolyF4::<Z64>::from_scalar(Wrapping(1)),
+    );
+
+    bit_redis_preprocessing.append_bits(vec![share]);
+    random_redis_preprocessing.append_randoms(vec![share]);
+
+    // Make sure we can actually see the "bit" from the other preprocessing
+    assert_eq!(bit_redis_preprocessing_bis.bits_len(), 1);
+    // Drop the preprocessing instance
+    drop(bit_redis_preprocessing);
+
+    // Sleep for a while because drop of the Redis preproc is
+    // sent to a tokio blocking thread so drop might return early
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    // Check that the shares have been cleaned up
+    assert_eq!(bit_redis_preprocessing_bis.bits_len(), 0);
+
+    // But not these ones
+    assert_eq!(random_redis_preprocessing.randoms_len(), 1)
 }
 
 test_triples![create_base_preprocessing_residue_64 Z64];
@@ -216,12 +253,12 @@ fn test_dkg_orchestrator_large(
 
     let params_basics_handles = params.get_params_basics_handle();
 
-    let identities = generate_fixed_identities(num_parties);
+    let roles = generate_fixed_roles(num_parties);
     //Executing offline, so require Sync network
     let runtimes = (0..num_sessions)
         .map(|_| {
             DistributedTestRuntime::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>::new(
-                identities.clone(),
+                roles.clone(),
                 threshold,
                 NetworkMode::Sync,
                 None,
@@ -232,26 +269,25 @@ fn test_dkg_orchestrator_large(
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let mut handles = OsThreadGroup::new();
-    for party_id in 0..num_parties {
+    for party in roles {
         let runtimes = runtimes.clone();
         let rt_handle = rt.handle().clone();
         handles.add(thread::spawn(move || {
             let _guard = rt_handle.enter();
-            println!("Thread created for {party_id}");
+            println!("Thread created for party {party}");
 
             //For each party, create num_sessions sessions
             let sessions = runtimes
                 .iter()
                 .zip_eq(0..num_sessions)
                 .map(|(runtime, session_id)| {
-                    runtime.large_session_for_party(SessionId::from(session_id), party_id)
+                    runtime.large_session_for_party(SessionId::from(session_id), party)
                 })
                 .collect_vec();
 
-            let identity = sessions[0].own_identity();
             let redis_conf = RedisConf::default();
             let mut redis_factory =
-                create_redis_factory(format!("LargeOrchestrator_{identity}"), &redis_conf);
+                create_redis_factory(format!("LargeOrchestrator_{party}"), &redis_conf);
             let orchestrator = PreprocessingOrchestrator::<ResiduePolyF4Z64>::new(
                 redis_factory.as_mut(),
                 params,
@@ -272,11 +308,11 @@ fn test_dkg_orchestrator_large(
 
             let (pk, sk) = rt_handle.block_on(async {
 
-                SecureOnlineDistributedKeyGen::<Z64>::keygen::<_, _,{ ResiduePolyF4Z64::EXTENSION_DEGREE}>(dkg_session, preproc.as_mut(), params)
+                SecureOnlineDistributedKeyGen::<Z64,{ResiduePolyF4Z64::EXTENSION_DEGREE}>::keygen(dkg_session, preproc.as_mut(), params, None)
                     .await
                     .unwrap()
             });
-            (party_id, pk, sk)
+            (party, pk, sk)
         }));
     }
 
@@ -327,8 +363,8 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
 }
 
 #[cfg(feature = "testing")]
-#[test]
-fn test_cast_fail_memory_bit_dec_preprocessing() {
+#[tokio::test]
+async fn test_cast_fail_memory_bit_dec_preprocessing() {
     use threshold_fhe::{
         algebra::galois_rings::degree_4::ResiduePolyF4Z64,
         execution::online::preprocessing::{

@@ -24,6 +24,10 @@ impl SessionId {
     pub fn to_le_bytes(&self) -> [u8; SESSION_ID_BYTES] {
         self.0.to_le_bytes()
     }
+
+    pub fn to_be_bytes(&self) -> [u8; SESSION_ID_BYTES] {
+        self.0.to_be_bytes()
+    }
 }
 
 impl FromStr for SessionId {

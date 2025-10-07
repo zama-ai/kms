@@ -1,5 +1,8 @@
 use const_format::concatcp;
 
+#[cfg(feature = "choreographer")]
+use crate::session_id::SessionId;
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         /// log_2 of parameter B_{SwitchSquash}, always using the upper bound
@@ -25,3 +28,8 @@ pub const TEMP_DKG_DIR: &str = "temp/dkg";
 
 pub const SMALL_TEST_KEY_PATH: &str = concatcp!(TEMP_DIR, "/small_test_keys.bin");
 pub const REAL_KEY_PATH: &str = concatcp!(TEMP_DIR, "/default_keys.bin");
+
+#[cfg(feature = "choreographer")]
+lazy_static::lazy_static! {
+    pub static ref DEFAULT_CHOREOGRAPHY_CONTEXT_ID: SessionId = SessionId::from(1776u128);
+}

@@ -33,27 +33,29 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        endpoints::keygen::{
-            CompressionPrivateKeySharesEnum, FhePubKeySet, GlweSecretKeyShareEnum, PrivateKeySet,
+        runtime::{
+            party::Role,
+            session::{BaseSessionHandles, DeSerializationRunTime},
         },
-        runtime::{party::Role, session::BaseSessionHandles},
         sharing::{
             input::robust_input,
             shamir::{InputOp, ShamirSharings},
             share::Share,
         },
         tfhe_internals::{
-            compression_decompression_key::{
-                CompressionPrivateKeyShares, SnsCompressionPrivateKeyShares,
-            },
-            glwe_key::GlweSecretKeyShare,
-            lwe_key::LweSecretKeyShare,
+            compression_decompression_key::CompressionPrivateKeyShares,
+            glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare,
+            sns_compression_key::SnsCompressionPrivateKeyShares,
         },
     },
     networking::value::NetworkValue,
 };
 
-use super::parameters::{DKGParams, DKGParamsBasics};
+use super::{
+    parameters::{DKGParams, DKGParamsBasics},
+    private_keysets::{CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet},
+    public_keysets::FhePubKeySet,
+};
 
 /// the party ID of the party doing the reconstruction
 pub const INPUT_PARTY_ID: usize = 1;
@@ -217,6 +219,8 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
+    // Keys are big so we use rayon for (de)serialization
+    session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
     let own_role = session.my_role();
     let params_basic_handle = params.get_params_basics_handle();
 
@@ -663,7 +667,9 @@ async fn transfer_network_value<S: BaseSessionHandles>(
     network_value: Option<NetworkValue<Z128>>,
     input_party_id: usize,
 ) -> anyhow::Result<NetworkValue<Z128>> {
-    session.network().increase_round_counter()?;
+    // We are transferring only big things here, so always pick rayon
+    let deserialization_runtime = DeSerializationRunTime::Rayon;
+    session.network().increase_round_counter().await;
     if session.my_role().one_based() == input_party_id {
         // send the value
         let network_val =
@@ -675,16 +681,16 @@ async fn transfer_network_value<S: BaseSessionHandles>(
         );
 
         let mut set = JoinSet::new();
-        let buf_to_send = network_val.clone().to_network();
+        let buf_to_send = Arc::new(network_val.clone().to_network());
         for receiver in 1..=num_parties {
             if receiver != input_party_id {
-                let rcv_identity = session.identity_from(&Role::indexed_from_one(receiver))?;
-
                 let networking = Arc::clone(session.network());
 
                 let cloned_buf = buf_to_send.clone();
                 set.spawn(async move {
-                    let _ = networking.send(cloned_buf, &rcv_identity).await;
+                    let _ = networking
+                        .send(cloned_buf, &Role::indexed_from_one(receiver))
+                        .await;
                 });
             }
         }
@@ -692,19 +698,20 @@ async fn transfer_network_value<S: BaseSessionHandles>(
         Ok(network_val)
     } else {
         // receive the value
-        let sender_identity = session.identity_from(&Role::indexed_from_one(input_party_id))?;
         let networking = Arc::clone(session.network());
-        let timeout = session.network().get_timeout_current_round()?;
+        let timeout = session.network().get_timeout_current_round().await;
         tracing::debug!(
             "Waiting to receive value from input party with timeout {:?}",
             timeout
         );
         let data = tokio::spawn(timeout_at(timeout, async move {
-            networking.receive(&sender_identity).await
+            networking
+                .receive(&Role::indexed_from_one(input_party_id))
+                .await
         }))
         .await??;
 
-        Ok(NetworkValue::<Z128>::from_network(data)?)
+        Ok(NetworkValue::<Z128>::from_network(data, deserialization_runtime).await?)
     }
 }
 

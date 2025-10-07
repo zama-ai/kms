@@ -26,25 +26,60 @@ use crate::{
     },
     networking::value::BroadcastValue,
     session_id::SessionId,
+    thread_handles::spawn_compute_bound,
     ProtocolDescription,
 };
 use anyhow::Context;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use serde::{Deserialize, Serialize};
-use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
+use std::{clone::Clone, sync::Arc};
 use tfhe::named::Named;
 use tfhe_versionable::{Upgrade, Version, Versionize, VersionsDispatch};
 use tonic::async_trait;
-use tracing::instrument;
+use tracing::{instrument, Instrument};
 
 /// Trait to capture the primitives of the PRSS/PRZS after init.
 #[async_trait]
 pub trait PRSSPrimitives<Z>: ProtocolDescription + Send + Sync {
-    fn prss_next(&mut self, party_id: Role) -> anyhow::Result<Z>;
-    fn przs_next(&mut self, party_id: Role, threshold: u8) -> anyhow::Result<Z>;
-    fn mask_next(&mut self, party_id: Role, bd: u128) -> anyhow::Result<Z>;
+    async fn prss_next(&mut self, party_id: Role) -> anyhow::Result<Z> {
+        self.prss_next_vec(party_id, 1)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow_error_and_log("No PRSS value returned!"))
+    }
+
+    async fn przs_next(&mut self, party_id: Role, threshold: u8) -> anyhow::Result<Z> {
+        self.przs_next_vec(party_id, threshold, 1)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow_error_and_log("No PRZS value returned!"))
+    }
+
+    async fn mask_next(&mut self, party_id: Role, bd: u128) -> anyhow::Result<Z> {
+        self.mask_next_vec(party_id, bd, 1)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow_error_and_log("No mask value returned!"))
+    }
+
+    async fn prss_next_vec(&mut self, party_id: Role, amount: usize) -> anyhow::Result<Vec<Z>>;
+    async fn przs_next_vec(
+        &mut self,
+        party_id: Role,
+        threshold: u8,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>>;
+    async fn mask_next_vec(
+        &mut self,
+        party_id: Role,
+        bd: u128,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>>;
 
     async fn prss_check<S: BaseSessionHandles>(
         &self,
@@ -173,7 +208,7 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandom> PRSSInit<Z>
     /// initialize the PRSS setup for this epoch and a given party
     ///
     /// __NOTE__: Needs to be instantiated with [`RealAgreeRandomWithAbort`] to match the spec
-    #[instrument(name="PRSS.Init (abort)",skip(self,session),fields(sid=?session.session_id(),own_identity = ?session.own_identity()))]
+    #[instrument(name="PRSS.Init (abort)",skip(self,session),fields(sid=?session.session_id(),my_role = ?session.my_role()))]
     async fn init<S: BaseSessionHandles>(
         &self,
         session: &mut S,
@@ -218,8 +253,8 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandom> PRSSInit<Z>
         }
 
         Ok(PRSSSetup {
-            sets: party_prss_sets,
-            alpha_powers,
+            sets: Arc::new(party_prss_sets),
+            alpha_powers: Arc::new(alpha_powers),
         })
     }
 }
@@ -232,7 +267,7 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss
     /// initialize the PRSS setup for this epoch and a given party
     ///
     /// __NOTE__: Needs to be instantiated with [`RealAgreeRandomWithAbort`] to match the spec
-    #[instrument(name="PRSS.Init (robust)",skip(self,session),fields(sid=?session.session_id(),own_identity = ?session.own_identity()))]
+    #[instrument(name="PRSS.Init (robust)",skip(self,session),fields(sid=?session.session_id(),my_role = ?session.my_role()))]
     async fn init<S: BaseSessionHandles>(
         &self,
         session: &mut S,
@@ -297,8 +332,11 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss
         }
 
         Ok(PRSSSetup {
-            sets: party_prss_sets,
-            alpha_powers: embed_parties_and_compute_alpha_powers(n, session.threshold() as usize)?,
+            sets: Arc::new(party_prss_sets),
+            alpha_powers: Arc::new(embed_parties_and_compute_alpha_powers(
+                n,
+                session.threshold() as usize,
+            )?),
         })
     }
 }
@@ -368,12 +406,14 @@ pub enum PRSSSetupVersioned<Z: Default + Clone + Serialize> {
     V0(PRSSSetup<Z>),
 }
 
+/// This struct is cheap to clone as it's made of Arc
+/// This is because it's cloned for every new session
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(PRSSSetupVersioned)]
 pub struct PRSSSetup<Z: Default + Clone + Serialize> {
     // all possible subsets of n-t parties (A) that contain Pi and their shared PRF keys
-    pub(crate) sets: Vec<PrssSet<Z>>,
-    pub(crate) alpha_powers: Vec<Vec<Z>>,
+    pub(crate) sets: Arc<Vec<PrssSet<Z>>>,
+    pub(crate) alpha_powers: Arc<Vec<Vec<Z>>>,
 }
 
 impl<Z: Default + Clone + Serialize> ProtocolDescription for PRSSSetup<Z> {
@@ -396,7 +436,10 @@ impl<Z: Default + Clone + Serialize> Named for PRSSSetup<Z> {
 #[cfg(feature = "testing")]
 impl<Z: Default + Clone + Serialize> PRSSSetup<Z> {
     pub fn new_testing_prss(sets: Vec<PrssSet<Z>>, alpha_powers: Vec<Vec<Z>>) -> Self {
-        Self { sets, alpha_powers }
+        Self {
+            sets: Arc::new(sets),
+            alpha_powers: Arc::new(alpha_powers),
+        }
     }
 }
 
@@ -416,7 +459,7 @@ pub struct PRSSState<Z: Default + Clone + Serialize, B: Broadcast> {
     /// PRSSSetup
     pub(crate) prss_setup: PRSSSetup<Z>,
     /// the initialized PRFs for each set
-    pub(crate) prfs: Vec<PrfAes>,
+    pub(crate) prfs: Arc<Vec<PrfAes>>,
     pub(crate) broadcast: B,
 }
 
@@ -494,15 +537,28 @@ where
     ///
     /// __NOTE__ : The output share is not uniformly random,
     /// and this method will panic if executed for Z an extension of Z64.
-    fn mask_next(&mut self, party_role: Role, bd: u128) -> anyhow::Result<Z> {
+    #[instrument(name="Mask.Next",skip_all,fields(batch_size=?amount))]
+    async fn mask_next_vec(
+        &mut self,
+        party_role: Role,
+        bd: u128,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
         let bd1 = bd << STATSEC;
-        let mut res = Z::ZERO;
 
-        for (i, set) in self.prss_setup.sets.iter().enumerate() {
+        //Cheap to clone as everything is an Arc or atomic types
+        let prfs = self.prfs.clone();
+        let prss_setup = self.prss_setup.clone();
+        let mask_ctr = self.counters.mask_ctr;
+
+        let res = spawn_compute_bound(move || {
+        (mask_ctr..mask_ctr + (amount as u128)).map(|ctr| {
+        let mut res = Z::ZERO;
+        for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
-                if let Some(aes_prf) = &self.prfs.get(i) {
-                    let phi0 = phi(&aes_prf.phi_aes, self.counters.mask_ctr, bd1)?;
-                    let phi1 = phi(&aes_prf.phi_aes, self.counters.mask_ctr + 1, bd1)?;
+                if let Some(aes_prf) = prfs.get(i) {
+                    let phi0 = phi(&aes_prf.phi_aes, ctr , bd1)?;
+                    let phi1 = phi(&aes_prf.phi_aes, ctr + 1, bd1)?;
                     let phi = phi0 + phi1;
 
                     // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
@@ -519,9 +575,11 @@ where
                 return Err(anyhow_error_and_log(format!("Called prss.mask_next() with party role {party_role} that is not in a precomputed set of parties!")));
             }
         }
+            Ok(res)}).try_collect()
+    }).instrument(tracing::Span::current()).await??;
 
-        // increase counter by two, since we have two phi calls above
-        self.counters.mask_ctr += 2;
+        // increase counter by two for each element generated, since we have two phi calls above
+        self.counters.mask_ctr += 2 * (amount as u128);
 
         Ok(res)
     }
@@ -530,13 +588,20 @@ where
     ///
     /// __NOTE__: telemetry is done at the caller because this function isn't batched
     /// and we want to avoid creating too many telemetry spans
-    fn prss_next(&mut self, party_role: Role) -> anyhow::Result<Z> {
-        let mut res = Z::ZERO;
+    #[instrument(name="PRSS.Next",skip_all,fields(batch_size=?amount))]
+    async fn prss_next_vec(&mut self, party_role: Role, amount: usize) -> anyhow::Result<Vec<Z>> {
+        //Cheap to clone as everything is an Arc or atomic types
+        let prfs = self.prfs.clone();
+        let prss_setup = self.prss_setup.clone();
+        let prss_ctr = self.counters.prss_ctr;
 
-        for (i, set) in self.prss_setup.sets.iter().enumerate() {
+        let res = spawn_compute_bound(move ||{
+            (prss_ctr..prss_ctr + (amount as u128)).map(|ctr| {
+        let mut res = Z::ZERO;
+        for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
-                if let Some(aes_prf) = &self.prfs.get(i) {
-                    let psi = psi(&aes_prf.psi_aes, self.counters.prss_ctr)?;
+                if let Some(aes_prf) = prfs.get(i) {
+                    let psi = psi(&aes_prf.psi_aes, ctr)?;
 
                     // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the precomputed f_a_points (indexed from zero)
                     let f_a = set.f_a_points[&party_role];
@@ -551,8 +616,10 @@ where
                 return Err(anyhow_error_and_log(format!("Called prss.next() with party role {party_role} that is not in a precomputed set of parties!")));
             }
         }
+        Ok(res)}).try_collect()
+    }).instrument(tracing::Span::current()).await??;
 
-        self.counters.prss_ctr += 1;
+        self.counters.prss_ctr += amount as u128;
 
         Ok(res)
     }
@@ -563,18 +630,30 @@ where
     ///
     /// __NOTE__: telemetry is done at the caller because this function isn't batched
     /// and we want to avoid creating too many telemetry spans
-    fn przs_next(&mut self, party_role: Role, threshold: u8) -> anyhow::Result<Z> {
-        let mut res = Z::ZERO;
+    #[instrument(name="PRZS.Next",skip_all,fields(batch_size=?amount))]
+    async fn przs_next_vec(
+        &mut self,
+        party_role: Role,
+        threshold: u8,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
+        //Cheap to clone as everything is an Arc or atomic types
+        let prfs = self.prfs.clone();
+        let prss_setup = self.prss_setup.clone();
+        let przs_ctr = self.counters.przs_ctr;
 
-        for (i, set) in self.prss_setup.sets.iter().enumerate() {
+        let res = spawn_compute_bound(move ||{
+            (przs_ctr..przs_ctr + (amount as u128)).map(|ctr| {
+        let mut res = Z::ZERO;
+        for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
-                if let Some(aes_prf) = &self.prfs.get(i) {
+                if let Some(aes_prf) = prfs.get(i) {
                     for j in 1..=threshold {
-                        let chi = chi(&aes_prf.chi_aes, self.counters.przs_ctr, j)?;
+                        let chi = chi(&aes_prf.chi_aes, ctr, j)?;
                         // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
                         let f_a = set.f_a_points[&party_role];
                         // power of alpha_i^j
-                        let alpha_j = self.prss_setup.alpha_powers[&party_role][j as usize];
+                        let alpha_j = prss_setup.alpha_powers[&party_role][j as usize];
                         res += f_a * alpha_j * chi;
                     }
                 } else {
@@ -586,15 +665,17 @@ where
                 return Err(anyhow_error_and_log(format!("Called przs.next() with party role {party_role} that is not in a precomputed set of parties!")));
             }
         }
+        Ok(res)}).try_collect()
+}).instrument(tracing::Span::current()).await??;
 
-        self.counters.przs_ctr += 1;
+        self.counters.przs_ctr += amount as u128;
 
         Ok(res)
     }
 
     /// Compute the PRSS.check() method which returns the summed up psi value for each party based on the supplied counter `ctr`.
     /// If parties are behaving maliciously they get added to the corruption list in [SmallSessionHandles]
-    #[instrument(name = "PRSS.check", skip(self, session), fields(sid=?session.session_id(),own_identity=?session.own_identity()))]
+    #[instrument(name = "PRSS.check", skip(self, session), fields(sid=?session.session_id(), my_role=?session.my_role()))]
     async fn prss_check<S: BaseSessionHandles>(
         &self,
         session: &mut S,
@@ -636,7 +717,7 @@ where
 
     /// Compute the PRZS.check() method which returns the summed up chi value for each party based on the supplied counter `ctr`.
     /// If parties are behaving maliciously they get added to the corruption list in [SmallSessionHandles]
-    #[instrument(name = "PRZS.Check", skip(self, session, ctr), fields(sid=?session.session_id(),own_identity=?session.own_identity()))]
+    #[instrument(name = "PRZS.Check", skip(self, session, ctr), fields(sid=?session.session_id(), my_role=?session.my_role()))]
     async fn przs_check<S: BaseSessionHandles>(
         &self,
         session: &mut S,
@@ -697,8 +778,10 @@ fn sort_votes<Z: Ring, S: BaseSessionHandles>(
             // If the party does not broadcast the type as expected they are considered malicious
             _ => {
                 session.add_corrupt(*role);
-                tracing::warn!("Party with role {:?} and identity {:?} sent values they shouldn't and is thus malicious",
-                     role.one_based(), session.role_assignments().get(role));
+                tracing::warn!(
+                    "Party with role {:?} sent values they shouldn't and is thus malicious",
+                    role.one_based()
+                );
                 continue;
             }
         };
@@ -736,8 +819,8 @@ fn add_vote<Z: Ring, S: BaseSessionHandles>(
                 // If the role was not inserted then it was already present and hence the party is trying to vote multiple times
                 // and they should be marked as corrupt
                 session.add_corrupt(cur_role);
-                tracing::warn!("Party with role {:?} and identity {:?} is trying to vote for the same prf value more than once and is thus malicious",
-                         cur_role.one_based(), session.role_assignments().get(&cur_role));
+                tracing::warn!("Party with role {:?} is trying to vote for the same prf value more than once and is thus malicious",
+                         cur_role.one_based());
             }
         }
         None => {
@@ -810,8 +893,8 @@ fn handle_non_voting_parties<Z: Ring, S: BaseSessionHandles>(
                 for cur_role in prss_set.iter() {
                     if !roles_votes.contains(cur_role) {
                         session.add_corrupt(*cur_role);
-                        tracing::warn!("Party with role {:?} and identity {:?} did not vote for the correct prf value and is thus malicious",
-                                 cur_role, session.role_assignments().get(cur_role));
+                        tracing::warn!("Party with role {:?} did not vote for the correct prf value and is thus malicious",
+                                 cur_role.one_based());
                     }
                 }
             }
@@ -838,7 +921,7 @@ fn compute_party_shares<Z: RingWithExceptionalSequence + Invert, P: ParameterHan
     };
 
     let mut s_values: HashMap<Role, Z> = HashMap::with_capacity(param.num_parties());
-    for cur_role in param.role_assignments().keys() {
+    for cur_role in param.roles() {
         let mut cur_s = Z::ZERO;
         for (set_idx, set) in sets.iter().enumerate() {
             if set.contains(cur_role) {
@@ -897,7 +980,7 @@ impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions> DerivePRSSState<
         let mut prfs = Vec::new();
 
         // initialize AES PRFs once with random agreed keys and sid
-        for set in &self.sets {
+        for set in self.sets.iter() {
             let chi_aes = ChiAes::new(&set.set_key, sid);
             let psi_aes = PsiAes::new(&set.set_key, sid);
             let phi_aes = PhiAes::new(&set.set_key, sid);
@@ -912,7 +995,7 @@ impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions> DerivePRSSState<
         PRSSState {
             counters: PRSSCounters::default(),
             prss_setup: self.clone(),
-            prfs,
+            prfs: Arc::new(prfs),
             broadcast: SyncReliableBroadcast::default(),
         }
     }
@@ -964,10 +1047,10 @@ mod tests {
         execution::{
             constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, SMALL_TEST_KEY_PATH, STATSEC},
             endpoints::decryption::{threshold_decrypt64, DecryptionMode},
-            runtime::party::{Identity, Role},
+            runtime::party::Role,
             runtime::{
                 session::{BaseSessionHandles, ParameterHandles, SmallSession},
-                test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+                test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
             sharing::{shamir::ShamirSharings, share::Share},
             small_execution::agree_random::{
@@ -978,6 +1061,7 @@ mod tests {
         tests::helper::testing::get_networkless_base_session_for_parties,
     };
     use aes_prng::AesRng;
+    use futures_util::future::{join, join_all};
     use rand::SeedableRng;
     use rstest::rstest;
     use std::num::Wrapping;
@@ -1016,7 +1100,7 @@ mod tests {
     //NOTE: Need to generalize (some of) the tests to ResiduePolyF4Z64 ?
     impl<Z: RingWithExceptionalSequence + Invert> PRSSSetup<Z> {
         // initializes the epoch for a single party (without actual networking)
-        pub fn testing_party_epoch_init(
+        pub async fn testing_party_epoch_init(
             num_parties: usize,
             threshold: usize,
             party_role: Role,
@@ -1039,10 +1123,9 @@ mod tests {
 
             let mut sess =
                 get_networkless_base_session_for_parties(num_parties, threshold as u8, party_role);
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            let _guard = rt.enter();
-            let random_agreed_keys = rt
-                .block_on(async { DummyAgreeRandom::default().execute(&mut sess).await })
+            let random_agreed_keys = DummyAgreeRandom::default()
+                .execute(&mut sess)
+                .await
                 .unwrap();
 
             let f_a_points = party_compute_f_a_points(&all_roles, &party_sets)?;
@@ -1061,7 +1144,10 @@ mod tests {
 
             tracing::debug!("epoch init: {:?}", sets);
 
-            Ok(PRSSSetup { sets, alpha_powers })
+            Ok(PRSSSetup {
+                sets: Arc::new(sets),
+                alpha_powers: Arc::new(alpha_powers),
+            })
         }
     }
 
@@ -1092,8 +1178,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_prss_mask_no_network_bound() {
+    #[tokio::test]
+    async fn test_prss_mask_no_network_bound() {
         let num_parties = 7;
         let threshold = 2;
         let binom_nt: usize = num_integer::binomial(num_parties, threshold);
@@ -1104,28 +1190,27 @@ mod tests {
 
         let sid = SessionId::from(42);
 
-        let shares = all_roles
-            .iter()
-            .map(|p| {
-                let prss_setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(
-                    num_parties,
-                    threshold,
-                    *p,
-                )
-                .unwrap();
+        let shares = join_all(all_roles.iter().map(|p| async {
+            let prss_setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(
+                num_parties,
+                threshold,
+                *p,
+            )
+            .await
+            .unwrap();
 
-                let mut state = prss_setup.new_prss_session_state(sid);
+            let mut state = prss_setup.new_prss_session_state(sid);
 
-                assert_eq!(state.counters.mask_ctr, 0);
+            assert_eq!(state.counters.mask_ctr, 0);
 
-                let nextval = state.mask_next(*p, B_SWITCH_SQUASH).unwrap();
+            let nextval = state.mask_next(*p, B_SWITCH_SQUASH).await.unwrap();
 
-                // prss state counter must have increased after call to next
-                assert_eq!(state.counters.mask_ctr, 2);
+            // prss state counter must have increased after call to next
+            assert_eq!(state.counters.mask_ctr, 2);
 
-                Share::new(*p, nextval)
-            })
-            .collect();
+            Share::new(*p, nextval)
+        }))
+        .await;
 
         let e_shares = ShamirSharings::create(shares);
 
@@ -1157,8 +1242,8 @@ mod tests {
         // check actual value against lower bound
     }
 
-    #[test]
-    fn test_prss_decrypt_distributed_local_sess() {
+    #[tokio::test]
+    async fn test_prss_decrypt_distributed_local_sess() {
         let threshold = 2;
         let num_parties = 7;
         // RNG for keys
@@ -1167,7 +1252,7 @@ mod tests {
         let keyset: KeySet = read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
         let params = keyset.get_cpu_params().unwrap();
 
-        let identities = generate_fixed_identities(num_parties);
+        let roles = generate_fixed_roles(num_parties);
 
         // generate key shares for all parties
         let key_shares =
@@ -1181,31 +1266,26 @@ mod tests {
 
         //Could probably be run Async, but NIST doc says all offline is Sync
         let mut runtime =
-            DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
+            DistributedTestRuntime::new(roles.clone(), threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_server_key(Arc::new(keyset.public_keys.server_key));
         runtime.setup_sks(key_shares);
 
         let mut seed = [0_u8; aes_prng::SEED_SIZE];
         // create sessions for each prss party
-        let sessions: Vec<SmallSession<ResiduePolyF4Z128>> = (0..num_parties)
-            .map(|p| {
-                seed[0] = p as u8;
-                runtime.small_session_for_party(
-                    SessionId::from(u128::MAX),
-                    p,
-                    Some(AesRng::from_seed(seed)),
-                )
-            })
-            .collect();
+        let sessions: Vec<SmallSession<ResiduePolyF4Z128>> = join_all(roles.iter().map(|p| {
+            seed[0] = p.one_based() as u8;
+            runtime.small_session_for_party(
+                SessionId::from(u128::MAX),
+                *p,
+                Some(AesRng::from_seed(seed)),
+            )
+        }))
+        .await;
 
         // Test with Real AgreeRandom with Abort
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-        let prss_setups = rt.block_on(async {
-            let prss_init = AbortRealPrssInit::<AbortSecureAgreeRandom>::default();
-            setup_prss_sess::<ResiduePolyF4Z128, _>(sessions, prss_init).await
-        });
+        let prss_init = AbortRealPrssInit::<AbortSecureAgreeRandom>::default();
+        let prss_setups = setup_prss_sess::<ResiduePolyF4Z128, _>(sessions, prss_init).await;
 
         runtime.setup_prss(prss_setups);
 
@@ -1214,28 +1294,25 @@ mod tests {
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(&runtime, &raw_ct, DecryptionMode::NoiseFloodSmall)
+        .await
         .unwrap();
-        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
+        let out_dec = &results_dec[&Role::indexed_from_one(1)];
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
 
         // (re)create sessions for each prss party
-        let sessions: Vec<SmallSession<ResiduePolyF4Z128>> = (0..num_parties)
-            .map(|p| {
-                seed[0] = p as u8;
-                runtime.small_session_for_party(
-                    SessionId::from(u128::MAX),
-                    p,
-                    Some(AesRng::from_seed(seed)),
-                )
-            })
-            .collect();
+        let sessions: Vec<SmallSession<ResiduePolyF4Z128>> = join_all(roles.iter().map(|p| {
+            seed[0] = p.one_based() as u8;
+            runtime.small_session_for_party(
+                SessionId::from(u128::MAX),
+                *p,
+                Some(AesRng::from_seed(seed)),
+            )
+        }))
+        .await;
         // Test with Dummy AgreeRandom
-        let _guard = rt.enter();
-        let prss_setups = rt.block_on(async {
-            let prss_init = AbortRealPrssInit::<DummyAgreeRandom>::default();
-            setup_prss_sess::<ResiduePolyF4Z128, _>(sessions, prss_init).await
-        });
+        let prss_init = AbortRealPrssInit::<DummyAgreeRandom>::default();
+        let prss_setups = setup_prss_sess::<ResiduePolyF4Z128, _>(sessions, prss_init).await;
 
         runtime.setup_prss(prss_setups);
 
@@ -1244,8 +1321,9 @@ mod tests {
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(&runtime, &raw_ct, DecryptionMode::NoiseFloodSmall)
+        .await
         .unwrap();
-        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
+        let out_dec = &results_dec[&Role::indexed_from_one(1)];
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
     }
@@ -1255,14 +1333,16 @@ mod tests {
     #[case(1)]
     #[case(2)]
     #[case(23)]
-    fn test_prss_mask_next_ctr(#[case] rounds: u128) {
+    async fn test_prss_mask_next_ctr(#[case] rounds: u128) {
         let num_parties = 4;
         let threshold = 1;
 
         let sid = SessionId::from(23425);
 
         let role_one = Role::indexed_from_one(1);
-        let prss = PRSSSetup::testing_party_epoch_init(num_parties, threshold, role_one).unwrap();
+        let prss = PRSSSetup::testing_party_epoch_init(num_parties, threshold, role_one)
+            .await
+            .unwrap();
 
         let mut state = prss.new_prss_session_state(sid);
 
@@ -1270,7 +1350,7 @@ mod tests {
 
         let mut prev = ResiduePolyF4Z128::ZERO;
         for _ in 0..rounds {
-            let cur = state.mask_next(role_one, B_SWITCH_SQUASH).unwrap();
+            let cur = state.mask_next(role_one, B_SWITCH_SQUASH).await.unwrap();
             // check that values change on each call.
             assert_ne!(prev, cur);
             prev = cur;
@@ -1288,7 +1368,7 @@ mod tests {
     #[case(4, 1)]
     #[case(10, 3)]
     /// check that points computed on f_A are well-formed
-    fn test_prss_fa_poly(#[case] num_parties: usize, #[case] threshold: usize) {
+    async fn test_prss_fa_poly(#[case] num_parties: usize, #[case] threshold: usize) {
         let all_roles = (1..=num_parties)
             .map(Role::indexed_from_one)
             .collect::<Vec<_>>();
@@ -1298,6 +1378,7 @@ mod tests {
             threshold,
             Role::indexed_from_one(1),
         )
+        .await
         .unwrap();
 
         for set in prss.sets.iter() {
@@ -1312,14 +1393,15 @@ mod tests {
         }
     }
 
-    #[test]
+    #[tokio::test]
     #[should_panic(expected = "PRSS set size is too large!")]
-    fn test_prss_too_large() {
+    async fn test_prss_too_large() {
         let _prss = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(
             22,
             7,
             Role::indexed_from_one(1),
         )
+        .await
         .unwrap();
     }
 
@@ -1355,8 +1437,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_przs() {
+    #[tokio::test]
+    async fn test_przs() {
         let num_parties = 7;
         let threshold = 2;
 
@@ -1365,28 +1447,24 @@ mod tests {
             .map(Role::indexed_from_one)
             .collect::<Vec<_>>();
 
-        let shares = all_roles
-            .into_iter()
-            .map(|p| {
-                let prss_setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(
-                    num_parties,
-                    threshold,
-                    p,
-                )
-                .unwrap();
+        let shares = join_all(all_roles.into_iter().map(|p| async move {
+            let prss_setup =
+                PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(num_parties, threshold, p)
+                    .await
+                    .unwrap();
 
-                let mut state = prss_setup.new_prss_session_state(sid);
+            let mut state = prss_setup.new_prss_session_state(sid);
 
-                assert_eq!(state.counters.przs_ctr, 0);
+            assert_eq!(state.counters.przs_ctr, 0);
 
-                let nextval = state.przs_next(p, threshold as u8).unwrap();
+            let nextval = state.przs_next(p, threshold as u8).await.unwrap();
 
-                // przs state counter must have increased after call to next
-                assert_eq!(state.counters.przs_ctr, 1);
+            // przs state counter must have increased after call to next
+            assert_eq!(state.counters.przs_ctr, 1);
 
-                Share::new(p, nextval)
-            })
-            .collect();
+            Share::new(p, nextval)
+        }))
+        .await;
 
         let e_shares = ShamirSharings::create(shares);
         let recon = e_shares.reconstruct(2 * threshold).unwrap();
@@ -1394,8 +1472,8 @@ mod tests {
         assert!(recon.is_zero());
     }
 
-    #[test]
-    fn test_prss_next() {
+    #[tokio::test]
+    async fn test_prss_next() {
         let num_parties = 7;
         let threshold = 2;
 
@@ -1405,27 +1483,25 @@ mod tests {
             .collect::<Vec<_>>();
 
         // create shares for each party using PRSS.next()
-        let shares = all_roles
-            .clone()
-            .into_iter()
-            .map(|p| {
-                // initialize PRSSSetup for this epoch
-                let prss_setup =
-                    PRSSSetup::testing_party_epoch_init(num_parties, threshold, p).unwrap();
+        let shares = join_all(all_roles.clone().into_iter().map(|p| async move {
+            // initialize PRSSSetup for this epoch
+            let prss_setup = PRSSSetup::testing_party_epoch_init(num_parties, threshold, p)
+                .await
+                .unwrap();
 
-                let mut state = prss_setup.new_prss_session_state(sid);
+            let mut state = prss_setup.new_prss_session_state(sid);
 
-                // check that counters are initialized with sid
-                assert_eq!(state.counters.prss_ctr, 0);
+            // check that counters are initialized with sid
+            assert_eq!(state.counters.prss_ctr, 0);
 
-                let nextval = state.prss_next(p).unwrap();
+            let nextval = state.prss_next(p).await.unwrap();
 
-                // przs state counter must have increased after call to next
-                assert_eq!(state.counters.prss_ctr, 1);
+            // przs state counter must have increased after call to next
+            assert_eq!(state.counters.prss_ctr, 1);
 
-                Share::new(p, nextval)
-            })
-            .collect();
+            Share::new(p, nextval)
+        }))
+        .await;
 
         // reconstruct the party shares
         let e_shares = ShamirSharings::create(shares);
@@ -1467,35 +1543,29 @@ mod tests {
         assert_eq!(psi_sum, recon);
     }
 
-    #[test]
-    fn sunshine_prss_check() {
+    #[tokio::test]
+    async fn sunshine_prss_check() {
         let parties = 7;
         let threshold = 2;
-        let identities = generate_fixed_identities(parties);
+        let roles = generate_fixed_roles(parties);
 
         //Could probably be run Async, but NIST doc says all offline is Sync
         let runtime = DistributedTestRuntime::<
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >::new(identities, threshold, NetworkMode::Sync, None);
+        >::new(roles.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId::from(23);
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
         let mut set = JoinSet::new();
-        let mut reference_values = Vec::with_capacity(parties);
-        for party_id in 1..=parties {
-            let rng = AesRng::seed_from_u64(party_id as u64);
-            let mut session = runtime.small_session_for_party(session_id, party_id - 1, Some(rng));
+        let mut reference_values = HashMap::with_capacity(parties);
+        for party in roles {
+            let rng = AesRng::seed_from_u64(party.one_based() as u64);
+            let mut session = runtime
+                .small_session_for_party(session_id, party, Some(rng))
+                .await;
             let state = session.prss();
             // Compute reference value based on check (we clone to ensure that they are evaluated for the same counter)
-            reference_values.push(
-                state
-                    .clone()
-                    .prss_next(Role::indexed_from_one(party_id))
-                    .unwrap(),
-            );
+            reference_values.insert(party, state.clone().prss_next(party).await.unwrap());
             // Do the actual computation
             set.spawn(async move {
                 let res = state
@@ -1508,14 +1578,11 @@ mod tests {
             });
         }
 
-        let results = rt.block_on(async {
-            let mut results = Vec::new();
-            while let Some(v) = set.join_next().await {
-                let data = v.unwrap();
-                results.push(data);
-            }
-            results
-        });
+        let mut results = Vec::new();
+        while let Some(v) = set.join_next().await {
+            let data = v.unwrap();
+            results.push(data);
+        }
 
         // Check the result
         // First verify that we get the expected amount of results (i.e. no threads panicked)
@@ -1527,10 +1594,7 @@ mod tests {
             assert_eq!(results.first().unwrap(), output);
             for (received_role, received_poly) in output {
                 // Validate against result of the "next" method
-                assert_eq!(
-                    received_role.get_from(&reference_values).unwrap(),
-                    received_poly
-                );
+                assert_eq!(reference_values.get(received_role).unwrap(), received_poly);
                 // Perform sanity checks (i.e. that nothing is a trivial element and party IDs are in a valid range)
                 assert!(received_role.one_based() <= parties);
                 assert!(received_role.one_based() > 0);
@@ -1540,33 +1604,34 @@ mod tests {
         }
     }
 
-    #[test]
-    fn sunshine_przs_check() {
+    #[tokio::test]
+    async fn sunshine_przs_check() {
         let parties = 7;
         let threshold = 2;
-        let identities = generate_fixed_identities(parties);
+        let roles = generate_fixed_roles(parties);
 
         //Could probably be run Async, but NIST doc says all offline is Sync
         let runtime = DistributedTestRuntime::<
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >::new(identities, threshold, NetworkMode::Sync, None);
+        >::new(roles.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId::from(17);
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
         let mut set = JoinSet::new();
-        let mut reference_values = Vec::with_capacity(parties);
-        for party_id in 1..=parties {
-            let rng = AesRng::seed_from_u64(party_id as u64);
-            let mut session = runtime.small_session_for_party(session_id, party_id - 1, Some(rng));
+        let mut reference_values = HashMap::with_capacity(parties);
+        for party in roles {
+            let rng = AesRng::seed_from_u64(party.one_based() as u64);
+            let mut session = runtime
+                .small_session_for_party(session_id, party, Some(rng))
+                .await;
             let state = session.prss();
             // Compute reference value based on check (we clone to ensure that they are evaluated for the same counter)
-            reference_values.push(
+            reference_values.insert(
+                party,
                 state
                     .clone()
-                    .przs_next(Role::indexed_from_one(party_id), session.threshold())
+                    .przs_next(party, session.threshold())
+                    .await
                     .unwrap(),
             );
             // Do the actual computation
@@ -1581,14 +1646,11 @@ mod tests {
             });
         }
 
-        let results = rt.block_on(async {
-            let mut results = Vec::new();
-            while let Some(v) = set.join_next().await {
-                let data = v.unwrap();
-                results.push(data);
-            }
-            results
-        });
+        let mut results = Vec::new();
+        while let Some(v) = set.join_next().await {
+            let data = v.unwrap();
+            results.push(data);
+        }
 
         // Check the result
         // First verify that we get the expected amount of results (i.e. no threads panicked)
@@ -1600,10 +1662,7 @@ mod tests {
             assert_eq!(results.first().unwrap(), output);
             for (received_role, received_poly) in output {
                 // Validate against result of the "next" method
-                assert_eq!(
-                    received_role.get_from(&reference_values).unwrap(),
-                    received_poly
-                );
+                assert_eq!(reference_values.get(received_role).unwrap(), received_poly);
                 // Perform sanity checks (i.e. that nothing is a trivial element and party IDs are in a valid range)
                 assert!(received_role.one_based() <= parties);
                 assert!(received_role.one_based() > 0);
@@ -1793,22 +1852,18 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn sunshine_compute_party_shares() {
+    #[tokio::test]
+    async fn sunshine_compute_party_shares() {
         let parties = 1;
         let role = Role::indexed_from_one(1);
         let mut session =
             get_networkless_base_session_for_parties(parties, 0, Role::indexed_from_one(1));
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-        let prss_setup: PRSSSetup<ResiduePolyF4Z128> = rt
-            .block_on(async {
-                AbortRealPrssInit::<DummyAgreeRandom>::default()
-                    .init(&mut session)
-                    .await
-            })
-            .unwrap();
+        let prss_setup: PRSSSetup<ResiduePolyF4Z128> =
+            AbortRealPrssInit::<DummyAgreeRandom>::default()
+                .init(&mut session)
+                .await
+                .unwrap();
         let state = prss_setup.new_prss_session_state(session.session_id());
 
         // clone state so we can iterate over the PRFs and call next/compute at the same time.
@@ -1816,7 +1871,7 @@ mod tests {
 
         for (i, set) in state.prss_setup.sets.iter().enumerate() {
             // Compute the reference value and use clone to ensure that the same counter is used for all parties
-            let psi_next = cloned_state.prss_next(role).unwrap();
+            let psi_next = cloned_state.prss_next(role).await.unwrap();
 
             let local_psi = psi(&state.prfs[i].psi_aes, state.counters.prss_ctr).unwrap();
             let local_psi_value = vec![local_psi];
@@ -1839,20 +1894,22 @@ mod tests {
     #[case(TestingParameters::init(5, 1, &[], &[], &[], false, Some(11)))]
     #[case(TestingParameters::init(7, 2, &[], &[], &[], false, Some(13)))]
     #[case(TestingParameters::init(10, 3, &[], &[], &[], false, Some(15)))]
-    fn test_prss_init_abort(#[case] params: TestingParameters) {
-        test_prss_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            AbortSecurePrssInit,
-            _,
-        >(params.clone(), AbortSecurePrssInit::default(), true, false);
-
-        test_prss_strategies::<
-            ResiduePolyF4Z64,
-            { ResiduePolyF4Z64::EXTENSION_DEGREE },
-            AbortSecurePrssInit,
-            _,
-        >(params, AbortSecurePrssInit::default(), false, false);
+    async fn test_prss_init_abort(#[case] params: TestingParameters) {
+        join(
+            test_prss_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                AbortSecurePrssInit,
+                _,
+            >(params.clone(), AbortSecurePrssInit::default(), true, false),
+            test_prss_strategies::<
+                ResiduePolyF4Z64,
+                { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                AbortSecurePrssInit,
+                _,
+            >(params, AbortSecurePrssInit::default(), false, false),
+        )
+        .await;
     }
 
     // Test PRSS init robust with no malicious parties
@@ -1867,20 +1924,22 @@ mod tests {
     #[case(TestingParameters::init(5, 1, &[], &[], &[], false, Some(14)))]
     #[case(TestingParameters::init(7, 2, &[], &[], &[], false, Some(17)))]
     #[case(TestingParameters::init(10, 3, &[], &[], &[], false, Some(20)))]
-    fn test_prss_init_robust(#[case] params: TestingParameters) {
-        test_prss_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            RobustSecurePrssInit,
-            _,
-        >(params.clone(), RobustSecurePrssInit::default(), true, false);
-
-        test_prss_strategies::<
-            ResiduePolyF4Z64,
-            { ResiduePolyF4Z64::EXTENSION_DEGREE },
-            RobustSecurePrssInit,
-            _,
-        >(params, RobustSecurePrssInit::default(), false, false);
+    async fn test_prss_init_robust(#[case] params: TestingParameters) {
+        join(
+            test_prss_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                RobustSecurePrssInit,
+                _,
+            >(params.clone(), RobustSecurePrssInit::default(), true, false),
+            test_prss_strategies::<
+                ResiduePolyF4Z64,
+                { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                RobustSecurePrssInit,
+                _,
+            >(params, RobustSecurePrssInit::default(), false, false),
+        )
+        .await;
     }
 
     // Test PRSS init with abort with malicious parties that drop from start
@@ -1892,13 +1951,14 @@ mod tests {
     #[case(TestingParameters::init(7, 2, &[2,5], &[], &[], true, None))]
     #[case(TestingParameters::init(10, 3, &[3,6,9], &[], &[], true, None))]
     #[should_panic]
-    fn test_dropout_prss_init_abort(#[case] params: TestingParameters) {
+    async fn test_dropout_prss_init_abort(#[case] params: TestingParameters) {
         test_prss_strategies::<
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
             AbortSecurePrssInit,
             _,
-        >(params.clone(), MaliciousPrssDrop::default(), true, false);
+        >(params.clone(), MaliciousPrssDrop::default(), true, false)
+        .await;
     }
 
     // Test PRSS robust init with malicious parties that drop from start
@@ -1909,20 +1969,22 @@ mod tests {
     #[case(TestingParameters::init(5, 1, &[3], &[], &[], true, None))]
     #[case(TestingParameters::init(7, 2, &[2,5], &[], &[], true, None))]
     #[case(TestingParameters::init(10, 3, &[3,6,9], &[], &[], true, None))]
-    fn test_dropout_prss_init_robust(#[case] params: TestingParameters) {
-        test_prss_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            RobustSecurePrssInit,
-            _,
-        >(params.clone(), MaliciousPrssDrop::default(), true, false);
-
-        test_prss_strategies::<
-            ResiduePolyF4Z64,
-            { ResiduePolyF4Z64::EXTENSION_DEGREE },
-            RobustSecurePrssInit,
-            _,
-        >(params, MaliciousPrssDrop::default(), false, false);
+    async fn test_dropout_prss_init_robust(#[case] params: TestingParameters) {
+        join(
+            test_prss_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                RobustSecurePrssInit,
+                _,
+            >(params.clone(), MaliciousPrssDrop::default(), true, false),
+            test_prss_strategies::<
+                ResiduePolyF4Z64,
+                { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                RobustSecurePrssInit,
+                _,
+            >(params, MaliciousPrssDrop::default(), false, false),
+        )
+        .await;
     }
 
     // Test PRSS robust init with actively malicious parties that
@@ -1933,42 +1995,44 @@ mod tests {
     #[case(TestingParameters::init(5, 1, &[3], &[], &[], false, None))]
     #[case(TestingParameters::init(7, 2, &[2,5], &[], &[], false, None))]
     #[case(TestingParameters::init(10, 3, &[3,6,9], &[], &[], false, None))]
-    fn test_malicious_honest_init_and_check_malicious_next_prss_init_robust(
+    async fn test_malicious_honest_init_and_check_malicious_next_prss_init_robust(
         #[case] params: TestingParameters,
     ) {
-        test_prss_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            RobustSecurePrssInit,
-            _,
-        >(
-            params.clone(),
-            MaliciousPrssHonestInitRobustThenRandom::<
-                RobustSecureAgreeRandom,
-                SecureVss,
-                SyncReliableBroadcast,
+        join(
+            test_prss_strategies::<
                 ResiduePolyF4Z128,
-            >::default(),
-            true,
-            false,
-        );
-
-        test_prss_strategies::<
-            ResiduePolyF4Z64,
-            { ResiduePolyF4Z64::EXTENSION_DEGREE },
-            RobustSecurePrssInit,
-            _,
-        >(
-            params,
-            MaliciousPrssHonestInitRobustThenRandom::<
-                RobustSecureAgreeRandom,
-                SecureVss,
-                SyncReliableBroadcast,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                RobustSecurePrssInit,
+                _,
+            >(
+                params.clone(),
+                MaliciousPrssHonestInitRobustThenRandom::<
+                    RobustSecureAgreeRandom,
+                    SecureVss,
+                    SyncReliableBroadcast,
+                    ResiduePolyF4Z128,
+                >::default(),
+                true,
+                false,
+            ),
+            test_prss_strategies::<
                 ResiduePolyF4Z64,
-            >::default(),
-            false,
-            false,
-        );
+                { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                RobustSecurePrssInit,
+                _,
+            >(
+                params,
+                MaliciousPrssHonestInitRobustThenRandom::<
+                    RobustSecureAgreeRandom,
+                    SecureVss,
+                    SyncReliableBroadcast,
+                    ResiduePolyF4Z64,
+                >::default(),
+                false,
+                false,
+            ),
+        )
+        .await;
     }
 
     // Test PRSS robust init with actively malicious parties that
@@ -1979,46 +2043,48 @@ mod tests {
     #[case(TestingParameters::init(5, 1, &[3], &[], &[], true, None))]
     #[case(TestingParameters::init(7, 2, &[2,5], &[], &[], true, None))]
     #[case(TestingParameters::init(10, 3, &[3,6,9], &[], &[], true, None))]
-    fn test_malicious_honest_init_malicious_check_and_next_prss_init_robust(
+    async fn test_malicious_honest_init_malicious_check_and_next_prss_init_robust(
         #[case] params: TestingParameters,
     ) {
         // In this test the malicious party will error out
         // because honest parties will stop talking to it after
         // during the przs check after finding out it's malicious
         // in the prss check
-        test_prss_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            RobustSecurePrssInit,
-            _,
-        >(
-            params.clone(),
-            MaliciousPrssHonestInitLieAll::<
-                RobustSecureAgreeRandom,
-                SecureVss,
-                SyncReliableBroadcast,
+        join(
+            test_prss_strategies::<
                 ResiduePolyF4Z128,
-            >::default(),
-            true,
-            true,
-        );
-
-        test_prss_strategies::<
-            ResiduePolyF4Z64,
-            { ResiduePolyF4Z64::EXTENSION_DEGREE },
-            RobustSecurePrssInit,
-            _,
-        >(
-            params,
-            MaliciousPrssHonestInitLieAll::<
-                RobustSecureAgreeRandom,
-                SecureVss,
-                SyncReliableBroadcast,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                RobustSecurePrssInit,
+                _,
+            >(
+                params.clone(),
+                MaliciousPrssHonestInitLieAll::<
+                    RobustSecureAgreeRandom,
+                    SecureVss,
+                    SyncReliableBroadcast,
+                    ResiduePolyF4Z128,
+                >::default(),
+                true,
+                true,
+            ),
+            test_prss_strategies::<
                 ResiduePolyF4Z64,
-            >::default(),
-            false,
-            true,
-        );
+                { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                RobustSecurePrssInit,
+                _,
+            >(
+                params,
+                MaliciousPrssHonestInitLieAll::<
+                    RobustSecureAgreeRandom,
+                    SecureVss,
+                    SyncReliableBroadcast,
+                    ResiduePolyF4Z64,
+                >::default(),
+                false,
+                true,
+            ),
+        )
+        .await;
     }
 
     /// Executes [`PrssInit::init`], [`DerivePRSSState::new_prss_session_state`]
@@ -2029,7 +2095,7 @@ mod tests {
     /// If [`TestingParameters::should_be_detected`] is set, we assert that the honest parties
     /// have inserted the malicious parties' identity in their corrupt set.
     /// We also validate the output of the honest parties.
-    fn test_prss_strategies<
+    async fn test_prss_strategies<
         Z: ErrorCorrect + Invert + PRSSConversions,
         const EXTENSION_DEGREE: usize,
         PRSSHonest: PRSSInit<Z> + Default + 'static,
@@ -2047,15 +2113,28 @@ mod tests {
             let setup = secure_prss_init.init(&mut session).await.unwrap();
             let mut state = setup.new_prss_session_state(session.session_id());
             let role = session.my_role();
-            let prss_output_shares = (0..num_secrets)
-                .map(|_| Share::<Z>::new(role, state.prss_next(role).unwrap()))
+            let threshold = session.threshold();
+            let prss_output_shares = state
+                .prss_next_vec(role, num_secrets)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|v| Share::<Z>::new(role, v))
                 .collect::<Vec<_>>();
-            let przs_output_shares = (0..num_secrets)
-                .map(|_| Share::<Z>::new(role, state.przs_next(role, session.threshold()).unwrap()))
+            let przs_output_shares = state
+                .przs_next_vec(role, threshold, num_secrets)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|v| Share::<Z>::new(role, v))
                 .collect::<Vec<_>>();
             let mask_output_shares = if generate_masks {
-                (0..num_secrets)
-                    .map(|_| Share::<Z>::new(role, state.mask_next(role, B_SWITCH_SQUASH).unwrap()))
+                state
+                    .mask_next_vec(role, B_SWITCH_SQUASH, num_secrets)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|v| Share::<Z>::new(role, v))
                     .collect::<Vec<_>>()
             } else {
                 vec![Share::<Z>::new(role, Z::ZERO)]
@@ -2066,7 +2145,6 @@ mod tests {
 
             (
                 session,
-                role,
                 (prss_output_shares, prss_check_zero),
                 (przs_output_shares, przs_check_zero),
                 mask_output_shares,
@@ -2078,19 +2156,28 @@ mod tests {
                 let setup = malicious_prss_init.init(&mut session).await.unwrap();
                 let mut state = setup.new_prss_session_state(session.session_id());
                 let role = session.my_role();
-                let prss_output_shares = (0..num_secrets)
-                    .map(|_| Share::<Z>::new(role, state.prss_next(role).unwrap()))
+                let threshold = session.threshold();
+                let prss_output_shares = state
+                    .prss_next_vec(role, num_secrets)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|v| Share::<Z>::new(role, v))
                     .collect::<Vec<_>>();
-                let przs_output_shares = (0..num_secrets)
-                    .map(|_| {
-                        Share::<Z>::new(role, state.przs_next(role, session.threshold()).unwrap())
-                    })
+                let przs_output_shares = state
+                    .przs_next_vec(role, threshold, num_secrets)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|v| Share::<Z>::new(role, v))
                     .collect::<Vec<_>>();
                 let mask_output_shares = if generate_masks {
-                    (0..num_secrets)
-                        .map(|_| {
-                            Share::<Z>::new(role, state.mask_next(role, B_SWITCH_SQUASH).unwrap())
-                        })
+                    state
+                        .mask_next_vec(role, B_SWITCH_SQUASH, num_secrets)
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .map(|v| Share::<Z>::new(role, v))
                         .collect::<Vec<_>>()
                 } else {
                     vec![Share::<Z>::new(role, Z::ZERO)]
@@ -2101,7 +2188,6 @@ mod tests {
 
                 (
                     session,
-                    role,
                     (prss_output_shares, prss_check_zero),
                     (przs_output_shares, przs_check_zero),
                     mask_output_shares,
@@ -2116,11 +2202,12 @@ mod tests {
                 None,
                 &mut task_honest,
                 &mut task_malicious,
-            );
+            )
+            .await;
 
         // If malicious behaviour should be detected, make sure it actually is
         // else make sure it really is not
-        for (session, my_role, _, _, _) in results_honest.iter() {
+        for (my_role, (session, _, _, _)) in results_honest.iter() {
             for malicious_role in params.malicious_roles.iter() {
                 if params.should_be_detected {
                     assert!(
@@ -2144,31 +2231,26 @@ mod tests {
         let mut przs_results = Vec::new();
         let mut przs_check_results = Vec::new();
         let mut masks_results = Vec::new();
-        for (
-            _,
-            _,
-            (prss_output, prss_check_output),
-            (przs_output, przs_check_output),
-            masks_output,
-        ) in results_honest.into_iter()
+        for (_, (prss_output, prss_check_output), (przs_output, przs_check_output), masks_output) in
+            results_honest.values()
         {
             assert_eq!(prss_output.len(), num_secrets);
-            prss_results.push(prss_output);
-            prss_check_results.push(prss_check_output);
+            prss_results.push(prss_output.clone());
+            prss_check_results.push(prss_check_output.clone());
 
             assert_eq!(przs_output.len(), num_secrets);
-            przs_results.push(przs_output);
-            przs_check_results.push(przs_check_output);
+            przs_results.push(przs_output.clone());
+            przs_check_results.push(przs_check_output.clone());
 
             if generate_masks {
                 assert_eq!(masks_output.len(), num_secrets);
-                masks_results.push(masks_output);
+                masks_results.push(masks_output.clone());
             }
         }
 
         // Parse the results for malicious, include their results in the mix
         // if they are not detected
-        for result_malicious in results_malicious {
+        for (role, result_malicious) in results_malicious {
             if should_malicious_panic {
                 assert!(
                     result_malicious.is_err(),
@@ -2186,7 +2268,6 @@ mod tests {
                 // (in high level protocols, if reconstruct of przs fails, we run the check)
                 let (
                     _,
-                    role,
                     (mut prss_output, _prss_check_output),
                     (mut _przs_output, _przs_check_output),
                     mut masks_output,

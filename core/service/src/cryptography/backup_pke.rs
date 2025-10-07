@@ -1,3 +1,5 @@
+use kms_grpc::rpc_types::PrivDataType;
+use kms_grpc::RequestId;
 use ml_kem::array::typenum::Unsigned;
 use ml_kem::array::Array;
 use ml_kem::EncodedSizeUser;
@@ -179,7 +181,7 @@ impl InnerBackupPublicKey {
         rng: &mut R,
         msg: &[u8],
     ) -> Result<Vec<u8>, CryptographyError> {
-        let inner = hybrid_ml_kem::enc::<MlKemType, _>(rng, msg, &self.encapsulation_key).unwrap();
+        let inner = hybrid_ml_kem::enc::<MlKemType, _>(rng, msg, &self.encapsulation_key)?;
         let mut ct_buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(&inner, &mut ct_buf, SAFE_SER_SIZE_LIMIT)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
@@ -201,12 +203,28 @@ impl BackupPublicKey {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum BackupCiphertextVersioned {
+    V0(BackupCiphertext),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(BackupCiphertextVersioned)]
+pub struct BackupCiphertext {
+    pub ciphertext: Vec<u8>,
+    pub priv_data_type: PrivDataType,
+    pub backup_id: RequestId,
+}
+
+impl Named for BackupCiphertext {
+    const NAME: &'static str = "cryptography::BackupCiphertext";
+}
+
 // We allow the following lints because we are fine with mutating the rng even if
 // we end up returning an error when serializing the enc_pk.
 #[allow(unknown_lints)]
 #[allow(non_local_effect_before_error_return)]
 pub fn keygen<R: Rng + CryptoRng>(
-    //todo change order
     rng: &mut R,
 ) -> Result<(BackupPublicKey, BackupPrivateKey), CryptographyError> {
     let (decapsulation_key, encapsulation_key) = hybrid_ml_kem::keygen::<MlKemType, _>(rng);

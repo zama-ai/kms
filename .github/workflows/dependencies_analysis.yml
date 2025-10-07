@@ -1,4 +1,4 @@
-name: "Dependency analysis"
+name: dependencies_analysis
 
 on:
   push:
@@ -14,11 +14,11 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
-  contents: read
+  contents: read # Required to checkout repository code
 
 jobs:
   dependencies-check:
-    name: "Dependency check"
+    name: dependencies_analysis/dependencies-check (bpr)
     runs-on: ubuntu-latest
     steps:
 

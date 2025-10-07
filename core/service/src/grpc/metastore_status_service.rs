@@ -14,10 +14,14 @@
 //! 3. `GetMetaStoreInfo` - Get meta-store capacity and current counts
 
 use std::{str::FromStr, sync::Arc};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 use crate::{
-    engine::base::{KeyGenCallValues, PubDecCallValues, UserDecryptCallValues},
+    backup::custodian::InternalCustodianContext,
+    engine::{
+        base::{CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues},
+        threshold::service::BucketMetaStore,
+    },
     util::meta_store::MetaStore,
 };
 use kms_grpc::{
@@ -28,16 +32,12 @@ use kms_grpc::{
         ListRequestsResponse, MetaStoreInfo, MetaStoreType, RequestProcessingStatus,
         RequestStatusInfo,
     },
-    rpc_types::SignedPubDataHandleInternal,
 };
-
-use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
-use threshold_fhe::execution::online::preprocessing::DKGPreprocessing;
 
 // Type aliases for the different MetaStore types used in the system
 
 /// MetaStore for Key Generation data, mapping request IDs to public data handles
-pub type KeyGenMetaStore = MetaStore<KeyGenCallValues>;
+pub type KeyGenMetaStore = MetaStore<KeyGenMetadata>;
 
 /// MetaStore for Public Decryption data, storing (ciphertext, plaintext, signature) tuples
 pub type PubDecMetaStore = MetaStore<PubDecCallValues>;
@@ -46,13 +46,13 @@ pub type PubDecMetaStore = MetaStore<PubDecCallValues>;
 pub type UserDecryptMetaStore = MetaStore<UserDecryptCallValues>;
 
 /// MetaStore for CRS (Common Reference String) data
-pub type CrsMetaStore = MetaStore<SignedPubDataHandleInternal>;
-
-/// MetaStore for DKG (Distributed Key Generation) preprocessing buckets
-pub type BucketMetaStore = Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>;
+pub type CrsMetaStore = MetaStore<CrsGenMetadata>;
 
 /// MetaStore for preprocessing data, wrapping the bucket store in an Arc<Mutex<>>
 pub type PreprocMetaStore = MetaStore<BucketMetaStore>;
+
+/// MetaStore for custodian context data, storing setup messages needed for backup operations.
+pub type CustodianMetaStore = MetaStore<InternalCustodianContext>;
 
 /// Implementation of the MetaStoreStatusService gRPC service.
 ///
@@ -72,6 +72,8 @@ pub struct MetaStoreStatusServiceImpl {
     pub crs_store: Option<Arc<RwLock<CrsMetaStore>>>,
     /// Store for preprocessing data buckets
     pub preproc_store: Option<Arc<RwLock<PreprocMetaStore>>>,
+    /// Store for custodian context data used for backup
+    pub custodian_context_store: Option<Arc<RwLock<CustodianMetaStore>>>,
 }
 
 impl MetaStoreStatusServiceImpl {
@@ -92,6 +94,7 @@ impl MetaStoreStatusServiceImpl {
         user_dec_store: Option<Arc<RwLock<UserDecryptMetaStore>>>,
         crs_store: Option<Arc<RwLock<CrsMetaStore>>>,
         preproc_store: Option<Arc<RwLock<PreprocMetaStore>>>,
+        custodian_context_store: Option<Arc<RwLock<CustodianMetaStore>>>,
     ) -> Self {
         Self {
             key_gen_store,
@@ -99,6 +102,7 @@ impl MetaStoreStatusServiceImpl {
             user_dec_store,
             crs_store,
             preproc_store,
+            custodian_context_store,
         }
     }
 

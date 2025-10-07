@@ -7,15 +7,18 @@ FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS k
 # By default, cargo build --release.
 # But you can provide --build-arg LTO_RELEASE="--profile release-lto-off" locally to build locally
 ARG LTO_RELEASE=release
+ARG APP_CACHE_DIR=kms
 
 # Fetch dependencies and build binaries
 WORKDIR /app/kms
 COPY . .
 RUN mkdir -p /app/kms/core/service/bin
 
-RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
     cargo fetch --locked
-RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
     cargo build  --locked --profile=${LTO_RELEASE} -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init -F insecure && \
     cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-gen-keys -F testing -F insecure && \
     cp /app/kms/target/${LTO_RELEASE}/kms-server \
@@ -24,7 +27,7 @@ RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
        /app/kms/target/${LTO_RELEASE}/kms-gen-keys \
     ./core/service/bin
 
-ARG YQ_VERSION=v4.45.1
+ARG YQ_VERSION=v4.47.2
 # Overridable arg to allow building for different architectures
 ARG TARGETARCH=amd64
 RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH}
@@ -32,7 +35,7 @@ RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_V
 ################################################################
 ## Third stage: Copy the binaries from preceding stages
 # This stage will be the final image
-FROM --platform=$BUILDPLATFORM cgr.dev/chainguard/glibc-dynamic:latest-dev AS prod
+FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
 
 USER root
 # Install required runtime dependencies
@@ -44,7 +47,7 @@ RUN apk update && apk add --no-cache \
     libgcc \
     libstdc++
 
-ARG YQ_VERSION=v4.45.1
+ARG YQ_VERSION=v4.47.2
 # Overridable arg to allow building for different architectures
 ARG TARGETARCH=amd64
 RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH} && \
@@ -102,7 +105,7 @@ RUN apk update && apk add --no-cache git && \
 ## Fourth stage: Build and install yq-go -- For development only with extra tools
 FROM --platform=$BUILDPLATFORM prod AS dev
 
-ARG YQ_VERSION=v4.45.1
+ARG YQ_VERSION=v4.47.2
 ARG TARGETARCH=amd64
 
 USER root

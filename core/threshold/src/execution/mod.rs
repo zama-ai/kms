@@ -67,6 +67,8 @@ pub mod tfhe_internals {
     #[cfg(feature = "non-wasm")]
     pub mod compression_decompression_key;
     #[cfg(feature = "non-wasm")]
+    pub mod compression_decompression_key_generation;
+    #[cfg(feature = "non-wasm")]
     pub mod ggsw_ciphertext;
     #[cfg(feature = "non-wasm")]
     pub mod glwe_ciphertext;
@@ -88,10 +90,20 @@ pub mod tfhe_internals {
     pub mod lwe_packing_keyswitch_key;
     #[cfg(feature = "non-wasm")]
     pub mod lwe_packing_keyswitch_key_generation;
+    #[cfg(feature = "non-wasm")]
+    pub mod modulus_switch_noise_reduction_key_generation;
     pub mod parameters;
+    #[cfg(feature = "non-wasm")]
+    pub mod private_keysets;
+    #[cfg(feature = "non-wasm")]
+    pub mod public_keysets;
     #[cfg(feature = "non-wasm")]
     pub mod randomness;
     mod raw_parameters;
+    #[cfg(feature = "non-wasm")]
+    pub mod sns_compression_key;
+    #[cfg(feature = "non-wasm")]
+    pub mod sns_compression_key_generation;
     pub mod switch_and_squash;
     #[cfg(any(test, feature = "testing"))]
     pub mod test_feature;

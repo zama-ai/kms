@@ -52,12 +52,12 @@ mod non_wasm {
         result.map_err(BoxedStatus::from)
     }
 
-    /// Converts an Option<T> to a TonicResult<T>
+    /// Converts an Option<T> to a TonicResult<T>, an aborted status is used if None.
     ///
     /// If None, returns a BoxedStatus error with the provided error message
-    pub fn tonic_some_or_err<T>(input: Option<T>, error: String) -> TonicResult<T> {
+    pub fn some_or_tonic_abort<T>(input: Option<T>, error: String) -> TonicResult<T> {
         input.ok_or_else(|| {
-            tracing::warn!(error);
+            tracing::error!(error);
             BoxedStatus::from(tonic::Status::new(
                 tonic::Code::Aborted,
                 top_1k_chars(error),
@@ -65,38 +65,13 @@ mod non_wasm {
         })
     }
 
-    /// Converts a reference to an Option<T> to a TonicResult<&T>
-    pub fn tonic_some_or_err_ref<T>(input: &Option<T>, error: String) -> TonicResult<&T> {
-        input.as_ref().ok_or_else(|| {
-            tracing::warn!(error);
-            BoxedStatus::from(tonic::Status::new(
-                tonic::Code::Aborted,
-                top_1k_chars(error),
-            ))
-        })
-    }
-
-    /// Converts an Option<&T> to a TonicResult<&T>
-    pub fn tonic_some_ref_or_err<T>(input: Option<&T>, error: String) -> TonicResult<&T> {
-        input.ok_or_else(|| {
-            tracing::warn!(error);
-            BoxedStatus::from(tonic::Status::new(
-                tonic::Code::Aborted,
-                top_1k_chars(error),
-            ))
-        })
-    }
-
-    /// Converts a Result<T, E> to a TonicResult<T>
+    /// Converts a Result<T, E> to a TonicResult<T>, an aborted status is used if there is an error.
     ///
     /// Formats the error message by combining the provided context with the error's string representation
-    pub fn tonic_handle_potential_err<T, E: ToString>(
-        resp: Result<T, E>,
-        error: String,
-    ) -> TonicResult<T> {
+    pub fn ok_or_tonic_abort<T, E: ToString>(resp: Result<T, E>, error: String) -> TonicResult<T> {
         resp.map_err(|e| {
             let msg = format!("{}: {}", error, e.to_string());
-            tracing::warn!(msg);
+            tracing::error!(msg);
             BoxedStatus::from(tonic::Status::new(tonic::Code::Aborted, top_1k_chars(msg)))
         })
     }

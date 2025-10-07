@@ -58,7 +58,7 @@ fn partial_decrypt<N: Const + NTTConstants<LevelOne>>(
         .collect_vec()
 }
 // run decryption with noise flooding
-#[instrument(name = "BGV.Threshold-Dec", skip_all,fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name = "BGV.Threshold-Dec", skip_all,fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn noise_flood_decryption<
     N: Clone + Const + NTTConstants<LevelOne>,
     S: SmallSessionHandles<LevelOne>,
@@ -84,9 +84,13 @@ pub(crate) async fn noise_flood_decryption<
 
     let dist_shift = LevelOne::from_u128(PLAINTEXT_MODULUS.get().into());
     //NOTE: We assumed a power of two cyclotomic ring, so E_M = 1 (Design Decision 24)
-    let shifted_t_vec = (0..N::VALUE)
-        .map(|_| prss_state.mask_next(own_role, 1u128 << ((LOG_B_MULT - LOG_PLAINTEXT) as u128)))
-        .try_collect::<_, Vec<LevelOne>, _>()?
+    let shifted_t_vec = prss_state
+        .mask_next_vec(
+            own_role,
+            1u128 << ((LOG_B_MULT - LOG_PLAINTEXT) as u128),
+            N::VALUE,
+        )
+        .await?
         .into_iter()
         .map(|x| x * dist_shift)
         .collect_vec();
@@ -160,7 +164,7 @@ mod tests {
     use crate::algebra::structure_traits::ZConsts;
     use crate::algebra::structure_traits::Zero;
     use crate::execution::runtime::session::ParameterHandles;
-    use crate::execution::runtime::test_runtime::generate_fixed_identities;
+    use crate::execution::runtime::test_runtime::generate_fixed_roles;
     use crate::execution::runtime::test_runtime::DistributedTestRuntime;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::sharing::shamir::ShamirSharings;
@@ -237,31 +241,34 @@ mod tests {
                 .collect_vec(),
         );
 
-        let identities = generate_fixed_identities(num_parties);
+        let roles = generate_fixed_roles(num_parties);
         //This is Async because we only do DDec, which is "online only"
         //Delay P1 by 1s every round
         let delay_map = HashMap::from([(
-            identities.first().unwrap().clone(),
+            *roles.get(&Role::indexed_from_one(1)).unwrap(),
             tokio::time::Duration::from_secs(1),
         )]);
         let runtime: DistributedTestRuntime<LevelOne, { LevelOne::EXTENSION_DEGREE }> =
-            DistributedTestRuntime::new(identities, threshold, NetworkMode::Async, Some(delay_map));
+            DistributedTestRuntime::new(roles, threshold, NetworkMode::Async, Some(delay_map));
 
         let session_id = SessionId::from(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         let mut set = JoinSet::new();
-        for (index_id, _identity) in runtime.identities.clone().into_iter().enumerate() {
-            let mut session = runtime.small_session_for_party(session_id, index_id, None);
+        for role in &runtime.roles {
+            let mut session = rt.block_on(async {
+                runtime
+                    .small_session_for_party(session_id, *role, None)
+                    .await
+            });
 
             let ksc = Arc::clone(&ntt_keyshares);
             let ctc = Arc::clone(&ct);
 
-            let own_role = Role::indexed_from_zero(index_id);
-            let ntt_shares = ksc.as_ref()[index_id]
+            let ntt_shares = ksc.as_ref()[role.one_based() - 1]
                 .iter()
-                .map(|ntt_val| Share::new(own_role, *ntt_val))
+                .map(|ntt_val| Share::new(*role, *ntt_val))
                 .collect_vec();
             let private_keyset = Arc::new(PrivateBgvKeySet::from_eval_domain(ntt_shares));
 

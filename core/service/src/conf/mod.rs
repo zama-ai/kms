@@ -1,6 +1,5 @@
-use crate::util::rate_limiter::RateLimiterConfig;
-
 use self::threshold::ThresholdPartyConf;
+use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
 use observability::{
     conf::{Settings, TelemetryConfig},
@@ -155,13 +154,9 @@ pub struct AwsKmsKeychain {
     pub root_key_spec: AwsKmsKeySpec,
 }
 
-#[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
-#[serde(deny_unknown_fields, rename_all = "snake_case")]
-pub struct SecretSharingKeychain {
-    pub custodian_keys: Vec<threshold::TlsKey>,
-    #[validate(range(min = 1))]
-    pub threshold: usize,
-}
+#[derive(Default, Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
+#[serde(default, rename_all = "snake_case")]
+pub struct SecretSharingKeychain {}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, EnumIs, ValueEnum)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
@@ -229,33 +224,35 @@ mod tests {
         assert_eq!(threshold_config.threshold, 1);
         assert_eq!(threshold_config.num_sessions_preproc, Some(2));
 
-        assert_eq!(threshold_config.peers.len(), 4);
-        assert_eq!(threshold_config.peers[0].address, "p1");
-        assert_eq!(threshold_config.peers[0].port, 50001);
-        assert_eq!(threshold_config.peers[0].party_id, 1);
+        let peers = threshold_config.peers.unwrap();
+
+        assert_eq!(peers.len(), 4);
+        assert_eq!(peers[0].address, "p1");
+        assert_eq!(peers[0].port, 50001);
+        assert_eq!(peers[0].party_id, 1);
         assert_eq!(
-            threshold_config.peers[0].tls_cert,
+            peers[0].tls_cert,
             Some(TlsCert::Path(PathBuf::from(r"certs/cert_p1.pem")))
         );
-        assert_eq!(threshold_config.peers[1].address, "p2");
-        assert_eq!(threshold_config.peers[1].port, 50002);
-        assert_eq!(threshold_config.peers[1].party_id, 2);
+        assert_eq!(peers[1].address, "p2");
+        assert_eq!(peers[1].port, 50002);
+        assert_eq!(peers[1].party_id, 2);
         assert_eq!(
-            threshold_config.peers[1].tls_cert,
+            peers[1].tls_cert,
             Some(TlsCert::Path(PathBuf::from(r"certs/cert_p2.pem")))
         );
-        assert_eq!(threshold_config.peers[2].address, "p3");
-        assert_eq!(threshold_config.peers[2].port, 50003);
-        assert_eq!(threshold_config.peers[2].party_id, 3);
+        assert_eq!(peers[2].address, "p3");
+        assert_eq!(peers[2].port, 50003);
+        assert_eq!(peers[2].party_id, 3);
         assert_eq!(
-            threshold_config.peers[2].tls_cert,
+            peers[2].tls_cert,
             Some(TlsCert::Path(PathBuf::from(r"certs/cert_p3.pem")))
         );
-        assert_eq!(threshold_config.peers[3].address, "p4");
-        assert_eq!(threshold_config.peers[3].port, 50004);
-        assert_eq!(threshold_config.peers[3].party_id, 4);
+        assert_eq!(peers[3].address, "p4");
+        assert_eq!(peers[3].port, 50004);
+        assert_eq!(peers[3].party_id, 4);
         assert_eq!(
-            threshold_config.peers[3].tls_cert,
+            peers[3].tls_cert,
             Some(TlsCert::Path(PathBuf::from(r"certs/cert_p4.pem")))
         );
 

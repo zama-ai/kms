@@ -1,6 +1,9 @@
 use itertools::Itertools;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 use tokio::{task::JoinSet, time::error::Elapsed};
 use tonic::async_trait;
 use tracing::instrument;
@@ -14,6 +17,7 @@ use crate::{
         runtime::{party::Role, session::BaseSessionHandles},
     },
     networking::value::NetworkValue,
+    thread_handles::spawn_compute_bound,
     ProtocolDescription,
 };
 
@@ -51,7 +55,7 @@ pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
     /// Blanket implementation that relies on [`Self::execute`]
     ///
     /// Opens a batch of secrets to designated parties
-    #[instrument(name="RobustOpenTo",skip(self,session,shares),fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),num_receivers = ?shares.len()))]
+    #[instrument(name="RobustOpenTo",skip(self,session,shares),fields(sid= ?session.session_id(), my_role = ?session.my_role(),num_receivers = ?shares.len()))]
     async fn multi_robust_open_list_to<Z: ErrorCorrect, B: BaseSessionHandles>(
         &self,
         session: &B,
@@ -108,7 +112,7 @@ pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
     ///
     /// Output:
     /// - The reconstructed secrets if reconstruction for all was possible
-    #[instrument(name="RobustOpen",skip(self,session,shares),fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
+    #[instrument(name="RobustOpen",skip(self,session,shares),fields(sid= ?session.session_id(), my_role = ?session.my_role(),batch_size = ?shares.len()))]
     async fn robust_open_list_to_all<Z: ErrorCorrect, B: BaseSessionHandles>(
         &self,
         session: &B,
@@ -180,17 +184,18 @@ impl RobustOpen for SecureRobustOpen {
             OpeningKind::ToSome(shares_map) => {
                 // We need to explicitly increase the round counter here
                 // because network().send() does not do it
-                session.network().increase_round_counter()?;
+                session.network().increase_round_counter().await;
                 let mut shares_for_reconstruction = None;
                 for (receiver_role, values) in shares_map.into_iter() {
                     if receiver_role == own_role {
                         shares_for_reconstruction = Some(values);
                     } else {
-                        let receiver = session.identity_from(&receiver_role)?;
-
                         session
                             .network()
-                            .send(NetworkValue::VecRingValue(values).to_network(), &receiver)
+                            .send(
+                                Arc::new(NetworkValue::VecRingValue(values).to_network()),
+                                &receiver_role,
+                            )
                             .await?;
                     }
                 }
@@ -223,15 +228,16 @@ impl RobustOpen for SecureRobustOpen {
                 Some(session.corrupt_roles()),
                 |msg, _id| match msg {
                     NetworkValue::VecRingValue(v) => Ok(v),
-                    _ => Err(anyhow_error_and_log(
-                        "Received something else than a Ring value in robust open to all"
-                            .to_string(),
-                    )),
+                    _ => Err(anyhow_error_and_log(format!(
+                        "Received {}, expected a Ring value in robust open to all",
+                        msg.network_type_name()
+                    ))),
                 },
-            )?;
+            )
+            .await;
 
             //Start filling sharings with my own shares
-            let mut sharings = shares
+            let sharings = shares
                 .into_iter()
                 .map(|share| ShamirSharings::create(vec![Share::new(own_role, share)]))
                 .collect_vec();
@@ -241,8 +247,7 @@ impl RobustOpen for SecureRobustOpen {
                 crate::networking::NetworkMode::Async => reconstruct_w_errors_async,
             };
 
-            try_reconstruct_from_shares(session, &mut sharings, degree, jobs, reconstruct_fn)
-                .await?
+            try_reconstruct_from_shares(session, sharings, degree, jobs, reconstruct_fn).await?
         } else {
             None
         };
@@ -269,7 +274,7 @@ type ReconsFunc<Z> = fn(
 /// - a set of jobs to receive the shares from the other parties
 async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
     session: &B,
-    sharings: &mut [ShamirSharings<Z>],
+    sharings: Vec<ShamirSharings<Z>>,
     degree: usize,
     mut jobs: JoinSet<Result<JobResultType<Z>, Elapsed>>,
     reconstruct_fn: ReconsFunc<Z>,
@@ -286,14 +291,23 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
     let mut collected_shares = 0;
     let required_shares = threshold as usize + 1; // Minimum shares needed for reconstruction
     let mut last_reconstruction_attempt = 0;
+    let sharings = Arc::new(Mutex::new(sharings));
 
     //Start awaiting on receive jobs to retrieve the shares
     while let Some(v) = jobs.join_next().await {
+        let sharings = sharings.clone();
         let joined_result = v?;
         match joined_result {
             Ok((party_id, data)) => {
                 if let Ok(values) = data {
-                    fill_indexed_shares(sharings, values, num_secrets, party_id)?;
+                    fill_indexed_shares(
+                        &mut sharings
+                            .lock()
+                            .map_err(|_| anyhow_error_and_log("Poisoned lock"))?,
+                        values,
+                        num_secrets,
+                        party_id,
+                    )?;
                     collected_shares += 1;
                 } else if let Err(e) = data {
                     tracing::warn!(
@@ -322,31 +336,29 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
         if should_attempt_reconstruction {
             last_reconstruction_attempt = collected_shares;
 
-            let res: Option<Vec<_>> =
-            //Note: here we keep waiting on new shares until we have all of the values opened.
-            // Here we want to use par_iter for opening the huge batches
-            // present in DKG, but we want to avoid using it for
-            // other tasks.
-            if num_secrets > 2 * BATCH_SIZE_BITS {
-                 sharings
-                .par_iter()
-                .with_min_len(2 * BATCH_SIZE_BITS)
-                .map(|sharing| {
-                    reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
-                        .unwrap_or_default()
-                })
-                .collect()
-            } else {
-                 sharings
-                .iter()
-                .map(|sharing| {
-                    reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
-                        .unwrap_or_default()
-                })
-                .collect()
-            };
+            // Spawn a task on rayon.
+            let res: Option<Vec<_>> = spawn_compute_bound(move || -> anyhow::Result<_> {
+                //Note: here we keep waiting on new shares until we have all of the values opened.
+                // Here we want to use par_iter for opening the huge batches
+                // present in DKG, but we want to avoid using it for
+                // other tasks.
+                Ok(sharings
+                    .lock()
+                    .map_err(|_| anyhow_error_and_log("Poisoned lock"))?
+                    .par_iter()
+                    .with_min_len(2 * BATCH_SIZE_BITS)
+                    .map(|sharing| {
+                        reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
+                            .unwrap_or_default()
+                    })
+                    .collect())
+            })
+            .await??;
 
             //Only prematurely shutdown the jobs if we have managed to reconstruct everything
+            // NOTE: This shutdown can cause a warn log from the spawn_compute_bound,
+            // because the job may die whilst a rayon task was spawned for deserializing the
+            // incoming message.
             if res.is_some() {
                 jobs.shutdown().await;
                 return Ok(res);
@@ -419,7 +431,7 @@ pub(crate) mod test {
     /// tell the test whether we expect the malicious parties
     /// to output the correct result.
     /// (RobustOpen does not mutate the corruption set)
-    fn test_robust_open_strategies<
+    async fn test_robust_open_strategies<
         Z: ErrorCorrect + Invert + PRSSConversions,
         const EXTENSION_DEGREE: usize,
         RO: RobustOpen + 'static,
@@ -442,7 +454,7 @@ pub(crate) mod test {
                 .robust_open_list_to_all(&session, shares, session.threshold() as usize)
                 .await
                 .unwrap();
-            (session.my_role(), secrets, result)
+            (secrets, result)
         };
 
         let mut task_malicious = |session: SmallSession<Z>, malicious_robust_open: RO| async move {
@@ -457,7 +469,7 @@ pub(crate) mod test {
                 .robust_open_list_to_all(&session, shares, session.threshold() as usize)
                 .await
                 .unwrap();
-            (session.my_role(), secrets, result)
+            (secrets, result)
         };
 
         let (results_honest, results_malicious) =
@@ -469,39 +481,39 @@ pub(crate) mod test {
                 None,
                 &mut task_honest,
                 &mut task_malicious,
-            );
+            )
+            .await;
 
         let num_honest = params.num_parties - params.malicious_roles.len();
         assert_eq!(results_honest.len(), num_honest);
 
-        let pivot = results_honest.first().cloned().unwrap();
+        let pivot = results_honest.get(&Role::indexed_from_one(1)).unwrap();
 
-        for (role, secrets, openings) in results_honest.into_iter() {
+        for (role, (secrets, openings)) in results_honest.iter() {
             assert!(
                 openings.is_some(),
                 "Honest Party {role} failed to open correctly, expected Some got None "
             );
-            let openings = openings.unwrap();
-            assert_eq!(secrets, pivot.1);
-            assert_eq!(secrets, openings);
+            let openings = openings.as_ref().unwrap();
+            assert_eq!(*secrets, pivot.0);
+            assert_eq!(*secrets, *openings);
         }
 
         if !params.should_be_detected {
-            for result_malicious in results_malicious.into_iter() {
-                let (role, secrets, openings) = result_malicious.unwrap();
+            for (role, result_malicious) in results_malicious.into_iter() {
+                let (secrets, openings) = result_malicious.unwrap();
                 assert!(
                     openings.is_some(),
                     "Malicious Party {role} failed to open correctly, expected Some got None "
                 );
-                let openings = openings.unwrap();
-                assert_eq!(secrets, pivot.1);
-                assert_eq!(secrets, openings);
+                assert_eq!(secrets, pivot.0);
+                assert_eq!(secrets, openings.unwrap());
             }
         }
     }
 
-    #[test]
-    fn test_robust_open_all_sync() {
+    #[tokio::test]
+    async fn test_robust_open_all_sync() {
         // expect a single round for opening
         let testing_parameters = TestingParameters::init(4, 1, &[], &[], &[], false, Some(1));
 
@@ -512,11 +524,11 @@ pub(crate) mod test {
             malicious_strategy,
             10,
             NetworkMode::Sync,
-        );
+        ).await;
     }
 
-    #[test]
-    fn test_robust_open_all_async() {
+    #[tokio::test]
+    async fn test_robust_open_all_async() {
         // expect a single round for opening
         let testing_parameters = TestingParameters::init(4, 1, &[], &[], &[], false, Some(1));
 
@@ -527,11 +539,11 @@ pub(crate) mod test {
             malicious_strategy,
             10,
             NetworkMode::Async,
-        );
+        ).await;
     }
 
-    #[test]
-    fn test_dropout_robust_open_all_sync() {
+    #[tokio::test]
+    async fn test_dropout_robust_open_all_sync() {
         // Expect a single round for opening
         // Party that drops can not reconstruct
         let testing_parameters = TestingParameters::init(4, 1, &[2], &[], &[], true, Some(1));
@@ -543,11 +555,11 @@ pub(crate) mod test {
             malicious_strategy,
             10,
             NetworkMode::Sync,
-        );
+        ).await;
     }
 
-    #[test]
-    fn test_dropout_robust_open_all_async() {
+    #[tokio::test]
+    async fn test_dropout_robust_open_all_async() {
         // Expect a single round for opening
         // Party that drops can not reconstruct
         let testing_parameters = TestingParameters::init(4, 1, &[2], &[], &[], true, Some(1));
@@ -559,11 +571,11 @@ pub(crate) mod test {
             malicious_strategy,
             10,
             NetworkMode::Async,
-        );
+        ).await;
     }
 
-    #[test]
-    fn test_malicious_robust_open_all_sync() {
+    #[tokio::test]
+    async fn test_malicious_robust_open_all_sync() {
         // Expect a single round for opening
         // Even the malicious party that sends random shares is able to reconstruct
         let testing_parameters = TestingParameters::init(4, 1, &[2], &[], &[], false, Some(1));
@@ -575,11 +587,11 @@ pub(crate) mod test {
             malicious_strategy,
             10,
             NetworkMode::Sync,
-        );
+        ).await;
     }
 
-    #[test]
-    fn test_malicious_robust_open_all_async() {
+    #[tokio::test]
+    async fn test_malicious_robust_open_all_async() {
         // Expect a single round for opening
         // Even the malicious party that sends random shares is able to reconstruct
         let testing_parameters = TestingParameters::init(4, 1, &[2], &[], &[], false, Some(1));
@@ -591,6 +603,6 @@ pub(crate) mod test {
             malicious_strategy,
             10,
             NetworkMode::Async,
-        );
+        ).await;
     }
 }

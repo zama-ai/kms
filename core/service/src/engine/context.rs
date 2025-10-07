@@ -1,16 +1,17 @@
 //! This module provides the context definition that
 //! can be constructed from the protobuf types and stored in the vault.
 
-use kms_grpc::RequestId;
+use kms_grpc::identifiers::ContextId;
 use serde::{Deserialize, Serialize};
 use tfhe::{named::Named, Versionize};
 use tfhe_versionable::VersionsDispatch;
 
 use crate::{
     cryptography::internal_crypto_types::{PublicEncKey, PublicSigKey},
-    vault::storage::{
-        crypto_material::get_core_signing_key, read_context_at_request_id, StorageReader,
+    engine::validation::{
+        parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
     },
+    vault::storage::{crypto_material::get_core_signing_key, read_context_at_id, StorageReader},
 };
 
 const ERR_DUPLICATE_PARTY_IDS: &str = "Duplicate party_ids found in context";
@@ -146,14 +147,14 @@ pub enum ContextInfoVersioned {
 #[versionize(ContextInfoVersioned)]
 pub struct ContextInfo {
     pub kms_nodes: Vec<NodeInfo>,
-    pub context_id: RequestId,
-    pub previous_context_id: Option<RequestId>,
+    pub context_id: ContextId,
+    pub previous_context_id: Option<ContextId>,
     pub software_version: SoftwareVersion,
     pub threshold: u32,
 }
 
 impl ContextInfo {
-    pub fn context_id(&self) -> &RequestId {
+    pub fn context_id(&self) -> &ContextId {
         &self.context_id
     }
 
@@ -261,7 +262,7 @@ impl ContextInfo {
             }
 
             // check that the previous context exists in storage
-            let _ = read_context_at_request_id(storage, prev_context.context_id())
+            let _ = read_context_at_id(storage, prev_context.context_id())
                 .await
                 .map_err(|e| {
                     anyhow::anyhow!(
@@ -306,18 +307,29 @@ impl TryFrom<kms_grpc::kms::v1::KmsContext> for ContextInfo {
 
     fn try_from(value: kms_grpc::kms::v1::KmsContext) -> anyhow::Result<Self> {
         let software_version = bc2wrap::deserialize(&value.software_version)?;
+        let previous_context_id = match value.previous_context_id {
+            Some(id) => Some(
+                parse_proto_request_id(
+                    &id,
+                    RequestIdParsingErr::Other("invalid previous context ID".to_string()),
+                )?
+                .into(),
+            ),
+            None => None,
+        };
+
         Ok(ContextInfo {
             kms_nodes: value
                 .kms_nodes
                 .into_iter()
                 .map(NodeInfo::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
-            context_id: RequestId::from(
-                value
-                    .context_id
-                    .ok_or_else(|| anyhow::anyhow!("Missing context_id"))?,
-            ),
-            previous_context_id: value.previous_context_id.map(RequestId::from),
+            context_id: parse_optional_proto_request_id(
+                &value.context_id,
+                RequestIdParsingErr::Context,
+            )?
+            .into(),
+            previous_context_id,
             software_version,
             threshold: value.threshold as u32,
         })
@@ -498,7 +510,7 @@ mod tests {
                     extra_verification_keys: vec![],
                 },
             ],
-            context_id: RequestId::from_bytes([4u8; 32]),
+            context_id: ContextId::from_bytes([4u8; 32]),
             previous_context_id: None,
             software_version: SoftwareVersion {
                 major: 1,
@@ -512,7 +524,7 @@ mod tests {
         let mut storage = RamStorage::new();
         store_versioned_at_request_id(
             &mut storage,
-            &RequestId::from_bytes([1u8; 32]),
+            &ContextId::from_bytes([1u8; 32]).into(),
             &sk,
             &PrivDataType::SigningKey.to_string(),
         )

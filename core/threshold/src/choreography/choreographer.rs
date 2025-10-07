@@ -8,9 +8,8 @@ use crate::choreography::grpc::gen::{
 use crate::choreography::requests::CrsGenParams;
 use crate::conf::choreo::ChoreoConf;
 use crate::execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
-use crate::execution::endpoints::keygen::FhePubKeySet;
-use crate::execution::runtime::party::RoleAssignment;
 use crate::execution::tfhe_internals::parameters::DkgParamsAvailable;
+use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::execution::zk::ceremony::compute_witness_dim;
 use crate::{
     algebra::base_ring::Z64,
@@ -57,7 +56,7 @@ impl ChoreoRuntime {
     pub fn new_from_conf(conf: &ChoreoConf) -> Result<ChoreoRuntime, Box<dyn std::error::Error>> {
         let topology = &conf.threshold_topology;
 
-        let role_assignments: RoleAssignment = topology.into();
+        let role_assignments: HashMap<Role, Identity> = topology.into();
 
         // we need to set the protocol in URI correctly
         // depending on whether the certificates are present

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
@@ -8,8 +8,9 @@ use threshold_fhe::{
     execution::{
         large_execution::vss::DummyVss,
         runtime::{
-            party::{Identity, Role},
+            party::Role,
             session::{BaseSession, ParameterHandles, SessionParameters},
+            test_runtime::generate_fixed_roles,
         },
         small_execution::{
             agree_random::DummyAgreeRandomFromShare,
@@ -67,11 +68,10 @@ pub fn get_base_session_for_parties(
     network_mode: NetworkMode,
 ) -> BaseSession {
     let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
-    let id = parameters.own_identity();
-    let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity()]);
+    let net_producer = LocalNetworkingProducer::from_roles(parameters.roles());
     BaseSession::new(
         parameters,
-        Arc::new(net_producer.user_net(id, network_mode, None)),
+        Arc::new(net_producer.user_net(role, network_mode, None)),
         AesRng::seed_from_u64(42),
     )
     .unwrap()
@@ -83,18 +83,11 @@ pub fn get_dummy_parameters_for_parties(
     role: Role,
 ) -> SessionParameters {
     assert!(amount > 0);
-    let mut role_assignment = HashMap::new();
-    for i in 0..amount {
-        role_assignment.insert(
-            Role::indexed_from_zero(i),
-            Identity("localhost".to_string(), 5000 + i as u16),
-        );
-    }
     SessionParameters::new(
         threshold,
         SessionId::from(1),
-        role_assignment.get(&role).unwrap().clone(),
-        role_assignment,
+        role,
+        generate_fixed_roles(amount),
     )
     .unwrap()
 }
