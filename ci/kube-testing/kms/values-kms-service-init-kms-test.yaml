@@ -1,6 +1,12 @@
 kmsInit:
   enabled: true
 
+minio:
+  enabled: true
+  endpoint: "http://minio:9000"
+  username: kms-access-key-id
+  password: kms-secret-access-key
+
 kmsCore:
   enabled: false
   thresholdMode:

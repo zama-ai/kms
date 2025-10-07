@@ -12,6 +12,12 @@ kmsGenKeys:
       memory: 6Gi
       cpu: 2
 
+minio:
+  enabled: true
+  endpoint: "http://minio:9000"
+  username: kms-access-key-id
+  password: kms-secret-access-key
+
 kmsCore:
   enabled: false
   thresholdMode:
@@ -42,8 +48,6 @@ kmsCoreClient:
 
 kmsInit:
   enabled: false
-
-
 
 kmsGenCertAndKeys:
   enabled: false
