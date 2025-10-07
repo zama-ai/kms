@@ -61,7 +61,7 @@ pub trait Kms: BaseKms {
         ct_format: CiphertextFormat,
         digest_link: &[u8],
         enc_key: &UnifiedPublicEncKey,
-        client_address: &[u8], // todo designcryption key
+        client_address: &[u8],
     ) -> anyhow::Result<Vec<u8>>;
 }
 

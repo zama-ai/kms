@@ -16,6 +16,7 @@ use kms_grpc::{
     utils::tonic_result::BoxedStatus,
     IdentifierError, RequestId,
 };
+use nom::AsBytes;
 use observability::{
     metrics,
     metrics_names::{
@@ -315,6 +316,7 @@ impl<
 
             let (partial_signcryption, packing_factor) = match pdec {
                 Ok((pdec_serialized, packing_factor, time)) => {
+                    // TODO add this to signcryption call
                     let signcryption_msg = SigncryptionPayload {
                         plaintext: TypedPlaintext::from_bytes(pdec_serialized, fhe_type),
                         link: link.clone(),
@@ -334,14 +336,14 @@ impl<
                         )
                     })
                     .await??;
-                    let res = bc2wrap::serialize(&enc_res)?;
 
                     tracing::info!(
                         "User decryption completed for type {:?}. Inner thread took {:?} ms",
                         fhe_type,
                         time.as_millis()
                     );
-                    (res, packing_factor)
+                    // TODO for legacy reasons we return the inner payload only
+                    (enc_res.payload, packing_factor)
                 }
                 Err(e) => return Err(anyhow!("Failed user decryption: {e}")),
             };
@@ -555,6 +557,9 @@ impl<
                 let _timer = timer;
                 // explicitly move the rate limiter context
                 let _permit = permit;
+                // TODO
+                let sadf = client_address.as_bytes();
+                assert_eq!(sadf, &client_address.to_vec());
                 let signcryption_key = Arc::new(UnifiedSigncryptionKey::new(
                     (*sig_key).clone(),
                     client_enc_key.clone(),

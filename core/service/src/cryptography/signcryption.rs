@@ -173,7 +173,7 @@ impl Designcrypt for UnifiedDesigncryptionKey {
         dsep: &DomainSep,
         cipher: &UnifiedSigncryption,
     ) -> Result<Vec<u8>, CryptographyError> {
-        // TODO this should be versioned
+        // TODO this should be versioned. Current way is only to handle legacy approach
         let cipher: Cipher = bc2wrap::deserialize(&cipher.payload)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
         let decrypted_plaintext = match &self.decryption_key {
@@ -213,7 +213,7 @@ fn parse_msg(
     let sig_bytes = &decrypted_plaintext[msg_len..(msg_len + SIG_SIZE)];
     let server_ver_key_digest =
         &decrypted_plaintext[(msg_len + SIG_SIZE)..(msg_len + SIG_SIZE + DIGEST_BYTES)];
-    // TODO this should just be based on key id
+    // TODO this should just be based on key id. Again legacy code that could be done more proper by using the notion of an id!
     // Verify verification key digest
     if serialize_hash_element(&DSEP_SIGNCRYPTION, server_verf_key)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?
@@ -248,6 +248,7 @@ fn check_format_and_signature(
         }
     };
     let msg_signed = [
+        dsep.to_vec(),
         msg,
         designcryption_key.sender_verf_key.verf_key_id(),
         serialized_enc_key,
@@ -260,7 +261,7 @@ fn check_format_and_signature(
     designcryption_key
         .sender_verf_key
         .pk()
-        .verify(&[dsep.as_slice(), &msg_signed].concat(), &sig.sig)
+        .verify(&msg_signed[..], &sig.sig)
         .map_err(|e| CryptographyError::VerificationError(e.to_string()))
 }
 
@@ -287,8 +288,9 @@ pub fn decrypt_signcryption_with_link(
     link: &[u8],
     design_key: &UnifiedDesigncryptionKey,
 ) -> anyhow::Result<TypedPlaintext> {
+    // TODO this method
     let signcryption_cipher = UnifiedSigncryption::new(
-        cipher.to_vec(), //todo check the type is right
+        cipher.to_vec(),
         (&design_key.decryption_key).into(),
         (&design_key.sender_verf_key).into(),
     );
@@ -616,7 +618,7 @@ mod tests {
 
     #[test]
     fn signcryption_with_bad_link() {
-        let (mut rng, client_signcryption_keys) = test_setup();
+        let (_rng, client_signcryption_keys) = test_setup();
         let link = [0, 1, 2, 3u8];
         let msg = TypedPlaintext {
             bytes: b"A relatively long message that we wish to be able to later validate".to_vec(),
@@ -627,17 +629,22 @@ mod tests {
             link: link.into(),
         })
         .unwrap();
-        let cipher = client_signcryption_keys
-            .signcrypt_key
-            .signcrypt(&mut rng, b"TESTTEST", &payload)
-            .unwrap();
-
-        let cipher = bc2wrap::serialize(&cipher).unwrap();
+        // let unified_signcryption = UnifiedSigncryption::new(
+        //     payload.clone(),
+        //     (&client_signcryption_keys.signcrypt_key.receiver_enc_key).into(),
+        //     (&client_signcryption_keys.designcrypt_key.sender_verf_key).into(),
+        // );
+        // let unified_signcryption_serialized = bc2wrap::serialize(&unified_signcryption).unwrap();
+        // let cipher = client_signcryption_keys
+        //     .signcrypt_key
+        //     .signcrypt(&mut rng, b"TESTTEST", &unified_signcryption_serialized)
+        //     .unwrap();
+        // let cipher = bc2wrap::serialize(&cipher.payload).unwrap();
 
         let bad_link = [1, 2, 3, 4u8];
         let _ = decrypt_signcryption_with_link(
             b"TESTTEST",
-            &cipher,
+            &payload,
             &bad_link,
             &client_signcryption_keys.designcrypt_key,
         )

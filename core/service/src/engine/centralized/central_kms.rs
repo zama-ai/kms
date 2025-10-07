@@ -957,10 +957,10 @@ impl<
         };
         let serialized_msg = bc2wrap::serialize(&signcryption_msg)?;
         let enc_res = signcryption_key.signcrypt(rng, &DSEP_USER_DECRYPTION, &serialized_msg)?;
-        let res = bc2wrap::serialize(&enc_res)?;
         tracing::info!("Completed user decryption of ciphertext");
 
-        Ok(res)
+        // TODO for legacy reasons we return the inner payload
+        Ok(enc_res.payload)
     }
 }
 

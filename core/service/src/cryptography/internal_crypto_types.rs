@@ -831,6 +831,7 @@ impl UnifiedSigncryptionKey {
     }
 }
 
+// TODO make ref type
 pub struct UnifiedDesigncryptionKey {
     pub decryption_key: UnifiedPrivateDecKey,
     pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
