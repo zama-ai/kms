@@ -464,6 +464,17 @@ impl KubernetesCmd {
                 self.down();
             }
 
+            let curl_minio = Command::new("curl")
+                .args(["http://minio:9000/kms-public"])
+                .output()
+                .expect("Failed to get minio kms-public");
+
+            if !curl_minio.status.success() {
+                let stderr = String::from_utf8_lossy(&curl_minio.stderr);
+                println!("Error: Failed to get minio kms-public: {}", stderr);
+                self.down();
+            }
+
             let kubernetes_logs_init_gen_keys_output = Command::new("kubectl")
                 .args([
                     "logs",
