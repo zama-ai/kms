@@ -464,8 +464,23 @@ impl KubernetesCmd {
                 self.down();
             }
 
+            //Kubectl port-forward to access the service
+            let _ = Command::new("kubectl")
+                .args([
+                    "port-forward",
+                    "svc",
+                    "minio",
+                    "9000:9000",
+                    "-n",
+                    &std::env::var("NAMESPACE").unwrap(),
+                ])
+                .stdout(Stdio::inherit()) // Show stdout in real-time
+                .stderr(Stdio::inherit()) // Show stderr in real-time
+                .output()
+                .expect("Failed to port-forward Minio");
+
             let curl_minio = Command::new("curl")
-                .args(["http://minio:9000/kms-public"])
+                .args(["http://localhost:9000/kms-public"])
                 .output()
                 .expect("Failed to get minio kms-public");
 
@@ -520,6 +535,17 @@ impl KubernetesCmd {
                 println!("Error: Failed to install/upgrade Helm chart: {}", stderr);
                 self.down();
             }
+
+            let _kubectl_get_pods = Command::new("kubectl")
+                .args([
+                    "get",
+                    "pods",
+                    "--namespace",
+                    &std::env::var("NAMESPACE").unwrap(),
+                ])
+                .stdout(Stdio::inherit()) // Show stdout in real-time
+                .stderr(Stdio::inherit()) // Show stderr in real-time
+                .output();
         }
 
         eprintln!("Waiting for KMS Core to be ready...");
