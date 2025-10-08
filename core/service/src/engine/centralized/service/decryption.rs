@@ -882,11 +882,12 @@ mod test_user_decryption {
                 .signcrypted_ciphertext,
         )
         .unwrap();
-        let res = hybrid_ml_kem::dec::<ml_kem::MlKem512>(
-            signcrypted_msg.0,
-            &enc_sk.unwrap_ml_kem_512().0,
-        )
-        .unwrap();
+        // Extract the DecapsulationKey<MlKem512Params> from UnifiedPrivateDecKey
+        let decap_key = match &enc_sk {
+            UnifiedPrivateDecKey::MlKem512(sk) => sk,
+            _ => panic!("Expected UnifiedPrivateDecKey::MlKem512"),
+        };
+        let res = hybrid_ml_kem::dec::<ml_kem::MlKem512>(signcrypted_msg.0, &decap_key.0).unwrap();
         assert_eq!(TestingPlaintext::from((res, tfhe::FheTypes::Bool)), msg);
     }
 

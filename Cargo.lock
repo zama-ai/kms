@@ -4596,6 +4596,7 @@ dependencies = [
  "kem",
  "rand_core 0.6.4",
  "sha3",
+ "zeroize",
 ]
 
 [[package]]

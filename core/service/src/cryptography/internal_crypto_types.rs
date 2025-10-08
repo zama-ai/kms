@@ -18,6 +18,7 @@ use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::hashing::DomainSep;
 use wasm_bindgen::prelude::wasm_bindgen;
+use zeroize::Zeroize;
 
 #[macro_export]
 macro_rules! impl_generic_versionize {
@@ -118,20 +119,6 @@ impl UnifiedPublicEncKey {
 // uses to encrypt its payload
 pub struct PublicEncKey<C: KemCore>(pub(crate) C::EncapsulationKey);
 
-#[cfg(test)]
-impl PublicEncKey<ml_kem::MlKem512> {
-    pub fn to_unified(&self) -> UnifiedPublicEncKey {
-        UnifiedPublicEncKey::MlKem512(self.clone())
-    }
-}
-
-#[cfg(test)]
-impl PublicEncKey<ml_kem::MlKem1024> {
-    pub fn to_unified(&self) -> UnifiedPublicEncKey {
-        UnifiedPublicEncKey::MlKem1024(self.clone())
-    }
-}
-
 impl<C: KemCore> Serialize for PublicEncKey<C> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -145,7 +132,7 @@ impl<C: KemCore> Named for PublicEncKey<C> {
     const NAME: &'static str = "PublicEncKey";
 }
 
-// workaround because clone doesn't get derived for this type
+/// workaround because clone doesn't get derived for this type
 impl<C: KemCore> Clone for PublicEncKey<C> {
     fn clone(&self) -> Self {
         let buf = self.0.as_bytes();
@@ -263,11 +250,23 @@ impl Encrypt for UnifiedPublicEncKey {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+pub enum UnifiedPrivateDecKeyVersioned {
+    V0(UnifiedPrivateDecKey),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
 #[expect(clippy::large_enum_variant)]
+#[versionize(UnifiedPrivateDecKeyVersioned)]
 pub enum UnifiedPrivateDecKey {
     MlKem512(PrivateEncKey<ml_kem::MlKem512>),
     MlKem1024(PrivateEncKey<ml_kem::MlKem1024>),
+    // WARNING: Do not modify the order of the variants or remove any variant as this will break deserialization of existing keys!
+    // Only acceptable if you make a new version
+}
+
+impl tfhe::named::Named for UnifiedPrivateDecKey {
+    const NAME: &'static str = "UnifiedPrivateDecKey";
 }
 
 impl From<UnifiedPrivateDecKey> for EncryptionSchemeType {
@@ -287,18 +286,31 @@ impl From<&UnifiedPrivateDecKey> for EncryptionSchemeType {
     }
 }
 
-impl UnifiedPrivateDecKey {
-    pub fn unwrap_ml_kem_512(self) -> PrivateEncKey<ml_kem::MlKem512> {
-        match self {
-            UnifiedPrivateDecKey::MlKem512(sk) => sk,
-            _ => panic!("Expected MlKem512 private decryption key"),
+// Alias wrapping the ephemeral private decryption key the user's wallet constructs to receive the
+// server's encrypted payload
+// TODO is this wrapper actually needed with the universal UnifiedPrivateDecKey?
+pub struct PrivateEncKey<C: KemCore>(pub(crate) C::DecapsulationKey);
+
+impl<C: KemCore> Zeroize for PrivateEncKey<C> {
+    fn zeroize(&mut self) {
+        // Directly zeroize the underlying key bytes without creating copies
+        // This is more secure as it avoids temporary allocations of sensitive data
+        let key_bytes_ptr = self.0.as_bytes().as_ptr() as *mut u8;
+        let key_len = self.0.as_bytes().len();
+
+        // SAFETY: We're zeroizing the memory that belongs to this struct
+        // The pointer is valid and the length is correct from as_bytes()
+        unsafe {
+            std::ptr::write_bytes(key_bytes_ptr, 0, key_len);
         }
     }
 }
 
-// Alias wrapping the ephemeral private decryption key the user's wallet constructs to receive the
-// server's encrypted payload
-pub struct PrivateEncKey<C: KemCore>(pub(crate) C::DecapsulationKey);
+impl<C: KemCore> Drop for PrivateEncKey<C> {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
 
 impl<C: KemCore> Clone for PrivateEncKey<C> {
     fn clone(&self) -> Self {
@@ -315,6 +327,33 @@ impl<C: KemCore> std::fmt::Debug for PrivateEncKey<C> {
     }
 }
 
+impl<C: KemCore> tfhe_versionable::Versionize for PrivateEncKey<C> {
+    type Versioned<'vers>
+        = &'vers PrivateEncKey<C>
+    where
+        C: 'vers;
+
+    fn versionize(&self) -> Self::Versioned<'_> {
+        self
+    }
+}
+
+impl<C: KemCore> tfhe_versionable::VersionizeOwned for PrivateEncKey<C> {
+    type VersionedOwned = PrivateEncKey<C>;
+    fn versionize_owned(self) -> Self::VersionedOwned {
+        self
+    }
+}
+
+impl<C: KemCore> tfhe_versionable::Unversionize for PrivateEncKey<C> {
+    fn unversionize(
+        versioned: Self::VersionedOwned,
+    ) -> Result<Self, tfhe_versionable::UnversionizeError> {
+        Ok(versioned)
+    }
+}
+
+// TODO why is this manual and not derived?
 impl<C: KemCore> Serialize for PrivateEncKey<C> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -395,10 +434,9 @@ pub enum EncryptionSchemeTypeVersioned {
 }
 
 // TODO separate into signature and encryption files
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, Versionize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, Versionize)]
 #[versionize(EncryptionSchemeTypeVersioned)]
 pub enum EncryptionSchemeType {
-    // #[default]
     MlKem512,
     MlKem1024,
 }
@@ -430,7 +468,7 @@ impl<'a> Encryption<'a> {
 
 impl<'a> EncryptionScheme for Encryption<'a> {
     fn scheme_type(&self) -> EncryptionSchemeType {
-        self.scheme_type
+        self.scheme_type.clone()
     }
 
     fn keygen(&mut self) -> Result<(UnifiedPrivateDecKey, UnifiedPublicEncKey), CryptographyError> {
@@ -602,8 +640,8 @@ impl Visitor<'_> for PublicSigKeyVisitor {
         }
     }
 }
-
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
+// Drop manually implemented due to conflict with Versionize macro
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
 pub enum PrivateSigKeyVersioned {
     V0(PrivateSigKey),
 }
@@ -611,7 +649,7 @@ pub enum PrivateSigKeyVersioned {
 // Struct wrapping signature signing key used by both the client and server to authenticate their
 // messages to one another
 #[wasm_bindgen]
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Zeroize, Versionize)]
 #[versionize(PrivateSigKeyVersioned)]
 pub struct PrivateSigKey {
     sk: WrappedSigningKey,
@@ -661,6 +699,14 @@ impl From<&PrivateSigKey> for SigningSchemeType {
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct WrappedSigningKey(k256::ecdsa::SigningKey);
 impl_generic_versionize!(WrappedSigningKey);
+
+impl Zeroize for WrappedSigningKey {
+    fn zeroize(&mut self) {
+        // TODO I am not sure this is sufficient, but I have a hard time finding any alternative
+        let mut bytes = self.0.to_bytes();
+        bytes.zeroize();
+    }
+}
 
 impl Serialize for WrappedSigningKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
