@@ -355,12 +355,17 @@ pub fn ml_kem_pke_sk_to_u8vec(sk: &PrivateEncKeyMlKem512) -> Result<Vec<u8>, JsE
 
 #[wasm_bindgen]
 pub fn u8vec_to_ml_kem_pke_pk(v: &[u8]) -> Result<PublicEncKeyMlKem512, JsError> {
-    tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
+    let key = tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
         std::io::Cursor::new(v),
         SAFE_SER_SIZE_LIMIT,
     )
-    .map(|x| PublicEncKeyMlKem512(x.unwrap_ml_kem_512()))
-    .map_err(|e| JsError::new(&e.to_string()))
+    .map_err(|e| JsError::new(&e.to_string()))?;
+    match key {
+        UnifiedPublicEncKey::MlKem512(key) => Ok(PublicEncKeyMlKem512(key)),
+        UnifiedPublicEncKey::MlKem1024(_) => Err(JsError::new(
+            "expected MlKem512 public encryption key but got MlKem1024",
+        )),
+    }
 }
 
 #[wasm_bindgen]

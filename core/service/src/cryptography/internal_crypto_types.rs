@@ -86,13 +86,6 @@ impl From<&UnifiedPublicEncKey> for EncryptionSchemeType {
 }
 
 impl UnifiedPublicEncKey {
-    pub fn unwrap_ml_kem_512(self) -> PublicEncKey<ml_kem::MlKem512> {
-        match self {
-            UnifiedPublicEncKey::MlKem512(pk) => pk,
-            _ => panic!("Expected MlKem512 public encryption key"),
-        }
-    }
-
     /// This function returns the bytes of the public encryption key for hashing purposes.
     /// Do not use this for serialization, but use safe_serialize instead.
     pub fn bytes_for_hashing(&self) -> anyhow::Result<Vec<u8>> {

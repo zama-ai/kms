@@ -574,7 +574,7 @@ mod tests {
 
     use crate::{
         cryptography::internal_crypto_types::{
-            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
+            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPublicEncKey,
         },
         engine::{
             base::derive_request_id,
@@ -837,7 +837,11 @@ mod tests {
         // bad public key
         {
             // note that we're serializing the inner mlkem512 public key, which is not supported
-            let bad_enc_pk_buf = bc2wrap::serialize(&enc_pk.unwrap_ml_kem_512()).unwrap();
+            let inner_key = match &enc_pk {
+                UnifiedPublicEncKey::MlKem512(pk) => pk,
+                _ => panic!("expected MlKem512 key"),
+            };
+            let bad_enc_pk_buf = bc2wrap::serialize(&inner_key).unwrap();
             let req = UserDecryptionRequest {
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
@@ -916,11 +920,15 @@ mod tests {
         );
         let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
 
+        let inner_key = match &enc_pk {
+            UnifiedPublicEncKey::MlKem512(pk) => pk,
+            _ => panic!("expected MlKem512 key"),
+        };
         let req = UserDecryptionRequest {
             request_id: Some(v1::RequestId {
                 request_id: "dummy request ID".to_owned(),
             }),
-            enc_key: bc2wrap::serialize(&enc_pk.unwrap_ml_kem_512()).unwrap(),
+            enc_key: bc2wrap::serialize(&inner_key).unwrap(),
             client_address: client_address.to_checksum(None),
             key_id: Some(key_id.into()),
             typed_ciphertexts: vec![typed_ciphertext],

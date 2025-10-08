@@ -676,18 +676,6 @@ mod tests {
             link: link.into(),
         })
         .unwrap();
-        // let unified_signcryption = UnifiedSigncryption::new(
-        //     payload.clone(),
-        //     (&client_signcryption_keys.signcrypt_key.receiver_enc_key).into(),
-        //     (&client_signcryption_keys.designcrypt_key.sender_verf_key).into(),
-        // );
-        // let unified_signcryption_serialized = bc2wrap::serialize(&unified_signcryption).unwrap();
-        // let cipher = client_signcryption_keys
-        //     .signcrypt_key
-        //     .signcrypt(&mut rng, b"TESTTEST", &unified_signcryption_serialized)
-        //     .unwrap();
-        // let cipher = bc2wrap::serialize(&cipher.payload).unwrap();
-
         let bad_link = [1, 2, 3, 4u8];
         let _ = decrypt_signcryption_with_link(
             b"TESTTEST",
