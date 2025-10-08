@@ -608,7 +608,7 @@ spec:
               value: {{ .Values.minio.username}}
             - name: AWS_SECRET_ACCESS_KEY
               value: {{ .Values.minio.password}}
-            - name: KMS_CORE__S3_ENDPOINT
+            - name: KMS_CORE__AWS__S3_ENDPOINT
               value: {{ .Values.minio.endpoint }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.privateVault.s3.bucket | quote }}
