@@ -52,7 +52,7 @@ spec:
           args:
             - -c
             - |
-              {{ include "kmsCoreInitEnvVars" . | indent 14 | trim }}
+              {{- include "kmsCoreInitEnvVars" . | nindent 14 }}
               envsubst < /var/lib/kms-core/config/kms-server.toml > kms-server.toml
               envsubst < /var/lib/kms-core/config/aws.toml >> kms-server.toml
               envsubst < /var/lib/kms-core/config/vaults.toml >> kms-server.toml
@@ -76,7 +76,7 @@ spec:
               value: {{ .Values.runMode }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
-          {{- if and .Values.kmsCore.envFrom.configmap.name (not .Values.minio.enabled) }}
+            {{- if and .Values.kmsCore.envFrom.configmap.name (not .Values.minio.enabled) }}
             - name: CORE_CLIENT__S3_ENDPOINT
               valueFrom:
                 configMapKeyRef:
@@ -142,7 +142,7 @@ spec:
                   key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultKeychainAWSKMSRootKeySpec }}
                   optional: true
             {{- end }}
-          {{- else }}
+            {{- else }}
             - name: AWS_ACCESS_KEY_ID
               value: {{ .Values.minio.username}}
             - name: AWS_SECRET_ACCESS_KEY
@@ -169,7 +169,7 @@ spec:
             - name: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
               value: {{ .Values.kmsCore.privateVault.awskms.rootKeyId | quote }}
             {{- end }}
-          {{- end }}
+            {{- end }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
             - mountPath: /var/lib/kms-core/config
@@ -312,52 +312,53 @@ spec:
           args:
             - -c
             - |
+              env
               echo "generating keys"
               kms-gen-keys --cmd signing-keys \
-              {{- if .Values.minio.enabled }}
+            {{- if .Values.minio.enabled }}
               --aws-s3-endpoint {{ .Values.minio.endpoint }} \
-              {{- end }}
+            {{- end }}
               --aws-region {{ .Values.kmsCore.aws.region }} \
-              {{- if .Values.kmsCore.publicVault.s3.enabled -}}
+            {{- if .Values.kmsCore.publicVault.s3.enabled -}}
               --public-storage s3 \
               --public-s3-bucket "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.publicVault.s3.bucket }}}" \
-                {{- if .Values.kmsCore.publicVault.s3.prefix }}
+              {{- if .Values.kmsCore.publicVault.s3.prefix }}
               --public-s3-prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.prefix }}}" \
-                {{- end }}
-              {{- else }}
+              {{- end }}
+            {{- else }}
               --public-storage file \
               --public-file-path "/keys" \
-              {{- end }}
-              {{- if .Values.kmsCore.privateVault.s3.enabled -}}
+            {{- end }}
+            {{- if .Values.kmsCore.privateVault.s3.enabled -}}
               --private-storage s3 \
               --private-s3-bucket "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.privateVault.s3.bucket }}}" \
-                {{- if .Values.kmsCore.privateVault.s3.prefix }}
+              {{- if .Values.kmsCore.privateVault.s3.prefix }}
               --private-s3-prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:=={{ .Values.kmsCore.privateVault.s3.prefix }}}" \
-                {{- end }}
-              {{- else }}
+              {{- end }}
+            {{- else }}
               --private-storage file \
               --private-file-path "/keys" \
-              {{- end }}
-              {{- if .Values.kmsCore.privateVault.awskms.enabled }}
+            {{- end }}
+            {{- if .Values.kmsCore.privateVault.awskms.enabled }}
               --root-key-id "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID:={{ .Values.kmsCore.privateVault.awskms.rootKeyId }}}" \
               --root-key-spec "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC:={{ .Values.kmsCore.privateVault.awskms.rootKeySpec }}}" \
-              {{- end }}
+            {{- end }}
               {{ include "kmsCoreMode" . }} \
-              {{- if .Values.kmsCore.thresholdMode.enabled }}
+            {{- if .Values.kmsCore.thresholdMode.enabled }}
               --signing-key-party-id ${KMS_CORE__THRESHOLD__MY_ID} \
-              {{- if .Values.kmsCore.thresholdMode.peersList }}
+            {{- if .Values.kmsCore.thresholdMode.peersList }}
               --num-parties {{ len .Values.kmsCore.thresholdMode.peersList }} \
-              {{- else }}
+            {{- else }}
               --num-parties {{ int .Values.kmsPeers.count }} \
-              {{- end }}
-              {{- if .Values.kmsCore.addressOverride }}
+            {{- end }}
+            {{- if .Values.kmsCore.addressOverride }}
               --tls-subject {{ .Values.kmsCore.addressOverride | quote }}
-              {{- else }}
+            {{- else }}
               --tls-subject "{{ include "kmsCoreName" . }}-${KMS_CORE__THRESHOLD__MY_ID}"
-              {{- end }}
-              {{- else }}
+            {{- end }}
+            {{- else }}
               --write-privkey
-              {{- end }}
+            {{- end }}
           env:
             {{- if .Values.kmsPeers.id }}
             - name: KMS_CORE__THRESHOLD__MY_ID
@@ -436,7 +437,7 @@ spec:
                   key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultKeychainAWSKMSRootKeySpec }}
                   optional: true
             {{- end }}
-          {{- else }}
+            {{- else }}
             - name: AWS_ACCESS_KEY_ID
               value: {{ .Values.minio.username}}
             - name: AWS_SECRET_ACCESS_KEY
@@ -463,7 +464,7 @@ spec:
             - name: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
               value: {{ .Values.kmsCore.privateVault.awskms.rootKeyId | quote }}
             {{- end }}
-          {{- end }}
+            {{- end }}
           {{- if not .Values.kmsCore.privateVault.s3.enabled }}
           volumeMounts:
             - mountPath: /keys
@@ -493,9 +494,9 @@ spec:
               echo "### BEGIN - describe-eif ###"
               nitro-cli describe-eif --eif-path {{ .Values.kmsCore.nitroEnclave.eifPath }}
               echo "### END - describe-eif ###"
-              {{- if .Values.kmsCore.nitroEnclave.signed }}
+            {{- if .Values.kmsCore.nitroEnclave.signed }}
               nitro-cli sign-eif --eif-path {{ .Values.kmsCore.nitroEnclave.eifPath }} --signing-certificate /var/lib/kms-core/config/party_cert.pem --private-key {{ .Values.kmsCore.nitroEnclave.eifSignKey }}
-              {{- end }}
+            {{- end }}
               # enclave config vsock is hardcoded to 4000 in init_enclave.sh
               # it can't be a separate container because
               # we had to serve kms-gen-keys.toml on the same port earlier
@@ -511,12 +512,14 @@ spec:
           args:
             - -c
             - |
-              {{- if .Values.minio.enabled }}
+            {{- if .Values.minio.enabled }}
               mkdir -p ~/.aws/
               echo '[default]' > ~/.aws/credentials
               echo 'aws_access_key_id = ${AWS_ACCESS_KEY_ID}' >> ~/.aws/credentials
               echo 'aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}' >> ~/.aws/credentials
-              {{- end }}
+            {{- end }}
+              env
+              cat ~/.aws/credentials
               kms-server --config-file=kms-server.toml
           {{- end }}
           env:
@@ -563,7 +566,7 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStoragePrefix }}
-              {{- if .Values.kmsCore.privateVault.awskms.enabled }}
+            {{- if .Values.kmsCore.privateVault.awskms.enabled }}
             - name: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
               valueFrom:
                 configMapKeyRef:
@@ -574,8 +577,8 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
-              {{- end }}
-              {{- if .Values.kmsCore.backupVault.s3.enabled }}
+            {{- end }}
+            {{- if .Values.kmsCore.backupVault.s3.enabled }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET
               valueFrom:
                 configMapKeyRef:
@@ -588,8 +591,8 @@ spec:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultStoragePrefix }}
                   optional: true
-              {{- end }}
-              {{- if .Values.kmsCore.backupVault.awskms.enabled }}
+            {{- end }}
+            {{- if .Values.kmsCore.backupVault.awskms.enabled }}
             - name: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
               valueFrom:
                 configMapKeyRef:
@@ -602,7 +605,7 @@ spec:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultKeychainAWSKMSRootKeySpec }}
                   optional: true
-              {{- end }}
+            {{- end }}
             {{- else }}
             - name: AWS_ACCESS_KEY_ID
               value: {{ .Values.minio.username}}
@@ -618,18 +621,18 @@ spec:
               value: {{ .Values.kmsCore.publicVault.s3.bucket | quote }}
             - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.publicVault.s3.prefix | quote }}
-              {{- if .Values.kmsCore.backupVault.s3.enabled }}
+            {{- if .Values.kmsCore.backupVault.s3.enabled }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.backupVault.s3.bucket | quote }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.backupVault.s3.prefix | quote }}
-              {{- end }}
-              {{- if .Values.kmsCore.privateVault.awskms.enabled }}
+            {{- end }}
+            {{- if .Values.kmsCore.privateVault.awskms.enabled }}
             - name: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
               value: {{ .Values.kmsCore.privateVault.awskms.rootKeySpec | quote }}
             - name: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
               value: {{ .Values.kmsCore.privateVault.awskms.rootKeyId | quote }}
-              {{- end }}
+            {{- end }}
             {{- end }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
@@ -658,25 +661,25 @@ spec:
               protocol: TCP
           resources:
             requests:
-              {{- if .Values.kmsCore.nitroEnclave.enabled }}
+            {{- if .Values.kmsCore.nitroEnclave.enabled }}
               aws.ec2.nitro/nitro_enclaves_cpus: {{ .Values.kmsCore.nitroEnclave.cpuCount }}
               memory: 2Gi
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
-              {{- else }}
+            {{- else }}
               memory: {{ .Values.kmsCore.resources.requests.memory }}
               cpu: {{ .Values.kmsCore.resources.requests.cpu }}
-              {{- end }}
+            {{- end }}
             limits:
               ephemeral-storage: {{ .Values.kmsCore.resources.limits.ephemeralStorage }}
-              {{- if .Values.kmsCore.nitroEnclave.enabled }}
+            {{- if .Values.kmsCore.nitroEnclave.enabled }}
               aws.ec2.nitro/nitro_enclaves_cpus: {{ .Values.kmsCore.nitroEnclave.cpuCount }}
               memory: 4Gi
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
-              {{- else }}
+            {{- else }}
               memory: {{ .Values.kmsCore.resources.limits.memory }}
-              {{- end }}
+            {{- end }}
           readinessProbe:
             grpc:
               port: {{ .Values.kmsCore.ports.client }}
