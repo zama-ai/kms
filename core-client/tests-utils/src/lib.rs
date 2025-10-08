@@ -464,32 +464,6 @@ impl KubernetesCmd {
                 self.down();
             }
 
-            //Kubectl port-forward to access the service
-            let _ = Command::new("kubectl")
-                .args([
-                    "port-forward",
-                    "svc",
-                    "minio",
-                    "9000:9000",
-                    "-n",
-                    &std::env::var("NAMESPACE").unwrap(),
-                ])
-                .stdout(Stdio::inherit()) // Show stdout in real-time
-                .stderr(Stdio::inherit()) // Show stderr in real-time
-                .output()
-                .expect("Failed to port-forward Minio");
-
-            let curl_minio = Command::new("curl")
-                .args(["http://localhost:9000/kms-public"])
-                .output()
-                .expect("Failed to get minio kms-public");
-
-            if !curl_minio.status.success() {
-                let stderr = String::from_utf8_lossy(&curl_minio.stderr);
-                println!("Error: Failed to get minio kms-public: {}", stderr);
-                self.down();
-            }
-
             let kubernetes_logs_init_gen_keys_output = Command::new("kubectl")
                 .args([
                     "logs",
