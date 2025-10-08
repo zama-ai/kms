@@ -107,8 +107,11 @@ impl Client {
                 request_id: Some((*request_id).into()),
                 // The key is freshly generated, so we can safely unwrap the serialization
                 // NOTE: in the legacy version we do not serialize the unified version
-                enc_key: bc2wrap::serialize(&enc_pk)
-                    .expect("Failed to serialize ephemeral encryption key"),
+                enc_key: bc2wrap::serialize(match &enc_pk {
+                    UnifiedPublicEncKey::MlKem1024(pk) => pk,
+                    _ => panic!("Expected UnifiedPublicEncKey::MlKem1024"),
+                })
+                .expect("Failed to serialize ephemeral encryption key"),
                 client_address: self.client_address.to_checksum(None),
                 typed_ciphertexts,
                 key_id: Some((*key_id).into()),
