@@ -487,6 +487,45 @@ impl KubernetesCmd {
                 self.down();
             }
 
+            let kubernetes_pod_env = Command::new("kubectl")
+                .args([
+                    "exec",
+                    &format!("kms-core-{}", i),
+                    "-c",
+                    "kms-core",
+                    "-n",
+                    &std::env::var("NAMESPACE").unwrap(),
+                    "--",
+                    "env",
+                ])
+                .output()
+                .expect("Failed to get pod env");
+
+            // Also write to stdout
+            std::io::stdout()
+                .write_all(&kubernetes_pod_env.stdout)
+                .expect("Failed to write logs to stdout");
+
+            let kubernetes_pod_wget = Command::new("kubectl")
+                .args([
+                    "exec",
+                    &format!("kms-core-{}", i),
+                    "-c",
+                    "kms-core",
+                    "-n",
+                    &std::env::var("NAMESPACE").unwrap(),
+                    "--",
+                    "wget",
+                    "http://minio:9000/kms-public",
+                ])
+                .output()
+                .expect("Failed to get pod env");
+
+            // Also write to stdout
+            std::io::stdout()
+                .write_all(&kubernetes_pod_wget.stdout)
+                .expect("Failed to write logs to stdout");
+
             let kubernetes_logs_output = Command::new("kubectl")
                 .args([
                     "logs",
