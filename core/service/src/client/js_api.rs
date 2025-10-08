@@ -76,7 +76,7 @@ use crate::client::user_decryption_wasm::{
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::hybrid_ml_kem;
 use crate::cryptography::internal_crypto_types::{
-    PrivateEncKey, PublicEncKey, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+    PrivateEncKey, PublicEncKey, UnifiedPrivateDecKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use aes_prng::AesRng;
@@ -592,13 +592,13 @@ pub fn process_user_decryption_resp(
             &eip712_domain,
             &agg_resp,
             &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),
-            &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
+            &UnifiedPrivateDecKey::MlKem512(enc_sk.0.clone()),
         )
     } else {
         client.insecure_process_user_decryption_resp(
             &agg_resp,
             &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),
-            &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
+            &UnifiedPrivateDecKey::MlKem512(enc_sk.0.clone()),
         )
     };
     match user_decrypt_resp {

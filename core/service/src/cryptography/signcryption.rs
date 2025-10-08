@@ -107,6 +107,9 @@ where
 /// `ClientRequest` and validated to be consistent with the blockchain identity of the client BEFORE
 /// calling this method. IF THIS HAS NOT BEEN DONE THEN ANYONE CAN IMPERSONATE ANY CLIENT!!!
 impl Signcrypt for UnifiedSigncryptionKey {
+    #[allow(unknown_lints)]
+    // We allow modifying the rng before return
+    #[allow(non_local_effect_before_error_return)]
     fn signcrypt<T>(
         &self,
         rng: &mut (impl CryptoRng + RngCore),
