@@ -6,5 +6,6 @@ minio:
   endpoint: "http://minio:9000"
   username: kms-access-key-id
   password: kms-secret-access-key
+
 kmsGenCertAndKeys:
   enabled: false

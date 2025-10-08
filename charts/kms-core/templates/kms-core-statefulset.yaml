@@ -542,14 +542,6 @@ spec:
               value: {{ .Values.runMode }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
-            {{- if .Values.minio.enabled }}
-            - name: AWS_ACCESS_KEY_ID
-              value: {{ .Values.minio.username}}
-            - name: AWS_SECRET_ACCESS_KEY
-              value: {{ .Values.minio.password}}
-            - name: S3_ENDPOINT
-              value: {{ .Values.minio.endpoint }}
-            {{- end }}
             {{- if and .Values.kmsCore.envFrom.configmap.name (not .Values.minio.enabled) }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               valueFrom:
@@ -612,6 +604,12 @@ spec:
                   optional: true
               {{- end }}
             {{- else }}
+            - name: AWS_ACCESS_KEY_ID
+              value: {{ .Values.minio.username}}
+            - name: AWS_SECRET_ACCESS_KEY
+              value: {{ .Values.minio.password}}
+            - name: KMS_CORE__S3_ENDPOINT
+              value: {{ .Values.minio.endpoint }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.privateVault.s3.bucket | quote }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
