@@ -20,6 +20,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
+use std::time::SystemTime;
 #[cfg(any(test, feature = "testing"))]
 use tfhe::zk::CompactPkeCrs;
 
@@ -40,6 +41,7 @@ const DSEP_BRACH: DomainSep = *b"BRACHABC";
 pub enum BroadcastValue<Z: Eq + Zero + Sized> {
     Bot,
     RingVector(Vec<Z>),
+    TimestampedRingVector((Vec<Z>, SystemTime)),
     RingValue(Z),
     PRSSVotes(Vec<(PartySet, Vec<Z>)>),
     Round2VSS(Vec<VerificationValues<Z>>),
@@ -55,6 +57,7 @@ impl<Z: Eq + Zero + Sized> BroadcastValue<Z> {
         match self {
             BroadcastValue::Bot => "Bot".to_string(),
             BroadcastValue::RingVector(_) => "RingVector".to_string(),
+            BroadcastValue::TimestampedRingVector(_) => "TimestampedRingVector".to_string(),
             BroadcastValue::RingValue(_) => "RingValue".to_string(),
             BroadcastValue::PRSSVotes(_) => "PRSSVotes".to_string(),
             BroadcastValue::Round2VSS(_) => "Round2VSS".to_string(),
@@ -88,6 +91,12 @@ impl<Z: Ring> From<Z> for BroadcastValue<Z> {
 impl<Z: Ring> From<Vec<Z>> for BroadcastValue<Z> {
     fn from(value: Vec<Z>) -> Self {
         BroadcastValue::RingVector(value)
+    }
+}
+
+impl<Z: Ring> From<(Vec<Z>, SystemTime)> for BroadcastValue<Z> {
+    fn from(value: (Vec<Z>, SystemTime)) -> Self {
+        BroadcastValue::TimestampedRingVector(value)
     }
 }
 

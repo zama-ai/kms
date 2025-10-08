@@ -876,6 +876,8 @@ mod tests {
     #[tokio::test]
     async fn test_honest_broadcast() {
         let malicious_strategy = SyncReliableBroadcast::default();
+
+        // NOTE that the number of expected rounds is 3+t
         let params = TestingParameters::init(4, 1, &[], &[], &[], false, Some(1 + 3));
 
         test_broadcast_from_all_w_corrupt_set_update_strategies::<ResiduePolyF4Z128, 4, _>(

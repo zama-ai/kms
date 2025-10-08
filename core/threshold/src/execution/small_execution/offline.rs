@@ -1,6 +1,7 @@
 use anyhow::Context;
 use itertools::Itertools;
 use std::collections::HashMap;
+use std::time::SystemTime;
 use tonic::async_trait;
 use tracing::instrument;
 
@@ -89,15 +90,17 @@ impl<
         let mut base_preprocessing = InMemoryBasePreprocessing::<Z>::default();
 
         // In case of malicious behavior not all triples might have been constructed, so we have to continue making triples until the batch is done
+        let mut sync_time = SystemTime::now();
         while base_preprocessing.triples_len() < batch_sizes.triples {
-            base_preprocessing.append_triples(
-                next_triple_batch(
-                    small_session,
-                    batch_sizes.triples - base_preprocessing.triples_len(),
-                    &self.broadcast,
-                )
-                .await?,
-            );
+            let (triples, new_sync_time) = next_triple_batch(
+                small_session,
+                batch_sizes.triples - base_preprocessing.triples_len(),
+                &self.broadcast,
+                sync_time,
+            )
+            .await?;
+            sync_time = new_sync_time;
+            base_preprocessing.append_triples(triples);
         }
         if batch_sizes.randoms > 0 {
             base_preprocessing
@@ -114,7 +117,7 @@ async fn next_random_batch<Z: Ring, Ses: SmallSessionHandles<Z>>(
     session: &mut Ses,
 ) -> anyhow::Result<Vec<Share<Z>>> {
     let my_role = session.my_role();
-    //Create telemetry span to record all calls to PRSS.Next
+    // Create telemetry span to record all calls to PRSS.Next
     let res = session
         .prss_as_mut()
         .prss_next_vec(my_role, amount)
@@ -123,6 +126,35 @@ async fn next_random_batch<Z: Ring, Ses: SmallSessionHandles<Z>>(
         .map(|x| Share::new(my_role, x))
         .collect();
     Ok(res)
+}
+
+// convert a SystemTime to an Instant
+fn systemtime_to_instant(t: SystemTime) -> tokio::time::Instant {
+    let now_sys = SystemTime::now();
+    let now_inst = tokio::time::Instant::now();
+
+    // unwrap here is safe because we checked t >= now_sys
+    if t >= now_sys {
+        let dur = t.duration_since(now_sys).unwrap();
+        now_inst + dur
+    } else {
+        let dur = now_sys.duration_since(t).unwrap();
+        now_inst - dur
+    }
+}
+
+fn instant_to_systemtime(t: tokio::time::Instant) -> SystemTime {
+    let now_sys = SystemTime::now();
+    let now_inst = tokio::time::Instant::now();
+
+    // unwrap here is safe because we checked t >= now_sys
+    if t >= now_inst {
+        let dur = t.duration_since(now_inst);
+        now_sys + dur
+    } else {
+        let dur = now_inst.duration_since(t);
+        now_sys - dur
+    }
 }
 
 /// Constructs a new batch of triples and appends this to the internal triple storage.
@@ -134,7 +166,8 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
     session: &mut Ses,
     amount: usize,
     broadcast: &BCast,
-) -> anyhow::Result<Vec<Triple<Z>>> {
+    batch_sync_time: SystemTime,
+) -> anyhow::Result<(Vec<Triple<Z>>, SystemTime)> {
     let counters = session.prss().get_counters();
     let my_role = session.my_role();
     let threshold = session.threshold();
@@ -150,44 +183,81 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
         .przs_next_vec(my_role, threshold, amount)
         .await?;
 
-    let (vec_x_single, vec_y_single, vec_v_single, vec_d_double) = spawn_compute_bound( move ||{
-    let mut all_prss = all_prss.into_iter();
-    let all_prss_ref = all_prss.by_ref();
-    let vec_x_single: Vec<_> = all_prss_ref.take(amount).collect();
-    let vec_y_single: Vec<_> = all_prss_ref.take(amount).collect();
-    let vec_v_single: Vec<_> = all_prss_ref.take(amount).collect();
+    let (vec_x_single, vec_y_single, vec_v_single, vec_d_double) = spawn_compute_bound(move || {
+        let mut all_prss = all_prss.into_iter();
+        let all_prss_ref = all_prss.by_ref();
+        let vec_x_single: Vec<_> = all_prss_ref.take(amount).collect();
+        let vec_y_single: Vec<_> = all_prss_ref.take(amount).collect();
+        let vec_v_single: Vec<_> = all_prss_ref.take(amount).collect();
 
-    if vec_x_single.len() != amount
-        || vec_y_single.len() != amount
-        || vec_v_single.len() != amount
-        || vec_z_double.len() != amount
-    {
-        return Err(anyhow::anyhow!(
-            "BUG: Not all expected values were generated, x={}, y={}, v={}, z={}. Expected {amount}.",
-            vec_x_single.len(),
-            vec_y_single.len(),
-            vec_v_single.len(),
-            vec_z_double.len(),
-        ));
-    }
+        if vec_x_single.len() != amount
+            || vec_y_single.len() != amount
+            || vec_v_single.len() != amount
+            || vec_z_double.len() != amount
+        {
+            return Err(anyhow::anyhow!(
+                "BUG: Not all expected values were generated, x={}, y={}, v={}, z={}. Expected {amount}.",
+                vec_x_single.len(),
+                vec_y_single.len(),
+                vec_v_single.len(),
+                vec_z_double.len(),
+            ));
+        }
 
-    let res = vec_x_single
-        .iter()
-        .zip_eq(vec_y_single.iter())
-        .zip_eq(vec_v_single.iter())
-        .zip_eq(vec_z_double.into_iter())
-        .map(|(((x, y), v), z)| *x * *y + (z + *v))
-        .collect_vec();
+        let res = vec_x_single
+            .iter()
+            .zip_eq(vec_y_single.iter())
+            .zip_eq(vec_v_single.iter())
+            .zip_eq(vec_z_double.into_iter())
+            .map(|(((x, y), v), z)| *x * *y + (z + *v))
+            .collect_vec();
 
-    Ok((vec_x_single, vec_y_single, vec_v_single, res))
+        Ok((vec_x_single, vec_y_single, vec_v_single, res))
     }).await??;
 
+    // round counter before broadcast
+    let r_before = session.network().get_current_round().await;
+
+    let val: BroadcastValue<Z> = (vec_d_double, SystemTime::now()).into();
     let broadcast_res = broadcast
-        .broadcast_from_all_w_corrupt_set_update(session, vec_d_double.into())
+        .broadcast_from_all_w_corrupt_set_update(session, val)
         .await?;
 
-    //Try reconstructing 2t sharings of d, a None means reconstruction failed.
-    let recons_vec_d = reconstruct_d_values(session, amount, broadcast_res.clone()).await?;
+    // NOTE this should be 3 + t
+    let r_bcast = session.network().get_current_round().await - r_before;
+    debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
+
+    // we need to split the timestamps out from broadcast_res
+    let (vec_map, timestamps): (HashMap<_, _>, Vec<_>) = broadcast_res
+        .into_iter()
+        .filter_map(|val| match val.1 {
+            BroadcastValue::TimestampedRingVector((vec, timestamp)) => {
+                Some(((val.0, BroadcastValue::RingVector(vec)), timestamp))
+            }
+            _ => None, // we may receive Bot
+        })
+        .unzip();
+
+    // we need to compute min(max({t_i}), U^r + R_b * D)
+    let new_batch_sync_time = {
+        // TODO unwrap
+        let left = timestamps.into_iter().max().unwrap();
+        let right =
+            batch_sync_time + r_bcast as u32 * session.network().get_timeout_current_round().await;
+        left.min(right)
+    };
+
+    // now we reset the init time and elapsed time
+    session
+        .network()
+        .reset_timeout(
+            systemtime_to_instant(new_batch_sync_time),
+            r_bcast as u32 * session.network().get_timeout_current_round().await,
+        )
+        .await;
+
+    // Try reconstructing 2t sharings of d, a None means reconstruction failed.
+    let recons_vec_d = reconstruct_d_values(session, amount, vec_map.clone()).await?;
 
     let mut triples = Vec::with_capacity(amount);
     let mut bad_triples_idx = Vec::new();
@@ -214,7 +284,7 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
     // If non-correctable malicious behaviour has been detected
     if !bad_triples_idx.is_empty() {
         // Recover the individual d shares from broadcast
-        let d_shares = parse_d_shares(session, amount, broadcast_res)?;
+        let d_shares = parse_d_shares(session, amount, vec_map)?;
         for i in bad_triples_idx {
             check_d(
                 session,
@@ -230,7 +300,11 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
             .await?;
         }
     }
-    Ok(triples)
+
+    Ok((
+        triples,
+        instant_to_systemtime(session.network().get_deadline_current_round().await),
+    ))
 }
 
 /// Helper method to parse the result of the broadcast by taking the ith share from each party and combine them in a vector for which reconstruction is then computed.
