@@ -211,7 +211,6 @@ jobs:
     #   - core-service
     #   - enclave
     runs-on: ubuntu-latest
-    if: inputs.testing
     steps:
       - name: Launch performance testing
         env:
