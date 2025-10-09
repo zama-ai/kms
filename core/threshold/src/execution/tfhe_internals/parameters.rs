@@ -162,6 +162,7 @@ impl AugmentedCiphertextParameters for ClassicPBSParameters {
 pub enum DKGParams {
     WithoutSnS(DKGParamsRegular),
     WithSnS(DKGParamsSnS),
+    // NOTE: do NOT modify the types above, as this would break serialization compatibility
 }
 
 impl From<DKGParams> for PBSParameters {

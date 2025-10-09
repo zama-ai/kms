@@ -223,6 +223,7 @@ pub fn validate_user_decrypt_req(
             format!("Error computing link: {e}"),
         ))
     })?;
+    // LEGACY CODE: we used to only support ML-KEM1024 encoded with bincode
     // NOTE: we need to do some backward compatibility support here so
     // first try to deserialize it using the old format (ML-KEM1024 encoded with bincode)
     let client_enc_key = match bc2wrap::deserialize::<PublicEncKey<ml_kem::MlKem1024>>(&req.enc_key)

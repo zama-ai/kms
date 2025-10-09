@@ -17,7 +17,7 @@ use crate::cryptography::hybrid_ml_kem;
 use crate::cryptography::internal_crypto_types::{CryptoRand, UnifiedSigncryptionKeyPairOwned};
 use crate::cryptography::internal_crypto_types::{
     Designcrypt, DesigncryptFHEPlaintext, Signcrypt, SigncryptFHEPlaintext,
-    UnifiedDesigncryptionKey, UnifiedPrivateDecKey, UnifiedPublicEncKey, UnifiedSigncryption,
+    UnifiedDesigncryptionKey, UnifiedPrivateEncKey, UnifiedPublicEncKey, UnifiedSigncryption,
     UnifiedSigncryptionKey, UnifiedSigncryptionKeyPair,
 };
 use crate::{anyhow_tracked, consts::SIG_SIZE};
@@ -199,10 +199,10 @@ impl Designcrypt for UnifiedDesigncryptionKey {
         let cipher: Cipher = bc2wrap::deserialize(&cipher.payload)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
         let decrypted_plaintext = match &self.decryption_key {
-            UnifiedPrivateDecKey::MlKem512(dec_key) => {
+            UnifiedPrivateEncKey::MlKem512(dec_key) => {
                 hybrid_ml_kem::dec::<ml_kem::MlKem512>(cipher.0, &dec_key.0)
             }
-            UnifiedPrivateDecKey::MlKem1024(dec_key) => {
+            UnifiedPrivateEncKey::MlKem1024(dec_key) => {
                 hybrid_ml_kem::dec::<ml_kem::MlKem1024>(cipher.0, &dec_key.0)
             }
         }?;
@@ -357,10 +357,10 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     let cipher: Cipher =
         bc2wrap::deserialize(cipher).map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
     let decrypted_plaintext = match &client_keys.designcryption_key.decryption_key {
-        UnifiedPrivateDecKey::MlKem512(client_keys) => {
+        UnifiedPrivateEncKey::MlKem512(client_keys) => {
             hybrid_ml_kem::dec::<ml_kem::MlKem512>(cipher.0.clone(), &client_keys.0)?
         }
-        UnifiedPrivateDecKey::MlKem1024(client_keys) => {
+        UnifiedPrivateEncKey::MlKem1024(client_keys) => {
             hybrid_ml_kem::dec::<ml_kem::MlKem1024>(cipher.0.clone(), &client_keys.0)?
         }
     };

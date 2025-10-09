@@ -818,7 +818,7 @@ mod test_user_decryption {
         cryptography::{
             hybrid_ml_kem,
             internal_crypto_types::{
-                Cipher, Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateDecKey,
+                Cipher, Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
             },
         },
         dummy_domain,
@@ -831,7 +831,7 @@ mod test_user_decryption {
 
     use super::*;
 
-    fn make_test_pk(rng: &mut AesRng) -> (Vec<u8>, UnifiedPrivateDecKey) {
+    fn make_test_pk(rng: &mut AesRng) -> (Vec<u8>, UnifiedPrivateEncKey) {
         let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, rng);
         let (enc_sk, enc_pk) = encryption.keygen().unwrap();
         let mut enc_key_buf = Vec::new();
@@ -884,7 +884,7 @@ mod test_user_decryption {
         .unwrap();
         // Extract the DecapsulationKey<MlKem512Params> from UnifiedPrivateDecKey
         let decap_key = match &enc_sk {
-            UnifiedPrivateDecKey::MlKem512(sk) => sk,
+            UnifiedPrivateEncKey::MlKem512(sk) => sk,
             _ => panic!("Expected UnifiedPrivateDecKey::MlKem512"),
         };
         let res = hybrid_ml_kem::dec::<ml_kem::MlKem512>(signcrypted_msg.0, &decap_key.0).unwrap();

@@ -1,6 +1,6 @@
 use crate::client::client_wasm::Client;
 use crate::cryptography::internal_crypto_types::{
-    PublicSigKey, UnifiedDesigncryptionKey, UnifiedPrivateDecKey, UnifiedSigncryptionKey,
+    PublicSigKey, UnifiedDesigncryptionKey, UnifiedPrivateEncKey, UnifiedSigncryptionKey,
     UnifiedSigncryptionKeyPair, UnifiedSigncryptionKeyPairOwned,
 };
 use crate::cryptography::internal_crypto_types::{Signature, UnifiedPublicEncKey};
@@ -53,7 +53,7 @@ impl Client {
         eip712_domain: &Eip712Domain,
         agg_resp: &[UserDecryptionResponse],
         enc_key: &UnifiedPublicEncKey,
-        dec_key: &UnifiedPrivateDecKey,
+        dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         // The condition below decides whether we'll parse the response
         // in the centralized mode or threshold mode.
@@ -94,7 +94,7 @@ impl Client {
         &self,
         agg_resp: &[UserDecryptionResponse],
         enc_pk: &UnifiedPublicEncKey,
-        enc_sk: &UnifiedPrivateDecKey,
+        enc_sk: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let sig_sk = match &self.client_sk {
             Some(sk) => sk,
@@ -134,7 +134,7 @@ impl Client {
         eip712_domain: &Eip712Domain,
         agg_resp: &[UserDecryptionResponse],
         enc_key: &UnifiedPublicEncKey,
-        dec_key: &UnifiedPrivateDecKey,
+        dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
@@ -250,7 +250,7 @@ impl Client {
         eip712_domain: &Eip712Domain,
         agg_resp: &[UserDecryptionResponse],
         enc_key: &UnifiedPublicEncKey,
-        dec_key: &UnifiedPrivateDecKey,
+        dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let validated_resps = some_or_err(
             validate_user_decrypt_responses_against_request(
@@ -637,7 +637,7 @@ impl Client {
         &self,
         agg_resp: &[UserDecryptionResponsePayload],
         enc_key: &UnifiedPublicEncKey,
-        dec_key: &UnifiedPrivateDecKey,
+        dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ShamirSharings<ResiduePolyF4<Z>>>, usize)>> {
         let batch_count = agg_resp
             .first()
@@ -744,7 +744,7 @@ pub struct TestingUserDecryptionTranscript {
     // request
     pub(crate) request: Option<UserDecryptionRequest>,
     // We keep the unified keys here because for legacy tests we need to produce legacy transcripts
-    pub(crate) eph_sk: crate::cryptography::internal_crypto_types::UnifiedPrivateDecKey,
+    pub(crate) eph_sk: crate::cryptography::internal_crypto_types::UnifiedPrivateEncKey,
     pub(crate) eph_pk: crate::cryptography::internal_crypto_types::UnifiedPublicEncKey,
     // response
     pub(crate) agg_resp: Vec<kms_grpc::kms::v1::UserDecryptionResponse>,

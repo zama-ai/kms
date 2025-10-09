@@ -1,7 +1,6 @@
 use crate::consts::{DEFAULT_PARAM, SAFE_SER_SIZE_LIMIT, SIG_SIZE, TEST_PARAM};
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
-use alloy_dyn_abi::Eip712Domain;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use kms_grpc::kms::v1::FheParameter;
 use ml_kem::{EncodedSizeUser, KemCore, MlKem1024, MlKem512};
@@ -64,6 +63,12 @@ pub enum UnifiedPublicEncKey {
     MlKem1024(PublicEncKey<ml_kem::MlKem1024>),
 }
 
+impl Zeroize for UnifiedPublicEncKey {
+    fn zeroize(&mut self) {
+        // Don't do anything, public key is not secret, but method is needed for types using both this and private keys
+    }
+}
+
 impl tfhe::named::Named for UnifiedPublicEncKey {
     const NAME: &'static str = "UnifiedPublicEncKey";
 }
@@ -85,31 +90,9 @@ impl From<&UnifiedPublicEncKey> for EncryptionSchemeType {
     }
 }
 
-impl UnifiedPublicEncKey {
-    /// This function returns the bytes of the public encryption key for hashing purposes.
-    /// Do not use this for serialization, but use safe_serialize instead.
-    pub fn bytes_for_hashing(&self) -> anyhow::Result<Vec<u8>> {
-        match self {
-            UnifiedPublicEncKey::MlKem512(user_pk) => {
-                let mut enc_key_buf = Vec::new();
-                tfhe::safe_serialization::safe_serialize(
-                    &UnifiedPublicEncKey::MlKem512(user_pk.clone()),
-                    &mut enc_key_buf,
-                    SAFE_SER_SIZE_LIMIT,
-                )?;
-                Ok(enc_key_buf)
-            }
-            // TODO: The following bincode serialization is done to be backward compatible
-            // with the old serialization format, used in relayer-sdk v0.2.0-0 and older (tkms v0.11.0-rc20 and older).
-            // It should be replaced with safe serialization (as above) in the future.
-            UnifiedPublicEncKey::MlKem1024(user_pk) => bc2wrap::serialize(user_pk),
-        }
-        .map_err(|e| anyhow::anyhow!("serialization error: {e}"))
-    }
-}
-
 // Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server
 // uses to encrypt its payload
+// TODO: the only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys
 pub struct PublicEncKey<C: KemCore>(pub(crate) C::EncapsulationKey);
 
 impl<C: KemCore> Serialize for PublicEncKey<C> {
@@ -244,37 +227,37 @@ impl Encrypt for UnifiedPublicEncKey {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
-pub enum UnifiedPrivateDecKeyVersioned {
-    V0(UnifiedPrivateDecKey),
+pub enum UnifiedPrivateEncKeyVersioned {
+    V0(UnifiedPrivateEncKey),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
 #[expect(clippy::large_enum_variant)]
-#[versionize(UnifiedPrivateDecKeyVersioned)]
-pub enum UnifiedPrivateDecKey {
+#[versionize(UnifiedPrivateEncKeyVersioned)]
+pub enum UnifiedPrivateEncKey {
     MlKem512(PrivateEncKey<ml_kem::MlKem512>),
     MlKem1024(PrivateEncKey<ml_kem::MlKem1024>),
     // WARNING: Do not modify the order of the variants or remove any variant as this will break deserialization of existing keys!
     // Only acceptable if you make a new version
 }
 
-impl tfhe::named::Named for UnifiedPrivateDecKey {
+impl tfhe::named::Named for UnifiedPrivateEncKey {
     const NAME: &'static str = "UnifiedPrivateDecKey";
 }
 
-impl From<UnifiedPrivateDecKey> for EncryptionSchemeType {
-    fn from(value: UnifiedPrivateDecKey) -> Self {
+impl From<UnifiedPrivateEncKey> for EncryptionSchemeType {
+    fn from(value: UnifiedPrivateEncKey) -> Self {
         match value {
-            UnifiedPrivateDecKey::MlKem512(_) => EncryptionSchemeType::MlKem512,
-            UnifiedPrivateDecKey::MlKem1024(_) => EncryptionSchemeType::MlKem1024,
+            UnifiedPrivateEncKey::MlKem512(_) => EncryptionSchemeType::MlKem512,
+            UnifiedPrivateEncKey::MlKem1024(_) => EncryptionSchemeType::MlKem1024,
         }
     }
 }
-impl From<&UnifiedPrivateDecKey> for EncryptionSchemeType {
-    fn from(value: &UnifiedPrivateDecKey) -> Self {
+impl From<&UnifiedPrivateEncKey> for EncryptionSchemeType {
+    fn from(value: &UnifiedPrivateEncKey) -> Self {
         match value {
-            UnifiedPrivateDecKey::MlKem512(_) => EncryptionSchemeType::MlKem512,
-            UnifiedPrivateDecKey::MlKem1024(_) => EncryptionSchemeType::MlKem1024,
+            UnifiedPrivateEncKey::MlKem512(_) => EncryptionSchemeType::MlKem512,
+            UnifiedPrivateEncKey::MlKem1024(_) => EncryptionSchemeType::MlKem1024,
         }
     }
 }
@@ -399,7 +382,7 @@ pub trait Decrypt {
     ) -> Result<T, CryptographyError>;
 }
 
-impl Decrypt for UnifiedPrivateDecKey {
+impl Decrypt for UnifiedPrivateEncKey {
     fn decrypt<T: serde::de::DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
         &self,
         cipher: &UnifiedCipher,
@@ -408,10 +391,10 @@ impl Decrypt for UnifiedPrivateDecKey {
         let inner_ct: HybridKemCt = safe_deserialize(&mut cipher_buf, SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::DeserializationError)?;
         let raw_plaintext = match self {
-            UnifiedPrivateDecKey::MlKem512(private_enc_key) => {
+            UnifiedPrivateEncKey::MlKem512(private_enc_key) => {
                 hybrid_ml_kem::dec::<MlKem512>(inner_ct, &private_enc_key.0)?
             }
-            UnifiedPrivateDecKey::MlKem1024(private_enc_key) => {
+            UnifiedPrivateEncKey::MlKem1024(private_enc_key) => {
                 hybrid_ml_kem::dec::<MlKem1024>(inner_ct, &private_enc_key.0)?
             }
         };
@@ -436,7 +419,7 @@ pub enum EncryptionSchemeType {
 
 pub trait EncryptionScheme: Send + Sync {
     fn scheme_type(&self) -> EncryptionSchemeType;
-    fn keygen(&mut self) -> Result<(UnifiedPrivateDecKey, UnifiedPublicEncKey), CryptographyError>;
+    fn keygen(&mut self) -> Result<(UnifiedPrivateEncKey, UnifiedPublicEncKey), CryptographyError>;
 }
 
 pub trait CryptoRand: CryptoRng + RngCore + Send + Sync {}
@@ -464,13 +447,13 @@ impl<'a> EncryptionScheme for Encryption<'a> {
         self.scheme_type.clone()
     }
 
-    fn keygen(&mut self) -> Result<(UnifiedPrivateDecKey, UnifiedPublicEncKey), CryptographyError> {
+    fn keygen(&mut self) -> Result<(UnifiedPrivateEncKey, UnifiedPublicEncKey), CryptographyError> {
         let (sk, pk) = match self.scheme_type {
             EncryptionSchemeType::MlKem512 => {
                 let (decapsulation_key, encapsulation_key) =
                     hybrid_ml_kem::keygen::<ml_kem::MlKem512, _>(&mut self.rng);
                 (
-                    UnifiedPrivateDecKey::MlKem512(PrivateEncKey(decapsulation_key)),
+                    UnifiedPrivateEncKey::MlKem512(PrivateEncKey(decapsulation_key)),
                     UnifiedPublicEncKey::MlKem512(PublicEncKey(encapsulation_key)),
                 )
             }
@@ -478,7 +461,7 @@ impl<'a> EncryptionScheme for Encryption<'a> {
                 let (decapsulation_key, encapsulation_key) =
                     hybrid_ml_kem::keygen::<ml_kem::MlKem1024, _>(&mut self.rng);
                 (
-                    UnifiedPrivateDecKey::MlKem1024(PrivateEncKey(decapsulation_key)),
+                    UnifiedPrivateEncKey::MlKem1024(PrivateEncKey(decapsulation_key)),
                     UnifiedPublicEncKey::MlKem1024(PublicEncKey(encapsulation_key)),
                 )
             }
@@ -518,6 +501,11 @@ pub enum PublicSigKeyVersioned {
 #[versionize(PublicSigKeyVersioned)]
 pub struct PublicSigKey {
     pk: WrappedVerifyingKey,
+}
+impl Zeroize for PublicSigKey {
+    fn zeroize(&mut self) {
+        // Don't do anything, public key is not secret, but method is needed for types using both this and private keys
+    }
 }
 
 impl Named for PublicSigKey {
@@ -688,16 +676,20 @@ impl From<&PrivateSigKey> for SigningSchemeType {
         SigningSchemeType::Ecdsa256k1
     }
 }
-
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct WrappedSigningKey(k256::ecdsa::SigningKey);
 impl_generic_versionize!(WrappedSigningKey);
 
 impl Zeroize for WrappedSigningKey {
     fn zeroize(&mut self) {
-        // TODO I am not sure this is sufficient, but I have a hard time finding any alternative
         let mut bytes = self.0.to_bytes();
         bytes.zeroize();
+    }
+}
+
+impl Drop for WrappedSigningKey {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -736,47 +728,19 @@ impl Visitor<'_> for PrivateSigKeyVisitor {
         }
     }
 }
-
-pub struct Eip712SigKey {
-    domain: Eip712Domain,
-    sk: PrivateSigKey,
-}
-impl Eip712SigKey {
-    pub fn new(domain: Eip712Domain, sk: PrivateSigKey) -> Self {
-        Self { domain, sk }
-    }
-
-    pub fn sk(&self) -> &PrivateSigKey {
-        &self.sk
-    }
-
-    pub fn domain(&self) -> &Eip712Domain {
-        &self.domain
-    }
-}
-
-pub struct Eip712VerfKey {
-    // domain: Domain,
-    address: alloy_primitives::Address,
-}
-
-impl Eip712VerfKey {
-    pub fn new(address: alloy_primitives::Address) -> Self {
-        Self { address }
-    }
-
-    /// Legacy method needed to avoid breaking changes in relayer-sdk
-    pub fn as_bytes(&self) -> &[u8] {
-        self.address.as_bytes()
-    }
-}
-
 // TODO shoudl be versionized in a struct as legacy XXXX
 // Type used for the signcrypted payload returned by a server
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Cipher(pub hybrid_ml_kem::HybridKemCt);
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
+pub enum UnifiedCipherVersioned {
+    V0(UnifiedCipher),
+}
+
+// TODO separate into signature and encryption files
+#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
+#[versionize(UnifiedCipherVersioned)]
 pub struct UnifiedCipher {
     pub cipher: Vec<u8>,
     pub encryption_type: EncryptionSchemeType,
@@ -867,7 +831,7 @@ impl UnifiedSigncryption {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
 pub enum UnifiedSigncryptionKeyVersioned {
     V0(UnifiedSigncryptionKey),
 }
@@ -878,6 +842,13 @@ pub struct UnifiedSigncryptionKey {
     pub signing_key: PrivateSigKey,
     pub receiver_enc_key: UnifiedPublicEncKey,
     pub receiver_id: Vec<u8>, // Identifier for the receiver's encryption key, e.g. blockchain address
+}
+
+impl Zeroize for UnifiedSigncryptionKey {
+    fn zeroize(&mut self) {
+        self.signing_key.zeroize();
+        // receiver_enc_key and receiver_id are public, no need to zeroize
+    }
 }
 
 impl UnifiedSigncryptionKey {
@@ -894,9 +865,16 @@ impl UnifiedSigncryptionKey {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+pub enum UnifiedDesigncryptionKeyVersioned {
+    V0(UnifiedDesigncryptionKey),
+}
+
 // TODO make ref type
+#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
+#[versionize(UnifiedDesigncryptionKeyVersioned)]
 pub struct UnifiedDesigncryptionKey {
-    pub decryption_key: UnifiedPrivateDecKey,
+    pub decryption_key: UnifiedPrivateEncKey,
     pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
     pub sender_verf_key: PublicSigKey,
     pub receiver_id: Vec<u8>, // Identifier for the receiver's encryption key, e.g. blockchain address
@@ -904,7 +882,7 @@ pub struct UnifiedDesigncryptionKey {
 
 impl UnifiedDesigncryptionKey {
     pub fn new(
-        decryption_key: UnifiedPrivateDecKey,
+        decryption_key: UnifiedPrivateEncKey,
         encryption_key: UnifiedPublicEncKey,
         sender_verf_key: PublicSigKey,
         receiver_id: Vec<u8>,
@@ -918,11 +896,20 @@ impl UnifiedDesigncryptionKey {
     }
 }
 
+/// Convinence type for efficiency
+#[derive(Clone, Debug)]
 pub struct UnifiedSigncryptionKeyPair<'a> {
     pub signcrypt_key: &'a UnifiedSigncryptionKey,
     pub designcryption_key: &'a UnifiedDesigncryptionKey,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+pub enum UnifiedSigncryptionKeyPairOwnedVersioned {
+    V0(UnifiedSigncryptionKeyPairOwned),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
+#[versionize(UnifiedSigncryptionKeyPairOwnedVersioned)]
 pub struct UnifiedSigncryptionKeyPairOwned {
     pub signcrypt_key: UnifiedSigncryptionKey,
     pub designcrypt_key: UnifiedDesigncryptionKey,
@@ -938,6 +925,7 @@ impl UnifiedSigncryptionKeyPairOwned {
 }
 // TODO add new methods and ensure that private keys always have public keys as well
 
+//TODO should also be versionized
 /// Wrapper struct for a digital signature
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Signature {
