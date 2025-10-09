@@ -2,7 +2,7 @@ use std::env;
 use std::fmt;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Output};
 
 pub struct DockerComposeCmd {
     pub root_path: PathBuf,
