@@ -477,6 +477,7 @@ async fn check_d<Z: Ring, Ses: SmallSessionHandles<Z>>(
 mod test {
     use futures_util::future::join;
     use rstest::rstest;
+    use std::time::{Duration, SystemTime};
     use std::{collections::HashMap, num::Wrapping};
 
     use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring};
@@ -485,7 +486,9 @@ mod test {
     use crate::execution::runtime::session::ToBaseSession;
     use crate::execution::sharing::shamir::{RevealOp, ShamirSharings};
     use crate::execution::small_execution::agree_random::RobustSecureAgreeRandom;
-    use crate::execution::small_execution::offline::reconstruct_d_values;
+    use crate::execution::small_execution::offline::{
+        instant_to_systemtime, reconstruct_d_values, systemtime_to_instant,
+    };
     use crate::execution::small_execution::prss::{
         DerivePRSSState, PRSSInit, RobustSecurePrssInit,
     };
@@ -929,5 +932,20 @@ mod test {
         assert_eq!(1, res.len());
         let first = res.first();
         assert!(first.is_some());
+    }
+
+    #[test]
+    fn test_time_conversion() {
+        let eps = Duration::from_millis(1);
+        {
+            let timestamp = SystemTime::now() - std::time::Duration::from_secs(42);
+            let new_timestamp = instant_to_systemtime(systemtime_to_instant(timestamp));
+            assert!(new_timestamp.duration_since(timestamp).unwrap() < eps);
+        }
+        {
+            let timestamp = tokio::time::Instant::now() - std::time::Duration::from_secs(42);
+            let new_timestamp = systemtime_to_instant(instant_to_systemtime(timestamp));
+            assert!(new_timestamp.duration_since(timestamp) < eps);
+        }
     }
 }
