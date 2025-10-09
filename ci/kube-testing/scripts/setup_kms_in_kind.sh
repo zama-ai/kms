@@ -135,19 +135,7 @@ kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
 - role: control-plane
-  kubeadmConfigPatches:
-  - |
-    kind: InitConfiguration
-    nodeRegistration:
-      kubeletExtraArgs:
-        system-reserved: memory=1Gi,cpu=1
 - role: worker
-  kubeadmConfigPatches:
-  - |
-    kind: JoinConfiguration
-    nodeRegistration:
-      kubeletExtraArgs:
-        system-reserved: memory=1Gi,cpu=1
 EOF
 
     log_info "Kind cluster created successfully"
@@ -156,16 +144,16 @@ EOF
 # Setup Kubernetes context
 setup_kube_context() {
     log_info "Setting up Kubernetes context..."
-    
+
     log_info "Available contexts:"
     kubectl config get-contexts --kubeconfig "${KUBECONFIG}"
-    
+
     log_info "Using kind-kind context..."
     kubectl config use-context kind-kind --kubeconfig "${KUBECONFIG}"
-    
+
     log_info "Checking cluster nodes..."
     kubectl get nodes
-    
+
     log_info "Kubernetes context configured"
 }
 
@@ -191,14 +179,14 @@ setup_namespace() {
 # Setup registry credentials
 setup_registry_credentials() {
     log_info "Setting up registry credentials..."
-    
+
     # Check if GITHUB_TOKEN is set
     if [[ -z "${GITHUB_TOKEN:-}" ]]; then
         log_warn "GITHUB_TOKEN not set, skipping registry credentials setup"
         log_warn "Set GITHUB_TOKEN environment variable to enable private image pulls"
         return 0
     fi
-    
+
     # Create dockerconfigjson for ghcr.io authentication
     local DOCKER_CONFIG_JSON
     DOCKER_CONFIG_JSON=$(cat <<JSON | base64 -w 0
@@ -211,7 +199,7 @@ setup_registry_credentials() {
 }
 JSON
 )
-    
+
     # Apply the secret to Kubernetes
     cat <<EOF | kubectl apply -f - --namespace "${NAMESPACE}"
 apiVersion: v1
@@ -222,7 +210,7 @@ metadata:
   name: registry-credentials
 type: kubernetes.io/dockerconfigjson
 EOF
-    
+
     kubectl get secrets registry-credentials -n "${NAMESPACE}" -o yaml
     log_info "Registry credentials configured"
 }
