@@ -379,7 +379,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
 /// client's blockchain signing key
 #[cfg(test)]
 pub(crate) fn ephemeral_signcryption_key_generation(
-    rng: &mut impl CryptoRand,
+    rng: &mut (impl CryptoRand + 'static),
     server_verf_key: &PublicSigKey,
 ) -> UnifiedSigncryptionKeyPairOwned {
     use crate::cryptography::internal_crypto_types::{

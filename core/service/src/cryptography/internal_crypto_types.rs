@@ -102,7 +102,7 @@ impl UnifiedPublicEncKey {
 
 // Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server
 // uses to encrypt its payload
-// TODO: the only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys
+// The only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys
 pub struct PublicEncKey<C: KemCore>(pub(crate) C::EncapsulationKey);
 
 impl<C: KemCore> Serialize for PublicEncKey<C> {
@@ -274,7 +274,7 @@ impl From<&UnifiedPrivateEncKey> for EncryptionSchemeType {
 
 // Alias wrapping the ephemeral private decryption key the user's wallet constructs to receive the
 // server's encrypted payload
-// TODO is this wrapper actually needed with the universal UnifiedPrivateDecKey?
+// The only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys
 pub struct PrivateEncKey<C: KemCore>(pub(crate) C::DecapsulationKey);
 
 impl<C: KemCore> Zeroize for PrivateEncKey<C> {
@@ -443,12 +443,9 @@ pub struct Encryption<'a> {
 impl<'a> Encryption<'a> {
     pub fn new(
         scheme_type: EncryptionSchemeType,
-        rng: &'a mut dyn CryptoRand, // impl CryptoRand + Send + Sync + 'static,
+        rng: &'a mut (impl CryptoRng + RngCore + Send + Sync + 'static),
     ) -> Self {
-        Self {
-            scheme_type,
-            rng, //Box::new(rng),
-        }
+        Self { scheme_type, rng }
     }
 }
 
@@ -983,6 +980,7 @@ impl Visitor<'_> for SignatureVisitor {
 /// This is a wrapper around [DKGParams] so that we can
 /// implement [From<FheParameter>]. It has a [std::ops::Deref] implementation
 /// which can be usefor for converting from [FheParameter] to [DKGParams]
+// TODO versionize
 pub(crate) struct WrappedDKGParams(DKGParams);
 impl From<FheParameter> for WrappedDKGParams {
     fn from(value: FheParameter) -> WrappedDKGParams {

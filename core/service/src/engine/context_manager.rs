@@ -410,7 +410,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_kms_context() {
-        let mut rng = &mut AesRng::seed_from_u64(42);
+        let mut rng = AesRng::seed_from_u64(42);
         let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
         let (_enc_sk, backup_encryption_public_key) = encryption.keygen().unwrap();
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
