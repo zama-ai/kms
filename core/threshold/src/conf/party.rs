@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use tokio_rustls::rustls::{
     client::ClientConfig,
     pki_types::{CertificateDer, PrivateKeyDer},
+    version::TLS13,
     RootCertStore,
 };
 use x509_parser::pem::parse_x509_pem;
@@ -112,7 +113,7 @@ impl CertificatePaths {
             roots.add(CertificateDer::from_slice(&cert.contents))?;
         }
 
-        ClientConfig::builder()
+        ClientConfig::builder_with_protocol_versions(&[&TLS13])
             .with_root_certificates(roots)
             .with_client_auth_cert(cert_chain, key_der)
             .map_err(|e| anyhow::anyhow!("Failed to build TLS client configuration: {e}"))

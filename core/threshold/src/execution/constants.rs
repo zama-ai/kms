@@ -1,7 +1,7 @@
 use const_format::concatcp;
 
 #[cfg(feature = "choreographer")]
-use crate::session_id::SessionId;
+use crate::{session_id::SessionId, tls_certs::DEFAULT_SESSION_ID_FROM_CONTEXT};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
@@ -31,5 +31,5 @@ pub const REAL_KEY_PATH: &str = concatcp!(TEMP_DIR, "/default_keys.bin");
 
 #[cfg(feature = "choreographer")]
 lazy_static::lazy_static! {
-    pub static ref DEFAULT_CHOREOGRAPHY_CONTEXT_ID: SessionId = SessionId::from(1776u128);
+    pub static ref DEFAULT_CHOREOGRAPHY_CONTEXT_ID: SessionId = SessionId::from(DEFAULT_SESSION_ID_FROM_CONTEXT);
 }

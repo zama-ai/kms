@@ -27,7 +27,6 @@ fn enc_and_serialize_ctxt<M, T>(
     msg: M,
     num_bits: usize,
     pk: &FhePublicKey,
-    server_key: Option<&ServerKey>,
     enc_config: EncryptionConfig,
 ) -> (Vec<u8>, CiphertextFormat)
 where
@@ -49,8 +48,6 @@ where
             (serialized_ct, ct_format)
         }
         CiphertextFormat::BigCompressed => {
-            let server_key = server_key.unwrap().clone();
-            tfhe::set_server_key(server_key);
             let squashed = ct.squash_noise().unwrap();
             let ct_list = tfhe::CompressedSquashedNoiseCiphertextListBuilder::new()
                 .push(squashed)
@@ -66,8 +63,6 @@ where
             (serialized_ct, ct_format)
         }
         CiphertextFormat::BigExpanded => {
-            let server_key = server_key.unwrap().clone();
-            tfhe::set_server_key(server_key);
             let squashed = ct.squash_noise().unwrap();
             let mut serialized_ct = Vec::new();
             safe_serialize(
@@ -112,62 +107,30 @@ pub fn compute_cipher(
 
     let fhe_type = msg.into();
     let (ct_buf, ct_format) = match msg {
-        TestingPlaintext::Bool(x) => enc_and_serialize_ctxt::<_, FheBool>(
-            x as u8,
-            FheBool::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U8(x) => enc_and_serialize_ctxt::<_, FheUint8>(
-            x,
-            FheUint8::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U16(x) => enc_and_serialize_ctxt::<_, FheUint16>(
-            x,
-            FheUint16::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U32(x) => enc_and_serialize_ctxt::<_, FheUint32>(
-            x,
-            FheUint32::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U64(x) => enc_and_serialize_ctxt::<_, FheUint64>(
-            x,
-            FheUint64::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U128(x) => enc_and_serialize_ctxt::<_, FheUint128>(
-            x,
-            FheUint128::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U160(x) => enc_and_serialize_ctxt::<_, FheUint160>(
-            x,
-            FheUint160::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
-        TestingPlaintext::U256(x) => enc_and_serialize_ctxt::<_, FheUint256>(
-            x,
-            FheUint256::num_bits(),
-            pk,
-            server_key,
-            enc_config,
-        ),
+        TestingPlaintext::Bool(x) => {
+            enc_and_serialize_ctxt::<_, FheBool>(x as u8, FheBool::num_bits(), pk, enc_config)
+        }
+        TestingPlaintext::U8(x) => {
+            enc_and_serialize_ctxt::<_, FheUint8>(x, FheUint8::num_bits(), pk, enc_config)
+        }
+        TestingPlaintext::U16(x) => {
+            enc_and_serialize_ctxt::<_, FheUint16>(x, FheUint16::num_bits(), pk, enc_config)
+        }
+        TestingPlaintext::U32(x) => {
+            enc_and_serialize_ctxt::<_, FheUint32>(x, FheUint32::num_bits(), pk, enc_config)
+        }
+        TestingPlaintext::U64(x) => {
+            enc_and_serialize_ctxt::<_, FheUint64>(x, FheUint64::num_bits(), pk, enc_config)
+        }
+        TestingPlaintext::U128(x) => {
+            enc_and_serialize_ctxt::<_, FheUint128>(x, FheUint128::num_bits(), pk, enc_config)
+        }
+        TestingPlaintext::U160(x) => {
+            enc_and_serialize_ctxt::<_, FheUint160>(x, FheUint160::num_bits(), pk, enc_config)
+        }
+        TestingPlaintext::U256(x) => {
+            enc_and_serialize_ctxt::<_, FheUint256>(x, FheUint256::num_bits(), pk, enc_config)
+        }
     };
     (ct_buf, ct_format, fhe_type)
 }
@@ -805,6 +768,7 @@ pub(crate) mod setup {
             ThresholdSigningKeyConfig::AllParties(
                 (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
             ),
+            false,
         )
         .await;
         ensure_threshold_keys_exist(

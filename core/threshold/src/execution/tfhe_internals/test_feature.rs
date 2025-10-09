@@ -21,7 +21,7 @@ use tfhe::{
         ClassicPBSParameters, PBSParameters,
     },
     zk::CompactPkeCrs,
-    ClientKey, ConfigBuilder, Seed,
+    ClientKey, Seed,
 };
 use tokio::{task::JoinSet, time::timeout_at};
 
@@ -159,40 +159,7 @@ impl KeySet {
 }
 
 pub fn gen_key_set<R: Rng + CryptoRng>(params: DKGParams, rng: &mut R) -> KeySet {
-    let pbs_params: ClassicPBSParameters = params
-        .get_params_basics_handle()
-        .to_classic_pbs_parameters();
-    let compression_params = params
-        .get_params_basics_handle()
-        .get_compression_decompression_params();
-    let noise_squashing_params = match params {
-        DKGParams::WithoutSnS(_) => None,
-        DKGParams::WithSnS(dkg_sns) => Some((dkg_sns.sns_params, dkg_sns.sns_compression_params)),
-    };
-    let config = ConfigBuilder::with_custom_parameters(pbs_params);
-    let config = if let Some(dedicated_pk_params) =
-        params.get_params_basics_handle().get_dedicated_pk_params()
-    {
-        config.use_dedicated_compact_public_key_parameters(dedicated_pk_params)
-    } else {
-        config
-    };
-    let config = if let Some(params) = compression_params {
-        config.enable_compression(params.raw_compression_parameters)
-    } else {
-        config
-    };
-    let config = if let Some((sns_params, sns_compression_params)) = noise_squashing_params {
-        let config = config.enable_noise_squashing(sns_params);
-        match sns_compression_params {
-            None => config,
-            Some(sns_compression_params) => {
-                config.enable_noise_squashing_compression(sns_compression_params)
-            }
-        }
-    } else {
-        config
-    };
+    let config = params.to_tfhe_config();
     let seed = Seed(rng.gen());
     let client_key = ClientKey::generate_with_seed(config, seed);
 

@@ -5,6 +5,7 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::KeyId;
 use kms_grpc::RequestId;
 use kms_lib::backup::SEED_PHRASE_DESC;
+use kms_lib::consts::ID_LENGTH;
 use kms_lib::consts::SIGNING_KEY_ID;
 use serial_test::serial;
 use std::fs::create_dir_all;
@@ -25,6 +26,12 @@ use test_context::{test_context, AsyncTestContext};
 // docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized-custodian.yml build
 // ```
 // Any issue might be related to the fact that some obsolete Docker images exist.
+
+// We use the following naming convention:
+// - centralized tests have "centralized" in their name
+// - threshold tests have "threshold" in their name
+// - nightly tests are marked with "nightly_tests" in their name.
+// We use this to filter tests in CI runs.
 
 trait DockerComposeContext {
     fn root_path(&self) -> PathBuf;
@@ -170,6 +177,7 @@ async fn insecure_key_gen<T: DockerComposeContext>(ctx: &T, test_path: &Path) ->
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing insecure key-gen");
@@ -183,16 +191,6 @@ async fn insecure_key_gen<T: DockerComposeContext>(ctx: &T, test_path: &Path) ->
     };
 
     key_id.to_string()
-}
-
-async fn key_and_crs_gen<T: DockerComposeContext>(
-    ctx: &mut T,
-    test_path: &Path,
-    insecure_crs_gen: bool,
-) -> (String, String) {
-    let key_id = insecure_key_gen(ctx, test_path).await;
-    let crs_id = crs_gen(ctx, test_path, insecure_crs_gen).await;
-    (key_id, crs_id)
 }
 
 async fn crs_gen<T: DockerComposeContext>(
@@ -211,6 +209,7 @@ async fn crs_gen<T: DockerComposeContext>(
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing CRS-gen");
@@ -232,6 +231,7 @@ async fn real_preproc_and_keygen(config_path: &str, test_path: &Path) -> String 
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
     println!("Doing preprocessing");
     let mut preproc_result = execute_cmd(&config, test_path).await.unwrap();
@@ -248,6 +248,7 @@ async fn real_preproc_and_keygen(config_path: &str, test_path: &Path) -> String 
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
     println!("Doing key-gen");
     let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
@@ -272,6 +273,7 @@ async fn restore_from_backup<T: DockerComposeContext>(ctx: &T, test_path: &Path)
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing restore from backup");
@@ -296,6 +298,7 @@ async fn test_template<T: DockerComposeContext>(
             logs: true,
             max_iter: 500,
             expect_all_responses: true,
+            download_all: false,
         };
 
         let results = execute_cmd(&config, test_path).await.unwrap();
@@ -352,6 +355,7 @@ async fn test_template<T: DockerComposeContext>(
                 logs: true,
                 max_iter: 500,
                 expect_all_responses: true,
+                download_all: false,
             };
 
             //We query result on a single request id, so should get a single result
@@ -387,6 +391,7 @@ async fn new_custodian_context<T: DockerComposeContext>(
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing new custodian context");
@@ -509,6 +514,7 @@ async fn custodian_backup_init<T: DockerComposeContext>(
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing backup init");
@@ -671,6 +677,7 @@ async fn custodian_backup_recovery<T: DockerComposeContext>(
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
+        download_all: false,
     };
 
     println!("Doing backup recovery");
@@ -688,23 +695,24 @@ async fn custodian_backup_recovery<T: DockerComposeContext>(
 #[test_context(DockerComposeCentralizedContext)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centralized_secure(ctx: &mut DockerComposeCentralizedContext) {
+async fn test_centralized_insecure(ctx: &mut DockerComposeCentralizedContext) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let (key_id, _crs_id) = key_and_crs_gen(ctx, keys_folder, false).await;
+    let key_id = insecure_key_gen(ctx, keys_folder).await;
     integration_test_commands(ctx, key_id).await;
 }
 
 #[test_context(DockerComposeCentralizedContext)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centralized_insecure(ctx: &mut DockerComposeCentralizedContext) {
+async fn test_centralized_crsgen_secure(ctx: &mut DockerComposeCentralizedContext) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let (key_id, _crs_id) = key_and_crs_gen(ctx, keys_folder, true).await;
-    integration_test_commands(ctx, key_id).await;
+    let crs_id = crs_gen(ctx, keys_folder, false).await;
+    // hex string with double the length of ID_LENGTH
+    assert_eq!(crs_id.len(), ID_LENGTH * 2);
 }
 
 // Test restore without custodians
@@ -768,18 +776,6 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
     // end points, and content returned from the KMS to the custodians, work as expected.
 }
 
-#[ignore]
-#[test_context(DockerComposeThresholdContextDefault)]
-#[tokio::test]
-#[serial(docker)]
-async fn test_threshold_secure(ctx: &mut DockerComposeThresholdContextDefault) {
-    init_testing();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let keys_folder = temp_dir.path();
-    let (key_id, _crs_id) = key_and_crs_gen(ctx, keys_folder, false).await;
-    integration_test_commands(ctx, key_id).await;
-}
-
 #[test_context(DockerComposeThresholdContextDefault)]
 #[tokio::test]
 #[serial(docker)]
@@ -787,7 +783,7 @@ async fn test_threshold_insecure(ctx: &mut DockerComposeThresholdContextDefault)
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let (key_id, _crs_id) = key_and_crs_gen(ctx, keys_folder, true).await;
+    let key_id = insecure_key_gen(ctx, keys_folder).await;
     integration_test_commands(ctx, key_id).await;
 }
 
@@ -999,7 +995,9 @@ fn config_path_from_context(ctx: &impl DockerComposeContext) -> String {
 #[test_context(DockerComposeThresholdContextTest)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_sequential_preproc_keygen(ctx: &DockerComposeThresholdContextTest) {
+async fn nightly_tests_threshold_sequential_preproc_keygen(
+    ctx: &DockerComposeThresholdContextTest,
+) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -1027,7 +1025,7 @@ async fn test_threshold_concurrent_preproc_keygen(ctx: &DockerComposeThresholdCo
 #[test_context(DockerComposeThresholdContextDefault)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_sequential_crs(ctx: &DockerComposeThresholdContextDefault) {
+async fn nightly_tests_threshold_sequential_crs(ctx: &DockerComposeThresholdContextDefault) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();

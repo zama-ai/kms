@@ -25,21 +25,19 @@ CURR_SID=$(( CURR_SID + 1 ))
 ##KEY GEN
 #Create preproc for dkg
 $STAIRWAYCTL_EXEC -c $1 preproc-key-gen --num-sessions 5 --sid $CURR_SID
-#Checking every 10 min
-$STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true --interval 600
+$STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true --interval 30
 CURR_SID=$(( CURR_SID + 1 ))
 #Execute DKG using the produced preproc
 $STAIRWAYCTL_EXEC -c $1 threshold-key-gen --sid $CURR_SID --preproc-sid $((CURR_SID - 1))
-#Checking every 10 min
-$STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true --interval 600
+$STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true --interval 30
 #Get the key
 mkdir -p $KEY_PATH
-$STAIRWAYCTL_EXEC -c $1 threshold-key-gen-result --sid $CURR_SID --storage-path $KEY_PATH 
+$STAIRWAYCTL_EXEC -c $1 threshold-key-gen-result --sid $CURR_SID --storage-path $KEY_PATH
 CURR_SID=$(( CURR_SID + 1 ))
 
 ###DDEC
 #Perform NUM_CTXTS decryptions
-for NUM_PARALLEL_SESSIONS in 1 2 4 #8 16 32 64 
+for NUM_PARALLEL_SESSIONS in 1 2 4 #8 16 32 64
 do
     $STAIRWAYCTL_EXEC -c $1 threshold-decrypt --path-pubkey $KEY_PATH/pk.bin --num-ctxt-per-session $NUM_CTXTS --num-parallel-sessions $NUM_PARALLEL_SESSIONS --sid $CURR_SID
     $STAIRWAYCTL_EXEC -c $1 status-check --sid $CURR_SID --keep-retry true
@@ -49,4 +47,4 @@ do
 done
 
 printf "Press enter to shutdown experiment\n"
-read _ 
+read _
