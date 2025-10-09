@@ -346,6 +346,20 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)
             .await
     }
+
+    pub async fn read_cloned_pk(
+        &self,
+        req_id: &RequestId,
+    ) -> anyhow::Result<WrappedPublicKeyOwned> {
+        self.inner.read_cloned_pk(req_id).await
+    }
+
+    pub async fn read_cloned_server_key(
+        &self,
+        req_id: &RequestId,
+    ) -> anyhow::Result<tfhe::ServerKey> {
+        self.inner.read_cloned_server_key(req_id).await
+    }
 }
 
 // we need to manually implement clone, see  https://github.com/rust-lang/rust/issues/26925

@@ -11,7 +11,7 @@ use kms_grpc::kms::v1::{
     InitiateResharingRequest, InitiateResharingResponse, KeyGenPreprocRequest, KeyGenPreprocResult,
     KeyGenRequest, KeyGenResult, KeyMaterialAvailabilityResponse, NewKmsContextRequest, NodeType,
     PeersFromContext, PublicDecryptionRequest, PublicDecryptionResponse, RequestId,
-    ResharingStatusRequest, ResharingStatusResponse, UserDecryptionRequest, UserDecryptionResponse,
+    ResharingResultRequest, ResharingResultResponse, UserDecryptionRequest, UserDecryptionResponse,
 };
 use kms_grpc::kms::v1::{HealthStatusResponse, PeerHealth};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
@@ -310,12 +310,12 @@ impl_endpoint! {
         }
 
         #[tracing::instrument(skip(self, request))]
-        async fn get_resharing_status(
+        async fn get_resharing_result(
             &self,
-            request: Request<ResharingStatusRequest>,
-        ) -> Result<Response<ResharingStatusResponse>, Status> {
+            request: Request<ResharingResultRequest>,
+        ) -> Result<Response<ResharingResultResponse>, Status> {
             METRICS.increment_request_counter(OP_GET_INITIATE_RESHARING_RESULT);
-            self.resharer.get_resharing_status(request).await.inspect_err(|err| {
+            self.resharer.get_resharing_result(request).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
                 let _ = METRICS
                     .increment_error_counter(OP_GET_INITIATE_RESHARING_RESULT, tag);
