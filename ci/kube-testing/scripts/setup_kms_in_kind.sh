@@ -234,7 +234,7 @@ deploy_minio() {
         --create-namespace \
         --wait \
         --timeout 5m \
-        -f "${REPO_ROOT}/ci/kube-testing/minio/values-minio-kms-test.yaml"
+        -f "${REPO_ROOT}/ci/kube-testing/infra/minio-values.yaml"
 
     log_info "MinIO deployed successfully"
 }
