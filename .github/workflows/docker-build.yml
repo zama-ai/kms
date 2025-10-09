@@ -4,6 +4,23 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      testing:
+        description: "Launch performance testing"
+        default: false
+        required: true
+        type: boolean
+      deployment_type:
+        description: "Deployment type"
+        required: true
+        default: "threshold"
+        type: choice
+        options:
+          - "threshold"
+          - "thresholdWithEnclave"
+          - "centralized"
+          - "centralizedWithEnclave"
+
   workflow_call:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
@@ -180,6 +197,34 @@ jobs:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  ############################################################################
+  # Launch performance testing
+  ############################################################################
+  performance-testing:
+    name: docker-build/performance-testing
+    needs:
+      - start-amd64-runner
+      - golden-image
+      - core-client
+      - core-service
+      - enclave
+    runs-on: ubuntu-latest
+    if: inputs.testing
+    steps:
+      - name: Launch performance testing
+        env:
+          GH_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+        run: |
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            /zama-ai/kms-testing/dispatches \
+            -f 'event_type=performance-testing' \
+            -F "client_payload[deployment_type]={{ inputs.deployment_type }}" \
+            -F "client_payload[kms_core_image_tag]={{ needs.golden-image.outputs.image_tag }}" \
+            -F "client_payload[kms_core_client_image_tag]={{ needs.core-client.outputs.image_tag }}"
 
   ############################################################################
   # Stop EC2 runner
