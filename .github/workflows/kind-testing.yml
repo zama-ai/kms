@@ -134,9 +134,6 @@ jobs:
           [ "$(uname -m)" = "aarch64" ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-arm64
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
-          kind create cluster \
-            --config ./ci/kube-testing/infra/kind-config.yaml \
-            --kubeconfig "${HOME}/.kube/config"
 
       - name: Install Helm
         run: |
