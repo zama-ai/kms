@@ -3,3 +3,4 @@
 self-hosted-runner:
   labels:
     - large_ubuntu_16_arm
+    - large_ubuntu_32
