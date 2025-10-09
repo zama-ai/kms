@@ -226,58 +226,19 @@ jobs:
       # Test Execution
       # Runs the Kubernetes integration tests using the configured environment
       #
-      - name: Setup registry credentials
+      - name: Setup kind with KMS version
+        env:
+          GITHUB_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
         run: |
-          kubectl config get-contexts --kubeconfig "${KUBECONFIG}"
-          kubectl config use-context kind-kind --kubeconfig "${KUBECONFIG}"
-          kubectl get nodes
-          kubectl create namespace "${NAMESPACE}"
-          kubectl get namespace
-          # Create dockerconfigjson for ghcr.io authentication
-          DOCKER_CONFIG_JSON=$(cat <<JSON | base64 -w 0
-          {
-            "auths": {
-              "ghcr.io": {
-                "auth": "$(echo -n "zws-bot:${{ secrets.ZWS_BOT_TOKEN }}" | base64 -w 0)"
-              }
-            }
-          }
-          JSON
-          )
-
-          # Apply the secret to Kubernetes
-          cat <<EOF | kubectl apply -f - --namespace "${NAMESPACE}"
-          apiVersion: v1
-          data:
-            .dockerconfigjson: ${DOCKER_CONFIG_JSON}
-          kind: Secret
-          metadata:
-            name: registry-credentials
-          type: kubernetes.io/dockerconfigjson
-          EOF
-          kubectl get secrets registry-credentials -n "${NAMESPACE}" -o yaml
+          ./ci/kube-testing/scripts/setup_kms_in_kind.sh \
+            --namespace "${NAMESPACE}" \
+            --kms-core-tag "${KMS_CORE_IMAGE_TAG:-v0.12.0}" \
+            --kms-core-client-tag "${KMS_CORE_CLIENT_IMAGE_TAG:-v0.12.0}" \
+            --deployment-type "${DEPLOYMENT_TYPE:-threshold}" \
+            --num-parties "${NUM_PARTIES:-4}"
 
       - name: Run Kubernetes Tests
         id: tests
-        env:
-          # Kubernetes and Helm configuration
-          KMS_RELEASE_NAME: kms
-          KMS_CHART_VERSION: 1.4.1
-          KMS_CHART_REGISTRY_URL: oci://ghcr.io/zama-ai/kms/charts/kms-core
-
-          # Paths to Helm values files for different test scenarios
-          KMS_THRESHOLD_VALUES_FILE: ci/kube-testing/kms/values-ci-threshold.yaml
-          KMS_THRESHOLD_CUSTODIAN_VALUES_FILE: ci/kube-testing/kms/values-ci-threshold-custodian.yaml
-          KMS_CENTRALIZED_CUSTODIAN_VALUES_FILE: ci/kube-testing/kms/values-ci-centralized-custodian.yaml
-          KMS_CENTRALIZED_VALUES_FILE: ci/kube-testing/kms/values-ci-centralized.yaml
-
-          # Infrastructure configuration
-          MINIO_VALUES_FILE: ci/kube-testing/infra/minio-values.yaml
-
-          # Secret management
-          SYNC_SECRET_VALUES_FILE: ci/kube-testing/infra/registry-credentials-values.yaml
-          SYNC_SECRETS_CHART_VERSION: 0.2.1
-
         # Execute the Kubernetes integration tests
         run: |
           cargo test --test kubernetes_test
