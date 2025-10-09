@@ -206,7 +206,7 @@ jobs:
   ############################################################################
   # Launch performance testing without enclave
   ############################################################################
-  performance-testing-without-enclave:
+  performance-testing:
     name: docker-build/performance-testing-without-enclave
     needs:
       - start-amd64-runner
@@ -215,7 +215,7 @@ jobs:
       - core-service
       - enclave
     runs-on: ubuntu-latest
-    if: inputs.testing || github.event_name == 'schedule'
+    if: inputs.testing
     steps:
       - name: Launch performance testing
         env:
@@ -247,21 +247,16 @@ jobs:
       - core-client
       - core-service
       - enclave
-      - performance-testing-without-enclave
     runs-on: ubuntu-latest
-    if: inputs.testing || github.event_name == 'schedule'
+    if: github.event_name == 'schedule'
     steps:
       - name: Launch performance testing
         env:
           GH_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          DEPLOYMENT_TYPE: ${{ inputs.deployment_type }}
+          DEPLOYMENT_TYPE: "thresholdWithEnclave"
           KMS_CORE_IMAGE_TAG: ${{ needs.core-service.outputs.image_tag }}
           KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.core-client.outputs.image_tag }}
         run: |
-          if [[ "${{ github.event_name == 'schedule' }}"]]; then
-            echo DEPLOYMENT_TYPE="thresholdWithEnclave" >> $GITHUB_ENV
-          fi
-
           gh api \
             --method POST \
             -H "Accept: application/vnd.github+json" \
