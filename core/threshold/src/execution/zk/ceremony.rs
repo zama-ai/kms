@@ -8,7 +8,7 @@ use crate::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
         runtime::session::BaseSessionHandles,
     },
-    networking::value::BroadcastValue,
+    networking::value::{BroadcastValue, BroadcastValueInner},
     session_id::SessionId,
     thread_handles::spawn_compute_bound,
 };
@@ -887,7 +887,7 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                 })
                 .await?;
 
-                let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
+                let vi: BroadcastValue<Z> = proof.clone().into();
 
                 // nobody else should be broadcasting so we do not process results
                 // since I know I'm honest, this step should never fail since
@@ -916,7 +916,7 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                         // check that it is from the correct sender
                         for (sender, msg) in res {
                             if sender == *role {
-                                if let BroadcastValue::PartialProof(proof) = msg {
+                                if let BroadcastValueInner::PartialProof(proof) = msg.inner {
                                     // We move pp and then let the blocking thread return it to pp_tmp
                                     // this will avoid cloning the whole pp which is just two vectors.
                                     // The rayon threadpool is used again (see comment above).
@@ -1137,7 +1137,7 @@ mod tests {
                     let mut proof: PartialProof =
                         make_partial_proof_deterministic(&pp, &tau, round + 1, &r, sid);
                     proof.h_pok += curve::Zp::ONE;
-                    let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
+                    let vi: BroadcastValue<Z> = proof.clone().into(); // BroadcastValue::PartialProof
 
                     let _ = self
                         .broadcast
@@ -1155,7 +1155,7 @@ mod tests {
                         .await
                         .unwrap();
                     let msg = hm.get(role).unwrap();
-                    if let BroadcastValue::PartialProof(proof) = msg {
+                    if let BroadcastValueInner::PartialProof(proof) = &msg.inner {
                         pp = proof.new_pp.clone();
                     }
                 }

@@ -6,10 +6,12 @@ use crate::execution::runtime::session::BaseSessionHandles;
 use crate::execution::runtime::session::DeSerializationRunTime;
 use crate::networking::value::BcastHash;
 use crate::networking::value::BroadcastValue;
+use crate::networking::value::BroadcastValueInner;
 use crate::networking::value::NetworkValue;
 use crate::thread_handles::spawn_compute_bound;
 use crate::ProtocolDescription;
 use std::collections::{HashMap, HashSet};
+use std::time::SystemTime;
 use tokio::task::JoinSet;
 use tokio::time::error::Elapsed;
 use tonic::async_trait;
@@ -19,6 +21,123 @@ pub(crate) type RoleValueMap<Z> = HashMap<Role, BroadcastValue<Z>>;
 type SendEchoJobType<Z> = (Role, anyhow::Result<RoleValueMap<Z>>);
 type VoteJobType = (Role, anyhow::Result<HashMap<Role, BcastHash>>);
 type GenericEchoVoteJob<T> = JoinSet<Result<(Role, anyhow::Result<HashMap<Role, T>>), Elapsed>>;
+
+// convert a SystemTime to an Instant
+pub(crate) fn systemtime_to_instant(t: SystemTime) -> tokio::time::Instant {
+    let now_sys = SystemTime::now();
+    let now_inst = tokio::time::Instant::now();
+
+    // unwrap here is safe because we checked t >= now_sys
+    if t >= now_sys {
+        let dur = t.duration_since(now_sys).unwrap();
+        now_inst + dur
+    } else {
+        let dur = now_sys.duration_since(t).unwrap();
+        now_inst - dur
+    }
+}
+
+pub(crate) fn instant_to_systemtime(t: tokio::time::Instant) -> SystemTime {
+    let now_sys = SystemTime::now();
+    let now_inst = tokio::time::Instant::now();
+
+    // unwrap here is safe because we checked t >= now_sys
+    if t >= now_inst {
+        let dur = t.duration_since(now_inst);
+        now_sys + dur
+    } else {
+        let dur = now_inst.duration_since(t);
+        now_sys - dur
+    }
+}
+
+pub struct TimestampedBroadcast<'a, B: Broadcast> {
+    pub(crate) bcast: &'a B,
+}
+
+impl<'a, B: Broadcast> TimestampedBroadcast<'a, B> {
+    // pub(crate) async fn broadcast_from_all<Z: Ring, Ses: BaseSessionHandles>(
+    //     &self,
+    //     session: &mut Ses,
+    //     batch_sync_time: SystemTime,
+    //     mut my_message: BroadcastValue<Z>,
+    // ) -> anyhow::Result<RoleValueMap<Z>> {
+    //     let sys_now = SystemTime::now();
+    //     my_message.timestamp = Some(sys_now);
+
+    //     // round counter before broadcast
+    //     let r_before = session.network().get_current_round().await;
+
+    //     let res = self.bcast.broadcast_from_all(session, my_message).await?;
+
+    //     let r_bcast = session.network().get_current_round().await - r_before;
+    //     debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
+    //     Self::reset_timeout(r_bcast, session, batch_sync_time, &res).await;
+    //     Ok(res)
+    // }
+
+    pub(crate) async fn broadcast_from_all_w_corrupt_set_update<
+        Z: Ring,
+        Ses: BaseSessionHandles,
+    >(
+        &self,
+        session: &mut Ses,
+        batch_sync_time: SystemTime,
+        mut my_message: BroadcastValue<Z>,
+    ) -> anyhow::Result<RoleValueMap<Z>> {
+        let sys_now = SystemTime::now();
+        my_message.timestamp = Some(sys_now);
+
+        // round counter before broadcast
+        let r_before = session.network().get_current_round().await;
+
+        let res = self
+            .bcast
+            .broadcast_w_corrupt_set_update(session, session.roles().clone(), Some(my_message))
+            .await?;
+
+        let r_bcast = session.network().get_current_round().await - r_before;
+        debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
+        Self::reset_timeout(r_bcast, session, batch_sync_time, &res).await;
+        Ok(res)
+    }
+
+    async fn reset_timeout<Z: Ring, Ses: BaseSessionHandles>(
+        r_bcast: usize,
+        session: &mut Ses,
+        batch_sync_time: SystemTime,
+        broadcast_res: &HashMap<Role, BroadcastValue<Z>>,
+    ) {
+        debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
+
+        // we need to extract the timestamps out from broadcast_res
+        let timestamps: Vec<_> = broadcast_res
+            .iter()
+            .filter_map(|val| match val.1.inner {
+                BroadcastValueInner::Bot => None,
+                _ => val.1.timestamp,
+            })
+            .collect();
+
+        // compute min(max({t_i}), U^r + R_b * D)
+        let new_batch_sync_time = {
+            // TODO unwrap
+            let left = timestamps.into_iter().max().unwrap();
+            let right = batch_sync_time
+                + r_bcast as u32 * session.network().get_timeout_current_round().await;
+            left.min(right)
+        };
+
+        // now we reset the init time and elapsed time
+        session
+            .network()
+            .reset_timeout(
+                systemtime_to_instant(new_batch_sync_time),
+                r_bcast as u32 * session.network().get_timeout_current_round().await,
+            )
+            .await;
+    }
+}
 
 #[async_trait]
 pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
@@ -116,7 +235,7 @@ pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
 
         // Add bot for the parties which were already corrupt before the bcast
         for role in session.corrupt_roles() {
-            broadcast_res.insert(*role, BroadcastValue::Bot);
+            broadcast_res.insert(*role, BroadcastValue::new(BroadcastValueInner::Bot));
         }
 
         // Note that the sender list is computed at the start
@@ -130,9 +249,13 @@ pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
 
             // Each party that was supposed to broadcast but where the parties did not consistently agree on the result
             // is added to the set of corrupt parties
-            if let BroadcastValue::Bot = broadcast_res.get(&role).ok_or_else(|| {
-                anyhow_error_and_log(format!("Cannot find {role} in broadcast's result."))
-            })? {
+            if let BroadcastValueInner::Bot = broadcast_res
+                .get(&role)
+                .ok_or_else(|| {
+                    anyhow_error_and_log(format!("Cannot find {role} in broadcast's result."))
+                })?
+                .inner
+            {
                 session.add_corrupt(role);
             }
         }
@@ -507,7 +630,7 @@ impl Broadcast for SyncReliableBroadcast {
         let is_sender = senders.contains(&my_role);
         let mut bcast_data: RoleValueMap<Z> = senders
             .iter()
-            .map(|role| (*role, BroadcastValue::Bot))
+            .map(|role| (*role, BroadcastValue::new(BroadcastValueInner::Bot)))
             .collect();
 
         let mut non_answering_parties = HashSet::<Role>::new();
@@ -817,60 +940,13 @@ mod tests {
             )
         };
 
-        let (results_honest, results_malicious) =
-            execute_protocol_small_w_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(
-                &params,
-                &params.malicious_roles,
-                malicious_broadcast,
-                NetworkMode::Sync,
-                None,
-                &mut task_honest,
-                &mut task_malicious,
-            )
-            .await;
-
-        //Assert malicious parties we shouldve been caught indeed are
-        if params.should_be_detected {
-            for (_, (_, _, corrupt_set)) in results_honest.iter() {
-                for role in params.malicious_roles.iter() {
-                    assert!(corrupt_set.contains(role));
-                }
-            }
-        }
-
-        //Check that result is correct
-        let mut collected_results: RoleValueMap<Z> = results_honest
-            .iter()
-            .map(|(role, (data, _, _))| (*role, data.clone()))
-            .collect();
-        if !params.should_be_detected {
-            results_malicious.iter().for_each(|(role, data)| {
-                if let Ok((data, _, _)) = data {
-                    collected_results.insert(*role, data.clone());
-                }
-            })
-        } else {
-            params.malicious_roles.iter().for_each(|role| {
-                let _ = collected_results.insert(*role, BroadcastValue::Bot);
-            });
-        }
-
-        for (role, (_, protocol_result, _)) in results_honest.iter() {
-            assert_eq!(
-                collected_results, *protocol_result,
-                "Party {role} doesnt agree with the collected results. Output {protocol_result:?} expected {collected_results:?}"
-            );
-        }
-
-        if !params.should_be_detected {
-            results_malicious.iter().for_each(|(role, result)| {
-                if let Ok((_,result,_)) = result {
-
-                let result = result.as_ref().unwrap();
-                assert_eq!(*result, collected_results, "Malicious but undetected party {role} doesnt agree with the collected results. Output {result:?} expected {collected_results:?}");
-                }
-            });
-        }
+        execute_and_check_honest_and_malicious_broadcasts::<_, _, _, EXTENSION_DEGREE, B>(
+            params,
+            malicious_broadcast,
+            &mut task_honest,
+            &mut task_malicious,
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -925,5 +1001,198 @@ mod tests {
             _,
         >(params, malicious_strategy)
         .await;
+    }
+
+    /// Generic function to test malicious broadcast strategies.
+    /// Executes [`Broadcast::broadcast_from_all_w_corrupt_set_update`]
+    /// as that is the more genreal version of broadcast
+    async fn test_timestamped_broadcast_from_all_w_corrupt_set_update_strategies<
+        Z: ErrorCorrect + Invert + PRSSConversions,
+        const EXTENSION_DEGREE: usize,
+        B: Broadcast + 'static,
+    >(
+        params: TestingParameters,
+        malicious_timestamp: SystemTime,
+        malicious_broadcast: B,
+    ) {
+        let sys_now = SystemTime::now();
+        let mut task_honest = |mut session: SmallSession<Z>| async move {
+            let real_broadcast = SyncReliableBroadcast::default();
+            let timed_broadcast = TimestampedBroadcast {
+                bcast: &real_broadcast,
+            };
+            let my_data = BroadcastValue::from(Z::sample(session.rng()));
+            (
+                my_data.clone(),
+                timed_broadcast
+                    .broadcast_from_all_w_corrupt_set_update(&mut session, sys_now, my_data)
+                    .await
+                    .unwrap(),
+                session.corrupt_roles().clone(),
+            )
+        };
+
+        let mut task_malicious = |mut session: SmallSession<Z>, malicious_broadcast: B| async move {
+            let my_data = BroadcastValue::from(Z::sample(session.rng()));
+            let timed_broadcast = TimestampedBroadcast {
+                bcast: &malicious_broadcast,
+            };
+            (
+                my_data.clone(),
+                timed_broadcast
+                    .broadcast_from_all_w_corrupt_set_update(
+                        &mut session,
+                        malicious_timestamp,
+                        my_data,
+                    )
+                    .await,
+                session.corrupt_roles().clone(),
+            )
+        };
+
+        execute_and_check_honest_and_malicious_broadcasts::<_, _, _, EXTENSION_DEGREE, B>(
+            params,
+            malicious_broadcast,
+            &mut task_honest,
+            &mut task_malicious,
+        )
+        .await;
+    }
+
+    type OutputM<Z> = (
+        BroadcastValue<Z>,
+        anyhow::Result<HashMap<Role, BroadcastValue<Z>>>,
+        HashSet<Role>,
+    );
+    type OutputT<Z> = (
+        BroadcastValue<Z>,
+        HashMap<Role, BroadcastValue<Z>>,
+        HashSet<Role>,
+    );
+    async fn execute_and_check_honest_and_malicious_broadcasts<
+        TaskOutputT,
+        TaskOutputM,
+        Z: ErrorCorrect + Invert + PRSSConversions,
+        const EXTENSION_DEGREE: usize,
+        B: Broadcast + 'static,
+    >(
+        params: TestingParameters,
+        malicious_broadcast: B,
+        task_honest: &mut dyn FnMut(SmallSession<Z>) -> TaskOutputT,
+        task_malicious: &mut dyn FnMut(SmallSession<Z>, B) -> TaskOutputM,
+    ) where
+        TaskOutputT: futures::Future<Output = OutputT<Z>>,
+        TaskOutputT: Send + 'static,
+        TaskOutputM: futures::Future<Output = OutputM<Z>>,
+        TaskOutputM: Send + 'static,
+    {
+        let (results_honest, results_malicious) = execute_protocol_small_w_malicious::<
+            TaskOutputT,
+            OutputT<Z>,
+            TaskOutputM,
+            OutputM<Z>,
+            B,
+            Z,
+            EXTENSION_DEGREE,
+        >(
+            &params,
+            &params.malicious_roles,
+            malicious_broadcast,
+            NetworkMode::Sync,
+            None,
+            task_honest,
+            task_malicious,
+        )
+        .await;
+
+        //Assert malicious parties we shouldve been caught indeed are
+        if params.should_be_detected {
+            for (_, (_, _, corrupt_set)) in results_honest.iter() {
+                for role in params.malicious_roles.iter() {
+                    assert!(corrupt_set.contains(role));
+                }
+            }
+        }
+
+        // Check that result is correct
+        // This is the original value set by the caller of broadcast, so it will not contain the timestamp
+        let mut collected_results: RoleValueMap<Z> = results_honest
+            .iter()
+            .map(|(role, (data, _, _))| (*role, data.clone()))
+            .collect();
+        if !params.should_be_detected {
+            results_malicious.iter().for_each(|(role, data)| {
+                if let Ok((data, _, _)) = data {
+                    collected_results.insert(*role, data.clone());
+                }
+            })
+        } else {
+            params.malicious_roles.iter().for_each(|role| {
+                let _ =
+                    collected_results.insert(*role, BroadcastValue::new(BroadcastValueInner::Bot));
+            });
+        }
+
+        for (role, (_, protocol_result, _)) in results_honest.iter() {
+            // TODO?? we're only interested in the consistency of inner values because the timestamps don't matter
+            assert_eq!(
+                collected_results.iter().map(|(k, v)| (*k, v.inner.clone())).collect::<HashMap<_, _>>(),
+                protocol_result.iter().map(|(k, v)| (*k, v.inner.clone())).collect::<HashMap<_, _>>(),
+                "Party {role} doesnt agree with the collected results. Output {protocol_result:?} expected {collected_results:?}"
+            );
+        }
+
+        if !params.should_be_detected {
+            results_malicious.iter().for_each(|(role, result)| {
+                if let Ok((_,result,_)) = result {
+
+                let result = result.as_ref().unwrap().iter().map(|(k, v)| (*k, v.inner.clone())).collect::<HashMap<_, _>>();
+                assert_eq!(result, collected_results.iter().map(|(k, v)| (*k, v.inner.clone())).collect::<HashMap<_, _>>(),
+                    "Malicious but undetected party {role} doesnt agree with the collected results. Output {result:?} expected {collected_results:?}");
+                }
+            });
+        }
+    }
+
+    #[tokio::test]
+    async fn test_timed_broadcast_high_timestamp() {
+        // one of the parties will always send a high timestamp
+        // we expect the protocol to proceed normally
+        let malicious_strategy = SyncReliableBroadcast::default();
+
+        // set the malicious roles to party 1
+        let params = TestingParameters::init(4, 1, &[1], &[], &[], false, Some(1 + 3));
+
+        test_timestamped_broadcast_from_all_w_corrupt_set_update_strategies::<
+            ResiduePolyF4Z128,
+            4,
+            _,
+        >(
+            params,
+            SystemTime::now() + std::time::Duration::from_secs(42 * 3600),
+            malicious_strategy,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_timed_broadcast_high_timestamp_and_drop() {
+        // one of the parties will always send a high timestamp
+        // we expect the protocol to proceed normally
+    }
+
+    #[test]
+    fn test_time_conversion() {
+        let eps = std::time::Duration::from_millis(1);
+        {
+            let timestamp = SystemTime::now() - std::time::Duration::from_secs(42);
+            let new_timestamp = instant_to_systemtime(systemtime_to_instant(timestamp));
+            assert!(new_timestamp.duration_since(timestamp).unwrap() < eps);
+        }
+        {
+            let timestamp = tokio::time::Instant::now() - std::time::Duration::from_secs(42);
+            let new_timestamp = systemtime_to_instant(instant_to_systemtime(timestamp));
+            assert!(new_timestamp.duration_since(timestamp) < eps);
+        }
     }
 }

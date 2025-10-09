@@ -14,7 +14,7 @@ use crate::{
             share::Share,
         },
     },
-    networking::value::BroadcastValue,
+    networking::value::BroadcastValueInner,
     ProtocolDescription,
 };
 use async_trait::async_trait;
@@ -224,10 +224,11 @@ pub(crate) async fn verify_sharing<
         let bcast_data = broadcast
             .broadcast_from_all_w_corrupt_set_update(
                 session,
-                BroadcastValue::LocalSingleShare(MapsSharesChallenges {
+                MapsSharesChallenges {
                     checks_for_all: map_share_check_values,
                     checks_for_mine: map_share_my_check_values,
-                }),
+                }
+                .into(),
             )
             .await?;
 
@@ -240,7 +241,7 @@ pub(crate) async fn verify_sharing<
         let mut bcast_output = HashMap::new();
         let mut bcast_corrupts = HashSet::new();
         for (role, bcast_value) in bcast_data {
-            if let BroadcastValue::LocalSingleShare(value) = bcast_value {
+            if let BroadcastValueInner::LocalSingleShare(value) = bcast_value.inner {
                 bcast_output.insert(role, value);
             } else {
                 bcast_corrupts.insert(role);

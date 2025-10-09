@@ -6,16 +6,18 @@ use super::{
     },
     share_dispute::{SecureShareDispute, ShareDispute, ShareDisputeOutputDouble},
 };
-use crate::execution::{
-    communication::broadcast::{Broadcast, SyncReliableBroadcast},
-    runtime::session::LargeSessionHandles,
-};
 use crate::{
     algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
     error::error_handler::anyhow_error_and_log,
     execution::runtime::party::Role,
-    networking::value::BroadcastValue,
     ProtocolDescription,
+};
+use crate::{
+    execution::{
+        communication::broadcast::{Broadcast, SyncReliableBroadcast},
+        runtime::session::LargeSessionHandles,
+    },
+    networking::value::BroadcastValueInner,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -264,12 +266,13 @@ pub(crate) async fn verify_sharing<
         let bcast_data = broadcast
             .broadcast_from_all_w_corrupt_set_update(
                 session,
-                BroadcastValue::LocalDoubleShare((
+                (
                     map_share_check_values_t,
                     map_share_check_values_2t,
                     map_share_my_check_values_t,
                     map_share_my_check_values_2t,
-                )),
+                )
+                    .into(),
             )
             .await?;
 
@@ -283,12 +286,12 @@ pub(crate) async fn verify_sharing<
         let mut bcast_data_2t = HashMap::<Role, MapsSharesChallenges<Z>>::new();
         let mut bcast_corrupts = HashSet::<Role>::new();
         for (role, map_data) in bcast_data.into_iter() {
-            if let BroadcastValue::LocalDoubleShare((
+            if let BroadcastValueInner::LocalDoubleShare((
                 data_share_t,
                 data_share_2t,
                 data_check_t,
                 data_check_2t,
-            )) = map_data
+            )) = map_data.inner
             {
                 bcast_data_t.insert(
                     role,

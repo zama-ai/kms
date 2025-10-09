@@ -28,7 +28,7 @@ use crate::{
             },
         },
     },
-    networking::value::BroadcastValue,
+    networking::value::{BroadcastValue, BroadcastValueInner},
 };
 use itertools::{izip, Itertools};
 use std::collections::HashMap;
@@ -346,7 +346,7 @@ where
 
     // We are resharing to the same set,
     // so we go straight to the sync-broadcast
-    let broadcast_value = BroadcastValue::RingVector(vj);
+    let broadcast_value: BroadcastValue<ResiduePoly<Z, EXTENSION_DEGREE>> = vj.into();
     let broadcast_result = SyncReliableBroadcast::default()
         .broadcast_from_all(session, broadcast_value)
         .await?;
@@ -354,7 +354,7 @@ where
     // compute v_{i,j} - <r_{i,j}>^{S_2}_k, k = 0,1,...,n1-1
     let mut s_share_vec = vec![vec![]; share_count];
     for (sender, msg) in broadcast_result {
-        if let BroadcastValue::RingVector(vs) = msg {
+        if let BroadcastValueInner::RingVector(vs) = msg.inner {
             let rs_share_iter = rs_shares
                 .remove(&sender)
                 .ok_or_else(|| anyhow_error_and_log(format!("missing share for {sender:?}")))?;

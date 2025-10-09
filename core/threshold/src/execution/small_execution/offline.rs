@@ -7,12 +7,13 @@ use tracing::instrument;
 
 use super::prss::PRSSPrimitives;
 use crate::error::error_handler::log_error_wrapper;
-use crate::execution::communication::broadcast::SyncReliableBroadcast;
+use crate::execution::communication::broadcast::{SyncReliableBroadcast, TimestampedBroadcast};
 use crate::execution::config::BatchParams;
 use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
 use crate::execution::runtime::session::BaseSessionHandles;
 use crate::execution::sharing::shamir::RevealOp;
+use crate::networking::value::BroadcastValueInner;
 use crate::thread_handles::spawn_compute_bound;
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Ring},
@@ -128,35 +129,6 @@ async fn next_random_batch<Z: Ring, Ses: SmallSessionHandles<Z>>(
     Ok(res)
 }
 
-// convert a SystemTime to an Instant
-fn systemtime_to_instant(t: SystemTime) -> tokio::time::Instant {
-    let now_sys = SystemTime::now();
-    let now_inst = tokio::time::Instant::now();
-
-    // unwrap here is safe because we checked t >= now_sys
-    if t >= now_sys {
-        let dur = t.duration_since(now_sys).unwrap();
-        now_inst + dur
-    } else {
-        let dur = now_sys.duration_since(t).unwrap();
-        now_inst - dur
-    }
-}
-
-fn instant_to_systemtime(t: tokio::time::Instant) -> SystemTime {
-    let now_sys = SystemTime::now();
-    let now_inst = tokio::time::Instant::now();
-
-    // unwrap here is safe because we checked t >= now_sys
-    if t >= now_inst {
-        let dur = t.duration_since(now_inst);
-        now_sys + dur
-    } else {
-        let dur = now_inst.duration_since(t);
-        now_sys - dur
-    }
-}
-
 /// Constructs a new batch of triples and appends this to the internal triple storage.
 /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
 /// If corruption occurs during the process then the corrupt parties are added to the corrupt set in `session` and the method
@@ -168,6 +140,7 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
     broadcast: &BCast,
     batch_sync_time: SystemTime,
 ) -> anyhow::Result<(Vec<Triple<Z>>, SystemTime)> {
+    let broadcast = TimestampedBroadcast { bcast: broadcast };
     let counters = session.prss().get_counters();
     let my_role = session.my_role();
     let threshold = session.threshold();
@@ -215,49 +188,17 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
         Ok((vec_x_single, vec_y_single, vec_v_single, res))
     }).await??;
 
-    // round counter before broadcast
-    let r_before = session.network().get_current_round().await;
-
-    let val: BroadcastValue<Z> = (vec_d_double, SystemTime::now()).into();
+    let val: BroadcastValue<Z> = vec_d_double.into();
     let broadcast_res = broadcast
-        .broadcast_from_all_w_corrupt_set_update(session, val)
+        .broadcast_from_all_w_corrupt_set_update(session, batch_sync_time, val)
         .await?;
 
-    // NOTE this should be 3 + t
-    let r_bcast = session.network().get_current_round().await - r_before;
-    debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
-
-    // we need to split the timestamps out from broadcast_res
-    let (vec_map, timestamps): (HashMap<_, _>, Vec<_>) = broadcast_res
-        .into_iter()
-        .filter_map(|val| match val.1 {
-            BroadcastValue::TimestampedRingVector((vec, timestamp)) => {
-                Some(((val.0, BroadcastValue::RingVector(vec)), timestamp))
-            }
-            _ => None, // we may receive Bot
-        })
-        .unzip();
-
-    // we need to compute min(max({t_i}), U^r + R_b * D)
-    let new_batch_sync_time = {
-        // TODO unwrap
-        let left = timestamps.into_iter().max().unwrap();
-        let right =
-            batch_sync_time + r_bcast as u32 * session.network().get_timeout_current_round().await;
-        left.min(right)
-    };
-
-    // now we reset the init time and elapsed time
-    session
-        .network()
-        .reset_timeout(
-            systemtime_to_instant(new_batch_sync_time),
-            r_bcast as u32 * session.network().get_timeout_current_round().await,
-        )
-        .await;
-
     // Try reconstructing 2t sharings of d, a None means reconstruction failed.
-    let recons_vec_d = reconstruct_d_values(session, amount, vec_map.clone()).await?;
+    let raw_broadcast_res: HashMap<_, _> = broadcast_res
+        .into_iter()
+        .map(|x| (x.0, x.1.inner))
+        .collect();
+    let recons_vec_d = reconstruct_d_values(session, amount, raw_broadcast_res.clone()).await?;
 
     let mut triples = Vec::with_capacity(amount);
     let mut bad_triples_idx = Vec::new();
@@ -284,7 +225,7 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
     // If non-correctable malicious behaviour has been detected
     if !bad_triples_idx.is_empty() {
         // Recover the individual d shares from broadcast
-        let d_shares = parse_d_shares(session, amount, vec_map)?;
+        let d_shares = parse_d_shares(session, amount, &raw_broadcast_res)?;
         for i in bad_triples_idx {
             check_d(
                 session,
@@ -303,7 +244,9 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
 
     Ok((
         triples,
-        instant_to_systemtime(session.network().get_deadline_current_round().await),
+        crate::execution::communication::broadcast::instant_to_systemtime(
+            session.network().get_deadline_current_round().await,
+        ),
     ))
 }
 
@@ -313,7 +256,7 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
 async fn reconstruct_d_values<Z, Ses: BaseSessionHandles>(
     session: &mut Ses,
     amount: usize,
-    d_recons: HashMap<Role, BroadcastValue<Z>>,
+    d_recons: HashMap<Role, BroadcastValueInner<Z>>,
 ) -> anyhow::Result<Vec<Option<Z>>>
 where
     Z: ErrorCorrect,
@@ -323,7 +266,7 @@ where
     // I.e. transpose the result and convert the role and value into indexed values
     for (cur_role, cur_values) in d_recons {
         match cur_values {
-            BroadcastValue::RingVector(cur_values) => {
+            BroadcastValueInner::RingVector(cur_values) => {
                 if cur_values.len() != amount {
                     tracing::warn!(
                             "I am party {:?} and party {:?} did not broadcast the correct amount of shares and is thus malicious",
@@ -385,14 +328,14 @@ where
 fn parse_d_shares<Z: Ring, Ses: BaseSessionHandles>(
     session: &mut Ses,
     amount: usize,
-    d_recons: HashMap<Role, BroadcastValue<Z>>,
+    d_recons: &HashMap<Role, BroadcastValueInner<Z>>,
 ) -> anyhow::Result<Vec<HashMap<Role, Option<Z>>>> {
     let mut res = Vec::with_capacity(amount);
     for i in 0..amount {
         let mut cur_map = HashMap::new();
-        for (cur_role, cur_values) in &d_recons {
+        for (cur_role, cur_values) in d_recons {
             match cur_values {
-                BroadcastValue::RingVector(cur_values) => {
+                BroadcastValueInner::RingVector(cur_values) => {
                     if cur_values.len() > i {
                         cur_map.insert(*cur_role, Some(cur_values[i]));
                     } else {
@@ -477,7 +420,6 @@ async fn check_d<Z: Ring, Ses: SmallSessionHandles<Z>>(
 mod test {
     use futures_util::future::join;
     use rstest::rstest;
-    use std::time::{Duration, SystemTime};
     use std::{collections::HashMap, num::Wrapping};
 
     use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring};
@@ -486,9 +428,7 @@ mod test {
     use crate::execution::runtime::session::ToBaseSession;
     use crate::execution::sharing::shamir::{RevealOp, ShamirSharings};
     use crate::execution::small_execution::agree_random::RobustSecureAgreeRandom;
-    use crate::execution::small_execution::offline::{
-        instant_to_systemtime, reconstruct_d_values, systemtime_to_instant,
-    };
+    use crate::execution::small_execution::offline::reconstruct_d_values;
     use crate::execution::small_execution::prss::{
         DerivePRSSState, PRSSInit, RobustSecurePrssInit,
     };
@@ -499,6 +439,7 @@ mod test {
     use crate::malicious_execution::small_execution::malicious_prss::{
         MaliciousPrssDrop, MaliciousPrssHonestInitLieAll, MaliciousPrssHonestInitRobustThenRandom,
     };
+    use crate::networking::value::BroadcastValueInner;
     use crate::networking::NetworkMode;
     use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
     use crate::tests::randomness_check::execute_all_randomness_tests_loose;
@@ -519,7 +460,6 @@ mod test {
                 prf::PRSSConversions,
             },
         },
-        networking::value::BroadcastValue,
         tests::helper::testing::get_networkless_base_session_for_parties,
     };
 
@@ -911,13 +851,13 @@ mod test {
         let d_recons = HashMap::from([
             (
                 Role::indexed_from_one(1),
-                BroadcastValue::RingVector(Vec::from([ResiduePolyF4Z128::from_scalar(Wrapping(
-                    42,
-                ))])),
+                BroadcastValueInner::RingVector(Vec::from([ResiduePolyF4Z128::from_scalar(
+                    Wrapping(42),
+                )])),
             ),
             (
                 Role::indexed_from_one(2),
-                BroadcastValue::RingValue(ResiduePolyF4Z128::from_scalar(Wrapping(13))),
+                BroadcastValueInner::RingValue(ResiduePolyF4Z128::from_scalar(Wrapping(13))),
             ),
         ]);
         assert!(session.corrupt_roles().is_empty());
@@ -932,20 +872,5 @@ mod test {
         assert_eq!(1, res.len());
         let first = res.first();
         assert!(first.is_some());
-    }
-
-    #[test]
-    fn test_time_conversion() {
-        let eps = Duration::from_millis(1);
-        {
-            let timestamp = SystemTime::now() - std::time::Duration::from_secs(42);
-            let new_timestamp = instant_to_systemtime(systemtime_to_instant(timestamp));
-            assert!(new_timestamp.duration_since(timestamp).unwrap() < eps);
-        }
-        {
-            let timestamp = tokio::time::Instant::now() - std::time::Duration::from_secs(42);
-            let new_timestamp = systemtime_to_instant(instant_to_systemtime(timestamp));
-            assert!(new_timestamp.duration_since(timestamp) < eps);
-        }
     }
 }
