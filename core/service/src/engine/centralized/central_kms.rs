@@ -1620,14 +1620,13 @@ pub(crate) mod tests {
             inner
         };
         let link = vec![42_u8, 42, 42];
+        let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
         let client_key_pair = {
             let mut keys =
-                ephemeral_signcryption_key_generation(&mut rng, &kms.base_kms.sig_key.verf_key());
+                ephemeral_signcryption_key_generation(&mut rng, &client_verf_key.verf_key_id());
             if sim_type == SimulationType::BadEphemeralKey {
-                let bad_keys = ephemeral_signcryption_key_generation(
-                    &mut rng,
-                    &kms.base_kms.sig_key.verf_key(),
-                );
+                let bad_keys =
+                    ephemeral_signcryption_key_generation(&mut rng, &client_verf_key.verf_key_id());
                 keys.signcrypt_key = bad_keys.signcrypt_key;
             }
             keys

@@ -322,6 +322,7 @@ pub(crate) fn check_normalized(sig: &Signature) -> Result<(), CryptographyError>
 ///
 /// This fn also checks that the provided link parameter corresponds to the link in the signcryption
 /// payload.
+// TODO remove an use proper method
 pub fn decrypt_signcryption_with_link(
     dsep: &DomainSep,
     cipher: &[u8],
@@ -380,25 +381,25 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
 #[cfg(test)]
 pub(crate) fn ephemeral_signcryption_key_generation(
     rng: &mut (impl CryptoRand + 'static),
-    server_verf_key: &PublicSigKey,
+    client_verf_key_id: &[u8],
 ) -> UnifiedSigncryptionKeyPairOwned {
     use crate::cryptography::internal_crypto_types::{
         gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
     };
-    let (client_verf_key, client_sig_key) = gen_sig_keys(rng);
+    let (server_verf_key, server_sig_key) = gen_sig_keys(rng);
     let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, rng);
     let (dec_key, enc_key) = encryption.keygen().unwrap();
     UnifiedSigncryptionKeyPairOwned {
         signcrypt_key: UnifiedSigncryptionKey::new(
-            client_sig_key.clone(),
+            server_sig_key.clone(),
             enc_key.clone(),
-            client_verf_key.verf_key_id(),
+            client_verf_key_id.to_vec(),
         ),
         designcrypt_key: UnifiedDesigncryptionKey::new(
             dec_key,
             enc_key,
             server_verf_key.clone(),
-            client_verf_key.verf_key_id(),
+            client_verf_key_id.to_vec(),
         ),
     }
 }
@@ -427,8 +428,8 @@ mod tests {
     /// keys and the dummy fhe cipher the request is made for.
     fn test_setup() -> (AesRng, UnifiedSigncryptionKeyPairOwned) {
         let mut rng = AesRng::seed_from_u64(1);
-        let (server_verf_key, _) = gen_sig_keys(&mut rng);
-        let keys = ephemeral_signcryption_key_generation(&mut rng, &server_verf_key);
+        let (client_verf_key, _) = gen_sig_keys(&mut rng);
+        let keys = ephemeral_signcryption_key_generation(&mut rng, &client_verf_key.verf_key_id());
         (rng, keys)
     }
 
@@ -527,7 +528,7 @@ mod tests {
             let mut rng = AesRng::seed_from_u64(2);
             let wrong_keys = ephemeral_signcryption_key_generation(
                 &mut rng,
-                &client_signcryption_keys.designcrypt_key.sender_verf_key,
+                &client_signcryption_keys.designcrypt_key.receiver_id,
             );
             assert!(wrong_keys
                 .designcrypt_key

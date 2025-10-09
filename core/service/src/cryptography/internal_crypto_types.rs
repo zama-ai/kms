@@ -272,6 +272,16 @@ impl From<&UnifiedPrivateEncKey> for EncryptionSchemeType {
     }
 }
 
+impl UnifiedPrivateEncKey {
+    /// Expect the inner type to be the default MlKem512 and return it, otherwise panic
+    pub fn unwrap_ml_kem_512(self) -> PrivateEncKey<ml_kem::MlKem512> {
+        match self {
+            UnifiedPrivateEncKey::MlKem512(pk) => pk,
+            _ => panic!("Expected MlKem512 private encryption key"),
+        }
+    }
+}
+
 // Alias wrapping the ephemeral private decryption key the user's wallet constructs to receive the
 // server's encrypted payload
 // The only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys
@@ -997,6 +1007,7 @@ impl std::ops::Deref for WrappedDKGParams {
         &self.0
     }
 }
+// todo implement legacy serialization instad of hash_to_bytes, do it as trait
 
 #[cfg(test)]
 mod tests {
@@ -1013,13 +1024,13 @@ mod tests {
         let mut rng = OsRng;
         let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
         let (sk, pk) = encryption.keygen().unwrap();
-        let pk_buf = bc2wrap::serialize(&pk).unwrap();
-        let sk_buf = bc2wrap::serialize(&sk).unwrap();
+        let pk_buf = bc2wrap::serialize(&pk.unwrap_ml_kem_512()).unwrap();
+        let sk_buf = bc2wrap::serialize(&sk.unwrap_ml_kem_512()).unwrap();
         // there is extra 8 bytes in the serialization to encode the length
         // see https://github.com/bincode-org/bincode/blob/trunk/docs/spec.md#linear-collections-vec-arrays-etc
-        assert_eq!(pk_buf.len(), hybrid_ml_kem::ML_KEM_512_PK_LENGTH + 8);
-        assert_eq!(sk_buf.len(), hybrid_ml_kem::ML_KEM_512_SK_LEN + 8);
 
+        assert_eq!(sk_buf.len(), hybrid_ml_kem::ML_KEM_512_SK_LEN + 8);
+        assert_eq!(pk_buf.len(), hybrid_ml_kem::ML_KEM_512_PK_LENGTH + 8);
         // deserialize and test if encryption still works.
         let pk2: PublicEncKey<ml_kem::MlKem512> = bc2wrap::deserialize(&pk_buf).unwrap();
         let sk2: PrivateEncKey<ml_kem::MlKem512> = bc2wrap::deserialize(&sk_buf).unwrap();
