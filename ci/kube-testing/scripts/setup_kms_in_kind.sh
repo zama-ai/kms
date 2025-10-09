@@ -130,7 +130,7 @@ setup_kind_cluster() {
     fi
 
     log_info "Creating Kind cluster..."
-    kind create cluster --name kms-test --config - <<EOF
+    kind create cluster --name "${NAMESPACE}" --config - <<EOF
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -148,8 +148,8 @@ setup_kube_context() {
     log_info "Available contexts:"
     kubectl config get-contexts --kubeconfig "${KUBECONFIG}"
 
-    log_info "Using kind-kind context..."
-    kubectl config use-context kind-kind --kubeconfig "${KUBECONFIG}"
+    log_info "Using kind-"${NAMESPACE}" context..."
+    kubectl config use-context kind-"${NAMESPACE}" --kubeconfig "${KUBECONFIG}"
 
     log_info "Checking cluster nodes..."
     kubectl get nodes
