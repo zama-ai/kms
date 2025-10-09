@@ -271,8 +271,9 @@ deploy_threshold_mode() {
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --wait \
-            --timeout 10m
+            --timeout 10m &
     done
+    wait
 
     log_info "Waiting for KMS Core pods to be ready..."
     for i in $(seq 1 "${NUM_PARTIES}"); do
