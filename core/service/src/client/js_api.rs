@@ -76,7 +76,7 @@ use crate::client::user_decryption_wasm::{
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::hybrid_ml_kem;
 use crate::cryptography::internal_crypto_types::{
-    PrivateEncKey, PublicEncKey, UnifiedPrivateDecKey, UnifiedPublicEncKey,
+    PrivateEncKey, PublicEncKey, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use aes_prng::AesRng;
@@ -355,17 +355,12 @@ pub fn ml_kem_pke_sk_to_u8vec(sk: &PrivateEncKeyMlKem512) -> Result<Vec<u8>, JsE
 
 #[wasm_bindgen]
 pub fn u8vec_to_ml_kem_pke_pk(v: &[u8]) -> Result<PublicEncKeyMlKem512, JsError> {
-    let key = tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
+    tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
         std::io::Cursor::new(v),
         SAFE_SER_SIZE_LIMIT,
     )
-    .map_err(|e| JsError::new(&e.to_string()))?;
-    match key {
-        UnifiedPublicEncKey::MlKem512(key) => Ok(PublicEncKeyMlKem512(key)),
-        UnifiedPublicEncKey::MlKem1024(_) => Err(JsError::new(
-            "expected MlKem512 public encryption key but got MlKem1024",
-        )),
-    }
+    .map(|x| PublicEncKeyMlKem512(x.unwrap_ml_kem_512()))
+    .map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
@@ -597,13 +592,13 @@ pub fn process_user_decryption_resp(
             &eip712_domain,
             &agg_resp,
             &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),
-            &UnifiedPrivateDecKey::MlKem512(enc_sk.0.clone()),
+            &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
         )
     } else {
         client.insecure_process_user_decryption_resp(
             &agg_resp,
             &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),
-            &UnifiedPrivateDecKey::MlKem512(enc_sk.0.clone()),
+            &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
         )
     };
     match user_decrypt_resp {

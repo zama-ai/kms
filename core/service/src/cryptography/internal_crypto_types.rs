@@ -90,6 +90,16 @@ impl From<&UnifiedPublicEncKey> for EncryptionSchemeType {
     }
 }
 
+impl UnifiedPublicEncKey {
+    /// Expect the inner type to be the default MlKem512 and return it, otherwise panic
+    pub fn unwrap_ml_kem_512(self) -> PublicEncKey<ml_kem::MlKem512> {
+        match self {
+            UnifiedPublicEncKey::MlKem512(pk) => pk,
+            _ => panic!("Expected MlKem512 public encryption key"),
+        }
+    }
+}
+
 // Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server
 // uses to encrypt its payload
 // TODO: the only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys
