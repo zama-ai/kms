@@ -5,8 +5,8 @@
 KMS keys must be generated before the KMS server can be started. To generate them you can do the following for the centralized or threshold version respectively:
 
 ```bash
-cargo run --bin kms-gen-keys -F testing -- centralized
-cargo run --bin kms-gen-keys -F testing -- threshold
+cargo run --bin kms-gen-keys -F testing -F threshold-fhe/testing -- centralized
+cargo run --bin kms-gen-keys -F testing -F threshold-fhe/testing -- threshold
 ```
 
 ## Threshold KMS TLS Certificates

@@ -967,15 +967,6 @@ impl PartialEq for FhePubKeySet {
     }
 }
 
-impl std::fmt::Debug for FhePubKeySet {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PubKeySet")
-            .field("public_key", &self.public_key)
-            .field("server_key", &"ommitted")
-            .finish()
-    }
-}
-
 pub fn run_decompression_test(
     keyset1_client_key: &tfhe::ClientKey,
     keyset2_client_key: &tfhe::ClientKey,
