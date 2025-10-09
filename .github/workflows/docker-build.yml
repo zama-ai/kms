@@ -207,7 +207,7 @@ jobs:
   # Launch performance testing without enclave
   ############################################################################
   performance-testing:
-    name: docker-build/performance-testing-without-enclave
+    name: docker-build/performance-testing
     needs:
       - start-amd64-runner
       - golden-image
@@ -239,7 +239,7 @@ jobs:
             -F "client_payload[kms_core_client_image_tag]=${KMS_CORE_CLIENT_IMAGE_TAG}"
 
   ############################################################################
-  # Launch performance testing with enclave
+  # Launch performance testing with enclave nightly
   ############################################################################
   performance-testing-with-enclave:
     name: docker-build/performance-testing-with-enclave
