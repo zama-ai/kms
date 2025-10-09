@@ -1,6 +1,7 @@
 name: docker-build
 
 on:
+  pull_request:
   release:
     types: [published]
   workflow_dispatch:
@@ -203,12 +204,12 @@ jobs:
   ############################################################################
   performance-testing:
     name: docker-build/performance-testing
-    needs:
-      - start-amd64-runner
-      - golden-image
-      - core-client
-      - core-service
-      - enclave
+    # needs:
+    #   - start-amd64-runner
+    #   - golden-image
+    #   - core-client
+    #   - core-service
+    #   - enclave
     runs-on: ubuntu-latest
     if: inputs.testing
     steps:
@@ -220,11 +221,14 @@ jobs:
             --method POST \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            /zama-ai/kms-testing/dispatches \
+            repos/zama-ai/kms-testing/dispatches \
             -f 'event_type=performance-testing' \
-            -F "client_payload[deployment_type]={{ inputs.deployment_type }}" \
-            -F "client_payload[kms_core_image_tag]={{ needs.golden-image.outputs.image_tag }}" \
-            -F "client_payload[kms_core_client_image_tag]={{ needs.core-client.outputs.image_tag }}"
+            -F "client_payload[deployment_type]=threshold" \
+            -F "client_payload[kms_core_image_tag]=v0.12.0" \
+            -F "client_payload[kms_core_client_image_tag]=v0.12.0"
+            # -F "client_payload[deployment_type]={{ inputs.deployment_type }}" \
+            # -F "client_payload[kms_core_image_tag]={{ needs.golden-image.outputs.image_tag }}" \
+            # -F "client_payload[kms_core_client_image_tag]={{ needs.core-client.outputs.image_tag }}"
 
   ############################################################################
   # Stop EC2 runner
