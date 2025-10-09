@@ -1,8 +1,10 @@
 name: docker-build
 
 on:
+  #=======================================================
   release:
     types: [published]
+  #=======================================================
   workflow_dispatch:
     inputs:
       testing:
@@ -20,7 +22,7 @@ on:
           - "thresholdWithEnclave"
           - "centralized"
           - "centralizedWithEnclave"
-
+  #=======================================================
   workflow_call:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
@@ -210,7 +212,6 @@ jobs:
       - core-service
       - enclave
     runs-on: ubuntu-latest
-    if: inputs.testing
     steps:
       - name: Launch performance testing
         env:
@@ -220,7 +221,7 @@ jobs:
             --method POST \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            /zama-ai/kms-testing/dispatches \
+            repos/zama-ai/kms-testing/dispatches \
             -f 'event_type=performance-testing' \
             -F "client_payload[deployment_type]={{ inputs.deployment_type }}" \
             -F "client_payload[kms_core_image_tag]={{ needs.golden-image.outputs.image_tag }}" \
