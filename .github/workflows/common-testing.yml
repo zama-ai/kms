@@ -183,7 +183,7 @@ jobs:
           toolchain: ${{ env.RUST_IMAGE_VERSION }}
           components: rustfmt, clippy, llvm-tools-preview, llvm-tools
           cache: false
-
+          
       - name: Install nextest and grcov
         run: |
           cargo install cargo-nextest --locked
@@ -212,6 +212,7 @@ jobs:
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           version: "26.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
 
       - name: Setup usage of private repo
         env:
@@ -399,86 +400,6 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./target/doc
           destination_dir: ${{ inputs.working-directory }}
-
-      # WASM handling
-      - name: Install
-        if: ${{ inputs.run-wasm }}
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - name: Build wasm with tests
-        if: ${{ inputs.run-wasm }}
-        env:
-          WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
-        run: wasm-pack build --target nodejs . --no-default-features "${WASM_TEST_FEATURE}"
-
-      - name: Install node
-        if: ${{ inputs.run-wasm }}
-        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
-        with:
-          node-version: 20
-
-      - name: Generate wasm test files
-        if: ${{ inputs.run-wasm }}
-        env:
-          WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
-        run: |
-          cargo test test_user_decryption_threshold_and_write_transcript "${WASM_TEST_FEATURE}" --lib
-          cargo test test_user_decryption_centralized_and_write_transcript "${WASM_TEST_FEATURE}" --lib
-
-      - name: Test wasm
-        if: ${{ inputs.run-wasm }}
-        run: node --test tests/js
-
-      # NPM package handling
-      - name: Set NPM version tag to latest
-        if: ${{ !github.event.release.prerelease }}
-        run: |
-          echo "NPM_TAG=latest" >> "${GITHUB_ENV}"
-
-      - name: Set NPM version tag to prerelease
-        if: ${{ github.event.release.prerelease }}
-        run: |
-          echo "NPM_TAG=prerelease" >> "${GITHUB_ENV}"
-
-      # Node package build and publish
-      - name: NPM build node package
-        if: ${{ inputs.npm-release }}
-        working-directory: ./core/service
-        run: |
-          rm -rf pkg
-          wasm-pack build --target nodejs . --no-default-features
-          sed -i 's/"kms"/"node-tkms"/g' pkg/package.json
-          echo "# node-tkms" > pkg/README.md
-
-      - name: NPM publish Node package
-        if: ${{ inputs.npm-release }}
-        uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
-        with:
-          token: ${{ secrets.NPM_TOKEN }}
-          package: ./core/service/pkg/package.json
-          dry-run: false
-          provenance: false # change to true when repo is public (see #1048)
-          tag: ${{ env.NPM_TAG }}
-
-      # Web package build and publish
-      - name: NPM build web package
-        if: ${{ inputs.npm-release }}
-        working-directory: ./core/service
-        run: |
-          rm -rf pkg
-          wasm-pack build --target web . --no-default-features
-          sed -i 's/"kms"/"tkms"/g' pkg/package.json
-          echo "# tkms" > pkg/README.md
-
-      - name: NPM publish web package
-        if: ${{ inputs.npm-release }}
-        uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
-        with:
-          token: ${{ secrets.NPM_TOKEN }}
-          package: ./core/service/pkg/package.json
-          dry-run: false
-          provenance: false # change to true when repo is public (see #1048)
-          tag: ${{ env.NPM_TAG }}
 
       - name: Remove aws credentials file
         run: |
