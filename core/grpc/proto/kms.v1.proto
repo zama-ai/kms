@@ -701,33 +701,61 @@ message HealthStatusResponse {
 message InitiateResharingRequest {
   // The request id of this resharing request (use to derive the session IDs and get the status)
   RequestId request_id = 1;
-  // The active KMS context, must be non-empty
-  RequestId current_context = 2;
-  // NOTE: For now the current and new context must be the same
-  // The new KMS context
-  RequestId new_context = 3;
+  // The active KMS context (default to DEFAULT_MPC_CONTEXT if empty)
+  RequestId context_id = 2;
   // The Key ID of the key to be reshared
-  RequestId key_id = 4;
+  RequestId key_id = 3;
   // The parameters of the key to be reshared, must match the parameters of the original key
-  FheParameter key_parameters = 5;
-
+  FheParameter key_parameters = 4;
+  // The EIP712 domain (same as for DKG).
+  Eip712DomainMsg domain = 5;
+  // The preprocessing ID that was used for DKG (needed for Metadata).
+  RequestId preproc_id = 6;
 }
 
 message InitiateResharingResponse {
   // The resharing operation ID
-  RequestId resharing_operation_id = 1;
+  RequestId request_id = 1;
 }
 
-message ResharingStatusRequest {
+message ResharingResultRequest {
   // The resharing operation ID
-  RequestId resharing_operation_id = 1;
+  RequestId request_id = 1;
 }
 
-message ResharingStatusResponse {
-  // The resharing operation ID
-  RequestId resharing_operation_id = 1;
-  // Whether the resharing operation has completed
-  bool completed = 2;
-  // The new context ID if the resharing has completed
-  RequestId new_context_id = 3;
+message ResharingResultResponse {
+  // The 32 Byte / 256 Bit ID of the resharing request, without `0x` prefix.
+  RequestId request_id = 1;
+
+  // Key ID of the reshared key
+  RequestId key_id = 2;
+  // Preprocessing ID used for keygen the resharing refers to
+  RequestId preprocessing_id = 3;
+
+  // Mapping of key type string to digest
+  // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5]).
+  // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
+  repeated KeyDigest key_digests = 4;
+
+  // EIP-712 signature on the key generation result.
+  // The structure signed has the following fields:
+  // struct KeygenVerification {
+  //     /// @notice The ID of the preprocessing keygen request.
+  //     uint256 prepKeygenId;
+  //     /// @notice The ID of the generated key.
+  //     uint256 keyId;
+  //     /// @notice The generated digests of keys.
+  //     KeyDigest[] keyDigests;
+  // }
+  // enum KeyType {
+  //     SERVER,
+  //     PUBLIC
+  // }
+  // struct KeyDigest {
+  //     /// @notice The type of the generated key.
+  //     KeyType keyType;
+  //     /// @notice The digest of the generated key.
+  //     bytes digest;
+  // }
+  bytes external_signature = 5;
 }

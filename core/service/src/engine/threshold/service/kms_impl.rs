@@ -560,6 +560,11 @@ where
         session_preparer_getter: session_preparer_getter.clone(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
+        // Provide reshare its own meta store, not tracked by the metastore status service
+        // as this is currently a temporary fix.
+        // Also not filled with existing keys as we will use the same key_id as the DKG one
+        // for reshared key (so the meta store has to be empty for that key id)
+        reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
     };
     // Update backup vault if it exists
     // This ensures that all files in the private storage are also in the backup vault
