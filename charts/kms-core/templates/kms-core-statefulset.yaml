@@ -512,14 +512,7 @@ spec:
           args:
             - -c
             - |
-            {{- if .Values.minio.enabled }}
-              mkdir -p ~/.aws/
-              echo '[default]' > ~/.aws/credentials
-              echo 'aws_access_key_id = ${AWS_ACCESS_KEY_ID}' >> ~/.aws/credentials
-              echo 'aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}' >> ~/.aws/credentials
-            {{- end }}
               env
-              cat ~/.aws/credentials
               kms-server --config-file=kms-server.toml
           {{- end }}
           env:
@@ -611,7 +604,7 @@ spec:
               value: {{ .Values.minio.username}}
             - name: AWS_SECRET_ACCESS_KEY
               value: {{ .Values.minio.password}}
-            - name: KMS_CORE__AWS__S3_ENDPOINT
+            - name: CORE_CLIENT__S3_ENDPOINT
               value: {{ .Values.minio.endpoint }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.privateVault.s3.bucket | quote }}
