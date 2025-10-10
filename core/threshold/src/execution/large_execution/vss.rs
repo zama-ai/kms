@@ -18,7 +18,7 @@ use crate::{
         communication::p2p::{generic_receive_from_all, send_to_parties},
         runtime::{party::Role, session::BaseSessionHandles},
     },
-    networking::value::{BroadcastValue, NetworkValue},
+    networking::value::{BroadcastValue, BroadcastValueInner, NetworkValue},
     ProtocolDescription,
 };
 
@@ -476,10 +476,7 @@ pub(crate) async fn round_2<
     }
 
     let bcast_data = broadcast
-        .broadcast_from_all_w_corrupt_set_update(
-            session,
-            BroadcastValue::Round2VSS(verification_vector),
-        )
+        .broadcast_from_all_w_corrupt_set_update(session, verification_vector.into())
         .await?;
 
     let mut casted_bcast_data: HashMap<Role, Option<Vec<VerificationValues<Z>>>> = bcast_data
@@ -516,7 +513,7 @@ fn verify_round_2_broadcast<Z: Ring>(
     num_parties: usize,
     batch_size: usize,
 ) -> Option<Vec<VerificationValues<Z>>> {
-    if let BroadcastValue::Round2VSS(value) = broadcast_value {
+    if let BroadcastValueInner::Round2VSS(value) = broadcast_value.inner {
         // We want to make sure that each party did sent verification values for
         // - condition_1 : all VSS
         // - condition_2 : for all VSS, for all parties, for the whole batch
@@ -587,7 +584,7 @@ pub(crate) async fn round_3<
     //(as it is the result of bcast in round 2)
     let bcast_settlements: HashMap<Role, BroadcastValue<Z>> = if !potentially_unhappy.is_empty() {
         broadcast
-            .broadcast_from_all_w_corrupt_set_update(session, BroadcastValue::Round3VSS(msg))
+            .broadcast_from_all_w_corrupt_set_update(session, msg.into())
             .await?
     } else {
         HashMap::<Role, BroadcastValue<Z>>::new()
@@ -667,7 +664,7 @@ pub(crate) async fn round_4<
 
     let bcast_data = if !unhappy_vec_is_empty {
         broadcast
-            .broadcast_from_all_w_corrupt_set_update(session, BroadcastValue::Round4VSS(msg))
+            .broadcast_from_all_w_corrupt_set_update(session, msg.into())
             .await?
     } else {
         HashMap::<Role, BroadcastValue<Z>>::new()
@@ -699,8 +696,8 @@ pub(crate) async fn round_4<
             //If sender is not considered corrupt but had to send my share in round 4, use this value
             let maybe_eval = bcast_data
                 .get(role_sender)
-                .and_then(|bcast| match bcast {
-                    BroadcastValue::Round4VSS(v) => Some(v),
+                .and_then(|bcast| match &bcast.inner {
+                    BroadcastValueInner::Round4VSS(v) => Some(v),
                     _ => None,
                 })
                 .and_then(|v| v.get(&(*role_sender, own_role)))
@@ -957,8 +954,8 @@ fn find_real_conflicts<Z: Ring>(
         let common_key = (*dealer_role, *role_pi, *role_pj);
         let sender_resolve = bcast_settlements
             .get(dealer_role)
-            .and_then(|bcd| match bcd {
-                BroadcastValue::Round3VSS(v) => Some(v),
+            .and_then(|bcd| match &bcd.inner {
+                BroadcastValueInner::Round3VSS(v) => Some(v),
                 _ => None,
             })
             .and_then(|v| v.get(&common_key))
@@ -970,8 +967,8 @@ fn find_real_conflicts<Z: Ring>(
 
         let pi_resolve = bcast_settlements
             .get(role_pi)
-            .and_then(|bcd| match bcd {
-                BroadcastValue::Round3VSS(v) => Some(v),
+            .and_then(|bcd| match &bcd.inner {
+                BroadcastValueInner::Round3VSS(v) => Some(v),
                 _ => None,
             })
             .and_then(|v| v.get(&common_key))
@@ -983,8 +980,8 @@ fn find_real_conflicts<Z: Ring>(
 
         let pj_resolve = bcast_settlements
             .get(role_pj)
-            .and_then(|bcd| match bcd {
-                BroadcastValue::Round3VSS(v) => Some(v),
+            .and_then(|bcd| match &bcd.inner {
+                BroadcastValueInner::Round3VSS(v) => Some(v),
                 _ => None,
             })
             .and_then(|v| v.get(&common_key))
@@ -1068,8 +1065,8 @@ fn round_4_fix_conflicts<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
                 } else {
                     let maybe_pair = bcast_data
                         .get(role_pj)
-                        .and_then(|bcd| match bcd {
-                            BroadcastValue::Round4VSS(v) => Some(v),
+                        .and_then(|bcd| match &bcd.inner {
+                            BroadcastValueInner::Round4VSS(v) => Some(v),
                             _ => None,
                         })
                         .and_then(|v| v.get(&(dealer_role, *role_pi)))
@@ -1105,8 +1102,8 @@ fn round_4_fix_conflicts<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
             //Retrieve sender's data from bcast related to Pi for this vss
             let maybe_poly = bcast_data
                 .get(&dealer_role)
-                .and_then(|bcd| match bcd {
-                    BroadcastValue::Round4VSS(v) => Some(v),
+                .and_then(|bcd| match &bcd.inner {
+                    BroadcastValueInner::Round4VSS(v) => Some(v),
                     _ => None,
                 })
                 .and_then(|v| v.get(&(dealer_role, *role_pi)))
