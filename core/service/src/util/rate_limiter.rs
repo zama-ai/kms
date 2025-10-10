@@ -176,6 +176,7 @@ mod tests {
             crsgen: 1,
             preproc: 1,
             keygen: 1,
+            reshare: 1,
         });
 
         // first pub_decryptryption is ok, but uses all tokens

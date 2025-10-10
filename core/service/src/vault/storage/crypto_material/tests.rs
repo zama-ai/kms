@@ -262,7 +262,7 @@ async fn write_threshold_empty_update() {
     )));
     // write to an empty meta store should fail
     crypto_storage
-        .write_threshold_keys_with_meta_store(
+        .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
@@ -280,7 +280,7 @@ async fn write_threshold_empty_update() {
         guard.insert(&req_id).unwrap();
     }
     crypto_storage
-        .write_threshold_keys_with_meta_store(
+        .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
@@ -310,7 +310,7 @@ async fn write_threshold_keys_meta_update() {
         guard.insert(&req_id).unwrap();
     }
     crypto_storage
-        .write_threshold_keys_with_meta_store(
+        .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
@@ -337,7 +337,7 @@ async fn write_threshold_keys_meta_update() {
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
     crypto_storage
-        .write_threshold_keys_with_meta_store(
+        .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
@@ -363,7 +363,7 @@ async fn write_threshold_keys_failed_storage() {
         guard.insert(&req_id).unwrap();
     }
     crypto_storage
-        .write_threshold_keys_with_meta_store(
+        .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
@@ -395,7 +395,7 @@ async fn write_threshold_keys_failed_storage() {
     }
     let new_req_id = derive_request_id("write_threshold_keys_failed_storage_2").unwrap();
     crypto_storage
-        .write_threshold_keys_with_meta_store(
+        .write_threshold_keys_with_dkg_meta_store(
             &new_req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
