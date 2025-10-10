@@ -1,9 +1,22 @@
 use kms_core_client::*;
 use std::path::Path;
+use std::path::PathBuf;
 use std::string::String;
 
+fn root_path() -> PathBuf {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    PathBuf::from(manifest_dir)
+        .parent()
+        .expect("Failed to get parent directory")
+        .to_path_buf()
+}
+
+fn config_path() -> String {
+    "core-client/config/client_local_threshold.toml".to_string()
+}
+
 async fn insecure_key_gen(test_path: &Path) -> String {
-    let path_to_config = Path::new("core-client/config/client_local_threshold.toml");
+    let path_to_config = root_path().join(config_path());
     let config = CmdConfig {
         file_conf: Some(String::from(path_to_config.to_str().unwrap())),
         command: CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
@@ -29,7 +42,7 @@ async fn insecure_key_gen(test_path: &Path) -> String {
 }
 
 async fn crs_gen(test_path: &Path) -> String {
-    let path_to_config = Path::new("core-client/config/client_local_threshold.toml");
+    let path_to_config = root_path().join(config_path());
     let command = CCCommand::CrsGen(CrsParameters { max_num_bits: 2048 });
     let config = CmdConfig {
         file_conf: Some(String::from(path_to_config.to_str().unwrap())),
