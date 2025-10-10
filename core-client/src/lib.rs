@@ -86,9 +86,12 @@ pub struct CoreClientConfig {
     // The mode of the KMS ("centralized" or "threshold"). Threshold by default.
     pub kms_type: KmsType,
     // List of configurations for the cores
+    #[validate(length(min = 1))]
     pub cores: Vec<CoreConf>,
     pub decryption_mode: Option<DecryptionMode>,
+    #[validate(range(min = 1))]
     pub num_majority: usize,
+    #[validate(range(min = 1))]
     pub num_reconstruct: usize,
     pub fhe_params: Option<FheParameter>,
 }
