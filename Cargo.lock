@@ -1729,15 +1729,11 @@ dependencies = [
 name = "backward-compatibility"
 version = "0.12.0"
 dependencies = [
- "aes-prng",
  "bincode 1.3.3",
- "cfg-if",
- "rand 0.8.5",
  "ron 0.10.1",
  "semver 1.0.26",
  "serde",
  "strum",
- "tokio",
 ]
 
 [[package]]

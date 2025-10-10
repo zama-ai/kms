@@ -11,15 +11,19 @@ members = [
     "tools/kms-health-check",
 ]
 
-# The backward-compatibility module is excluded from the workspace in order to avoid dependency
-# conflicts. This is related to the fact that it needs to import the different packages (kms,
-# threshold-fhe) to test with specific versions when generating the data. However, the
-# workspace already has these dependencies by nature, creating a name conflict like described in
+# The backward-compatibility modules are excluded from the workspace to avoid dependency conflicts.
+# 
+# backward-compatibility/            - Test loading/execution logic with current dependencies
+# backward-compatibility/generate-v0.11 - Data generation for v0.11.x with old KMS version dependencies
+#
+# The generate crates need to import old KMS versions (e.g., v0.11.1) which conflict with the
+# current workspace dependencies, creating name conflicts as described in:
 # https://github.com/rust-lang/cargo/issues/12891
-# Note that it's not possible to only generate the lock file using specific features as the resolver
+#
+# Note: It's not possible to only generate the lock file using specific features as the resolver
 # builds the graph as if all features are enabled:
 # https://doc.rust-lang.org/cargo/reference/resolver.html#features
-exclude = ["backward-compatibility"]
+exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11"]
 
 [workspace.package]
 authors = ["Zama"]
