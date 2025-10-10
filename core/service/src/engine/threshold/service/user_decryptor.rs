@@ -10,8 +10,8 @@ use anyhow::anyhow;
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{
-        self, Empty, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
-        UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
+        self, Empty, TypedCiphertext, TypedSigncryptedCiphertext, UserDecryptionRequest,
+        UserDecryptionResponse, UserDecryptionResponsePayload,
     },
     utils::tonic_result::BoxedStatus,
     IdentifierError, RequestId,
@@ -57,8 +57,7 @@ use crate::{
     consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
         error::CryptographyError,
-        internal_crypto_types::{Signcrypt, UnifiedSigncryptionKey},
-        signcryption::SigncryptionPayload,
+        internal_crypto_types::{SigncryptFHEPlaintext, UnifiedSigncryptionKey},
     },
     engine::{
         base::{
@@ -316,23 +315,20 @@ impl<
 
             let (partial_signcryption, packing_factor) = match pdec {
                 Ok((pdec_serialized, packing_factor, time)) => {
-                    // TODO add this to signcryption call
-                    let signcryption_msg = SigncryptionPayload {
-                        plaintext: TypedPlaintext::from_bytes(pdec_serialized, fhe_type),
-                        link: link.clone(),
-                    };
-
                     let rng = rng.clone();
                     let signcryption_key_clone = signcryption_key.clone();
+                    let link_clone = link.clone();
 
                     let enc_res = spawn_compute_bound(move || {
                         let mut rng = rng.lock().map_err(|_| {
                             CryptographyError::Other("Poisoned mutex guard".to_string())
                         })?;
-                        signcryption_key_clone.signcrypt(
+                        signcryption_key_clone.signcrypt_plaintext(
                             rng.deref_mut(),
                             &DSEP_USER_DECRYPTION,
-                            &bc2wrap::serialize(&signcryption_msg)?,
+                            &pdec_serialized,
+                            fhe_type,
+                            &link_clone,
                         )
                     })
                     .await??;

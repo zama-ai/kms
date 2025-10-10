@@ -816,9 +816,9 @@ mod test_user_decryption {
     use crate::{
         consts::SAFE_SER_SIZE_LIMIT,
         cryptography::{
-            hybrid_ml_kem,
+            hybrid_ml_kem::{self, HybridKemCt},
             internal_crypto_types::{
-                Cipher, Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
+                Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
             },
         },
         dummy_domain,
@@ -873,7 +873,8 @@ mod test_user_decryption {
             get_user_decryption_result_impl(&kms, tonic::Request::new(request_id.into()))
                 .await
                 .unwrap();
-        let signcrypted_msg: Cipher = bc2wrap::deserialize(
+        // LEGACY should have been using safe_deserialize
+        let signcrypted_msg: HybridKemCt = bc2wrap::deserialize(
             &response
                 .into_inner()
                 .payload
@@ -887,7 +888,7 @@ mod test_user_decryption {
             UnifiedPrivateEncKey::MlKem512(sk) => sk,
             _ => panic!("Expected UnifiedPrivateDecKey::MlKem512"),
         };
-        let res = hybrid_ml_kem::dec::<ml_kem::MlKem512>(signcrypted_msg.0, &decap_key.0).unwrap();
+        let res = hybrid_ml_kem::dec::<ml_kem::MlKem512>(signcrypted_msg, &decap_key.0).unwrap();
         assert_eq!(TestingPlaintext::from((res, tfhe::FheTypes::Bool)), msg);
     }
 

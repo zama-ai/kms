@@ -66,7 +66,6 @@ pub enum UnifiedPublicEncKeyVersioned {
     V0(UnifiedPublicEncKey),
 }
 
-// TODO ideally this should be a trait but this required quite a bit of refactoring
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedPublicEncKeyVersioned)]
 #[expect(clippy::large_enum_variant)]
@@ -119,7 +118,7 @@ impl LegacySerialization for UnifiedPublicEncKey {
                 .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
                 Ok(enc_key_buf)
             }
-            // TODO: The following bincode serialization is done to be backward compatible
+            // LEGACY: The following bincode serialization is done to be backward compatible
             // with the old serialization format, used in relayer-sdk v0.2.0-0 and older (tkms v0.11.0-rc20 and older).
             // It should be replaced with safe serialization (as above) in the future.
             UnifiedPublicEncKey::MlKem1024(user_pk) => {
@@ -408,7 +407,6 @@ impl<C: KemCore> tfhe_versionable::Unversionize for PrivateEncKey<C> {
     }
 }
 
-// TODO why is this manual and not derived?
 impl<C: KemCore> Serialize for PrivateEncKey<C> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -488,7 +486,7 @@ pub enum EncryptionSchemeTypeVersioned {
     V0(EncryptionSchemeType),
 }
 
-// TODO separate into signature and encryption files
+// TODO(#2782) separate into signature and encryption files
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, Versionize)]
 #[versionize(EncryptionSchemeTypeVersioned)]
 pub enum EncryptionSchemeType {
@@ -507,7 +505,7 @@ impl<T: CryptoRng + RngCore + Send + Sync> CryptoRand for T {}
 
 pub struct Encryption<'a> {
     scheme_type: EncryptionSchemeType,
-    rng: &'a mut dyn CryptoRand, //Box<dyn CryptoRand + Send + Sync>,
+    rng: &'a mut dyn CryptoRand,
 }
 
 impl<'a> Encryption<'a> {
@@ -622,13 +620,13 @@ impl PublicSigKey {
 }
 impl From<PublicSigKey> for SigningSchemeType {
     fn from(_value: PublicSigKey) -> Self {
-        // TODO only scheme for now
+        // Only scheme for now
         SigningSchemeType::Ecdsa256k1
     }
 }
 impl From<&PublicSigKey> for SigningSchemeType {
     fn from(_value: &PublicSigKey) -> Self {
-        // TODO only scheme for now
+        // Only scheme for now
         SigningSchemeType::Ecdsa256k1
     }
 }
@@ -703,7 +701,7 @@ impl Visitor<'_> for PublicSigKeyVisitor {
 pub enum PrivateSigKeyVersioned {
     V0(PrivateSigKey),
 }
-// TODO should eventually be replaced or consolidated with the UnifiedPriavateSignKey
+// TODO(#2781) should eventually be replaced or consolidated with the UnifiedPrivateSigningKey
 // Struct wrapping signature signing key used by both the client and server to authenticate their
 // messages to one another
 #[wasm_bindgen]
@@ -724,7 +722,7 @@ impl PrivateSigKey {
         }
     }
 
-    /// TODO DEPRECATED: code should be refactored to not use this outside on this class
+    /// TODO(#2781) DEPRECATED: code should be refactored to not use this outside on this class
     pub fn sk(&self) -> &k256::ecdsa::SigningKey {
         &self.sk.0
     }
@@ -805,20 +803,16 @@ impl Visitor<'_> for PrivateSigKeyVisitor {
         }
     }
 }
-// TODO shoudl be versionized in a struct as legacy XXXX
 // Type used for the signcrypted payload returned by a server
-#[derive(Clone, Serialize, Deserialize, Debug)]
-pub struct Cipher(pub hybrid_ml_kem::HybridKemCt);
-
 #[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
 pub enum UnifiedCipherVersioned {
     V0(UnifiedCipher),
 }
 
-// TODO separate into signature and encryption files
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedCipherVersioned)]
 pub struct UnifiedCipher {
+    // The safe_serialization of the ciphertext specified by the encryption_type
     pub cipher: Vec<u8>,
     pub encryption_type: EncryptionSchemeType,
 }
@@ -833,7 +827,7 @@ impl UnifiedCipher {
 }
 
 pub trait Signcrypt {
-    // TODO should be generalized to the following
+    // TODO(#2782) should be generalized to the following
     // fn signcrypt<T: Serialize + tfhe::Versionize + tfhe::named::Named>(
     //     &self,
     //     rng: &mut (impl CryptoRng + RngCore),
@@ -841,7 +835,6 @@ pub trait Signcrypt {
     //     msg: &T,
     // ) -> Result<UnifiedSigncryption, CryptographyError> {
     fn signcrypt<T: Serialize + AsRef<[u8]>>(
-        // TOTO should probablly be typedPlaintext for now
         &self,
         rng: &mut (impl CryptoRng + RngCore),
         dsep: &DomainSep,
@@ -850,7 +843,7 @@ pub trait Signcrypt {
 }
 
 pub trait Designcrypt {
-    // TODO should eventually look like this
+    // TODO(#2782) should eventually look like this
     // fn designcrypt<T: Serialize + tfhe::Versionize + tfhe::named::Named>(
     //     &self,
     //     signcryption: &UnifiedSigncryption,
@@ -951,7 +944,6 @@ pub enum UnifiedDesigncryptionKeyVersioned {
     V0(UnifiedDesigncryptionKey),
 }
 
-// TODO make ref type
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
 #[versionize(UnifiedDesigncryptionKeyVersioned)]
 pub struct UnifiedDesigncryptionKey {
@@ -1005,9 +997,8 @@ impl UnifiedSigncryptionKeyPairOwned {
         }
     }
 }
-// TODO add new methods and ensure that private keys always have public keys as well
 
-//TODO should also be versionized
+//TODO(#2781) should also be versionized
 /// Wrapper struct for a digital signature
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Signature {
@@ -1054,8 +1045,7 @@ impl Visitor<'_> for SignatureVisitor {
 
 /// This is a wrapper around [DKGParams] so that we can
 /// implement [From<FheParameter>]. It has a [std::ops::Deref] implementation
-/// which can be usefor for converting from [FheParameter] to [DKGParams]
-// TODO versionize
+/// which can be used for for converting from [FheParameter] to [DKGParams]
 pub(crate) struct WrappedDKGParams(DKGParams);
 impl From<FheParameter> for WrappedDKGParams {
     fn from(value: FheParameter) -> WrappedDKGParams {
@@ -1072,17 +1062,18 @@ impl std::ops::Deref for WrappedDKGParams {
         &self.0
     }
 }
-// todo implement legacy serialization instad of hash_to_bytes, do it as trait
 
 #[cfg(test)]
 mod tests {
     use crate::cryptography::{
-        hybrid_ml_kem,
+        hybrid_ml_kem::{self, HybridKemCt},
         internal_crypto_types::{
             Encryption, EncryptionScheme, EncryptionSchemeType, PrivateEncKey, PublicEncKey,
         },
     };
     use rand::rngs::OsRng;
+    use serde::{Deserialize, Serialize};
+    use tokio_rustls::rustls::crypto::cipher::NONCE_LEN;
 
     #[test]
     fn test_pke_serialize_size() {
@@ -1104,5 +1095,28 @@ mod tests {
         let ct = hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(&mut rng, msg, &pk2.0).unwrap();
         let pt = hybrid_ml_kem::dec::<ml_kem::MlKem512>(ct, &sk2.0).unwrap();
         assert_eq!(msg.to_vec(), pt);
+    }
+
+    // Test is purely here as a reference and sanity check.
+    // That it passes comes directly from the way serde works
+    #[test]
+    fn validate_consistent_cipher_encoding() {
+        #[derive(Clone, Serialize, Deserialize, Debug)]
+        struct Cipher(pub hybrid_ml_kem::HybridKemCt);
+
+        let ct = hybrid_ml_kem::HybridKemCt {
+            nonce: [0_u8; NONCE_LEN],
+            kem_ct: vec![1u8; 100],
+            payload_ct: vec![2u8; 200],
+        };
+
+        let plain_encoding = bc2wrap::serialize(&Cipher(ct.clone())).unwrap();
+        let wrapped_encoding = bc2wrap::serialize(&Cipher(ct.clone())).unwrap();
+        assert_eq!(plain_encoding, wrapped_encoding);
+        let decoded_wrapping = bc2wrap::deserialize::<Cipher>(&plain_encoding).unwrap();
+        let decoded_unwrapped = bc2wrap::deserialize::<HybridKemCt>(&wrapped_encoding).unwrap();
+        assert_eq!(decoded_wrapping.0.nonce, decoded_unwrapped.nonce);
+        assert_eq!(decoded_wrapping.0.kem_ct, decoded_unwrapped.kem_ct);
+        assert_eq!(decoded_wrapping.0.payload_ct, decoded_unwrapped.payload_ct);
     }
 }

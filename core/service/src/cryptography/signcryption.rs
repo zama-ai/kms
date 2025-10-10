@@ -10,9 +10,9 @@
 //!
 //! For encryption a hybrid encryption scheme is used based on ML-KEM and AES GCM.
 
-use super::internal_crypto_types::{Cipher, PrivateSigKey, PublicSigKey, Signature};
+use super::internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature};
 use crate::cryptography::error::CryptographyError;
-use crate::cryptography::hybrid_ml_kem;
+use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
 #[cfg(test)]
 use crate::cryptography::internal_crypto_types::{CryptoRand, UnifiedSigncryptionKeyPairOwned};
 use crate::cryptography::internal_crypto_types::{
@@ -26,16 +26,22 @@ use kms_grpc::kms::v1::TypedPlaintext;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use tfhe::FheTypes;
+use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_fhe::hashing::{serialize_hash_element, DomainSep, DIGEST_BYTES};
 
 const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";
 
+#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug, VersionsDispatch)]
+pub enum SigncryptionPayloadVersioned {
+    V0(SigncryptionPayload),
+}
+
 /// Representation of the data stored in a signcryption,
 /// needed to facilitate FHE decryption and request linking.
 /// The result is linked to some byte array.
-/// LEGACY CODE! Do not use in new code!
-/// TODO should be versioned while supporting this old legacy format see issue XXX
-#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug)]
+
+#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug, Versionize)]
+#[versionize(SigncryptionPayloadVersioned)]
 pub struct SigncryptionPayload {
     pub plaintext: TypedPlaintext,
     pub link: Vec<u8>,
@@ -63,7 +69,7 @@ where
 /// Compute the signature on message based on the server's signing key for a given EIP712 domain.
 ///
 /// Returns the [Signature]. Concretely r || s.
-/// TODO method is dead code
+/// TODO(#2781) method is dead code, consolidate with the other code that implements eip712 signing
 pub fn sign_eip712<T: alloy_sol_types::SolStruct>(
     msg: &T,
     domain: &alloy_sol_types::Eip712Domain,
@@ -161,7 +167,7 @@ impl Signcrypt for UnifiedSigncryptionKey {
         }?;
         // LEGACY: approach to serialization
         let res = UnifiedSigncryption {
-            payload: bc2wrap::serialize(&Cipher(ciphertext))
+            payload: bc2wrap::serialize(&ciphertext)
                 .map_err(|e| CryptographyError::BincodeError(e.to_string()))?,
             encryption_type: (&self.receiver_enc_key).into(),
             signing_type: (&self.signing_key).into(),
@@ -183,6 +189,7 @@ impl SigncryptFHEPlaintext for UnifiedSigncryptionKey {
             plaintext: TypedPlaintext::from_bytes(plaintext.to_owned(), fhe_type),
             link: link.to_owned(),
         };
+        // LEGACY Code: should be using safe_serialization
         self.signcrypt(rng, dsep, &bc2wrap::serialize(&signcryption_msg)?)
     }
 }
@@ -196,20 +203,20 @@ impl Designcrypt for UnifiedDesigncryptionKey {
         dsep: &DomainSep,
         cipher: &UnifiedSigncryption,
     ) -> Result<Vec<u8>, CryptographyError> {
-        // TODO this should be versioned. Current way is only to handle legacy approach
         if cipher.encryption_type != (&self.encryption_key).into() {
             return Err(CryptographyError::VerificationError(
                 "encryption type of cipher does not match the decryption key type".to_string(),
             ));
         }
-        let deserialized_payload: Cipher = bc2wrap::deserialize(&cipher.payload)
+        // LEGACY Code: should be using safe_deserialization
+        let deserialized_payload: HybridKemCt = bc2wrap::deserialize(&cipher.payload)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
         let decrypted_plaintext = match &self.decryption_key {
             UnifiedPrivateEncKey::MlKem512(dec_key) => {
-                hybrid_ml_kem::dec::<ml_kem::MlKem512>(deserialized_payload.0, &dec_key.0)
+                hybrid_ml_kem::dec::<ml_kem::MlKem512>(deserialized_payload, &dec_key.0)
             }
             UnifiedPrivateEncKey::MlKem1024(dec_key) => {
-                hybrid_ml_kem::dec::<ml_kem::MlKem1024>(deserialized_payload.0, &dec_key.0)
+                hybrid_ml_kem::dec::<ml_kem::MlKem1024>(deserialized_payload, &dec_key.0)
             }
         }?;
         let (msg, sig) = parse_msg(decrypted_plaintext, &self.sender_verf_key)?;
@@ -217,7 +224,7 @@ impl Designcrypt for UnifiedDesigncryptionKey {
         Ok(msg)
     }
 }
-// continue here and then fix bug in ci and todo! above
+
 impl DesigncryptFHEPlaintext for UnifiedDesigncryptionKey {
     fn designcrypt_plaintext(
         &self,
@@ -231,7 +238,7 @@ impl DesigncryptFHEPlaintext for UnifiedDesigncryptionKey {
             signing_type: (&self.sender_verf_key).into(),
         };
         let decrypted_signcryption = self.designcrypt(dsep, &parsed_signcryption)?;
-
+        // LEGACY should be using safe_deserialization
         let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize(&decrypted_signcryption)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
         if link != signcrypted_msg.link {
@@ -265,7 +272,7 @@ fn parse_msg(
     let sig_bytes = &decrypted_plaintext[msg_len..(msg_len + SIG_SIZE)];
     let server_ver_key_digest =
         &decrypted_plaintext[(msg_len + SIG_SIZE)..(msg_len + SIG_SIZE + DIGEST_BYTES)];
-    // TODO this should just be based on key id. Again legacy code that could be done more proper by using the notion of an id!
+    // LEGACY: this should just be based on key id. Again legacy code that could be done more proper by using the notion of an id!
     // Verify verification key digest
     if serialize_hash_element(&DSEP_SIGNCRYPTION, server_verf_key)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?
@@ -339,21 +346,22 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     cipher: &[u8],
     client_keys: &UnifiedSigncryptionKeyPair,
 ) -> Result<TypedPlaintext, CryptographyError> {
-    let cipher: Cipher =
+    // LEGACY should be using safe_deserialization
+    let cipher: HybridKemCt =
         bc2wrap::deserialize(cipher).map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
     let decrypted_plaintext = match &client_keys.designcryption_key.decryption_key {
         UnifiedPrivateEncKey::MlKem512(client_keys) => {
-            hybrid_ml_kem::dec::<ml_kem::MlKem512>(cipher.0.clone(), &client_keys.0)?
+            hybrid_ml_kem::dec::<ml_kem::MlKem512>(cipher.clone(), &client_keys.0)?
         }
         UnifiedPrivateEncKey::MlKem1024(client_keys) => {
-            hybrid_ml_kem::dec::<ml_kem::MlKem1024>(cipher.0.clone(), &client_keys.0)?
+            hybrid_ml_kem::dec::<ml_kem::MlKem1024>(cipher.clone(), &client_keys.0)?
         }
     };
 
     // strip off the signature bytes (these are ignored here)
     let msg_len = decrypted_plaintext.len() - DIGEST_BYTES - SIG_SIZE;
     let msg = &decrypted_plaintext[..msg_len];
-
+    // LEGACY should be using safe_deserialization
     let signcrypted_msg: SigncryptionPayload =
         bc2wrap::deserialize(msg).map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
 

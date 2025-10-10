@@ -7,10 +7,11 @@ use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::decompression;
 #[cfg(feature = "non-wasm")]
+use crate::cryptography::internal_crypto_types::SigncryptFHEPlaintext;
+#[cfg(feature = "non-wasm")]
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::cryptography::internal_crypto_types::UnifiedSigncryptionKey;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
-use crate::cryptography::internal_crypto_types::{Signcrypt, UnifiedSigncryptionKey};
-use crate::cryptography::signcryption::SigncryptionPayload;
 #[cfg(feature = "non-wasm")]
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
@@ -908,15 +909,17 @@ impl<
             client_enc_key.clone(),
             client_id.to_vec(),
         );
-        let plaintext = Self::public_decrypt(keys, ct, fhe_type, ct_format)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
-        let signcryption_msg = SigncryptionPayload {
-            plaintext,
-            link: link.to_vec(),
-        };
-        let serialized_msg = bc2wrap::serialize(&signcryption_msg)?;
-        let enc_res = signcryption_key.signcrypt(rng, &DSEP_USER_DECRYPTION, &serialized_msg)?;
+        let plaintext = Self::public_decrypt(keys, ct, fhe_type, ct_format)?;
+        let enc_res = signcryption_key.signcrypt_plaintext(
+            rng,
+            &DSEP_USER_DECRYPTION,
+            &plaintext.bytes,
+            fhe_type,
+            link,
+        )?;
+
         tracing::info!("Completed user decryption of ciphertext");
 
         // TODO for legacy reasons we return the inner payload
