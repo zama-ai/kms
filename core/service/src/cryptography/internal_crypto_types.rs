@@ -1,6 +1,7 @@
 use crate::consts::{DEFAULT_PARAM, SAFE_SER_SIZE_LIMIT, SIG_SIZE, TEST_PARAM};
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
+use crate::cryptography::signcryption::SigncryptionPayload;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use kms_grpc::kms::v1::FheParameter;
 use ml_kem::{EncodedSizeUser, KemCore, MlKem1024, MlKem512};
@@ -49,6 +50,17 @@ macro_rules! impl_generic_versionize {
     };
 }
 
+/// Trait to help handling difficult cases of legacy serialization and deserialization
+/// where versioning was not originally in play on the underlying type.
+pub trait LegacySerialization {
+    /// Serializes data of old types using bincode, and data of new types using safe serialization
+    /// Be careful if you start using old types with safe serialization as this will break compatibility
+    fn to_legacy_bytes(&self) -> Result<Vec<u8>, CryptographyError>;
+    fn from_legacy_bytes(bytes: &[u8]) -> Result<Self, CryptographyError>
+    where
+        Self: Sized;
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
 pub enum UnifiedPublicEncKeyVersioned {
     V0(UnifiedPublicEncKey),
@@ -60,6 +72,9 @@ pub enum UnifiedPublicEncKeyVersioned {
 #[expect(clippy::large_enum_variant)]
 pub enum UnifiedPublicEncKey {
     MlKem512(PublicEncKey<ml_kem::MlKem512>),
+    // LEGACY: Note that this should ONLY be used for legacy reasons, new code should use MlKem512.
+    // If used in current code, then take care to NOT use to_legacy_bytes or from_legacy_bytes on this variant
+    // as this will do bincode serialization instead of safe serialization
     MlKem1024(PublicEncKey<ml_kem::MlKem1024>),
 }
 
@@ -86,6 +101,50 @@ impl From<&UnifiedPublicEncKey> for EncryptionSchemeType {
         match value {
             UnifiedPublicEncKey::MlKem512(_) => EncryptionSchemeType::MlKem512,
             UnifiedPublicEncKey::MlKem1024(_) => EncryptionSchemeType::MlKem1024,
+        }
+    }
+}
+
+// LEGACY: Remove once it is no longer needed
+impl LegacySerialization for UnifiedPublicEncKey {
+    fn to_legacy_bytes(&self) -> Result<Vec<u8>, CryptographyError> {
+        match self {
+            UnifiedPublicEncKey::MlKem512(user_pk) => {
+                let mut enc_key_buf = Vec::new();
+                tfhe::safe_serialization::safe_serialize(
+                    &UnifiedPublicEncKey::MlKem512(user_pk.clone()),
+                    &mut enc_key_buf,
+                    SAFE_SER_SIZE_LIMIT,
+                )
+                .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
+                Ok(enc_key_buf)
+            }
+            // TODO: The following bincode serialization is done to be backward compatible
+            // with the old serialization format, used in relayer-sdk v0.2.0-0 and older (tkms v0.11.0-rc20 and older).
+            // It should be replaced with safe serialization (as above) in the future.
+            UnifiedPublicEncKey::MlKem1024(user_pk) => {
+                bc2wrap::serialize(user_pk).map_err(CryptographyError::BincodeEncodeError)
+            }
+        }
+    }
+
+    fn from_legacy_bytes(bytes: &[u8]) -> Result<Self, CryptographyError> {
+        // LEGACY CODE: we used to only support ML-KEM1024 encoded with bincode
+        // NOTE: we need to do some backward compatibility support here so
+        // first try to deserialize it using the old format (ML-KEM1024 encoded with bincode)
+
+        match bc2wrap::deserialize::<PublicEncKey<ml_kem::MlKem1024>>(bytes) {
+            Ok(inner) => {
+                // we got an old MlKem1024 public key, wrap it in the enum
+                tracing::warn!("🔒 Using MlKem1024 public encryption key");
+                Ok(UnifiedPublicEncKey::MlKem1024(inner))
+            }
+            // in case the old deserialization fails, try the new format
+            Err(_) => tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
+                std::io::Cursor::new(&bytes),
+                crate::consts::SAFE_SER_SIZE_LIMIT,
+            )
+            .map_err(|e| CryptographyError::DeserializationError(e.to_string())),
         }
     }
 }
@@ -434,6 +493,7 @@ pub enum EncryptionSchemeTypeVersioned {
 #[versionize(EncryptionSchemeTypeVersioned)]
 pub enum EncryptionSchemeType {
     MlKem512,
+    #[deprecated]
     MlKem1024,
 }
 
@@ -795,6 +855,10 @@ pub trait Designcrypt {
     //     &self,
     //     signcryption: &UnifiedSigncryption,
     // ) -> Result<T, CryptographyError>;
+    /// Decrypt a signcrypted message and verify the signature.
+    ///
+    /// This fn also checks that the provided link parameter corresponds to the link in the signcryption
+    /// payload.
     fn designcrypt(
         &self,
         dsep: &DomainSep,
@@ -807,9 +871,9 @@ pub trait SigncryptFHEPlaintext: Signcrypt {
         &self,
         rng: &mut (impl CryptoRng + RngCore),
         dsep: &DomainSep,
-        plaintext: Vec<u8>,
+        plaintext: &[u8],
         fhe_type: FheTypes,
-        link: Vec<u8>,
+        link: &[u8],
     ) -> Result<UnifiedSigncryption, CryptographyError>;
 }
 
@@ -817,9 +881,9 @@ pub trait DesigncryptFHEPlaintext: Designcrypt {
     fn designcrypt_plaintext(
         &self,
         dsep: &DomainSep,
-        signcryption: &UnifiedSigncryption,
-        link: Vec<u8>,
-    ) -> Result<Vec<u8>, CryptographyError>;
+        signcryption: &[u8],
+        link: &[u8],
+    ) -> Result<SigncryptionPayload, CryptographyError>;
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
@@ -894,7 +958,8 @@ pub struct UnifiedDesigncryptionKey {
     pub decryption_key: UnifiedPrivateEncKey,
     pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
     pub sender_verf_key: PublicSigKey,
-    pub receiver_id: Vec<u8>, // Identifier for the receiver's encryption key, e.g. blockchain address
+    /// The ID of the receiver of the signcryption, e.g. blockchain address
+    pub receiver_id: Vec<u8>,
 }
 
 impl UnifiedDesigncryptionKey {

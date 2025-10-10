@@ -7,7 +7,7 @@ use tfhe::{named::Named, Versionize};
 use tfhe_versionable::VersionsDispatch;
 
 use crate::{
-    cryptography::internal_crypto_types::{PublicSigKey, UnifiedPublicEncKey},
+    cryptography::internal_crypto_types::{LegacySerialization, PublicSigKey, UnifiedPublicEncKey},
     engine::validation::{
         parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
     },
@@ -99,7 +99,7 @@ impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
             name: value.name,
             party_id: value.party_id.try_into()?,
             verification_key: bc2wrap::deserialize(&value.verification_key)?,
-            backup_encryption_public_key: bc2wrap::deserialize(
+            backup_encryption_public_key: UnifiedPublicEncKey::from_legacy_bytes(
                 &value.backup_encryption_public_key,
             )?,
             external_url: value.external_url,

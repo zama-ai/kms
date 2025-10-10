@@ -1,8 +1,8 @@
 use crate::client::client_wasm::Client;
-use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::internal_crypto_types::Encryption;
 use crate::cryptography::internal_crypto_types::EncryptionScheme;
 use crate::cryptography::internal_crypto_types::EncryptionSchemeType;
+use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::internal_crypto_types::UnifiedPrivateEncKey;
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
 use crate::{anyhow_error_and_log, some_or_err};
@@ -29,6 +29,7 @@ impl Client {
         typed_ciphertexts: Vec<TypedCiphertext>,
         request_id: &RequestId,
         key_id: &RequestId,
+        encryption_scheme: EncryptionSchemeType,
     ) -> anyhow::Result<(
         UserDecryptionRequest,
         UnifiedPublicEncKey,
@@ -47,71 +48,15 @@ impl Client {
         let domain_msg = alloy_to_protobuf_domain(domain)?;
 
         // NOTE: we only support MlKem512 in the latest version
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut self.rng);
-        let (enc_sk, enc_pk) = encryption.keygen()?;
-
-        let mut enc_key_buf = Vec::new();
-        // The key is freshly generated, so we can safely unwrap the serialization
-        tfhe::safe_serialization::safe_serialize(&enc_pk, &mut enc_key_buf, SAFE_SER_SIZE_LIMIT)
-            .expect("Failed to serialize ephemeral encryption key");
-
-        Ok((
-            UserDecryptionRequest {
-                request_id: Some((*request_id).into()),
-                enc_key: enc_key_buf,
-                client_address: self.client_address.to_checksum(None),
-                typed_ciphertexts,
-                key_id: Some((*key_id).into()),
-                domain: Some(domain_msg),
-                extra_data: vec![],
-                context_id: None,
-                epoch_id: None,
-            },
-            enc_pk,
-            enc_sk,
-        ))
-    }
-
-    /// This is the legacy version of the user decryption request
-    /// where the encryption key is MlKem1024 serialized using bincode2.
-    /// The normal version [Self::user_decryption_request] uses MlKem512 uses safe serialization.
-    #[cfg(test)]
-    pub(crate) fn user_decryption_request_legacy(
-        &mut self,
-        domain: &Eip712Domain,
-        typed_ciphertexts: Vec<TypedCiphertext>,
-        request_id: &RequestId,
-        key_id: &RequestId,
-    ) -> anyhow::Result<(
-        UserDecryptionRequest,
-        UnifiedPublicEncKey,
-        UnifiedPrivateEncKey,
-    )> {
-        if !request_id.is_valid() {
-            return Err(anyhow_error_and_log(format!(
-                "The request id format is not valid {request_id}"
-            )));
-        }
-        let _client_sk = some_or_err(
-            self.client_sk.clone(),
-            "missing client signing key".to_string(),
-        )?;
-
-        let domain_msg = alloy_to_protobuf_domain(domain)?;
-
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem1024, &mut self.rng);
+        let mut encryption = Encryption::new(encryption_scheme, &mut self.rng);
         let (enc_sk, enc_pk) = encryption.keygen()?;
 
         Ok((
             UserDecryptionRequest {
                 request_id: Some((*request_id).into()),
-                // The key is freshly generated, so we can safely unwrap the serialization
-                // NOTE: in the legacy version we do not serialize the unified version
-                enc_key: bc2wrap::serialize(match &enc_pk {
-                    UnifiedPublicEncKey::MlKem1024(pk) => pk,
-                    _ => panic!("Expected UnifiedPublicEncKey::MlKem1024"),
-                })
-                .expect("Failed to serialize ephemeral encryption key"),
+                enc_key: enc_pk
+                    .to_legacy_bytes()
+                    .expect("Failed to serialize ephemeral encryption key"),
                 client_address: self.client_address.to_checksum(None),
                 typed_ciphertexts,
                 key_id: Some((*key_id).into()),

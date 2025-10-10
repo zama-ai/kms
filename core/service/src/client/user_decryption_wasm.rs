@@ -1,12 +1,10 @@
 use crate::client::client_wasm::Client;
 use crate::cryptography::internal_crypto_types::{
-    PublicSigKey, UnifiedDesigncryptionKey, UnifiedPrivateEncKey, UnifiedSigncryptionKey,
-    UnifiedSigncryptionKeyPair, UnifiedSigncryptionKeyPairOwned,
+    DesigncryptFHEPlaintext, PublicSigKey, UnifiedDesigncryptionKey, UnifiedPrivateEncKey,
+    UnifiedSigncryptionKey, UnifiedSigncryptionKeyPair, UnifiedSigncryptionKeyPairOwned,
 };
 use crate::cryptography::internal_crypto_types::{Signature, UnifiedPublicEncKey};
-use crate::cryptography::signcryption::{
-    decrypt_signcryption_with_link, insecure_decrypt_ignoring_signature, internal_verify_sig,
-};
+use crate::cryptography::signcryption::{insecure_decrypt_ignoring_signature, internal_verify_sig};
 use crate::engine::validation::{
     check_ext_user_decryption_signature, validate_user_decrypt_responses_against_request,
     DSEP_USER_DECRYPTION,
@@ -206,16 +204,15 @@ impl Client {
             cur_verf_key,
             self.client_address.to_vec(),
         );
+
         payload
             .signcrypted_ciphertexts
             .into_iter()
             .map(|ct| {
-                decrypt_signcryption_with_link(
-                    &DSEP_USER_DECRYPTION,
-                    &ct.signcrypted_ciphertext,
-                    &link,
-                    &design_key,
-                )
+                design_key
+                    .designcrypt_plaintext(&DSEP_USER_DECRYPTION, &ct.signcrypted_ciphertext, &link)
+                    .map(|res| res.plaintext)
+                    .map_err(|e| anyhow::anyhow!("designcrypt_plaintext failed: {}", e))
             })
             .collect()
     }
@@ -682,22 +679,21 @@ impl Client {
                 //
                 // Also it's ok to use [cur_resp.digest] as the link since we already checked
                 // that it matches with the original request
-                let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&cur_resp.verification_key)?;
+                let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&cur_resp.verification_key)?; // TODO
                 let design_key = UnifiedDesigncryptionKey::new(
                     dec_key.to_owned(),
                     enc_key.to_owned(),
                     cur_verf_key,
                     self.client_address.to_vec(),
                 );
-                match decrypt_signcryption_with_link(
+                match design_key.designcrypt_plaintext(
                     &DSEP_USER_DECRYPTION,
                     &cur_resp.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
                     &cur_resp.digest,
-                    &design_key,
                 ) {
                     Ok(decryption_share) => {
                         let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =
-                            bc2wrap::deserialize(&decryption_share.bytes)?;
+                            bc2wrap::deserialize(&decryption_share.plaintext.bytes)?;
                         let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
                         for cur_block_share in cipher_blocks_share {
                             cur_blocks.push(cur_block_share);

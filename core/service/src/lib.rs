@@ -1,3 +1,4 @@
+use crate::cryptography::internal_crypto_types::{LegacySerialization, UnifiedPublicEncKey};
 use alloy_dyn_abi::Eip712Domain;
 use alloy_primitives::B256;
 use anyhow::anyhow;
@@ -26,7 +27,10 @@ pub mod cryptography {
     pub mod decompression;
     pub mod error;
     pub mod hybrid_ml_kem;
+    // Allow our deprecated modules for now as we need to be backwards compatible
+    #[allow(deprecated)]
     pub mod internal_crypto_types;
+    #[allow(deprecated)]
     pub mod signcryption;
 }
 #[cfg(feature = "non-wasm")]
@@ -111,22 +115,9 @@ pub fn compute_user_decrypt_message_hash(
     // LEGACY CODE: we used to only support ML-KEM1024 encoded with bincode
     // the solidity structure to sign with EIP-712
     // note that the JS client must also use the same encoding to verify the result
-    let user_pk_buf = match user_pk {
-        UnifiedPublicEncKey::MlKem512(user_pk) => {
-            let mut enc_key_buf = Vec::new();
-            tfhe::safe_serialization::safe_serialize(
-                &UnifiedPublicEncKey::MlKem512(user_pk.clone()),
-                &mut enc_key_buf,
-                SAFE_SER_SIZE_LIMIT,
-            )?;
-            Ok(enc_key_buf)
-        }
-        // TODO: The following bincode serialization is done to be backward compatible
-        // with the old serialization format, used in relayer-sdk v0.2.0-0 and older (tkms v0.11.0-rc20 and older).
-        // It should be replaced with safe serialization (as above) in the future.
-        UnifiedPublicEncKey::MlKem1024(user_pk) => bc2wrap::serialize(user_pk),
-    }
-    .map_err(|e| anyhow::anyhow!("serialization error: {e}"))?;
+    let user_pk_buf = user_pk
+        .to_legacy_bytes()
+        .map_err(|e| anyhow::anyhow!("serialization error: {e}"))?;
 
     let message = UserDecryptResponseVerification {
         publicKey: user_pk_buf.into(),
@@ -156,7 +147,3 @@ pub(crate) fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 
 // re-export DecryptionMode
 pub use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-
-use crate::{
-    consts::SAFE_SER_SIZE_LIMIT, cryptography::internal_crypto_types::UnifiedPublicEncKey,
-};

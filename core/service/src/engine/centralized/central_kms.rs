@@ -1123,10 +1123,10 @@ pub(crate) mod tests {
     };
     use crate::consts::{DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
-    use crate::cryptography::internal_crypto_types::{gen_sig_keys, PrivateSigKey};
-    use crate::cryptography::signcryption::{
-        decrypt_signcryption_with_link, ephemeral_signcryption_key_generation,
+    use crate::cryptography::internal_crypto_types::{
+        gen_sig_keys, DesigncryptFHEPlaintext, PrivateSigKey,
     };
+    use crate::cryptography::signcryption::ephemeral_signcryption_key_generation;
     use crate::dummy_domain;
     use crate::engine::base::{compute_handle, derive_request_id};
     use crate::engine::centralized::central_kms::RealCentralizedKms;
@@ -1622,16 +1622,21 @@ pub(crate) mod tests {
         let link = vec![42_u8, 42, 42];
         let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
         let client_key_pair = {
-            let mut keys =
-                ephemeral_signcryption_key_generation(&mut rng, &client_verf_key.verf_key_id());
+            let mut keys = ephemeral_signcryption_key_generation(
+                &mut rng,
+                &client_verf_key.verf_key_id(),
+                Some(kms.base_kms.sig_key.as_ref()),
+            );
             if sim_type == SimulationType::BadEphemeralKey {
-                let bad_keys =
-                    ephemeral_signcryption_key_generation(&mut rng, &client_verf_key.verf_key_id());
+                let bad_keys = ephemeral_signcryption_key_generation(
+                    &mut rng,
+                    &client_verf_key.verf_key_id(),
+                    Some(kms.base_kms.sig_key.as_ref()),
+                );
                 keys.signcrypt_key = bad_keys.signcrypt_key;
             }
             keys
         };
-        let unified_client_keys = client_key_pair.designcrypt_key.encryption_key.clone();
         let mut rng = kms.base_kms.new_rng().await;
         let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage
@@ -1644,11 +1649,8 @@ pub(crate) mod tests {
             fhe_type,
             ct_format,
             &link,
-            &unified_client_keys,
-            &client_key_pair
-                .designcrypt_key
-                .sender_verf_key
-                .verf_key_id(),
+            &client_key_pair.designcrypt_key.encryption_key,
+            &client_key_pair.designcrypt_key.receiver_id,
         );
         // if bad FHE key is used, then it *might* panic
         let raw_cipher = if sim_type == SimulationType::BadFheKey {
@@ -1662,11 +1664,10 @@ pub(crate) mod tests {
         } else {
             raw_cipher.unwrap()
         };
-        let decrypted = decrypt_signcryption_with_link(
+        let decrypted = client_key_pair.designcrypt_key.designcrypt_plaintext(
             &DSEP_USER_DECRYPTION,
             &raw_cipher,
             &link,
-            &client_key_pair.designcrypt_key,
         );
         if sim_type == SimulationType::BadEphemeralKey {
             assert!(decrypted.is_err());
@@ -1680,13 +1681,13 @@ pub(crate) mod tests {
             assert!(decrypted.is_err());
             return;
         }
-        let plaintext = decrypted.unwrap();
+        let decrypted = decrypted.unwrap();
         if sim_type == SimulationType::BadFheKey {
-            assert_ne!(plaintext.as_u64(), msg);
+            assert_ne!(decrypted.plaintext.as_u64(), msg);
         } else {
-            assert_eq!(plaintext.as_u64(), msg);
+            assert_eq!(decrypted.plaintext.as_u64(), msg);
         }
-        assert_eq!(plaintext.fhe_type().unwrap(), FheTypes::Uint64);
+        assert_eq!(decrypted.plaintext.fhe_type().unwrap(), FheTypes::Uint64);
     }
 
     #[test]

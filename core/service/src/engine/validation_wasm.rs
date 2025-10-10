@@ -13,7 +13,9 @@ use crate::{
     anyhow_error_and_log,
     client::user_decryption_wasm::{compute_link, ParsedUserDecryptionRequest},
     cryptography::{
-        internal_crypto_types::{PublicEncKey, PublicSigKey, Signature, UnifiedPublicEncKey},
+        internal_crypto_types::{
+            LegacySerialization, PublicSigKey, Signature, UnifiedPublicEncKey,
+        },
         signcryption::internal_verify_sig,
     },
     some_or_err,
@@ -60,18 +62,9 @@ pub(crate) fn check_ext_user_decryption_signature(
         alloy_signer::Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
 
     // NOTE: we need to support legacy user_pk, so try to deserialize MlKem1024 encoded with bincode first
-    let unified_pk =
-        match bc2wrap::deserialize::<PublicEncKey<ml_kem::MlKem1024>>(request.enc_key()) {
-            Ok(pk) => UnifiedPublicEncKey::MlKem1024(pk),
-            // in case the old deserialization fails, try the new format
-            Err(_) => tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
-                request.enc_key(),
-                crate::consts::SAFE_SER_SIZE_LIMIT,
-            )
-            .map_err(|e| {
-                anyhow_error_and_log(format!("Error deserializing UnifiedPublicEncKey: {e}"))
-            })?,
-        };
+    let unified_pk = UnifiedPublicEncKey::from_legacy_bytes(request.enc_key()).map_err(|e| {
+        anyhow_error_and_log(format!("Error deserializing UnifiedPublicEncKey: {e}"))
+    })?;
     let hash =
         crate::compute_user_decrypt_message_hash(payload, eip712_domain, &unified_pk, vec![])?;
 

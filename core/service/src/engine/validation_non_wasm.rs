@@ -16,12 +16,12 @@ use kms_grpc::{
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::hashing::DomainSep;
 
-use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::cryptography::internal_crypto_types::{LegacySerialization, UnifiedPublicEncKey};
 use crate::engine::base::retrieve_parameters;
 use crate::{
     anyhow_error_and_log,
     cryptography::{
-        internal_crypto_types::{PublicEncKey, PublicSigKey, Signature},
+        internal_crypto_types::{PublicSigKey, Signature},
         signcryption::internal_verify_sig,
     },
 };
@@ -223,31 +223,13 @@ pub fn validate_user_decrypt_req(
             format!("Error computing link: {e}"),
         ))
     })?;
-    // LEGACY CODE: we used to only support ML-KEM1024 encoded with bincode
-    // NOTE: we need to do some backward compatibility support here so
-    // first try to deserialize it using the old format (ML-KEM1024 encoded with bincode)
-    let client_enc_key = match bc2wrap::deserialize::<PublicEncKey<ml_kem::MlKem1024>>(&req.enc_key)
-    {
-        Ok(inner) => {
-            // we got an old MlKem1024 public key, wrap it in the enum
-            tracing::warn!("🔒 Using MlKem1024 public encryption key");
-            UnifiedPublicEncKey::MlKem1024(inner)
-        }
-        // in case the old deserialization fails, try the new format
-        Err(_) => tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
-            std::io::Cursor::new(&req.enc_key),
-            crate::consts::SAFE_SER_SIZE_LIMIT,
-        )
-        .map_err(|e| {
-            tracing::error!(
-                "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
-            );
-            BoxedStatus::from(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"),
-            ))
-        })?,
-    };
+    let client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(&req.enc_key).map_err(|e| {
+        tracing::error!("Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}");
+        BoxedStatus::from(tonic::Status::new(
+            tonic::Code::InvalidArgument,
+            format!("Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"),
+        ))
+    })?;
     Ok((
         req.typed_ciphertexts.clone(),
         link,
