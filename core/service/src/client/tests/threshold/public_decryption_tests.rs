@@ -281,7 +281,9 @@ pub async fn run_decryption_threshold(
     let mut req_tasks = JoinSet::new();
     let reqs: Vec<_> = (0..parallelism)
         .map(|j| {
-            let request_id = derive_request_id(&format!("TEST_DEC_ID_{j}")).unwrap();
+            // Make it unique wrt key_id as well do be sure there's no clash when running
+            // the dec test with multiple keys
+            let request_id = derive_request_id(&format!("TEST_DEC_ID_{j}_KEY_{key_id}")).unwrap();
 
             internal_client
                 .public_decryption_request(cts.clone(), &dummy_domain(), &request_id, key_id)
