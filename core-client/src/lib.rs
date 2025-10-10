@@ -36,7 +36,9 @@ use kms_lib::util::key_setup::test_tools::{
     EncryptionConfig, TestingPlaintext,
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
-use kms_lib::DecryptionMode;
+use kms_lib::vault::storage::{make_storage, read_text_at_request_id};
+use kms_lib::vault::Vault;
+use kms_lib::{conf, DecryptionMode};
 use observability::conf::Settings;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -791,6 +793,7 @@ pub async fn fetch_element(
     let element_key = element_id.to_string();
     // Construct the URL
     let url = join_vars(&[endpoint, folder, element_key.as_str()]);
+    tracing::debug!("Fetching element: {url}");
 
     // If URL we fetch it
     if url.starts_with("http") {
@@ -814,6 +817,7 @@ pub async fn fetch_element(
             ),))
         }
     } else {
+        // read from local file system
         let key_path = Path::new(endpoint).join(folder).join(element_id);
         let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
             anyhow!(
@@ -821,7 +825,9 @@ pub async fn fetch_element(
                 &key_path
             )
         })?;
-        Ok(Bytes::from(byte_res))
+        let res = Bytes::from(byte_res);
+        tracing::info!("Successfully read {} bytes for element {element_id} from local path {endpoint}/{folder}", res.len());
+        Ok(res)
     }
 }
 
@@ -889,8 +895,51 @@ async fn fetch_global_pub_element_and_write_to_file(
     write_bytes_to_file(&folder, element_id, content.as_ref()).await
 }
 
-/// This fetches the kms ethereum address from local storage
-async fn fetch_kms_addresses(
+/// This reads the kms ethereum address from local file system
+async fn read_kms_addresses_local(
+    path: &Path,
+    sim_conf: &CoreClientConfig,
+) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
+    let mut addr_strings = Vec::with_capacity(sim_conf.cores.len());
+
+    for cur_core in &sim_conf.cores {
+        let cur_role = Role::indexed_from_one(cur_core.party_id);
+        let vault = {
+            let store_path = Some(conf::Storage::File(conf::FileStorage {
+                path: path.to_path_buf(),
+            }));
+            let backup_proxy_storage =
+                make_storage(store_path, StorageType::PUB, Some(cur_role), None, None).unwrap();
+            Vault {
+                storage: backup_proxy_storage,
+                keychain: None,
+            }
+        };
+
+        let content = read_text_at_request_id(
+            &vault,
+            &SIGNING_KEY_ID,
+            &PubDataType::VerfAddress.to_string(),
+        )
+        .await?;
+        addr_strings.push(content);
+    }
+
+    // turn bytes read into Address type
+    let kms_addrs: Vec<_> = addr_strings
+        .iter()
+        .map(|x| {
+            alloy_primitives::Address::parse_checksummed(x, None)
+                .unwrap_or_else(|e| panic!("invalid ethereum address: {x:?} - {e}"))
+        })
+        .collect();
+
+    Ok(kms_addrs)
+}
+
+/// This fetches the KMS ethereum address from S3
+#[expect(dead_code)]
+async fn fetch_kms_addresses_remote(
     sim_conf: &CoreClientConfig,
 ) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
     let key_id = &SIGNING_KEY_ID.to_string();
@@ -1569,6 +1618,9 @@ pub async fn execute_cmd(
         _ => DEFAULT_PARAM,
     };
 
+    // Vector of KMS ethereum addresses
+    let mut addr_vec = Vec::new();
+
     if let CCCommand::Encrypt(_) = command {
         //Don't need to fetch or connect if we just do an encrypt
     } else if let CCCommand::DoNothing(_) = command {
@@ -1582,9 +1634,12 @@ pub async fn execute_cmd(
             &public_verf_types,
             &cc_conf,
             destination_prefix,
-            true, // we always need all verification keys
+            true, // we always need to download all verification keys
         )
         .await?;
+
+        // read the addresses we just fetched from disk
+        addr_vec.append(&mut read_kms_addresses_local(destination_prefix, &cc_conf).await?);
 
         match cc_conf.kms_type {
             KmsType::Centralized => {
@@ -1701,7 +1756,7 @@ pub async fn execute_cmd(
         param.as_str_name()
     );
 
-    let kms_addrs = Arc::new(fetch_kms_addresses(&cc_conf).await?);
+    let kms_addrs = Arc::new(addr_vec);
 
     let key_types = vec![
         PubDataType::PublicKey,
