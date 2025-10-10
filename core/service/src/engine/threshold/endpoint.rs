@@ -11,7 +11,7 @@ use kms_grpc::kms::v1::{
     InitiateResharingRequest, InitiateResharingResponse, KeyGenPreprocRequest, KeyGenPreprocResult,
     KeyGenRequest, KeyGenResult, KeyMaterialAvailabilityResponse, NewKmsContextRequest, NodeType,
     PeersFromContext, PublicDecryptionRequest, PublicDecryptionResponse, RequestId,
-    ResharingResultRequest, ResharingResultResponse, UserDecryptionRequest, UserDecryptionResponse,
+    ResharingResultResponse, UserDecryptionRequest, UserDecryptionResponse,
 };
 use kms_grpc::kms::v1::{HealthStatusResponse, PeerHealth};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
@@ -312,7 +312,7 @@ impl_endpoint! {
         #[tracing::instrument(skip(self, request))]
         async fn get_resharing_result(
             &self,
-            request: Request<ResharingResultRequest>,
+            request: Request<RequestId>,
         ) -> Result<Response<ResharingResultResponse>, Status> {
             METRICS.increment_request_counter(OP_GET_INITIATE_RESHARING_RESULT);
             self.resharer.get_resharing_result(request).await.inspect_err(|err| {

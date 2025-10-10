@@ -95,6 +95,6 @@ pub trait Resharer {
     ) -> Result<Response<InitiateResharingResponse>, Status>;
     async fn get_resharing_result(
         &self,
-        request: Request<ResharingResultRequest>,
+        request: Request<RequestId>,
     ) -> Result<Response<ResharingResultResponse>, Status>;
 }

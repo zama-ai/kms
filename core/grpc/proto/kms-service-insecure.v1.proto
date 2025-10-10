@@ -46,7 +46,7 @@ service CoreServiceEndpoint {
 
   rpc InitiateResharing(kms.v1.InitiateResharingRequest) returns (kms.v1.InitiateResharingResponse);
 
-  rpc GetResharingResult(kms.v1.ResharingResultRequest) returns (kms.v1.ResharingResultResponse);
+  rpc GetResharingResult(kms.v1.RequestId) returns (kms.v1.ResharingResultResponse);
 
   rpc NewCustodianContext(kms.v1.NewCustodianContextRequest) returns (kms.v1.Empty);
 
