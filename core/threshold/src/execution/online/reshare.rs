@@ -221,6 +221,7 @@ where
         let expected_key_size = basic_params_handle.compression_sk_num_bits();
         Some(match parameters {
             DKGParams::WithoutSnS(_) => {
+                // Extract the GLWE secret key share for the compression scheme if any
                 let maybe_key = input_share
                     .as_mut()
                     .and_then(|s| {
@@ -244,6 +245,7 @@ where
                 })
             }
             DKGParams::WithSnS(_) => {
+                // Extract the GLWE secret key share for the compression scheme if any
                 let maybe_key = input_share
                     .as_mut()
                     .and_then(|s| {
@@ -376,6 +378,7 @@ where
         )));
     }
 
+    // Broadcast our part of the resharing if we have keys to reshare,
     // If we have nothing to reshare, we just broadcast Bot
     let broadcast_value = if let Some(input_shares) = input_shares {
         let vj = opened
