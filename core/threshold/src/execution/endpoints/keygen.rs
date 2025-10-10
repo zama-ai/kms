@@ -1114,12 +1114,13 @@ pub mod tests {
             random::{get_rng, seed_from_rng},
             tfhe_internals::{
                 parameters::{
-                    DKGParams, BC_PARAMS_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE,
+                    DKGParams, BC_PARAMS_NO_SNS, BC_PARAMS_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE,
                     NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE,
                     NIST_PARAMS_P8_NO_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_LWE,
                     NIST_PARAMS_P8_SNS_FGLWE, OLD_PARAMS_P32_REAL_WITH_SNS, PARAMS_TEST_BK_SNS,
                 },
                 test_feature::to_hl_client_key,
+                utils::tests::load_private_keys_set_from_file,
                 utils::tests::reconstruct_glwe_secret_key_from_file,
             },
         },
@@ -1659,7 +1660,7 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         run_keygen_test::<EXTENSION_DEGREE>(
-            BC_PARAMS_NO_SNS,
+            BC_PARAMS_SNS,
             5,
             1,
             KeygenTestConfig {
@@ -1672,6 +1673,114 @@ pub mod tests {
             },
         )
         .await
+    }
+
+    #[test]
+    fn lol() {
+        let prefix_path = "mydir";
+        let prefix_path = Path::new(prefix_path);
+        load_private_keys_set_from_file(5, 1, &BC_PARAMS_SNS, &prefix_path);
+
+        let (_, pk) = retrieve_keys_from_files::<3>(BC_PARAMS_SNS, 5, 1, &prefix_path);
+
+        let public_key = pk.public_key.into_raw_parts().0.into_raw_parts();
+        let (sks, ksk_enc, comp_key, decomp_key, sns_key, sns_comp_key, rerand_ksk, _tag) =
+            pk.server_key.into_raw_parts();
+
+        let (sks, ksk_enc, comp_key, decomp_key, sns_key, sns_comp_key, rerand_ksk) = (
+            sks.into_raw_parts(),
+            ksk_enc.unwrap().into_raw_parts(),
+            comp_key.unwrap().into_raw_parts(),
+            decomp_key.unwrap().into_raw_parts(),
+            sns_key.unwrap().into_raw_parts(),
+            sns_comp_key.unwrap().into_raw_parts(),
+            rerand_ksk.map(|x| match x {
+                tfhe::ReRandomizationKeySwitchingKey::UseCPKEncryptionKSK => None,
+                tfhe::ReRandomizationKeySwitchingKey::DedicatedKSK(key_switching_key_material) => {
+                    Some(key_switching_key_material)
+                }
+            }),
+        );
+
+        {
+            use std::fs::File;
+            use std::io::prelude::*;
+            {
+                let key_path = prefix_path.join("public_key.bin");
+                let key_bin =
+                    bincode::serde::encode_to_vec(&public_key, bincode::config::legacy()).unwrap();
+
+                let mut file = File::create(key_path).unwrap();
+                file.write_all(&key_bin).unwrap();
+            }
+
+            {
+                let key_path = prefix_path.join("sks.bin");
+                let key_bin =
+                    bincode::serde::encode_to_vec(&sks, bincode::config::legacy()).unwrap();
+
+                let mut file = File::create(key_path).unwrap();
+                file.write_all(&key_bin).unwrap();
+            }
+
+            {
+                let key_path = prefix_path.join("ksk_enc.bin");
+                let key_bin =
+                    bincode::serde::encode_to_vec(&ksk_enc, bincode::config::legacy()).unwrap();
+
+                let mut file = File::create(key_path).unwrap();
+                file.write_all(&key_bin).unwrap();
+            }
+
+            {
+                let key_path = prefix_path.join("comp_key.bin");
+                let key_bin =
+                    bincode::serde::encode_to_vec(&comp_key, bincode::config::legacy()).unwrap();
+
+                let mut file = File::create(key_path).unwrap();
+                file.write_all(&key_bin).unwrap();
+            }
+
+            {
+                let key_path = prefix_path.join("decomp_key.bin");
+                let key_bin =
+                    bincode::serde::encode_to_vec(&decomp_key, bincode::config::legacy()).unwrap();
+
+                let mut file = File::create(key_path).unwrap();
+                file.write_all(&key_bin).unwrap();
+            }
+
+            {
+                let key_path = prefix_path.join("sns_key.bin");
+                let key_bin =
+                    bincode::serde::encode_to_vec(&sns_key, bincode::config::legacy()).unwrap();
+
+                let mut file = File::create(key_path).unwrap();
+                file.write_all(&key_bin).unwrap();
+            }
+
+            {
+                let key_path = prefix_path.join("sns_comp_key.bin");
+                let key_bin =
+                    bincode::serde::encode_to_vec(&sns_comp_key, bincode::config::legacy())
+                        .unwrap();
+
+                let mut file = File::create(key_path).unwrap();
+                file.write_all(&key_bin).unwrap();
+            }
+
+            {
+                let key_path = prefix_path.join("rerand_ksk.bin");
+                let key_bin = bincode::serde::encode_to_vec(
+                    &rerand_ksk.unwrap().unwrap(),
+                    bincode::config::legacy(),
+                )
+                .unwrap();
+
+                let mut file = File::create(key_path).unwrap();
+                file.write_all(&key_bin).unwrap();
+            }
+        }
     }
 
     #[cfg(feature = "slow_tests")]
@@ -1716,30 +1825,29 @@ pub mod tests {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
-        let temp_dir = tempfile::tempdir().unwrap();
+        // let temp_dir = tempfile::tempdir().unwrap();
+        // let temp_dir = temp_dir.path();
+
+        let temp_dir = "mydir";
+        let temp_dir = std::path::Path::new(temp_dir);
 
         run_dkg_and_save(
             params,
             num_parties,
             threshold,
-            temp_dir.path(),
+            temp_dir,
             config.run_compressed,
         )
         .await;
 
         if config.run_switch_and_squash {
-            run_switch_and_squash(
-                temp_dir.path(),
-                params.try_into().unwrap(),
-                num_parties,
-                threshold,
-            );
+            run_switch_and_squash(temp_dir, params.try_into().unwrap(), num_parties, threshold);
         }
 
         match params {
             DKGParams::WithSnS(_) => {
                 run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsSnS>(
-                    temp_dir.path(),
+                    temp_dir,
                     params,
                     num_parties,
                     threshold,
@@ -1748,7 +1856,7 @@ pub mod tests {
             }
             DKGParams::WithoutSnS(_) => {
                 run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
-                    temp_dir.path(),
+                    temp_dir,
                     params,
                     num_parties,
                     threshold,
@@ -1760,7 +1868,7 @@ pub mod tests {
         // Only run fheuint tests for parameter sets that are large enough
         if config.run_fheuint {
             run_tfhe_computation_fheuint::<EXTENSION_DEGREE>(
-                temp_dir.path(),
+                temp_dir,
                 params,
                 num_parties,
                 threshold,
