@@ -325,7 +325,7 @@ deploy_threshold_mode() {
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --wait \
             --timeout 10m
-        kubectl logs pod kms-service-threshold-${i}-${NAMESPACE}-core-${i} -n ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
+        kubectl logs kms-service-threshold-${i}-${NAMESPACE}-core-${i} -n ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
     done
 
     log_info "Waiting for KMS Core pods to be ready..."
