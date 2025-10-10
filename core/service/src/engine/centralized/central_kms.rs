@@ -922,7 +922,7 @@ impl<
 
         tracing::info!("Completed user decryption of ciphertext");
 
-        // TODO for legacy reasons we return the inner payload
+        // LEGACY: for legacy reasons we return the inner payload
         Ok(enc_res.payload)
     }
 }
@@ -1126,9 +1126,8 @@ pub(crate) mod tests {
     };
     use crate::consts::{DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
-    use crate::cryptography::internal_crypto_types::{
-        gen_sig_keys, DesigncryptFHEPlaintext, PrivateSigKey,
-    };
+    use crate::cryptography::error::CryptographyError;
+    use crate::cryptography::internal_crypto_types::{gen_sig_keys, DesigncryptFHEPlaintext};
     use crate::cryptography::signcryption::ephemeral_signcryption_key_generation;
     use crate::dummy_domain;
     use crate::engine::base::{compute_handle, derive_request_id};
@@ -1143,11 +1142,11 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use kms_grpc::rpc_types::{PrivDataType, WrappedPublicKey};
     use kms_grpc::RequestId;
-    use rand::{RngCore, SeedableRng};
+    use rand::SeedableRng;
     use serial_test::serial;
     use std::collections::HashMap;
+    use std::path::Path;
     use std::str::FromStr;
-    use std::{path::Path, sync::Arc};
     use tfhe::{set_server_key, FheTypes};
     use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
     use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
@@ -1564,20 +1563,6 @@ pub(crate) mod tests {
             .unwrap();
     }
 
-    fn set_wrong_sig_key<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-    >(
-        inner: &mut RealCentralizedKms<PubS, PrivS>,
-        rng: &mut AesRng,
-    ) {
-        // move to the next state so ensure we're generating a different ecdsa key
-        _ = rng.next_u64();
-        let wrong_ecdsa_key = k256::ecdsa::SigningKey::random(rng);
-        assert_ne!(&wrong_ecdsa_key, inner.base_kms.sig_key.sk());
-        inner.base_kms.sig_key = Arc::new(PrivateSigKey::new(wrong_ecdsa_key));
-    }
-
     async fn simulate_user_decrypt(
         sim_type: SimulationType,
         keys: &CentralizedTestingKeys,
@@ -1600,7 +1585,7 @@ pub(crate) mod tests {
         };
 
         let kms = {
-            let (mut inner, _health_service) = RealCentralizedKms::<RamStorage, RamStorage>::new(
+            let (inner, _health_service) = RealCentralizedKms::<RamStorage, RamStorage>::new(
                 new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
@@ -1616,9 +1601,6 @@ pub(crate) mod tests {
             .unwrap();
             if sim_type == SimulationType::BadFheKey {
                 set_wrong_client_key(&inner, key_handle, keys.params).await;
-            }
-            if sim_type == SimulationType::BadSigKey {
-                set_wrong_sig_key(&mut inner, &mut rng);
             }
             inner
         };
@@ -1636,7 +1618,13 @@ pub(crate) mod tests {
                     &client_verf_key.verf_key_id(),
                     Some(kms.base_kms.sig_key.as_ref()),
                 );
-                keys.signcrypt_key = bad_keys.signcrypt_key;
+                // Change the decryption key
+                keys.designcrypt_key.decryption_key = bad_keys.designcrypt_key.decryption_key;
+            }
+            if sim_type == SimulationType::BadSigKey {
+                // Change the signing key
+                let (server_sig_pk, _server_sig_sk) = gen_sig_keys(&mut rng);
+                keys.designcrypt_key.sender_verf_key = server_sig_pk;
             }
             keys
         };
@@ -1652,8 +1640,8 @@ pub(crate) mod tests {
             fhe_type,
             ct_format,
             &link,
-            &client_key_pair.designcrypt_key.encryption_key,
-            &client_key_pair.designcrypt_key.receiver_id,
+            &client_key_pair.signcrypt_key.receiver_enc_key,
+            &client_key_pair.signcrypt_key.receiver_id,
         );
         // if bad FHE key is used, then it *might* panic
         let raw_cipher = if sim_type == SimulationType::BadFheKey {
@@ -1674,10 +1662,10 @@ pub(crate) mod tests {
         );
         if sim_type == SimulationType::BadEphemeralKey {
             assert!(decrypted.is_err());
-            assert!(decrypted
-                .unwrap_err()
-                .to_string()
-                .contains("signcryption decryption failed"));
+            assert!(matches!(
+                decrypted.unwrap_err(),
+                CryptographyError::AesGcmError(..)
+            ));
             return;
         }
         if sim_type == SimulationType::BadSigKey {

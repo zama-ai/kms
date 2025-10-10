@@ -3,11 +3,16 @@
 
 use kms_grpc::identifiers::ContextId;
 use serde::{Deserialize, Serialize};
-use tfhe::{named::Named, Versionize};
+use tfhe::{
+    named::Named,
+    safe_serialization::{safe_deserialize, safe_serialize},
+    Versionize,
+};
 use tfhe_versionable::VersionsDispatch;
 
 use crate::{
-    cryptography::internal_crypto_types::{LegacySerialization, PublicSigKey, UnifiedPublicEncKey},
+    consts::SAFE_SER_SIZE_LIMIT,
+    cryptography::internal_crypto_types::{PublicSigKey, UnifiedPublicEncKey},
     engine::validation::{
         parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
     },
@@ -95,13 +100,21 @@ impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
     type Error = anyhow::Error;
 
     fn try_from(value: kms_grpc::kms::v1::KmsNode) -> anyhow::Result<Self> {
+        // Observe that legacy formats have never been used here, so it is safe to use safe_deserialize
+        let backup_encryption_public_key = {
+            safe_deserialize(
+                std::io::Cursor::new(&value.backup_encryption_public_key),
+                SAFE_SER_SIZE_LIMIT,
+            )
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to deserialize backup encryption public key: {}", e)
+            })?
+        };
         Ok(NodeInfo {
             name: value.name,
             party_id: value.party_id.try_into()?,
-            verification_key: bc2wrap::deserialize(&value.verification_key)?,
-            backup_encryption_public_key: UnifiedPublicEncKey::from_legacy_bytes(
-                &value.backup_encryption_public_key,
-            )?,
+            verification_key: bc2wrap::deserialize(&value.verification_key)?, // LEGACY
+            backup_encryption_public_key,
             external_url: value.external_url,
             tls_cert: value.tls_cert,
             public_storage_url: value.public_storage_url,
@@ -117,11 +130,19 @@ impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
 impl TryFrom<NodeInfo> for kms_grpc::kms::v1::KmsNode {
     type Error = anyhow::Error;
     fn try_from(value: NodeInfo) -> anyhow::Result<Self> {
+        // Observe that legacy formats have never been used here, so it is safe to use safe_serialize
+        let mut backup_encryption_public_key = Vec::new();
+        safe_serialize(
+            &value.backup_encryption_public_key,
+            &mut backup_encryption_public_key,
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to serialize backup encryption public key: {}", e))?;
         Ok(kms_grpc::kms::v1::KmsNode {
             name: value.name,
             party_id: value.party_id.try_into()?,
             verification_key: bc2wrap::serialize(&value.verification_key)?,
-            backup_encryption_public_key: bc2wrap::serialize(&value.backup_encryption_public_key)?,
+            backup_encryption_public_key,
             external_url: value.external_url,
             tls_cert: value.tls_cert,
             public_storage_url: value.public_storage_url,
