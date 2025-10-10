@@ -38,27 +38,25 @@ kmsCore:
       numSessionsPreproc: 12
       peersList:
         - id: 1
-          host: kms-core-1
+          host: kms-service-threshold-1-kms-test-core-1
           port: 50001
         - id: 2
-          host: kms-core-2
+          host: kms-service-threshold-2-kms-test-core-2
           port: 50001
         - id: 3
-          host: kms-core-3
+          host: kms-service-threshold-3-kms-test-core-3
           port: 50001
         - id: 4
-          host: kms-core-4
+          host: kms-service-threshold-4-kms-test-core-4
           port: 50001
   publicVault:
     s3:
       enabled: true
       bucket: kms-public
-      path: ""
   privateVault:
     s3:
       enabled: true
       bucket: kms-private
-      path: ""
   rateLimiter:
     bucketSize: 50000
   aws:
@@ -88,6 +86,12 @@ redis:
 tracing:
   enabled: false
   endpoint: "http://observability-zws-dev-observability-alloy.observability.svc.cluster.local:4317"
+
+kubeUtils:
+  image:
+    name: ghcr.io/zama-ai/security-hub/infra/kube-utils
+    tag: v0.4.3
+    pullPolicy: Always
 
 socat:
   image:

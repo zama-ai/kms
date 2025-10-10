@@ -45,7 +45,7 @@ data:
     {{- if .Values.kmsCore.privateVault.s3.enabled }}
     [private_vault.storage.s3]
     bucket = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET}"
-      {{- if .Values.kmsCore.publicVault.s3.prefix }}
+      {{- if .Values.kmsCore.privateVault.s3.prefix }}
     prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX}"
       {{- end }}
 

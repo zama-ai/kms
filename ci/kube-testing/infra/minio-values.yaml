@@ -5,13 +5,12 @@ rootPassword: minio-admin
 replicas: 1
 buckets:
   - name: kms-public
+    region: eu-west-1
     policy: public
     purge: false
   - name: kms-private
+    region: eu-west-1
     policy: private
-    purge: false
-  - name: coprocessor
-    policy: public
     purge: false
 customCommands:
   - command: "admin accesskey create myminio/ --access-key kms-access-key-id --secret-key kms-secret-access-key"

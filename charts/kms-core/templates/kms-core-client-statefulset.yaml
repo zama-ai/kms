@@ -27,7 +27,7 @@ spec:
         env:
           {{- if .Values.minio.enabled }}
           - name: S3_ENDPOINT
-            value: "{{ .Values.minio.endpoint }}/{{ .Values.kmsCore.publicVault.s3.bucket }}/{{ .Values.kmsCore.publicVault.s3.path }}"
+            value: "{{ .Values.minio.endpoint }}/{{ .Values.kmsCore.publicVault.s3.bucket }}/{{ .Values.kmsCore.publicVault.s3.prefix }}"
           {{- else }}
           - name: S3_ENDPOINT
             value: "https://{{ .Values.kmsCore.publicVault.s3.bucket }}.s3.{{ .Values.kmsCore.aws.region }}.amazonaws.com{{ if .Values.kmsCore.publicVault.s3.prefix }}/{{ .Values.kmsCore.publicVault.s3.prefix }}{{ end }}"
@@ -42,9 +42,11 @@ spec:
             value: '{{ .Values.kmsCoreClient.fhe_parameter | quote }}'
         command:
           - /app/load-core-client-config.sh
+        {{- if not .Values.minio.enabled }}
         envFrom:
           - configMapRef:
               name: {{ .Values.kmsCoreClient.envFrom.configmap.name }}
+        {{- end }}
         volumeMounts:
           - mountPath: /app/load-core-client-config.sh
             subPath: load-core-client-config.sh

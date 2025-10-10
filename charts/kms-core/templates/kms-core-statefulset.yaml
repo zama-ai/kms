@@ -151,17 +151,23 @@ spec:
               value: {{ .Values.minio.endpoint }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.privateVault.s3.bucket | quote }}
+            {{- if .Values.kmsCore.privateVault.s3.prefix }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.privateVault.s3.prefix | quote }}
+            {{- end }}
             - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.publicVault.s3.bucket | quote }}
+            {{- if .Values.kmsCore.publicVault.s3.prefix }}
             - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.publicVault.s3.prefix | quote }}
+            {{- end }}
             {{- if .Values.kmsCore.backupVault.s3.enabled }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.backupVault.s3.bucket | quote }}
+            {{- if .Values.kmsCore.backupVault.s3.prefix }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.backupVault.s3.prefix | quote }}
+            {{- end }}
             {{- end }}
             {{- if .Values.kmsCore.privateVault.awskms.enabled }}
             - name: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
@@ -446,17 +452,23 @@ spec:
               value: {{ .Values.minio.endpoint }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.privateVault.s3.bucket | quote }}
+            {{- if .Values.kmsCore.privateVault.s3.prefix }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.privateVault.s3.prefix | quote }}
+            {{- end }}
             - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.publicVault.s3.bucket | quote }}
+            {{- if .Values.kmsCore.publicVault.s3.prefix }}
             - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.publicVault.s3.prefix | quote }}
+            {{- end }}
             {{- if .Values.kmsCore.backupVault.s3.enabled }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.backupVault.s3.bucket | quote }}
+            {{- if .Values.kmsCore.backupVault.s3.prefix }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.backupVault.s3.prefix | quote }}
+            {{- end }}
             {{- end }}
             {{- if .Values.kmsCore.privateVault.awskms.enabled }}
             - name: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
@@ -512,7 +524,15 @@ spec:
           args:
             - -c
             - |
-              env
+              {{- if .Values.minio.enabled }}
+              mkdir -p ~/.aws/
+              cat > ~/.aws/credentials <<EOF
+              [default]
+              aws_access_key_id=${AWS_ACCESS_KEY_ID}
+              aws_secret_access_key=${AWS_SECRET_ACCESS_KEY}
+              EOF
+              cat ~/.aws/credentials
+              {{- end }}
               kms-server --config-file=kms-server.toml
           {{- end }}
           env:
@@ -604,21 +624,27 @@ spec:
               value: {{ .Values.minio.username}}
             - name: AWS_SECRET_ACCESS_KEY
               value: {{ .Values.minio.password}}
-            - name: CORE_CLIENT__S3_ENDPOINT
+            - name: AWS_ENDPOINT_URL_S3
               value: {{ .Values.minio.endpoint }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.privateVault.s3.bucket | quote }}
+            {{- if .Values.kmsCore.privateVault.s3.prefix }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.privateVault.s3.prefix | quote }}
+            {{- end }}
             - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.publicVault.s3.bucket | quote }}
+            {{- if .Values.kmsCore.publicVault.s3.prefix }}
             - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.publicVault.s3.prefix | quote }}
+            {{- end }}
             {{- if .Values.kmsCore.backupVault.s3.enabled }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.backupVault.s3.bucket | quote }}
+            {{- if .Values.kmsCore.backupVault.s3.prefix }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.backupVault.s3.prefix | quote }}
+            {{- end }}
             {{- end }}
             {{- if .Values.kmsCore.privateVault.awskms.enabled }}
             - name: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
