@@ -36,6 +36,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUST_IMAGE_VERSION="$(cat ${REPO_ROOT}/toolchain.txt)"
 CLEANUP=false
 BUILD=false
+LOCAL=false
 
 # Colors for output
 RED='\033[0;31m'
@@ -86,6 +87,10 @@ parse_args() {
                 ;;
             --build)
                 BUILD=true
+                shift
+                ;;
+            --local)
+                LOCAL=true
                 shift
                 ;;
             --help)
@@ -186,6 +191,12 @@ setup_namespace() {
 # Setup registry credentials
 setup_registry_credentials() {
     log_info "Setting up registry credentials..."
+
+    if [[ "$LOCAL" == "true" ]]; then
+        log_info "Skipping registry credentials setup for local deployment"
+        kubectl apply -f ${HOME}/dockerconfig.yaml -n ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
+        return 0
+    fi
 
     # Check if GITHUB_TOKEN is set
     if [[ -z "${GITHUB_TOKEN:-}" ]]; then
@@ -313,9 +324,9 @@ deploy_threshold_mode() {
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --wait \
-            --timeout 10m &
+            --timeout 10m
+        kubectl logs pod kms-service-threshold-${i}-${NAMESPACE}-core-${i} -n ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
     done
-    wait
 
     log_info "Waiting for KMS Core pods to be ready..."
     for i in $(seq 1 "${NUM_PARTIES}"); do

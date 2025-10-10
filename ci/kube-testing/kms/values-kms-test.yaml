@@ -55,7 +55,7 @@ kmsCore:
       bucket: kms
   privateVault:
     s3:
-      enabled: false
+      enabled: true
       bucket: kms-private
   rateLimiter:
     bucketSize: 50000
