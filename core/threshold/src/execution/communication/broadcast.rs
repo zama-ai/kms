@@ -761,10 +761,12 @@ mod tests {
     use crate::malicious_execution::communication::malicious_broadcast::{
         MaliciousBroadcastDrop, MaliciousBroadcastSender,
     };
+    use crate::networking::constants::NETWORK_TIMEOUT;
     use crate::networking::NetworkMode;
     use crate::session_id::SessionId;
     use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
     use itertools::Itertools;
+    use tokio::time::Duration;
 
     fn legitimate_broadcast<Z: Ring, const EXTENSION_DEGREE: usize>(
         senders: &HashSet<Role>,
@@ -945,6 +947,7 @@ mod tests {
             malicious_broadcast,
             &mut task_honest,
             &mut task_malicious,
+            None,
         )
         .await;
     }
@@ -1012,42 +1015,61 @@ mod tests {
         B: Broadcast + 'static,
     >(
         params: TestingParameters,
+        iters: usize,
         malicious_timestamp: SystemTime,
         malicious_broadcast: B,
+        delay_vec: Option<Vec<Duration>>,
     ) {
-        let sys_now = SystemTime::now();
         let mut task_honest = |mut session: SmallSession<Z>| async move {
+            let mut sys_now = SystemTime::now();
             let real_broadcast = SyncReliableBroadcast::default();
             let timed_broadcast = TimestampedBroadcast {
                 bcast: &real_broadcast,
             };
             let my_data = BroadcastValue::from(Z::sample(session.rng()));
-            (
-                my_data.clone(),
-                timed_broadcast
-                    .broadcast_from_all_w_corrupt_set_update(&mut session, sys_now, my_data)
+
+            // do two broadcasts with the same value and keep the final result
+            let mut res = HashMap::new();
+            for _ in 0..iters {
+                res = timed_broadcast
+                    .broadcast_from_all_w_corrupt_set_update(&mut session, sys_now, my_data.clone())
                     .await
-                    .unwrap(),
-                session.corrupt_roles().clone(),
-            )
+                    .unwrap();
+                sys_now =
+                    instant_to_systemtime(session.network().get_deadline_current_round().await);
+            }
+            (my_data, res, session.corrupt_roles().clone())
         };
 
+        // the first broadcast is honest, the second one is malicious
         let mut task_malicious = |mut session: SmallSession<Z>, malicious_broadcast: B| async move {
+            let mut sys_now = SystemTime::now();
             let my_data = BroadcastValue::from(Z::sample(session.rng()));
-            let timed_broadcast = TimestampedBroadcast {
+            let real_broadcast = SyncReliableBroadcast::default();
+            let real_broadcast = TimestampedBroadcast {
+                bcast: &real_broadcast,
+            };
+            let malicious_broadcast = TimestampedBroadcast {
                 bcast: &malicious_broadcast,
             };
-            (
-                my_data.clone(),
-                timed_broadcast
-                    .broadcast_from_all_w_corrupt_set_update(
-                        &mut session,
-                        malicious_timestamp,
-                        my_data,
-                    )
-                    .await,
-                session.corrupt_roles().clone(),
-            )
+            // malicious parties will always use the wrong sync time
+            for _ in 0..iters - 1 {
+                let _ = real_broadcast
+                    .broadcast_from_all_w_corrupt_set_update(&mut session, sys_now, my_data.clone())
+                    .await;
+                sys_now =
+                    instant_to_systemtime(session.network().get_deadline_current_round().await);
+            }
+
+            // the final broadcast is done using the malicious protocol and with a malicious timestamp
+            let res = malicious_broadcast
+                .broadcast_from_all_w_corrupt_set_update(
+                    &mut session,
+                    malicious_timestamp,
+                    my_data.clone(),
+                )
+                .await;
+            (my_data, res, session.corrupt_roles().clone())
         };
 
         execute_and_check_honest_and_malicious_broadcasts::<_, _, _, EXTENSION_DEGREE, B>(
@@ -1055,6 +1077,7 @@ mod tests {
             malicious_broadcast,
             &mut task_honest,
             &mut task_malicious,
+            delay_vec,
         )
         .await;
     }
@@ -1080,6 +1103,7 @@ mod tests {
         malicious_broadcast: B,
         task_honest: &mut dyn FnMut(SmallSession<Z>) -> TaskOutputT,
         task_malicious: &mut dyn FnMut(SmallSession<Z>, B) -> TaskOutputM,
+        delay_vec: Option<Vec<Duration>>,
     ) where
         TaskOutputT: futures::Future<Output = OutputT<Z>>,
         TaskOutputT: Send + 'static,
@@ -1099,7 +1123,7 @@ mod tests {
             &params.malicious_roles,
             malicious_broadcast,
             NetworkMode::Sync,
-            None,
+            delay_vec,
             task_honest,
             task_malicious,
         )
@@ -1134,7 +1158,8 @@ mod tests {
         }
 
         for (role, (_, protocol_result, _)) in results_honest.iter() {
-            // TODO?? we're only interested in the consistency of inner values because the timestamps don't matter
+            // Since the original value [collected_results] set by the caller of broadcast
+            // does not contain the timestamp, we only compare the actual inner values
             assert_eq!(
                 collected_results.iter().map(|(k, v)| (*k, v.inner.clone())).collect::<HashMap<_, _>>(),
                 protocol_result.iter().map(|(k, v)| (*k, v.inner.clone())).collect::<HashMap<_, _>>(),
@@ -1157,40 +1182,126 @@ mod tests {
     #[tokio::test]
     async fn test_timed_broadcast_high_timestamp() {
         // one of the parties will always send a high timestamp
-        // we expect the protocol to proceed normally
+        // we expect the protocol to proceed normally, without extra delays
         let malicious_strategy = SyncReliableBroadcast::default();
 
         // set the malicious roles to party 1
-        let params = TestingParameters::init(4, 1, &[1], &[], &[], false, Some(1 + 3));
+        let iters = 5;
+        let num_parties = 4;
+        let threshold = 1;
+        let networking_delay = 1; // seconds
+        let params = TestingParameters::init(
+            num_parties,
+            threshold,
+            &[1],
+            &[],
+            &[],
+            false,
+            Some((threshold + 3) * iters),
+        );
 
+        let start_instant = tokio::time::Instant::now();
         test_timestamped_broadcast_from_all_w_corrupt_set_update_strategies::<
             ResiduePolyF4Z128,
             4,
             _,
         >(
             params,
-            SystemTime::now() + std::time::Duration::from_secs(42 * 3600),
+            iters,
+            SystemTime::now() + Duration::from_secs(42 * 3600),
             malicious_strategy,
+            Some(vec![Duration::from_secs(networking_delay); num_parties]),
         )
         .await;
+
+        // everything should finish much earlier than iters * round_timeout because no parties are dropping
+        // as such, the protocol should finish in roughly iters * (3 + t) * networking_delay
+        let elapsed = start_instant.elapsed();
+        let lower_bound =
+            Duration::from_secs(iters as u64 * (3 + threshold) as u64 * networking_delay);
+        println!(
+            "Elapsed time: {:?}, expected elasped time: {:?}",
+            elapsed, lower_bound
+        );
+
+        // WARNING: these asserts might not be very reliable on a heavily loaded system
+        assert!(lower_bound < elapsed);
+        assert!(elapsed < lower_bound + Duration::from_secs(networking_delay));
     }
 
     #[tokio::test]
     async fn test_timed_broadcast_high_timestamp_and_drop() {
-        // one of the parties will always send a high timestamp
-        // we expect the protocol to proceed normally
+        // the malicious party stops responding at the final iteration
+        // this means other parties should not wait for a long time
+        // instead, they should only wait for the delay of one extra round
+        let malicious_strategy = MaliciousBroadcastDrop::default();
+
+        // set the malicious roles to party 1
+        let iters = 5;
+        let num_parties = 4;
+        let threshold = 1;
+        let networking_delay = 1; // seconds
+        let params = TestingParameters::init(
+            num_parties,
+            threshold,
+            &[1],
+            &[],
+            &[],
+            true,
+            Some((threshold + 3) * iters),
+        );
+
+        let start_instant = tokio::time::Instant::now();
+        test_timestamped_broadcast_from_all_w_corrupt_set_update_strategies::<
+            ResiduePolyF4Z128,
+            4,
+            _,
+        >(
+            params,
+            iters,
+            SystemTime::now() + Duration::from_secs(42 * 3600),
+            malicious_strategy,
+            Some(vec![Duration::from_secs(networking_delay); num_parties]),
+        )
+        .await;
+
+        let elapsed = start_instant.elapsed();
+
+        // normal execution time should take ~ iters * (3 + t) * networking_delay
+        // which is 20 seconds in this case
+        let mut lower_bound =
+            Duration::from_secs(iters as u64 * (3 + threshold) as u64 * networking_delay);
+        // however, the adversary drops in the final iteration
+        // so we need to wait for another (3 + t) * round_timeout
+        // which is another 20 seconds in this case
+        lower_bound += *NETWORK_TIMEOUT * (threshold as u32 + 3);
+        // the final deadline will be the above plus another round_timeout
+        // because the deadline is init_time + round_timeout*num_bcast_rounds + round_delay
+        lower_bound += *NETWORK_TIMEOUT;
+        // note that without the improved timeout functionality
+        // the final deadline would be iters * round_timeout * num_bcast_rounds
+        // this works out to be 100
+
+        println!(
+            "Elapsed time: {:?}, expected elasped time: {:?}",
+            elapsed, lower_bound
+        );
+
+        // WARNING: these asserts might not be very reliable on a heavily loaded system
+        assert!(lower_bound < elapsed);
+        assert!(elapsed < lower_bound + *NETWORK_TIMEOUT);
     }
 
     #[test]
     fn test_time_conversion() {
-        let eps = std::time::Duration::from_millis(1);
+        let eps = Duration::from_millis(1);
         {
-            let timestamp = SystemTime::now() - std::time::Duration::from_secs(42);
+            let timestamp = SystemTime::now() - Duration::from_secs(42);
             let new_timestamp = instant_to_systemtime(systemtime_to_instant(timestamp));
             assert!(new_timestamp.duration_since(timestamp).unwrap() < eps);
         }
         {
-            let timestamp = tokio::time::Instant::now() - std::time::Duration::from_secs(42);
+            let timestamp = tokio::time::Instant::now() - Duration::from_secs(42);
             let new_timestamp = systemtime_to_instant(instant_to_systemtime(timestamp));
             assert!(new_timestamp.duration_since(timestamp) < eps);
         }
