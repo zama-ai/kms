@@ -10,7 +10,7 @@ use bincode::Options;
 use serde::Serialize;
 use tfhe_versionable_0_6::Versionize as Versionize_0_6;
 
-use crate::{
+use backward_compatibility::{
     data_dir, dir_for_version,
     parameters::{
         ClassicPBSParametersTest, DKGParamsRegularTest, DKGParamsSnSTest,

@@ -46,22 +46,19 @@ use tfhe_1_3::{
 };
 use tokio::runtime::Runtime;
 
-use crate::parameters::SwitchAndSquashCompressionParametersTest;
-use crate::{
-    generate::{
-        store_versioned_auxiliary_05, store_versioned_test_05, KMSCoreVersion, TEST_DKG_PARAMS_SNS,
-    },
-    parameters::{
-        ClassicPBSParametersTest, DKGParamsRegularTest, DKGParamsSnSTest,
-        SwitchAndSquashParametersTest,
-    },
-    KmsFheKeyHandlesTest, PRSSSetupTest, PrivateSigKeyTest, PublicSigKeyTest,
-    SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS, ThresholdFheKeysTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_MODULE_NAME,
+use backward_compatibility::parameters::{
+    ClassicPBSParametersTest, DKGParamsRegularTest, DKGParamsSnSTest,
+    SwitchAndSquashCompressionParametersTest, SwitchAndSquashParametersTest,
 };
-use crate::{
-    AppKeyBlobTest, PrfKeyTest, PubDataTypeTest, PublicKeyTypeTest, TestMetadataKmsGrpc,
-    KMS_GRPC_MODULE_NAME,
+use backward_compatibility::{
+    AppKeyBlobTest, KmsFheKeyHandlesTest, PRSSSetupTest, PrfKeyTest, PubDataTypeTest,
+    PrivateSigKeyTest, PublicKeyTypeTest, PublicSigKeyTest, SignedPubDataHandleInternalTest,
+    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest,
+    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+};
+
+use crate::generate::{
+    store_versioned_auxiliary_05, store_versioned_test_05, KMSCoreVersion, TEST_DKG_PARAMS_SNS,
 };
 
 // Macro to store a versioned test
