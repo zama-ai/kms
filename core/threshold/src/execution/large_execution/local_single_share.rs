@@ -7,7 +7,7 @@ use crate::{
     algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::broadcast::{Broadcast, SyncReliableBroadcast},
+        communication::broadcast::{Broadcast, SyncReliableBroadcast, TimestampedBroadcast},
         runtime::{party::Role, session::LargeSessionHandles},
         sharing::{
             shamir::{RevealOp, ShamirSharings},
@@ -191,6 +191,10 @@ pub(crate) async fn verify_sharing<
     let (pads_shares_all, my_shared_pads) = (&pads.all_shares, &pads.shares_own_secret);
     let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
     let my_role = session.my_role();
+
+    let broadcast = TimestampedBroadcast { bcast: broadcast };
+    let mut sync_time = None;
+
     //TODO: Could be done in parallel (to minimize round complexity)
     for g in 0..m {
         let map_challenges =
@@ -224,6 +228,7 @@ pub(crate) async fn verify_sharing<
         let bcast_data = broadcast
             .broadcast_from_all_w_corrupt_set_update(
                 session,
+                sync_time,
                 MapsSharesChallenges {
                     checks_for_all: map_share_check_values,
                     checks_for_mine: map_share_my_check_values,
@@ -269,6 +274,12 @@ pub(crate) async fn verify_sharing<
             );
             return Ok(false);
         }
+
+        sync_time = Some(
+            crate::execution::communication::broadcast::instant_to_systemtime(
+                session.network().get_deadline_current_round().await,
+            ),
+        );
     }
 
     //If we reached here, everything went fine

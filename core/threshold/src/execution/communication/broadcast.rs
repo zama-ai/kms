@@ -56,35 +56,39 @@ pub struct TimestampedBroadcast<'a, B: Broadcast> {
 }
 
 impl<'a, B: Broadcast> TimestampedBroadcast<'a, B> {
-    // pub(crate) async fn broadcast_from_all<Z: Ring, Ses: BaseSessionHandles>(
-    //     &self,
-    //     session: &mut Ses,
-    //     batch_sync_time: SystemTime,
-    //     mut my_message: BroadcastValue<Z>,
-    // ) -> anyhow::Result<RoleValueMap<Z>> {
-    //     let sys_now = SystemTime::now();
-    //     my_message.timestamp = Some(sys_now);
-
-    //     // round counter before broadcast
-    //     let r_before = session.network().get_current_round().await;
-
-    //     let res = self.bcast.broadcast_from_all(session, my_message).await?;
-
-    //     let r_bcast = session.network().get_current_round().await - r_before;
-    //     debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
-    //     Self::reset_timeout(r_bcast, session, batch_sync_time, &res).await;
-    //     Ok(res)
-    // }
-
-    pub(crate) async fn broadcast_from_all_w_corrupt_set_update<
-        Z: Ring,
-        Ses: BaseSessionHandles,
-    >(
+    pub async fn broadcast_from_all<Z: Ring, Ses: BaseSessionHandles>(
         &self,
         session: &mut Ses,
         batch_sync_time: SystemTime,
         mut my_message: BroadcastValue<Z>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
+        let sys_now = SystemTime::now();
+        my_message.timestamp = Some(sys_now);
+
+        // round counter before broadcast
+        let r_before = session.network().get_current_round().await;
+
+        let res = self.bcast.broadcast_from_all(session, my_message).await?;
+
+        let r_bcast = session.network().get_current_round().await - r_before;
+        debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
+        Self::reset_timeout(r_bcast, session, batch_sync_time, &res).await;
+        Ok(res)
+    }
+
+    /// Similar to [Broadcast::broadcast_from_all_w_corrupt_set_update] but
+    /// it uses a smarter timeout update mechanism.
+    /// It will reduce the overall timeout of the protocol if there are
+    /// malicious parties dropping out over many rounds.
+    pub async fn broadcast_from_all_w_corrupt_set_update<Z: Ring, Ses: BaseSessionHandles>(
+        &self,
+        session: &mut Ses,
+        sync_time: Option<SystemTime>,
+        mut my_message: BroadcastValue<Z>,
+    ) -> anyhow::Result<RoleValueMap<Z>> {
+        // if sync_time is None, it means this is the very first bcast of the protocol
+        // if it is Some, then it is the second or later broadcast
+        let sync_time = sync_time.unwrap_or_else(SystemTime::now);
         let sys_now = SystemTime::now();
         my_message.timestamp = Some(sys_now);
 
@@ -98,7 +102,7 @@ impl<'a, B: Broadcast> TimestampedBroadcast<'a, B> {
 
         let r_bcast = session.network().get_current_round().await - r_before;
         debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
-        Self::reset_timeout(r_bcast, session, batch_sync_time, &res).await;
+        Self::reset_timeout(r_bcast, session, sync_time, &res).await;
         Ok(res)
     }
 
@@ -121,8 +125,15 @@ impl<'a, B: Broadcast> TimestampedBroadcast<'a, B> {
 
         // compute min(max({t_i}), U^r + R_b * D)
         let new_batch_sync_time = {
-            // TODO unwrap
-            let left = timestamps.into_iter().max().unwrap();
+            let left = match timestamps.into_iter().max() {
+                Some(t) => t,
+                None => {
+                    tracing::error!(
+                        "failed to reset timeout, empty timestamps, continuing without resetting"
+                    );
+                    return;
+                }
+            };
             let right = batch_sync_time
                 + r_bcast as u32 * session.network().get_timeout_current_round().await;
             left.min(right)
@@ -1021,7 +1032,7 @@ mod tests {
         delay_vec: Option<Vec<Duration>>,
     ) {
         let mut task_honest = |mut session: SmallSession<Z>| async move {
-            let mut sys_now = SystemTime::now();
+            let mut sys_now = None;
             let real_broadcast = SyncReliableBroadcast::default();
             let timed_broadcast = TimestampedBroadcast {
                 bcast: &real_broadcast,
@@ -1035,15 +1046,16 @@ mod tests {
                     .broadcast_from_all_w_corrupt_set_update(&mut session, sys_now, my_data.clone())
                     .await
                     .unwrap();
-                sys_now =
-                    instant_to_systemtime(session.network().get_deadline_current_round().await);
+                sys_now = Some(instant_to_systemtime(
+                    session.network().get_deadline_current_round().await,
+                ));
             }
             (my_data, res, session.corrupt_roles().clone())
         };
 
         // the first broadcast is honest, the second one is malicious
         let mut task_malicious = |mut session: SmallSession<Z>, malicious_broadcast: B| async move {
-            let mut sys_now = SystemTime::now();
+            let mut sys_now = None;
             let my_data = BroadcastValue::from(Z::sample(session.rng()));
             let real_broadcast = SyncReliableBroadcast::default();
             let real_broadcast = TimestampedBroadcast {
@@ -1057,15 +1069,16 @@ mod tests {
                 let _ = real_broadcast
                     .broadcast_from_all_w_corrupt_set_update(&mut session, sys_now, my_data.clone())
                     .await;
-                sys_now =
-                    instant_to_systemtime(session.network().get_deadline_current_round().await);
+                sys_now = Some(instant_to_systemtime(
+                    session.network().get_deadline_current_round().await,
+                ));
             }
 
             // the final broadcast is done using the malicious protocol and with a malicious timestamp
             let res = malicious_broadcast
                 .broadcast_from_all_w_corrupt_set_update(
                     &mut session,
-                    malicious_timestamp,
+                    Some(malicious_timestamp),
                     my_data.clone(),
                 )
                 .await;

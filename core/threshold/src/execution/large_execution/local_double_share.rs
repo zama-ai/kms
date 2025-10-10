@@ -9,7 +9,7 @@ use super::{
 use crate::{
     algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
     error::error_handler::anyhow_error_and_log,
-    execution::runtime::party::Role,
+    execution::{communication::broadcast::TimestampedBroadcast, runtime::party::Role},
     ProtocolDescription,
 };
 use crate::{
@@ -217,6 +217,9 @@ pub(crate) async fn verify_sharing<
     let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
     let my_role = session.my_role();
 
+    let broadcast = TimestampedBroadcast { bcast: broadcast };
+    let mut sync_time = None;
+
     //TODO: Could be done in parallel (to minimize round complexity)
     for g in 0..m {
         let map_challenges =
@@ -266,6 +269,7 @@ pub(crate) async fn verify_sharing<
         let bcast_data = broadcast
             .broadcast_from_all_w_corrupt_set_update(
                 session,
+                sync_time,
                 (
                     map_share_check_values_t,
                     map_share_check_values_2t,
@@ -369,6 +373,12 @@ pub(crate) async fn verify_sharing<
         {
             return Ok(false);
         }
+
+        sync_time = Some(
+            crate::execution::communication::broadcast::instant_to_systemtime(
+                session.network().get_deadline_current_round().await,
+            ),
+        );
     }
 
     //If we reached here, evereything went fine

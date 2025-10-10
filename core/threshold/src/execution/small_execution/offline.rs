@@ -91,7 +91,7 @@ impl<
         let mut base_preprocessing = InMemoryBasePreprocessing::<Z>::default();
 
         // In case of malicious behavior not all triples might have been constructed, so we have to continue making triples until the batch is done
-        let mut sync_time = SystemTime::now();
+        let mut sync_time = None;
         while base_preprocessing.triples_len() < batch_sizes.triples {
             let (triples, new_sync_time) = next_triple_batch(
                 small_session,
@@ -100,7 +100,7 @@ impl<
                 sync_time,
             )
             .await?;
-            sync_time = new_sync_time;
+            sync_time = Some(new_sync_time);
             base_preprocessing.append_triples(triples);
         }
         if batch_sizes.randoms > 0 {
@@ -138,7 +138,7 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
     session: &mut Ses,
     amount: usize,
     broadcast: &BCast,
-    batch_sync_time: SystemTime,
+    sync_time: Option<SystemTime>,
 ) -> anyhow::Result<(Vec<Triple<Z>>, SystemTime)> {
     let broadcast = TimestampedBroadcast { bcast: broadcast };
     let counters = session.prss().get_counters();
@@ -190,7 +190,7 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
 
     let val: BroadcastValue<Z> = vec_d_double.into();
     let broadcast_res = broadcast
-        .broadcast_from_all_w_corrupt_set_update(session, batch_sync_time, val)
+        .broadcast_from_all_w_corrupt_set_update(session, sync_time, val)
         .await?;
 
     // Try reconstructing 2t sharings of d, a None means reconstruction failed.
