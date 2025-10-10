@@ -7,8 +7,8 @@ use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::kms::v1::{
-    FheParameter, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
-    KeySetAddedInfo, KeySetConfig,
+    FheParameter, InitiateResharingRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
+    KeyGenRequest, KeyGenResult, KeySetAddedInfo, KeySetConfig,
 };
 use kms_grpc::rpc_types::{
     alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
@@ -85,6 +85,10 @@ impl Client {
             domain: Some(domain),
             epoch_id: None,
         })
+    }
+
+    pub fn reshare_request(&self) -> anyhow::Result<InitiateResharingRequest> {
+        Ok(InitiateResharingRequest {})
     }
 
     pub fn process_preproc_response(

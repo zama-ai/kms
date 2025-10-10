@@ -61,7 +61,7 @@ impl TestKeyGenResult {
         }
     }
 
-    fn get_standard(self) -> (tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey) {
+    pub(crate) fn get_standard(self) -> (tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey) {
         match self {
             TestKeyGenResult::DecompressionOnly(_) => panic!("expected to find standard"),
             TestKeyGenResult::Standard(inner) => inner,
@@ -961,7 +961,7 @@ pub(crate) async fn preproc_and_keygen(
 // issue: https://github.com/zama-ai/kms-core/issues/663
 #[cfg(feature = "slow_tests")]
 #[allow(clippy::too_many_arguments)]
-async fn run_preproc(
+pub(crate) async fn run_preproc(
     amount_parties: usize,
     parameter: FheParameter,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
