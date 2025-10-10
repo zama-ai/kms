@@ -6,9 +6,8 @@ use kms_grpc::{
     RequestId,
 };
 use serial_test::serial;
-use tfhe::boolean::backward_compatibility::server_key;
 use threshold_fhe::execution::{
-    online::reshare, runtime::party::Role, tfhe_internals::private_keysets::PrivateKeySet,
+    runtime::party::Role, tfhe_internals::private_keysets::PrivateKeySet,
 };
 use tokio::task::JoinSet;
 use tonic::{transport::Channel, Response, Status};
@@ -31,7 +30,6 @@ use crate::{
     dummy_domain,
     engine::{base::derive_request_id, threshold::service::ThresholdFheKeys},
     util::{key_setup::test_tools::purge, rate_limiter::RateLimiterConfig},
-    vault::storage::{file::FileStorage, StorageType},
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -70,7 +68,7 @@ pub(crate) async fn reshare(
     };
 
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
+    let (_kms_servers, kms_clients, internal_client) = threshold_handles(
         *dkg_param,
         amount_parties,
         true,
@@ -79,7 +77,7 @@ pub(crate) async fn reshare(
     )
     .await;
 
-    let mut expected_num_parties_crashed = party_ids_to_crash.as_ref().map_or(0, |v| v.len());
+    let expected_num_parties_crashed = party_ids_to_crash.as_ref().map_or(0, |v| v.len());
 
     // Run a regular DKG to have something to reshare
     run_preproc(
