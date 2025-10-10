@@ -164,8 +164,24 @@ type DKGPreprocSnsStore<const EXTENSION_DEGREE: usize> = DashMap<
         Box<dyn DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
     ),
 >;
-type KeyStore<const EXTENSION_DEGREE: usize> =
-    DashMap<SessionId, Arc<((FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>), DKGParams)>>;
+
+struct KeyBucket<const EXTENSION_DEGREE: usize> {
+    pub_keyset: Arc<FhePubKeySet>,
+    priv_keyset: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
+    params: DKGParams,
+}
+
+impl<const EXTENSION_DEGREE: usize> KeyBucket<EXTENSION_DEGREE> {
+    pub fn new(keys: (FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>), params: DKGParams) -> Self {
+        Self {
+            pub_keyset: Arc::new(keys.0),
+            priv_keyset: Arc::new(keys.1),
+            params,
+        }
+    }
+}
+
+type KeyStore<const EXTENSION_DEGREE: usize> = DashMap<SessionId, Arc<KeyBucket<EXTENSION_DEGREE>>>;
 type DDecPreprocNFStore<const EXTENSION_DEGREE: usize> =
     DashMap<SessionId, Vec<InMemoryNoiseFloodPreprocessing<EXTENSION_DEGREE>>>;
 type DDecPreprocBitDecStore<const EXTENSION_DEGREE: usize> =
@@ -967,7 +983,7 @@ where
                     )
                     .await
                     .unwrap();
-                    key_store.insert(session_id, Arc::new((keys, dkg_params)));
+                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
                     fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
@@ -990,7 +1006,7 @@ where
                     )
                     .await
                     .unwrap();
-                    key_store.insert(session_id, Arc::new((keys, dkg_params)));
+                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
                     fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
@@ -1022,7 +1038,7 @@ where
                     )
                     .await
                     .unwrap();
-                    key_store.insert(session_id, Arc::new((keys, dkg_params)));
+                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
                     fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
@@ -1045,7 +1061,7 @@ where
                     )
                     .await
                     .unwrap();
-                    key_store.insert(session_id, Arc::new((keys, dkg_params)));
+                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
                     fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
@@ -1118,9 +1134,10 @@ where
                         format!("Failed to do centralised key generation {e:?}"),
                     )
                 })?;
-            self.data
-                .key_store
-                .insert(session_id, Arc::new((keys.clone(), dkg_params)));
+            self.data.key_store.insert(
+                session_id,
+                Arc::new(KeyBucket::new(keys.clone(), dkg_params)),
+            );
             return Ok(tonic::Response::new(ThresholdKeyGenResultResponse {
                 pub_keyset: bc2wrap::serialize(&keys.0).map_err(|e| {
                     tonic::Status::new(
@@ -1133,7 +1150,7 @@ where
             let keys = self.data.key_store.get(&session_id);
             if let Some(keys) = keys {
                 return Ok(tonic::Response::new(ThresholdKeyGenResultResponse {
-                    pub_keyset: bc2wrap::serialize(&keys.0).map_err(|e| {
+                    pub_keyset: bc2wrap::serialize(&keys.pub_keyset).map_err(|e| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
                             format!("Failed to serialize pubkey: {e:?}"),
@@ -1201,8 +1218,7 @@ where
                     format!("Can not find key that corresponds to session ID {key_sid}"),
                 )
             })?
-            .0
-             .1
+            .priv_keyset
             .parameters
             .message_modulus_log();
         let num_bits_message = ctxt_type.get_num_bits_rep();
@@ -1563,14 +1579,15 @@ where
             let num_copies = throughput.num_copies;
             let chunk_size = num_copies.div_ceil(num_sessions);
             let prss_setup = self.data.prss_setup.clone();
-            let sns_key = Arc::new(key_ref.0 .0.server_key.noise_squashing_key().unwrap());
-            let server_key = Arc::new(key_ref.0 .0.server_key.as_ref());
-            let ks = get_key_switching_key(key_ref.0 .0.server_key.as_ref()).map_err(|_| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    "Failed to retrieve ksk from server key",
-                )
-            })?;
+            let sns_key = Arc::new(key_ref.pub_keyset.server_key.noise_squashing_key().unwrap());
+            let server_key = Arc::new(key_ref.pub_keyset.server_key.as_ref());
+            let ks =
+                get_key_switching_key(key_ref.pub_keyset.server_key.as_ref()).map_err(|_| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        "Failed to retrieve ksk from server key",
+                    )
+                })?;
             //Throughput number of ctxts is dictated by num_sessions*num_copies
             //we thus only take the 1st ctxt here
             let num_blocks = ctxts[0].len();
@@ -1672,7 +1689,7 @@ where
                                 ctxts.len()
                             );
 
-                            let key_shares = Arc::new(key_ref.0 .1.clone());
+                            let key_shares = key_ref.priv_keyset.clone();
                             decryption_tasks.spawn(
                                 async move {
                                     let noiseflood_preprocessing = Arc::new(Mutex::new(
@@ -1845,7 +1862,7 @@ where
                                                 >(
                                                     &mut base_session,
                                                     &mut inner_preprocessings,
-                                                    &key_ref.0 .1,
+                                                    key_ref.priv_keyset.as_ref(),
                                                     &ks,
                                                     inner_blocks_ctxt,
                                                 )
@@ -2023,8 +2040,8 @@ where
                             .for_each(|(block, ctxts)| ctxts.push(block));
                     });
 
-                    let ks =
-                        get_key_switching_key(key_ref.0 .0.server_key.as_ref()).map_err(|_| {
+                    let ks = get_key_switching_key(key_ref.pub_keyset.server_key.as_ref())
+                        .map_err(|_| {
                             tonic::Status::new(
                                 tonic::Code::Aborted,
                                 "Failed to retrieve ksk from server key",
@@ -2051,7 +2068,7 @@ where
                                         task_decryption_bitdec_par::<EXTENSION_DEGREE, _, _, u64>(
                                             &mut session,
                                             &mut inner_preprocessings,
-                                            &key_share.0 .1,
+                                            &key_share.priv_keyset,
                                             &ksk,
                                             ctxts_blocks,
                                         )
@@ -2104,7 +2121,12 @@ where
                     );
                 }
                 DecryptionMode::NoiseFloodSmall | DecryptionMode::NoiseFloodLarge => {
-                    if key_ref.0 .0.server_key.noise_squashing_key().is_none() {
+                    if key_ref
+                        .pub_keyset
+                        .server_key
+                        .noise_squashing_key()
+                        .is_none()
+                    {
                         return Err(tonic::Status::new(tonic::Code::Aborted,format!("Asked for NoiseFlood decrypt but there is no Switch and Squash key for key at session ID {key_sid}")));
                     }
                     let preprocessings = if let Some(preproc_sid) = preproc_sid {
@@ -2129,9 +2151,9 @@ where
                             .collect_vec()
                     };
                     let my_future = || async move {
-                        let server_key = key_ref.0 .0.server_key.as_ref();
+                        let server_key = key_ref.pub_keyset.server_key.as_ref();
                         let mut res = Vec::new();
-                        let sns_key = key_ref.0 .0.server_key.noise_squashing_key();
+                        let sns_key = key_ref.pub_keyset.server_key.noise_squashing_key();
                         for (ctxt, preprocessing) in
                             ctxts.into_iter().zip_eq(preprocessings.into_iter())
                         // May panic
@@ -2156,7 +2178,7 @@ where
                             } else {
                                 panic!("Missing key (it was there just before)")
                             };
-                            let key_shares = Arc::new(key_ref.0 .1.clone());
+                            let key_shares = key_ref.priv_keyset.clone();
                             res.push(
                                 run_decryption_noiseflood_64::<
                                     EXTENSION_DEGREE,
@@ -2488,9 +2510,9 @@ where
             //NOTE: we need a mutable access to the keyset because reshare will zeroize it
             //however since this is a clone it doesn't do much...
             //Wondering whether it really should be reshare's role to zeroize stuff ?
-            let public_key_set = key_ref.0 .0.clone();
-            let old_private_key_set = key_ref.0 .1.clone();
-            let params = key_ref.as_ref().1;
+            let public_key_set = key_ref.pub_keyset.clone();
+            let old_private_key_set = key_ref.priv_keyset.as_ref().clone();
+            let params = key_ref.as_ref().params;
 
             //Perform preprocessing
             let num_needed_preproc = ResharePreprocRequired::new_same_set(num_parties, params);
@@ -2584,7 +2606,11 @@ where
             //NOTE: we do not delete the old one as moby is only for testing purposes
             key_store.insert(
                 reshare_params.new_key_sid,
-                Arc::new(((public_key_set, new_private_key_set), params)),
+                Arc::new(KeyBucket {
+                    pub_keyset: public_key_set,
+                    priv_keyset: Arc::new(new_private_key_set),
+                    params,
+                }),
             );
             let mut sessions = sessions.into_iter().collect_vec();
             sessions.push(reshare_base_session);
