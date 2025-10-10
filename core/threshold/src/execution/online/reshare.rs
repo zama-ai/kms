@@ -785,13 +785,19 @@ mod tests {
 
         // we make the shares shorter to make sure the test doesn't take too long
         let new_params = truncate_client_keys(&mut keyset);
-        let params = keyset.get_cpu_params().unwrap();
 
         // generate the key shares
         let mut rng = AesRng::from_entropy();
-        let mut key_shares =
-            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
-                .unwrap();
+        let mut key_shares = keygen_all_party_shares_from_keyset(
+            &keyset,
+            new_params
+                .get_params_basics_handle()
+                .to_classic_pbs_parameters(),
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
 
         let roles = generate_fixed_roles(num_parties);
         //Reshare assumes Sync network
@@ -884,6 +890,7 @@ mod tests {
             keyset.get_raw_lwe_client_key().to_owned().into_container(),
             keyset.get_raw_glwe_client_key().to_owned().into_container(),
         );
+        // We have at most 1 error, the one we just added
         let rec_sk = reconstruct_sk(key_shares.clone(), threshold, 1);
         assert_eq!(rec_sk, expected_sk);
 
@@ -995,6 +1002,8 @@ mod tests {
         Ok(())
     }
 
+    // We truncate the keys in the keyset to make the test faster
+    // We return the params that correspond to the truncated keys
     fn truncate_client_keys(keyset: &mut KeySet) -> DKGParams {
         let (raw_sns_private_key, sns_params) = keyset
             .client_key
