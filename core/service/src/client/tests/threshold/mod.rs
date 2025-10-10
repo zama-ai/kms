@@ -7,6 +7,7 @@ mod misc_tests;
 #[cfg(feature = "slow_tests")]
 mod nightly_tests;
 mod public_decryption_tests;
+#[cfg(feature = "slow_tests")]
 mod reshare_tests;
 #[cfg(feature = "insecure")]
 mod restore_from_backup_tests;

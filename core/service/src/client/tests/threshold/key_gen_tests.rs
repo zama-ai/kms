@@ -1144,6 +1144,7 @@ fn try_reconstruct_shares(
     )
 }
 
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 pub(crate) async fn verify_keygen_responses(
     finished: Vec<(u32, Result<Response<KeyGenResult>, Status>)>,
     data_root_path: Option<&Path>,
