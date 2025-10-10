@@ -761,13 +761,13 @@ mod tests {
     #[cfg(feature = "extension_degree_8")]
     #[test]
     fn reshare_with_error_f8() -> anyhow::Result<()> {
-        simulate_reshare::<8>(false, true)
+        simulate_reshare::<8>(true, false)
     }
 
     #[cfg(feature = "extension_degree_8")]
     #[test]
     fn reshare_with_missing_f8() -> anyhow::Result<()> {
-        simulate_reshare::<8>(true, false)
+        simulate_reshare::<8>(false, true)
     }
 
     fn simulate_reshare<const EXTENSION_DEGREE: usize>(
