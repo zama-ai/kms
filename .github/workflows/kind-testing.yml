@@ -278,11 +278,17 @@ jobs:
           #===========================================================
           # Stop the setup script and all its child processes (port-forwards)
           echo "Stopping setup script and port-forwards (PID: ${SETUP_PID})..."
-          
-          # Send SIGTERM to the process group
+
+          # Check if process still exists
           if kill -0 ${SETUP_PID} 2>/dev/null; then
-            kill -TERM -${SETUP_PID} 2>/dev/null || echo "Failed to send SIGTERM to process group"
-            
+            # Send SIGINT to the process group (simulates Ctrl+C)
+            if kill -INT -- -${SETUP_PID} 2>/dev/null; then
+              echo "Sent SIGINT (Ctrl+C) to process group -${SETUP_PID}"
+            else
+              # Try killing just the main process if process group fails
+              kill -INT ${SETUP_PID} 2>/dev/null && echo "Sent SIGINT to process ${SETUP_PID}" || echo "Process already terminated"
+            fi
+
             # Wait for graceful shutdown with timeout
             CLEANUP_TIMEOUT=30
             CLEANUP_ELAPSED=0
@@ -290,12 +296,14 @@ jobs:
               sleep 1
               CLEANUP_ELAPSED=$((CLEANUP_ELAPSED + 1))
             done
-            
+
             # Force kill if still running
             if kill -0 ${SETUP_PID} 2>/dev/null; then
-              echo "Process group didn't terminate gracefully, sending SIGKILL..."
-              kill -9 -${SETUP_PID} 2>/dev/null || true
-              sleep 2
+              echo "Process didn't terminate after ${CLEANUP_TIMEOUT}s, sending SIGKILL..."
+              kill -9 -- -${SETUP_PID} 2>/dev/null || kill -9 ${SETUP_PID} 2>/dev/null || true
+              sleep 1
+            else
+              echo "Process terminated successfully"
             fi
           else
             echo "Setup process already terminated"
@@ -307,7 +315,7 @@ jobs:
             echo "Tests failed with exit code ${TEST_EXIT_CODE}"
             exit ${TEST_EXIT_CODE}
           fi
-          
+
           echo "Tests passed successfully"
 
       - name: Upload kms-core logs
@@ -315,7 +323,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: kms-core-logs
-          path: kms-core-*.txt
+          path: /tmp/kms-service-threshold-*.log
           retention-days: 7 # Keep logs for 7 days
           if-no-files-found: warn # Only warn if no log files are found
 

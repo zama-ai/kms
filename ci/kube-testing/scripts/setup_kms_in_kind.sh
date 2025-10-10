@@ -324,14 +324,15 @@ deploy_threshold_mode() {
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --wait \
-            --timeout 10m
-        kubectl logs kms-service-threshold-${i}-${NAMESPACE}-core-${i} -n ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
+            --timeout 10m &
     done
+    wait
 
     log_info "Waiting for KMS Core pods to be ready..."
     for i in $(seq 1 "${NUM_PARTIES}"); do
         kubectl wait --for=condition=ready pod -l app=kms-core \
             -n "${NAMESPACE}" --timeout=10m --kubeconfig "${KUBE_CONFIG}"
+        kubectl logs kms-service-threshold-${i}-${NAMESPACE}-core-${i} -n ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
     done
 
     # Deploy initialization job
@@ -415,7 +416,7 @@ setup_port_forwarding() {
                     -n "${NAMESPACE}" \
                     "svc/kms-service-threshold-${i}-${NAMESPACE}-core-${i}" \
                     "${port}:50100" \
-                    --kubeconfig "${KUBE_CONFIG}" \
+                    --kubeconfig "${KUBE_CONFIG}"  2>/dev/null \
                     &
             done
             ;;
@@ -425,7 +426,7 @@ setup_port_forwarding() {
                 -n "${NAMESPACE}" \
                 svc/kms-core \
                 50100:50100 \
-                --kubeconfig "${KUBE_CONFIG}" \
+                --kubeconfig "${KUBE_CONFIG}" 2>/dev/null \
                 &
             ;;
     esac
@@ -437,6 +438,10 @@ setup_port_forwarding() {
 cleanup() {
     log_info "Cleaning up KMS resources..."
 
+    log_info "Save logs for debugging..."
+    for i in $(seq 1 "${NUM_PARTIES}"); do
+        kubectl logs kms-service-threshold-${i}-${NAMESPACE}-core-${i} -n ${NAMESPACE} --kubeconfig ${KUBE_CONFIG} > /tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log
+    done
     # Uninstall Helm releases
     helm uninstall -n "${NAMESPACE}" kms-core-gen-keys 2>/dev/null || true
     helm uninstall -n "${NAMESPACE}" kms-core-init 2>/dev/null || true
