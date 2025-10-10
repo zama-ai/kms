@@ -68,10 +68,10 @@ kmsCore:
     enabled: false
   resources:
     requests:
-      memory: 12Gi
+      memory: 24Gi
       cpu: 12
     limits:
-      memory: 12Gi
+      memory: 24Gi
       cpu: 12
       ephemeralStorage: 1Gi
       grpcTimeout: 360
