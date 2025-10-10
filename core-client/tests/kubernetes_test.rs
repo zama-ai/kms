@@ -73,3 +73,13 @@ async fn test_threshold_insecure() {
     let _key_id = insecure_key_gen(keys_folder).await;
     let _crs_id = crs_gen(keys_folder).await;
 }
+
+#[tokio::test]
+async fn full_gen_tests_default_threshold_sequential_crs() {
+    init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let crs_id_1 = crs_gen(keys_folder).await;
+    let crs_id_2 = crs_gen(keys_folder).await;
+    assert_ne!(crs_id_1, crs_id_2);
+}
