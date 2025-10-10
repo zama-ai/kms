@@ -39,11 +39,11 @@ kmsCoreClient:
   fhe_parameter: Default
   resources:
     requests:
-      memory: 2Gi
-      cpu: 1
+      memory: 24Gi
+      cpu: 12
     limits:
-      memory: 4Gi
-      cpu: 1
+      memory: 24Gi
+      cpu: 12
 
 kubeUtils:
   image:

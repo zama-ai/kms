@@ -68,11 +68,11 @@ kmsCore:
     enabled: false
   resources:
     requests:
-      memory: 1Gi
-      cpu: 1
+      memory: 12Gi
+      cpu: 12
     limits:
-      memory: 1Gi
-      cpu: 1
+      memory: 12Gi
+      cpu: 12
       ephemeralStorage: 1Gi
       grpcTimeout: 360
       grpcMaxMessageSize: 104857600
