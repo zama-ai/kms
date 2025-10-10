@@ -218,8 +218,13 @@ metadata:
 type: kubernetes.io/dockerconfigjson
 EOF
 
-    kubectl get secrets registry-credentials -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -o yaml
-    log_info "Registry credentials configured"
+    # Verify secret exists without printing its contents
+    if kubectl get secret registry-credentials -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &> /dev/null; then
+        log_info "Registry credentials configured successfully"
+    else
+        log_error "Failed to create registry credentials"
+        return 1
+    fi
 }
 
 # Setup Helm repositories
@@ -297,7 +302,6 @@ deploy_kms_core() {
 deploy_threshold_mode() {
     log_info "Deploying KMS Core in threshold mode with ${NUM_PARTIES} parties..."
 
-    kubectl apply -f ~/dockerconfig.yaml -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
     for i in $(seq 1 "${NUM_PARTIES}"); do
         log_info "Deploying KMS Core party ${i}/${NUM_PARTIES}..."
         helm upgrade --install "kms-service-threshold-${i}-${NAMESPACE}" \
