@@ -106,7 +106,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         let _ = self
             .crypto_storage
             .refresh_threshold_fhe_keys(&key_id_to_reshare)
-            .await;
+            .await.inspect_err(|e|tracing::warn!("During reshare, failed to refresh keys with id {}: {}. Will try to do the reshare anyway.", key_id_to_reshare, e));
 
         // We assume the operators have manually copied the public keys to the public storage
         let public_key = self
@@ -152,6 +152,19 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         let sk = Arc::clone(&self.base_kms.sig_key);
         let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
 
+        // Update status
+        {
+            let mut guarded_meta_store = meta_store.write().await;
+            guarded_meta_store.insert(&request_id).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!(
+                        "Failed to insert reshare status for request {} : {}",
+                        request_id, e
+                    ),
+                )
+            })?;
+        }
         let task = async move {
             let (session_id_z128, session_id_z64, session_id_reshare) = {
                 (
@@ -255,12 +268,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 .await;
 
             crypto_storage
-                .write_threshold_keys_with_meta_store(
+                .write_threshold_keys_with_reshare_meta_store(
+                    &request_id,
                     &key_id_to_reshare,
                     threshold_fhe_keys,
                     fhe_pubkeys,
-                    info,
-                    meta_store,
+                    info.clone(),
+                    Arc::clone(&meta_store),
                 )
                 .await;
 
@@ -302,12 +316,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
         match res {
             KeyGenMetadata::Current(res) => {
-                if res.key_id != request_id {
-                    return Err(Status::internal(format!(
-                        "Key generation result not found for request ID: {}",
-                        request_id
-                    )));
-                }
+                tracing::info!(
+                    "Retrieved reshare result for request ID {:?}. Key id is {}",
+                    request_id,
+                    res.key_id
+                );
 
                 // Note: This relies on the ordering of the PubDataType enum
                 // which must be kept stable (in particular, ServerKey must be before PublicKey)

@@ -149,6 +149,7 @@ pub async fn crs_gen_centralized(
         crsgen: 100,
         preproc: 1,
         keygen: 1,
+        reshare: 1,
     };
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, mut kms_client, internal_client) =
