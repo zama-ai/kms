@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
+use itertools::Itertools;
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{
-        InitiateResharingRequest, InitiateResharingResponse, ResharingResultRequest,
+        InitiateResharingRequest, InitiateResharingResponse, KeyDigest, ResharingResultRequest,
         ResharingResultResponse,
     },
-    rpc_types::{optional_protobuf_to_alloy_domain, PrivDataType, WrappedPublicKeyOwned},
-    IdentifierError, RequestId,
+    rpc_types::{optional_protobuf_to_alloy_domain, WrappedPublicKeyOwned},
+    IdentifierError,
 };
 use threshold_fhe::{
     execution::{
@@ -36,13 +37,10 @@ use crate::{
         validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
     util::{
-        meta_store::{self, MetaStore},
+        meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
     },
-    vault::storage::{
-        crypto_material::{log_storage_success, ThresholdCryptoMaterialStorage},
-        store_versioned_at_request_id, Storage,
-    },
+    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
 };
 
 pub struct RealResharer<
@@ -116,10 +114,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Internal,
-                    format!(
-                        "Failed to fetch public key from public storage: {}",
-                        e.to_string()
-                    ),
+                    format!("Failed to fetch public key from public storage: {}", e),
                 )
             })?;
 
@@ -200,19 +195,16 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
             // Read the old keys if they exists, otherwise we enter resharing with no keys
             // NOTE: Will need to drop this unwrap somehow
-            let (mut mutable_keys, metadata) = {
+            let mut mutable_keys = {
                 let old_fhe_keys_rlock = crypto_storage
                     .read_guarded_threshold_fhe_keys_from_cache(&key_id_to_reshare)
                     .await
                     .ok();
                 // Note: the function is supposed to zeroize the keys (hence requires mut access),
                 // so we clone it, cause we can't zeroize storage from here
-                let key = old_fhe_keys_rlock
+                old_fhe_keys_rlock
                     .as_ref()
-                    .map(|r| r.private_keys.as_ref().clone());
-
-                let metadata = old_fhe_keys_rlock.map(|r| r.meta_data.clone());
-                (key, metadata)
+                    .map(|r| r.private_keys.as_ref().clone())
             };
 
             let new_private_key_set = reshare_sk_same_sets(
@@ -237,7 +229,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             ) {
                 Ok(info) => info,
                 Err(_) => {
-                    todo!("ERROR")
+                    let mut guarded_meta_storage = meta_store.write().await;
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_storage
+                        .update(&request_id, Err("Failed to compute key info".to_string()));
+                    anyhow::bail!("Failed to compute key info")
                 }
             };
 
@@ -265,19 +261,24 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     meta_store,
                 )
                 .await;
-            //NOTE: Probably need to modify the storage
-            // such that we can overwrite only the private keys
-            // (assuming the public keys are here, either because DKG succeeded or we
-            // fetched and verified them from all the other parties)
 
-            //crypto_storage.overwrite_private_key(
-            //    key_id,
-            //    new_private_key_set,
-            //);
-
-            Ok::<(), anyhow::Error>(())
+            Ok(())
         };
-        self.tracker.spawn(task);
+        self.tracker.spawn(async move {
+            match task.await {
+                Ok(_) => tracing::info!(
+                    "Resharing completed successfully for request ID {:?} and key ID {:?}",
+                    request_id,
+                    key_id_to_reshare
+                ),
+                Err(e) => tracing::error!(
+                    "Resharing failed for request ID {:?} and key ID {:?}: {}",
+                    request_id,
+                    key_id_to_reshare,
+                    e
+                ),
+            }
+        });
         Ok(Response::new(InitiateResharingResponse {
             request_id: Some(request_id.into()),
         }))
@@ -287,6 +288,53 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         request: Request<ResharingResultRequest>,
     ) -> Result<Response<ResharingResultResponse>, Status> {
-        todo!()
+        let request_id = parse_optional_proto_request_id(
+            &request.get_ref().request_id,
+            RequestIdParsingErr::ReshareResponse,
+        )?;
+
+        let status = {
+            let guarded_meta_store = self.reshare_pubinfo_meta_store.read().await;
+            guarded_meta_store.retrieve(&request_id)
+        };
+
+        let res = handle_res_mapping(status, &request_id, "Reshare").await?;
+
+        match res {
+            KeyGenMetadata::Current(res) => {
+                if res.key_id != request_id {
+                    return Err(Status::internal(format!(
+                        "Key generation result not found for request ID: {}",
+                        request_id
+                    )));
+                }
+
+                // Note: This relies on the ordering of the PubDataType enum
+                // which must be kept stable (in particular, ServerKey must be before PublicKey)
+                let key_digests = res
+                    .key_digest_map
+                    .into_iter()
+                    .sorted_by_key(|x| x.0)
+                    .map(|(key, digest)| KeyDigest {
+                        key_type: key.to_string(),
+                        digest,
+                    })
+                    .collect::<Vec<_>>();
+
+                Ok(Response::new(ResharingResultResponse {
+                    request_id: Some(request_id.into()),
+                    key_id: Some(res.key_id.into()),
+                    preprocessing_id: Some(res.preprocessing_id.into()),
+                    key_digests,
+                    external_signature: res.external_signature,
+                }))
+            }
+            KeyGenMetadata::LegacyV0(_res) => {
+                tracing::error!("Resharing should not return legacy metadata");
+                Err(Status::internal(
+                    "Resharing returned legacy metadata, which should not happen",
+                ))
+            }
+        }
     }
 }

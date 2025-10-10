@@ -429,10 +429,10 @@ impl<
     }
 
     #[tracing::instrument(skip(self, _request))]
-    async fn get_resharing_status(
+    async fn get_resharing_result(
         &self,
-        _request: Request<kms_grpc::kms::v1::ResharingStatusRequest>,
-    ) -> Result<Response<kms_grpc::kms::v1::ResharingStatusResponse>, Status> {
+        _request: Request<kms_grpc::kms::v1::ResharingResultRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::ResharingResultResponse>, Status> {
         unimplemented!("Resharing is not supported in Centralized KMS");
     }
 }

@@ -68,6 +68,7 @@ pub(crate) enum RequestIdParsingErr {
     PublicDecResponse,
 
     ReshareRequest,
+    ReshareResponse,
 
     CustodianContext,
     BackupRecovery,
@@ -115,6 +116,9 @@ impl std::fmt::Display for RequestIdParsingErr {
             }
             RequestIdParsingErr::ReshareRequest => {
                 write!(f, "Invalid reshare request ID")
+            }
+            RequestIdParsingErr::ReshareResponse => {
+                write!(f, "Invalid reshare response ID")
             }
         }
     }
