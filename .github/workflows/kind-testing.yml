@@ -223,22 +223,61 @@ jobs:
       # Test Execution
       # Runs the Kubernetes integration tests using the configured environment
       #
-      - name: Setup kind with KMS version
+      - name: Setup Kind and Run Kubernetes Tests
+        id: tests
+        # Execute the Kubernetes integration tests
         env:
           GITHUB_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
         run: |
+          #===========================================================
+          # Run setup script in background and capture its PID
+          # Use tee to both display output and save to log file for monitoring
           ./ci/kube-testing/scripts/setup_kms_in_kind.sh \
             --namespace "${NAMESPACE}" \
             --kms-core-tag "${KMS_CORE_IMAGE_TAG:-v0.12.0}" \
             --kms-core-client-tag "${KMS_CORE_CLIENT_IMAGE_TAG:-v0.12.0}" \
             --deployment-type "${DEPLOYMENT_TYPE:-threshold}" \
-            --num-parties "${NUM_PARTIES:-4}"
-          sleep 60
-      - name: Run Kubernetes Tests
-        id: tests
-        # Execute the Kubernetes integration tests
-        run: |
+            --num-parties "${NUM_PARTIES:-4}" 2>&1 | tee setup_kms.log &
+          SETUP_PID=$!
+
+          # Wait for setup to complete by monitoring the log file
+          echo "Waiting for KMS setup to complete..."
+          TIMEOUT=600  # 10 minutes timeout
+          ELAPSED=0
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            if grep -q "Press Ctrl+C to stop port forwarding and exit" setup_kms.log 2>/dev/null; then
+              echo "KMS setup completed successfully!"
+              break
+            fi
+            if ! kill -0 ${SETUP_PID} 2>/dev/null; then
+              echo "Setup script terminated unexpectedly!"
+              cat setup_kms.log
+              exit 1
+            fi
+            sleep 5
+            ELAPSED=$((ELAPSED + 5))
+          done
+
+          if [ $ELAPSED -ge $TIMEOUT ]; then
+            echo "Timeout waiting for KMS setup to complete"
+            cat setup_kms.log
+            kill -TERM -${SETUP_PID} 2>/dev/null || true
+            exit 1
+          fi
+
+          #===========================================================
+          # Run tests
           cargo test --test kubernetes_test
+          TEST_EXIT_CODE=$?
+
+          #===========================================================
+          # Stop the setup script and all its child processes (port-forwards)
+          kill -TERM -${SETUP_PID} 2>/dev/null || true
+          wait ${SETUP_PID} 2>/dev/null || true
+
+          #===========================================================
+          # Exit with the test exit code to preserve test results
+          exit ${TEST_EXIT_CODE}
 
       - name: Upload kms-core logs
         if: always()
