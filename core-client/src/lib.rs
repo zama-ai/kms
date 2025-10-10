@@ -2989,7 +2989,7 @@ mod tests {
         assert!(parse_hex("0xzz").is_err());
         assert!(parse_hex("0x1234g").is_err());
         assert!(parse_hex("0x12345g").is_err());
-        assert!(parse_hex("Ox01").is_err()); // leading O instead of 0
+        assert!(parse_hex("Ox01").is_err()); // leading O (letter) instead of 0 (digit)
     }
 
     #[test]
