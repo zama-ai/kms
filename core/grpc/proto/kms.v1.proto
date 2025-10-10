@@ -718,11 +718,6 @@ message InitiateResharingResponse {
   RequestId request_id = 1;
 }
 
-message ResharingResultRequest {
-  // The resharing operation ID
-  RequestId request_id = 1;
-}
-
 message ResharingResultResponse {
   // The 32 Byte / 256 Bit ID of the resharing request, without `0x` prefix.
   RequestId request_id = 1;

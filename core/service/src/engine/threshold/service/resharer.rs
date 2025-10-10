@@ -4,7 +4,7 @@ use itertools::Itertools;
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{
-        InitiateResharingRequest, InitiateResharingResponse, KeyDigest, ResharingResultRequest,
+        InitiateResharingRequest, InitiateResharingResponse, KeyDigest, RequestId,
         ResharingResultResponse,
     },
     rpc_types::{optional_protobuf_to_alloy_domain, WrappedPublicKeyOwned},
@@ -34,7 +34,9 @@ use crate::{
             service::{session::SessionPreparerGetter, ThresholdFheKeys},
             traits::Resharer,
         },
-        validation::{parse_optional_proto_request_id, RequestIdParsingErr},
+        validation::{
+            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+        },
     },
     util::{
         meta_store::{handle_res_mapping, MetaStore},
@@ -286,12 +288,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
     async fn get_resharing_result(
         &self,
-        request: Request<ResharingResultRequest>,
+        request: Request<RequestId>,
     ) -> Result<Response<ResharingResultResponse>, Status> {
-        let request_id = parse_optional_proto_request_id(
-            &request.get_ref().request_id,
-            RequestIdParsingErr::ReshareResponse,
-        )?;
+        let request_id =
+            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::ReshareResponse)?;
 
         let status = {
             let guarded_meta_store = self.reshare_pubinfo_meta_store.read().await;

@@ -87,8 +87,23 @@ impl Client {
         })
     }
 
-    pub fn reshare_request(&self) -> anyhow::Result<InitiateResharingRequest> {
-        Ok(InitiateResharingRequest {})
+    pub fn reshare_request(
+        &self,
+        request_id: &RequestId,
+        key_id: &RequestId,
+        preproc_id: &RequestId,
+        param: Option<FheParameter>,
+        domain: &Eip712Domain,
+    ) -> anyhow::Result<InitiateResharingRequest> {
+        let domain = alloy_to_protobuf_domain(domain)?;
+        Ok(InitiateResharingRequest {
+            request_id: Some((*request_id).into()),
+            context_id: None,
+            key_id: Some((*key_id).into()),
+            key_parameters: param.unwrap_or_default().into(),
+            domain: Some(domain),
+            preproc_id: Some((*preproc_id).into()),
+        })
     }
 
     pub fn process_preproc_response(
