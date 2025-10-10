@@ -277,12 +277,38 @@ jobs:
 
           #===========================================================
           # Stop the setup script and all its child processes (port-forwards)
-          kill -TERM -${SETUP_PID} 2>/dev/null || true
-          wait ${SETUP_PID} 2>/dev/null || true
+          echo "Stopping setup script and port-forwards (PID: ${SETUP_PID})..."
+          
+          # Send SIGTERM to the process group
+          if kill -0 ${SETUP_PID} 2>/dev/null; then
+            kill -TERM -${SETUP_PID} 2>/dev/null || echo "Failed to send SIGTERM to process group"
+            
+            # Wait for graceful shutdown with timeout
+            CLEANUP_TIMEOUT=30
+            CLEANUP_ELAPSED=0
+            while kill -0 ${SETUP_PID} 2>/dev/null && [ $CLEANUP_ELAPSED -lt $CLEANUP_TIMEOUT ]; do
+              sleep 1
+              CLEANUP_ELAPSED=$((CLEANUP_ELAPSED + 1))
+            done
+            
+            # Force kill if still running
+            if kill -0 ${SETUP_PID} 2>/dev/null; then
+              echo "Process group didn't terminate gracefully, sending SIGKILL..."
+              kill -9 -${SETUP_PID} 2>/dev/null || true
+              sleep 2
+            fi
+          else
+            echo "Setup process already terminated"
+          fi
 
           #===========================================================
-          # Exit with the test exit code to preserve test results
-          exit ${TEST_EXIT_CODE}
+          # Check test exit code and fail the step if tests failed
+          if [ ${TEST_EXIT_CODE} -ne 0 ]; then
+            echo "Tests failed with exit code ${TEST_EXIT_CODE}"
+            exit ${TEST_EXIT_CODE}
+          fi
+          
+          echo "Tests passed successfully"
 
       - name: Upload kms-core logs
         if: always()
