@@ -1136,7 +1136,7 @@ impl<
         // Note: We can't easily check here whether we succeeded writing to the meta store
         // thus we can't increment the error counter if it fails
         crypto_storage
-            .write_threshold_keys_with_meta_store(
+            .write_threshold_keys_with_dkg_meta_store(
                 req_id,
                 threshold_fhe_keys,
                 fhe_pub_key_set,
@@ -1391,7 +1391,7 @@ impl<
         //Note: We can't easily check here whether we succeeded writing to the meta store
         //thus we can't increment the error counter if it fails
         crypto_storage
-            .write_threshold_keys_with_meta_store(
+            .write_threshold_keys_with_dkg_meta_store(
                 req_id,
                 threshold_fhe_keys,
                 pub_key_set,

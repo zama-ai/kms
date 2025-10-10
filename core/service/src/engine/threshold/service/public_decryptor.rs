@@ -909,7 +909,7 @@ mod tests {
         }
         public_decryptor
             .crypto_storage
-            .write_threshold_keys_with_meta_store(
+            .write_threshold_keys_with_dkg_meta_store(
                 &key_id,
                 threshold_fhe_keys,
                 fhe_key_set,

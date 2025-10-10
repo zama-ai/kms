@@ -44,6 +44,10 @@ pub const OP_CUSTODIAN_BACKUP_RECOVERY: &str = "custodian_backup_recovery";
 pub const OP_CUSTODIAN_RECOVERY_INIT: &str = "custodian_recovery_init";
 pub const OP_RESTORE_FROM_BACKUP: &str = "restore_from_backup";
 
+// Resharing
+pub const OP_INITIATE_RESHARING: &str = "initiate_resharing";
+pub const OP_GET_INITIATE_RESHARING_RESULT: &str = "get_initiate_resharing_result";
+
 // PK fetch
 pub const OP_FETCH_PK: &str = "fetch_pk";
 

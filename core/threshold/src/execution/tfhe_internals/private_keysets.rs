@@ -113,6 +113,26 @@ pub enum CompressionPrivateKeySharesEnum<const EXTENSION_DEGREE: usize> {
     Z128(CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>),
 }
 
+impl<const EXTENSION_DEGREE: usize> CompressionPrivateKeySharesEnum<EXTENSION_DEGREE> {
+    pub fn try_cast_mut_to_z64(
+        &mut self,
+    ) -> anyhow::Result<&mut CompressionPrivateKeyShares<Z64, EXTENSION_DEGREE>> {
+        match self {
+            CompressionPrivateKeySharesEnum::Z64(inner) => Ok(inner),
+            CompressionPrivateKeySharesEnum::Z128(_) => anyhow::bail!("not z64"),
+        }
+    }
+
+    pub fn try_cast_mut_to_z128(
+        &mut self,
+    ) -> anyhow::Result<&mut CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>> {
+        match self {
+            CompressionPrivateKeySharesEnum::Z64(_) => anyhow::bail!("not z128"),
+            CompressionPrivateKeySharesEnum::Z128(inner) => Ok(inner),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
 pub enum GlweSecretKeyShareEnumVersioned<const EXTENSION_DEGREE: usize> {
     V0(GlweSecretKeyShareEnum<EXTENSION_DEGREE>),
@@ -123,6 +143,26 @@ pub enum GlweSecretKeyShareEnumVersioned<const EXTENSION_DEGREE: usize> {
 pub enum GlweSecretKeyShareEnum<const EXTENSION_DEGREE: usize> {
     Z64(GlweSecretKeyShare<Z64, EXTENSION_DEGREE>),
     Z128(GlweSecretKeyShare<Z128, EXTENSION_DEGREE>),
+}
+
+impl<const EXTENSION_DEGREE: usize> GlweSecretKeyShareEnum<EXTENSION_DEGREE> {
+    pub fn try_cast_mut_to_z64(
+        &mut self,
+    ) -> anyhow::Result<&mut GlweSecretKeyShare<Z64, EXTENSION_DEGREE>> {
+        match self {
+            GlweSecretKeyShareEnum::Z64(inner) => Ok(inner),
+            GlweSecretKeyShareEnum::Z128(_) => anyhow::bail!("not z64"),
+        }
+    }
+
+    pub fn try_cast_mut_to_z128(
+        &mut self,
+    ) -> anyhow::Result<&mut GlweSecretKeyShare<Z128, EXTENSION_DEGREE>> {
+        match self {
+            GlweSecretKeyShareEnum::Z64(_) => anyhow::bail!("not z128"),
+            GlweSecretKeyShareEnum::Z128(inner) => Ok(inner),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -223,6 +223,7 @@ pub async fn decryption_threshold(
         crsgen: 1,
         preproc: 1,
         keygen: 1,
+        reshare: 1,
     };
     let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
         dkg_params,
