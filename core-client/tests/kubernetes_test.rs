@@ -12,7 +12,7 @@ fn root_path() -> PathBuf {
 }
 
 fn config_path() -> String {
-    "core-client/config/client_local_threshold.toml".to_string()
+    "core-client/config/client_local_kind_threshold.toml".to_string()
 }
 
 async fn insecure_key_gen(test_path: &Path) -> String {

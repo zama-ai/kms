@@ -52,7 +52,7 @@ kmsCore:
   publicVault:
     s3:
       enabled: true
-      bucket: kms
+      bucket: kms-public
   privateVault:
     s3:
       enabled: true
