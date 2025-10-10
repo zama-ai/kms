@@ -25,24 +25,24 @@ party_id = 1
 # The address of the given KMS server, including the port
 address = "localhost:50100"
 # The S3 endpoint where the public material of the given server can be reached
-s3_endpoint = "http://localhost:9000/kms"
+s3_endpoint = "http://localhost:9000/kms-public"
 # The folder at the S3 endpoint where the data is stored
 object_folder = "PUB-p1"
 
 [[cores]]
 party_id = 2
 address = "localhost:50200"
-s3_endpoint = "http://localhost:9000/kms"
+s3_endpoint = "http://localhost:9000/kms-public"
 object_folder = "PUB-p2"
 
 [[cores]]
 party_id = 3
 address = "localhost:50300"
-s3_endpoint = "http://localhost:9000/kms"
+s3_endpoint = "http://localhost:9000/kms-public"
 object_folder = "PUB-p3"
 
 [[cores]]
 party_id = 4
 address = "localhost:50400"
-s3_endpoint = "http://localhost:9000/kms"
+s3_endpoint = "http://localhost:9000/kms-public"
 object_folder = "PUB-p4"
