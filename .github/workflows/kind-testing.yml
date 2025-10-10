@@ -233,7 +233,7 @@ jobs:
             --kms-core-client-tag "${KMS_CORE_CLIENT_IMAGE_TAG:-v0.12.0}" \
             --deployment-type "${DEPLOYMENT_TYPE:-threshold}" \
             --num-parties "${NUM_PARTIES:-4}"
-
+          sleep 60
       - name: Run Kubernetes Tests
         id: tests
         # Execute the Kubernetes integration tests

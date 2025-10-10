@@ -26,13 +26,16 @@ set -euo pipefail
 
 # Default configuration
 NAMESPACE="${NAMESPACE:-kms-test}"
-KMS_CORE_IMAGE_TAG="${KMS_CORE_IMAGE_TAG:-latest}"
-KMS_CORE_CLIENT_IMAGE_TAG="${KMS_CORE_CLIENT_IMAGE_TAG:-latest}"
+KMS_CORE_IMAGE_TAG="${KMS_CORE_IMAGE_TAG:-latest-dev}"
+KMS_CORE_CLIENT_IMAGE_TAG="${KMS_CORE_CLIENT_IMAGE_TAG:-latest-dev}"
 DEPLOYMENT_TYPE="${DEPLOYMENT_TYPE:-threshold}"
 NUM_PARTIES="${NUM_PARTIES:-4}"
-CLEANUP=false
+KUBE_CONFIG="${HOME}/.kube/kind_config"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+RUST_IMAGE_VERSION="$(cat ${REPO_ROOT}/toolchain.txt)"
+CLEANUP=false
+BUILD=false
 
 # Colors for output
 RED='\033[0;31m'
@@ -81,6 +84,10 @@ parse_args() {
                 CLEANUP=true
                 shift
                 ;;
+            --build)
+                BUILD=true
+                shift
+                ;;
             --help)
                 grep "^#" "$0" | grep -v "^#!/" | sed 's/^# //'
                 exit 0
@@ -122,7 +129,7 @@ setup_kind_cluster() {
         log_warn "Kind cluster 'kms-test' already exists"
         if [[ "$CLEANUP" == "true" ]]; then
             log_info "Deleting existing cluster..."
-            kind delete cluster --name kms-test
+            kind delete cluster --name kms-test --kubeconfig "${KUBE_CONFIG}"
         else
             log_info "Using existing cluster"
             return 0
@@ -130,7 +137,7 @@ setup_kind_cluster() {
     fi
 
     log_info "Creating Kind cluster..."
-    kind create cluster --name "${NAMESPACE}" --config - <<EOF
+    kind create cluster --name "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" --config - <<EOF
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -146,13 +153,13 @@ setup_kube_context() {
     log_info "Setting up Kubernetes context..."
 
     log_info "Available contexts:"
-    kubectl config get-contexts --kubeconfig "${KUBECONFIG}"
+    kubectl config get-contexts --kubeconfig "${KUBE_CONFIG}"
 
     log_info "Using kind-"${NAMESPACE}" context..."
-    kubectl config use-context kind-"${NAMESPACE}" --kubeconfig "${KUBECONFIG}"
+    kubectl config use-context kind-"${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
 
     log_info "Checking cluster nodes..."
-    kubectl get nodes
+    kubectl get nodes --kubeconfig "${KUBE_CONFIG}"
 
     log_info "Kubernetes context configured"
 }
@@ -164,15 +171,15 @@ setup_namespace() {
     if kubectl get namespace "${NAMESPACE}" &> /dev/null; then
         if [[ "$CLEANUP" == "true" ]]; then
             log_info "Deleting existing namespace..."
-            kubectl delete namespace "${NAMESPACE}" --wait=true || true
+            kubectl delete namespace "${NAMESPACE}" --wait=true --kubeconfig "${KUBE_CONFIG}" || true
         else
             log_warn "Namespace already exists, skipping creation"
             return 0
         fi
     fi
 
-    kubectl create namespace "${NAMESPACE}"
-    kubectl get namespace
+    kubectl create namespace "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
+    kubectl get namespace --kubeconfig "${KUBE_CONFIG}"
     log_info "Namespace created"
 }
 
@@ -201,7 +208,7 @@ JSON
 )
 
     # Apply the secret to Kubernetes
-    cat <<EOF | kubectl apply -f - --namespace "${NAMESPACE}"
+    cat <<EOF | kubectl apply -f - --namespace "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
 apiVersion: v1
 data:
   .dockerconfigjson: ${DOCKER_CONFIG_JSON}
@@ -211,7 +218,7 @@ metadata:
 type: kubernetes.io/dockerconfigjson
 EOF
 
-    kubectl get secrets registry-credentials -n "${NAMESPACE}" -o yaml
+    kubectl get secrets registry-credentials -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -o yaml
     log_info "Registry credentials configured"
 }
 
@@ -225,12 +232,41 @@ setup_helm_repos() {
     log_info "Helm repositories configured"
 }
 
+build_container() {
+  log_info "Building container for core-service ..."
+  docker buildx build -t "ghcr.io/zama-ai/kms/core-service:latest-dev" \
+    -f "${REPO_ROOT}/docker/core/service/Dockerfile" \
+    --build-arg RUST_IMAGE_VERSION=${RUST_IMAGE_VERSION} \
+    "${REPO_ROOT}/" \
+    --load
+
+  log_info "Loading container for core-service in kind ..."
+  kind load docker-image "ghcr.io/zama-ai/kms/core-service:latest-dev" \
+    -n "${NAMESPACE}" \
+    --kubeconfig "${KUBE_CONFIG}" \
+    --nodes "${NAMESPACE}"-worker
+
+  log_info "Building container for core-client ..."
+  docker buildx build -t "ghcr.io/zama-ai/kms/core-client:latest-dev" \
+    -f "${REPO_ROOT}/docker/core/client/Dockerfile" \
+    --build-arg RUST_IMAGE_VERSION=${RUST_IMAGE_VERSION} \
+    "${REPO_ROOT}/" \
+    --load
+
+  log_info "Loading container for core-client in kind ..."
+  kind load docker-image "ghcr.io/zama-ai/kms/core-client:latest-dev" \
+    -n "${NAMESPACE}" \
+    --kubeconfig "${KUBE_CONFIG}" \
+    --nodes "${NAMESPACE}"-worker
+}
+
 # Deploy MinIO
 deploy_minio() {
     log_info "Deploying MinIO..."
 
     helm upgrade --install minio minio/minio \
         --namespace "${NAMESPACE}" \
+        --kubeconfig "${KUBE_CONFIG}" \
         --create-namespace \
         --wait \
         --timeout 5m \
@@ -261,11 +297,13 @@ deploy_kms_core() {
 deploy_threshold_mode() {
     log_info "Deploying KMS Core in threshold mode with ${NUM_PARTIES} parties..."
 
+    kubectl apply -f ~/dockerconfig.yaml -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
     for i in $(seq 1 "${NUM_PARTIES}"); do
         log_info "Deploying KMS Core party ${i}/${NUM_PARTIES}..."
-        helm upgrade --install "kms-core-${i}" \
+        helm upgrade --install "kms-service-threshold-${i}-${NAMESPACE}" \
             "${REPO_ROOT}/charts/kms-core" \
             --namespace "${NAMESPACE}" \
+            --kubeconfig "${KUBE_CONFIG}" \
             -f "${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml" \
             -f "${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-threshold-${i}-kms-test.yaml" \
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
@@ -277,8 +315,8 @@ deploy_threshold_mode() {
 
     log_info "Waiting for KMS Core pods to be ready..."
     for i in $(seq 1 "${NUM_PARTIES}"); do
-        kubectl wait --for=condition=ready pod "kms-core-${i}" \
-            -n "${NAMESPACE}" --timeout=10m
+        kubectl wait --for=condition=ready pod -l app=kms-core \
+            -n "${NAMESPACE}" --timeout=10m --kubeconfig "${KUBE_CONFIG}"
     done
 
     # Deploy initialization job
@@ -286,6 +324,7 @@ deploy_threshold_mode() {
     helm upgrade --install kms-core-init \
         "${REPO_ROOT}/charts/kms-core" \
         --namespace "${NAMESPACE}" \
+        --kubeconfig "${KUBE_CONFIG}" \
         -f "${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml" \
         --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
         --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
@@ -295,23 +334,24 @@ deploy_threshold_mode() {
 
     log_info "Waiting for initialization to complete..."
     kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
-        -n "${NAMESPACE}" --timeout=10m
+        -n "${NAMESPACE}" --timeout=10m --kubeconfig "${KUBE_CONFIG}"
 
     # Deploy key generation job
-    log_info "Deploying KMS Core key generation job..."
-    helm upgrade --install kms-core-gen-keys \
-        "${REPO_ROOT}/charts/kms-core" \
-        --namespace "${NAMESPACE}" \
-        -f "${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml" \
-        --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
-        --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-        --wait \
-        --wait-for-jobs \
-        --timeout 40m
+    # log_info "Deploying KMS Core key generation job..."
+    # helm upgrade --install kms-core-gen-keys \
+    #     "${REPO_ROOT}/charts/kms-core" \
+    #     --namespace "${NAMESPACE}" \
+    #     --kubeconfig "${KUBE_CONFIG}" \
+    #     -f "${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml" \
+    #     --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+    #     --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+    #     --wait \
+    #     --wait-for-jobs \
+    #     --timeout 40m
 
-    log_info "Waiting for key generation to complete..."
-    kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys \
-        -n "${NAMESPACE}" --timeout=10m
+    # log_info "Waiting for key generation to complete..."
+    # kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys \
+    #     -n "${NAMESPACE}" --timeout=10m --kubeconfig "${KUBE_CONFIG}"
 
     log_info "Threshold mode deployment completed"
 }
@@ -323,6 +363,7 @@ deploy_centralized_mode() {
     helm upgrade --install kms-core \
         "${REPO_ROOT}/charts/kms-core" \
         --namespace "${NAMESPACE}" \
+        --kubeconfig "${KUBE_CONFIG}" \
         -f "${REPO_ROOT}/ci/kube-testing/kms/values-kms-centralized-test.yaml" \
         --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
         --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
@@ -342,7 +383,12 @@ setup_port_forwarding() {
 
     # Port forward MinIO
     log_info "Port forwarding MinIO (9000:9000)..."
-    kubectl port-forward -n "${NAMESPACE}" svc/minio 9000:9000 &
+    kubectl port-forward \
+        -n "${NAMESPACE}" \
+        svc/minio \
+        9000:9000 \
+        --kubeconfig "${KUBE_CONFIG}" \
+        &
 
     # Port forward KMS Core services
     case "${DEPLOYMENT_TYPE}" in
@@ -350,17 +396,26 @@ setup_port_forwarding() {
             for i in $(seq 1 "${NUM_PARTIES}"); do
                 local port=$((50000 + i * 100))
                 log_info "Port forwarding kms-core-${i} (${port}:50100)..."
-                kubectl port-forward -n "${NAMESPACE}" "svc/kms-core-${i}" "${port}:50100" &
+                kubectl port-forward \
+                    -n "${NAMESPACE}" \
+                    "svc/kms-service-threshold-${i}-${NAMESPACE}-core-${i}" \
+                    "${port}:50100" \
+                    --kubeconfig "${KUBE_CONFIG}" \
+                    &
             done
             ;;
         centralized)
             log_info "Port forwarding kms-core (50100:50100)..."
-            kubectl port-forward -n "${NAMESPACE}" svc/kms-core 50100:50100 &
+            kubectl port-forward \
+                -n "${NAMESPACE}" \
+                svc/kms-core \
+                50100:50100 \
+                --kubeconfig "${KUBE_CONFIG}" \
+                &
             ;;
     esac
 
     log_info "Port forwarding setup complete"
-    log_info "MinIO UI: http://localhost:9000"
 }
 
 # Cleanup function
@@ -390,6 +445,9 @@ cleanup() {
     # Kill port forwarding processes
     pkill -f "kubectl port-forward" || true
 
+    kind delete cluster --name ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
+    rm -f ${KUBE_CONFIG}
+
     log_info "Cleanup completed"
 }
 
@@ -413,6 +471,9 @@ main() {
     setup_registry_credentials
     setup_helm_repos
     deploy_minio
+    if [[ "$BUILD" == "true" ]]; then
+        build_container
+    fi
     deploy_kms_core
     setup_port_forwarding
 
@@ -438,10 +499,16 @@ main() {
     log_info "  $0 --cleanup"
     log_info "Or delete the Kind cluster:"
     log_info "  kind delete cluster --name kms-test"
+    log_info ""
+    log_info "Port forwarding is running in the background."
+    log_info "Press Ctrl+C to stop port forwarding and exit."
+
+    # Wait for user interrupt to keep port-forwards alive
+    wait
 }
 
-# Trap cleanup on exit
-trap cleanup EXIT INT TERM
+# Trap cleanup only on interrupt and termination (not on normal exit)
+trap cleanup INT TERM
 
 # Run main function
 main "$@"
