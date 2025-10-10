@@ -267,7 +267,7 @@ jobs:
 
           #===========================================================
           # Run tests
-          cargo test --test kubernetes_test
+          cargo nextest run --test kubernetes_test
           TEST_EXIT_CODE=$?
 
           #===========================================================

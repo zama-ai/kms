@@ -4,7 +4,7 @@ rootUser: minio-admin
 rootPassword: minio-admin
 replicas: 1
 buckets:
-  - name: kms-public
+  - name: kms
     region: eu-west-1
     policy: public
     purge: false
