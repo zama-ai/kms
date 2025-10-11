@@ -277,6 +277,7 @@ jobs:
 
           #===========================================================
           # Stop the setup script and all its child processes (port-forwards)
+          # Note: The cleanup function in the script will collect logs before stopping
           echo "Stopping setup script and port-forwards (PID: ${SETUP_PID})..."
 
           # Check if process still exists
@@ -289,8 +290,8 @@ jobs:
               kill -INT ${SETUP_PID} 2>/dev/null && echo "Sent SIGINT to process ${SETUP_PID}" || echo "Process already terminated"
             fi
 
-            # Wait for graceful shutdown with timeout
-            CLEANUP_TIMEOUT=30
+            # Wait for graceful shutdown with timeout (shorter in CI since cleanup is lightweight)
+            CLEANUP_TIMEOUT=5
             CLEANUP_ELAPSED=0
             while kill -0 ${SETUP_PID} 2>/dev/null && [ $CLEANUP_ELAPSED -lt $CLEANUP_TIMEOUT ]; do
               sleep 1
@@ -323,7 +324,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: kms-core-logs
-          path: /tmp/kms-service-threshold-*.log
+          path: |
+            /tmp/kms-service-threshold-*.log
+            /tmp/kms-core-*.log
           retention-days: 7 # Keep logs for 7 days
           if-no-files-found: warn # Only warn if no log files are found
 
