@@ -574,7 +574,7 @@ pub fn hash_sol_struct<D: SolStruct>(
 }
 
 /// take some public data (e.g. public key or CRS) and sign it using EIP-712 for external verification (e.g. in fhevm).
-/// TODO should be part of the file where we have signatures
+/// TODO(#2782) should be part of the file where we have signatures
 pub fn compute_external_pubdata_signature<D: SolStruct>(
     client_sk: &PrivateSigKey,
     data: &D,

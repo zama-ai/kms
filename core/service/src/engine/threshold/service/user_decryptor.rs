@@ -16,7 +16,6 @@ use kms_grpc::{
     utils::tonic_result::BoxedStatus,
     IdentifierError, RequestId,
 };
-use nom::AsBytes;
 use observability::{
     metrics,
     metrics_names::{
@@ -338,7 +337,7 @@ impl<
                         fhe_type,
                         time.as_millis()
                     );
-                    // TODO for legacy reasons we return the inner payload only
+                    // LEGACY: for legacy reasons we return the inner payload only
                     (enc_res.payload, packing_factor)
                 }
                 Err(e) => return Err(anyhow!("Failed user decryption: {e}")),
@@ -553,9 +552,6 @@ impl<
                 let _timer = timer;
                 // explicitly move the rate limiter context
                 let _permit = permit;
-                // TODO
-                let sadf = client_address.as_bytes();
-                assert_eq!(sadf, &client_address.to_vec());
                 let signcryption_key = Arc::new(UnifiedSigncryptionKey::new(
                     (*sig_key).clone(),
                     client_enc_key.clone(),

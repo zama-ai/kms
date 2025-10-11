@@ -679,7 +679,7 @@ impl Client {
                 //
                 // Also it's ok to use [cur_resp.digest] as the link since we already checked
                 // that it matches with the original request
-                let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&cur_resp.verification_key)?; // TODO
+                let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&cur_resp.verification_key)?; // TODO(#2781)
                 let design_key = UnifiedDesigncryptionKey::new(
                     dec_key.to_owned(),
                     enc_key.to_owned(),

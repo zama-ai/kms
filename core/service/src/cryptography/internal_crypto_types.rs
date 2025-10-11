@@ -56,6 +56,7 @@ pub trait LegacySerialization {
     /// Serializes data of old types using bincode, and data of new types using safe serialization
     /// Be careful if you start using old types with safe serialization as this will break compatibility
     fn to_legacy_bytes(&self) -> Result<Vec<u8>, CryptographyError>;
+    /// Deserializes data of old types using bincode, and data of new types using safe deserialization
     fn from_legacy_bytes(bytes: &[u8]) -> Result<Self, CryptographyError>
     where
         Self: Sized;
@@ -258,6 +259,7 @@ impl<C: KemCore> Visitor<'_> for PublicEncKeyVisitor<C> {
 /// It is enforced that T must implement Versionize and be Named
 /// in order to prevent missing versioning of encrypted data.
 pub trait Encrypt {
+    /// Encrypt a message of type T using a given randomness generator
     fn encrypt<T: Serialize + tfhe::Versionize + tfhe::named::Named>(
         &self,
         rng: &mut (impl CryptoRng + RngCore),
@@ -453,6 +455,7 @@ impl<C: KemCore> Visitor<'_> for PrivateEncKeyVisitor<C> {
 /// It is enforced that T must implement Unversionize and be Named
 /// in order to prevent missing versioning of en/decrypted data.
 pub trait Decrypt {
+    /// Decrypt a ciphertext of type UnifiedCipher into a plaintext of type T
     fn decrypt<T: serde::de::DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
         &self,
         cipher: &UnifiedCipher,
@@ -496,7 +499,9 @@ pub enum EncryptionSchemeType {
 }
 
 pub trait EncryptionScheme: Send + Sync {
+    /// Return the type of encryption scheme used by this instance
     fn scheme_type(&self) -> EncryptionSchemeType;
+    /// Generate a new keypair for this encryption scheme
     fn keygen(&mut self) -> Result<(UnifiedPrivateEncKey, UnifiedPublicEncKey), CryptographyError>;
 }
 
@@ -601,7 +606,7 @@ impl PublicSigKey {
         addr.to_vec()
     }
 
-    /// DEPRECATED legacy code since this is not the right way to serialize as it is not versioned
+    /// DEPRECATED LEGACY code since this is not the right way to serialize as it is not versioned
     pub fn get_serialized_verf_key(&self) -> anyhow::Result<Vec<u8>> {
         let serialized_verf_key = bc2wrap::serialize(&PublicSigKey::new(self.pk().to_owned()))?;
         Ok(serialized_verf_key)
@@ -834,6 +839,7 @@ pub trait Signcrypt {
     //     dsep: &DomainSep,
     //     msg: &T,
     // ) -> Result<UnifiedSigncryption, CryptographyError> {
+    /// Signcrypt a message of type T with a specified domain separator.
     fn signcrypt<T: Serialize + AsRef<[u8]>>(
         &self,
         rng: &mut (impl CryptoRng + RngCore),
@@ -848,7 +854,8 @@ pub trait Designcrypt {
     //     &self,
     //     signcryption: &UnifiedSigncryption,
     // ) -> Result<T, CryptographyError>;
-    /// Decrypt a signcrypted message and verify the signature.
+    /// Decrypt a signcrypted message and verify the signature before returning the result.
+    /// If the signature verification fails, an error is returned.
     ///
     /// This fn also checks that the provided link parameter corresponds to the link in the signcryption
     /// payload.
@@ -860,6 +867,10 @@ pub trait Designcrypt {
 }
 
 pub trait SigncryptFHEPlaintext: Signcrypt {
+    /// Signcrypt a plaintext message with a specified domain separator and FHE type.
+    /// The link parameter is used to bind the signcryption to a specific context or session.
+    /// The link should be unique for each signcryption operation to prevent replay attacks.    
+    /// The method is exclusively used to encrypt partially decrypted FHE ciphertexts for user decryption.
     fn signcrypt_plaintext(
         &self,
         rng: &mut (impl CryptoRng + RngCore),
@@ -871,6 +882,10 @@ pub trait SigncryptFHEPlaintext: Signcrypt {
 }
 
 pub trait DesigncryptFHEPlaintext: Designcrypt {
+    /// Decrypt a signcrypted plaintext message and verify the signature before returning the result.
+    /// If the signature verification fails, an error is returned.
+    /// The link parameter is used to verify that the signcryption corresponds to the expected context or session.
+    /// The method is exclusively used to decrypt partially decrypted FHE ciphertexts for user decryption.
     fn designcrypt_plaintext(
         &self,
         dsep: &DomainSep,
