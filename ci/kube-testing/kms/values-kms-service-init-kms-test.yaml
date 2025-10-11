@@ -7,6 +7,24 @@ minio:
   username: kms-access-key-id
   password: kms-secret-access-key
 
+kmsCoreClient:
+  enabled: true
+  nameOverride: kms-core-client-threshold
+  image:
+    name: ghcr.io/zama-ai/kms/core-client
+    tag:
+  num_majority: 2 # 2 when 4 parties and 5 when 13 parties
+  num_reconstruct: 3 # 3 when 4 parties and 9 when 13 parties
+  decryption_mode: NoiseFloodSmall
+  fhe_parameter: Default
+  resources:
+    requests:
+      memory: 24Gi
+      cpu: 12
+    limits:
+      memory: 24Gi
+      cpu: 12
+
 kmsCore:
   enabled: false
   thresholdMode:
@@ -26,24 +44,6 @@ kmsCore:
       - id: 4
         host: kms-service-threshold-4-kms-test-core-4
         port: 50001
-
-kmsCoreClient:
-  enabled: true
-  nameOverride: kms-core-client-threshold
-  image:
-    name: ghcr.io/zama-ai/kms/core-client
-    tag:
-  num_majority: 2 # 2 when 4 parties and 5 when 13 parties
-  num_reconstruct: 3 # 3 when 4 parties and 9 when 13 parties
-  decryption_mode: NoiseFloodSmall
-  fhe_parameter: Default
-  resources:
-    requests:
-      memory: 24Gi
-      cpu: 12
-    limits:
-      memory: 24Gi
-      cpu: 12
 
 kubeUtils:
   image:

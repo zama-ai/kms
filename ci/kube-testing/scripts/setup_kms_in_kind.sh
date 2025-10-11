@@ -1,30 +1,35 @@
 #!/usr/bin/env bash
 
-##############################################################################
+#=============================================================================
 # KMS Setup Script for Kind (Kubernetes in Docker)
 #
 # This script sets up KMS in a local Kind cluster for testing purposes.
 # It supports different deployment modes:
-# - threshold: Standard threshold mode (4 parties)
-# - centralized: Single party mode
+#   - threshold: Standard threshold mode (4 parties)
+#   - centralized: Single party mode
 #
 # Usage:
 #   ./setup_kms_in_kind.sh [OPTIONS]
 #
 # Options:
-#   --namespace <name>           Kubernetes namespace (default: kms-test)
-#   --kms-core-tag <tag>        KMS Core image tag (default: latest)
-#   --kms-client-tag <tag>      KMS Core Client image tag (default: latest)
+#   --namespace <name>          Kubernetes namespace (default: kms-test)
+#   --kms-core-tag <tag>        KMS Core image tag (default: latest-dev)
+#   --kms-core-client-tag <tag> KMS Core Client image tag (default: latest-dev)
 #   --deployment-type <type>    Deployment type: threshold|centralized (default: threshold)
 #   --num-parties <num>         Number of parties for threshold mode (default: 4)
 #   --cleanup                   Cleanup existing deployment before setup
+#   --build                     Build and load Docker images locally
+#   --local                     Run in local mode (full cleanup on exit)
 #   --help                      Show this help message
 #
-##############################################################################
+#=============================================================================
 
+# Exit on error, undefined variables, and pipe failures
 set -euo pipefail
 
-# Default configuration
+#=============================================================================
+# Configuration Variables
+#=============================================================================
 NAMESPACE="${NAMESPACE:-kms-test}"
 KMS_CORE_IMAGE_TAG="${KMS_CORE_IMAGE_TAG:-latest-dev}"
 KMS_CORE_CLIENT_IMAGE_TAG="${KMS_CORE_CLIENT_IMAGE_TAG:-latest-dev}"
@@ -38,13 +43,18 @@ CLEANUP=false
 BUILD=false
 LOCAL=false
 
-# Colors for output
+#=============================================================================
+# Color Codes for Output
+#=============================================================================
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Logging functions
+#=============================================================================
+# Logging Functions
+#=============================================================================
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $*"
 }
@@ -56,6 +66,10 @@ log_warn() {
 log_error() {
     echo -e "${RED}[ERROR]${NC} $*"
 }
+
+#=============================================================================
+# Argument Parsing
+#=============================================================================
 
 # Parse command line arguments
 parse_args() {
@@ -105,6 +119,10 @@ parse_args() {
     done
 }
 
+#=============================================================================
+# Prerequisite Checks
+#=============================================================================
+
 # Check prerequisites
 check_prerequisites() {
     log_info "Checking prerequisites..."
@@ -125,6 +143,10 @@ check_prerequisites() {
 
     log_info "All prerequisites met"
 }
+
+#=============================================================================
+# Kind Cluster Setup
+#=============================================================================
 
 # Setup Kind cluster
 setup_kind_cluster() {
@@ -152,6 +174,10 @@ EOF
 
     log_info "Kind cluster created successfully"
 }
+
+#=============================================================================
+# Kubernetes Configuration
+#=============================================================================
 
 # Setup Kubernetes context
 setup_kube_context() {
@@ -188,7 +214,7 @@ setup_namespace() {
     log_info "Namespace created"
 }
 
-# Setup registry credentials
+# Setup registry credentials for pulling private images
 setup_registry_credentials() {
     log_info "Setting up registry credentials..."
 
@@ -238,6 +264,10 @@ EOF
     fi
 }
 
+#=============================================================================
+# Helm Configuration
+#=============================================================================
+
 # Setup Helm repositories
 setup_helm_repos() {
     log_info "Setting up Helm repositories..."
@@ -248,6 +278,11 @@ setup_helm_repos() {
     log_info "Helm repositories configured"
 }
 
+#=============================================================================
+# Container Build and Load
+#=============================================================================
+
+# Build and load Docker images into Kind cluster
 build_container() {
   log_info "Building container for core-service ..."
   docker buildx build -t "ghcr.io/zama-ai/kms/core-service:latest-dev" \
@@ -276,7 +311,11 @@ build_container() {
     --nodes "${NAMESPACE}"-worker
 }
 
-# Deploy MinIO
+#=============================================================================
+# MinIO Deployment
+#=============================================================================
+
+# Deploy MinIO object storage
 deploy_minio() {
     log_info "Deploying MinIO..."
 
@@ -291,7 +330,11 @@ deploy_minio() {
     log_info "MinIO deployed successfully"
 }
 
-# Deploy KMS Core
+#=============================================================================
+# KMS Core Deployment
+#=============================================================================
+
+# Deploy KMS Core based on deployment type
 deploy_kms_core() {
     log_info "Deploying KMS Core (${DEPLOYMENT_TYPE} mode with ${NUM_PARTIES} parties)..."
 
@@ -309,7 +352,7 @@ deploy_kms_core() {
     esac
 }
 
-# Deploy threshold mode
+# Deploy threshold mode with multiple parties
 deploy_threshold_mode() {
     log_info "Deploying KMS Core in threshold mode with ${NUM_PARTIES} parties..."
 
@@ -320,9 +363,9 @@ deploy_threshold_mode() {
             --namespace "${NAMESPACE}" \
             --kubeconfig "${KUBE_CONFIG}" \
             -f "${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml" \
-            -f "${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-threshold-${i}-kms-test.yaml" \
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+            --set kmsPeers.id="${i}" \
             --wait \
             --timeout 10m &
     done
@@ -372,7 +415,7 @@ deploy_threshold_mode() {
     log_info "Threshold mode deployment completed"
 }
 
-# Deploy centralized mode
+# Deploy centralized mode with single party
 deploy_centralized_mode() {
     log_info "Deploying KMS Core in centralized mode..."
 
@@ -393,7 +436,11 @@ deploy_centralized_mode() {
     log_info "Centralized mode deployment completed"
 }
 
-# Setup port forwarding
+#=============================================================================
+# Port Forwarding Setup
+#=============================================================================
+
+# Setup port forwarding for local access to services
 setup_port_forwarding() {
     log_info "Setting up port forwarding..."
 
@@ -404,6 +451,7 @@ setup_port_forwarding() {
         svc/minio \
         9000:9000 \
         --kubeconfig "${KUBE_CONFIG}" \
+        > /dev/null 2>&1 \
         &
 
     # Port forward KMS Core services
@@ -416,7 +464,8 @@ setup_port_forwarding() {
                     -n "${NAMESPACE}" \
                     "svc/kms-service-threshold-${i}-${NAMESPACE}-core-${i}" \
                     "${port}:50100" \
-                    --kubeconfig "${KUBE_CONFIG}"  2>/dev/null \
+                    --kubeconfig "${KUBE_CONFIG}" \
+                    > /dev/null 2>&1 \
                     &
             done
             ;;
@@ -426,7 +475,8 @@ setup_port_forwarding() {
                 -n "${NAMESPACE}" \
                 svc/kms-core \
                 50100:50100 \
-                --kubeconfig "${KUBE_CONFIG}" 2>/dev/null \
+                --kubeconfig "${KUBE_CONFIG}" \
+                > /dev/null 2>&1 \
                 &
             ;;
     esac
@@ -434,56 +484,95 @@ setup_port_forwarding() {
     log_info "Port forwarding setup complete"
 }
 
-# Cleanup function
+#=============================================================================
+# Cleanup Function
+#=============================================================================
+
+# Cleanup resources on script termination (triggered by SIGINT/SIGTERM)
 cleanup() {
     log_info "Cleaning up KMS resources..."
 
-    log_info "Save logs for debugging..."
-    for i in $(seq 1 "${NUM_PARTIES}"); do
-        kubectl logs kms-service-threshold-${i}-${NAMESPACE}-core-${i} -n ${NAMESPACE} --kubeconfig ${KUBE_CONFIG} > /tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log
-    done
-    # Uninstall Helm releases
-    helm uninstall -n "${NAMESPACE}" kms-core-gen-keys 2>/dev/null || true
-    helm uninstall -n "${NAMESPACE}" kms-core-init 2>/dev/null || true
-
+    # Collect logs first (before killing anything)
+    log_info "Collecting logs for debugging..."
     case "${DEPLOYMENT_TYPE}" in
         threshold)
             for i in $(seq 1 "${NUM_PARTIES}"); do
-                helm uninstall -n "${NAMESPACE}" "kms-core-${i}" 2>/dev/null || true
+                kubectl logs kms-service-threshold-${i}-${NAMESPACE}-core-${i} \
+                    -n ${NAMESPACE} \
+                    --kubeconfig ${KUBE_CONFIG} \
+                    > /tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log 2>/dev/null || \
+                    log_warn "Failed to collect logs for core-${i}"
             done
             ;;
         centralized)
-            helm uninstall -n "${NAMESPACE}" kms-core 2>/dev/null || true
+            kubectl logs kms-core \
+                -n ${NAMESPACE} \
+                --kubeconfig ${KUBE_CONFIG} \
+                > /tmp/kms-core-${NAMESPACE}.log 2>/dev/null || \
+                log_warn "Failed to collect logs for kms-core"
             ;;
     esac
 
-    helm uninstall -n "${NAMESPACE}" minio 2>/dev/null || true
-
-    # Delete namespace
-    kubectl delete namespace "${NAMESPACE}" --wait=true 2>/dev/null || true
-
-    # Kill port forwarding processes
+    # Stop all port forwarding processes
+    log_info "Stopping port-forward processes..."
     pkill -f "kubectl port-forward" || true
 
-    kind delete cluster --name ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
-    rm -f ${KUBE_CONFIG}
+    # Conditional cleanup based on execution mode
+    if [[ "$LOCAL" == "true" ]]; then
+        # Full cleanup for local development
+        log_info "Running full cleanup (local mode)..."
+
+        # Uninstall Helm releases
+        helm uninstall -n "${NAMESPACE}" kms-core-gen-keys 2>/dev/null || true
+        helm uninstall -n "${NAMESPACE}" kms-core-init 2>/dev/null || true
+        helm uninstall -n "${NAMESPACE}" minio 2>/dev/null || true
+        case "${DEPLOYMENT_TYPE}" in
+            threshold)
+                for i in $(seq 1 "${NUM_PARTIES}"); do
+                    helm uninstall -n "${NAMESPACE}" "kms-core-${i}" 2>/dev/null || true
+                done
+                ;;
+            centralized)
+                helm uninstall -n "${NAMESPACE}" kms-core 2>/dev/null || true
+                ;;
+        esac
+
+        kubectl delete namespace "${NAMESPACE}" --wait=true 2>/dev/null || true
+        kind delete cluster --name ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
+        rm -f "${KUBE_CONFIG}"
+    else
+        # Lightweight cleanup for CI
+        # The CI workflow will handle full cluster cleanup
+        log_info "Running lightweight cleanup (CI mode)..."
+        log_info "Logs collected and port-forwards stopped. CI will handle cluster cleanup."
+    fi
 
     log_info "Cleanup completed"
+    exit 0
 }
 
-# Main function
+#=============================================================================
+# Main Function
+#=============================================================================
+
+# Main execution function
 main() {
     parse_args "$@"
 
     log_info "Starting KMS setup in Kind..."
+    log_info "========================================="
     log_info "Configuration:"
-    log_info "  Namespace: ${NAMESPACE}"
-    log_info "  Deployment Type: ${DEPLOYMENT_TYPE}"
-    log_info "  Number of Parties: ${NUM_PARTIES}"
-    log_info "  KMS Core Image Tag: ${KMS_CORE_IMAGE_TAG}"
-    log_info "  KMS Client Image Tag: ${KMS_CORE_CLIENT_IMAGE_TAG}"
-    log_info "  Cleanup: ${CLEANUP}"
+    log_info "  Namespace:                ${NAMESPACE}"
+    log_info "  Deployment Type:          ${DEPLOYMENT_TYPE}"
+    log_info "  Number of Parties:        ${NUM_PARTIES}"
+    log_info "  KMS Core Image Tag:       ${KMS_CORE_IMAGE_TAG}"
+    log_info "  KMS CoreClient Image Tag: ${KMS_CORE_CLIENT_IMAGE_TAG}"
+    log_info "  Cleanup Mode:             ${CLEANUP}"
+    log_info "  Build Locally:            ${BUILD}"
+    log_info "  Local Mode:               ${LOCAL}"
+    log_info "========================================="
 
+    # Execute setup steps
     check_prerequisites
     setup_kind_cluster
     setup_kube_context
@@ -491,17 +580,22 @@ main() {
     setup_registry_credentials
     setup_helm_repos
     deploy_minio
+
+    # Optionally build and load images
     if [[ "$BUILD" == "true" ]]; then
         build_container
     fi
+
     deploy_kms_core
     setup_port_forwarding
 
+    # Display success message and access information
+    log_info ""
     log_info "========================================="
     log_info "KMS setup completed successfully!"
     log_info "========================================="
     log_info ""
-    log_info "To access the services:"
+    log_info "Service Access URLs:"
     log_info "  MinIO UI: http://localhost:9000"
     case "${DEPLOYMENT_TYPE}" in
         threshold)
@@ -515,20 +609,24 @@ main() {
             ;;
     esac
     log_info ""
-    log_info "To cleanup, run:"
-    log_info "  $0 --cleanup"
-    log_info "Or delete the Kind cluster:"
-    log_info "  kind delete cluster --name kms-test"
+    log_info "Cleanup Instructions:"
+    log_info "  Script cleanup:  $0 --cleanup"
+    log_info "  Manual cleanup:  kind delete cluster --name kms-test"
     log_info ""
     log_info "Port forwarding is running in the background."
     log_info "Press Ctrl+C to stop port forwarding and exit."
+    log_info "========================================="
 
     # Wait for user interrupt to keep port-forwards alive
     wait
 }
 
-# Trap cleanup only on interrupt and termination (not on normal exit)
+#=============================================================================
+# Script Execution
+#=============================================================================
+
+# Trap cleanup on interrupt and termination signals (not on normal exit)
 trap cleanup INT TERM
 
-# Run main function
+# Execute main function with all arguments
 main "$@"
