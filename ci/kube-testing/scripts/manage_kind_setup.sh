@@ -137,6 +137,44 @@ stop_setup() {
         echo "Setup process already terminated"
     fi
     
+    # Wait a moment for log collection to complete
+    echo "Waiting for log collection to complete..."
+    sleep 2
+    
+    # Verify logs were collected
+    echo "Verifying collected logs..."
+    if ls /tmp/kms-*.log 1> /dev/null 2>&1; then
+        echo "Logs collected successfully:"
+        ls -lh /tmp/kms-*.log
+    else
+        echo "Warning: No logs found in /tmp/"
+        echo "Attempting manual log collection..."
+        
+        # Try to collect logs manually if cleanup didn't work
+        NAMESPACE="${NAMESPACE:-kms-test}"
+        KUBE_CONFIG="${HOME}/.kube/kind_config"
+        
+        # Detect deployment type from running pods
+        if kubectl get pods -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" 2>/dev/null | grep -q "kms-service-threshold"; then
+            echo "Detected threshold deployment, collecting logs..."
+            for i in 1 2 3 4; do
+                POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
+                if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
+                    kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+                        > "/tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log" 2>/dev/null && \
+                        echo "  Collected logs from ${POD_NAME}" || \
+                        echo "  Failed to collect logs from ${POD_NAME}"
+                fi
+            done
+        elif kubectl get pods -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" 2>/dev/null | grep -q "kms-core"; then
+            echo "Detected centralized deployment, collecting logs..."
+            kubectl logs kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+                > "/tmp/kms-core-${NAMESPACE}.log" 2>/dev/null && \
+                echo "  Collected logs from kms-core" || \
+                echo "  Failed to collect logs from kms-core"
+        fi
+    fi
+    
     # Cleanup PID files
     rm -f .setup_pid .tail_pid
 }
