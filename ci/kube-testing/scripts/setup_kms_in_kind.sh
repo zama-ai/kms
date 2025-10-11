@@ -169,6 +169,153 @@ validate_config() {
     fi
 }
 
+check_local_resources() {
+    # Check resource requirements for local development
+    if [[ "${LOCAL}" == "true" ]]; then
+        # Extract resource values from values files
+        local KMS_CORE_VALUES="${SCRIPT_DIR}/../kms/values-kms-test.yaml"
+        local KMS_CORE_CLIENT_VALUES="${SCRIPT_DIR}/../kms/values-kms-service-init-kms-test.yaml"
+
+        # Parse memory and CPU from kms-core values (values-kms-test.yaml)
+        local KMS_CORE_MEMORY=$(grep -A 10 "resources:" "${KMS_CORE_VALUES}" | grep "memory:" | head -1 | awk '{print $2}' | sed 's/Gi//')
+        local KMS_CORE_CPU=$(grep -A 10 "resources:" "${KMS_CORE_VALUES}" | grep "cpu:" | head -1 | awk '{print $2}')
+
+        # Parse memory and CPU from kms-core-client values (values-kms-service-init-kms-test.yaml)
+        local KMS_CORE_CLIENT_MEMORY=$(grep -A 10 "resources:" "${KMS_CORE_CLIENT_VALUES}" | grep "memory:" | head -1 | awk '{print $2}' | sed 's/Gi//')
+        local KMS_CORE_CLIENT_CPU=$(grep -A 10 "resources:" "${KMS_CORE_CLIENT_VALUES}" | grep "cpu:" | head -1 | awk '{print $2}')
+
+        # Calculate total resources
+        local TOTAL_KMS_CORE_MEMORY=$((KMS_CORE_MEMORY * NUM_PARTIES))
+        local TOTAL_KMS_CORE_CPU=$((KMS_CORE_CPU * NUM_PARTIES))
+        local TOTAL_MEMORY=$((TOTAL_KMS_CORE_MEMORY + KMS_CORE_CLIENT_MEMORY))
+        local TOTAL_CPU=$((TOTAL_KMS_CORE_CPU + KMS_CORE_CLIENT_CPU))
+
+        # Retrieve num_seccion_preproc
+        local NUM_SESSIN_PREPROC=$(grep "numSessionsPreproc:" "${KMS_CORE_VALUES}" | head -1 | awk '{print $2}')
+
+        log_warn "========================================="
+        log_warn "Running in LOCAL mode"
+        log_warn "========================================="
+        log_warn "The default Helm values require significant resources:"
+        log_warn ""
+        log_warn "KMS Core Client (1 instance):"
+        log_warn "  - Memory: ${KMS_CORE_CLIENT_MEMORY}Gi"
+        log_warn "  - CPU: ${KMS_CORE_CLIENT_CPU} cores"
+        log_warn ""
+        log_warn "KMS Core (${NUM_PARTIES} parties):"
+        log_warn "  - Memory per core: ${KMS_CORE_MEMORY}Gi"
+        log_warn "  - CPU per core: ${KMS_CORE_CPU} cores"
+        log_warn "  - Total: ${TOTAL_KMS_CORE_MEMORY}Gi RAM, ${TOTAL_KMS_CORE_CPU} CPU cores"
+        log_warn ""
+        log_warn "KMS Core num_sessions_preproc:"
+        log_warn "  - num_sessions_preproc: ${NUM_SESSIN_PREPROC}"
+        log_warn ""
+        log_warn "TOTAL RESOURCES REQUIRED:"
+        log_warn "  - Memory: ${TOTAL_MEMORY}Gi"
+        log_warn "  - CPU: ${TOTAL_CPU} cores"
+        log_warn "========================================="
+        log_warn ""
+        log_warn "If your system doesn't have these resources, you MUST adjust the values files:"
+        log_warn "  - ${KMS_CORE_VALUES}"
+        log_warn "  - ${KMS_CORE_CLIENT_VALUES}"
+        log_warn ""
+        log_warn "Look for sections marked with:"
+        log_warn "  #==========RESOURCES TO ADJUST BASED ON ENVIRONMENT=========="
+        log_warn ""
+        log_warn "Recommended minimum for local testing with FHE_PARAMS=Test :"
+        log_warn "  - KMS Core Client: 4Gi RAM, 2 CPU cores"
+        log_warn "  - KMS Core (per party): 4Gi RAM, 2 CPU cores"
+        log_warn "  - Total for ${NUM_PARTIES} parties: $((4 + 4 * NUM_PARTIES))Gi RAM, $((2 + 2 * NUM_PARTIES)) CPU cores"
+        log_warn "========================================="
+        echo ""
+
+        # Prompt user for action
+        echo "Choose an option:"
+        echo "  1) Continue with current values"
+        echo "  2) Adjust resources interactively"
+        echo "  3) Cancel and edit files manually"
+        read -p "Enter your choice (1/2/3): " -r CHOICE
+        echo ""
+
+        case "${CHOICE}" in
+            1)
+                log_info "Continuing with current resource values..."
+                ;;
+            2)
+                log_info "Interactive resource adjustment..."
+                echo ""
+                # Create local values files
+                log_info "Creating local values files..."
+                cp "${KMS_CORE_VALUES}" "${SCRIPT_DIR}"/../kms/local-values-kms-test.yaml
+                cp "${KMS_CORE_CLIENT_VALUES}" "${SCRIPT_DIR}"/../kms/local-values-kms-service-init-kms-test.yaml
+                local KMS_CORE_VALUES="${SCRIPT_DIR}/../kms/local-values-kms-test.yaml"
+                local KMS_CORE_CLIENT_VALUES="${SCRIPT_DIR}/../kms/local-values-kms-service-init-kms-test.yaml"
+
+                # Adjust KMS Core resources
+                echo ""
+                echo "Adjusting KMS Core resources..."
+                read -p "KMS Core Memory per party (current: ${KMS_CORE_MEMORY}Gi, recommended: 4Gi): " -r NEW_CORE_MEM
+                NEW_CORE_MEM="${NEW_CORE_MEM:-${KMS_CORE_MEMORY}}"
+                read -p "KMS Core CPU per party (current: ${KMS_CORE_CPU}, recommended: 2): " -r NEW_CORE_CPU
+                NEW_CORE_CPU="${NEW_CORE_CPU:-${KMS_CORE_CPU}}"
+                read -p "KMS Core num_sessions_preproc (current: ${NUM_SESSIN_PREPROC}, recommended: ${NEW_CORE_CPU}): " -r NEW_NUM_SESSIN_PREPROC
+                NEW_NUM_SESSIN_PREPROC="${NEW_NUM_SESSIN_PREPROC:-${NUM_SESSIN_PREPROC}}"
+
+                # Adjust KMS Core Client resources
+                echo ""
+                echo "Adjusting KMS Core Client resources..."
+                read -p "KMS Core Client Memory (current: ${KMS_CORE_CLIENT_MEMORY}Gi, recommended: 4Gi): " -r NEW_CLIENT_MEM
+                NEW_CLIENT_MEM="${NEW_CLIENT_MEM:-${KMS_CORE_CLIENT_MEMORY}}"
+                read -p "KMS Core Client CPU (current: ${KMS_CORE_CLIENT_CPU}, recommended: 2): " -r NEW_CLIENT_CPU
+                NEW_CLIENT_CPU="${NEW_CLIENT_CPU:-${KMS_CORE_CLIENT_CPU}}"
+
+
+                # Update the values files with sed (platform-aware)
+                log_info "Updating values files..."
+
+                # Update KMS Core Client values
+                if [[ "${OS}" == "macos" ]]; then
+                    sed -i '' "s/memory: ${KMS_CORE_MEMORY}Gi/memory: ${NEW_CORE_MEM}Gi/g" "${KMS_CORE_VALUES}"
+                    sed -i '' "s/cpu: ${KMS_CORE_CPU}/cpu: ${NEW_CORE_CPU}/g" "${KMS_CORE_VALUES}"
+                    sed -i '' "s/numSessionsPreproc: ${NUM_SESSIN_PREPROC}/numSessionsPreproc: ${NEW_NUM_SESSIN_PREPROC}/g" "${KMS_CORE_VALUES}"
+                    sed -i '' "s/memory: ${KMS_CORE_CLIENT_MEMORY}Gi/memory: ${NEW_CLIENT_MEM}Gi/g" "${KMS_CORE_CLIENT_VALUES}"
+                    sed -i '' "s/cpu: ${KMS_CORE_CLIENT_CPU}/cpu: ${NEW_CLIENT_CPU}/g" "${KMS_CORE_CLIENT_VALUES}"
+                else
+                    sed -i "s/memory: ${KMS_CORE_MEMORY}Gi/memory: ${NEW_CORE_MEM}Gi/g" "${KMS_CORE_VALUES}"
+                    sed -i "s/cpu: ${KMS_CORE_CPU}/cpu: ${NEW_CORE_CPU}/g" "${KMS_CORE_VALUES}"
+                    sed -i "s/numSessionsPreproc: ${NUM_SESSIN_PREPROC}/numSessionsPreproc: ${NEW_NUM_SESSIN_PREPROC}/g" "${KMS_CORE_VALUES}"
+                    sed -i "s/memory: ${KMS_CORE_CLIENT_MEMORY}Gi/memory: ${NEW_CLIENT_MEM}Gi/g" "${KMS_CORE_CLIENT_VALUES}"
+                    sed -i "s/cpu: ${KMS_CORE_CLIENT_CPU}/cpu: ${NEW_CLIENT_CPU}/g" "${KMS_CORE_CLIENT_VALUES}"
+                fi
+
+                log_info "New local values files created successfully:"
+                log_info "- ${SCRIPT_DIR}/../kms/local-values-kms-test.yaml"
+                log_info "- ${SCRIPT_DIR}/../kms/local-values-kms-service-init-kms-test.yaml"
+
+                # Calculate new totals
+                local NEW_TOTAL_MEM=$((NEW_CORE_MEM * NUM_PARTIES + NEW_CLIENT_MEM))
+                local NEW_TOTAL_CPU=$((NEW_CORE_CPU * NUM_PARTIES + NEW_CLIENT_CPU))
+                local NEW_TOTAL_NUM_SESSIN_PREPROC=${NEW_NUM_SESSIN_PREPROC}
+
+                log_info ""
+                log_info "======================NEW RESOURCES ADJUSTMENT========================="
+                log_info "New total resources: ${NEW_TOTAL_MEM}Gi RAM, ${NEW_TOTAL_CPU} CPU cores"
+                log_info "New total num_sessions_preproc: ${NEW_TOTAL_NUM_SESSIN_PREPROC}"
+                log_info "======================================================================="
+                log_info ""
+                ;;
+            3)
+                log_info "Setup cancelled. Please edit the values files manually and run again."
+                exit 0
+                ;;
+            *)
+                log_error "Invalid choice. Setup cancelled."
+                exit 1
+                ;;
+        esac
+    fi
+}
+
 #=============================================================================
 # Prerequisite Checks
 #=============================================================================
@@ -406,13 +553,21 @@ deploy_kms_core() {
 deploy_threshold_mode() {
     log_info "Deploying KMS Core in threshold mode with ${NUM_PARTIES} parties..."
 
+    if [[ "${LOCAL}" == "true" ]]; then
+      VALUES_FILE_KMS_CORE="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
+      VALUES_FILE_KMS_CORE_INIT="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
+    else
+      VALUES_FILE_KMS_CORE="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
+      VALUES_FILE_KMS_CORE_INIT="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
+    fi
+
     for i in $(seq 1 "${NUM_PARTIES}"); do
         log_info "Deploying KMS Core party ${i}/${NUM_PARTIES}..."
         helm upgrade --install "kms-service-threshold-${i}-${NAMESPACE}" \
             "${REPO_ROOT}/charts/kms-core" \
             --namespace "${NAMESPACE}" \
             --kubeconfig "${KUBE_CONFIG}" \
-            -f "${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml" \
+            -f "${VALUES_FILE_KMS_CORE}" \
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --set kmsPeers.id="${i}" \
@@ -434,7 +589,7 @@ deploy_threshold_mode() {
         "${REPO_ROOT}/charts/kms-core" \
         --namespace "${NAMESPACE}" \
         --kubeconfig "${KUBE_CONFIG}" \
-        -f "${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml" \
+        -f "${VALUES_FILE_KMS_CORE_INIT}" \
         --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
         --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
         --wait \
@@ -469,11 +624,17 @@ deploy_threshold_mode() {
 deploy_centralized_mode() {
     log_info "Deploying KMS Core in centralized mode..."
 
+    if [[ "${LOCAL}" == "true" ]]; then
+      VALUES_FILE_KMS_CORE="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
+    else
+      VALUES_FILE_KMS_CORE="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
+    fi
+
     helm upgrade --install kms-core \
         "${REPO_ROOT}/charts/kms-core" \
         --namespace "${NAMESPACE}" \
         --kubeconfig "${KUBE_CONFIG}" \
-        -f "${REPO_ROOT}/ci/kube-testing/kms/values-kms-centralized-test.yaml" \
+        -f "${VALUES_FILE_KMS_CORE}" \
         --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
         --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
         --wait \
@@ -603,6 +764,10 @@ main() {
     detect_platform
     # Validating configuration
     validate_config
+    if [[ "${LOCAL}" == "true" ]]; then
+      # Adjusting resources
+      check_local_resources
+    fi
 
     log_info "Starting KMS setup in Kind..."
     log_info "========================================="

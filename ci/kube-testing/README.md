@@ -126,6 +126,83 @@ Then run the setup script with `--local` flag:
 ./ci/kube-testing/scripts/setup_kms_in_kind.sh --local
 ```
 
+### Interactive Resource Adjustment (Local Mode)
+
+When running with the `--local` flag, the script will analyze resource requirements and offer an interactive prompt to adjust them based on your system capabilities.
+
+**Resource Warning Example:**
+```
+=========================================
+Running in LOCAL mode
+=========================================
+The default Helm values require significant resources:
+
+KMS Core Client (1 instance):
+  - Memory: 24Gi
+  - CPU: 12 cores
+
+KMS Core (4 parties):
+  - Memory per core: 24Gi
+  - CPU per core: 12 cores
+  - Total: 96Gi RAM, 48 CPU cores
+
+KMS Core num_sessions_preproc:
+  - num_sessions_preproc: 12
+
+TOTAL RESOURCES REQUIRED:
+  - Memory: 120Gi
+  - CPU: 60 cores
+=========================================
+```
+
+**Interactive Options:**
+```
+Choose an option:
+  1) Continue with current values
+  2) Adjust resources interactively
+  3) Cancel and edit files manually
+Enter your choice (1/2/3):
+```
+
+**Option 1: Continue** - Proceeds with existing values (requires sufficient system resources)
+
+**Option 2: Interactive Adjustment** - Prompts for custom values:
+```
+Adjusting KMS Core resources...
+KMS Core Memory per party (current: 24Gi, recommended: 4Gi): 6
+KMS Core CPU per party (current: 12, recommended: 2): 4
+KMS Core num_sessions_preproc (current: 12, recommended: 4): 4
+
+Adjusting KMS Core Client resources...
+KMS Core Client Memory (current: 24Gi, recommended: 4Gi): 4
+KMS Core Client CPU (current: 12, recommended: 2): 2
+```
+
+The script will:
+- Create local values files with your custom settings
+- Use these files for deployment
+- Show the new total resource requirements
+
+**Local Values Files Created:**
+- `ci/kube-testing/kms/local-values-kms-test.yaml`
+- `ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml`
+
+These files are:
+- ✅ **Automatically created** from the interactive prompt
+- ✅ **Git-ignored** (won't be committed to the repository)
+- ✅ **Used only for local development** (CI uses default values)
+- ✅ **Safe to delete** (will be recreated on next run)
+
+**Option 3: Cancel** - Exits the script so you can manually edit values files
+
+**Recommended Minimum Resources for Local Testing:**
+
+With `FHE_PARAMS=Test` parameter:
+- **KMS Core Client:** 4Gi RAM, 2 CPU cores
+- **KMS Core (per party):** 4Gi RAM, 2 CPU cores
+- **Total for 4 parties:** 20Gi RAM, 10 CPU cores
+- **Total for 13 parties:** 56Gi RAM, 28 CPU cores
+
 ### Example: Centralized Mode
 
 ```bash
@@ -142,13 +219,35 @@ Then run the setup script with `--local` flag:
   --local
 ```
 
-### Example: Custom Number of Parties if you enough resources
+### Example: Custom Number of Parties
 
-You can tweak the resources of kms in values:
+**Option 1: Use Interactive Adjustment (Recommended for Local)**
+
+Run with `--local` flag and choose option 2 to interactively adjust resources:
+
+```bash
+./ci/kube-testing/scripts/setup_kms_in_kind.sh \
+  --deployment-type threshold \
+  --num-parties 13 \
+  --local
+```
+
+**Option 2: Manual Configuration (For CI/Production)**
+
+Manually edit the values files:
 - `ci/kube-testing/kms/values-kms-service-init-kms-test.yaml`
 - `ci/kube-testing/kms/values-kms-test.yaml`
 
-And run the setup script:
+Look for sections marked with:
+```yaml
+#==========RESOURCES TO ADJUST BASED ON ENVIRONMENT==========
+resources:
+  requests:
+    memory: 24Gi  # Adjust based on your system
+    cpu: 12       # Adjust based on your system
+```
+
+Then run the setup script:
 
 ```bash
 ./ci/kube-testing/scripts/setup_kms_in_kind.sh \
@@ -349,9 +448,38 @@ env:
 
 Located in `kms/` directory:
 
-- `values-kms-test.yaml` - Base configuration
-- `values-kms-service-init-kms-test.yaml` - Initialization job configuration
+**Default Values (Used by CI):**
+- `values-kms-test.yaml` - Base configuration for KMS Core
+- `values-kms-service-init-kms-test.yaml` - Initialization job and KMS Core Client configuration
 - `values-kms-service-gen-keys-kms-test.yaml` - Configuration for gen keys mode
+
+**Local Values (Auto-generated, Git-ignored):**
+- `local-values-kms-test.yaml` - Local overrides for KMS Core (created by interactive prompt)
+- `local-values-kms-service-init-kms-test.yaml` - Local overrides for KMS Core Client (created by interactive prompt)
+
+These local files are:
+- Created automatically when using `--local` flag with interactive adjustment (option 2)
+- Used instead of default values when running in local mode
+- Ignored by git (listed in `.gitignore`)
+- Safe to delete (will be recreated on next interactive run)
+
+**Resource Configuration Sections:**
+
+Look for these marked sections in values files to adjust resources:
+```yaml
+#=============================================================
+#==========RESOURCES TO ADJUST BASED ON ENVIRONMENT==========
+# If you launch the deployment locally, adjust these resources
+# according to your system and available resources
+resources:
+  requests:
+    memory: 24Gi  # Default for CI/production
+    cpu: 12       # Adjust for local development
+  limits:
+    memory: 24Gi
+    cpu: 12
+#=============================================================
+```
 
 ### Infrastructure
 
@@ -403,6 +531,56 @@ kubectl logs <pod-name> -n kms-test
 
 # Describe pod for events
 kubectl describe pod <pod-name> -n kms-test
+```
+
+### Insufficient Resources (OOMKilled, Pending Pods)
+
+If pods are failing due to insufficient resources:
+
+**Symptoms:**
+- Pods stuck in `Pending` state
+- Pods showing `OOMKilled` status
+- Error: `Insufficient memory` or `Insufficient cpu`
+
+**Solution 1: Use Interactive Adjustment (Recommended)**
+```bash
+# Run with --local flag and choose option 2
+./ci/kube-testing/scripts/setup_kms_in_kind.sh --local
+
+# When prompted, choose option 2 and enter lower values
+# Example: 4Gi memory and 2 CPU per core instead of 24Gi and 12 CPU
+```
+
+**Solution 2: Manually Edit Local Values**
+```bash
+# Create local values files
+cp ci/kube-testing/kms/values-kms-test.yaml \
+   ci/kube-testing/kms/local-values-kms-test.yaml
+
+cp ci/kube-testing/kms/values-kms-service-init-kms-test.yaml \
+   ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml
+
+# Edit the files and reduce resource requests
+# Then run with --local flag
+./ci/kube-testing/scripts/setup_kms_in_kind.sh --local
+```
+
+**Solution 3: Reduce Number of Parties**
+```bash
+# Use centralized mode (1 party) instead of threshold (4 parties)
+./ci/kube-testing/scripts/setup_kms_in_kind.sh \
+  --deployment-type centralized \
+  --local
+```
+
+**Check Available Resources:**
+```bash
+# Check Docker resources (macOS)
+docker info | grep -E 'CPUs|Total Memory'
+
+# Check system resources (Linux)
+free -h
+nproc
 ```
 
 ### Setup Timeout

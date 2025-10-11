@@ -17,6 +17,10 @@ kmsCoreClient:
   num_reconstruct: 3 # 3 when 4 parties and 9 when 13 parties
   decryption_mode: NoiseFloodSmall
   fhe_parameter: Default
+  #=============================================================
+  #==========RESOURCERS TO ADJUST BASED ON ENVIRONMENT==========
+  # If you launch the deployment locally, adjust these resources
+  # according to your system and available resources
   resources:
     requests:
       memory: 24Gi
@@ -24,6 +28,7 @@ kmsCoreClient:
     limits:
       memory: 24Gi
       cpu: 12
+  #=============================================================
 
 kmsCore:
   enabled: false

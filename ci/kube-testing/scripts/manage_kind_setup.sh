@@ -87,6 +87,28 @@ stop_setup() {
         TAIL_PID=$(cat .tail_pid)
     fi
 
+    # Collect logs based on deployment type
+    echo "Collecting logs for ${DEPLOYMENT_TYPE} deployment before stopping..."
+    case "${DEPLOYMENT_TYPE}" in
+        threshold)
+            for i in $(seq 1 "${NUM_PARTIES}"); do
+                POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
+                if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
+                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+                    > "/tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log" 2>/dev/null && \
+                echo "  Collected logs from ${POD_NAME}" || \
+                echo "  Failed to collect logs from ${POD_NAME}"
+                fi
+            done
+            ;;
+        centralized)
+            kubectl logs kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+            > "/tmp/kms-core-${NAMESPACE}.log" 2>/dev/null && \
+            echo "  Collected logs from kms-core" || \
+            echo "  Failed to collect logs from kms-core"
+            ;;
+    esac
+
     echo "Stopping setup script and port-forwards (PID: ${SETUP_PID})..."
     echo "Deployment type: ${DEPLOYMENT_TYPE}, Number of parties: ${NUM_PARTIES}"
 
@@ -108,28 +130,6 @@ stop_setup() {
     pkill -9 -f "kubectl port-forward" || true
     sleep 2
     echo "Setup process terminated"
-
-    # Collect logs based on deployment type
-    echo "Collecting logs for ${DEPLOYMENT_TYPE} deployment..."
-    case "${DEPLOYMENT_TYPE}" in
-        threshold)
-            for i in $(seq 1 "${NUM_PARTIES}"); do
-                POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
-                if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
-                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
-                    > "/tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log" 2>/dev/null && \
-                echo "  Collected logs from ${POD_NAME}" || \
-                echo "  Failed to collect logs from ${POD_NAME}"
-                fi
-            done
-            ;;
-        centralized)
-            kubectl logs kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
-            > "/tmp/kms-core-${NAMESPACE}.log" 2>/dev/null && \
-            echo "  Collected logs from kms-core" || \
-            echo "  Failed to collect logs from kms-core"
-            ;;
-    esac
 
     # Cleanup PID files
     rm -f .setup_pid .tail_pid

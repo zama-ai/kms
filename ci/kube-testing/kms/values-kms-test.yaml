@@ -35,7 +35,12 @@ kmsCore:
       initialIntervalMs: 100
       cleanupIntervalSecs: 2
       thresholdValue: 1
+      #=============================================================
+      #==========RESOURCERS TO ADJUST BASED ON ENVIRONMENT==========
+      # If you launch the deployment locally, adjust these resources
+      # according to your system and available resources
       numSessionsPreproc: 12
+      #=============================================================
       peersList:
         - id: 1
           host: kms-service-threshold-1-kms-test-core-1
@@ -66,6 +71,10 @@ kmsCore:
     capacity: 5Gi
   serviceMonitor:
     enabled: false
+  #=============================================================
+  #==========RESOURCERS TO ADJUST BASED ON ENVIRONMENT==========
+  # If you launch the deployment locally, adjust these resources
+  # according to your system and available resources
   resources:
     requests:
       memory: 24Gi
@@ -73,6 +82,7 @@ kmsCore:
     limits:
       memory: 24Gi
       cpu: 12
+  #=============================================================
       ephemeralStorage: 1Gi
       grpcTimeout: 360
       grpcMaxMessageSize: 104857600
