@@ -621,9 +621,10 @@ main() {
     log_info "========================================="
 
     # Wait for user interrupt to keep port-forwards alive
-    # Use an infinite loop with sleep to make the script interruptible
+    # Start a background sleep and wait for it - this makes the script properly interruptible
     while true; do
-        sleep 1
+        sleep 3600 &
+        wait $! || true
     done
 }
 
@@ -633,9 +634,6 @@ main() {
 
 # Trap cleanup on interrupt and termination signals (not on normal exit)
 trap cleanup INT TERM
-
-# Ensure the script creates a new process group for proper signal handling
-set -m
 
 # Execute main function with all arguments
 main "$@"
