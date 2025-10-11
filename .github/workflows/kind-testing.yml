@@ -282,29 +282,36 @@ jobs:
 
           # Check if process still exists
           if kill -0 ${SETUP_PID} 2>/dev/null; then
-            # Send SIGINT to the process group (simulates Ctrl+C)
-            if kill -INT -- -${SETUP_PID} 2>/dev/null; then
-              echo "Sent SIGINT (Ctrl+C) to process group -${SETUP_PID}"
+            echo "Process ${SETUP_PID} is running, sending SIGINT..."
+            
+            # Send SIGINT to the process (not process group, as script handles its own children)
+            if kill -INT ${SETUP_PID} 2>/dev/null; then
+              echo "Sent SIGINT to process ${SETUP_PID}"
             else
-              # Try killing just the main process if process group fails
-              kill -INT ${SETUP_PID} 2>/dev/null && echo "Sent SIGINT to process ${SETUP_PID}" || echo "Process already terminated"
+              echo "Failed to send SIGINT, process may have already terminated"
             fi
 
-            # Wait for graceful shutdown with timeout (shorter in CI since cleanup is lightweight)
-            CLEANUP_TIMEOUT=5
+            # Wait for graceful shutdown with timeout
+            CLEANUP_TIMEOUT=10
             CLEANUP_ELAPSED=0
+            echo "Waiting for cleanup to complete (timeout: ${CLEANUP_TIMEOUT}s)..."
             while kill -0 ${SETUP_PID} 2>/dev/null && [ $CLEANUP_ELAPSED -lt $CLEANUP_TIMEOUT ]; do
               sleep 1
               CLEANUP_ELAPSED=$((CLEANUP_ELAPSED + 1))
+              if [ $((CLEANUP_ELAPSED % 2)) -eq 0 ]; then
+                echo "  Still waiting... (${CLEANUP_ELAPSED}s elapsed)"
+              fi
             done
 
             # Force kill if still running
             if kill -0 ${SETUP_PID} 2>/dev/null; then
               echo "Process didn't terminate after ${CLEANUP_TIMEOUT}s, sending SIGKILL..."
-              kill -9 -- -${SETUP_PID} 2>/dev/null || kill -9 ${SETUP_PID} 2>/dev/null || true
-              sleep 1
+              kill -9 ${SETUP_PID} 2>/dev/null || true
+              # Also kill any remaining port-forward processes
+              pkill -9 -f "kubectl port-forward" || true
+              sleep 2
             else
-              echo "Process terminated successfully"
+              echo "Process terminated successfully after ${CLEANUP_ELAPSED}s"
             fi
           else
             echo "Setup process already terminated"
