@@ -228,102 +228,37 @@ jobs:
       # Test Execution
       # Runs the Kubernetes integration tests using the configured environment
       #
-      - name: Setup Kind and Run Kubernetes Tests
-        id: tests
-        # Execute the Kubernetes integration tests
+      - name: Setup Kind Cluster
+        id: setup
         env:
           GITHUB_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
         run: |
-          #===========================================================
-          # Run setup script in background and capture its PID
-          # Use tee to both display output and save to log file for monitoring
-          ./ci/kube-testing/scripts/setup_kms_in_kind.sh \
-            --namespace "${NAMESPACE}" \
-            --kms-core-tag "${KMS_CORE_IMAGE_TAG:-v0.12.0}" \
-            --kms-core-client-tag "${KMS_CORE_CLIENT_IMAGE_TAG:-v0.12.0}" \
-            --deployment-type "${DEPLOYMENT_TYPE:-threshold}" \
-            --num-parties "${NUM_PARTIES:-4}" 2>&1 | tee setup_kms.log &
-          SETUP_PID=$!
+          # Start KMS setup and wait for completion
+          ./ci/kube-testing/scripts/manage_kind_setup.sh start
 
-          # Wait for setup to complete by monitoring the log file
-          echo "Waiting for KMS setup to complete..."
-          TIMEOUT=600  # 10 minutes timeout
-          ELAPSED=0
-          while [ $ELAPSED -lt $TIMEOUT ]; do
-            if grep -q "Press Ctrl+C to stop port forwarding and exit" setup_kms.log 2>/dev/null; then
-              echo "KMS setup completed successfully!"
-              break
-            fi
-            if ! kill -0 ${SETUP_PID} 2>/dev/null; then
-              echo "Setup script terminated unexpectedly!"
-              cat setup_kms.log
-              exit 1
-            fi
-            sleep 5
-            ELAPSED=$((ELAPSED + 5))
-          done
-
-          if [ $ELAPSED -ge $TIMEOUT ]; then
-            echo "Timeout waiting for KMS setup to complete"
-            cat setup_kms.log
-            kill -TERM -${SETUP_PID} 2>/dev/null || true
-            exit 1
-          fi
-
-          #===========================================================
-          # Run tests
+      - name: Run Kubernetes Tests
+        id: tests
+        run: |
+          # Run tests and capture exit code
           cargo nextest run --test kubernetes_test
-          TEST_EXIT_CODE=$?
+          echo "TEST_EXIT_CODE=$?" >> $GITHUB_ENV
 
-          #===========================================================
-          # Stop the setup script and all its child processes (port-forwards)
-          # Note: The cleanup function in the script will collect logs before stopping
-          echo "Stopping setup script and port-forwards (PID: ${SETUP_PID})..."
+      - name: Cleanup Kind Setup
+        if: always()
+        run: |
+          # Stop setup script and cleanup resources
+          SETUP_PID=$(cat .setup_pid 2>/dev/null || echo "")
+          TAIL_PID=$(cat .tail_pid 2>/dev/null || echo "")
+          ./ci/kube-testing/scripts/manage_kind_setup.sh stop "${SETUP_PID}" "${TAIL_PID}"
 
-          # Check if process still exists
-          if kill -0 ${SETUP_PID} 2>/dev/null; then
-            echo "Process ${SETUP_PID} is running, sending SIGINT..."
-            
-            # Send SIGINT to the process (not process group, as script handles its own children)
-            if kill -INT ${SETUP_PID} 2>/dev/null; then
-              echo "Sent SIGINT to process ${SETUP_PID}"
-            else
-              echo "Failed to send SIGINT, process may have already terminated"
-            fi
-
-            # Wait for graceful shutdown with timeout
-            CLEANUP_TIMEOUT=10
-            CLEANUP_ELAPSED=0
-            echo "Waiting for cleanup to complete (timeout: ${CLEANUP_TIMEOUT}s)..."
-            while kill -0 ${SETUP_PID} 2>/dev/null && [ $CLEANUP_ELAPSED -lt $CLEANUP_TIMEOUT ]; do
-              sleep 1
-              CLEANUP_ELAPSED=$((CLEANUP_ELAPSED + 1))
-              if [ $((CLEANUP_ELAPSED % 2)) -eq 0 ]; then
-                echo "  Still waiting... (${CLEANUP_ELAPSED}s elapsed)"
-              fi
-            done
-
-            # Force kill if still running
-            if kill -0 ${SETUP_PID} 2>/dev/null; then
-              echo "Process didn't terminate after ${CLEANUP_TIMEOUT}s, sending SIGKILL..."
-              kill -9 ${SETUP_PID} 2>/dev/null || true
-              # Also kill any remaining port-forward processes
-              pkill -9 -f "kubectl port-forward" || true
-              sleep 2
-            else
-              echo "Process terminated successfully after ${CLEANUP_ELAPSED}s"
-            fi
-          else
-            echo "Setup process already terminated"
-          fi
-
-          #===========================================================
-          # Check test exit code and fail the step if tests failed
-          if [ ${TEST_EXIT_CODE} -ne 0 ]; then
+      - name: Check Test Results
+        if: always()
+        run: |
+          # Fail the workflow if tests failed
+          if [ "${TEST_EXIT_CODE:-0}" -ne 0 ]; then
             echo "Tests failed with exit code ${TEST_EXIT_CODE}"
             exit ${TEST_EXIT_CODE}
           fi
-
           echo "Tests passed successfully"
 
       - name: Upload kms-core logs
