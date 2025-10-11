@@ -224,12 +224,12 @@ jobs:
       - name: Setup Kind Cluster in threshold mode with 4 parties
         id: setup
         env:
+          DEPLOYMENT_TYPE: threshold # Deployment type: threshold or centralized
           GITHUB_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
-          KUBE_CONFIG: "${HOME}/.kube/kind_config"
-          NAMESPACE: kms-test
           KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
           KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
-          DEPLOYMENT_TYPE: threshold # Deployment type: threshold or centralized
+          KUBE_CONFIG: "${HOME}/.kube/kind_config"
+          NAMESPACE: kms-test
           NUM_PARTIES: 4 # Number of parties for threshold mode
         run: |
           # Start KMS setup and wait for completion
@@ -246,13 +246,17 @@ jobs:
 
       - name: Cleanup Kind Setup and Collect Logs
         if: always()
+        env:
+          DEPLOYMENT_TYPE: threshold
+          KUBE_CONFIG: "${HOME}/.kube/kind_config"
+          NAMESPACE: "kms-test"
+          NUM_PARTIES: 4
         run: |
           # Stop setup script and cleanup resources
-          # This will trigger the cleanup function which collects logs to /tmp/
-          # The script will verify logs were collected and attempt manual collection if needed
+          # This will collect logs from pods based on DEPLOYMENT_TYPE and NUM_PARTIES
           SETUP_PID=$(cat .setup_pid 2>/dev/null || echo "")
           TAIL_PID=$(cat .tail_pid 2>/dev/null || echo "")
-          ./ci/kube-testing/scripts/manage_kind_setup.sh stop "${SETUP_PID}" "${TAIL_PID}" "${DEPLOYMENT_TYPE}" "${NUM_PARTIES}"
+          ./ci/kube-testing/scripts/manage_kind_setup.sh stop "${SETUP_PID}" "${TAIL_PID}"
 
       - name: Upload kms-core logs
         if: always()

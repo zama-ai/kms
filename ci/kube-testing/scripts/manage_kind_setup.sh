@@ -9,7 +9,7 @@
 #
 # Usage:
 #   ./manage_kind_setup.sh start
-#   ./manage_kind_setup.sh stop <PID> <TAIL_PID>
+#   ./manage_kind_setup.sh stop <SETUP_PID> <TAIL_PID> [DEPLOYMENT_TYPE] [NUM_PARTIES]
 #
 #=============================================================================
 
@@ -17,8 +17,6 @@ set -euo pipefail
 
 COMMAND="${1:-}"
 SETUP_LOG="setup_kms.log"
-NAMESPACE="${NAMESPACE:-kms-test}"
-KUBE_CONFIG="${HOME}/.kube/kind_config"
 
 #=============================================================================
 # Start Setup
@@ -28,11 +26,11 @@ start_setup() {
 
     # Run setup script in background and capture its PID
     ./ci/kube-testing/scripts/setup_kms_in_kind.sh \
-        --namespace "${NAMESPACE:-kms-test}" \
-        --kms-core-tag "${KMS_CORE_IMAGE_TAG:-v0.12.0}" \
-        --kms-core-client-tag "${KMS_CORE_CLIENT_IMAGE_TAG:-v0.12.0}" \
-        --deployment-type "${DEPLOYMENT_TYPE:-threshold}" \
-        --num-parties "${NUM_PARTIES:-4}" > "${SETUP_LOG}" 2>&1 &
+        --namespace "${NAMESPACE}" \
+        --kms-core-tag "${KMS_CORE_IMAGE_TAG}" \
+        --kms-core-client-tag "${KMS_CORE_CLIENT_IMAGE_TAG}" \
+        --deployment-type "${DEPLOYMENT_TYPE}" \
+        --num-parties "${NUM_PARTIES}" > "${SETUP_LOG}" 2>&1 &
     SETUP_PID=$!
 
     # Tail the log file in background for real-time output
@@ -90,6 +88,7 @@ stop_setup() {
     fi
 
     echo "Stopping setup script and port-forwards (PID: ${SETUP_PID})..."
+    echo "Deployment type: ${DEPLOYMENT_TYPE}, Number of parties: ${NUM_PARTIES}"
 
     # Stop the tail process first
     if [ -n "${TAIL_PID}" ]; then
@@ -110,8 +109,8 @@ stop_setup() {
     sleep 2
     echo "Setup process terminated"
 
-    # Detect deployment type from running pods
-    echo "Detecting deployment type and collecting logs..."
+    # Collect logs based on deployment type
+    echo "Collecting logs for ${DEPLOYMENT_TYPE} deployment..."
     case "${DEPLOYMENT_TYPE}" in
         threshold)
             for i in $(seq 1 "${NUM_PARTIES}"); do

@@ -26,11 +26,21 @@ The setup includes:
 
 ## Prerequisites
 
+### Required Tools
+
 Ensure the following tools are installed:
 - `kubectl` - Kubernetes CLI
 - `helm` - Kubernetes package manager
 - `kind` - Kubernetes in Docker
 - `docker` - Container runtime
+
+### Supported Platforms
+
+The scripts support both **macOS** and **Linux**:
+- ✅ **macOS** (Darwin) - Tested on macOS
+- ✅ **Linux** - Tested on Ubuntu/Debian
+
+Platform-specific commands (like `base64`) are automatically detected and adjusted.
 
 ## Local Usage
 

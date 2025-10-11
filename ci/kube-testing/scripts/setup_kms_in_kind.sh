@@ -34,7 +34,7 @@ NAMESPACE="${NAMESPACE:-kms-test}"
 KMS_CORE_IMAGE_TAG="${KMS_CORE_IMAGE_TAG:-latest}"
 KMS_CORE_CLIENT_IMAGE_TAG="${KMS_CORE_CLIENT_IMAGE_TAG:-latest}"
 DEPLOYMENT_TYPE="${DEPLOYMENT_TYPE:-threshold}"
-NUM_PARTIES="${NUM_PARTIES:-4}"
+NUM_PARTIES="${NUM_PARTIES:-$([ "${DEPLOYMENT_TYPE}" = "centralized" ] && echo "1" || echo "4")}"
 KUBE_CONFIG="${HOME}/.kube/kind_config"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
@@ -42,6 +42,28 @@ RUST_IMAGE_VERSION="$(cat ${REPO_ROOT}/toolchain.txt)"
 CLEANUP=false
 BUILD=false
 LOCAL=false
+
+#=============================================================================
+# Platform Detection
+#=============================================================================
+
+# Detect OS and set platform-specific commands
+detect_platform() {
+    case "$(uname -s)" in
+        Darwin*)
+            OS="macos"
+            BASE64_CMD="base64"
+            ;;
+        Linux*)
+            OS="linux"
+            BASE64_CMD="base64 -w 0"
+            ;;
+        *)
+            log_error "Unsupported OS: $(uname -s)"
+            exit 1
+            ;;
+    esac
+}
 
 #=============================================================================
 # Color Codes for Output
@@ -117,6 +139,34 @@ parse_args() {
                 ;;
         esac
     done
+}
+
+#=============================================================================
+# Configuration Validation
+#=============================================================================
+
+# Validate and adjust configuration based on deployment type
+validate_config() {
+    # Validate deployment type
+    if [[ "${DEPLOYMENT_TYPE}" != "centralized" ]] && [[ "${DEPLOYMENT_TYPE}" != "threshold" ]]; then
+        log_error "Invalid DEPLOYMENT_TYPE: ${DEPLOYMENT_TYPE}. Must be 'threshold' or 'centralized'"
+        exit 1
+    fi
+
+    # Override NUM_PARTIES for centralized mode if explicitly set to something else
+    if [[ "${DEPLOYMENT_TYPE}" == "centralized" ]] && [[ "${NUM_PARTIES}" != "1" ]]; then
+        log_warn "NUM_PARTIES=${NUM_PARTIES} ignored for centralized deployment, using 1"
+        NUM_PARTIES=1
+    fi
+
+    # Check if image tags are provided or build flag is set
+    if [[ "${KMS_CORE_IMAGE_TAG}" == "latest" ]] || [[ "${KMS_CORE_CLIENT_IMAGE_TAG}" == "latest" ]]; then
+        if [[ "${BUILD}" != "true" ]]; then
+            log_error "Image tags are set to 'latest' but --build flag is not set"
+            log_error "Either provide specific image tags (--kms-core-tag, --kms-core-client-tag) or use --build to build locally"
+            exit 1
+        fi
+    fi
 }
 
 #=============================================================================
@@ -233,11 +283,11 @@ setup_registry_credentials() {
 
     # Create dockerconfigjson for ghcr.io authentication
     local DOCKER_CONFIG_JSON
-    DOCKER_CONFIG_JSON=$(cat <<JSON | base64 -w 0
+    DOCKER_CONFIG_JSON=$(cat <<JSON | ${BASE64_CMD}
 {
   "auths": {
     "ghcr.io": {
-      "auth": "$(echo -n "zws-bot:${GITHUB_TOKEN}" | base64 -w 0)"
+      "auth": "$(echo -n "zws-bot:${GITHUB_TOKEN}" | ${BASE64_CMD})"
     }
   }
 }
@@ -549,6 +599,10 @@ cleanup() {
 # Main execution function
 main() {
     parse_args "$@"
+    # Initializing platform detection
+    detect_platform
+    # Validating configuration
+    validate_config
 
     log_info "Starting KMS setup in Kind..."
     log_info "========================================="
