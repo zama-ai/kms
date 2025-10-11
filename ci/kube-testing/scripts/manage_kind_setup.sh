@@ -17,13 +17,15 @@ set -euo pipefail
 
 COMMAND="${1:-}"
 SETUP_LOG="setup_kms.log"
+NAMESPACE="${NAMESPACE:-kms-test}"
+KUBE_CONFIG="${HOME}/.kube/kind_config"
 
 #=============================================================================
 # Start Setup
 #=============================================================================
 start_setup() {
     echo "Starting KMS setup in background..."
-    
+
     # Run setup script in background and capture its PID
     ./ci/kube-testing/scripts/setup_kms_in_kind.sh \
         --namespace "${NAMESPACE:-kms-test}" \
@@ -32,39 +34,39 @@ start_setup() {
         --deployment-type "${DEPLOYMENT_TYPE:-threshold}" \
         --num-parties "${NUM_PARTIES:-4}" > "${SETUP_LOG}" 2>&1 &
     SETUP_PID=$!
-    
+
     # Tail the log file in background for real-time output
     tail -f "${SETUP_LOG}" &
     TAIL_PID=$!
-    
+
     # Save PIDs to files for later retrieval
     echo "${SETUP_PID}" > .setup_pid
     echo "${TAIL_PID}" > .tail_pid
-    
+
     echo "Setup PID: ${SETUP_PID}"
     echo "Tail PID: ${TAIL_PID}"
-    
+
     # Wait for setup to complete
     echo "Waiting for KMS setup to complete..."
     TIMEOUT=600  # 10 minutes timeout
     ELAPSED=0
-    
+
     while [ $ELAPSED -lt $TIMEOUT ]; do
         if grep -q "Press Ctrl+C to stop port forwarding and exit" "${SETUP_LOG}" 2>/dev/null; then
             echo "KMS setup completed successfully!"
             return 0
         fi
-        
+
         if ! kill -0 ${SETUP_PID} 2>/dev/null; then
             echo "Setup script terminated unexpectedly!"
             cat "${SETUP_LOG}"
             return 1
         fi
-        
+
         sleep 5
         ELAPSED=$((ELAPSED + 5))
     done
-    
+
     # Timeout reached
     echo "Timeout waiting for KMS setup to complete"
     cat "${SETUP_LOG}"
@@ -78,7 +80,7 @@ start_setup() {
 stop_setup() {
     local SETUP_PID="${2:-}"
     local TAIL_PID="${3:-}"
-    
+
     # Read PIDs from files if not provided
     if [ -z "${SETUP_PID}" ] && [ -f .setup_pid ]; then
         SETUP_PID=$(cat .setup_pid)
@@ -86,95 +88,50 @@ stop_setup() {
     if [ -z "${TAIL_PID}" ] && [ -f .tail_pid ]; then
         TAIL_PID=$(cat .tail_pid)
     fi
-    
+
     echo "Stopping setup script and port-forwards (PID: ${SETUP_PID})..."
-    
+
     # Stop the tail process first
     if [ -n "${TAIL_PID}" ]; then
         kill ${TAIL_PID} 2>/dev/null || true
     fi
-    
+
     # Check if setup process still exists
     if [ -z "${SETUP_PID}" ]; then
         echo "No setup PID provided or found"
         return 0
     fi
-    
-    if kill -0 ${SETUP_PID} 2>/dev/null; then
-        echo "Process ${SETUP_PID} is running, sending SIGINT..."
-        
-        # Send SIGINT to the process
-        if kill -INT ${SETUP_PID} 2>/dev/null; then
-            echo "Sent SIGINT to process ${SETUP_PID}"
-        else
-            echo "Failed to send SIGINT, process may have already terminated"
-        fi
-        
-        # Wait for graceful shutdown with timeout
-        CLEANUP_TIMEOUT=10
-        CLEANUP_ELAPSED=0
-        echo "Waiting for cleanup to complete (timeout: ${CLEANUP_TIMEOUT}s)..."
-        
-        while kill -0 ${SETUP_PID} 2>/dev/null && [ $CLEANUP_ELAPSED -lt $CLEANUP_TIMEOUT ]; do
-            sleep 1
-            CLEANUP_ELAPSED=$((CLEANUP_ELAPSED + 1))
-            if [ $((CLEANUP_ELAPSED % 2)) -eq 0 ]; then
-                echo "  Still waiting... (${CLEANUP_ELAPSED}s elapsed)"
-            fi
-        done
-        
-        # Force kill if still running
-        if kill -0 ${SETUP_PID} 2>/dev/null; then
-            echo "Process didn't terminate after ${CLEANUP_TIMEOUT}s, sending SIGKILL..."
-            kill -9 ${SETUP_PID} 2>/dev/null || true
-            # Also kill any remaining port-forward processes
-            pkill -9 -f "kubectl port-forward" || true
-            sleep 2
-        else
-            echo "Process terminated successfully after ${CLEANUP_ELAPSED}s"
-        fi
-    else
-        echo "Setup process already terminated"
-    fi
-    
-    # Wait a moment for log collection to complete
-    echo "Waiting for log collection to complete..."
+
+    echo "Terminating setup process (PID: ${SETUP_PID})..."
+    kill -9 ${SETUP_PID} 2>/dev/null || true
+    # Also kill any remaining port-forward processes
+    echo "Terminating any remaining port-forward processes..."
+    pkill -9 -f "kubectl port-forward" || true
     sleep 2
-    
-    # Verify logs were collected
-    echo "Verifying collected logs..."
-    if ls /tmp/kms-*.log 1> /dev/null 2>&1; then
-        echo "Logs collected successfully:"
-        ls -lh /tmp/kms-*.log
-    else
-        echo "Warning: No logs found in /tmp/"
-        echo "Attempting manual log collection..."
-        
-        # Try to collect logs manually if cleanup didn't work
-        NAMESPACE="${NAMESPACE:-kms-test}"
-        KUBE_CONFIG="${HOME}/.kube/kind_config"
-        
-        # Detect deployment type from running pods
-        if kubectl get pods -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" 2>/dev/null | grep -q "kms-service-threshold"; then
-            echo "Detected threshold deployment, collecting logs..."
-            for i in 1 2 3 4; do
+    echo "Setup process terminated"
+
+    # Detect deployment type from running pods
+    echo "Detecting deployment type and collecting logs..."
+    case "${DEPLOYMENT_TYPE}" in
+        threshold)
+            for i in $(seq 1 "${NUM_PARTIES}"); do
                 POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
                 if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
-                    kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
-                        > "/tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log" 2>/dev/null && \
-                        echo "  Collected logs from ${POD_NAME}" || \
-                        echo "  Failed to collect logs from ${POD_NAME}"
+                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+                    > "/tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log" 2>/dev/null && \
+                echo "  Collected logs from ${POD_NAME}" || \
+                echo "  Failed to collect logs from ${POD_NAME}"
                 fi
             done
-        elif kubectl get pods -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" 2>/dev/null | grep -q "kms-core"; then
-            echo "Detected centralized deployment, collecting logs..."
+            ;;
+        centralized)
             kubectl logs kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
-                > "/tmp/kms-core-${NAMESPACE}.log" 2>/dev/null && \
-                echo "  Collected logs from kms-core" || \
-                echo "  Failed to collect logs from kms-core"
-        fi
-    fi
-    
+            > "/tmp/kms-core-${NAMESPACE}.log" 2>/dev/null && \
+            echo "  Collected logs from kms-core" || \
+            echo "  Failed to collect logs from kms-core"
+            ;;
+    esac
+
     # Cleanup PID files
     rm -f .setup_pid .tail_pid
 }

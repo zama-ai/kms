@@ -31,8 +31,8 @@ set -euo pipefail
 # Configuration Variables
 #=============================================================================
 NAMESPACE="${NAMESPACE:-kms-test}"
-KMS_CORE_IMAGE_TAG="${KMS_CORE_IMAGE_TAG:-latest-dev}"
-KMS_CORE_CLIENT_IMAGE_TAG="${KMS_CORE_CLIENT_IMAGE_TAG:-latest-dev}"
+KMS_CORE_IMAGE_TAG="${KMS_CORE_IMAGE_TAG:-latest}"
+KMS_CORE_CLIENT_IMAGE_TAG="${KMS_CORE_CLIENT_IMAGE_TAG:-latest}"
 DEPLOYMENT_TYPE="${DEPLOYMENT_TYPE:-threshold}"
 NUM_PARTIES="${NUM_PARTIES:-4}"
 KUBE_CONFIG="${HOME}/.kube/kind_config"
@@ -495,27 +495,6 @@ cleanup() {
     log_info "========================================="
     log_info "Cleaning up KMS resources..."
 
-    # Collect logs first (before killing anything)
-    log_info "Collecting logs for debugging..."
-    case "${DEPLOYMENT_TYPE}" in
-        threshold)
-            for i in $(seq 1 "${NUM_PARTIES}"); do
-                kubectl logs kms-service-threshold-${i}-${NAMESPACE}-core-${i} \
-                    -n ${NAMESPACE} \
-                    --kubeconfig ${KUBE_CONFIG} \
-                    > /tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log 2>/dev/null || \
-                    log_warn "Failed to collect logs for core-${i}"
-            done
-            ;;
-        centralized)
-            kubectl logs kms-core \
-                -n ${NAMESPACE} \
-                --kubeconfig ${KUBE_CONFIG} \
-                > /tmp/kms-core-${NAMESPACE}.log 2>/dev/null || \
-                log_warn "Failed to collect logs for kms-core"
-            ;;
-    esac
-
     # Stop all port forwarding processes
     log_info "Stopping port-forward processes..."
     pkill -f "kubectl port-forward" || true
@@ -524,22 +503,31 @@ cleanup() {
     if [[ "$LOCAL" == "true" ]]; then
         # Full cleanup for local development
         log_info "Running full cleanup (local mode)..."
-
         # Uninstall Helm releases
-        helm uninstall -n "${NAMESPACE}" kms-core-gen-keys 2>/dev/null || true
-        helm uninstall -n "${NAMESPACE}" kms-core-init 2>/dev/null || true
-        helm uninstall -n "${NAMESPACE}" minio 2>/dev/null || true
         case "${DEPLOYMENT_TYPE}" in
             threshold)
                 for i in $(seq 1 "${NUM_PARTIES}"); do
-                    helm uninstall -n "${NAMESPACE}" "kms-core-${i}" 2>/dev/null || true
+                  POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
+                  if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
+                    kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+                        > "/tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log" 2>/dev/null && \
+                    echo "  Collected logs from ${POD_NAME}" || \
+                    echo "  Failed to collect logs from ${POD_NAME}"
+                  fi
+                  helm uninstall -n "${NAMESPACE}" "kms-core-${i}" 2>/dev/null || true
                 done
                 ;;
             centralized)
+                kubectl logs kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+                > "/tmp/kms-core-${NAMESPACE}.log" 2>/dev/null && \
+                echo "  Collected logs from kms-core" || \
+                echo "  Failed to collect logs from kms-core"
                 helm uninstall -n "${NAMESPACE}" kms-core 2>/dev/null || true
                 ;;
         esac
-
+        helm uninstall -n "${NAMESPACE}" kms-core-gen-keys 2>/dev/null || true
+        helm uninstall -n "${NAMESPACE}" kms-core-init 2>/dev/null || true
+        helm uninstall -n "${NAMESPACE}" minio 2>/dev/null || true
         kubectl delete namespace "${NAMESPACE}" --wait=true 2>/dev/null || true
         kind delete cluster --name ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
         rm -f "${KUBE_CONFIG}"
