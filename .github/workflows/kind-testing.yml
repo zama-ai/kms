@@ -242,7 +242,7 @@ jobs:
         run: |
           # Run tests and capture exit code
           cargo nextest run --test kubernetes_test
-          echo "TEST_EXIT_CODE=$?" >> $GITHUB_ENV
+          echo "TEST_EXIT_CODE=$?" >> "${GITHUB_ENV}"
 
       - name: Cleanup Kind Setup and Collect Logs
         if: always()
@@ -252,7 +252,7 @@ jobs:
           # The script will verify logs were collected and attempt manual collection if needed
           SETUP_PID=$(cat .setup_pid 2>/dev/null || echo "")
           TAIL_PID=$(cat .tail_pid 2>/dev/null || echo "")
-          ./ci/kube-testing/scripts/manage_kind_setup.sh stop "${SETUP_PID}" "${TAIL_PID}"
+          ./ci/kube-testing/scripts/manage_kind_setup.sh stop "${SETUP_PID}" "${TAIL_PID}" "${DEPLOYMENT_TYPE}" "${NUM_PARTIES}"
 
       - name: Upload kms-core logs
         if: always()
@@ -271,7 +271,7 @@ jobs:
           # Fail the workflow if tests failed
           if [ "${TEST_EXIT_CODE:-0}" -ne 0 ]; then
             echo "Tests failed with exit code ${TEST_EXIT_CODE}"
-            exit ${TEST_EXIT_CODE}
+            exit "${TEST_EXIT_CODE}"
           fi
           echo "Tests passed successfully"
 

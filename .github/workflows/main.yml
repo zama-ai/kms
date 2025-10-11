@@ -250,6 +250,7 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - name: Set matrix
+        id: set-matrix
         run: |
           MATRIX="matrix={\"include\":["
           MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests --skip nightly\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests\"}"
@@ -407,7 +408,8 @@ jobs:
     env:
       EVENT_NAME: ${{ github.event_name }}
     steps:
-      - id: set-matrix
+      - name: Set matrix
+        id: set-matrix
         run: |
           MATRIX="matrix={\"include\":["
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
