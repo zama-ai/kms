@@ -243,23 +243,15 @@ jobs:
           cargo nextest run --test kubernetes_test
           echo "TEST_EXIT_CODE=$?" >> $GITHUB_ENV
 
-      - name: Cleanup Kind Setup
+      - name: Cleanup Kind Setup and Collect Logs
         if: always()
         run: |
           # Stop setup script and cleanup resources
+          # This will trigger the cleanup function which collects logs to /tmp/
+          # The script will verify logs were collected and attempt manual collection if needed
           SETUP_PID=$(cat .setup_pid 2>/dev/null || echo "")
           TAIL_PID=$(cat .tail_pid 2>/dev/null || echo "")
           ./ci/kube-testing/scripts/manage_kind_setup.sh stop "${SETUP_PID}" "${TAIL_PID}"
-
-      - name: Check Test Results
-        if: always()
-        run: |
-          # Fail the workflow if tests failed
-          if [ "${TEST_EXIT_CODE:-0}" -ne 0 ]; then
-            echo "Tests failed with exit code ${TEST_EXIT_CODE}"
-            exit ${TEST_EXIT_CODE}
-          fi
-          echo "Tests passed successfully"
 
       - name: Upload kms-core logs
         if: always()
@@ -271,6 +263,16 @@ jobs:
             /tmp/kms-core-*.log
           retention-days: 7 # Keep logs for 7 days
           if-no-files-found: warn # Only warn if no log files are found
+
+      - name: Check Test Results
+        if: always()
+        run: |
+          # Fail the workflow if tests failed
+          if [ "${TEST_EXIT_CODE:-0}" -ne 0 ]; then
+            echo "Tests failed with exit code ${TEST_EXIT_CODE}"
+            exit ${TEST_EXIT_CODE}
+          fi
+          echo "Tests passed successfully"
 
   ############################################################################
   # Stop EC2 Runner Job
