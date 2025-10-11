@@ -120,6 +120,7 @@ async fn test_central_close_after_drop() {
 async fn test_largecipher() {
     use crate::{
         consts::DEFAULT_CENTRAL_KEY_ID,
+        cryptography::internal_crypto_types::EncryptionSchemeType,
         engine::centralized::central_kms::tests::{
             new_priv_ram_storage_from_existing_keys, new_pub_ram_storage_from_existing_keys,
         },
@@ -175,6 +176,7 @@ async fn test_largecipher() {
             typed_ciphertexts,
             &request_id,
             &DEFAULT_CENTRAL_KEY_ID,
+            EncryptionSchemeType::MlKem512,
         )
         .unwrap();
     let response = kms_client
