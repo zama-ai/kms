@@ -490,6 +490,9 @@ setup_port_forwarding() {
 
 # Cleanup resources on script termination (triggered by SIGINT/SIGTERM)
 cleanup() {
+    log_info "========================================="
+    log_info "Cleanup function triggered by signal"
+    log_info "========================================="
     log_info "Cleaning up KMS resources..."
 
     # Collect logs first (before killing anything)
@@ -618,7 +621,10 @@ main() {
     log_info "========================================="
 
     # Wait for user interrupt to keep port-forwards alive
-    wait
+    # Use an infinite loop with sleep to make the script interruptible
+    while true; do
+        sleep 1
+    done
 }
 
 #=============================================================================
@@ -627,6 +633,9 @@ main() {
 
 # Trap cleanup on interrupt and termination signals (not on normal exit)
 trap cleanup INT TERM
+
+# Ensure the script creates a new process group for proper signal handling
+set -m
 
 # Execute main function with all arguments
 main "$@"
