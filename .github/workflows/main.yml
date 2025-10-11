@@ -249,10 +249,10 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - id: set-matrix
+      - name: Set matrix
+        id: set-matrix
         run: |
           MATRIX="matrix={\"include\":["
-          # Regular tests: Run different test suites in parallel with specific features
           MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests --skip nightly\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests\"}"
           MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
@@ -408,14 +408,13 @@ jobs:
     env:
       EVENT_NAME: ${{ github.event_name }}
     steps:
-      - id: set-matrix
+      - name: Set matrix
+        id: set-matrix
         run: |
           MATRIX="matrix={\"include\":["
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
-            # Nightly tests: Run comprehensive test suite in release mode
             MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly_tests\"}"
           else
-            # Regular tests: Run different test suites in parallel with specific features
             MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly\"}"
           fi
           MATRIX="${MATRIX%,}]}"
