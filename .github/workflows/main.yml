@@ -249,21 +249,13 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - id: set-matrix
+      - name: Set matrix
         run: |
-          # Regular tests: Run different test suites in parallel with specific features
-          cat <<'EOF' >> "$GITHUB_OUTPUT"
-          matrix={
-            "include": [
-              {
-                "args-tests": "threshold -- --skip centralized --skip full_gen_tests"
-              },
-              {
-                "args-tests": "centralized -- --skip threshold --skip full_gen_tests"
-              }
-            ]
-          }
-          EOF
+          MATRIX="matrix={\"include\":["
+          MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests --skip nightly\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests\"}"
+          MATRIX="${MATRIX%,}]}"
+          echo "$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "$MATRIX"
 
   # Core client integration tests
   test-core-client:
@@ -417,38 +409,15 @@ jobs:
     steps:
       - id: set-matrix
         run: |
+          MATRIX="matrix={\"include\":["
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
-            # Nightly tests: Run comprehensive test suite in release mode
-            cat <<'EOF' >> "$GITHUB_OUTPUT"
-          matrix={
-            "include": [
-              {
-                "args-tests": "--release -F slow_tests -F s3_tests -F insecure nightly_tests"
-              }
-            ]
-          }
-          EOF
+            MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly_tests\"}"
           else
-            # Regular tests: Run different test suites in parallel with specific features
-            cat <<'EOF' >> "$GITHUB_OUTPUT"
-          matrix={
-            "include": [
-              {
-                "args-tests": "-F testing --lib"
-              },
-              {
-                "args-tests": "-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly_tests"
-              },
-              {
-                "args-tests": "-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly_tests"
-              },
-              {
-                "args-tests": "-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly_tests"
-              }
-            ]
-          }
-          EOF
+            MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly\"}"
           fi
+          MATRIX="${MATRIX%,}]}"
+          echo "$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "$MATRIX"
 
   # Runs core service tests based on the matrix configuration
   # Uses big instance for better performance and includes:

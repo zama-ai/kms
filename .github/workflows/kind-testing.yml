@@ -65,13 +65,6 @@ jobs:
       - docker-build
     runs-on: ${{ needs.start-runner.outputs.label }}
 
-    # Environment variables for Kubernetes configuration
-    env:
-      KUBECONFIG: "/home/ubuntu/.kube/config" # Path to kubeconfig
-      KUBE_CONTEXT: kind-kind # Kubernetes context name for the Kind cluster
-      NAMESPACE: kms-test
-      KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
-      KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
     steps:
       - name: Checkout Project
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -228,12 +221,20 @@ jobs:
       # Test Execution
       # Runs the Kubernetes integration tests using the configured environment
       #
-      - name: Setup Kind Cluster
+      - name: Setup Kind Cluster in threshold mode with 4 parties
         id: setup
         env:
           GITHUB_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+          KUBE_CONFIG: "${HOME}/.kube/kind_config"
+          NAMESPACE: kms-test
+          KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          DEPLOYMENT_TYPE: threshold # Deployment type: threshold or centralized
+          NUM_PARTIES: 4 # Number of parties for threshold mode
         run: |
           # Start KMS setup and wait for completion
+          # Uses environment variables: NAMESPACE, KMS_CORE_IMAGE_TAG, KMS_CORE_CLIENT_IMAGE_TAG,
+          # DEPLOYMENT_TYPE, NUM_PARTIES
           ./ci/kube-testing/scripts/manage_kind_setup.sh start
 
       - name: Run Kubernetes Tests
