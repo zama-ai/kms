@@ -27,9 +27,11 @@ spec:
           image: {{ .Values.kmsCoreClient.image.name }}:{{ .Values.kmsCoreClient.image.tag }}
           command:
             - /app/core-client-gen-keys.sh
+          {{- if not .Values.minio.enabled }}
           envFrom:
             - configMapRef:
                 name: {{ .Values.kmsCoreClient.envFrom.configmap.name }}
+          {{- end }}
           env:
             {{- if .Values.minio.enabled }}
             - name: S3_ENDPOINT

@@ -65,14 +65,15 @@ The script will:
 ./ci/kube-testing/scripts/setup_kms_in_kind.sh [OPTIONS]
 
 Options:
-  --namespace <name>          Kubernetes namespace (optionnal, default: kms-test)
-  --kms-core-tag <tag>        KMS Core image tag (optionnal, default: latest)
-  --kms-core-client-tag <tag> KMS Core Client image tag (optionnal, default: latest)
-  --deployment-type <type>    Deployment type: threshold|centralized (optionnal, default: threshold)
-  --num-parties <num>         Number of parties for threshold mode (optionnal, default: 4)
-  --cleanup                   Cleanup existing deployment before setup (optionnal, default: false)
-  --build                     Build and load Docker images locally (optionnal, default: false)
-  --local                     Run in local mode (full cleanup on exit, optionnal, default: false)
+  --namespace <name>          Kubernetes namespace (optional, default: kms-test)
+  --kms-core-tag <tag>        KMS Core image tag (optional, default: latest)
+  --kms-core-client-tag <tag> KMS Core Client image tag (optional, default: latest)
+  --deployment-type <type>    Deployment type: threshold|centralized (optional, default: threshold)
+  --num-parties <num>         Number of parties for threshold mode (optional, default: 4)
+  --cleanup                   Cleanup existing deployment before setup (optional, default: false)
+  --build                     Build and load Docker images locally (optional, default: false)
+  --local                     Run in local mode (full cleanup on exit, optional, default: false)
+  --gen-keys                  Generate keys using gen-keys job (optional, only with --local and threshold mode)
   --help                      Show help message
 ```
 
@@ -93,7 +94,7 @@ export DEPLOYMENT_TYPE="threshold"
 export NUM_PARTIES="4"
 ```
 
-### GitHub token for private image pulls
+### Token for private image pulls
 
 To pull private images and helm charts from GitHub Container Registry, you need to create a `dockerconfig.yaml` file with your Personal Access Token:
 
@@ -182,16 +183,19 @@ The script will:
 - Create local values files with your custom settings
 - Use these files for deployment
 - Show the new total resource requirements
+- Apply FHE parameter settings to all files
 
 **Local Values Files Created:**
 - `ci/kube-testing/kms/local-values-kms-test.yaml`
 - `ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml`
+- `ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml` (only if using `--gen-keys`)
 
 These files are:
 - ✅ **Automatically created** from the interactive prompt
 - ✅ **Git-ignored** (won't be committed to the repository)
 - ✅ **Used only for local development** (CI uses default values)
 - ✅ **Safe to delete** (will be recreated on next run)
+- ✅ **Include FHE parameter customization** (e.g., Test, Default)
 
 **Option 3: Cancel** - Exits the script so you can manually edit values files
 
@@ -219,6 +223,48 @@ With `FHE_PARAMS=Test` parameter:
   --local
 ```
 
+### Example: Generate Keys (Threshold Mode Only)
+
+The `--gen-keys` flag enables automatic key generation using a Kubernetes job. This is useful for testing threshold mode deployments with pre-generated keys.
+
+**Requirements:**
+- Must be used with `--local` flag
+- Only works with `--deployment-type threshold`
+- Automatically creates `local-values-kms-service-gen-keys-kms-test.yaml` if using interactive adjustment
+
+**Basic usage:**
+```bash
+./ci/kube-testing/scripts/setup_kms_in_kind.sh \
+  --local \
+  --gen-keys
+```
+
+**With interactive resource adjustment:**
+```bash
+./ci/kube-testing/scripts/setup_kms_in_kind.sh \
+  --local \
+  --gen-keys \
+  --deployment-type threshold \
+  --num-parties 4
+```
+
+When prompted with the interactive menu (option 2), the script will:
+1. Create local values files for KMS Core and KMS Core Client
+2. Create `local-values-kms-service-gen-keys-kms-test.yaml` for the key generation job
+3. Apply your custom resource settings and FHE parameters to all files
+4. Deploy the key generation job after KMS Core initialization
+
+**What happens:**
+1. KMS Core pods are deployed (threshold mode)
+2. KMS Core Client initialization job runs
+3. **Key generation job runs** (generates keys for all parties)
+4. Keys are stored in MinIO
+5. Setup completes and waits for user interrupt
+
+**Configuration file:**
+- Default: `ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml`
+- Local: `ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml` (auto-generated)
+
 ### Example: Custom Number of Parties
 
 **Option 1: Use Interactive Adjustment (Recommended for Local)**
@@ -232,7 +278,7 @@ Run with `--local` flag and choose option 2 to interactively adjust resources:
   --local
 ```
 
-**Option 2: Manual Configuration (For CI/Production)**
+**Option 2: Manual Configuration (For CI)**
 
 Manually edit the values files:
 - `ci/kube-testing/kms/values-kms-service-init-kms-test.yaml`
@@ -406,13 +452,16 @@ env:
 **Purpose**: Main setup script that creates and configures the Kind cluster.
 
 **Key Functions**:
-- `setup_kind_cluster()` - Creates Kind cluster
-- `setup_namespace()` - Creates Kubernetes namespace
-- `deploy_minio()` - Deploys MinIO object storage
-- `deploy_threshold_mode()` - Deploys multi-party KMS
-- `deploy_centralized_mode()` - Deploys single-party KMS
-- `setup_port_forwarding()` - Configures port-forwards
-- `cleanup()` - Triggered by SIGINT/SIGTERM (Ctrl+C)
+- `detect_platform` - Detects the platform (macOS or Linux)
+- `validate_config` - Validates configuration
+- `check_local_resources` - Adjusts resources for local development
+- `setup_kind_cluster` - Creates Kind cluster
+- `setup_namespace` - Creates Kubernetes namespace
+- `deploy_minio` - Deploys MinIO object storage
+- `deploy_threshold_mode` - Deploys multi-party KMS
+- `deploy_centralized_mode` - Deploys single-party KMS
+- `setup_port_forwarding` - Configures port-forwards
+- `cleanup` - Triggered by SIGINT/SIGTERM (Ctrl+C)
 
 **Behavior**:
 - Runs in foreground with infinite loop
@@ -451,17 +500,19 @@ Located in `kms/` directory:
 **Default Values (Used by CI):**
 - `values-kms-test.yaml` - Base configuration for KMS Core
 - `values-kms-service-init-kms-test.yaml` - Initialization job and KMS Core Client configuration
-- `values-kms-service-gen-keys-kms-test.yaml` - Configuration for gen keys mode
+- `values-kms-service-gen-keys-kms-test.yaml` - Key generation job configuration (used with `--gen-keys`)
 
 **Local Values (Auto-generated, Git-ignored):**
 - `local-values-kms-test.yaml` - Local overrides for KMS Core (created by interactive prompt)
 - `local-values-kms-service-init-kms-test.yaml` - Local overrides for KMS Core Client (created by interactive prompt)
+- `local-values-kms-service-gen-keys-kms-test.yaml` - Local overrides for key generation job (created when using `--gen-keys`)
 
 These local files are:
 - Created automatically when using `--local` flag with interactive adjustment (option 2)
 - Used instead of default values when running in local mode
 - Ignored by git (listed in `.gitignore`)
 - Safe to delete (will be recreated on next interactive run)
+- The gen-keys local file is only created when using `--gen-keys` flag
 
 **Resource Configuration Sections:**
 

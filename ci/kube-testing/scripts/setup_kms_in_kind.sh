@@ -42,6 +42,7 @@ RUST_IMAGE_VERSION="$(cat ${REPO_ROOT}/toolchain.txt)"
 CLEANUP=false
 BUILD=false
 LOCAL=false
+GEN_KEYS=false
 
 #=============================================================================
 # Platform Detection
@@ -129,6 +130,10 @@ parse_args() {
                 LOCAL=true
                 shift
                 ;;
+            --gen-keys)
+                GEN_KEYS=true
+                shift
+                ;;
             --help)
                 grep "^#" "$0" | grep -v "^#!/" | sed 's/^# //'
                 exit 0
@@ -173,16 +178,19 @@ check_local_resources() {
     # Check resource requirements for local development
     if [[ "${LOCAL}" == "true" ]]; then
         # Extract resource values from values files
-        local KMS_CORE_VALUES="${SCRIPT_DIR}/../kms/values-kms-test.yaml"
-        local KMS_CORE_CLIENT_VALUES="${SCRIPT_DIR}/../kms/values-kms-service-init-kms-test.yaml"
+        local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
+        local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
+        if [[ "${GEN_KEYS}" == "true" ]]; then
+            local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml"
+        fi
 
         # Parse memory and CPU from kms-core values (values-kms-test.yaml)
         local KMS_CORE_MEMORY=$(grep -A 10 "resources:" "${KMS_CORE_VALUES}" | grep "memory:" | head -1 | awk '{print $2}' | sed 's/Gi//')
         local KMS_CORE_CPU=$(grep -A 10 "resources:" "${KMS_CORE_VALUES}" | grep "cpu:" | head -1 | awk '{print $2}')
 
         # Parse memory and CPU from kms-core-client values (values-kms-service-init-kms-test.yaml)
-        local KMS_CORE_CLIENT_MEMORY=$(grep -A 10 "resources:" "${KMS_CORE_CLIENT_VALUES}" | grep "memory:" | head -1 | awk '{print $2}' | sed 's/Gi//')
-        local KMS_CORE_CLIENT_CPU=$(grep -A 10 "resources:" "${KMS_CORE_CLIENT_VALUES}" | grep "cpu:" | head -1 | awk '{print $2}')
+        local KMS_CORE_CLIENT_MEMORY=$(grep -A 10 "resources:" "${KMS_CORE_CLIENT_INIT_VALUES}" | grep "memory:" | head -1 | awk '{print $2}' | sed 's/Gi//')
+        local KMS_CORE_CLIENT_CPU=$(grep -A 10 "resources:" "${KMS_CORE_CLIENT_INIT_VALUES}" | grep "cpu:" | head -1 | awk '{print $2}')
 
         # Calculate total resources
         local TOTAL_KMS_CORE_MEMORY=$((KMS_CORE_MEMORY * NUM_PARTIES))
@@ -192,15 +200,13 @@ check_local_resources() {
 
         # Retrieve num_seccion_preproc
         local NUM_SESSIN_PREPROC=$(grep "numSessionsPreproc:" "${KMS_CORE_VALUES}" | head -1 | awk '{print $2}')
+        # Retrieve FHE_PARAMS
+        local FHE_PARAMS=$(grep "fhe_parameter:" "${KMS_CORE_CLIENT_INIT_VALUES}" | head -1 | awk '{print $2}')
 
         log_warn "========================================="
         log_warn "Running in LOCAL mode"
         log_warn "========================================="
         log_warn "The default Helm values require significant resources:"
-        log_warn ""
-        log_warn "KMS Core Client (1 instance):"
-        log_warn "  - Memory: ${KMS_CORE_CLIENT_MEMORY}Gi"
-        log_warn "  - CPU: ${KMS_CORE_CLIENT_CPU} cores"
         log_warn ""
         log_warn "KMS Core (${NUM_PARTIES} parties):"
         log_warn "  - Memory per core: ${KMS_CORE_MEMORY}Gi"
@@ -210,6 +216,13 @@ check_local_resources() {
         log_warn "KMS Core num_sessions_preproc:"
         log_warn "  - num_sessions_preproc: ${NUM_SESSIN_PREPROC}"
         log_warn ""
+        log_warn "KMS Core Client (1 instance):"
+        log_warn "  - Memory: ${KMS_CORE_CLIENT_MEMORY}Gi"
+        log_warn "  - CPU: ${KMS_CORE_CLIENT_CPU} cores"
+        log_warn ""
+        log_warn "KMS Core Client fhe_parameter:"
+        log_warn "  - fhe_parameter: ${FHE_PARAMS}"
+        log_warn ""
         log_warn "TOTAL RESOURCES REQUIRED:"
         log_warn "  - Memory: ${TOTAL_MEMORY}Gi"
         log_warn "  - CPU: ${TOTAL_CPU} cores"
@@ -217,7 +230,7 @@ check_local_resources() {
         log_warn ""
         log_warn "If your system doesn't have these resources, you MUST adjust the values files:"
         log_warn "  - ${KMS_CORE_VALUES}"
-        log_warn "  - ${KMS_CORE_CLIENT_VALUES}"
+        log_warn "  - ${KMS_CORE_CLIENT_INIT_VALUES}"
         log_warn ""
         log_warn "Look for sections marked with:"
         log_warn "  #==========RESOURCES TO ADJUST BASED ON ENVIRONMENT=========="
@@ -246,10 +259,14 @@ check_local_resources() {
                 echo ""
                 # Create local values files
                 log_info "Creating local values files..."
-                cp "${KMS_CORE_VALUES}" "${SCRIPT_DIR}"/../kms/local-values-kms-test.yaml
-                cp "${KMS_CORE_CLIENT_VALUES}" "${SCRIPT_DIR}"/../kms/local-values-kms-service-init-kms-test.yaml
-                local KMS_CORE_VALUES="${SCRIPT_DIR}/../kms/local-values-kms-test.yaml"
-                local KMS_CORE_CLIENT_VALUES="${SCRIPT_DIR}/../kms/local-values-kms-service-init-kms-test.yaml"
+                cp "${KMS_CORE_VALUES}" "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-test.yaml
+                KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
+                cp "${KMS_CORE_CLIENT_INIT_VALUES}" "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml
+                KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
+                if [[ "${GEN_KEYS}" == "true" ]]; then
+                    cp "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}" "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml
+                    KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
+                fi
 
                 # Adjust KMS Core resources
                 echo ""
@@ -268,6 +285,8 @@ check_local_resources() {
                 NEW_CLIENT_MEM="${NEW_CLIENT_MEM:-${KMS_CORE_CLIENT_MEMORY}}"
                 read -p "KMS Core Client CPU (current: ${KMS_CORE_CLIENT_CPU}, recommended: 2): " -r NEW_CLIENT_CPU
                 NEW_CLIENT_CPU="${NEW_CLIENT_CPU:-${KMS_CORE_CLIENT_CPU}}"
+                read -p "KMS Core Client fhe_parameter (current: ${FHE_PARAMS}, recommended: Test): " -r NEW_FHE_PARAMS
+                NEW_FHE_PARAMS="${NEW_FHE_PARAMS:-${FHE_PARAMS}}"
 
 
                 # Update the values files with sed (platform-aware)
@@ -278,29 +297,40 @@ check_local_resources() {
                     sed -i '' "s/memory: ${KMS_CORE_MEMORY}Gi/memory: ${NEW_CORE_MEM}Gi/g" "${KMS_CORE_VALUES}"
                     sed -i '' "s/cpu: ${KMS_CORE_CPU}/cpu: ${NEW_CORE_CPU}/g" "${KMS_CORE_VALUES}"
                     sed -i '' "s/numSessionsPreproc: ${NUM_SESSIN_PREPROC}/numSessionsPreproc: ${NEW_NUM_SESSIN_PREPROC}/g" "${KMS_CORE_VALUES}"
-                    sed -i '' "s/memory: ${KMS_CORE_CLIENT_MEMORY}Gi/memory: ${NEW_CLIENT_MEM}Gi/g" "${KMS_CORE_CLIENT_VALUES}"
-                    sed -i '' "s/cpu: ${KMS_CORE_CLIENT_CPU}/cpu: ${NEW_CLIENT_CPU}/g" "${KMS_CORE_CLIENT_VALUES}"
+                    sed -i '' "s/memory: ${KMS_CORE_CLIENT_MEMORY}Gi/memory: ${NEW_CLIENT_MEM}Gi/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
+                    sed -i '' "s/cpu: ${KMS_CORE_CLIENT_CPU}/cpu: ${NEW_CLIENT_CPU}/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
+                    sed -i '' "s/fhe_parameter: ${FHE_PARAMS}/fhe_parameter: ${NEW_FHE_PARAMS}/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
+                    if [[ "${GEN_KEYS}" == "true" ]]; then
+                        sed -i '' "s/fhe_parameter: ${FHE_PARAMS}/fhe_parameter: ${NEW_FHE_PARAMS}/g" "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
+                    fi
                 else
                     sed -i "s/memory: ${KMS_CORE_MEMORY}Gi/memory: ${NEW_CORE_MEM}Gi/g" "${KMS_CORE_VALUES}"
                     sed -i "s/cpu: ${KMS_CORE_CPU}/cpu: ${NEW_CORE_CPU}/g" "${KMS_CORE_VALUES}"
                     sed -i "s/numSessionsPreproc: ${NUM_SESSIN_PREPROC}/numSessionsPreproc: ${NEW_NUM_SESSIN_PREPROC}/g" "${KMS_CORE_VALUES}"
-                    sed -i "s/memory: ${KMS_CORE_CLIENT_MEMORY}Gi/memory: ${NEW_CLIENT_MEM}Gi/g" "${KMS_CORE_CLIENT_VALUES}"
-                    sed -i "s/cpu: ${KMS_CORE_CLIENT_CPU}/cpu: ${NEW_CLIENT_CPU}/g" "${KMS_CORE_CLIENT_VALUES}"
+                    sed -i "s/memory: ${KMS_CORE_CLIENT_MEMORY}Gi/memory: ${NEW_CLIENT_MEM}Gi/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
+                    sed -i "s/cpu: ${KMS_CORE_CLIENT_CPU}/cpu: ${NEW_CLIENT_CPU}/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
+                    sed -i "s/fhe_parameter: ${FHE_PARAMS}/fhe_parameter: ${NEW_FHE_PARAMS}/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
+                    if [[ "${GEN_KEYS}" == "true" ]]; then
+                        sed -i "s/fhe_parameter: ${FHE_PARAMS}/fhe_parameter: ${NEW_FHE_PARAMS}/g" "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
+                    fi
                 fi
 
                 log_info "New local values files created successfully:"
-                log_info "- ${SCRIPT_DIR}/../kms/local-values-kms-test.yaml"
-                log_info "- ${SCRIPT_DIR}/../kms/local-values-kms-service-init-kms-test.yaml"
+                log_info "- ${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
+                log_info "- ${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
+                log_info "- ${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
 
                 # Calculate new totals
                 local NEW_TOTAL_MEM=$((NEW_CORE_MEM * NUM_PARTIES + NEW_CLIENT_MEM))
                 local NEW_TOTAL_CPU=$((NEW_CORE_CPU * NUM_PARTIES + NEW_CLIENT_CPU))
                 local NEW_TOTAL_NUM_SESSIN_PREPROC=${NEW_NUM_SESSIN_PREPROC}
+                local NEW_TOTAL_FHE_PARAMS=${NEW_FHE_PARAMS}
 
                 log_info ""
                 log_info "======================NEW RESOURCES ADJUSTMENT========================="
                 log_info "New total resources: ${NEW_TOTAL_MEM}Gi RAM, ${NEW_TOTAL_CPU} CPU cores"
                 log_info "New total num_sessions_preproc: ${NEW_TOTAL_NUM_SESSIN_PREPROC}"
+                log_info "New total fhe_parameter: ${NEW_TOTAL_FHE_PARAMS}"
                 log_info "======================================================================="
                 log_info ""
                 ;;
@@ -554,11 +584,17 @@ deploy_threshold_mode() {
     log_info "Deploying KMS Core in threshold mode with ${NUM_PARTIES} parties..."
 
     if [[ "${LOCAL}" == "true" ]]; then
-      VALUES_FILE_KMS_CORE="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
-      VALUES_FILE_KMS_CORE_INIT="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
+        local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
+        local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
+        if [[ "${GEN_KEYS}" == "true" ]]; then
+            local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
+        fi
     else
-      VALUES_FILE_KMS_CORE="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
-      VALUES_FILE_KMS_CORE_INIT="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
+        local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
+        local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
+        if [[ "${GEN_KEYS}" == "true" ]]; then
+            local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml"
+        fi
     fi
 
     for i in $(seq 1 "${NUM_PARTIES}"); do
@@ -567,7 +603,7 @@ deploy_threshold_mode() {
             "${REPO_ROOT}/charts/kms-core" \
             --namespace "${NAMESPACE}" \
             --kubeconfig "${KUBE_CONFIG}" \
-            -f "${VALUES_FILE_KMS_CORE}" \
+            -f "${KMS_CORE_VALUES}" \
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --set kmsPeers.id="${i}" \
@@ -589,7 +625,7 @@ deploy_threshold_mode() {
         "${REPO_ROOT}/charts/kms-core" \
         --namespace "${NAMESPACE}" \
         --kubeconfig "${KUBE_CONFIG}" \
-        -f "${VALUES_FILE_KMS_CORE_INIT}" \
+        -f "${KMS_CORE_CLIENT_INIT_VALUES}" \
         --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
         --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
         --wait \
@@ -601,22 +637,23 @@ deploy_threshold_mode() {
         -n "${NAMESPACE}" --timeout=10m --kubeconfig "${KUBE_CONFIG}"
 
     # Deploy key generation job
-    # log_info "Deploying KMS Core key generation job..."
-    # helm upgrade --install kms-core-gen-keys \
-    #     "${REPO_ROOT}/charts/kms-core" \
-    #     --namespace "${NAMESPACE}" \
-    #     --kubeconfig "${KUBE_CONFIG}" \
-    #     -f "${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml" \
-    #     --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
-    #     --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-    #     --wait \
-    #     --wait-for-jobs \
-    #     --timeout 40m
+    if [[ "${LOCAL}" == "true" && "${GEN_KEYS}" == "true" && "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
+      log_info "Deploying KMS Core key generation job..."
+      helm upgrade --install kms-core-gen-keys \
+          "${REPO_ROOT}/charts/kms-core" \
+          --namespace "${NAMESPACE}" \
+          --kubeconfig "${KUBE_CONFIG}" \
+          -f "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}" \
+          --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+          --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+          --wait \
+          --wait-for-jobs \
+          --timeout 40m
 
-    # log_info "Waiting for key generation to complete..."
-    # kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys \
-    #     -n "${NAMESPACE}" --timeout=10m --kubeconfig "${KUBE_CONFIG}"
-
+      log_info "Waiting for key generation to complete..."
+      kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys \
+          -n "${NAMESPACE}" --timeout=10m --kubeconfig "${KUBE_CONFIG}"
+    fi
     log_info "Threshold mode deployment completed"
 }
 
@@ -625,16 +662,16 @@ deploy_centralized_mode() {
     log_info "Deploying KMS Core in centralized mode..."
 
     if [[ "${LOCAL}" == "true" ]]; then
-      VALUES_FILE_KMS_CORE="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
+      local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
     else
-      VALUES_FILE_KMS_CORE="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
+      local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
     fi
 
     helm upgrade --install kms-core \
         "${REPO_ROOT}/charts/kms-core" \
         --namespace "${NAMESPACE}" \
         --kubeconfig "${KUBE_CONFIG}" \
-        -f "${VALUES_FILE_KMS_CORE}" \
+        -f "${KMS_CORE_VALUES}" \
         --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
         --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
         --wait \
@@ -717,25 +754,48 @@ cleanup() {
         # Uninstall Helm releases
         case "${DEPLOYMENT_TYPE}" in
             threshold)
+                if [ -z "${NUM_PARTIES:-}" ]; then
+                    echo "ERROR: NUM_PARTIES not set for threshold deployment"
+                    return 0
+                fi
+
+                echo "Collecting logs from ${NUM_PARTIES} KMS Core pods..."
                 for i in $(seq 1 "${NUM_PARTIES}"); do
-                  POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
-                  if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
-                    kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
-                        > "/tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log" 2>/dev/null && \
-                    echo "  Collected logs from ${POD_NAME}" || \
-                    echo "  Failed to collect logs from ${POD_NAME}"
-                  fi
-                  helm uninstall -n "${NAMESPACE}" "kms-core-${i}" 2>/dev/null || true
+                    POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
+                    echo "  Checking pod: ${POD_NAME}"
+
+                    if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
+                        echo "  Pod ${POD_NAME} exists, collecting logs..."
+                        if kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+                            > "/tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log" 2>&1; then
+                            echo "  ✓ Collected logs from ${POD_NAME}"
+                        else
+                            echo "  ✗ Failed to collect logs from ${POD_NAME}"
+                        fi
+                    else
+                        echo "  ✗ Pod ${POD_NAME} not found"
+                    fi
                 done
                 ;;
             centralized)
-                kubectl logs kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
-                > "/tmp/kms-core-${NAMESPACE}.log" 2>/dev/null && \
-                echo "  Collected logs from kms-core" || \
-                echo "  Failed to collect logs from kms-core"
-                helm uninstall -n "${NAMESPACE}" kms-core 2>/dev/null || true
+                echo "Collecting logs from centralized KMS Core pod..."
+                if kubectl get pod kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
+                    if kubectl logs kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+                        > "/tmp/kms-core-${NAMESPACE}.log" 2>&1; then
+                        echo "  ✓ Collected logs from kms-core"
+                    else
+                        echo "  ✗ Failed to collect logs from kms-core"
+                    fi
+                else
+                    echo "  ✗ Pod kms-core not found"
+                fi
+                ;;
+            *)
+                echo "ERROR: Unknown deployment type: ${DEPLOYMENT_TYPE}"
                 ;;
         esac
+
+        echo "Log collection completed"
         helm uninstall -n "${NAMESPACE}" kms-core-gen-keys 2>/dev/null || true
         helm uninstall -n "${NAMESPACE}" kms-core-init 2>/dev/null || true
         helm uninstall -n "${NAMESPACE}" minio 2>/dev/null || true
@@ -780,6 +840,7 @@ main() {
     log_info "  Cleanup Mode:             ${CLEANUP}"
     log_info "  Build Locally:            ${BUILD}"
     log_info "  Local Mode:               ${LOCAL}"
+    log_info "  Generate Keys:            ${GEN_KEYS}"
     log_info "========================================="
 
     # Execute setup steps

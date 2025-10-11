@@ -249,7 +249,7 @@ jobs:
         env:
           DEPLOYMENT_TYPE: threshold
           KUBE_CONFIG: "${HOME}/.kube/kind_config"
-          NAMESPACE: "kms-test"
+          NAMESPACE: kms-test
           NUM_PARTIES: 4
         run: |
           # Stop setup script and cleanup resources

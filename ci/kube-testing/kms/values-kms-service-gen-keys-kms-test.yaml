@@ -6,11 +6,11 @@ kmsGenKeys:
     name: kms-keys
   resources:
     requests:
-      memory: 6Gi
-      cpu: 2
+      memory: 2Gi
+      cpu: 1
     limits:
-      memory: 6Gi
-      cpu: 2
+      memory: 2Gi
+      cpu: 1
 
 minio:
   enabled: true
@@ -41,10 +41,16 @@ kmsCoreClient:
   image:
     name: ghcr.io/zama-ai/kms/core-client
     tag:
-  num_majority: 5 # 2 when 4 parties and 5 when 13 parties
-  num_reconstruct: 9 # 3 when 4 parties and 9 when 13 parties
+  num_majority: 2 # 2 when 4 parties and 5 when 13 parties
+  num_reconstruct: 3 # 3 when 4 parties and 9 when 13 parties
   decryption_mode: NoiseFloodSmall
   fhe_parameter: Default
+
+kubeUtils:
+  image:
+    name: ghcr.io/zama-ai/security-hub/infra/kube-utils
+    tag: v0.4.3
+    pullPolicy: Always
 
 kmsInit:
   enabled: false
