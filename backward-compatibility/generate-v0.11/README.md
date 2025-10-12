@@ -21,6 +21,32 @@ This allows us to:
 - Test that data with the current KMS version
 - Avoid the dependency version conflicts that previously prevented regeneration
 
+## How It Works
+
+The backward compatibility system operates in two independent phases:
+
+### 1. **Data Generation** (Development/Manual)
+Uses **old KMS code** (v0.11.1) to create serialized test data:
+```bash
+cd backward-compatibility/generate-v0.11
+cargo run --release
+```
+- Runs in isolation with v0.11.1 dependencies
+- Generates versioned binary data files
+- Stores data in `../data/` directory
+
+### 2. **Data Verification** (CI/Testing)
+Uses **current KMS code** to load and verify the old data:
+```bash
+make test-backward-compatibility        # CI: pulls LFS data first
+make test-backward-compatibility-local  # Dev: uses local data
+```
+- Runs with current workspace dependencies
+- Loads old serialized data
+- Verifies it deserializes correctly with current code
+
+**Key Benefit**: Both processes maintain completely independent dependency trees, eliminating version conflicts while ensuring backward compatibility across KMS releases.
+
 ## Quick Reference
 
 **Complete workflow for regenerating and testing data:**
