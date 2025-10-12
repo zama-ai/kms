@@ -768,7 +768,7 @@ setup_port_forwarding() {
 #=============================================================================
 collect_logs() {
     log_info "Collecting logs for ${DEPLOYMENT_TYPE} deployment..."
-    
+
     case "${DEPLOYMENT_TYPE}" in
         threshold)
             if [ -z "${NUM_PARTIES:-}" ]; then
@@ -836,10 +836,10 @@ cleanup() {
     if [[ "$LOCAL" == "true" ]]; then
         # Full cleanup for local development
         log_info "Running full cleanup (local mode)..."
-        
+
         # Collect logs before destroying cluster
         collect_logs || log_error "Failed to collect logs"
-        
+
         # Delete cluster and kubeconfig
         kind delete cluster --name ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
         rm -f "${KUBE_CONFIG}"
@@ -863,14 +863,14 @@ main() {
     parse_args "$@"
     # Initializing platform detection
     detect_platform
-    
+
     # If only collecting logs, do that and exit
     if [[ "${COLLECT_LOGS_ONLY}" == "true" ]]; then
         log_info "Collecting logs only (CI mode)..."
         collect_logs
         exit $?
     fi
-    
+
     # Validating configuration
     validate_config
     if [[ "${LOCAL}" == "true" ]]; then
@@ -931,7 +931,7 @@ main() {
     log_info ""
     log_info "Cleanup Instructions:"
     log_info "  Script cleanup:  $0 --cleanup"
-    log_info "  Manual cleanup:  kind delete cluster --name kms-test"
+    log_info "  Manual cleanup:  kind delete cluster --name ${NAMESPACE}"
     log_info ""
     log_info "Port forwarding is running in the background."
     log_info "Press Ctrl+C to stop port forwarding and exit."
