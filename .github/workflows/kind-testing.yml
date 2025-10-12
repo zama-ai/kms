@@ -62,6 +62,8 @@ jobs:
   kind-testing:
     name: kind-testing
     strategy:
+      max-parallel: 1
+      fail-fast: true
       matrix:
         include:
           - cargo-check: true
@@ -249,9 +251,9 @@ jobs:
         env:
           DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
           GITHUB_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
-          # KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          # KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}  ############################# TODO
           KMS_CORE_IMAGE_TAG: b91bb0d
-          # KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          # KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}  ############################# TODO
           KMS_CORE_CLIENT_IMAGE_TAG: b91bb0d
           KUBE_CONFIG: "${HOME}/.kube/kind_config_${{ matrix.deployment-type }}"
           NAMESPACE: kms-test-${{ matrix.deployment-type }}
@@ -263,6 +265,7 @@ jobs:
           ./ci/kube-testing/scripts/manage_kind_setup.sh start
 
       - name: Run Kubernetes Tests
+        if: matrix.cargo-check == false
         id: tests
         env:
           DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
@@ -287,7 +290,7 @@ jobs:
                 for i in $(seq 1 "${NUM_PARTIES}"); do
                     POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
                     echo "  Checking pod: ${POD_NAME}"
-
+                    kubectl get pod -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
                     if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
                         echo "  Pod ${POD_NAME} exists, collecting logs..."
                         if kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
@@ -303,6 +306,7 @@ jobs:
                 ;;
             centralized)
                 echo "Collecting logs from centralized KMS Core pod..."
+                kubectl get pod -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
                 if kubectl get pod kms-core-1 -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
                     if kubectl logs kms-core-1 -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
                         > "/tmp/kms-core-${NAMESPACE}.log" 2>&1; then
@@ -322,10 +326,10 @@ jobs:
       - name: Cleanup Kind Setup and Collect Logs
         if: always() && matrix.cargo-check == false
         env:
-          DEPLOYMENT_TYPE: threshold
-          KUBE_CONFIG: "${HOME}/.kube/kind_config"
-          NAMESPACE: kms-test
-          NUM_PARTIES: 4
+          DEPLOYMENT_TYPE: ${{ matrix.deployment-type }}
+          KUBE_CONFIG: "${HOME}/.kube/kind_config_${{ matrix.deployment-type }}"
+          NAMESPACE: kms-test-${{ matrix.deployment-type }}
+          NUM_PARTIES: ${{ matrix.num-parties }}
         run: |
           # Stop setup script and cleanup resources
           # This will collect logs from pods based on DEPLOYMENT_TYPE and NUM_PARTIES
