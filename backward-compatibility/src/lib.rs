@@ -13,10 +13,6 @@ use strum::Display;
 
 pub mod parameters;
 
-#[cfg(feature = "generate")]
-pub mod data_0_11;
-#[cfg(feature = "generate")]
-pub mod generate;
 #[cfg(feature = "load")]
 pub mod load;
 #[cfg(feature = "tests")]

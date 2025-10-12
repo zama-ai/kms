@@ -50,6 +50,12 @@ stop-compose-centralized-custodian:
 test-backward-compatibility: pull-lfs-files
 	cargo test --test backward_compatibility_* -- --include-ignored
 
+test-backward-compatibility-local:
+	cargo test --test backward_compatibility_* -- --include-ignored
+
+generate-backward-compatibility-v0.11:
+	cd backward-compatibility/generate-v0.11 && cargo run --release
+
 # Check if Git LFS is installed and enabled
 check-git-lfs:
 	@if git lfs version > /dev/null 2>&1; then \

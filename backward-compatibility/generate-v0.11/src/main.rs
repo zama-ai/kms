@@ -1,11 +1,12 @@
 //! Main file to run for generating all the versioned data for all kms-core versions.
 
 use backward_compatibility::{
-    data_0_11::V0_11,
-    data_dir,
-    generate::{store_metadata, KMSCoreVersion},
-    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, Testcase,
+    data_dir, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, Testcase,
     DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME, PRNG_SEED,
+};
+use backward_compatibility_generate_v0_11::{
+    data_0_11::V0_11,
+    generate::{store_metadata, KMSCoreVersion},
 };
 
 // Type aliases
