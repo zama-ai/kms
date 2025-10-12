@@ -255,8 +255,8 @@ jobs:
   ############################################################################
   # Stop EC2 runner
   ############################################################################
-  stop-runners:
-    name: docker-build/stop-runners
+  stop-runners-amd64:
+    name: docker-build/stop-runners-amd64
     needs:
       - start-amd64-runner
       - golden-image
