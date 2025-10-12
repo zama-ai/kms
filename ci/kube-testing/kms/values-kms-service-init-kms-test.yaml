@@ -9,7 +9,7 @@ minio:
 
 kmsCoreClient:
   enabled: true
-  nameOverride: kms-core-client-threshold
+  nameOverride: kms-core-client
   image:
     name: ghcr.io/zama-ai/kms/core-client
     tag:

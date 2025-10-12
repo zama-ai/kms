@@ -52,7 +52,7 @@ jobs:
           slab-url: ${{ secrets.SLAB_BASE_URL }}
           job-secret: ${{ secrets.JOB_SECRET }}
           backend: aws
-          profile: "big-instance-service" # Uses big instances for resource-intensive tests
+          profile: "big-instance-kind" # Uses big instances for resource-intensive tests c7a.24xlarge
 
   ############################################################################
   # Kind Testing Job
@@ -60,6 +60,15 @@ jobs:
   ############################################################################
   kind-testing:
     name: kind-testing
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cargo-check: true
+          - deployment-type: threshold
+            num-parties: 4
+          - deployment-type: centralized
+            num-parties: 1
     needs:
       - start-runner
       - docker-build
@@ -103,12 +112,14 @@ jobs:
       # Configures Docker Buildx for building multi-platform images
       #
       - name: Set up Docker Buildx
+        if: matrix.cargo-check == false
         uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v3.3.0
         with:
           platforms: linux/amd64 # Target platform for builds
           buildkitd-flags: --debug # Enable debug logging for BuildKit
 
       - name: Install kubectl
+        if: matrix.cargo-check == false
         run: |
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl.sha256"
@@ -125,6 +136,7 @@ jobs:
           kubectl version --client
 
       - name: Install KIND
+        if: matrix.cargo-check == false
         run: |
           # For AMD64 / x86_64
           [ "$(uname -m)" = "x86_64" ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64
@@ -134,12 +146,14 @@ jobs:
           sudo mv ./kind /usr/local/bin/kind
 
       - name: Install Helm
+        if: matrix.cargo-check == false
         run: |
           curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
           chmod 700 get_helm.sh
           ./get_helm.sh
 
       - name: Configure AWS credentials
+        if: matrix.cargo-check == false
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
@@ -148,6 +162,7 @@ jobs:
 
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to zws GitHub Container Registry
+        if: matrix.cargo-check == false
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
           registry: ghcr.io
@@ -190,31 +205,38 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
 
       - name: Setup cargo nextest and grcov
+        if: matrix.cargo-check == false
         run: |
           cargo install cargo-nextest grcov --locked --force
 
       - name: Setup cargo dylint
+        if: matrix.cargo-check == true
         run: |
           cargo install cargo-dylint dylint-link --force
 
       - name: clippy and rustfmt versions
+        if: matrix.cargo-check == true
         run: |
           cargo clippy -V && cargo fmt --version
 
       - name: Formatting
+        if: matrix.cargo-check == true
         run: cargo fmt --all -- --check
 
       - name: Linting default features
+        if: matrix.cargo-check == true
         env:
           PACKAGE_NAME: "kms-core-client"
         run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
 
       - name: Linting All features
+        if: matrix.cargo-check == true
         env:
           PACKAGE_NAME: "kms-core-client"
         run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings
 
       - name: Linting dylint
+        if: matrix.cargo-check == true
         run: cargo dylint --all
 
       # ==========================================================================
@@ -222,15 +244,16 @@ jobs:
       # Runs the Kubernetes integration tests using the configured environment
       #
       - name: Setup Kind Cluster in threshold mode with 4 parties
+        if: matrix.cargo-check == false
         id: setup
         env:
-          DEPLOYMENT_TYPE: threshold # Deployment type: threshold or centralized
+          DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
           GITHUB_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
           KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
           KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
-          KUBE_CONFIG: "${HOME}/.kube/kind_config"
-          NAMESPACE: kms-test
-          NUM_PARTIES: 4 # Number of parties for threshold mode
+          KUBE_CONFIG: "${HOME}/.kube/kind_config_${{ matrix.deployment-type }}"
+          NAMESPACE: kms-test-${{ matrix.deployment-type }}
+          NUM_PARTIES: ${{ matrix.num-parties }} # Number of parties
         run: |
           # Start KMS setup and wait for completion
           # Uses environment variables: NAMESPACE, KMS_CORE_IMAGE_TAG, KMS_CORE_CLIENT_IMAGE_TAG,
@@ -241,11 +264,56 @@ jobs:
         id: tests
         run: |
           # Run tests and capture exit code
-          cargo nextest run --test kubernetes_test
+          cargo nextest run --test kubernetes_test_${{ matrix.deployment-type }}
           echo "TEST_EXIT_CODE=$?" >> "${GITHUB_ENV}"
 
+          #=======================================================================
+          echo "Retrieving log..."
+          case "${DEPLOYMENT_TYPE}" in
+            threshold)
+                if [ -z "${NUM_PARTIES:-}" ]; then
+                    echo "ERROR: Required environment variable NUM_PARTIES not set for threshold deployment cleanup"
+                    return 0
+                fi
+
+                echo "Collecting logs from ${NUM_PARTIES} KMS Core pods..."
+                for i in $(seq 1 "${NUM_PARTIES}"); do
+                    POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
+                    echo "  Checking pod: ${POD_NAME}"
+
+                    if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
+                        echo "  Pod ${POD_NAME} exists, collecting logs..."
+                        if kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+                            > "/tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log" 2>&1; then
+                            echo "  ✓ Collected logs from ${POD_NAME}"
+                        else
+                            echo "  ✗ Failed to collect logs from ${POD_NAME}"
+                        fi
+                    else
+                        echo "  ✗ Pod ${POD_NAME} not found"
+                    fi
+                done
+                ;;
+            centralized)
+                echo "Collecting logs from centralized KMS Core pod..."
+                if kubectl get pod kms-core-1 -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
+                    if kubectl logs kms-core-1 -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+                        > "/tmp/kms-core-${NAMESPACE}.log" 2>&1; then
+                        echo "  ✓ Collected logs from kms-core"
+                    else
+                        echo "  ✗ Failed to collect logs from kms-core"
+                    fi
+                else
+                    echo "  ✗ Pod kms-core not found"
+                fi
+                ;;
+            *)
+                echo "ERROR: Unknown deployment type: ${DEPLOYMENT_TYPE}"
+                ;;
+          esac
+
       - name: Cleanup Kind Setup and Collect Logs
-        if: always()
+        if: always() && matrix.cargo-check == false
         env:
           DEPLOYMENT_TYPE: threshold
           KUBE_CONFIG: "${HOME}/.kube/kind_config"
@@ -259,7 +327,7 @@ jobs:
           ./ci/kube-testing/scripts/manage_kind_setup.sh stop "${SETUP_PID}" "${TAIL_PID}"
 
       - name: Upload kms-core logs
-        if: always()
+        if: always() && matrix.cargo-check == false
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: kms-core-logs
@@ -270,7 +338,7 @@ jobs:
           if-no-files-found: warn # Only warn if no log files are found
 
       - name: Check Test Results
-        if: always()
+        if: always() && matrix.cargo-check == false
         run: |
           # Fail the workflow if tests failed
           if [ "${TEST_EXIT_CODE:-0}" -ne 0 ]; then

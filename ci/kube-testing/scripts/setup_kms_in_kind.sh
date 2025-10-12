@@ -663,15 +663,18 @@ deploy_centralized_mode() {
 
     if [[ "${LOCAL}" == "true" ]]; then
       local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
+      local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
     else
       local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
+      local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
     fi
 
-    helm upgrade --install kms-core \
+    helm upgrade --install kms \
         "${REPO_ROOT}/charts/kms-core" \
         --namespace "${NAMESPACE}" \
         --kubeconfig "${KUBE_CONFIG}" \
         -f "${KMS_CORE_VALUES}" \
+        --set kmsCore.thresholdMode.enabled=false \
         --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
         --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
         --wait \
@@ -679,7 +682,26 @@ deploy_centralized_mode() {
 
     log_info "Waiting for KMS Core pod to be ready..."
     kubectl wait --for=condition=ready pod -l app=kms-core \
-        -n "${NAMESPACE}" --timeout=10m
+        -n "${NAMESPACE}" --timeout=10m --kubeconfig "${KUBE_CONFIG}"
+
+    # Deploy initialization job
+    log_info "Deploying KMS Core initialization job..."
+    helm upgrade --install kms-core-init \
+        "${REPO_ROOT}/charts/kms-core" \
+        --namespace "${NAMESPACE}" \
+        --kubeconfig "${KUBE_CONFIG}" \
+        -f "${KMS_CORE_CLIENT_INIT_VALUES}" \
+        --set kmsCore.nameOverride="kms-core" \
+        --set kmsInit.enabled=false \
+        --set kmsCore.thresholdMode.enabled=false \
+        --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+        --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+        --wait \
+        --timeout 20m
+
+    log_info "Waiting for kms-core-client..."
+    kubectl wait --for=condition=ready pod -l app=kms-core-client \
+        -n "${NAMESPACE}" --timeout=10m --kubeconfig "${KUBE_CONFIG}"
 
     log_info "Centralized mode deployment completed"
 }
@@ -718,7 +740,7 @@ setup_port_forwarding() {
             done
             ;;
         centralized)
-            log_info "Port forwarding kms-core (50100:50100)..."
+            log_info "Port forwarding kms-core-1 (50100:50100)..."
             kubectl port-forward \
                 -n "${NAMESPACE}" \
                 svc/kms-core \
@@ -779,15 +801,15 @@ cleanup() {
                 ;;
             centralized)
                 echo "Collecting logs from centralized KMS Core pod..."
-                if kubectl get pod kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
-                    if kubectl logs kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+                if kubectl get pod kms-core-1 -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
+                    if kubectl logs kms-core-1 -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
                         > "/tmp/kms-core-${NAMESPACE}.log" 2>&1; then
-                        echo "  ✓ Collected logs from kms-core"
+                        echo "  ✓ Collected logs from kms-core-1"
                     else
-                        echo "  ✗ Failed to collect logs from kms-core"
+                        echo "  ✗ Failed to collect logs from kms-core-1"
                     fi
                 else
-                    echo "  ✗ Pod kms-core not found"
+                    echo "  ✗ Pod kms-core-1 not found"
                 fi
                 ;;
             *)
@@ -796,10 +818,6 @@ cleanup() {
         esac
 
         echo "Log collection completed"
-        helm uninstall -n "${NAMESPACE}" kms-core-gen-keys 2>/dev/null || true
-        helm uninstall -n "${NAMESPACE}" kms-core-init 2>/dev/null || true
-        helm uninstall -n "${NAMESPACE}" minio 2>/dev/null || true
-        kubectl delete namespace "${NAMESPACE}" --wait=true 2>/dev/null || true
         kind delete cluster --name ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
         rm -f "${KUBE_CONFIG}"
     else

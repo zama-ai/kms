@@ -60,6 +60,7 @@ spec:
               cat kms-server.toml
               echo "### END - kms-server.toml ###"
           env:
+            {{- if .Values.kmsCore.thresholdMode.enabled }}
             {{- if .Values.kmsPeers.id }}
             - name: KMS_CORE__THRESHOLD__MY_ID
               value: "{{ .Values.kmsPeers.id }}"
@@ -69,6 +70,7 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.thresholdId }}
+            {{- end }}
             {{- end }}
             - name: NO_COLOR
               value: "true"
@@ -366,6 +368,7 @@ spec:
               --write-privkey
             {{- end }}
           env:
+            {{- if .Values.kmsCore.thresholdMode.enabled }}
             {{- if .Values.kmsPeers.id }}
             - name: KMS_CORE__THRESHOLD__MY_ID
               value: "{{ .Values.kmsPeers.id }}"
@@ -375,6 +378,7 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.thresholdId }}
+            {{- end }}
             {{- end }}
             - name: "NO_COLOR"
               value: "true"

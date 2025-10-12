@@ -87,70 +87,7 @@ stop_setup() {
         TAIL_PID=$(cat .tail_pid)
     fi
 
-    # Debug: Print environment variables
-    echo "Environment variables for log collection:"
-    echo "  DEPLOYMENT_TYPE: ${DEPLOYMENT_TYPE:-not set}"
-    echo "  NUM_PARTIES: ${NUM_PARTIES:-not set}"
-    echo "  NAMESPACE: ${NAMESPACE:-not set}"
-    echo "  KUBE_CONFIG: ${KUBE_CONFIG:-not set}"
-
-    # Collect logs based on deployment type
-    echo "Collecting logs for ${DEPLOYMENT_TYPE:-unknown} deployment before stopping..."
-
-    # Check if required variables are set
-    if [ -z "${DEPLOYMENT_TYPE:-}" ] || [ -z "${NAMESPACE:-}" ] || [ -z "${KUBE_CONFIG:-}" ]; then
-        echo "ERROR: Required environment variables not set for log collection"
-        echo "Skipping log collection..."
-        return 0
-    fi
-
-    case "${DEPLOYMENT_TYPE}" in
-        threshold)
-            if [ -z "${NUM_PARTIES:-}" ]; then
-                echo "ERROR: Required environment variable NUM_PARTIES not set for threshold deployment cleanup"
-                return 0
-            fi
-
-            echo "Collecting logs from ${NUM_PARTIES} KMS Core pods..."
-            for i in $(seq 1 "${NUM_PARTIES}"); do
-                POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
-                echo "  Checking pod: ${POD_NAME}"
-
-                if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
-                    echo "  Pod ${POD_NAME} exists, collecting logs..."
-                    if kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
-                        > "/tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log" 2>&1; then
-                        echo "  ✓ Collected logs from ${POD_NAME}"
-                    else
-                        echo "  ✗ Failed to collect logs from ${POD_NAME}"
-                    fi
-                else
-                    echo "  ✗ Pod ${POD_NAME} not found"
-                fi
-            done
-            ;;
-        centralized)
-            echo "Collecting logs from centralized KMS Core pod..."
-            if kubectl get pod kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
-                if kubectl logs kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
-                    > "/tmp/kms-core-${NAMESPACE}.log" 2>&1; then
-                    echo "  ✓ Collected logs from kms-core"
-                else
-                    echo "  ✗ Failed to collect logs from kms-core"
-                fi
-            else
-                echo "  ✗ Pod kms-core not found"
-            fi
-            ;;
-        *)
-            echo "ERROR: Unknown deployment type: ${DEPLOYMENT_TYPE}"
-            ;;
-    esac
-
-    echo "Log collection completed"
-
     echo "Stopping setup script and port-forwards (PID: ${SETUP_PID})..."
-    echo "Deployment type: ${DEPLOYMENT_TYPE}, Number of parties: ${NUM_PARTIES}"
 
     # Stop the tail process first
     if [ -n "${TAIL_PID}" ]; then
