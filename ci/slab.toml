@@ -18,6 +18,11 @@ region = "eu-west-3"
 image_id = "ami-0a56cf46caf2fd41c"
 instance_type = "c6i.12xlarge"
 
+[backend.aws.docker-big-instance-arm]
+region = "eu-west-3"
+image_id = "ami-0a56cf46caf2fd41c"
+instance_type = "c6g.12xlarge"
+
 [backend.aws.big-instance-kind]
 region = "eu-west-1"
 image_id = "ami-04f62ae93462b459a"

@@ -358,7 +358,7 @@ jobs:
       - kind-testing
     runs-on: ubuntu-latest
     # Always run this job, even if previous jobs failed
-    if: ${{ always() }}
+    if: always() && !cancelled()
 
     steps:
       - name: Stop EC2 runner
