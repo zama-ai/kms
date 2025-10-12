@@ -20,6 +20,8 @@
 #   --cleanup                   Cleanup existing deployment before setup
 #   --build                     Build and load Docker images locally
 #   --local                     Run in local mode (full cleanup on exit)
+#   --gen-keys                  Generate keys using gen-keys job (only with --local and threshold)
+#   --collect-logs              Collect logs from pods and exit (for CI use)
 #   --help                      Show this help message
 #
 #=============================================================================
@@ -43,6 +45,7 @@ CLEANUP=false
 BUILD=false
 LOCAL=false
 GEN_KEYS=false
+COLLECT_LOGS_ONLY=false
 
 #=============================================================================
 # Platform Detection
@@ -132,6 +135,10 @@ parse_args() {
                 ;;
             --gen-keys)
                 GEN_KEYS=true
+                shift
+                ;;
+            --collect-logs)
+                COLLECT_LOGS_ONLY=true
                 shift
                 ;;
             --help)
@@ -755,6 +762,62 @@ setup_port_forwarding() {
 }
 
 #=============================================================================
+# Log Collection Function
+# Collects logs from KMS Core pods based on deployment type
+# Can be called from cleanup or directly from CI
+#=============================================================================
+collect_logs() {
+    log_info "Collecting logs for ${DEPLOYMENT_TYPE} deployment..."
+    
+    case "${DEPLOYMENT_TYPE}" in
+        threshold)
+            if [ -z "${NUM_PARTIES:-}" ]; then
+                log_error "NUM_PARTIES not set for threshold deployment"
+                return 1
+            fi
+
+            log_info "Collecting logs from ${NUM_PARTIES} KMS Core pods..."
+            for i in $(seq 1 "${NUM_PARTIES}"); do
+                POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
+                log_info "  Checking pod: ${POD_NAME}"
+
+                if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
+                    log_info "  Pod ${POD_NAME} exists, collecting logs..."
+                    if kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+                        > "/tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log" 2>&1; then
+                        log_info "  ✓ Collected logs from ${POD_NAME}"
+                    else
+                        log_error "  ✗ Failed to collect logs from ${POD_NAME}"
+                    fi
+                else
+                    log_error "  ✗ Pod ${POD_NAME} not found"
+                fi
+            done
+            ;;
+        centralized)
+            log_info "Collecting logs from centralized KMS Core pod..."
+            if kubectl get pod kms-core-1 -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
+                if kubectl logs kms-core-1 -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+                    > "/tmp/kms-core-${NAMESPACE}.log" 2>&1; then
+                    log_info "  ✓ Collected logs from kms-core-1"
+                else
+                    log_error "  ✗ Failed to collect logs from kms-core-1"
+                fi
+            else
+                log_error "  ✗ Pod kms-core-1 not found"
+            fi
+            ;;
+        *)
+            log_error "Unknown deployment type: ${DEPLOYMENT_TYPE}"
+            return 1
+            ;;
+    esac
+
+    log_info "Log collection completed"
+    return 0
+}
+
+#=============================================================================
 # Cleanup Function
 #=============================================================================
 
@@ -773,51 +836,11 @@ cleanup() {
     if [[ "$LOCAL" == "true" ]]; then
         # Full cleanup for local development
         log_info "Running full cleanup (local mode)..."
-        # Uninstall Helm releases
-        case "${DEPLOYMENT_TYPE}" in
-            threshold)
-                if [ -z "${NUM_PARTIES:-}" ]; then
-                    echo "ERROR: NUM_PARTIES not set for threshold deployment"
-                    return 0
-                fi
-
-                echo "Collecting logs from ${NUM_PARTIES} KMS Core pods..."
-                for i in $(seq 1 "${NUM_PARTIES}"); do
-                    POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
-                    echo "  Checking pod: ${POD_NAME}"
-
-                    if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
-                        echo "  Pod ${POD_NAME} exists, collecting logs..."
-                        if kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
-                            > "/tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log" 2>&1; then
-                            echo "  ✓ Collected logs from ${POD_NAME}"
-                        else
-                            echo "  ✗ Failed to collect logs from ${POD_NAME}"
-                        fi
-                    else
-                        echo "  ✗ Pod ${POD_NAME} not found"
-                    fi
-                done
-                ;;
-            centralized)
-                echo "Collecting logs from centralized KMS Core pod..."
-                if kubectl get pod kms-core-1 -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
-                    if kubectl logs kms-core-1 -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
-                        > "/tmp/kms-core-${NAMESPACE}.log" 2>&1; then
-                        echo "  ✓ Collected logs from kms-core-1"
-                    else
-                        echo "  ✗ Failed to collect logs from kms-core-1"
-                    fi
-                else
-                    echo "  ✗ Pod kms-core-1 not found"
-                fi
-                ;;
-            *)
-                echo "ERROR: Unknown deployment type: ${DEPLOYMENT_TYPE}"
-                ;;
-        esac
-
-        echo "Log collection completed"
+        
+        # Collect logs before destroying cluster
+        collect_logs || log_error "Failed to collect logs"
+        
+        # Delete cluster and kubeconfig
         kind delete cluster --name ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
         rm -f "${KUBE_CONFIG}"
     else
@@ -840,6 +863,14 @@ main() {
     parse_args "$@"
     # Initializing platform detection
     detect_platform
+    
+    # If only collecting logs, do that and exit
+    if [[ "${COLLECT_LOGS_ONLY}" == "true" ]]; then
+        log_info "Collecting logs only (CI mode)..."
+        collect_logs
+        exit $?
+    fi
+    
     # Validating configuration
     validate_config
     if [[ "${LOCAL}" == "true" ]]; then

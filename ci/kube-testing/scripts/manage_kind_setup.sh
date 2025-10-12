@@ -17,6 +17,7 @@ set -euo pipefail
 
 COMMAND="${1:-}"
 SETUP_LOG="setup_kms.log"
+KUBE_CONFIG="${HOME}/.kube/kind_config_${DEPLOYMENT_TYPE}"
 
 #=============================================================================
 # Start Setup
@@ -106,6 +107,10 @@ stop_setup() {
     echo "Terminating any remaining port-forward processes..."
     pkill -9 -f "kubectl port-forward" || true
     sleep 2
+    # Delete cluster and kubeconfig
+    kind delete cluster --name ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
+    rm -f "${KUBE_CONFIG}"
+
     echo "Setup process terminated"
 
     # Cleanup PID files
