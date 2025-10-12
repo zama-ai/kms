@@ -61,7 +61,7 @@ jobs:
   kind-testing:
     name: kind-testing
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - cargo-check: true
