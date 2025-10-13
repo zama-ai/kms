@@ -908,10 +908,14 @@ async fn read_kms_addresses_local(
             let store_path = Some(conf::Storage::File(conf::FileStorage {
                 path: path.to_path_buf(),
             }));
-            let backup_proxy_storage =
-                make_storage(store_path, StorageType::PUB, Some(cur_role), None, None).unwrap();
+            let party_role = match sim_conf.kms_type {
+                KmsType::Centralized => None, // in centralized mode, there is only one party, so no need to specify role to access the right storage
+                KmsType::Threshold => Some(cur_role),
+            };
+            let storage =
+                make_storage(store_path, StorageType::PUB, party_role, None, None).unwrap();
             Vault {
-                storage: backup_proxy_storage,
+                storage,
                 keychain: None,
             }
         };
