@@ -187,6 +187,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
     RealContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
+    RealResharer<PubS, PrivS>,
 >;
 
 #[cfg(feature = "insecure")]

@@ -249,8 +249,8 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
 
 #[cfg(not(feature = "insecure"))]
 #[allow(clippy::let_underscore_future)]
-impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync> Drop
-    for ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO>
+impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync, RE: Sync> Drop
+    for ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO, RE>
 {
     fn drop(&mut self) {
         let _ = self.shutdown();
