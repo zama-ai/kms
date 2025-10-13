@@ -86,7 +86,7 @@ jobs:
     name: docker-build/golden-image (bpr)
     needs:
       - start-amd64-runner
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c1c13bcb20d15cd17caf7dc6be89ec1f0b54d5c3
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@ac758208479a9746b34cabb13756a8181e24e622
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -117,7 +117,7 @@ jobs:
     needs:
       - start-amd64-runner
       - golden-image
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c1c13bcb20d15cd17caf7dc6be89ec1f0b54d5c3
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@ac758208479a9746b34cabb13756a8181e24e622
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -148,7 +148,7 @@ jobs:
     needs:
       - start-amd64-runner
       - golden-image
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c1c13bcb20d15cd17caf7dc6be89ec1f0b54d5c3
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@ac758208479a9746b34cabb13756a8181e24e622
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
