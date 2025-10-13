@@ -1579,7 +1579,13 @@ where
             let num_copies = throughput.num_copies;
             let chunk_size = num_copies.div_ceil(num_sessions);
             let prss_setup = self.data.prss_setup.clone();
-            let sns_key = Arc::new(key_ref.pub_keyset.server_key.noise_squashing_key().unwrap());
+            let sns_key = Arc::new(
+                key_ref
+                    .pub_keyset
+                    .server_key
+                    .noise_squashing_key()
+                    .expect("Failed to get noise squashing key"),
+            );
             let server_key = Arc::new(key_ref.pub_keyset.server_key.as_ref());
             let ks =
                 get_key_switching_key(key_ref.pub_keyset.server_key.as_ref()).map_err(|_| {
