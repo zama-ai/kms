@@ -1191,12 +1191,3 @@ fn try_reconstruct_shares(
         sns_compression_private_key,
     )
 }
-
-#[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
-#[tracing_test::traced_test]
-#[rstest::rstest]
-#[serial]
-async fn secure_threshold_decompression_keygen_temporary() {
-    run_threshold_decompression_keygen(13, FheParameter::Test, false).await;
-}
