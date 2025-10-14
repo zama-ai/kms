@@ -252,7 +252,7 @@ async fn write_threshold_empty_update() {
 
     // Check no errors happened
     assert!(!logs_contain(&format!(
-        "while updating KeyGen meta store for {req_id}"
+        "while updating meta store for {req_id}"
     )));
     assert!(!logs_contain(&format!(
         "PK already exists in pk_cache for {req_id}"
@@ -271,7 +271,7 @@ async fn write_threshold_empty_update() {
         )
         .await;
     // Check that the expected error happened
-    assert!(logs_contain("while updating KeyGen meta store for"));
+    assert!(logs_contain("while updating meta store for"));
 
     // update the meta store and the write should be ok
     {
@@ -320,7 +320,7 @@ async fn write_threshold_keys_meta_update() {
         .await;
     // Check that no errors were logged
     assert!(!logs_contain(&format!(
-        "while updating KeyGen meta store for {req_id}"
+        "while updating meta store for {req_id}"
     )));
     assert!(!logs_contain(&format!(
         "PK already exists in pk_cache for {req_id}"
@@ -345,7 +345,7 @@ async fn write_threshold_keys_meta_update() {
             meta_store.clone(),
         )
         .await;
-    assert!(logs_contain("while updating KeyGen meta store for"));
+    assert!(logs_contain("while updating meta store for"));
 }
 
 #[tokio::test]
@@ -373,7 +373,7 @@ async fn write_threshold_keys_failed_storage() {
         .await;
     // Check that no errors were logged
     assert!(!logs_contain(&format!(
-        "while updating KeyGen meta store for {req_id}"
+        "while updating meta store for {req_id}"
     )));
     assert!(!logs_contain(&format!(
         "PK already exists in pk_cache for {req_id}"
@@ -404,9 +404,7 @@ async fn write_threshold_keys_failed_storage() {
         )
         .await;
     // Check that no errors were logged
-    assert!(!logs_contain(
-        "while updating KeyGen meta store for {new_req_id}"
-    ));
+    assert!(!logs_contain("while updating meta store for {new_req_id}"));
 
     // check the meta store is correct
     {

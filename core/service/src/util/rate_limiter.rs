@@ -36,7 +36,7 @@ impl Default for RateLimiterConfig {
             crsgen: 100,
             preproc: 25000,
             keygen: 1000,
-            reshare: 500,
+            reshare: 1,
         }
     }
 }
