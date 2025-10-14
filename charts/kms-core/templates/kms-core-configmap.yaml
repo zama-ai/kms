@@ -227,6 +227,7 @@ data:
     crsgen = 100
     preproc = 50000
     keygen = 1000
+    reshare = 1
 
     {{- if .Values.kmsCore.nitroEnclave.enabled }}
   enclave.json: |
