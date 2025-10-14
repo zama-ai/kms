@@ -326,7 +326,7 @@ async fn write_threshold_keys_meta_update() {
         "PK already exists in pk_cache for {req_id}"
     )));
     assert!(logs_contain(&format!(
-        "Finished DKG for Request Id {req_id}."
+        "Finished storing key for Key Id {req_id}."
     )));
 
     // check the meta store is correct
@@ -379,7 +379,7 @@ async fn write_threshold_keys_failed_storage() {
         "PK already exists in pk_cache for {req_id}"
     )));
     assert!(logs_contain(&format!(
-        "Finished DKG for Request Id {req_id}."
+        "Finished storing key for Key Id {req_id}."
     )));
 
     // check the meta store is correct
