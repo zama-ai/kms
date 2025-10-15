@@ -510,10 +510,6 @@ impl Networking for NetworkSession {
         init_time + *network_timeout + *max_elapsed_time
     }
 
-    // async fn get_max_elapsed_time(&self) -> Duration {
-    //     *self.max_elapsed_time.read().await
-    // }
-
     async fn get_timeout_current_round(&self) -> Duration {
         *self.current_network_timeout.read().await
     }

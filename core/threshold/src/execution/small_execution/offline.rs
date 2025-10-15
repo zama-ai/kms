@@ -1,7 +1,6 @@
 use anyhow::Context;
 use itertools::Itertools;
 use std::collections::HashMap;
-use std::time::SystemTime;
 use tonic::async_trait;
 use tracing::instrument;
 
@@ -69,8 +68,11 @@ impl<BCast: Broadcast + Default> Default for RealSmallPreprocessing<BCast> {
     }
 }
 
-/// Alias for [`RealSmallPreprocessing`] with a secure implementation of [`PRSSPrimitives`] and [`Broadcast`]
-pub type SecureSmallPreprocessing = RealSmallPreprocessing<SyncReliableBroadcast>;
+/// Alias for [`RealSmallPreprocessing`] with a secure implementation of [`PRSSPrimitives`] and [`Broadcast`].
+/// The secure implementation of [`Broadcast`] is [`TimestampedBroadcast`] so that we send timestamps along with
+/// the broadcasted values to reduce "resynchronize" timeouts.
+pub type SecureSmallPreprocessing =
+    RealSmallPreprocessing<TimestampedBroadcast<SyncReliableBroadcast>>;
 
 #[async_trait]
 impl<
@@ -91,16 +93,13 @@ impl<
         let mut base_preprocessing = InMemoryBasePreprocessing::<Z>::default();
 
         // In case of malicious behavior not all triples might have been constructed, so we have to continue making triples until the batch is done
-        let mut sync_time = None;
         while base_preprocessing.triples_len() < batch_sizes.triples {
-            let (triples, new_sync_time) = next_triple_batch(
+            let triples = next_triple_batch(
                 small_session,
                 batch_sizes.triples - base_preprocessing.triples_len(),
                 &self.broadcast,
-                sync_time,
             )
             .await?;
-            sync_time = Some(new_sync_time);
             base_preprocessing.append_triples(triples);
         }
         if batch_sizes.randoms > 0 {
@@ -138,9 +137,7 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
     session: &mut Ses,
     amount: usize,
     broadcast: &BCast,
-    sync_time: Option<SystemTime>,
-) -> anyhow::Result<(Vec<Triple<Z>>, SystemTime)> {
-    let broadcast = TimestampedBroadcast { bcast: broadcast };
+) -> anyhow::Result<Vec<Triple<Z>>> {
     let counters = session.prss().get_counters();
     let my_role = session.my_role();
     let threshold = session.threshold();
@@ -190,7 +187,7 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
 
     let val: BroadcastValue<Z> = vec_d_double.into();
     let broadcast_res = broadcast
-        .broadcast_from_all_w_corrupt_set_update(session, sync_time, val)
+        .broadcast_from_all_w_corrupt_set_update(session, val)
         .await?;
 
     // Try reconstructing 2t sharings of d, a None means reconstruction failed.
@@ -242,12 +239,7 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
         }
     }
 
-    Ok((
-        triples,
-        crate::execution::communication::broadcast::instant_to_systemtime(
-            session.network().get_deadline_current_round().await,
-        ),
-    ))
+    Ok(triples)
 }
 
 /// Helper method to parse the result of the broadcast by taking the ith share from each party and combine them in a vector for which reconstruction is then computed.

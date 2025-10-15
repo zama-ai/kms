@@ -219,10 +219,6 @@ impl Networking for LocalNetworking {
         *self.current_network_timeout.read().await
     }
 
-    // async fn get_max_elapsed_time(&self) -> Duration {
-    //     *self.max_elapsed_time.read().await
-    // }
-
     async fn get_deadline_current_round(&self) -> Instant {
         // initialize init_time on first access
         // this avoids running into timeouts when large computations happen after the test runtime is set up and before the first message is received.

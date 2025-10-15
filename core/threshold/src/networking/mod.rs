@@ -41,8 +41,6 @@ pub trait Networking {
     /// Get the timeout for the current round.
     async fn get_timeout_current_round(&self) -> Duration;
 
-    // async fn get_max_elapsed_time(&self) -> Duration;
-
     async fn reset_timeout(&self, init_time: Instant, elapsed_time: Duration);
 
     async fn get_current_round(&self) -> usize;

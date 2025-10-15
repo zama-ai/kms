@@ -37,116 +37,114 @@ pub(crate) fn systemtime_to_instant(t: SystemTime) -> tokio::time::Instant {
     }
 }
 
-pub(crate) fn instant_to_systemtime(t: tokio::time::Instant) -> SystemTime {
-    let now_sys = SystemTime::now();
-    let now_inst = tokio::time::Instant::now();
+#[derive(Default, Clone)]
+pub struct TimestampedBroadcast<B: Broadcast> {
+    pub(crate) bcast: B,
+}
 
-    // unwrap here is safe because we checked t >= now_sys
-    if t >= now_inst {
-        let dur = t.duration_since(now_inst);
-        now_sys + dur
-    } else {
-        let dur = now_inst.duration_since(t);
-        now_sys - dur
+pub(crate) async fn reset_timeout<Z: Ring, Ses: BaseSessionHandles>(
+    session: &mut Ses,
+    broadcast_res: &HashMap<Role, BroadcastValue<Z>>,
+) {
+    let r_bcast = session.threshold() as usize + 3;
+
+    // we need to extract the timestamps out from broadcast_res
+    let timestamps: Vec<_> = broadcast_res
+        .iter()
+        .filter_map(|val| match val.1.inner {
+            BroadcastValueInner::Bot => None,
+            _ => val.1.timestamp,
+        })
+        .collect();
+
+    // compute min(max({t_i}), current_deadline)
+    // where current_deadline =
+    let new_init_time = {
+        let left = match timestamps.into_iter().max() {
+            Some(t) => systemtime_to_instant(t),
+            None => {
+                tracing::error!(
+                    "failed to reset timeout, empty timestamps, continuing without resetting"
+                );
+                return;
+            }
+        };
+        let right = session.network().get_deadline_current_round().await;
+        left.min(right)
+    };
+
+    // now we reset the init time and elapsed time
+    session
+        .network()
+        .reset_timeout(
+            new_init_time,
+            r_bcast as u32 * session.network().get_timeout_current_round().await,
+        )
+        .await;
+}
+
+impl<B: Broadcast> ProtocolDescription for TimestampedBroadcast<B> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{indent}-TimestampedBroadcast",)
     }
 }
 
-pub struct TimestampedBroadcast<'a, B: Broadcast> {
-    pub(crate) bcast: &'a B,
-}
-
-impl<'a, B: Broadcast> TimestampedBroadcast<'a, B> {
-    pub async fn broadcast_from_all<Z: Ring, Ses: BaseSessionHandles>(
+#[async_trait]
+impl<B: Broadcast> Broadcast for TimestampedBroadcast<B> {
+    #[instrument(name= "Timestampled-Bcast",skip(self,session,senders,my_message),fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+    async fn execute<Z: Ring, S: BaseSessionHandles>(
         &self,
-        session: &mut Ses,
-        batch_sync_time: SystemTime,
-        mut my_message: BroadcastValue<Z>,
+        session: &mut S,
+        senders: &HashSet<Role>,
+        my_message: Option<BroadcastValue<Z>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
-        let sys_now = SystemTime::now();
-        my_message.timestamp = Some(sys_now);
-
-        // round counter before broadcast
-        let r_before = session.network().get_current_round().await;
-
-        let res = self.bcast.broadcast_from_all(session, my_message).await?;
-
-        let r_bcast = session.network().get_current_round().await - r_before;
-        debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
-        Self::reset_timeout(r_bcast, session, batch_sync_time, &res).await;
-        Ok(res)
+        self.bcast.execute(session, senders, my_message).await
     }
 
-    /// Similar to [Broadcast::broadcast_from_all_w_corrupt_set_update] but
+    /// Similar to [SyncReliableBroadcast::broadcast_from_all_w_corrupt_set_update] but
     /// it uses a smarter timeout update mechanism.
     /// It will reduce the overall timeout of the protocol if there are
     /// malicious parties dropping out over many rounds.
-    pub async fn broadcast_from_all_w_corrupt_set_update<Z: Ring, Ses: BaseSessionHandles>(
+    async fn broadcast_from_all_w_corrupt_set_update<Z: Ring, Ses: BaseSessionHandles>(
         &self,
         session: &mut Ses,
-        sync_time: Option<SystemTime>,
         mut my_message: BroadcastValue<Z>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
-        // if sync_time is None, it means this is the very first bcast of the protocol
-        // if it is Some, then it is the second or later broadcast
-        let sync_time = sync_time.unwrap_or_else(SystemTime::now);
         let sys_now = SystemTime::now();
         my_message.timestamp = Some(sys_now);
 
-        // round counter before broadcast
         let r_before = session.network().get_current_round().await;
-
         let res = self
             .bcast
             .broadcast_w_corrupt_set_update(session, session.roles().clone(), Some(my_message))
             .await?;
-
         let r_bcast = session.network().get_current_round().await - r_before;
         debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
-        Self::reset_timeout(r_bcast, session, sync_time, &res).await;
+
+        reset_timeout(session, &res).await;
         Ok(res)
     }
 
-    async fn reset_timeout<Z: Ring, Ses: BaseSessionHandles>(
-        r_bcast: usize,
-        session: &mut Ses,
-        batch_sync_time: SystemTime,
-        broadcast_res: &HashMap<Role, BroadcastValue<Z>>,
-    ) {
+    /// Similar to [SyncReliableBroadcast::broadcast_from_all_w_corrupt_set_update] but
+    /// it uses a smarter timeout update mechanism.
+    /// It will reduce the overall timeout of the protocol if there are
+    /// malicious parties dropping out over many rounds.
+    async fn broadcast_from_all<Z: Ring, S: BaseSessionHandles>(
+        &self,
+        session: &mut S,
+        mut my_message: BroadcastValue<Z>,
+    ) -> anyhow::Result<RoleValueMap<Z>> {
+        let sys_now = SystemTime::now();
+        my_message.timestamp = Some(sys_now);
+
+        let r_before = session.network().get_current_round().await;
+        let res = self.bcast.broadcast_from_all(session, my_message).await?;
+        let r_bcast = session.network().get_current_round().await - r_before;
         debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
 
-        // we need to extract the timestamps out from broadcast_res
-        let timestamps: Vec<_> = broadcast_res
-            .iter()
-            .filter_map(|val| match val.1.inner {
-                BroadcastValueInner::Bot => None,
-                _ => val.1.timestamp,
-            })
-            .collect();
-
-        // compute min(max({t_i}), U^r + R_b * D)
-        let new_batch_sync_time = {
-            let left = match timestamps.into_iter().max() {
-                Some(t) => t,
-                None => {
-                    tracing::error!(
-                        "failed to reset timeout, empty timestamps, continuing without resetting"
-                    );
-                    return;
-                }
-            };
-            let right = batch_sync_time
-                + r_bcast as u32 * session.network().get_timeout_current_round().await;
-            left.min(right)
-        };
-
-        // now we reset the init time and elapsed time
-        session
-            .network()
-            .reset_timeout(
-                systemtime_to_instant(new_batch_sync_time),
-                r_bcast as u32 * session.network().get_timeout_current_round().await,
-            )
-            .await;
+        reset_timeout(session, &res).await;
+        Ok(res)
     }
 }
 
@@ -770,7 +768,7 @@ mod tests {
     #[cfg(feature = "slow_tests")]
     use crate::malicious_execution::communication::malicious_broadcast::MaliciousBroadcastSenderEcho;
     use crate::malicious_execution::communication::malicious_broadcast::{
-        MaliciousBroadcastDrop, MaliciousBroadcastSender,
+        MaliciousBroadcastDrop, MaliciousBroadcastSender, MaliciousTimestampedBroadcast,
     };
     use crate::networking::constants::NETWORK_TIMEOUT;
     use crate::networking::NetworkMode;
@@ -1027,15 +1025,14 @@ mod tests {
     >(
         params: TestingParameters,
         iters: usize,
-        malicious_timestamp: SystemTime,
+        malicious_timestamp: Option<SystemTime>,
         malicious_broadcast: B,
         delay_vec: Option<Vec<Duration>>,
     ) {
         let mut task_honest = |mut session: SmallSession<Z>| async move {
-            let mut sys_now = None;
             let real_broadcast = SyncReliableBroadcast::default();
             let timed_broadcast = TimestampedBroadcast {
-                bcast: &real_broadcast,
+                bcast: real_broadcast,
             };
             let my_data = BroadcastValue::from(Z::sample(session.rng()));
 
@@ -1043,44 +1040,37 @@ mod tests {
             let mut res = HashMap::new();
             for _ in 0..iters {
                 res = timed_broadcast
-                    .broadcast_from_all_w_corrupt_set_update(&mut session, sys_now, my_data.clone())
+                    .broadcast_from_all_w_corrupt_set_update(&mut session, my_data.clone())
                     .await
                     .unwrap();
-                sys_now = Some(instant_to_systemtime(
-                    session.network().get_deadline_current_round().await,
-                ));
             }
             (my_data, res, session.corrupt_roles().clone())
         };
 
-        // the first broadcast is honest, the second one is malicious
+        // the first n-1 broadcasts are done using the honest protocol and a bad timestamp
+        // the final broadcast is done using the malicious protocol and with a bad timestamp
         let mut task_malicious = |mut session: SmallSession<Z>, malicious_broadcast: B| async move {
-            let mut sys_now = None;
             let my_data = BroadcastValue::from(Z::sample(session.rng()));
             let real_broadcast = SyncReliableBroadcast::default();
-            let real_broadcast = TimestampedBroadcast {
-                bcast: &real_broadcast,
+            let real_broadcast = MaliciousTimestampedBroadcast {
+                malicious_timestamp,
+                bcast: real_broadcast,
             };
-            let malicious_broadcast = TimestampedBroadcast {
-                bcast: &malicious_broadcast,
+            let malicious_broadcast = MaliciousTimestampedBroadcast {
+                malicious_timestamp,
+                bcast: malicious_broadcast,
             };
+
             // malicious parties will always use the wrong sync time
             for _ in 0..iters - 1 {
                 let _ = real_broadcast
-                    .broadcast_from_all_w_corrupt_set_update(&mut session, sys_now, my_data.clone())
+                    .broadcast_from_all_w_corrupt_set_update(&mut session, my_data.clone())
                     .await;
-                sys_now = Some(instant_to_systemtime(
-                    session.network().get_deadline_current_round().await,
-                ));
             }
 
             // the final broadcast is done using the malicious protocol and with a malicious timestamp
             let res = malicious_broadcast
-                .broadcast_from_all_w_corrupt_set_update(
-                    &mut session,
-                    Some(malicious_timestamp),
-                    my_data.clone(),
-                )
+                .broadcast_from_all_w_corrupt_set_update(&mut session, my_data.clone())
                 .await;
             (my_data, res, session.corrupt_roles().clone())
         };
@@ -1213,6 +1203,7 @@ mod tests {
             Some((threshold + 3) * iters),
         );
 
+        let bad_timestamp = SystemTime::now() + Duration::from_secs(42 * 3600);
         let start_instant = tokio::time::Instant::now();
         test_timestamped_broadcast_from_all_w_corrupt_set_update_strategies::<
             ResiduePolyF4Z128,
@@ -1221,7 +1212,7 @@ mod tests {
         >(
             params,
             iters,
-            SystemTime::now() + Duration::from_secs(42 * 3600),
+            Some(bad_timestamp),
             malicious_strategy,
             Some(vec![Duration::from_secs(networking_delay); num_parties]),
         )
@@ -1243,7 +1234,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_timed_broadcast_high_timestamp_and_drop() {
+    async fn test_timed_broadcast_final_drop() {
         // the malicious party stops responding at the final iteration
         // this means other parties should not wait for a long time
         // instead, they should only wait for the delay of one extra round
@@ -1272,7 +1263,7 @@ mod tests {
         >(
             params,
             iters,
-            SystemTime::now() + Duration::from_secs(42 * 3600),
+            None,
             malicious_strategy,
             Some(vec![Duration::from_secs(networking_delay); num_parties]),
         )
@@ -1303,6 +1294,20 @@ mod tests {
         // WARNING: these asserts might not be very reliable on a heavily loaded system
         assert!(lower_bound < elapsed);
         assert!(elapsed < lower_bound + *NETWORK_TIMEOUT);
+    }
+
+    fn instant_to_systemtime(t: tokio::time::Instant) -> SystemTime {
+        let now_sys = SystemTime::now();
+        let now_inst = tokio::time::Instant::now();
+
+        // unwrap here is safe because we checked t >= now_sys
+        if t >= now_inst {
+            let dur = t.duration_since(now_inst);
+            now_sys + dur
+        } else {
+            let dur = now_inst.duration_since(t);
+            now_sys - dur
+        }
     }
 
     #[test]
