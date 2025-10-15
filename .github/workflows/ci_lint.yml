@@ -37,6 +37,7 @@ jobs:
             slsa-framework/slsa-github-generator
 
   sast-check:
+    name: ci_lint/sast-check (bpr)
     # job permissions
     permissions:
       security-events: write # Required to write security events for SAST results
@@ -49,7 +50,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: ci_lint/sast-check (bpr)
+      - name: Run zizmor
         uses: zizmorcore/zizmor-action@e673c3917a1aef3c65c972347ed84ccd013ecda4 # v0.2.0
         with:
           persona: pedantic
