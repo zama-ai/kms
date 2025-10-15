@@ -23,7 +23,7 @@ use crate::{
             compression_decompression_key::CompressionPrivateKeyShares,
             glwe_key::GlweSecretKeyShare,
             lwe_key::LweSecretKeyShare,
-            parameters::{DKGParams, DKGParamsBasics},
+            parameters::{DKGParams, DKGParamsBasics, DkgMode},
             private_keysets::{
                 CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet,
             },
@@ -51,19 +51,15 @@ impl ResharePreprocRequired {
 
         num_randoms_64 += params.lwe_dimension().0;
 
-        // Assume that whether the glwe key is 64-bit or 128-bit,
-        // depends only on whether we have SnS params or not.
-        // Note that in theory one could call non-SnS DKG in Z128,
-        // but it doesn't make much sense (non-SnS as a whole is not very useful).
-        match parameters {
-            DKGParams::WithoutSnS(_) => {
+        match parameters.get_params_basics_handle().get_dkg_mode() {
+            DkgMode::Z64 => {
                 num_randoms_64 += params.glwe_sk_num_bits() + params.compression_sk_num_bits()
             }
-            DKGParams::WithSnS(p) => {
-                num_randoms_128 += params.glwe_sk_num_bits()
-                    + params.compression_sk_num_bits()
-                    + p.glwe_sk_num_bits_sns()
-                    + p.sns_compression_sk_num_bits()
+            DkgMode::Z128 => {
+                num_randoms_128 += params.glwe_sk_num_bits() + params.compression_sk_num_bits();
+                if let DKGParams::WithSnS(p) = parameters {
+                    num_randoms_128 += p.glwe_sk_num_bits_sns() + p.sns_compression_sk_num_bits();
+                }
             }
         }
 
@@ -176,10 +172,10 @@ where
         data: reshare_same_sets(preproc64, session, maybe_key, expected_key_size).await?,
     };
 
-    // Reshare the GLWE compute key, domain depends on whether we have SnS params or not
+    // Reshare the GLWE compute key
     let expected_key_size = basic_params_handle.glwe_sk_num_bits();
-    let glwe_secret_key_share = match parameters {
-        DKGParams::WithoutSnS(_) => {
+    let glwe_secret_key_share = match parameters.get_params_basics_handle().get_dkg_mode() {
+        DkgMode::Z64 => {
             let maybe_key = input_share
                 .as_mut()
                 .map(|s| {
@@ -194,7 +190,7 @@ where
                 polynomial_size,
             })
         }
-        DKGParams::WithSnS(_) => {
+        DkgMode::Z128 => {
             let maybe_key = input_share
                 .as_mut()
                 .map(|s| {
@@ -211,7 +207,7 @@ where
         }
     };
 
-    // Reshare the GLWE compression key, domain depends on whether we have SnS params or not
+    // Reshare the GLWE compression key
     let glwe_secret_key_share_compression = if let Some(compression_params) =
         basic_params_handle.get_compression_decompression_params()
     {
@@ -219,8 +215,8 @@ where
             .raw_compression_parameters
             .packing_ks_polynomial_size;
         let expected_key_size = basic_params_handle.compression_sk_num_bits();
-        Some(match parameters {
-            DKGParams::WithoutSnS(_) => {
+        Some(match parameters.get_params_basics_handle().get_dkg_mode() {
+            DkgMode::Z64 => {
                 // Extract the GLWE secret key share for the compression scheme if any
                 let maybe_key = input_share
                     .as_mut()
@@ -244,7 +240,7 @@ where
                     params: compression_params.raw_compression_parameters,
                 })
             }
-            DKGParams::WithSnS(_) => {
+            DkgMode::Z128 => {
                 // Extract the GLWE secret key share for the compression scheme if any
                 let maybe_key = input_share
                     .as_mut()
@@ -415,8 +411,11 @@ where
             tracing::warn!("During resharing, received Bot from {}", sender);
             Vec::new()
         } else {
-            tracing::warn!(
-                "During resharing, unexpected broadcast value coming from {}",
+            // Any other variant is malicious behavior
+            // since it's broadcast we can add it to malicious parties
+            session.add_corrupt(sender);
+            tracing::error!(
+                "During resharing, unexpected broadcast. Adding {} to corrupt parties",
                 sender
             );
             Vec::new()
@@ -1119,6 +1118,7 @@ mod tests {
         keyset.client_key = ck;
         DKGParams::WithSnS(DKGParamsSnS {
             regular_params: DKGParamsRegular {
+                dkg_mode: DkgMode::Z128,
                 sec: 128,
                 ciphertext_parameters: new_pbs_params,
                 dedicated_compact_public_key_parameters: None,
