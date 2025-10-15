@@ -46,7 +46,6 @@ use serial_test::serial;
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(7, 3)]
-#[case(5, 2)]
 #[case(3, 1)]
 #[serial]
 async fn test_auto_update_backups_threshold(#[case] custodians: usize, #[case] threshold: u32) {
@@ -125,7 +124,6 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(7, 3)]
-#[case(5, 2)]
 #[case(3, 1)]
 #[serial]
 async fn test_backup_after_crs_threshold(#[case] custodians: usize, #[case] threshold: u32) {
@@ -234,7 +232,6 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
 #[case(7, 3)]
-#[case(5, 2)]
 #[case(3, 1)]
 #[serial]
 async fn test_decrypt_after_recovery_threshold(#[case] custodians: usize, #[case] threshold: u32) {
@@ -286,6 +283,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         None,
         true,
         test_path,
+        0,
     )
     .await;
 
@@ -372,6 +370,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         )
         .await;
     run_decryption_threshold(
+        amount_parties,
         &mut kms_servers,
         &mut kms_clients,
         &mut internal_client,

@@ -233,6 +233,7 @@ pub async fn decryption_threshold(
     )
     .await;
     run_decryption_threshold(
+        amount_parties,
         &mut kms_servers,
         &mut kms_clients,
         &mut internal_client,
@@ -248,6 +249,7 @@ pub async fn decryption_threshold(
 
 #[expect(clippy::too_many_arguments)]
 pub async fn run_decryption_threshold(
+    amount_parties: usize,
     kms_servers: &mut HashMap<u32, ServerHandle>,
     kms_clients: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &mut Client,
@@ -258,8 +260,7 @@ pub async fn run_decryption_threshold(
     parallelism: usize,
     data_root_path: Option<&Path>,
 ) {
-    let amount_parties = kms_clients.len();
-    assert_eq!(amount_parties, kms_servers.len());
+    assert_eq!(kms_clients.len(), kms_servers.len());
     assert!(parallelism > 0);
     let mut cts = Vec::new();
     let mut bits = 0;
@@ -280,7 +281,9 @@ pub async fn run_decryption_threshold(
     let mut req_tasks = JoinSet::new();
     let reqs: Vec<_> = (0..parallelism)
         .map(|j| {
-            let request_id = derive_request_id(&format!("TEST_DEC_ID_{j}")).unwrap();
+            // Make it unique wrt key_id as well do be sure there's no clash when running
+            // the dec test with multiple keys
+            let request_id = derive_request_id(&format!("TEST_DEC_ID_{j}_KEY_{key_id}")).unwrap();
 
             internal_client
                 .public_decryption_request(cts.clone(), &dummy_domain(), &request_id, key_id)
@@ -291,15 +294,16 @@ pub async fn run_decryption_threshold(
     // Either send the request, or crash the party if it's in
     // party_ids_to_crash
     let party_ids_to_crash = party_ids_to_crash.unwrap_or_default();
-    for i in 1..=amount_parties as u32 {
-        if party_ids_to_crash.contains(&(i as usize)) {
-            let server_handle = kms_servers.remove(&i).unwrap();
+    let kms_servers_keys: Vec<u32> = kms_servers.keys().copied().collect();
+    for i in kms_servers_keys.iter() {
+        if party_ids_to_crash.contains(&(*i as usize)) {
+            let server_handle = kms_servers.remove(i).unwrap();
             server_handle.assert_shutdown().await;
-            let _kms_client = kms_clients.remove(&i).unwrap();
+            let _kms_client = kms_clients.remove(i).unwrap();
         } else {
             for j in 0..parallelism {
                 let req_cloned = reqs.get(j).unwrap().clone();
-                let mut cur_client = kms_clients.get(&i).unwrap().clone();
+                let mut cur_client = kms_clients.get(i).unwrap().clone();
                 req_tasks.spawn(async move {
                     cur_client
                         .public_decrypt(tonic::Request::new(req_cloned))
@@ -313,19 +317,16 @@ pub async fn run_decryption_threshold(
     while let Some(inner) = req_tasks.join_next().await {
         req_response_vec.push(inner.unwrap().unwrap().into_inner());
     }
-    assert_eq!(
-        req_response_vec.len(),
-        (amount_parties - party_ids_to_crash.len()) * parallelism
-    );
+    assert_eq!(req_response_vec.len(), kms_clients.len() * parallelism);
 
     // get all responses
     let mut resp_tasks = JoinSet::new();
-    for i in 1..=amount_parties as u32 {
-        if party_ids_to_crash.contains(&(i as usize)) {
+    for i in kms_servers_keys.iter() {
+        if party_ids_to_crash.contains(&(*i as usize)) {
             continue;
         }
         for req in &reqs {
-            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            let mut cur_client = kms_clients.get(i).unwrap().clone();
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
             resp_tasks.spawn(async move {
                 // Sleep to give the server some time to complete decryption

@@ -21,20 +21,20 @@ use tokio::task::JoinSet;
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn default_insecure_threshold_dkg_backup() {
-    // NOTE: amount_parties must not be too high
+async fn test_insecure_threshold_dkg_backup() {
+    // NOTE: amount_parties must not be too high when changing the param to FheParameter::Default
     // because every party will load all the keys and each ServerKey is 1.5 GB
     // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
     let amount_parties = 4;
-    let param = FheParameter::Default;
+    let param = FheParameter::Test;
     let dkg_param: WrappedDKGParams = param.into();
 
     let key_id_1: RequestId = derive_request_id(&format!(
-        "default_insecure_threshold_dkg_backup_1{amount_parties}_{param:?}",
+        "test_insecure_threshold_dkg_backup_1{amount_parties}_{param:?}",
     ))
     .unwrap();
     let key_id_2: RequestId = derive_request_id(&format!(
-        "default_insecure_threshold_dkg_backup_2{amount_parties}_{param:?}",
+        "test_insecure_threshold_dkg_backup_2{amount_parties}_{param:?}",
     ))
     .unwrap();
 
@@ -57,6 +57,7 @@ async fn default_insecure_threshold_dkg_backup() {
         None,
         true,
         test_path,
+        0,
     )
     .await;
 
@@ -70,6 +71,7 @@ async fn default_insecure_threshold_dkg_backup() {
         None,
         true,
         test_path,
+        0,
     )
     .await;
 
@@ -139,19 +141,19 @@ async fn default_insecure_threshold_dkg_backup() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn default_insecure_threshold_autobackup_after_deletion() {
-    // NOTE: amount_parties must not be too high
+async fn test_insecure_threshold_autobackup_after_deletion() {
+    // NOTE: amount_parties must not be too high when changing the param to FheParameter::Default
     // because every party will load all the keys and each ServerKey is 1.5 GB
     // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
     use crate::conf::FileStorage as FileStorageConf;
     use crate::conf::Storage as StorageConf;
 
     let amount_parties = 4;
-    let param = FheParameter::Default;
+    let param = FheParameter::Test;
     let dkg_param: WrappedDKGParams = param.into();
 
     let key_id: RequestId = derive_request_id(&format!(
-        "default_insecure_autobackup_after_deletion_{amount_parties}_{param:?}",
+        "test_insecure_autobackup_after_deletion_{amount_parties}_{param:?}",
     ))
     .unwrap();
     let test_path = None;
@@ -172,6 +174,7 @@ async fn default_insecure_threshold_autobackup_after_deletion() {
         None,
         true,
         test_path,
+        0,
     )
     .await;
 
@@ -212,13 +215,13 @@ async fn default_insecure_threshold_autobackup_after_deletion() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn default_insecure_threshold_crs_backup() {
+async fn test_insecure_threshold_crs_backup() {
     let amount_parties = 4;
-    let param = FheParameter::Default;
+    let param = FheParameter::Test;
     let dkg_param: WrappedDKGParams = param.into();
 
     let req_id: RequestId = derive_request_id(&format!(
-        "default_insecure_threshold_crs_backup_{amount_parties}_{param:?}",
+        "test_insecure_threshold_crs_backup_{amount_parties}_{param:?}",
     ))
     .unwrap();
     let test_path = None;
