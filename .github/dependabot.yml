@@ -8,6 +8,8 @@ updates:
       interval: "weekly"
     # Set to 0 to prevent version updates (i.e. require only security updates)
     open-pull-requests-limit: 0
+    cooldown:
+      default-days: 4 # set to zizmor's minimum as we are not opening PR
   - package-ecosystem: "github-actions"
     directory: "/"
     # Check for updates every Monday
@@ -15,3 +17,5 @@ updates:
       interval: "weekly"
     # Set to 0 to prevent version updates (i.e. require only security updates)
     open-pull-requests-limit: 0
+    cooldown:
+      default-days: 4 # set to zizmor's minimum as we are not opening PR
