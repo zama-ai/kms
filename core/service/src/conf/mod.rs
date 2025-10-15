@@ -33,8 +33,31 @@ pub struct CoreConfig {
     pub rate_limiter_conf: Option<RateLimiterConfig>,
     #[validate(nested)]
     pub threshold: Option<ThresholdPartyConf>,
+    #[validate(nested)]
+    pub internal_config: Option<InternalConfig>,
     #[cfg(feature = "insecure")]
     pub mock_enclave: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize, Validate, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct InternalConfig {
+    #[validate(range(min = 1))]
+    pub num_tokio_threads: usize,
+    #[validate(range(min = 1))]
+    pub num_rayon_threads: usize,
+}
+
+impl Default for InternalConfig {
+    fn default() -> Self {
+        let num_threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        InternalConfig {
+            num_tokio_threads: num_threads,
+            num_rayon_threads: num_threads,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]
