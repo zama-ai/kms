@@ -124,7 +124,9 @@ pub async fn setup_threshold_no_client<
                 min_dec_cache: MIN_DEC_CACHE,
                 my_id: i,
                 preproc_redis: None,
-                num_sessions_preproc: None,
+                // Add some parallelism so CI runs a bit faster
+                // since it uses large machines
+                num_sessions_preproc: Some(5),
                 tls: None,
                 peers: Some(mpc_conf),
                 core_to_core_net: None,
