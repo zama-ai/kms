@@ -195,13 +195,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
             let mut correlated_randomness_z64 = SecureSmallPreprocessing::default()
                 .execute(&mut session_z64, num_needed_preproc.batch_params_64)
-                .await
-                .unwrap();
+                .await?;
 
             let mut correlated_randomness_z128 = SecureSmallPreprocessing::default()
                 .execute(&mut session_z128, num_needed_preproc.batch_params_128)
-                .await
-                .unwrap();
+                .await?;
 
             //Perform online
             let mut base_session = session_preparer
@@ -209,7 +207,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 .await?;
 
             // Read the old keys if they exists, otherwise we enter resharing with no keys
-            // NOTE: Will need to drop this unwrap somehow
             let mut mutable_keys = {
                 let old_fhe_keys_rlock = crypto_storage
                     .read_guarded_threshold_fhe_keys_from_cache(&key_id_to_reshare)
@@ -267,6 +264,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 .purge_key_material(&key_id_to_reshare, dummy_meta_store.write().await)
                 .await;
 
+            // HOTFIX(keygen-recovery): Note that this overwrites the private storage
+            // at the given key ID. It's needed as long as reshare shortcuts the
+            // GW, but should be fixed long term.
             crypto_storage
                 .write_threshold_keys_with_reshare_meta_store(
                     &request_id,
