@@ -50,6 +50,25 @@ stop-compose-centralized-custodian:
 test-backward-compatibility: pull-lfs-files
 	cargo test --test backward_compatibility_* -- --include-ignored
 
+test-backward-compatibility-local:
+	cargo test --test backward_compatibility_* -- --include-ignored --no-capture
+
+clean-backward-compatibility-data:
+	rm -f backward-compatibility/data/kms.ron
+	rm -f backward-compatibility/data/kms-grpc.ron
+	rm -f backward-compatibility/data/threshold-fhe.ron
+	rm -rf backward-compatibility/data/0_11_0
+	rm -rf backward-compatibility/data/0_11_1
+
+generate-backward-compatibility-v0.11.0:
+	cd backward-compatibility/generate-v0.11.0 && cargo run --release
+
+generate-backward-compatibility-v0.11.1:
+	cd backward-compatibility/generate-v0.11.1 && cargo run --release
+
+generate-backward-compatibility-all: clean-backward-compatibility-data generate-backward-compatibility-v0.11.0 generate-backward-compatibility-v0.11.1
+	@echo "✅ Generated backward compatibility data for all versions"
+
 # Check if Git LFS is installed and enabled
 check-git-lfs:
 	@if git lfs version > /dev/null 2>&1; then \

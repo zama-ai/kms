@@ -1,6 +1,6 @@
 [
     (
-        kms_core_version_min: "0.11",
+        kms_core_version_min: "0.11.0",
         kms_core_module: "threshold-fhe",
         metadata: PRSSSetup((
             test_filename: "prss_setup_rpoly_64",
@@ -11,7 +11,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.11",
+        kms_core_version_min: "0.11.0",
         kms_core_module: "threshold-fhe",
         metadata: PRSSSetup((
             test_filename: "prss_setup_rpoly_128",
@@ -22,7 +22,37 @@
         )),
     ),
     (
-        kms_core_version_min: "0.11",
+        kms_core_version_min: "0.11.0",
+        kms_core_module: "threshold-fhe",
+        metadata: PrfKey((
+            test_filename: "prf_key",
+            seed: 100,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11.1",
+        kms_core_module: "threshold-fhe",
+        metadata: PRSSSetup((
+            test_filename: "prss_setup_rpoly_64",
+            amount: 10,
+            threshold: 3,
+            role_i: 1,
+            residue_poly_size: 64,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11.1",
+        kms_core_module: "threshold-fhe",
+        metadata: PRSSSetup((
+            test_filename: "prss_setup_rpoly_128",
+            amount: 10,
+            threshold: 3,
+            role_i: 1,
+            residue_poly_size: 128,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11.1",
         kms_core_module: "threshold-fhe",
         metadata: PrfKey((
             test_filename: "prf_key",
