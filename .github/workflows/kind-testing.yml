@@ -53,7 +53,7 @@ jobs:
           slab-url: ${{ secrets.SLAB_BASE_URL }}
           job-secret: ${{ secrets.JOB_SECRET }}
           backend: aws
-          profile: "big-instance"
+          profile: 'big-instance'
 
   start-runner-threshold:
     name: kind-testing/start-runner (threshold)
@@ -72,7 +72,7 @@ jobs:
           slab-url: ${{ secrets.SLAB_BASE_URL }}
           job-secret: ${{ secrets.JOB_SECRET }}
           backend: aws
-          profile: "big-instance-kind"
+          profile: 'big-instance-kind'
 
   start-runner-centralized:
     name: kind-testing/start-runner (centralized)
@@ -91,7 +91,7 @@ jobs:
           slab-url: ${{ secrets.SLAB_BASE_URL }}
           job-secret: ${{ secrets.JOB_SECRET }}
           backend: aws
-          profile: "big-instance-service"
+          profile: 'big-instance-service'
 
   ############################################################################
   # Kind Testing Job
@@ -145,7 +145,7 @@ jobs:
       # ==========================================================================
       - name: Setup Git LFS
         env:
-          GIT_LFS_VERSION: "3.6.1" # Pinned version for reproducibility
+          GIT_LFS_VERSION: '3.6.1' # Pinned version for reproducibility
         run: |
           # Download and install Git LFS
           wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
@@ -247,7 +247,7 @@ jobs:
       - name: Install Protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
-          version: "26.x"
+          version: '26.x'
           repo-token: ${{ secrets.GITHUB_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
 
       - name: Setup cargo nextest and grcov
@@ -272,13 +272,13 @@ jobs:
       - name: Linting default features
         if: matrix.cargo-check == true
         env:
-          PACKAGE_NAME: "kms-core-client"
+          PACKAGE_NAME: 'kms-core-client'
         run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
 
       - name: Linting All features
         if: matrix.cargo-check == true
         env:
-          PACKAGE_NAME: "kms-core-client"
+          PACKAGE_NAME: 'kms-core-client'
         run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings
 
       - name: Linting dylint
@@ -313,7 +313,10 @@ jobs:
           NAMESPACE: kms-test-${{ matrix.deployment-type }}
           NUM_PARTIES: ${{ matrix.num-parties }} # Number of parties
         run: |
-          # Run tests and capture exit code
+          #============================================================
+          # Here we run the tests and capture exit code
+          #============================================================
+          #
           cargo nextest run --test kubernetes_test_"${DEPLOYMENT_TYPE}" --profile ci --no-fail-fast
           echo "TEST_EXIT_CODE=$?" >> "${GITHUB_ENV}"
 
