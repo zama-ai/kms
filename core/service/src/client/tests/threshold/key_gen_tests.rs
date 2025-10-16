@@ -1154,13 +1154,15 @@ pub(crate) async fn verify_keygen_responses(
     domain: &Eip712Domain,
     total_num_parties: usize,
 ) -> Option<(TestKeyGenResult, HashMap<Role, ThresholdFheKeys>)> {
+    use itertools::Itertools;
+
     let mut serialized_ref_pk = Vec::new();
     let mut serialized_ref_server_key = Vec::new();
     let mut all_threshold_fhe_keys = HashMap::new();
     let mut final_public_key = None;
     let mut final_server_key = None;
 
-    for (idx, kg_res) in finished.into_iter() {
+    for (idx, kg_res) in finished.into_iter().sorted_by_key(|(idx, _)| *idx) {
         let role = Role::indexed_from_one(idx as usize);
         let kg_res = kg_res.unwrap().into_inner();
         let storage = FileStorage::new(data_root_path, StorageType::PUB, Some(role)).unwrap();

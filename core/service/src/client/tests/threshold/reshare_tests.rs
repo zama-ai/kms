@@ -23,13 +23,17 @@ use crate::{
                 key_gen_tests::{
                     run_preproc, run_threshold_keygen, verify_keygen_responses, TestKeyGenResult,
                 },
+                public_decryption_tests::run_decryption_threshold,
             },
         },
     },
     cryptography::internal_crypto_types::WrappedDKGParams,
     dummy_domain,
     engine::{base::derive_request_id, threshold::service::ThresholdFheKeys},
-    util::{key_setup::test_tools::purge, rate_limiter::RateLimiterConfig},
+    util::{
+        key_setup::test_tools::{purge, EncryptionConfig, TestingPlaintext},
+        rate_limiter::RateLimiterConfig,
+    },
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -68,7 +72,7 @@ pub(crate) async fn reshare(
     };
 
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (_kms_servers, kms_clients, internal_client) = threshold_handles(
+    let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
         *dkg_param,
         amount_parties,
         true,
@@ -201,6 +205,24 @@ pub(crate) async fn reshare(
             );
         }
     }
+
+    // Run a DDec
+    run_decryption_threshold(
+        amount_parties,
+        &mut kms_servers,
+        &mut kms_clients,
+        &mut internal_client,
+        &req_key,
+        vec![TestingPlaintext::U8(u8::MAX)],
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: true,
+        },
+        None,
+        1,
+        None,
+    )
+    .await;
 }
 
 async fn run_reshare(
