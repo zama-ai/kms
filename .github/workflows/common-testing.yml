@@ -183,7 +183,7 @@ jobs:
           toolchain: ${{ env.RUST_IMAGE_VERSION }}
           components: rustfmt, clippy, llvm-tools-preview, llvm-tools
           cache: false
-          
+
       - name: Install nextest and grcov
         run: |
           cargo install cargo-nextest --locked
@@ -193,7 +193,7 @@ jobs:
       # Setup cache for dockerfile and inject in docker
       #
       - name: Setup Cache
-        uses: runs-on/cache@197b09d6da1bf42f673fee18769c794b789a0c7d # v4
+        uses: runs-on/cache@197b09d6da1bf42f673fee18769c794b789a0c7d # v4.0.0
         id: cache
         env:
           RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
