@@ -345,18 +345,12 @@ where
         Ok(())
     });
 
-    // If no RedisConf is provided, we just use in-memory storage for the
-    // preprocessing. Note: This is only allowed for testing.
+    // If no RedisConf is provided, we just use in-memory storage for storing preprocessing materials
     let preproc_factory = match &config.preproc_redis {
-        None => {
-            if cfg!(feature = "insecure") || cfg!(feature = "testing") {
-                create_memory_factory()
-            } else {
-                panic!("Redis configuration must be provided")
-            }
-        }
+        None => create_memory_factory(),
         Some(ref conf) => create_redis_factory(format!("PARTY_{}", config.my_id), conf),
     };
+
     let num_sessions_preproc = config
         .num_sessions_preproc
         .map_or(MINIMUM_SESSIONS_PREPROC, |x| {
