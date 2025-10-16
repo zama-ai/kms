@@ -44,21 +44,22 @@ pub struct TimestampedBroadcast<B: Broadcast> {
 
 pub(crate) async fn reset_timeout<Z: Ring, Ses: BaseSessionHandles>(
     session: &mut Ses,
+    deadline_before: tokio::time::Instant,
     broadcast_res: &HashMap<Role, BroadcastValue<Z>>,
 ) {
+    // The number of rounds in a broadcast
+    // (see the Synchronous Broadcast protocol in NIST doc).
     let r_bcast = session.threshold() as usize + 3;
 
     // we need to extract the timestamps out from broadcast_res
     let timestamps: Vec<_> = broadcast_res
         .iter()
-        .filter_map(|val| match val.1.inner {
-            BroadcastValueInner::Bot => None,
-            _ => val.1.timestamp,
-        })
+        .filter_map(|val| val.1.timestamp)
         .collect();
 
-    // compute min(max({t_i}), current_deadline)
-    // where current_deadline =
+    // compute min(max({t_i}), T_i + E_i + \Delta)
+    // where T_i + E_i is the deadline prior to starting the broadcast
+    // (T_i = init_time and E_i = elapsed_time)
     let new_init_time = {
         let left = match timestamps.into_iter().max() {
             Some(t) => systemtime_to_instant(t),
@@ -69,17 +70,20 @@ pub(crate) async fn reset_timeout<Z: Ring, Ses: BaseSessionHandles>(
                 return;
             }
         };
-        let right = session.network().get_deadline_current_round().await;
+        let right = deadline_before + session.network().get_timeout_current_round().await;
         left.min(right)
     };
 
     // now we reset the init time and elapsed time
+    let deadline_after_broadcast = session.network().get_deadline_current_round().await;
+    let broadcast_max_elapsed_time = deadline_after_broadcast.duration_since(deadline_before);
+    debug_assert_eq!(
+        r_bcast as u32 * session.network().get_timeout_current_round().await,
+        broadcast_max_elapsed_time
+    );
     session
         .network()
-        .reset_timeout(
-            new_init_time,
-            r_bcast as u32 * session.network().get_timeout_current_round().await,
-        )
+        .reset_timeout(new_init_time, broadcast_max_elapsed_time)
         .await;
 }
 
@@ -115,6 +119,7 @@ impl<B: Broadcast> Broadcast for TimestampedBroadcast<B> {
         my_message.timestamp = Some(sys_now);
 
         let r_before = session.network().get_current_round().await;
+        let deadline_before = session.network().get_deadline_current_round().await;
         let res = self
             .bcast
             .broadcast_w_corrupt_set_update(session, session.roles().clone(), Some(my_message))
@@ -122,7 +127,7 @@ impl<B: Broadcast> Broadcast for TimestampedBroadcast<B> {
         let r_bcast = session.network().get_current_round().await - r_before;
         debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
 
-        reset_timeout(session, &res).await;
+        reset_timeout(session, deadline_before, &res).await;
         Ok(res)
     }
 
@@ -139,11 +144,13 @@ impl<B: Broadcast> Broadcast for TimestampedBroadcast<B> {
         my_message.timestamp = Some(sys_now);
 
         let r_before = session.network().get_current_round().await;
+        let deadline_before = session.network().get_deadline_current_round().await;
+
         let res = self.bcast.broadcast_from_all(session, my_message).await?;
         let r_bcast = session.network().get_current_round().await - r_before;
         debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
 
-        reset_timeout(session, &res).await;
+        reset_timeout(session, deadline_before, &res).await;
         Ok(res)
     }
 }

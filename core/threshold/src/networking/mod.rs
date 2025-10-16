@@ -35,10 +35,12 @@ pub trait Networking {
     /// __NOTE__: We always assume this is called right before sending happens
     async fn increase_round_counter(&self);
 
-    /// Used to compute the deadline in network functions
+    /// Used to compute the deadline in network functions.
+    /// We consider deadline to always have an `Ìnstant` type.
     async fn get_deadline_current_round(&self) -> Instant;
 
     /// Get the timeout for the current round.
+    /// This is the maximum `Duration` that a single round should take.
     async fn get_timeout_current_round(&self) -> Duration;
 
     async fn reset_timeout(&self, init_time: Instant, elapsed_time: Duration);

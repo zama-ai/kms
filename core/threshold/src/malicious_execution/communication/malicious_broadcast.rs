@@ -306,6 +306,11 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
     }
 }
 
+/// Malicious implementation of the [`Broadcast`] protocol
+/// but it may send a malicious timestamp specified during construction
+/// instead of the real (current) timestamp.
+/// If the malicious timestamp is not specified during construction,
+/// then the real timestamp is used.
 #[derive(Clone)]
 pub struct MaliciousTimestampedBroadcast<B> {
     pub(crate) malicious_timestamp: Option<std::time::SystemTime>,
@@ -341,6 +346,7 @@ impl<B: Broadcast> Broadcast for MaliciousTimestampedBroadcast<B> {
         );
 
         let r_before = session.network().get_current_round().await;
+        let deadline_before = session.network().get_deadline_current_round().await;
         let res = self
             .bcast
             .broadcast_w_corrupt_set_update(session, session.roles().clone(), Some(my_message))
@@ -348,7 +354,7 @@ impl<B: Broadcast> Broadcast for MaliciousTimestampedBroadcast<B> {
         let r_bcast = session.network().get_current_round().await - r_before;
         debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
 
-        reset_timeout(session, &res).await;
+        reset_timeout(session, deadline_before, &res).await;
         Ok(res)
     }
 
@@ -363,11 +369,12 @@ impl<B: Broadcast> Broadcast for MaliciousTimestampedBroadcast<B> {
         );
 
         let r_before = session.network().get_current_round().await;
+        let deadline_before = session.network().get_deadline_current_round().await;
         let res = self.bcast.broadcast_from_all(session, my_message).await?;
         let r_bcast = session.network().get_current_round().await - r_before;
         debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
 
-        reset_timeout(session, &res).await;
+        reset_timeout(session, deadline_before, &res).await;
         Ok(res)
     }
 }
