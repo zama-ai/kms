@@ -347,6 +347,8 @@ impl<B: Broadcast> Broadcast for MaliciousTimestampedBroadcast<B> {
 
         let r_before = session.network().get_current_round().await;
         let deadline_before = session.network().get_deadline_current_round().await;
+        let timeout_before = session.network().get_timeout_current_round().await;
+
         let res = self
             .bcast
             .broadcast_w_corrupt_set_update(session, session.roles().clone(), Some(my_message))
@@ -354,7 +356,7 @@ impl<B: Broadcast> Broadcast for MaliciousTimestampedBroadcast<B> {
         let r_bcast = session.network().get_current_round().await - r_before;
         debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
 
-        reset_timeout(session, deadline_before, &res).await;
+        reset_timeout(session, deadline_before, timeout_before, &res).await;
         Ok(res)
     }
 
@@ -370,11 +372,13 @@ impl<B: Broadcast> Broadcast for MaliciousTimestampedBroadcast<B> {
 
         let r_before = session.network().get_current_round().await;
         let deadline_before = session.network().get_deadline_current_round().await;
+        let timeout_before = session.network().get_timeout_current_round().await;
+
         let res = self.bcast.broadcast_from_all(session, my_message).await?;
         let r_bcast = session.network().get_current_round().await - r_before;
         debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
 
-        reset_timeout(session, deadline_before, &res).await;
+        reset_timeout(session, deadline_before, timeout_before, &res).await;
         Ok(res)
     }
 }
