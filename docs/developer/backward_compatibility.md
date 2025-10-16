@@ -26,19 +26,32 @@ However, this does not allow changes to be made to the test metadata scheme itse
 
 ## Data generation
 
-**Note:** Data generation has been moved to a separate crate (`backward-compatibility/generate-v0.11`) to avoid dependency conflicts between old and new KMS versions.
+**Note:** Data generation has been moved to separate version-specific crates to avoid dependency conflicts:
+- `backward-compatibility/generate-v0.11.0` - For KMS v0.11.0
+- `backward-compatibility/generate-v0.11.1` - For KMS v0.11.1
 
-To re-generate the data, you can use either:
+Each generator uses the exact dependencies from its target KMS version.
 
-**Option 1: Using Make (from repository root)**
+To re-generate data for **all versions** (recommended):
+
 ```shell
-make generate-backward-compatibility-v0.11
+make generate-backward-compatibility-all
 ```
 
-**Option 2: Direct cargo command**
+Or generate for specific versions:
+
 ```shell
-cd backward-compatibility/generate-v0.11
-cargo run --release
+# Generate only v0.11.0 data
+make generate-backward-compatibility-v0.11.0
+
+# Generate only v0.11.1 data
+make generate-backward-compatibility-v0.11.1
+```
+
+**Direct cargo commands:**
+```shell
+cd backward-compatibility/generate-v0.11.0 && cargo run --release
+cd backward-compatibility/generate-v0.11.1 && cargo run --release
 ```
 
 ### Testing Generated Data
@@ -59,22 +72,41 @@ cargo test --test 'backward_compatibility_*' -- --include-ignored
 
 TFHE-rs' prng is seeded with a fixed seed, so the data should be identical at each generation. However, the actual serialized objects might be different because bincode does not serialize HashMap in a deterministic way (see: [this issue](https://github.com/TyOverby/bincode/issues/514)).
 
-### Why a separate crate?
+### Why separate generator crates?
 
 The backward compatibility system needs to:
-1. **Generate** test data using old KMS versions (e.g., v0.11.1)
+1. **Generate** test data using old KMS versions (e.g., v0.11.0, v0.11.1)
 2. **Load and test** that data with the current KMS version
 
-These operations require conflicting dependency versions (e.g., `cfg_if`, `serde`, `tfhe`), which cannot coexist in the same crate. By separating generation into version-specific crates (e.g., `backward-compatibility/generate-v0.11`), we can:
-- Generate data with old KMS versions without conflicts
+These operations require conflicting dependency versions. Additionally, **even patch versions can have incompatible dependencies**:
+- v0.11.0 uses: alloy 1.1.2, tfhe 1.3.2, tfhe-versionable 0.6.0
+- v0.11.1 uses: alloy 1.3.1, tfhe 1.3.3, tfhe-versionable 0.6.1
+
+By maintaining separate generator crates per version, we can:
+- Generate data with exact old KMS dependencies
 - Test that data with the current KMS version
-- Avoid the dependency version conflicts that previously prevented regeneration
+- Avoid dependency conflicts that prevent regeneration
+- Ensure accurate backward compatibility testing
+
+### Metadata Merging
+
+Generators **append** to existing metadata files rather than overwriting them. This allows multiple versions to coexist:
+
+```ron
+// backward-compatibility/data/kms.ron
+[
+    (kms_core_version_min: "0.11.0", ...),  // From generate-v0.11.0
+    (kms_core_version_min: "0.11.1", ...),  // From generate-v0.11.1
+]
+```
+
+The `make generate-backward-compatibility-all` target cleans old data first, then runs all generators in sequence.
 
 ## Adding a test for an existing type
 
-To add a new test for a type that is already tested, you need to:
+To add a test for a type that is already tested, you need to:
 
-- go to the appropriate generator crate (e.g., `backward-compatibility/generate-v0.11/src/data_x_y.rs`) for the version you're testing
+- go to the appropriate generator crate (e.g., `backward-compatibility/generate-v0.11.1/src/data_0_11.rs`) for the version you're testing
 - create a const global variable with the metadata for that test
 - create a `gen_...` method in the appropriate struct (ex: `KmsV0_11` for KMS objects)
 - instantiate the object you want to test in it.
@@ -248,13 +280,18 @@ impl TestedModule for KMS {
 
 To add data for a new released version of kms-core, you should:
 
-- **Check compatibility**: Verify the new version's dependencies (especially `serde`, `cfg-if`, `tfhe`) are compatible with existing versions in the generator
-- add a dependency to that version in the appropriate generator's `Cargo.toml` (e.g., `backward-compatibility/generate-v0.11/Cargo.toml`). These dependencies are isolated in the generation crate to avoid conflicts during testing
-- create a new `src/data_x_y.rs` file in the generator crate
-- implement the `KMSCoreVersion` trait for the new version. You can use the code in `data_0_11.rs` as an example
-- go to the generator's `src/main.rs`, call `gen_all_data` within the `main()` function using the new version and then extend the different `zzz_testcases`
+- **Check compatibility**: Verify the new version's dependencies (especially `serde`, `alloy`, `tfhe`) are compatible with existing generator versions
+- **If compatible**: Add to existing generator (e.g., add v0.12.0 to `generate-v0.11.1` if dependencies match)
+- **If incompatible**: Create a new generator crate (e.g., `generate-v0.12.0`)
 
-**If dependencies conflict**: You may need to create a separate generator crate (e.g., `backward-compatibility/generate-v0.13`). See the detailed guide for instructions.
+See [`backward-compatibility/ADDING_NEW_VERSIONS.md`](../../backward-compatibility/ADDING_NEW_VERSIONS.md) for detailed instructions.
+
+**For a new generator crate:**
+1. Copy an existing generator: `cp -r generate-v0.11.1 generate-v0.12.0`
+2. Update `Cargo.toml`: package name, version, and KMS dependencies
+3. Update `src/data_0_11.rs`: imports and `VERSION_NUMBER`
+4. Add to root `Makefile` and `Cargo.toml` exclude list
+5. Test: `make generate-backward-compatibility-all`
 
 In the generator's `src/data_x_y.rs`:
 
@@ -341,7 +378,7 @@ For more in depth scenarios, you can take a look at the [tfhe-rs examples](https
 If you want to update the test data _without_ actually testing for backward compatibility, you can follow the following steps:
 
 1. In the PR (PR1) that contains breaking changes for backward compatibility, disable the related backward test
-1. Once PR1 is merged, create a new PR (PR2) where you update the appropriate generator's `Cargo.toml` (e.g., `backward-compatibility/generate-v0.11/Cargo.toml`) with the commit hash that correspond to PR1 being merged to `main`
-1. Then you run `make generate-backward-compatibility-v0.11` (or `cd backward-compatibility/generate-v0.11 && cargo run --release`) as described above to generate new testing objects
+1. Once PR1 is merged, create a new PR (PR2) where you update the appropriate generator's `Cargo.toml` (e.g., `backward-compatibility/generate-v0.11.1/Cargo.toml`) with the commit hash that correspond to PR1 being merged to `main`
+1. Then you run `make generate-backward-compatibility-all` to regenerate testing objects for all versions
 1. Re-enable the backward compatibility tests that were disabled in PR1
 1. Push the changes to PR2 and the tests should pass

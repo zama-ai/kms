@@ -1,19 +1,19 @@
-//! Data generation for kms-core v0.11
+//! Data generation for kms-core v0.11.0
 //! This file provides the code that is used to generate all the data to serialize and versionize
-//! for kms-core v0.11
+//! for kms-core v0.11.0
 
 use aes_prng::AesRng;
-use kms_0_11::cryptography::internal_crypto_types::gen_sig_keys;
-use kms_0_11::engine::base::KmsFheKeyHandles;
-use kms_0_11::engine::centralized::central_kms::generate_client_fhe_key;
-use kms_0_11::engine::threshold::service::ThresholdFheKeys;
-use kms_0_11::util::key_setup::FhePublicKey;
+use kms_0_11_0::cryptography::internal_crypto_types::gen_sig_keys;
+use kms_0_11_0::engine::base::KmsFheKeyHandles;
+use kms_0_11_0::engine::centralized::central_kms::generate_client_fhe_key;
+use kms_0_11_0::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
+use kms_0_11_0::util::key_setup::FhePublicKey;
 use std::{borrow::Cow, fs::create_dir_all, path::PathBuf};
 use tfhe_1_3::shortint::parameters::{LweCiphertextCount, NoiseSquashingCompressionParameters};
-use threshold_fhe_0_11::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-use threshold_fhe_0_11::execution::tfhe_internals::public_keysets::FhePubKeySet;
-use threshold_fhe_0_11::execution::small_execution::prf::PrfKey;
-use threshold_fhe_0_11::{
+use threshold_fhe_0_11_0::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use threshold_fhe_0_11_0::execution::endpoints::keygen::FhePubKeySet;
+use threshold_fhe_0_11_0::execution::small_execution::prf::PrfKey;
+use threshold_fhe_0_11_0::{
     execution::{
         runtime::party::Role,
         tfhe_internals::{
@@ -24,8 +24,8 @@ use threshold_fhe_0_11::{
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
 
-use kms_0_11::vault::keychain::AppKeyBlob;
-use kms_grpc_0_11::rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal};
+use kms_0_11_0::vault::keychain::AppKeyBlob;
+use kms_grpc_0_11_0::rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal};
 use rand::{RngCore, SeedableRng};
 use tfhe_1_3::{
     core_crypto::commons::{
@@ -91,6 +91,7 @@ fn convert_dkg_params_regular(value: DKGParamsRegularTest) -> DKGParamsRegular {
         sec: value.sec,
         ciphertext_parameters: convert_classic_pbs_parameters(value.ciphertext_parameters),
         dedicated_compact_public_key_parameters: None,
+        flag: value.flag,
         compression_decompression_parameters: None,
     }
 }
@@ -272,12 +273,12 @@ const OPERATOR_BACKUP_OUTPUT_TEST: OperatorBackupOutputTest = OperatorBackupOutp
 };
 */
 
-fn dummy_domain() -> alloy_sol_types_1_3_1::Eip712Domain {
-    alloy_sol_types_1_3_1::eip712_domain!(
+fn dummy_domain() -> alloy_sol_types_1_1_2::Eip712Domain {
+    alloy_sol_types_1_1_2::eip712_domain!(
         name: "Authorization token",
         version: "1",
         chain_id: 8006,
-        verifying_contract: alloy_primitives_1_3_1::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        verifying_contract: alloy_primitives_1_1_2::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
     )
 }
 
@@ -385,16 +386,12 @@ impl KmsV0_11 {
 
         // NOTE: kms_fhe_key_handles.public_key_info is a HashMap
         // so generation is not deterministic
-        let key_id = kms_grpc_0_11::RequestId::zeros();
-        let preproc_id = kms_grpc_0_11::RequestId::zeros();
         let kms_fhe_key_handles = KmsFheKeyHandles::new(
             &private_sig_key,
             client_key,
-            &key_id,
-            &preproc_id,
             &public_key_set,
             decompression_key,
-            &dummy_domain(),
+            Some(&dummy_domain()),
         )
         .unwrap();
 
@@ -445,10 +442,12 @@ impl KmsV0_11 {
             &THRESHOLD_FHE_KEYS_TEST.integer_server_key_filename,
         );
 
+        let mut rng = AesRng::seed_from_u64(THRESHOLD_FHE_KEYS_TEST.state);
+        let (_, private_sig_key) = gen_sig_keys(&mut rng);
+
         // NOTE: this is not deterministic since the result is a HashMap
-        // compute_all_info doesn't exist in v0.11.1, so we create the metadata manually
-        use std::collections::HashMap;
-        let info: HashMap<PubDataType, SignedPubDataHandleInternal> = HashMap::new();
+        let info =
+            compute_all_info(&private_sig_key, &fhe_pub_key_set, Some(&dummy_domain())).unwrap();
         store_versioned_auxiliary!(
             &info,
             dir,
@@ -465,11 +464,11 @@ impl KmsV0_11 {
         );
 
         let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: std::sync::Arc::new(private_key_set),
-            integer_server_key: std::sync::Arc::new(integer_server_key),
-            sns_key: sns_key.map(std::sync::Arc::new),
-            meta_data: kms_0_11::engine::base::KeyGenMetadata::LegacyV0(info),
-            decompression_key: decompression_key.map(std::sync::Arc::new),
+            private_keys: private_key_set,
+            integer_server_key,
+            sns_key,
+            pk_meta_data: info,
+            decompression_key,
         };
 
         store_versioned_test!(
@@ -640,7 +639,7 @@ impl KmsGrpcV0_11 {
 }
 
 impl KMSCoreVersion for V0_11 {
-    const VERSION_NUMBER: &'static str = "0.11";
+    const VERSION_NUMBER: &'static str = "0.11.0";
 
     // Without this, some keys will be generated differently every time we run the script
     fn seed_prng(seed: u128) {
@@ -688,3 +687,4 @@ impl KMSCoreVersion for V0_11 {
         ]
     }
 }
+

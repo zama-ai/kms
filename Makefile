@@ -53,8 +53,21 @@ test-backward-compatibility: pull-lfs-files
 test-backward-compatibility-local:
 	cargo test --test backward_compatibility_* -- --include-ignored
 
-generate-backward-compatibility-v0.11:
-	cd backward-compatibility/generate-v0.11 && cargo run --release
+clean-backward-compatibility-data:
+	rm -f backward-compatibility/data/kms.ron
+	rm -f backward-compatibility/data/kms-grpc.ron
+	rm -f backward-compatibility/data/threshold-fhe.ron
+	rm -rf backward-compatibility/data/0_11_0
+	rm -rf backward-compatibility/data/0_11_1
+
+generate-backward-compatibility-v0.11.0:
+	cd backward-compatibility/generate-v0.11.0 && cargo run --release
+
+generate-backward-compatibility-v0.11.1:
+	cd backward-compatibility/generate-v0.11.1 && cargo run --release
+
+generate-backward-compatibility-all: clean-backward-compatibility-data generate-backward-compatibility-v0.11.0 generate-backward-compatibility-v0.11.1
+	@echo "✅ Generated backward compatibility data for v0.11.0 and v0.11.1"
 
 # Check if Git LFS is installed and enabled
 check-git-lfs:

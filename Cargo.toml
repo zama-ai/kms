@@ -13,17 +13,18 @@ members = [
 
 # The backward-compatibility modules are excluded from the workspace to avoid dependency conflicts.
 # 
-# backward-compatibility/            - Test loading/execution logic with current dependencies
-# backward-compatibility/generate-v0.11 - Data generation for v0.11.x with old KMS version dependencies
+# backward-compatibility/                - Test loading/execution logic with current dependencies
+# backward-compatibility/generate-v0.11.0 - Data generation for v0.11.0 with old KMS version dependencies
+# backward-compatibility/generate-v0.11.1 - Data generation for v0.11.1 with old KMS version dependencies
 #
-# The generate crates need to import old KMS versions (e.g., v0.11.1) which conflict with the
+# The generate crates need to import old KMS versions (e.g., v0.11.0, v0.11.1) which conflict with the
 # current workspace dependencies, creating name conflicts as described in:
 # https://github.com/rust-lang/cargo/issues/12891
 #
 # Note: It's not possible to only generate the lock file using specific features as the resolver
 # builds the graph as if all features are enabled:
 # https://doc.rust-lang.org/cargo/reference/resolver.html#features
-exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11"]
+exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11.0", "backward-compatibility/generate-v0.11.1"]
 
 [workspace.package]
 authors = ["Zama"]
