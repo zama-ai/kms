@@ -233,9 +233,25 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         if Z::BIT_LENGTH == 64 {
             if let DKGParams::WithSnS(_) = params {
                 return Err(anyhow_error_and_log(
-                    "Can not generate Switch and Squash key with ResiduePolyF8Z64".to_string(),
+                    "Can not generate Switch and Squash key in Z64".to_string(),
                 ));
             }
+        }
+
+        if Z::BIT_LENGTH
+            != params
+                .get_params_basics_handle()
+                .get_dkg_mode()
+                .expected_bit_length()
+        {
+            return Err(anyhow_error_and_log(format!(
+                "Inconsistent parameters: trying to do DKG in Z{} with DKGParams in Z{}",
+                Z::BIT_LENGTH,
+                params
+                    .get_params_basics_handle()
+                    .get_dkg_mode()
+                    .expected_bit_length()
+            )));
         }
 
         let (pub_key_set, priv_key_set) = distributed_keygen_from_optional_compression_sk(
@@ -275,9 +291,25 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         if Z::BIT_LENGTH == 64 {
             if let DKGParams::WithSnS(_) = params {
                 return Err(anyhow_error_and_log(
-                    "Can not generate Switch and Squash key with ResiduePolyF8Z64".to_string(),
+                    "Can not generate Switch and Squash key with in Z64".to_string(),
                 ));
             }
+        }
+
+        if Z::BIT_LENGTH
+            != params
+                .get_params_basics_handle()
+                .get_dkg_mode()
+                .expected_bit_length()
+        {
+            return Err(anyhow_error_and_log(format!(
+                "Inconsistent parameters: trying to do DKG in Z{} with DKGParams in Z{}",
+                Z::BIT_LENGTH,
+                params
+                    .get_params_basics_handle()
+                    .get_dkg_mode()
+                    .expected_bit_length()
+            )));
         }
 
         let (pub_key_set, priv_key_set) =
