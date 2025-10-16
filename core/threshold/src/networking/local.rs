@@ -234,11 +234,6 @@ impl Networking for LocalNetworking {
     }
 
     async fn reset_timeout(&self, init_time: Instant, elapsed_time: Duration) {
-        println!(
-            "round={},party={:?}: resetting timeout to {elapsed_time:?} and {init_time:?}",
-            self.get_current_round().await,
-            self.owner,
-        );
         let mut init_time_guard = self.init_time.write().await;
         *init_time_guard = Some(init_time);
 

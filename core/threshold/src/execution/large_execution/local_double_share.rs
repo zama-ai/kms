@@ -381,7 +381,9 @@ pub(crate) async fn verify_sharing<
 #[cfg(test)]
 pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
-    use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
+    use crate::execution::communication::broadcast::{
+        Broadcast, SyncReliableBroadcast, TimestampedBroadcast,
+    };
     #[cfg(feature = "slow_tests")]
     use crate::execution::large_execution::{
         coinflip::{Coinflip, RealCoinflip, SecureCoinflip},
@@ -573,7 +575,8 @@ pub(crate) mod tests {
         )]
         params: TestingParameters,
         #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
-        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
+        #[values(TimestampedBroadcast::<SyncReliableBroadcast>::default())]
+        broadcast_strategy: BCast,
         #[values(
             DroppingVssFromStart::default(),
             DroppingVssAfterR1::default(),
@@ -626,7 +629,8 @@ pub(crate) mod tests {
         )]
         params: TestingParameters,
         #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
-        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
+        #[values(TimestampedBroadcast::<SyncReliableBroadcast>::default())]
+        broadcast_strategy: BCast,
         #[values(
             RealVss::new(&broadcast_strategy),
             DroppingVssAfterR2::new(&broadcast_strategy),
@@ -710,7 +714,8 @@ pub(crate) mod tests {
         )]
         params: TestingParameters,
         #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
-        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
+        #[values(TimestampedBroadcast::<SyncReliableBroadcast>::default())]
+        broadcast_strategy: BCast,
         #[values(
             RealVss::new(&broadcast_strategy),
             DroppingVssAfterR2::new(&broadcast_strategy),
@@ -764,7 +769,8 @@ pub(crate) mod tests {
         )]
         params: TestingParameters,
         #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
-        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
+        #[values(TimestampedBroadcast::<SyncReliableBroadcast>::default())]
+        broadcast_strategy: BCast,
         #[values(
             RealVss::new(&broadcast_strategy),
             DroppingVssAfterR2::new(&broadcast_strategy),
