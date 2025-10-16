@@ -7,7 +7,7 @@ use crate::{
     algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::broadcast::{Broadcast, SyncReliableBroadcast, TimestampedBroadcast},
+        communication::broadcast::{Broadcast, SyncReliableBroadcast},
         runtime::{party::Role, session::LargeSessionHandles},
         sharing::{
             shamir::{RevealOp, ShamirSharings},
@@ -26,11 +26,8 @@ use tracing::instrument;
 
 pub(crate) const LOCAL_SINGLE_MAX_ITER: usize = 30;
 
-pub type SecureLocalSingleShare = RealLocalSingleShare<
-    SecureCoinflip,
-    SecureShareDispute,
-    TimestampedBroadcast<SyncReliableBroadcast>,
->;
+pub type SecureLocalSingleShare =
+    RealLocalSingleShare<SecureCoinflip, SecureShareDispute, SyncReliableBroadcast>;
 
 #[async_trait]
 pub trait LocalSingleShare: ProtocolDescription + Send + Sync + Clone {

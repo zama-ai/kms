@@ -9,7 +9,7 @@ use super::{
 use crate::{
     algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
     error::error_handler::anyhow_error_and_log,
-    execution::{communication::broadcast::TimestampedBroadcast, runtime::party::Role},
+    execution::runtime::party::Role,
     ProtocolDescription,
 };
 use crate::{
@@ -27,11 +27,8 @@ use tracing::instrument;
 
 pub(crate) const LOCAL_DOUBLE_MAX_ITER: usize = 30;
 
-pub type SecureLocalDoubleShare = RealLocalDoubleShare<
-    SecureCoinflip,
-    SecureShareDispute,
-    TimestampedBroadcast<SyncReliableBroadcast>,
->;
+pub type SecureLocalDoubleShare =
+    RealLocalDoubleShare<SecureCoinflip, SecureShareDispute, SyncReliableBroadcast>;
 
 pub struct DoubleShares<Z> {
     pub(crate) share_t: Vec<Z>,
@@ -381,9 +378,7 @@ pub(crate) async fn verify_sharing<
 #[cfg(test)]
 pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
-    use crate::execution::communication::broadcast::{
-        Broadcast, SyncReliableBroadcast, TimestampedBroadcast,
-    };
+    use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
     #[cfg(feature = "slow_tests")]
     use crate::execution::large_execution::{
         coinflip::{Coinflip, RealCoinflip, SecureCoinflip},
@@ -575,8 +570,7 @@ pub(crate) mod tests {
         )]
         params: TestingParameters,
         #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
-        #[values(TimestampedBroadcast::<SyncReliableBroadcast>::default())]
-        broadcast_strategy: BCast,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
             DroppingVssFromStart::default(),
             DroppingVssAfterR1::default(),
@@ -629,8 +623,7 @@ pub(crate) mod tests {
         )]
         params: TestingParameters,
         #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
-        #[values(TimestampedBroadcast::<SyncReliableBroadcast>::default())]
-        broadcast_strategy: BCast,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
             RealVss::new(&broadcast_strategy),
             DroppingVssAfterR2::new(&broadcast_strategy),
@@ -714,8 +707,7 @@ pub(crate) mod tests {
         )]
         params: TestingParameters,
         #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
-        #[values(TimestampedBroadcast::<SyncReliableBroadcast>::default())]
-        broadcast_strategy: BCast,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
             RealVss::new(&broadcast_strategy),
             DroppingVssAfterR2::new(&broadcast_strategy),
@@ -769,8 +761,7 @@ pub(crate) mod tests {
         )]
         params: TestingParameters,
         #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
-        #[values(TimestampedBroadcast::<SyncReliableBroadcast>::default())]
-        broadcast_strategy: BCast,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
             RealVss::new(&broadcast_strategy),
             DroppingVssAfterR2::new(&broadcast_strategy),
