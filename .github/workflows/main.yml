@@ -320,7 +320,7 @@ jobs:
       working-directory: './core-client'
       package-name: 'kms-core-client'
       # Explicitly skip integration tests since they are all named something with centralized or threshold or full_gen_tests
-      args-tests: '-- --skip centralized --skip threshold --skip full_gen_tests --skip nightly'
+      args-tests: '-- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip centralzd --skip threshld'
       app-cache-dir: 'kms-core-client'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
