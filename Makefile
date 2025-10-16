@@ -67,7 +67,7 @@ generate-backward-compatibility-v0.11.1:
 	cd backward-compatibility/generate-v0.11.1 && cargo run --release
 
 generate-backward-compatibility-all: clean-backward-compatibility-data generate-backward-compatibility-v0.11.0 generate-backward-compatibility-v0.11.1
-	@echo "✅ Generated backward compatibility data for v0.11.0 and v0.11.1"
+	@echo "✅ Generated backward compatibility data for all versions"
 
 # Check if Git LFS is installed and enabled
 check-git-lfs:
