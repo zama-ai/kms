@@ -6,7 +6,7 @@ use observability::{
     telemetry::{init_telemetry, SdkMeterProvider, SdkTracerProvider},
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{cmp, path::PathBuf};
 use strum_macros::EnumIs;
 use url::Url;
 use validator::{Validate, ValidationErrors};
@@ -53,9 +53,11 @@ impl Default for InternalConfig {
         let num_threads = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
+        let num_tokio_threads = num_threads.div_ceil(8);
+        let num_rayon_threads = cmp::max(1, num_threads.saturating_sub(num_tokio_threads));
         InternalConfig {
-            num_tokio_threads: num_threads,
-            num_rayon_threads: num_threads,
+            num_tokio_threads,
+            num_rayon_threads,
         }
     }
 }
