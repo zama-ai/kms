@@ -89,8 +89,7 @@ impl<Z: Eq + Zero + Sized> BroadcastValue<Z> {
 impl<Z: Eq + Zero + Serialize> BroadcastValue<Z> {
     pub fn to_bcast_hash(&self) -> Result<BcastHash, anyhow::Error> {
         // Note that we are implicitly assuming that the serialization of a broadcast value ensure uniqueness
-        // IMPORTANT: use self.inner and not self because self contains a timestamp which may be different between messagees
-        let digest = serialize_hash_element(&DSEP_BRACH, &self.inner)
+        let digest = serialize_hash_element(&DSEP_BRACH, &self)
             .map_err(|e| anyhow::anyhow!("Could not serialize and hash message: {}", e))?;
         digest
             .as_slice()
