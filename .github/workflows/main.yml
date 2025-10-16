@@ -253,7 +253,7 @@ jobs:
         id: set-matrix
         run: |
           MATRIX="matrix={\"include\":["
-          MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests --skip nightly --skip kubernetes_test_centralized --skip kubernetes_test_threshold\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests --skip kubernetes_test_centralized --skip kubernetes_test_threshold\"}"
+          MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests --skip nightly --exact --skip kms-core-client::kubernetes_test_centralized --skip kms-core-client::kubernetes_test_threshold\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests --exact --skip kms-core-client::kubernetes_test_centralized --skip kms-core-client::kubernetes_test_threshold\"}"
           MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "$MATRIX"
