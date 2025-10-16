@@ -23,6 +23,7 @@ cfg_if::cfg_if! {
     use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
     use threshold_fhe::execution::runtime::party::Role;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+    use threshold_fhe::execution::tfhe_internals::test_feature::to_hl_client_key;
     use tokio::task::JoinSet;
     use tonic::transport::Channel;
 }}
@@ -43,7 +44,6 @@ use std::path::Path;
 use std::sync::Arc;
 #[cfg(feature = "slow_tests")]
 use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
-use threshold_fhe::execution::tfhe_internals::test_feature::to_hl_client_key;
 use tonic::{Response, Status};
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]

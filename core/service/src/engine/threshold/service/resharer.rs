@@ -106,7 +106,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         let _ = self
             .crypto_storage
             .refresh_threshold_fhe_keys(&key_id_to_reshare)
-            .await.inspect_err(|e|tracing::warn!("During reshare, failed to refresh keys with id {}: {}. Will try to do the reshare anyway.", key_id_to_reshare, e));
+            .await
+            .inspect_err(|e|tracing::warn!("During reshare, failed to refresh keys with id {}: {}. Will try to do the reshare anyway.", key_id_to_reshare, e));
 
         // We assume the operators have manually copied the public keys to the public storage
         let public_key = self
@@ -215,7 +216,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 // Note: the function is supposed to zeroize the keys (hence requires mut access),
                 // so we clone it, cause we can't zeroize storage from here
                 old_fhe_keys_rlock
-                    .as_ref()
+                    .as_deref()
                     .map(|r| r.private_keys.as_ref().clone())
             };
 

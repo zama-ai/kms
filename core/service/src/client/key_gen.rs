@@ -103,6 +103,7 @@ impl Client {
             key_parameters: param.unwrap_or_default().into(),
             domain: Some(domain),
             preproc_id: Some((*preproc_id).into()),
+            epoch_id: None,
         })
     }
 
