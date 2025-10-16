@@ -71,7 +71,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     cargo fetch --locked
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
-    cargo build  --locked --profile=${LTO_RELEASE} -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init --bin kms-custodian -F insecure && && \
+    cargo build  --locked --profile=${LTO_RELEASE} -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init --bin kms-custodian -F insecure && \
     cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-gen-keys -F testing -F insecure -F threshold-fhe/testing && \
     cp /app/kms/target/${LTO_RELEASE}/kms-server \
        /app/kms/target/${LTO_RELEASE}/kms-gen-tls-certs \
