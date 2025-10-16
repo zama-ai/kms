@@ -121,23 +121,26 @@ where
     P: AsRef<Path>,
 {
     let path = path.as_ref();
-    
+
     // If file doesn't exist, just write the new data
     if !path.exists() {
-        let serialized = ron::ser::to_string_pretty(new_data, ron::ser::PrettyConfig::default()).unwrap();
+        let serialized =
+            ron::ser::to_string_pretty(new_data, ron::ser::PrettyConfig::default()).unwrap();
         fs::write(path, serialized).unwrap();
         return;
     }
-    
+
     // Load existing metadata
     let existing_content = fs::read_to_string(path).unwrap();
-    let mut combined_data: Vec<Meta> = ron::from_str(&existing_content).unwrap_or_else(|_| Vec::new());
-    
+    let mut combined_data: Vec<Meta> =
+        ron::from_str(&existing_content).unwrap_or_else(|_| Vec::new());
+
     // Append new entries
     combined_data.extend_from_slice(new_data);
-    
+
     // Write combined data
-    let serialized = ron::ser::to_string_pretty(&combined_data, ron::ser::PrettyConfig::default()).unwrap();
+    let serialized =
+        ron::ser::to_string_pretty(&combined_data, ron::ser::PrettyConfig::default()).unwrap();
     fs::write(path, serialized).unwrap();
 }
 

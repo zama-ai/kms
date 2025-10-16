@@ -51,7 +51,7 @@ test-backward-compatibility: pull-lfs-files
 	cargo test --test backward_compatibility_* -- --include-ignored
 
 test-backward-compatibility-local:
-	cargo test --test backward_compatibility_* -- --include-ignored
+	cargo test --test backward_compatibility_* -- --include-ignored --no-capture
 
 clean-backward-compatibility-data:
 	rm -f backward-compatibility/data/kms.ron
