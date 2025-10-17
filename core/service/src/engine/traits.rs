@@ -38,7 +38,6 @@ pub trait BaseKms {
         dsep: &DomainSep,
         msg: &T,
     ) -> anyhow::Result<Signature>;
-    fn get_serialized_verf_key(&self) -> Vec<u8>;
     fn digest<T: ?Sized + AsRef<[u8]>>(
         domain_separator: &DomainSep,
         msg: &T,
@@ -62,7 +61,7 @@ pub trait Kms: BaseKms {
         ct_format: CiphertextFormat,
         digest_link: &[u8],
         enc_key: &UnifiedPublicEncKey,
-        client_address: &alloy_primitives::Address,
+        client_address: &[u8],
     ) -> anyhow::Result<Vec<u8>>;
 }
 

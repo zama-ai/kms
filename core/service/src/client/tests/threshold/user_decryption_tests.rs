@@ -11,7 +11,7 @@ use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::TEST_PARAM;
 use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::cryptography::internal_crypto_types::{EncryptionSchemeType, PrivateSigKey};
 use crate::cryptography::internal_crypto_types::{UnifiedPrivateEncKey, UnifiedPublicEncKey};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
@@ -459,25 +459,21 @@ pub(crate) async fn user_decryption_threshold(
                 ciphertext_format: ct_format.into(),
                 external_handle: j.to_be_bytes().to_vec(),
             }];
-            let (req, enc_pk, enc_sk) = if legacy {
-                internal_client
-                    .user_decryption_request_legacy(
-                        &dummy_domain(),
-                        typed_ciphertexts,
-                        &request_id,
-                        &key_id.to_string().try_into().unwrap(),
-                    )
-                    .unwrap()
+            let encryption_scheme = if legacy {
+                EncryptionSchemeType::MlKem1024
             } else {
-                internal_client
-                    .user_decryption_request(
-                        &dummy_domain(),
-                        typed_ciphertexts,
-                        &request_id,
-                        &key_id.to_string().try_into().unwrap(),
-                    )
-                    .unwrap()
+                EncryptionSchemeType::MlKem512
             };
+            let (req, enc_pk, enc_sk) = internal_client
+                .user_decryption_request(
+                    &dummy_domain(),
+                    typed_ciphertexts,
+                    &request_id,
+                    &key_id.to_string().try_into().unwrap(),
+                    encryption_scheme,
+                )
+                .unwrap();
+
             (req, enc_pk, enc_sk)
         })
         .collect();
