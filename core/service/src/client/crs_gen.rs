@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::client::client_wasm::Client;
-use crate::engine::base::compute_handle;
+use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::base::DSEP_PUBDATA_CRS;
 use crate::engine::validation::parse_optional_proto_request_id;
 use crate::engine::validation::RequestIdParsingErr;
@@ -10,8 +10,10 @@ use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, FheParameter};
 use kms_grpc::rpc_types::{alloy_to_protobuf_domain, PubDataType};
+use kms_grpc::solidity_types::CrsgenVerification;
 use kms_grpc::RequestId;
 use tfhe::zk::CompactPkeCrs;
+use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
 
 impl Client {
     pub fn crs_gen_request(
@@ -19,7 +21,7 @@ impl Client {
         request_id: &RequestId,
         max_num_bits: Option<u32>,
         param: Option<FheParameter>,
-        eip712_domain: Eip712Domain,
+        eip712_domain: &Eip712Domain,
     ) -> anyhow::Result<CrsGenRequest> {
         let parsed_param: i32 = match param {
             Some(parsed_param) => parsed_param.into(),
@@ -35,7 +37,8 @@ impl Client {
             params: parsed_param,
             max_num_bits,
             request_id: Some((*request_id).into()),
-            domain: Some(alloy_to_protobuf_domain(&eip712_domain)?),
+            domain: Some(alloy_to_protobuf_domain(eip712_domain)?),
+            context_id: None,
         })
     }
 
@@ -51,6 +54,7 @@ impl Client {
         &self,
         request_id: &RequestId,
         res_storage: Vec<(CrsGenResult, S)>,
+        domain: &Eip712Domain,
         min_agree_count: u32,
     ) -> anyhow::Result<CompactPkeCrs> {
         let mut verifying_pks = std::collections::HashSet::new();
@@ -67,15 +71,9 @@ impl Client {
 
         let res_len = res_storage.len();
         for (result, storage) in res_storage {
-            let (pp_w_id, info) = if let Some(info) = result.crs_results {
-                let pp: CompactPkeCrs = storage
-                    .read_data(request_id, &PubDataType::CRS.to_string())
-                    .await?;
-                (pp, info)
-            } else {
-                tracing::warn!("empty SignedPubDataHandle");
-                continue;
-            };
+            let pp: CompactPkeCrs = storage
+                .read_data(request_id, &PubDataType::CRS.to_string())
+                .await?;
 
             // check the result matches our request ID
             if request_id.as_str()
@@ -89,14 +87,20 @@ impl Client {
             }
 
             // check the digest
-            let hex_digest = compute_handle(&pp_w_id)?;
-            if info.key_handle != hex_digest {
+            let actual_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &pp)?;
+            if result.crs_digest != actual_digest {
                 tracing::warn!("crs_handle does not match the computed digest; discarding the CRS");
                 continue;
             }
 
+            let max_num_bits = max_num_bits_from_crs(&pp);
+
             // check the signature
-            match self.find_verifying_public_key(&DSEP_PUBDATA_CRS, &hex_digest, &info.signature) {
+            match self.find_verifying_address(
+                &CrsgenVerification::new(request_id, max_num_bits, actual_digest.clone()),
+                domain,
+                &result.external_signature,
+            ) {
                 Some(pk) => {
                     verifying_pks.insert(pk);
                 }
@@ -108,15 +112,15 @@ impl Client {
             }
 
             // put the result in a hash map so that we can check for majority
-            match hash_counter_map.get_mut(&hex_digest) {
+            match hash_counter_map.get_mut(&actual_digest) {
                 Some(v) => {
                     *v += 1;
                 }
                 None => {
-                    hash_counter_map.insert(hex_digest.clone(), 1usize);
+                    hash_counter_map.insert(actual_digest.clone(), 1usize);
                 }
             }
-            pp_map.insert(hex_digest, pp_w_id);
+            pp_map.insert(actual_digest, pp);
         }
 
         tracing::info!(
@@ -160,34 +164,38 @@ impl Client {
     pub async fn process_get_crs_resp<R: StorageReader>(
         &self,
         crs_gen_result: &CrsGenResult,
+        domain: &Eip712Domain,
         storage: &R,
     ) -> anyhow::Result<Option<CompactPkeCrs>> {
-        let crs_info = some_or_err(
-            crs_gen_result.crs_results.clone(),
-            "Could not find CRS info".to_string(),
-        )?;
         let request_id = parse_optional_proto_request_id(
             &crs_gen_result.request_id,
             RequestIdParsingErr::Other("invalid request ID while processing CRS".to_string()),
         )
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
         let pp = self.get_crs(&request_id, storage).await?;
-        let crs_handle = compute_handle(&pp)?;
-        if crs_handle != crs_info.key_handle {
+        let actual_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &pp)?;
+        if actual_digest != crs_gen_result.crs_digest {
             tracing::warn!(
                 "Computed crs handle {} of retrieved crs does not match expected crs handle {}",
-                crs_handle,
-                crs_info.key_handle,
+                hex::encode(&actual_digest),
+                hex::encode(&crs_gen_result.crs_digest),
             );
             return Ok(None);
         }
+
+        let max_num_bits = max_num_bits_from_crs(&pp);
         if self
-            .verify_server_signature(&DSEP_PUBDATA_CRS, &crs_handle, &crs_info.signature)
+            .verify_external_signature(
+                &CrsgenVerification::new(&request_id, max_num_bits, actual_digest.clone()),
+                domain,
+                &crs_gen_result.external_signature,
+            )
             .is_err()
         {
             tracing::warn!(
                 "Could not verify server signature for crs handle {}",
-                crs_handle,
+                hex::encode(&actual_digest),
             );
             return Ok(None);
         }
@@ -209,6 +217,10 @@ impl Client {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use super::*;
+    use crate::consts::TEST_PARAM;
+    use crate::vault::storage::ram::RamStorage;
+    use crate::vault::storage::Storage;
     use tfhe::zk::CompactPkeCrs;
     use tfhe::ProvenCompactCiphertextList;
     use tfhe::Tag;
@@ -245,11 +257,86 @@ pub(crate) mod tests {
         let metadata = vec![23_u8, 42];
         let mut compact_list_builder = ProvenCompactCiphertextList::builder(&pk);
         for msg in msgs {
-            compact_list_builder.push_with_num_bits(msg, 64).unwrap();
+            compact_list_builder.push(msg);
         }
         let proven_ct = compact_list_builder
             .build_with_proof_packed(pp, &metadata, tfhe::zk::ZkComputeLoad::Proof)
             .unwrap();
         assert!(proven_ct.verify(pp, &pk, &metadata).is_valid());
+    }
+
+    #[test]
+    fn verify_pp_with_tfhers() {
+        // We're using test parameters because they're unique to KMS
+        // and have more constraints. The normal parameters should always be tested by tfhe-rs.
+        let dkg_params = TEST_PARAM;
+        let params_h = dkg_params.get_params_basics_handle();
+
+        let config =
+            tfhe::ConfigBuilder::with_custom_parameters(params_h.to_classic_pbs_parameters())
+                .use_dedicated_compact_public_key_parameters(
+                    params_h.get_dedicated_pk_params().unwrap(),
+                )
+                .build();
+
+        let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
+        verify_pp(&dkg_params, &crs);
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn process_distributed_crs_result_invalid_signature_does_not_insert_key() {
+        // Setup
+        let client = Client::new(
+            HashMap::new(),
+            alloy_primitives::Address::new([1; 20]), // The all 1 address
+            None,
+            TEST_PARAM,
+            None,
+        );
+        let request_id = RequestId::default();
+        let domain = Eip712Domain::default();
+        let dkg_params = TEST_PARAM;
+        let params_h = dkg_params.get_params_basics_handle();
+        let config =
+            tfhe::ConfigBuilder::with_custom_parameters(params_h.to_classic_pbs_parameters())
+                .use_dedicated_compact_public_key_parameters(
+                    params_h.get_dedicated_pk_params().unwrap(),
+                )
+                .build();
+        let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
+
+        // Create a CrsGenResult with an invalid signature
+        let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
+        let result = CrsGenResult {
+            request_id: Some(request_id.into()),
+            crs_digest: crs_digest.clone(),
+            external_signature: vec![0u8; 65], // Invalid signature
+            ..Default::default()
+        };
+
+        let mut storage = RamStorage::new();
+        storage
+            .store_data(&crs, &request_id, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
+        let res_storage = vec![(result, storage)];
+
+        // Run
+        let res = client
+            .process_distributed_crs_result(
+                &request_id,
+                res_storage,
+                &domain,
+                1, // min_agree_count
+            )
+            .await;
+
+        // Should fail due to no valid signatures
+        assert!(res.is_err());
+        // Check that we fail because of invalid signature
+        assert!(logs_contain("Signature could not be verified for a CRS"));
+        // Ensure that a value with a bad sig does not get counted like it did before the fix
+        assert!(!logs_contain("CRS map contains 1 entries"));
     }
 }

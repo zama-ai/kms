@@ -1,3 +1,4 @@
+use crate::client::client_wasm::Client;
 use crate::client::test_tools::centralized_handles;
 use crate::client::tests::common::{assert_plaintext, TIME_TO_SLEEP_MS};
 #[cfg(feature = "slow_tests")]
@@ -12,10 +13,13 @@ use crate::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
 };
 use kms_grpc::kms::v1::{Empty, TypedCiphertext};
+use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::RequestId;
 use serial_test::serial;
+use std::path::Path;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
+use tonic::transport::Channel;
 
 #[tokio::test]
 #[serial]
@@ -70,7 +74,7 @@ async fn test_decryption_central_precompute_sns() {
             TestingPlaintext::U32(9876),
             TestingPlaintext::U16(420),
             TestingPlaintext::Bool(true),
-            TestingPlaintext::U80((1u128 << 80) - 1),
+            TestingPlaintext::U128((1u128 << 80) - 1),
         ],
         EncryptionConfig {
             compression: false,
@@ -135,10 +139,32 @@ pub(crate) async fn decryption_centralized(
     assert!(parallelism > 0);
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, kms_client, mut internal_client) = centralized_handles(dkg_params, None).await;
+    run_decryption_centralized(
+        &kms_client,
+        &mut internal_client,
+        key_id,
+        msgs,
+        encryption_config,
+        parallelism,
+        None,
+    )
+    .await;
+    kms_server.assert_shutdown().await;
+}
+
+pub(crate) async fn run_decryption_centralized(
+    kms_client: &CoreServiceEndpointClient<Channel>,
+    internal_client: &mut Client,
+    key_id: &RequestId,
+    msgs: Vec<TestingPlaintext>,
+    encryption_config: EncryptionConfig,
+    parallelism: usize,
+    test_path: Option<&Path>,
+) {
     let mut cts = Vec::new();
     for (i, msg) in msgs.clone().into_iter().enumerate() {
         let (ct, ct_format, fhe_type) =
-            compute_cipher_from_stored_key(None, msg, key_id, encryption_config).await;
+            compute_cipher_from_stored_key(test_path, msg, key_id, 1, encryption_config).await;
         let ctt = TypedCiphertext {
             ciphertext: ct,
             fhe_type: fhe_type as i32,
@@ -147,12 +173,10 @@ pub(crate) async fn decryption_centralized(
         };
         cts.push(ctt);
     }
-
     // build parallel requests
     let reqs: Vec<_> = (0..parallelism)
         .map(|j: usize| {
-            let request_id = derive_request_id(&format!("TEST_DEC_ID_{j}")).unwrap();
-
+            let request_id = derive_request_id(&format!("TEST_DEC_ID_{key_id}_{j}")).unwrap();
             internal_client
                 .public_decryption_request(cts.clone(), &dummy_domain(), &request_id, key_id)
                 .unwrap()
@@ -255,6 +279,4 @@ pub(crate) async fn decryption_centralized(
             assert_plaintext(&msgs[i], plaintext);
         }
     }
-
-    kms_server.assert_shutdown().await;
 }

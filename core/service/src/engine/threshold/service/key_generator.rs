@@ -1,9 +1,11 @@
 // === Standard Library ===
 use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
+use itertools::Itertools;
 // === External Crates ===
 use kms_grpc::{
-    kms::v1::{self, Empty, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
+    identifiers::ContextId,
+    kms::v1::{self, Empty, KeyDigest, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
     rpc_types::{optional_protobuf_to_alloy_domain, PubDataType},
     RequestId,
 };
@@ -51,22 +53,23 @@ use tracing::Instrument;
 
 // === Internal Crate Imports ===
 use crate::{
+    consts::DEFAULT_MPC_CONTEXT,
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
         base::{
-            compute_info, convert_key_response, retrieve_parameters, BaseKmsStruct,
-            KeyGenCallValues, DSEP_PUBDATA_KEY,
+            compute_info_decompression_keygen, compute_info_standard_keygen, retrieve_parameters,
+            BaseKmsStruct, KeyGenMetadata, DSEP_PUBDATA_KEY,
         },
         keyset_configuration::InternalKeySetConfig,
         threshold::{
-            service::{kms_impl::compute_all_info, ThresholdFheKeys},
+            service::{session::SessionPreparerGetter, ThresholdFheKeys},
             traits::KeyGenerator,
         },
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
     },
-    tonic_handle_potential_err,
+    ok_or_tonic_abort,
     util::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
@@ -78,9 +81,11 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::{session::SessionPreparer, BucketMetaStore};
+use super::BucketMetaStore;
 
 // === Insecure Feature-Specific Imports ===
+#[cfg(feature = "insecure")]
+use crate::engine::base::INSECURE_PREPROCESSING_ID;
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::InsecureKeyGenerator;
 #[cfg(feature = "insecure")]
@@ -103,8 +108,8 @@ pub struct RealKeyGenerator<
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     // TODO eventually add mode to allow for nlarge as well.
     pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
-    pub dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
-    pub session_preparer: SessionPreparer,
+    pub dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+    pub session_preparer_getter: SessionPreparerGetter,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
     // Map of ongoing key generation tasks
@@ -136,7 +141,7 @@ impl<
                 crypto_storage: value.crypto_storage.clone(),
                 preproc_buckets: Arc::clone(&value.preproc_buckets),
                 dkg_pubinfo_meta_store: Arc::clone(&value.dkg_pubinfo_meta_store),
-                session_preparer: value.session_preparer.new_instance().await,
+                session_preparer_getter: value.session_preparer_getter.clone(),
                 tracker: Arc::clone(&value.tracker),
                 ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
@@ -145,7 +150,6 @@ impl<
         }
     }
 }
-
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
 impl<
@@ -176,8 +180,14 @@ impl<
 // This is essentially the same as an Option, but it's
 // more clear to label the variants as `Secure`
 // and `Insecure`.
+#[allow(clippy::type_complexity)]
 pub enum PreprocHandleWithMode {
-    Secure(Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>),
+    Secure(
+        (
+            RequestId,
+            Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>,
+        ),
+    ),
     Insecure,
 }
 
@@ -208,8 +218,14 @@ impl<
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
         eip712_domain: &alloy_sol_types::Eip712Domain,
+        context_id: Option<ContextId>,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
+        // TODO(zama-ai/kms-internal/issues/2758)
+        // remove the default context when all of context is ready
+        let context_id = context_id.unwrap_or(*DEFAULT_MPC_CONTEXT);
+        let session_preparer = self.session_preparer_getter.get(&context_id).await?;
+
         //Retrieve the right metric tag
         let op_tag = match (
             &preproc_handle_w_mode,
@@ -248,7 +264,7 @@ impl<
         // that runs the computation
         let timer = metrics::METRICS
             .time_operation(op_tag)
-            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string());
+            .tag(TAG_PARTY_ID, session_preparer.my_role()?.to_string());
         // Update status
         {
             let mut guarded_meta_store = self.dkg_pubinfo_meta_store.write().await;
@@ -258,8 +274,8 @@ impl<
         // Create the base session necessary to run the DKG
         let base_session = {
             let session_id = req_id.derive_session_id()?;
-            self.session_preparer
-                .make_base_session(session_id, NetworkMode::Async)
+            session_preparer
+                .make_base_session(session_id, context_id, NetworkMode::Async)
                 .await?
         };
 
@@ -380,9 +396,6 @@ impl<
         let request_id =
             parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::KeyGenRequest)?;
 
-        // Retrieve kg params and preproc_id
-        let dkg_params = retrieve_parameters(inner.params)?;
-
         let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
 
         let internal_keyset_config =
@@ -390,7 +403,7 @@ impl<
                 |e| {
                     tonic::Status::new(
                         tonic::Code::InvalidArgument,
-                        format!("Failed to parse KeySetConfig: {}", e),
+                        format!("Failed to parse KeySetConfig: {e}"),
                     )
                 },
             )?;
@@ -401,7 +414,7 @@ impl<
             if guarded_meta_store.exists(&request_id) {
                 return Err(tonic::Status::new(
                     tonic::Code::AlreadyExists,
-                    format!("Request ID {} already exists for keygen", request_id),
+                    format!("Request ID {request_id} already exists for keygen"),
                 ));
             }
         }
@@ -411,8 +424,13 @@ impl<
         // preferrably right before running the threshold protocol,
         // because if some error happens later on, e.g., in launch_dkg,
         // then the preprocessing is essentially lost
-        let preproc_handle = if insecure {
-            PreprocHandleWithMode::Insecure
+        //
+        // If inner.params is not set, then we need to retrieve the preprocessing
+        // unless we are in insecure mode.
+        // In the insecure mode the default parameters will be used if not set.
+        let (preproc_handle, dkg_params) = if insecure {
+            let dkg_params = retrieve_parameters(inner.params)?;
+            (PreprocHandleWithMode::Insecure, dkg_params)
         } else {
             let preproc_id = parse_optional_proto_request_id(
                 &inner.preproc_id,
@@ -424,18 +442,41 @@ impl<
                 let mut map = self.preproc_buckets.write().await;
                 map.delete(&preproc_id)
             };
-            PreprocHandleWithMode::Secure(
-                handle_res_mapping(preproc, &preproc_id, "Preprocessing").await?,
+            let prep_bucket = handle_res_mapping(preproc, &preproc_id, "Preprocessing").await?;
+            if prep_bucket.preprocessing_id != preproc_id {
+                return Err(tonic::Status::internal(format!(
+                    "Preprocessing ID mismatch: expected {}, got {} in bucket",
+                    preproc_id, prep_bucket.preprocessing_id
+                )));
+            }
+            let dkg_param = match inner.params {
+                Some(fhe_param) => retrieve_parameters(Some(fhe_param))?,
+                None => prep_bucket.dkg_param,
+            };
+            (
+                PreprocHandleWithMode::Secure((preproc_id, prep_bucket.preprocessing_store)),
+                dkg_param,
             )
         };
 
-        tonic_handle_potential_err(
+        ok_or_tonic_abort(
             self.launch_dkg(
                 dkg_params,
                 internal_keyset_config,
                 preproc_handle,
                 request_id,
                 &eip712_domain,
+                inner
+                    .context_id
+                    .as_ref()
+                    .map(|id| id.try_into())
+                    .transpose()
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::InvalidArgument,
+                            format!("invalid context id: {e}"),
+                        )
+                    })?,
                 permit,
             )
             .await,
@@ -457,10 +498,54 @@ impl<
             guarded_meta_store.retrieve(&request_id)
         };
         let res = handle_res_mapping(status, &request_id, "DKG").await?;
-        Ok(Response::new(KeyGenResult {
-            request_id: Some(request_id.into()),
-            key_results: convert_key_response(res),
-        }))
+
+        match res {
+            KeyGenMetadata::Current(res) => {
+                if res.key_id != request_id {
+                    return Err(Status::internal(format!(
+                        "Key generation result not found for request ID: {}",
+                        request_id
+                    )));
+                }
+
+                // Note: This relies on the ordering of the PubDataType enum
+                // which must be kept stable (in particular, ServerKey must be before PublicKey)
+                let key_digests = res
+                    .key_digest_map
+                    .into_iter()
+                    .sorted_by_key(|x| x.0)
+                    .map(|(key, digest)| KeyDigest {
+                        key_type: key.to_string(),
+                        digest,
+                    })
+                    .collect::<Vec<_>>();
+
+                Ok(Response::new(KeyGenResult {
+                    request_id: Some(request_id.into()),
+                    preprocessing_id: Some(res.preprocessing_id.into()),
+                    key_digests,
+                    external_signature: res.external_signature,
+                }))
+            }
+            KeyGenMetadata::LegacyV0(_res) => {
+                tracing::warn!(
+                    "Legacy key generation result for request ID: {}",
+                    request_id
+                );
+                // Because this is a legacy result and the call path will not reach here
+                // (because a restart is needed to upgrade to the new version and the meta store is deleted from RAM),
+                // we just return empty values for the fields below.
+                Ok(Response::new(KeyGenResult {
+                    request_id: Some(request_id.into()),
+                    preprocessing_id: None,
+                    // we do not attempt to convert the legacy key digest map
+                    // because it does not match the format to the current one
+                    // since no domain separation is used
+                    key_digests: Vec::new(),
+                    external_signature: vec![],
+                }))
+            }
+        }
     }
 
     async fn sns_compression_key_gen_closure<P>(
@@ -619,7 +704,7 @@ impl<
                         .into_iter()
                         .map(|x| x as u128)
                         .collect(),
-                    sns_params.polynomial_size,
+                    sns_params.polynomial_size(),
                 ),
                 sns_params,
             )),
@@ -774,7 +859,7 @@ impl<
                     }
                 };
 
-                let (client_key, _, _, _, _, _) = to_hl_client_key(
+                let (client_key, _, _, _, _, _, _) = to_hl_client_key(
                     &params,
                     dummy_lwe_secret_key,
                     bit_glwe_secret_key,
@@ -811,7 +896,7 @@ impl<
     pub async fn decompression_key_gen_background(
         req_id: &RequestId,
         mut base_session: BaseSession,
-        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
         sk: Arc<PrivateSigKey>,
@@ -822,7 +907,7 @@ impl<
     ) -> Result<(), ()> {
         let _permit = permit;
         let start = Instant::now();
-        let dkg_res = match preproc_handle_w_mode {
+        let (prep_id, dkg_res) = match preproc_handle_w_mode {
             PreprocHandleWithMode::Insecure => {
                 // sanity check to make sure we're using the insecure feature
                 #[cfg(not(feature = "insecure"))]
@@ -831,35 +916,41 @@ impl<
                 }
                 #[cfg(feature = "insecure")]
                 {
-                    match Self::get_glwe_and_compression_key_shares(
-                        keyset_added_info,
-                        crypto_storage.clone(),
+                    (
+                        *INSECURE_PREPROCESSING_ID,
+                        match Self::get_glwe_and_compression_key_shares(
+                            keyset_added_info,
+                            crypto_storage.clone(),
+                        )
+                        .await
+                        {
+                            Ok((glwe_shares, compression_shares)) => {
+                                Self::reconstruct_glwe_and_compression_key_shares(
+                                    &base_session,
+                                    params,
+                                    glwe_shares,
+                                    compression_shares,
+                                )
+                                .await
+                            }
+                            Err(e) => Err(e),
+                        },
                     )
-                    .await
-                    {
-                        Ok((glwe_shares, compression_shares)) => {
-                            Self::reconstruct_glwe_and_compression_key_shares(
-                                &base_session,
-                                params,
-                                glwe_shares,
-                                compression_shares,
-                            )
-                            .await
-                        }
-                        Err(e) => Err(e),
-                    }
                 }
             }
-            PreprocHandleWithMode::Secure(preproc_handle) => {
+            PreprocHandleWithMode::Secure((prep_id, preproc_handle)) => {
                 let mut preproc_handle = preproc_handle.lock().await;
-                Self::decompression_key_gen_closure(
-                    &mut base_session,
-                    crypto_storage.clone(),
-                    params,
-                    keyset_added_info,
-                    preproc_handle.as_mut(),
+                (
+                    prep_id,
+                    Self::decompression_key_gen_closure(
+                        &mut base_session,
+                        crypto_storage.clone(),
+                        params,
+                        keyset_added_info,
+                        preproc_handle.as_mut(),
+                    )
+                    .await,
                 )
-                .await
             }
         };
 
@@ -876,8 +967,15 @@ impl<
         };
 
         // Compute all the info required for storing
-        let info = match compute_info(&sk, &DSEP_PUBDATA_KEY, &decompression_key, &eip712_domain) {
-            Ok(info) => HashMap::from_iter(vec![(PubDataType::DecompressionKey, info)]),
+        let info = match compute_info_decompression_keygen(
+            &sk,
+            &DSEP_PUBDATA_KEY,
+            &prep_id,
+            req_id,
+            &decompression_key,
+            &eip712_domain,
+        ) {
+            Ok(info) => info,
             Err(_) => {
                 let mut guarded_meta_storage = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
@@ -904,7 +1002,7 @@ impl<
     pub async fn sns_compression_key_gen_background(
         req_id: &RequestId,
         mut base_session: BaseSession,
-        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
         sk: Arc<PrivateSigKey>,
@@ -933,7 +1031,7 @@ impl<
             }
         };
 
-        let dkg_res = match preproc_handle_w_mode {
+        let (prep_id, dkg_res) = match preproc_handle_w_mode {
             PreprocHandleWithMode::Insecure => {
                 // sanity check to make sure we're using the insecure feature
                 #[cfg(not(feature = "insecure"))]
@@ -942,36 +1040,44 @@ impl<
                 }
                 #[cfg(feature = "insecure")]
                 {
-                    match Self::reconstruct_sns_sk(
-                        &base_session,
-                        params,
-                        &base_key_id,
-                        crypto_storage.clone(),
+                    (
+                        *INSECURE_PREPROCESSING_ID,
+                        match Self::reconstruct_sns_sk(
+                            &base_session,
+                            params,
+                            &base_key_id,
+                            crypto_storage.clone(),
+                        )
+                        .await
+                        {
+                            Ok(sns_sk) => {
+                                initialize_sns_compression_key_materials(
+                                    &mut base_session,
+                                    params,
+                                    sns_sk,
+                                )
+                                .await
+                            }
+                            Err(e) => {
+                                Err(anyhow::anyhow!("sns sk reconstruction failed with {}", e))
+                            }
+                        },
                     )
-                    .await
-                    {
-                        Ok(sns_sk) => {
-                            initialize_sns_compression_key_materials(
-                                &mut base_session,
-                                params,
-                                sns_sk,
-                            )
-                            .await
-                        }
-                        Err(e) => Err(anyhow::anyhow!("sns sk reconstruction failed with {}", e)),
-                    }
                 }
             }
-            PreprocHandleWithMode::Secure(preproc_handle) => {
+            PreprocHandleWithMode::Secure((prep_id, preproc_handle)) => {
                 let mut preproc_handle = preproc_handle.lock().await;
-                Self::sns_compression_key_gen_closure(
-                    &mut base_session,
-                    crypto_storage.clone(),
-                    params,
-                    &base_key_id,
-                    preproc_handle.as_mut(),
+                (
+                    prep_id,
+                    Self::sns_compression_key_gen_closure(
+                        &mut base_session,
+                        crypto_storage.clone(),
+                        params,
+                        &base_key_id,
+                        preproc_handle.as_mut(),
+                    )
+                    .await,
                 )
-                .await
             }
         };
 
@@ -1008,7 +1114,15 @@ impl<
         };
 
         // Compute all the info required for storing
-        let info = match compute_all_info(&sk, &fhe_pub_key_set, &eip712_domain) {
+        //
+        let info = match compute_info_standard_keygen(
+            &sk,
+            &DSEP_PUBDATA_KEY,
+            &prep_id,
+            req_id,
+            &fhe_pub_key_set,
+            &eip712_domain,
+        ) {
             Ok(info) => info,
             Err(_) => {
                 let mut guarded_meta_storage = meta_store.write().await;
@@ -1050,14 +1164,16 @@ impl<
             .read_guarded_threshold_fhe_keys_from_cache(base_key_id)
             .await?;
 
-        let mut new_threshold_fhe_keys = (*threshold_fhe_keys).clone();
-        new_threshold_fhe_keys
-            .private_keys
-            .glwe_sns_compression_key_as_lwe = Some(
+        let mut new_private_keys = (*threshold_fhe_keys.private_keys).clone();
+        new_private_keys.glwe_sns_compression_key_as_lwe = Some(
             sns_compression_sk_shares
                 .post_packing_ks_key
                 .into_lwe_secret_key(),
         );
+        let new_threshold_fhe_keys = ThresholdFheKeys {
+            private_keys: Arc::new(new_private_keys),
+            ..(*threshold_fhe_keys).clone()
+        };
 
         // update the server keys
         let pub_storage = crypto_storage.inner.public_storage.clone();
@@ -1082,6 +1198,7 @@ impl<
                 ),
             ),
             server_key_parts.6,
+            server_key_parts.7,
         );
 
         // just read the public key since we need it in the return type, but no need to update it
@@ -1136,7 +1253,7 @@ impl<
     async fn key_gen_background(
         req_id: &RequestId,
         mut base_session: BaseSession,
-        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
         sk: Arc<PrivateSigKey>,
@@ -1148,7 +1265,7 @@ impl<
     ) -> Result<(), ()> {
         let _permit = permit;
         let start = Instant::now();
-        let dkg_res = match preproc_handle_w_mode {
+        let (prep_id, dkg_res) = match preproc_handle_w_mode {
             PreprocHandleWithMode::Insecure => {
                 // sanity check to make sure we're using the insecure feature
                 #[cfg(not(feature = "insecure"))]
@@ -1159,32 +1276,35 @@ impl<
                 }
                 #[cfg(feature = "insecure")]
                 {
-                    match (
-                        keyset_config.compression_config,
-                        keyset_config.computation_key_type,
-                    ) {
-                        (
-                            ddec_keyset_config::KeySetCompressionConfig::Generate,
-                            ddec_keyset_config::ComputeKeyType::Cpu,
-                        ) => initialize_key_material(&mut base_session, params).await,
-                        _ => {
-                            // TODO insecure keygen from existing compression key is not supported
-                            let mut guarded_meta_storage = meta_store.write().await;
-                            let _ = guarded_meta_storage.update(
+                    (
+                        *INSECURE_PREPROCESSING_ID,
+                        match (
+                            keyset_config.compression_config,
+                            keyset_config.computation_key_type,
+                        ) {
+                            (
+                                ddec_keyset_config::KeySetCompressionConfig::Generate,
+                                ddec_keyset_config::ComputeKeyType::Cpu,
+                            ) => initialize_key_material(&mut base_session, params).await,
+                            _ => {
+                                // TODO insecure keygen from existing compression key is not supported
+                                let mut guarded_meta_storage = meta_store.write().await;
+                                let _ = guarded_meta_storage.update(
                             req_id,
                             Err(
                                 "insecure keygen from existing compression key is not supported"
                                     .to_string(),
                             ),
                         );
-                            return Err(());
-                        }
-                    }
+                                return Err(());
+                            }
+                        },
+                    )
                 }
             }
-            PreprocHandleWithMode::Secure(preproc_handle) => {
+            PreprocHandleWithMode::Secure((prep_id, preproc_handle)) => {
                 let mut preproc_handle = preproc_handle.lock().await;
-                match (
+                (prep_id, match (
                     keyset_config.compression_config,
                     keyset_config.computation_key_type,
                 ) {
@@ -1207,7 +1327,7 @@ impl<
                         )
                         .await
                     }
-                }
+                })
             }
         };
 
@@ -1224,7 +1344,14 @@ impl<
         };
 
         //Compute all the info required for storing
-        let info = match compute_all_info(&sk, &pub_key_set, &eip712_domain) {
+        let info = match compute_info_standard_keygen(
+            &sk,
+            &DSEP_PUBDATA_KEY,
+            &prep_id,
+            req_id,
+            &pub_key_set,
+            &eip712_domain,
+        ) {
             Ok(info) => info,
             Err(_) => {
                 let mut guarded_meta_storage = meta_store.write().await;
@@ -1243,6 +1370,7 @@ impl<
                 raw_decompression_key,
                 raw_noise_squashing_key,
                 _raw_noise_squashing_compression_key,
+                _raw_rerandomization_key,
                 _raw_tag,
             ) = pub_key_set.server_key.clone().into_raw_parts();
             (
@@ -1253,11 +1381,11 @@ impl<
         };
 
         let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys,
-            integer_server_key,
-            sns_key,
-            decompression_key,
-            pk_meta_data: info.clone(),
+            private_keys: Arc::new(private_keys),
+            integer_server_key: Arc::new(integer_server_key),
+            sns_key: sns_key.map(Arc::new),
+            decompression_key: decompression_key.map(Arc::new),
+            meta_data: info.clone(),
         };
 
         //Note: We can't easily check here whether we succeeded writing to the meta store
@@ -1303,7 +1431,7 @@ impl<
 mod tests {
     use kms_grpc::{
         kms::v1::{FheParameter, KeySetConfig},
-        rpc_types::alloy_to_protobuf_domain,
+        rpc_types::{alloy_to_protobuf_domain, KMSType},
     };
     use rand::rngs::OsRng;
     use threshold_fhe::{
@@ -1313,7 +1441,12 @@ mod tests {
         },
     };
 
-    use crate::{dummy_domain, vault::storage::ram};
+    use crate::{
+        consts::TEST_PARAM,
+        dummy_domain,
+        engine::threshold::service::session::{SessionPreparer, SessionPreparerManager},
+        vault::storage::ram,
+    };
 
     use super::*;
 
@@ -1324,9 +1457,10 @@ mod tests {
         > RealKeyGenerator<PubS, PrivS, KG>
     {
         async fn init_test(
+            base_kms: BaseKmsStruct,
             pub_storage: PubS,
             priv_storage: PrivS,
-            session_preparer: SessionPreparer,
+            session_preparer_getter: SessionPreparerGetter,
         ) -> Self {
             let crypto_storage = ThresholdCryptoMaterialStorage::new(
                 pub_storage,
@@ -1340,11 +1474,11 @@ mod tests {
             let rate_limiter = RateLimiter::default();
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
             Self {
-                base_kms: session_preparer.base_kms.new_instance().await,
+                base_kms,
                 crypto_storage,
                 preproc_buckets: Arc::new(RwLock::new(MetaStore::new_unlimited())),
                 dkg_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-                session_preparer: session_preparer.new_instance().await,
+                session_preparer_getter,
                 tracker,
                 ongoing,
                 rate_limiter,
@@ -1364,10 +1498,13 @@ mod tests {
     impl<KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static>
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>
     {
-        pub async fn init_ram_keygen(session_preparer: SessionPreparer) -> Self {
+        pub async fn init_ram_keygen(
+            base_kms: BaseKmsStruct,
+            session_preparer_getter: SessionPreparerGetter,
+        ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(pub_storage, priv_storage, session_preparer).await
+            Self::init_test(base_kms, pub_storage, priv_storage, session_preparer_getter).await
         }
     }
 
@@ -1377,9 +1514,22 @@ mod tests {
         [RequestId; 4],
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
-        let session_preparer = SessionPreparer::new_test_session(false);
+        use crate::cryptography::internal_crypto_types::gen_sig_keys;
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            Arc::new(RwLock::new(None)),
+            Arc::new(RwLock::new(None)),
+        );
+        let context_id = *DEFAULT_MPC_CONTEXT;
+        session_preparer_manager
+            .insert(context_id, session_preparer)
+            .await;
         let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
-            session_preparer.new_instance().await,
+            base_kms,
+            session_preparer_manager.make_getter(),
         )
         .await;
 
@@ -1392,17 +1542,25 @@ mod tests {
         // We need to setup the preprocessor metastore so that keygen will pass
         for prep_id in &prep_ids {
             let session_id = prep_id.derive_session_id().unwrap();
-            let dummy_prep = Box::new(DummyPreprocessing::<ResiduePolyF4Z128>::new(
-                42,
-                &session_preparer
-                    .make_base_session(session_id, NetworkMode::Sync)
-                    .await
-                    .unwrap(),
-            ));
+            let session_preparer = session_preparer_manager.get(&context_id).await.unwrap();
+            let dummy_prep = BucketMetaStore {
+                preprocessing_id: *prep_id,
+                external_signature: vec![],
+                preprocessing_store: Arc::new(Mutex::new(Box::new(DummyPreprocessing::<
+                    ResiduePolyF4Z128,
+                >::new(
+                    42,
+                    &session_preparer
+                        .make_base_session(session_id, context_id, NetworkMode::Sync)
+                        .await
+                        .unwrap(),
+                )))),
+                dkg_param: TEST_PARAM,
+            };
             let mut guarded_prep_bucket = kg.preproc_buckets.write().await;
             (*guarded_prep_bucket).insert(prep_id).unwrap();
             (*guarded_prep_bucket)
-                .update(prep_id, Ok(Arc::new(Mutex::new(dummy_prep))))
+                .update(prep_id, Ok(dummy_prep))
                 .unwrap();
         }
         (prep_ids, kg)
@@ -1424,11 +1582,13 @@ mod tests {
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let request = tonic::Request::new(KeyGenRequest {
                 request_id: Some(bad_key_id.clone()),
-                params: FheParameter::Test as i32,
+                params: Some(FheParameter::Test as i32),
                 preproc_id: Some(prep_id.into()),
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
 
             assert_eq!(
@@ -1451,11 +1611,13 @@ mod tests {
 
             let request = tonic::Request::new(KeyGenRequest {
                 request_id: Some(key_id.into()),
-                params: FheParameter::Test as i32,
+                params: Some(FheParameter::Test as i32),
                 preproc_id: Some(prep_id.into()),
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
 
             assert_eq!(
@@ -1474,11 +1636,13 @@ mod tests {
 
             let request = tonic::Request::new(KeyGenRequest {
                 request_id: Some(key_id.into()),
-                params: FheParameter::Test as i32,
+                params: Some(FheParameter::Test as i32),
                 preproc_id: Some(prep_id.into()),
                 domain: Some(domain),
                 keyset_config: Some(keyset_config),
                 keyset_added_info: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
 
             assert_eq!(
@@ -1504,11 +1668,13 @@ mod tests {
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
-            params: FheParameter::Test as i32,
+            params: Some(FheParameter::Test as i32),
             preproc_id: Some(prep_id.into()),
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         });
 
         assert_eq!(
@@ -1531,11 +1697,13 @@ mod tests {
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let request = tonic::Request::new(KeyGenRequest {
                 request_id: Some(key_id.into()),
-                params: FheParameter::Test as i32,
+                params: Some(FheParameter::Test as i32),
                 preproc_id: Some(bad_prep_id.into()),
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
 
             assert_eq!(
@@ -1569,11 +1737,13 @@ mod tests {
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
-            params: FheParameter::Test as i32,
+            params: Some(FheParameter::Test as i32),
             preproc_id: Some(prep_id.into()),
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         });
 
         // keygen should pass because the failure occurs in background process
@@ -1603,11 +1773,13 @@ mod tests {
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request0 = KeyGenRequest {
             request_id: Some(key_id.into()),
-            params: FheParameter::Test as i32,
+            params: Some(FheParameter::Test as i32),
             preproc_id: Some(prep_id0.into()),
             domain: Some(domain.clone()),
             keyset_config: None,
             keyset_added_info: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         };
 
         kg.key_gen(tonic::Request::new(request0)).await.unwrap();
@@ -1616,11 +1788,13 @@ mod tests {
         // NOTE: we need to use a different preproc ID to avoid the `NotFound` error
         let request1 = KeyGenRequest {
             request_id: Some(key_id.into()),
-            params: FheParameter::Test as i32,
+            params: Some(FheParameter::Test as i32),
             preproc_id: Some(prep_id1.into()),
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         };
         assert_eq!(
             kg.key_gen(tonic::Request::new(request1))
@@ -1649,11 +1823,16 @@ mod tests {
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let tonic_req = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
-            params: FheParameter::Test as i32,
+            // The test parameters will be used under the hood
+            // since we configured the dummy key generator with preprocessing materials from prep_ids.
+            // Those preprocessing materials have the test parameters.
+            params: None,
             preproc_id: Some(prep_id.into()),
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         });
 
         kg.key_gen(tonic_req).await.unwrap();

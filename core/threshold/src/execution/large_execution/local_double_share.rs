@@ -85,7 +85,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> RealLocalDoubleShare<C, S, 
 impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
     for RealLocalDoubleShare<C, S, BCast>
 {
-    #[instrument(name="LocalDoubleShare",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?secrets.len()))]
+    #[instrument(name="LocalDoubleShare",skip(self,session,secrets),fields(sid = ?session.session_id(),my_role=?session.my_role(),batch_size=?secrets.len()))]
     async fn execute<Z: Derive + ErrorCorrect + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
@@ -212,14 +212,13 @@ pub(crate) async fn verify_sharing<
         &pads_double.output_2t.shares_own_secret,
     );
 
-    let roles = session.role_assignments().keys().cloned().collect_vec();
     let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
     let my_role = session.my_role();
 
     //TODO: Could be done in parallel (to minimize round complexity)
     for g in 0..m {
-        tracing::warn!("I AM {my_role} DOING LOOP OF LSL {g} out of {m}");
-        let map_challenges = Z::derive_challenges_from_coinflip(x, g.try_into()?, l, &roles);
+        let map_challenges =
+            Z::derive_challenges_from_coinflip(x, g.try_into()?, l, session.roles());
 
         //Compute my share of check values for every sharing of degree t
         let map_share_check_values_t = compute_check_values(
@@ -410,9 +409,7 @@ pub(crate) mod tests {
         execution::{
             large_execution::local_double_share::{LocalDoubleShare, SecureLocalDoubleShare},
             runtime::party::Role,
-            runtime::session::{
-                BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
-            },
+            runtime::session::{BaseSessionHandles, LargeSession, LargeSessionHandles},
             sharing::{shamir::ShamirSharings, share::Share},
         },
         tests::helper::tests::{
@@ -420,11 +417,13 @@ pub(crate) mod tests {
         },
     };
     use aes_prng::AesRng;
+    use futures_util::future::join;
     use itertools::Itertools;
     use rand::SeedableRng;
     use rstest::rstest;
+    use std::collections::HashSet;
 
-    fn test_ldl_strategies<
+    async fn test_ldl_strategies<
         Z: RingWithExceptionalSequence + Derive + ErrorCorrect + Invert,
         const EXTENSION_DEGREE: usize,
         LD: LocalDoubleShare + 'static,
@@ -442,7 +441,6 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             (
-                session.my_role(),
                 real_ldl.execute(&mut session, &secrets).await.unwrap(),
                 session.corrupt_roles().clone(),
                 session.disputed_roles().clone(),
@@ -453,33 +451,31 @@ pub(crate) mod tests {
             let secrets = (0..num_secrets)
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
-            (
-                session.my_role(),
-                malicious_ldl.execute(&mut session, &secrets).await,
-            )
+
+            malicious_ldl.execute(&mut session, &secrets).await
         };
+
+        let mut malicious_roles_with_dispute = HashSet::from_iter(malicious_due_to_dispute);
+        malicious_roles_with_dispute.extend(params.malicious_roles.clone());
 
         //LocalDoubleShare assumes Sync network
         let (result_honest, _) =
             execute_protocol_large_w_disputes_and_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(
                 &params,
                 &params.dispute_pairs,
-                &[
-                    malicious_due_to_dispute.clone(),
-                    params.malicious_roles.to_vec(),
-                ]
-                .concat(),
+                &malicious_roles_with_dispute,
                 malicious_ldl,
                 NetworkMode::Sync,
                 None,
                 &mut task_honest,
                 &mut task_malicious,
-            );
+            )
+            .await;
 
         //make sure the dispute and malicious set of all honest parties is in sync
-        let ref_malicious_set = result_honest[0].2.clone();
-        let ref_dispute_set = result_honest[0].3.clone();
-        for (_, _, malicious_set, dispute_set) in result_honest.iter() {
+        let ref_malicious_set = result_honest[&Role::indexed_from_one(1)].1.clone();
+        let ref_dispute_set = result_honest[&Role::indexed_from_one(1)].2.clone();
+        for (_, malicious_set, dispute_set) in result_honest.values() {
             assert_eq!(malicious_set, &ref_malicious_set);
             assert_eq!(dispute_set, &ref_dispute_set);
         }
@@ -487,12 +483,7 @@ pub(crate) mod tests {
         //If it applies
         //Make sure malicious parties are detected as such
         if params.should_be_detected {
-            for role in &[
-                malicious_due_to_dispute.clone(),
-                params.malicious_roles.to_vec(),
-            ]
-            .concat()
-            {
+            for role in &malicious_roles_with_dispute {
                 assert!(ref_malicious_set.contains(role));
             }
         } else {
@@ -514,7 +505,7 @@ pub(crate) mod tests {
             for (secret_id, expected_secret) in expected_secrets.into_iter().enumerate() {
                 let mut vec_shares_t = Vec::new();
                 let mut vec_shares_2t = Vec::new();
-                for (role, result_ldl, _, _) in result_honest.iter() {
+                for (role, (result_ldl, _, _)) in result_honest.iter() {
                     vec_shares_t.push(Share::new(
                         *role,
                         result_ldl.get(&sender_role).unwrap().share_t[secret_id],
@@ -545,22 +536,25 @@ pub(crate) mod tests {
     #[rstest]
     #[case(TestingParameters::init_honest(4, 1, Some(88)))]
     #[case(TestingParameters::init_honest(7, 2, Some(109)))]
-    fn test_ldl_z128(#[case] params: TestingParameters) {
+    async fn test_ldl_z128(#[case] params: TestingParameters) {
         let malicious_ldl = SecureLocalDoubleShare::default();
 
-        test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            malicious_ldl.clone(),
-        );
-        test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            malicious_ldl.clone(),
-        );
+        join(
+            test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
+                params.clone(),
+                malicious_ldl.clone(),
+            ),
+            test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+                params.clone(),
+                malicious_ldl.clone(),
+            ),
+        )
+        .await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[rstest]
-    fn test_ldl_malicious_subprotocols_caught<
+    async fn test_ldl_malicious_subprotocols_caught<
         V: Vss,
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
@@ -598,19 +592,22 @@ pub(crate) mod tests {
             share_dispute: share_dispute_strategy,
             broadcast: broadcast_strategy,
         };
-        test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            malicious_ldl.clone(),
-        );
-        test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            malicious_ldl.clone(),
-        );
+        join(
+            test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
+                params.clone(),
+                malicious_ldl.clone(),
+            ),
+            test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+                params.clone(),
+                malicious_ldl.clone(),
+            ),
+        )
+        .await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[rstest]
-    fn test_ldl_malicious_subprotocols_not_caught<
+    async fn test_ldl_malicious_subprotocols_not_caught<
         V: Vss,
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
@@ -642,21 +639,24 @@ pub(crate) mod tests {
             share_dispute: share_dispute_strategy,
             broadcast: broadcast_strategy,
         };
-        test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            malicious_ldl.clone(),
-        );
-        test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            malicious_ldl.clone(),
-        );
+        join(
+            test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
+                params.clone(),
+                malicious_ldl.clone(),
+            ),
+            test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+                params.clone(),
+                malicious_ldl.clone(),
+            ),
+        )
+        .await;
     }
 
     #[rstest]
     #[case(TestingParameters::init(4,1,&[2],&[0],&[],true,None), SecureCoinflip::default(), MaliciousShareDisputeRecons::new(&params.roles_to_lie_to),SyncReliableBroadcast::default())]
     #[case(TestingParameters::init(4,1,&[2],&[],&[(3,0)],false,None), MaliciousCoinflipRecons::<SecureVss, SecureRobustOpen>::default(), RealShareDispute::default(),SyncReliableBroadcast::default())]
     #[cfg(feature = "slow_tests")]
-    fn test_ldl_malicious_subprotocols_fine_grain<
+    async fn test_ldl_malicious_subprotocols_fine_grain<
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
         BCast: Broadcast + 'static,
@@ -671,14 +671,17 @@ pub(crate) mod tests {
             share_dispute: share_dispute_strategy,
             broadcast: broadcast_strategy,
         };
-        test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            malicious_ldl.clone(),
-        );
-        test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            malicious_ldl.clone(),
-        );
+        join(
+            test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
+                params.clone(),
+                malicious_ldl.clone(),
+            ),
+            test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+                params.clone(),
+                malicious_ldl.clone(),
+            ),
+        )
+        .await;
     }
 
     //Tests for when some parties lie about shares they received
@@ -686,7 +689,7 @@ pub(crate) mod tests {
     //catching malicious users only if it lies about too many parties
     #[cfg(feature = "slow_tests")]
     #[rstest]
-    fn test_malicious_receiver_ldl_malicious_subprotocols<
+    async fn test_malicious_receiver_ldl_malicious_subprotocols<
         V: Vss,
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
@@ -723,21 +726,24 @@ pub(crate) mod tests {
             broadcast_strategy,
             &params.roles_to_lie_to,
         );
-        test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            malicious_ldl.clone(),
-        );
-        test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            malicious_ldl.clone(),
-        );
+        join(
+            test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
+                params.clone(),
+                malicious_ldl.clone(),
+            ),
+            test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+                params.clone(),
+                malicious_ldl.clone(),
+            ),
+        )
+        .await;
     }
 
     //Tests for when some parties lie about shares they sent
     //Parties should finish after second iteration, catching malicious sender always because it keeps lying
     #[cfg(feature = "slow_tests")]
     #[rstest]
-    fn test_malicious_sender_ldl_malicious_subprotocols<
+    async fn test_malicious_sender_ldl_malicious_subprotocols<
         V: Vss,
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
@@ -774,13 +780,16 @@ pub(crate) mod tests {
             broadcast_strategy,
             &params.roles_to_lie_to,
         );
-        test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            malicious_ldl.clone(),
-        );
-        test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            malicious_ldl.clone(),
-        );
+        join(
+            test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
+                params.clone(),
+                malicious_ldl.clone(),
+            ),
+            test_ldl_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+                params.clone(),
+                malicious_ldl.clone(),
+            ),
+        )
+        .await;
     }
 }

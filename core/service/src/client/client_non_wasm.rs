@@ -1,22 +1,20 @@
 use crate::anyhow_error_and_log;
 use crate::client::client_wasm::Client;
-use crate::cryptography::internal_crypto_types::PublicSigKey;
-use crate::cryptography::internal_crypto_types::Signature;
-use crate::engine::base::BaseKmsStruct;
-use crate::engine::traits::BaseKms;
+use crate::engine::base::hash_sol_struct;
 use crate::vault::storage::{
     crypto_material::{
         get_client_signing_key, get_client_verification_key, get_core_verification_key,
     },
     Storage, StorageReader,
 };
+use alloy_dyn_abi::Eip712Domain;
+use alloy_sol_types::SolStruct;
 use futures_util::future::{try_join_all, TryFutureExt};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::fmt;
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::hashing::DomainSep;
 
 /// Client data type
 ///
@@ -86,54 +84,57 @@ impl Client {
         ))
     }
 
-    /// Verify the signature received from the server on keys or other data objects.
-    /// This verification will pass if one of the public keys can verify the signature.
-    pub(crate) fn verify_server_signature<T: serde::Serialize + AsRef<[u8]>>(
+    pub(crate) fn verify_external_signature<T: SolStruct>(
         &self,
-        dsep: &DomainSep,
         data: &T,
-        signature: &[u8],
+        domain: &Eip712Domain,
+        external_sig: &[u8],
     ) -> anyhow::Result<()> {
         if self
-            .find_verifying_public_key(dsep, data, signature)
+            .find_verifying_address(data, domain, external_sig)
             .is_some()
         {
             Ok(())
         } else {
-            Err(anyhow::anyhow!("server signature verification failed"))
+            Err(anyhow::anyhow!("external signature verification failed"))
         }
     }
 
-    /// Verify the signature received from the server on keys or other data objects
-    /// and return the public key that verified the signature.
-    pub(crate) fn find_verifying_public_key<T: serde::Serialize + AsRef<[u8]>>(
+    pub(crate) fn find_verifying_address<T: SolStruct>(
         &self,
-        dsep: &DomainSep,
         data: &T,
-        signature: &[u8],
-    ) -> Option<PublicSigKey> {
-        let signature_struct: Signature = match bc2wrap::deserialize(signature) {
-            Ok(signature_struct) => signature_struct,
-            Err(_) => {
-                tracing::error!("Could not deserialize signature");
-                return None;
-            }
-        };
-
-        let server_pks = match self.get_server_pks() {
-            Ok(pks) => pks,
-            Err(e) => {
-                tracing::error!("failed to get server pks ({})", e);
-                return None;
-            }
-        };
-
-        for verf_key in server_pks.values() {
-            let ok = BaseKmsStruct::verify_sig(dsep, &data, &signature_struct, verf_key).is_ok();
-            if ok {
-                return Some(verf_key.clone());
-            }
+        domain: &Eip712Domain,
+        external_sig: &[u8],
+    ) -> Option<alloy_primitives::Address> {
+        if external_sig.len() != 65 {
+            tracing::error!(
+                "external signature has the wrong length, expected 65 got {}",
+                external_sig.len()
+            );
+            return None;
         }
-        None
+        // Since the signature is 65 bytes long, the last byte is the parity bit
+        // so we extract it and use it as the parity.
+        let sig = alloy_signer::Signature::from_bytes_and_parity(
+            external_sig,
+            external_sig[64] & 0x01 == 0,
+        );
+        let hash = if let Ok(h) = hash_sol_struct(data, domain) {
+            h
+        } else {
+            tracing::error!("Could not hash SolStruct");
+            return None;
+        };
+
+        let addr = if let Ok(a) = sig.recover_address_from_prehash(&hash) {
+            a
+        } else {
+            tracing::error!("Could not recover address from signature");
+            return None;
+        };
+
+        self.get_server_addrs()
+            .into_values()
+            .find(|&verf_key| verf_key == addr)
     }
 }

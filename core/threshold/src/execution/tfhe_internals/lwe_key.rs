@@ -2,7 +2,7 @@ use itertools::{EitherOrBoth, Itertools};
 use serde::{Deserialize, Serialize};
 use tfhe::{
     core_crypto::{
-        commons::{math::random::CompressionSeed, traits::ByteRandomGenerator},
+        commons::{math::random::CompressionSeed, traits::ParallelByteRandomGenerator},
         entities::{LweCompactPublicKey, LweCompactPublicKeyOwned},
         prelude::{SeededLweCompactPublicKey, SeededLweCompactPublicKeyOwned},
     },
@@ -231,7 +231,7 @@ pub fn allocate_and_generate_new_lwe_compact_public_key<Z, Gen, const EXTENSION_
 where
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
 {
     let mut pk = LweCompactPublicKeyShare::new(lwe_secret_key.lwe_dimension());
 
@@ -247,7 +247,7 @@ pub fn generate_lwe_compact_public_key<Z, Gen, const EXTENSION_DEGREE: usize>(
 ) where
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
 {
     let encryption_type = output.glwe_ciphertext_share.encryption_type;
     let (mask, body) = output.get_mut_mask_and_body();
@@ -268,7 +268,7 @@ fn generate_lwe_key_shares<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     params: &DKGParams,
@@ -307,12 +307,12 @@ where
 }
 
 /// Generates the lwe private key share and associated public key
-#[instrument(name="Gen Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_lwe_private_public_key_pair<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     params: &DKGParams,
@@ -337,12 +337,12 @@ where
 }
 
 /// Generates the lwe private key share and associated public key
-#[instrument(name="Gen compressed Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen compressed Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_lwe_private_compressed_public_key_pair<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     params: &DKGParams,
@@ -421,8 +421,8 @@ mod tests {
 
     use super::{allocate_and_generate_new_lwe_compact_public_key, LweSecretKeyShare};
 
-    #[test]
-    fn test_pk_generation() {
+    #[tokio::test]
+    async fn test_pk_generation() {
         let lwe_dimension = 1024_usize;
         let message_log_modulus = 3_usize;
         let ctxt_log_modulus = 64_usize;
@@ -497,7 +497,8 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
-        );
+        )
+        .await;
 
         let mut lwe_key_shares = HashMap::new();
         let opened_pk_ref = results[0].2.clone();

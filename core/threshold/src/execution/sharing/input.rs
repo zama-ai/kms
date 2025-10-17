@@ -20,7 +20,8 @@ where
     Z: Ring,
     ShamirSharings<Z>: InputOp<Z>,
 {
-    session.network().increase_round_counter()?;
+    let deserialization_runtime = session.get_deserialization_runtime();
+    session.network().increase_round_counter().await;
     if role.one_based() == input_party_id {
         let threshold = session.threshold();
         let sis = {
@@ -54,28 +55,31 @@ where
                 output = to_send.into_iter().map(|v| Share::new(*role, v)).collect();
                 continue;
             }
-            let receiver = session.identity_from(&to_send_role)?;
-
             let networking = Arc::clone(session.network());
             set.spawn(async move {
                 let _ = networking
-                    .send(NetworkValue::VecRingValue(to_send).to_network(), &receiver)
+                    .send(
+                        Arc::new(NetworkValue::VecRingValue(to_send).to_network()),
+                        &to_send_role,
+                    )
                     .await;
             });
         }
         while (set.join_next().await).is_some() {}
         Ok(output)
     } else {
-        let sender = session.identity_from(&Role::indexed_from_one(input_party_id))?;
-
         let networking = Arc::clone(session.network());
         let data = tokio::spawn(timeout_at(
-            session.network().get_timeout_current_round()?,
-            async move { networking.receive(&sender).await },
+            session.network().get_timeout_current_round().await,
+            async move {
+                networking
+                    .receive(&Role::indexed_from_one(input_party_id))
+                    .await
+            },
         ))
         .await??;
 
-        let data = match NetworkValue::from_network(data)? {
+        let data = match NetworkValue::from_network(data, deserialization_runtime).await? {
             NetworkValue::VecRingValue(rv) => rv,
             _ => Err(anyhow_error_and_log(
                 "I have received sth different from a ring value!".to_string(),

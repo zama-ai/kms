@@ -10,6 +10,7 @@ use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::TestingPlaintext;
 use kms_grpc::{kms::v1::FheParameter, RequestId};
 use serial_test::serial;
+use threshold_fhe::execution::runtime::party::Role;
 
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::Bool(true)], 2, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
@@ -17,11 +18,9 @@ use serial_test::serial;
 #[case(vec![TestingPlaintext::U16(u16::MAX)], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(vec![TestingPlaintext::U32(u32::MAX)], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(vec![TestingPlaintext::U64(u64::MAX)], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-#[case(vec![TestingPlaintext::U80((1u128 << 80) - 1)], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(vec![TestingPlaintext::U128(u128::MAX)], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(vec![TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128)))], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-#[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[tracing_test::traced_test]
@@ -55,8 +54,8 @@ async fn default_decryption_threshold_with_sns_preprocessing(
 #[case(vec![TestingPlaintext::U8(u8::MAX)], 1, DEFAULT_AMOUNT_PARTIES,Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(vec![TestingPlaintext::U32(u32::MAX)], 1, DEFAULT_AMOUNT_PARTIES, Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(vec![TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX)))], 1, DEFAULT_AMOUNT_PARTIES, Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID)]
-// Note: this takes approx. 138 secs locally.
-#[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, DEFAULT_AMOUNT_PARTIES,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID)]
+// Note: the following takes approx. 138 secs locally. Disabled since we only support up to 256 bits for now starting with v0.12.0
+// #[case(vec![TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1, DEFAULT_AMOUNT_PARTIES,Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 async fn default_decryption_threshold_with_crash(
@@ -91,12 +90,9 @@ async fn default_decryption_threshold_with_crash(
 #[case(TestingPlaintext::U16(u16::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U32(u32::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U64(u64::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-#[case(TestingPlaintext::U80((1u128 << 80) - 1), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U128(u128::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-// Note: this takes approx. 300 secs locally.
-#[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[serial]
 #[tracing_test::traced_test]
 async fn default_user_decryption_threshold(
@@ -135,12 +131,9 @@ async fn default_user_decryption_threshold(
 #[case(TestingPlaintext::U16(u16::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U32(u32::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U64(u64::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-#[case(TestingPlaintext::U80((1u128 << 80) - 1), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U128(u128::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
-// Note: this takes approx. 300 secs locally.
-#[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
 #[serial]
 #[tracing_test::traced_test]
 async fn default_user_decryption_threshold_sns_precompute(
@@ -179,11 +172,9 @@ async fn default_user_decryption_threshold_sns_precompute(
 #[case(TestingPlaintext::U16(u16::MAX), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U32(u32::MAX), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U64(u64::MAX), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID)]
-#[case(TestingPlaintext::U80((1u128 << 80) - 1), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U128(u128::MAX), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![2]), &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, DEFAULT_AMOUNT_PARTIES ,Some(vec![3]), &DEFAULT_THRESHOLD_KEY_ID)]
 #[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![4]), &DEFAULT_THRESHOLD_KEY_ID)]
-#[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, DEFAULT_AMOUNT_PARTIES, Some(vec![1]), &DEFAULT_THRESHOLD_KEY_ID)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[serial]
 async fn default_user_decryption_threshold_with_crash(
@@ -209,7 +200,12 @@ async fn default_user_decryption_threshold_with_crash(
         parallelism,
         secure,
         amount_parties,
-        party_ids_to_crash,
+        party_ids_to_crash.map(|party_ids| {
+            party_ids
+                .iter()
+                .map(|id| Role::indexed_from_zero(*id))
+                .collect()
+        }),
         None,
         None,
     )
@@ -296,7 +292,16 @@ async fn secure_threshold_concurrent_crs_default(#[case] amount_parties: usize) 
 #[case(DEFAULT_AMOUNT_PARTIES)]
 #[serial]
 async fn secure_threshold_sequential_keygen_test(#[case] amount_parties: usize) {
-    preproc_and_keygen(amount_parties, FheParameter::Test, false, 2, false).await;
+    preproc_and_keygen(
+        amount_parties,
+        FheParameter::Test,
+        false,
+        2,
+        false,
+        None,
+        None,
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -306,7 +311,16 @@ async fn secure_threshold_sequential_keygen_test(#[case] amount_parties: usize) 
 #[case(DEFAULT_AMOUNT_PARTIES)]
 #[serial]
 async fn secure_threshold_concurrent_keygen_test(#[case] amount_parties: usize) {
-    preproc_and_keygen(amount_parties, FheParameter::Test, false, 2, true).await;
+    preproc_and_keygen(
+        amount_parties,
+        FheParameter::Test,
+        false,
+        2,
+        true,
+        None,
+        None,
+    )
+    .await;
 }
 
 #[cfg(feature = "slow_tests")]

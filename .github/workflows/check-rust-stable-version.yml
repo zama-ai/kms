@@ -1,4 +1,4 @@
-name: "Check Rust stable version"
+name: check-rust-stable-version
 
 on:
   schedule:
@@ -8,8 +8,8 @@ permissions:
   contents: read
 
 jobs:
-  check-rust-stable-version:
-    name: "Check Rust stable version"
+  check:
+    name: check-rust-stable-version/check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Project

@@ -5,36 +5,40 @@
 ## First stage sets up basic Rust build environment
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS builder
 
+ARG APP_CACHE_DIR=kms-core-client
+
 WORKDIR /app/kms-core-client
 
 # Copy entire project for workspace support
 COPY . .
 
 # Build using cargo install with caching
-RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
     mkdir -p /app/kms-core-client/bin && \
-    cargo install --path core-client --root core-client --bins
+    cargo install --path core/service --root tools/service --bin kms-custodian && \
+    cargo install --path core-client --root core-client --bins && \
+    cargo install --path tools/kms-health-check --root tools/kms-health-check --bins
 
 
 ################################################################
 # Runtime Stage
-FROM --platform=$BUILDPLATFORM cgr.dev/chainguard/glibc-dynamic:latest-dev AS prod
+FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
 
 # Install only required runtime dependencies
 USER root
-RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
-    --mount=type=cache,target=/var/lib/apk,sharing=locked \
-    apk add --no-cache \
+RUN apk add --no-cache \
         openssl \
         wget \
         libgcc \
-        libstdc++ \
-    && rm -rf /var/lib/apk/lists/*
+        libstdc++
 
 WORKDIR /app/kms-core-client
 
 # Copy binaries
 COPY --from=builder /app/kms-core-client/core-client/bin/ /app/kms-core-client/bin/
+COPY --from=builder /app/kms-core-client/tools/kms-health-check/bin/ /app/kms-core-client/bin/
+COPY --from=builder /app/kms-core-client/tools/service/bin/ /app/kms-core-client/bin/
 
 # Change user to limit root access
 RUN addgroup -S kms --gid 10002 && \

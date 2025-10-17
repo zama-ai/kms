@@ -1,15 +1,9 @@
-name: kms-service
-description: A helm chart to distribute and deploy the Zama KMS application stack
-version: 1.0.7
+name: kms-core
+description: A helm chart to distribute and deploy the Zama KMS core service.
+version: 1.4.2
+appVersion: 0.12.0   # Minimum kms version to run this chart
 apiVersion: v2
 keywords:
   - kms-service
   - threshold
   - centralized
-dependencies:
-  - name: minio
-    version: ~16.0.10
-    repository: oci://registry-1.docker.io/bitnamicharts
-    condition: minio.enabled
-    tags:
-      - local

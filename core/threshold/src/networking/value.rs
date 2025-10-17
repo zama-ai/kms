@@ -5,6 +5,7 @@ use crate::execution::large_execution::local_single_share::MapsSharesChallenges;
 use crate::execution::large_execution::vss::{
     ExchangedDataRound1, ValueOrPoly, VerificationValues,
 };
+use crate::execution::runtime::session::DeSerializationRunTime;
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::execution::zk::ceremony;
@@ -12,6 +13,7 @@ use crate::execution::{runtime::party::Role, small_execution::prss::PartySet};
 #[cfg(feature = "experimental")]
 use crate::experimental::bgv::basics::PublicBgvKeySet;
 use crate::hashing::{serialize_hash_element, DomainSep};
+use crate::thread_handles::spawn_compute_bound;
 use crate::{
     commitment::{Commitment, Opening},
     execution::small_execution::prf::PrfKey,
@@ -46,6 +48,23 @@ pub enum BroadcastValue<Z: Eq + Zero + Sized> {
     LocalSingleShare(MapsSharesChallenges<Z>),
     LocalDoubleShare(MapsDoubleSharesChallenges<Z>),
     PartialProof(ceremony::PartialProof),
+}
+
+impl<Z: Eq + Zero + Sized> BroadcastValue<Z> {
+    pub fn type_name(&self) -> String {
+        match self {
+            BroadcastValue::Bot => "Bot".to_string(),
+            BroadcastValue::RingVector(_) => "RingVector".to_string(),
+            BroadcastValue::RingValue(_) => "RingValue".to_string(),
+            BroadcastValue::PRSSVotes(_) => "PRSSVotes".to_string(),
+            BroadcastValue::Round2VSS(_) => "Round2VSS".to_string(),
+            BroadcastValue::Round3VSS(_) => "Round3VSS".to_string(),
+            BroadcastValue::Round4VSS(_) => "Round4VSS".to_string(),
+            BroadcastValue::LocalSingleShare(_) => "LocalSingleShare".to_string(),
+            BroadcastValue::LocalDoubleShare(_) => "LocalDoubleShare".to_string(),
+            BroadcastValue::PartialProof(_) => "PartialProof".to_string(),
+        }
+    }
 }
 
 impl<Z: Eq + Zero + Serialize> BroadcastValue<Z> {
@@ -111,13 +130,29 @@ impl<Z: Eq + Zero> AsRef<NetworkValue<Z>> for NetworkValue<Z> {
 }
 
 impl<Z: Ring> NetworkValue<Z> {
+    // Note we do not offload the serialization to rayon as
+    // benchmark show serialization is fast
+    // and sending to rayon implies a clone which makes it significantly slower
     pub fn to_network(&self) -> Vec<u8> {
         bc2wrap::serialize(self).unwrap()
     }
 
-    pub fn from_network(serialized: anyhow::Result<Vec<u8>>) -> anyhow::Result<Self> {
-        bc2wrap::deserialize::<Self>(&serialized?)
-            .map_err(|_e| anyhow_error_and_log("failed to parse value"))
+    pub async fn from_network(
+        serialized: anyhow::Result<Vec<u8>>,
+        serialization_runtime: DeSerializationRunTime,
+    ) -> anyhow::Result<Self> {
+        match serialization_runtime {
+            DeSerializationRunTime::Tokio => bc2wrap::deserialize_safe::<Self>(&serialized?)
+                .map_err(|_e| anyhow_error_and_log("failed to parse value")),
+            DeSerializationRunTime::Rayon => {
+                // offload to rayon threadpool
+                spawn_compute_bound(move || {
+                    bc2wrap::deserialize_safe::<Self>(&serialized?)
+                        .map_err(|_e| anyhow_error_and_log("failed to parse value"))
+                })
+                .await?
+            }
+        }
     }
 }
 
@@ -150,43 +185,46 @@ impl<Z: Eq + Zero> NetworkValue<Z> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use super::*;
     use crate::{
         algebra::base_ring::Z128,
-        execution::{
-            constants::SMALL_TEST_KEY_PATH, runtime::party::Identity,
-            tfhe_internals::test_feature::KeySet,
-        },
+        execution::{constants::SMALL_TEST_KEY_PATH, tfhe_internals::test_feature::KeySet},
         file_handling::tests::read_element,
         networking::{local::LocalNetworkingProducer, NetworkMode, Networking},
     };
-
-    use super::*;
+    use std::collections::HashSet;
 
     #[tokio::test]
     async fn test_box_sending() {
         let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
-
-        let alice = Identity("alice".into(), 5001);
-        let bob = Identity("bob".into(), 5002);
-        let identities: Vec<Identity> = vec![alice.clone(), bob.clone()];
-        let net_producer = LocalNetworkingProducer::from_ids(&identities);
+        let alice = Role::indexed_from_one(1);
+        let bob = Role::indexed_from_one(2);
+        let roles = HashSet::from([alice, bob]);
+        let net_producer = LocalNetworkingProducer::from_roles(&roles);
         let pk = keys.public_keys.clone();
         let value = NetworkValue::<Z128>::PubKeySet(Box::new(keys.public_keys));
 
-        let net_alice = net_producer.user_net(alice.clone(), NetworkMode::Sync, None);
-        let net_bob = net_producer.user_net(bob.clone(), NetworkMode::Sync, None);
+        let net_alice = net_producer.user_net(alice, NetworkMode::Sync, None);
+        let net_bob = net_producer.user_net(bob, NetworkMode::Sync, None);
 
         let task1 = tokio::spawn(async move {
-            let recv = net_bob.receive(&alice.clone()).await;
-            let received_key = match NetworkValue::<Z128>::from_network(recv) {
-                Ok(NetworkValue::PubKeySet(key)) => key,
-                _ => panic!(),
-            };
+            let recv = net_bob.receive(&alice).await;
+            let received_key =
+                match NetworkValue::<Z128>::from_network(recv, DeSerializationRunTime::Tokio).await
+                {
+                    Ok(NetworkValue::PubKeySet(key)) => key,
+                    _ => panic!(),
+                };
             assert_eq!(*received_key, pk);
         });
 
-        let task2 =
-            tokio::spawn(async move { net_alice.send(value.to_network(), &bob.clone()).await });
+        let task2 = tokio::spawn(async move {
+            net_alice
+                .send(Arc::new(value.to_network()), &bob.clone())
+                .await
+        });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
     }

@@ -4,16 +4,16 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 // === External Crates ===
 use aes_prng::AesRng;
 use kms_grpc::{
+    identifiers::ContextId,
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
-    rpc_types::{optional_protobuf_to_alloy_domain, SignedPubDataHandleInternal},
-    utils::tonic_result::tonic_handle_potential_err,
+    utils::tonic_result::ok_or_tonic_abort,
     RequestId,
 };
 use observability::{
     metrics,
     metrics_names::{
-        ERR_CANCELLED, ERR_CRS_GEN_FAILED, ERR_INVALID_REQUEST, OP_CRS_GEN_REQUEST,
-        OP_INSECURE_CRS_GEN_REQUEST, TAG_PARTY_ID,
+        ERR_CANCELLED, ERR_CRS_GEN_FAILED, OP_CRS_GEN_REQUEST, OP_INSECURE_CRS_GEN_REQUEST,
+        TAG_PARTY_ID,
     },
 };
 use threshold_fhe::{
@@ -32,13 +32,12 @@ use tracing::Instrument;
 
 // === Internal Crate ===
 use crate::{
+    consts::DEFAULT_MPC_CONTEXT,
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
-        base::{compute_info, retrieve_parameters, BaseKmsStruct, DSEP_PUBDATA_CRS},
+        base::{compute_info_crs, BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS},
         threshold::traits::CrsGenerator,
-        validation::{
-            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
-        },
+        validation::{parse_proto_request_id, validate_crs_gen_request, RequestIdParsingErr},
     },
     util::{
         meta_store::{handle_res_mapping, MetaStore},
@@ -48,7 +47,7 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::session::SessionPreparer;
+use super::session::SessionPreparerGetter;
 
 // === Insecure Feature-Specific Imports ===
 cfg_if::cfg_if! {
@@ -72,8 +71,8 @@ pub struct RealCrsGenerator<
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
-    pub crs_meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
-    pub session_preparer: SessionPreparer,
+    pub crs_meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+    pub session_preparer_getter: SessionPreparerGetter,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
     // Map of ongoing crs generation tasks
@@ -100,8 +99,9 @@ impl<
             "Starting crs generation on kms for request ID {:?}",
             inner.request_id
         );
+        let (req_id, dkg_params, eip712_domain, context_id) =
+            validate_crs_gen_request(inner.clone())?;
 
-        let dkg_params = retrieve_parameters(inner.params)?;
         let crs_params = dkg_params
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
@@ -114,29 +114,22 @@ impl<
                 )
             })?;
 
-        let req_id =
-            parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::CrsGenRequest)?;
-
-        let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
-
         // Validate the request ID before proceeding
         {
             let guarded_meta_store = self.crs_meta_store.read().await;
 
             if guarded_meta_store.exists(&req_id) {
                 return Err(Status::already_exists(format!(
-                    "CRS gen request with ID {} already exists",
-                    req_id
+                    "CRS gen request with ID {req_id} already exists"
                 )));
             }
 
-            if tonic_handle_potential_err(
+            if ok_or_tonic_abort(
                 self.crypto_storage.crs_exists(&req_id).await,
                 "Could not check crs existance in storage".to_string(),
             )? {
                 return Err(Status::already_exists(format!(
-                    "CRS with key ID {} already exists",
-                    req_id,
+                    "CRS with key ID {req_id} already exists"
                 )));
             }
         }
@@ -150,6 +143,7 @@ impl<
             dkg_params,
             &eip712_domain,
             permit,
+            context_id,
             insecure,
         )
         .await
@@ -166,9 +160,13 @@ impl<
         dkg_params: DKGParams,
         eip712_domain: &alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
+        context_id: Option<ContextId>,
         insecure: bool,
     ) -> anyhow::Result<()> {
-        //Retrieve the correct tag
+        let context_id = context_id.as_ref().unwrap_or(&DEFAULT_MPC_CONTEXT);
+        let session_preparer = self.session_preparer_getter.get(context_id).await?;
+
+        // Retrieve the correct tag
         let op_tag = if insecure {
             OP_INSECURE_CRS_GEN_REQUEST
         } else {
@@ -179,19 +177,16 @@ impl<
         // that runs the computation
         let timer = metrics::METRICS
             .time_operation(op_tag)
-            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string());
+            .tag(TAG_PARTY_ID, session_preparer.my_role()?.to_string());
         {
             let mut guarded_meta_store = self.crs_meta_store.write().await;
             guarded_meta_store.insert(&req_id)?;
         }
 
-        let session_id = req_id.derive_session_id().inspect_err(|_| {
-            metrics::METRICS.increment_error_counter(op_tag, ERR_INVALID_REQUEST);
-        })?;
+        let session_id = req_id.derive_session_id()?;
         // CRS ceremony requires a sync network
-        let session = self
-            .session_preparer
-            .make_base_session(session_id, NetworkMode::Sync)
+        let session = session_preparer
+            .make_base_session(session_id, *context_id, NetworkMode::Sync)
             .await?;
 
         let meta_store = Arc::clone(&self.crs_meta_store);
@@ -251,10 +246,45 @@ impl<
             guarded_meta_store.retrieve(&request_id)
         };
         let crs_data = handle_res_mapping(status, &request_id, "CRS generation").await?;
-        Ok(Response::new(CrsGenResult {
-            request_id: Some(request_id.into()),
-            crs_results: Some(crs_data.into()),
-        }))
+
+        match crs_data {
+            CrsGenMetadata::Current(crs_data) => {
+                if crs_data.crs_id != request_id {
+                    return Err(Status::new(
+                        tonic::Code::Internal,
+                        format!(
+                            "Request ID mismatch: expected {}, got {}",
+                            request_id, crs_data.crs_id
+                        ),
+                    ));
+                }
+                Ok(Response::new(CrsGenResult {
+                    request_id: Some(request_id.into()),
+                    crs_digest: crs_data.crs_digest,
+                    max_num_bits: crs_data.max_num_bits,
+                    external_signature: crs_data.external_signature,
+                }))
+            }
+            CrsGenMetadata::LegacyV0(_) => {
+                // This is a legacy result, we cannot return the crs_digest or external_signature
+                // as they're signed using a different SolStruct and hashed using a different domain separator
+                tracing::warn!(
+                    "Received a legacy CRS generation result,
+                not returning crs_digest or external_signature"
+                );
+                // The old SignedPubDataHandleInternal does not store max_num_bits
+                // so we have to read it from storage if we want to return it.
+                // But because this is a legacy result and the call path will not reach here
+                // (because a restart is needed to upgrade to the new version and the meta store is deleted from RAM)
+                // it is never needed, so we just return 0 for max_num_bits.
+                Ok(Response::new(CrsGenResult {
+                    request_id: Some(request_id.into()),
+                    crs_digest: vec![],
+                    max_num_bits: 0,
+                    external_signature: vec![],
+                }))
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -264,7 +294,7 @@ impl<
         max_num_bits: Option<u32>,
         mut base_session: BaseSession,
         rng: AesRng,
-        meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
+        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
@@ -294,15 +324,8 @@ impl<
                 let input_party_id = 1;
                 let domain = eip712_domain.clone();
                 if my_role.one_based() == input_party_id {
-                    let crs_res = async_generate_crs(
-                        &sk,
-                        params,
-                        max_num_bits,
-                        domain,
-                        base_session.session_id(),
-                        rng,
-                    )
-                    .await;
+                    let crs_res =
+                        async_generate_crs(&sk, params, max_num_bits, domain, req_id, rng).await;
                     let crs = match crs_res {
                         Ok((crs, _)) => crs,
                         Err(e) => {
@@ -326,12 +349,14 @@ impl<
                 internal.try_into_tfhe_zk_pok_pp(&pke_params, base_session.session_id())
             })
         };
+
         let res_info_pp = pp.and_then(|pp| {
-            compute_info(&sk, &DSEP_PUBDATA_CRS, &pp, &eip712_domain).map(|info| (pp, info))
+            compute_info_crs(&sk, &DSEP_PUBDATA_CRS, req_id, &pp, &eip712_domain)
+                .map(|pub_info| (pp, pub_info))
         });
 
-        let (pp_id, meta_data) = match res_info_pp {
-            Ok((meta, pp_id)) => (meta, pp_id),
+        let (pp, crs_info) = match res_info_pp {
+            Ok((pp, pp_id)) => (pp, pp_id),
             Err(e) => {
                 let mut guarded_meta_store = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
@@ -340,11 +365,11 @@ impl<
             }
         };
 
-        tracing::info!("CRS generation completed for req_id={req_id:?}, storing the CRS.");
+        tracing::info!("CRS generation completed for req_id={req_id}, storing the CRS.");
         //Note: We can't easily check here whether we succeeded writing to the meta store
         //thus we can't increment the error counter if it fails
         crypto_storage
-            .write_crs_with_meta_store(req_id, pp_id, meta_data, meta_store)
+            .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)
             .await;
 
         let crs_stop_timer = Instant::now();
@@ -398,7 +423,7 @@ impl<
                 base_kms: value.base_kms.new_instance().await,
                 crypto_storage: value.crypto_storage.clone(),
                 crs_meta_store: Arc::clone(&value.crs_meta_store),
-                session_preparer: value.session_preparer.new_instance().await,
+                session_preparer_getter: value.session_preparer_getter.clone(),
                 tracker: Arc::clone(&value.tracker),
                 ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
@@ -438,15 +463,25 @@ impl<
 mod tests {
     use std::time::Duration;
 
-    use kms_grpc::{kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain};
+    use kms_grpc::{
+        kms::v1::FheParameter,
+        rpc_types::{alloy_to_protobuf_domain, KMSType},
+    };
+    use rand::SeedableRng;
     use threshold_fhe::{
         algebra::structure_traits::Ring,
         execution::{
-            runtime::session::BaseSessionHandles, zk::ceremony::FinalizedInternalPublicParameter,
+            runtime::session::BaseSessionHandles, small_execution::prss::PRSSSetup,
+            zk::ceremony::FinalizedInternalPublicParameter,
         },
     };
 
-    use crate::{consts::DURATION_WAITING_ON_RESULT_SECONDS, dummy_domain};
+    use crate::{
+        consts::DURATION_WAITING_ON_RESULT_SECONDS,
+        cryptography::internal_crypto_types::gen_sig_keys,
+        dummy_domain,
+        engine::threshold::service::session::{SessionPreparer, SessionPreparerManager},
+    };
 
     use super::*;
 
@@ -457,9 +492,10 @@ mod tests {
         > RealCrsGenerator<PubS, PrivS, C>
     {
         async fn init_test(
+            base_kms: BaseKmsStruct,
             pub_storage: PubS,
             priv_storage: PrivS,
-            session_preparer: SessionPreparer,
+            session_preparer_getter: SessionPreparerGetter,
         ) -> Self {
             let crypto_storage = ThresholdCryptoMaterialStorage::new(
                 pub_storage,
@@ -473,10 +509,10 @@ mod tests {
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
             let rate_limiter = RateLimiter::default();
             Self {
-                base_kms: session_preparer.base_kms.new_instance().await,
+                base_kms,
                 crypto_storage,
                 crs_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-                session_preparer,
+                session_preparer_getter,
                 tracker,
                 ongoing,
                 rate_limiter,
@@ -529,54 +565,44 @@ mod tests {
         }
     }
 
-    impl RealCrsGenerator<ram::RamStorage, ram::RamStorage, InsecureCeremony> {
-        async fn init_test_insecure_ceremony(session_preparer: SessionPreparer) -> Self {
-            let pub_storage = ram::RamStorage::new();
-            let priv_storage = ram::RamStorage::new();
-            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test(
-                pub_storage,
-                priv_storage,
-                session_preparer,
-            )
-            .await
-        }
-    }
+    async fn make_crs_gen<C: Ceremony + 'static>(
+        rng: &mut AesRng,
+    ) -> RealCrsGenerator<ram::RamStorage, ram::RamStorage, C> {
+        let (_pk, sk) = gen_sig_keys(rng);
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            prss_setup_z128,
+            prss_setup_z64,
+        );
+        session_preparer_manager
+            .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
+            .await;
 
-    impl RealCrsGenerator<ram::RamStorage, ram::RamStorage, BrokenCeremony> {
-        async fn init_test_broken_ceremony(session_preparer: SessionPreparer) -> Self {
-            let pub_storage = ram::RamStorage::new();
-            let priv_storage = ram::RamStorage::new();
-            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, BrokenCeremony>::init_test(
-                pub_storage,
-                priv_storage,
-                session_preparer,
-            )
-            .await
-        }
-    }
-
-    impl RealCrsGenerator<ram::RamStorage, ram::RamStorage, SlowCeremony> {
-        async fn init_test_slow_ceremony(session_preparer: SessionPreparer) -> Self {
-            let pub_storage = ram::RamStorage::new();
-            let priv_storage = ram::RamStorage::new();
-            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, SlowCeremony>::init_test(
-                pub_storage,
-                priv_storage,
-                session_preparer,
-            )
-            .await
-        }
+        let pub_storage = ram::RamStorage::new();
+        let priv_storage = ram::RamStorage::new();
+        RealCrsGenerator::<ram::RamStorage, ram::RamStorage, C>::init_test(
+            base_kms,
+            pub_storage,
+            priv_storage,
+            session_preparer_manager.make_getter(),
+        )
+        .await
     }
 
     #[tokio::test]
     async fn invalid_argument() {
-        let session_preparer = SessionPreparer::new_test_session(true);
-
-        let crs_gen =
-            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
-                session_preparer,
-            )
-            .await;
+        let mut rng = AesRng::seed_from_u64(123);
+        let crs_gen = make_crs_gen::<InsecureCeremony>(&mut rng).await;
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         {
@@ -586,6 +612,7 @@ mod tests {
                 max_num_bits: None,
                 request_id: None,
                 domain: Some(domain),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             };
 
             let request = Request::new(req);
@@ -608,13 +635,14 @@ mod tests {
 
         {
             // use the wrong fhe parameter
-            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let req_id = RequestId::new_random(&mut rng);
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let req = CrsGenRequest {
                 params: 200, // wrong parameter
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: Some(domain),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             };
 
             let request = Request::new(req);
@@ -625,12 +653,13 @@ mod tests {
 
         {
             // missing domain
-            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let req_id = RequestId::new_random(&mut rng);
             let req = CrsGenRequest {
                 params: FheParameter::Default as i32,
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             };
 
             let request = Request::new(req);
@@ -644,12 +673,13 @@ mod tests {
             // wrong domain
             let mut domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             domain.verifying_contract = "wrong_contract".to_string();
-            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let req_id = RequestId::new_random(&mut rng);
             let req = CrsGenRequest {
                 params: FheParameter::Default as i32,
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: Some(domain),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             };
 
             let request = Request::new(req);
@@ -662,15 +692,10 @@ mod tests {
 
     #[tokio::test]
     async fn not_found() {
-        let session_preparer = SessionPreparer::new_test_session(true);
+        let mut rng = AesRng::seed_from_u64(123);
+        let crs_gen = make_crs_gen::<InsecureCeremony>(&mut rng).await;
 
-        let crs_gen =
-            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
-                session_preparer,
-            )
-            .await;
-
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req_id = RequestId::new_random(&mut rng);
         assert_eq!(
             crs_gen
                 .get_result(Request::new(req_id.into()))
@@ -683,23 +708,20 @@ mod tests {
 
     #[tokio::test]
     async fn resource_exhausted() {
-        let session_preparer = SessionPreparer::new_test_session(true);
+        let mut rng = AesRng::seed_from_u64(123);
+        let mut crs_gen = make_crs_gen::<InsecureCeremony>(&mut rng).await;
 
-        let mut crs_gen =
-            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
-                session_preparer,
-            )
-            .await;
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
         crs_gen.set_bucket_size(1);
 
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
 
         let request = Request::new(req);
@@ -712,21 +734,17 @@ mod tests {
     async fn internal_failure() {
         // Even if the CRS ceremony fails, we should not return an error
         // because it's happening in the background.
-        let session_preparer = SessionPreparer::new_test_session(true);
+        let mut rng = AesRng::seed_from_u64(123);
+        let crs_gen = make_crs_gen::<BrokenCeremony>(&mut rng).await;
 
-        let crs_gen =
-                RealCrsGenerator::<ram::RamStorage, ram::RamStorage, BrokenCeremony>::init_test_broken_ceremony(
-                    session_preparer,
-                )
-                .await;
-
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
 
         // we expect the CRS generation call to pass, but only get an error when we try to retrieve the result
@@ -744,15 +762,11 @@ mod tests {
 
     #[tokio::test]
     async fn unavailable() {
-        let session_preparer = SessionPreparer::new_test_session(true);
+        let mut rng = AesRng::seed_from_u64(123);
+        // use the slow CRS gen
+        let crs_gen = make_crs_gen::<SlowCeremony>(&mut rng).await;
 
-        let crs_gen =
-            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, SlowCeremony>::init_test_slow_ceremony(
-                session_preparer,
-            )
-            .await;
-
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req_id = RequestId::new_random(&mut rng);
 
         // start the ceremony but immediately fetch the result, it should be not found too
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
@@ -761,6 +775,7 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
 
         let request = Request::new(req);
@@ -777,21 +792,17 @@ mod tests {
 
     #[tokio::test]
     async fn already_exists() {
-        let session_preparer = SessionPreparer::new_test_session(true);
+        let mut rng = AesRng::seed_from_u64(123);
+        let crs_gen = make_crs_gen::<InsecureCeremony>(&mut rng).await;
 
-        let crs_gen =
-            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
-                session_preparer,
-            )
-            .await;
-
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
 
         crs_gen.crs_gen(Request::new(req.clone())).await.unwrap();
@@ -805,22 +816,18 @@ mod tests {
 
     #[tokio::test]
     async fn sunshine() {
-        let session_preparer = SessionPreparer::new_test_session(true);
-
-        let crs_gen =
-            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
-                session_preparer,
-            )
-            .await;
+        let mut rng = AesRng::seed_from_u64(123);
+        let crs_gen = make_crs_gen::<InsecureCeremony>(&mut rng).await;
 
         // Test that we can successfully generate a CRS
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
 
         let request = Request::new(req);

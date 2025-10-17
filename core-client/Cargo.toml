@@ -17,16 +17,17 @@ name = "kms-core-client"
 path = "src/bin.rs"
 
 [dependencies]
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
 aes-prng.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
-alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 alloy-signer.workspace = true
+alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
+anyhow.workspace = true
 attestation-doc-validation.workspace = true
 bytes.workspace = true
-reqwest = { workspace = true, features = ["json", "rustls-tls"] }
-anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
-observability.workspace = true
 hex.workspace = true
 kms = { workspace = true, default-features = false, features = [
     "non-wasm",
@@ -34,12 +35,15 @@ kms = { workspace = true, default-features = false, features = [
     "insecure",
 ] }
 kms-grpc.workspace = true
+observability.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 serde = { workspace = true, features = ["derive"] }
 strum.workspace = true
 strum_macros.workspace = true
+tempfile.workspace = true
 tfhe.workspace = true
-threshold-fhe.workspace = true
+threshold-fhe = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tonic = { workspace = true }
 tracing = { workspace = true, features = ["log"] }
@@ -48,9 +52,13 @@ tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 validator.workspace = true
 
 [dev-dependencies]
-test-context = "=0.4.1"
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
+assert_cmd.workspace = true
 cc-tests-utils = { path = "./tests-utils" }
 serial_test.workspace = true
+test-context.workspace = true
 
 [build-dependencies]
 tonic-build.workspace = true

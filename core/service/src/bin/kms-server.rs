@@ -1,11 +1,19 @@
+use anyhow::ensure;
 use clap::Parser;
 use futures_util::future::OptionFuture;
 use k256::ecdsa::SigningKey;
 use kms_grpc::rpc_types::PubDataType;
 use kms_lib::{
-    conf::{init_conf_kms_core_telemetry, threshold::TlsConf, CoreConfig},
-    consts::SIGNING_KEY_ID,
-    cryptography::attestation::{make_security_module, SecurityModule},
+    conf::{
+        init_conf_kms_core_telemetry,
+        threshold::{PeerConf, ThresholdPartyConf, TlsConf},
+        CoreConfig,
+    },
+    consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID},
+    cryptography::{
+        attestation::{make_security_module, SecurityModule, SecurityModuleProxy},
+        internal_crypto_types::PrivateSigKey,
+    },
     engine::{
         centralized::central_kms::RealCentralizedKms, run_server,
         threshold::service::new_real_threshold_kms,
@@ -13,7 +21,7 @@ use kms_lib::{
     grpc::MetaStoreStatusServiceImpl,
     vault::{
         aws::build_aws_sdk_config,
-        keychain::{awskms::build_aws_kms_client, make_keychain},
+        keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
         storage::{
             crypto_material::get_core_signing_key, make_storage, read_text_at_request_id,
             s3::build_s3_client, StorageCache, StorageType,
@@ -21,9 +29,20 @@ use kms_lib::{
         Vault,
     },
 };
-use std::{net::ToSocketAddrs, sync::Arc};
-use threshold_fhe::{execution::runtime::party::Role, networking::tls::BasicTLSConfig};
+use std::{env, net::ToSocketAddrs, sync::Arc, thread};
+use threshold_fhe::{
+    execution::runtime::party::Role,
+    networking::tls::{build_ca_certs_map, AttestedVerifier},
+};
 use tokio::net::TcpListener;
+use tokio_rustls::rustls::{
+    client::{danger::DangerousClientConfigBuilder, ClientConfig},
+    crypto::aws_lc_rs::default_provider as aws_lc_rs_default_provider,
+    pki_types::{CertificateDer, PrivateKeyDer, UnixTime},
+    server::ServerConfig,
+    version::TLS13,
+};
+use webpki::{anchor_from_trusted_cert, EndEntityCert, KeyUsage};
 
 #[derive(Parser)]
 #[clap(name = "KMS server")]
@@ -53,6 +72,194 @@ struct KmsArgs {
     config_file: String,
 }
 
+async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener {
+    let mpc_socket_addr_str = format!(
+        "{}:{}",
+        threshold_config.listen_address, threshold_config.listen_port
+    );
+    let mpc_socket_addr = mpc_socket_addr_str
+        .to_socket_addrs()
+        .unwrap_or_else(|e| {
+            panic!(
+                "Wrong MPC IP Address: {} \n {:?}",
+                threshold_config.listen_address, e
+            )
+        })
+        .next()
+        .unwrap_or_else(|| {
+            panic!(
+                "Failed to parse MPC IP Address: {}",
+                threshold_config.listen_address
+            )
+        });
+    let mpc_listener = TcpListener::bind(mpc_socket_addr)
+        .await
+        .unwrap_or_else(|e| panic!("Could not bind to {mpc_socket_addr} \n {e:?}"));
+
+    tracing::info!(
+                "Starting threshold KMS server v{} for party {}, listening for MPC communication on {:?}...",
+                env!("CARGO_PKG_VERSION"),
+                threshold_config.my_id,
+                mpc_socket_addr
+    );
+    if let Some(peers) = &threshold_config.peers {
+        tracing::info!(
+            "Parameters: using threshold t={}, knowing n={} parties in total (myself included)",
+            threshold_config.threshold,
+            peers.len()
+        );
+    }
+
+    mpc_listener
+}
+
+/// Communication between MPC parties can be optionally protected with mTLS
+/// which requires a TLS certificate valid both for server and client
+/// authentication.  We have to construct rustls config structs ourselves
+/// instead of using the wrapper from tonic::transport because we need to
+/// provide our own certificate verifier that can validate bundled attestation
+/// documents and that can receive new trust roots on the context change.
+async fn build_tls_config(
+    my_id: usize,
+    peers: &[PeerConf],
+    tls_config: &TlsConf,
+    security_module: Option<Arc<SecurityModuleProxy>>,
+    public_vault: &Vault,
+    sk: &PrivateSigKey,
+    #[cfg(feature = "insecure")] mock_enclave: bool,
+) -> anyhow::Result<(ServerConfig, ClientConfig)> {
+    let context_id = *DEFAULT_MPC_CONTEXT;
+    aws_lc_rs_default_provider()
+        .install_default()
+        .unwrap_or_else(|_| {
+            panic!("Failed to load default crypto provider");
+        });
+    // Communication between MPC parties can be optionally protected
+    // with mTLS which requires a TLS certificate valid both for server
+    // and client authentication.
+    let ca_certs_list = peers
+        .iter()
+        .map(|peer| {
+            peer.tls_cert
+                .as_ref()
+                .map(|cert| cert.into_pem(peer.party_id, peers))
+                .unwrap_or_else(|| panic!("No CA certificate present for peer {}", peer.party_id))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let ca_certs = build_ca_certs_map(ca_certs_list.into_iter())?;
+
+    let (cert, key, trusted_releases, pcr8_expected) = match tls_config {
+        TlsConf::Manual { ref cert, ref key } => {
+            tracing::info!("Using third-party TLS certificate without Nitro remote attestation");
+            let cert = cert.into_pem(my_id, peers)?;
+            let key = key.into_pem()?;
+            (cert, key, None, false)
+        }
+        // When remote attestation is used, the enclave generates a
+        // self-signed TLS certificate for a private key that never
+        // leaves its memory. This certificate includes the AWS
+        // Nitro attestation document and the certificate used
+        // by the MPC party to sign the enclave image it is
+        // running. The private key is not supplied, since it needs
+        // to be generated inside an AWS Nitro enclave.
+        TlsConf::SemiAuto {
+            ref cert,
+            ref trusted_releases,
+        } => {
+            let security_module = security_module.as_ref().unwrap_or_else(|| {
+                            panic!("EIF signing certificate present but not security module, unable to construct TLS identity")
+                        });
+            tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
+            let eif_signing_cert_pem = cert.into_pem(my_id, peers)?;
+            let (cert, key) = security_module
+                .wrap_x509_cert(context_id, eif_signing_cert_pem, true)
+                .await?;
+            (cert, key, Some(Arc::new(trusted_releases.clone())), true)
+        }
+        TlsConf::FullAuto {
+            ref trusted_releases,
+        } => {
+            let security_module = security_module
+                .as_ref()
+                .unwrap_or_else(|| panic!("TLS identity and security module not present"));
+            tracing::info!(
+                "Using TLS certificate with Nitro remote attestation signed by onboard CA"
+            );
+            let ca_cert_bytes = read_text_at_request_id(
+                public_vault,
+                &SIGNING_KEY_ID,
+                &PubDataType::CACert.to_string(),
+            )
+            .await?;
+            let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
+
+            // check if the CA certificate matches the KMS signing key
+            let ca_cert_x509 = ca_cert.parse_x509()?;
+            if let x509_parser::public_key::PublicKey::EC(pk_sec1) =
+                ca_cert_x509.public_key().parsed()?
+            {
+                let ca_pk = Box::new(pk_sec1.data());
+                let sk_vk = sk.sk().verifying_key().to_encoded_point(false).to_bytes();
+                ensure!(
+                    **ca_pk == *sk_vk,
+                    "CA certificate public key {:?} doesn't correspond to the KMS verifying key {:?}",
+                    hex::encode(*ca_pk),
+                    hex::encode(sk_vk)
+                );
+            } else {
+                panic!("CA certificate public key isn't ECDSA");
+            };
+
+            let (cert, key) = security_module
+                .issue_x509_cert(context_id, &ca_cert, sk, true)
+                .await?;
+
+            // sanity check
+            EndEntityCert::try_from(&cert.contents.as_slice().into())?
+                .verify_for_usage(
+                    &[webpki::aws_lc_rs::ECDSA_P256K1_SHA256],
+                    &[anchor_from_trusted_cert(
+                        &ca_cert.contents.as_slice().into(),
+                    )?],
+                    &[],
+                    UnixTime::now(),
+                    KeyUsage::server_auth(),
+                    None,
+                    None,
+                )
+                .unwrap_or_else(|e| {
+                    panic!("TLS certificate signed by enclave CA is invalid, cannot proceed: {e}")
+                });
+
+            (cert, key, Some(Arc::new(trusted_releases.clone())), false)
+        }
+    };
+
+    let cert_chain = vec![CertificateDer::from_slice(cert.contents.as_slice()).into_owned()];
+    let key_der = PrivateKeyDer::try_from(key.contents.as_slice())
+        .unwrap_or_else(|e| panic!("Could not read TLS private key: {e}"))
+        .clone_key();
+    let verifier = Arc::new(AttestedVerifier::new(
+        pcr8_expected,
+        #[cfg(feature = "insecure")]
+        mock_enclave,
+    )?);
+    // Adding a context to the verifier is optional at this point and
+    // can be done at any point of the application lifecycle, for
+    // example, when a new context is set through a GRPC call.
+    verifier.add_context(context_id.derive_session_id()?, ca_certs, trusted_releases)?;
+
+    let server_config = ServerConfig::builder_with_protocol_versions(&[&TLS13])
+        .with_client_cert_verifier(verifier.clone())
+        .with_single_cert(cert_chain.clone(), key_der.clone_key())?;
+    let client_config = DangerousClientConfigBuilder {
+        cfg: ClientConfig::builder_with_protocol_versions(&[&TLS13]),
+    }
+    .with_custom_certificate_verifier(verifier)
+    .with_client_auth_cert(cert_chain, key_der)?;
+    Ok((server_config, client_config))
+}
+
 /// Starts a KMS server.
 /// We support two execution modes, `centralized` or `threshold`, that have to be specified with the `mode` parameter in the configuration file.
 /// See the help page for additional details.
@@ -65,6 +272,15 @@ async fn main() -> anyhow::Result<()> {
         init_conf_kms_core_telemetry::<CoreConfig>(&args.config_file).await?;
 
     tracing::info!("Starting KMS Server with core config: {:?}", &core_config);
+
+    tracing::info!(
+        "Multi-threading values: TOKIO_WORKER_THREADS: {:?}, tokio::num_workers: {}, RAYON_NUM_THREADS: {:?}, rayon::current_num_threads: {}, available_parallelism: {}.",
+        env::var_os("TOKIO_WORKER_THREADS").unwrap_or_else(|| "not set".into()),
+        tokio::runtime::Handle::current().metrics().num_workers(),
+        env::var_os("RAYON_NUM_THREADS").unwrap_or_else(||  "not set".into()),
+        rayon::current_num_threads(),
+        thread::available_parallelism()?.get(),
+    );
 
     let party_role = core_config
         .threshold
@@ -162,9 +378,15 @@ async fn main() -> anyhow::Result<()> {
             .map(|tls| tls.is_semi_auto() || tls.is_full_auto())
             .unwrap_or(false);
     let security_module = need_security_module
-        .then(make_security_module)
+        .then(|| {
+            make_security_module(
+                #[cfg(feature = "insecure")]
+                core_config.mock_enclave.is_some_and(|m| m),
+            )
+        })
         .transpose()
-        .inspect_err(|e| tracing::warn!("Could not initialize security module: {e}"))?;
+        .inspect_err(|e| tracing::warn!("Could not initialize security module: {e}"))?
+        .map(Arc::new);
 
     // public vault
     let public_storage = make_storage(
@@ -198,13 +420,13 @@ async fn main() -> anyhow::Result<()> {
             .as_ref()
             .and_then(|v| v.keychain.as_ref())
             .map(|k| {
-                make_keychain(
+                // Observe that the public storage is used to load a backup_id and backup key
+                // in the case where the custodian based secret sharing is used
+                make_keychain_proxy(
                     k,
                     awskms_client.clone(),
-                    security_module.clone(),
-                    None,
-                    None,
-                    None,
+                    security_module.as_ref().map(Arc::clone),
+                    Some(&public_vault.storage),
                 )
             }),
     )
@@ -221,6 +443,10 @@ async fn main() -> anyhow::Result<()> {
 
     // compute corresponding public key and derive address from private sig key
     let pk = SigningKey::verifying_key(sk.sk());
+    tracing::info!(
+        "KMS verifying key is {}",
+        hex::encode(pk.to_encoded_point(false).to_bytes())
+    );
     tracing::info!(
         "Public ethereum address is {}",
         alloy_signer::utils::public_key_to_address(pk)
@@ -249,13 +475,11 @@ async fn main() -> anyhow::Result<()> {
             .as_ref()
             .and_then(|v| v.keychain.as_ref())
             .map(|k| {
-                make_keychain(
+                make_keychain_proxy(
                     k,
                     awskms_client.clone(),
-                    security_module.clone(),
+                    security_module.as_ref().map(Arc::clone),
                     Some(&public_vault),
-                    party_role,
-                    Some(sk.clone()),
                 )
             }),
     )
@@ -297,111 +521,47 @@ async fn main() -> anyhow::Result<()> {
 
     match core_config.threshold {
         Some(threshold_config) => {
-            let mpc_socket_addr_str = format!(
-                "{}:{}",
-                threshold_config.listen_address, threshold_config.listen_port
-            );
-            let mpc_socket_addr = mpc_socket_addr_str
-                .to_socket_addrs()
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "Wrong MPC IP Address: {} \n {:?}",
-                        threshold_config.listen_address, e
-                    )
-                })
-                .next()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "Failed to parse MPC IP Address: {}",
-                        threshold_config.listen_address
-                    )
-                });
-            let mpc_listener = TcpListener::bind(mpc_socket_addr)
-                .await
-                .unwrap_or_else(|e| panic!("Could not bind to {mpc_socket_addr} \n {e:?}"));
+            let mpc_listener = make_mpc_listener(&threshold_config).await;
 
-            tracing::info!(
-                "Starting threshold KMS server v{} for party {}, listening for MPC communication on {:?}...",
-                env!("CARGO_PKG_VERSION"),
-                threshold_config.my_id,
-                mpc_socket_addr
-            );
-            tracing::info!(
-                "Parameters: using threshold t={}, knowing n={} parties in total (myself included)",
-                threshold_config.threshold,
-                threshold_config.peers.len()
-            );
-
-            // Communication between MPC parties can be optionally protected
-            // with mTLS which requires a TLS certificate valid both for server
-            // and client authentication.
-            let tls_identity = match threshold_config.tls {
-                Some(TlsConf::Manual { ref cert, ref key }) => {
-                    let cert =
-                        cert.into_pem(threshold_config.my_id, threshold_config.peers.as_slice())?;
-                    let key = key.into_pem()?;
-                    Some(BasicTLSConfig {
-                        cert,
-                        key,
-                        trusted_releases: None,
-                        pcr8_expected: false,
-                    })
-                }
-                // When remote attestation is used, the enclave generates a
-                // self-signed TLS certificate for a private key that never
-                // leaves its memory. This certificate includes the AWS
-                // Nitro attestation document and the certificate used
-                // by the MPC party to sign the enclave image it is
-                // running. The private key is not supplied, since it needs
-                // to be generated inside an AWS Nitro enclave.
-                Some(TlsConf::SemiAuto {
-                    ref cert,
-                    ref trusted_releases,
-                }) => {
-                    let security_module = security_module.as_ref().unwrap_or_else(|| {
-                            panic!("EIF signing certificate present but not security module, unable to construct TLS identity")
-                        });
-                    tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
-                    let eif_signing_cert_pem =
-                        cert.into_pem(threshold_config.my_id, threshold_config.peers.as_slice())?;
-                    let (cert, key) = security_module.wrap_x509_cert(eif_signing_cert_pem).await?;
-                    Some(BasicTLSConfig {
-                        cert,
-                        key,
-                        trusted_releases: Some(Arc::new(trusted_releases.clone())),
-                        pcr8_expected: true,
-                    })
-                }
-                Some(TlsConf::FullAuto {
-                    ref trusted_releases,
-                }) => {
-                    let security_module = security_module
-                        .as_ref()
-                        .unwrap_or_else(|| panic!("TLS identity and security module not present"));
-                    tracing::info!(
-                        "Using TLS certificate with Nitro remote attestation signed by onboard CA"
-                    );
-                    let ca_cert_bytes = read_text_at_request_id(
-                        &public_vault,
-                        &SIGNING_KEY_ID,
-                        &PubDataType::CACert.to_string(),
-                    )
-                    .await?;
-                    let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
-
-                    let (cert, key) = security_module.issue_x509_cert(ca_cert, &sk).await?;
-                    Some(BasicTLSConfig {
-                        cert,
-                        key,
-                        trusted_releases: Some(Arc::new(trusted_releases.clone())),
-                        pcr8_expected: false,
-                    })
-                }
+            let tls_identity = match &threshold_config.tls {
+                Some(tls_config) => Some(match &threshold_config.peers {
+                    Some(peers) => {
+                        build_tls_config(
+                            threshold_config.my_id,
+                            peers,
+                            tls_config,
+                            security_module.clone(),
+                            &public_vault,
+                            &sk,
+                            #[cfg(feature = "insecure")]
+                            core_config.mock_enclave.is_some_and(|m| m),
+                        )
+                        .await?
+                    }
+                    None => {
+                        panic!("TLS enabled but peer list not provided: reading peer list from the context unsupported yet")
+                    }
+                }),
                 None => {
-                    tracing::warn!("No TLS identity - using plaintext communication");
+                    tracing::warn!(
+                        "No TLS identity - using plaintext communication between MPC nodes"
+                    );
                     None
                 }
             };
+
+            #[cfg(not(feature = "insecure"))]
+            let need_peer_tcp_proxy = need_security_module;
+            #[cfg(feature = "insecure")]
+            let need_peer_tcp_proxy =
+                need_security_module && !core_config.mock_enclave.is_some_and(|m| m);
+
+            if need_peer_tcp_proxy {
+                tracing::warn!("KMS server will connect to peers through vsock proxies");
+            } else {
+                tracing::warn!("KMS server will connect to peers directly");
+            };
+
             let (kms, health_service, metastore_status_service) = new_real_threshold_kms(
                 threshold_config,
                 public_vault,
@@ -411,6 +571,7 @@ async fn main() -> anyhow::Result<()> {
                 mpc_listener,
                 sk,
                 tls_identity,
+                need_peer_tcp_proxy,
                 false,
                 core_config.rate_limiter_conf,
                 std::future::pending(),
@@ -436,6 +597,7 @@ async fn main() -> anyhow::Result<()> {
                 public_vault,
                 private_vault,
                 backup_vault,
+                security_module,
                 sk,
                 core_config.rate_limiter_conf,
             )
@@ -446,6 +608,7 @@ async fn main() -> anyhow::Result<()> {
                 Some(Arc::clone(kms.get_user_dec_meta_store())), // user_dec_store
                 Some(Arc::clone(kms.get_crs_meta_store())),     // crs_store
                 None, // preproc_store - not available in centralized mode
+                Some(Arc::clone(kms.get_custodian_meta_store())), // custodian_store
             ));
             run_server(
                 core_config.service,

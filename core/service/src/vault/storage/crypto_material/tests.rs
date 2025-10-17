@@ -1,20 +1,18 @@
 use crate::{
-    cryptography::internal_crypto_types::gen_sig_keys, dummy_domain,
-    engine::base::derive_request_id,
+    cryptography::internal_crypto_types::gen_sig_keys,
+    dummy_domain,
+    engine::base::{derive_request_id, KeyGenMetadata},
 };
 use aes_prng::AesRng;
-use kms_grpc::rpc_types::WrappedPublicKey;
+use kms_grpc::{rpc_types::WrappedPublicKey, RequestId};
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tfhe::{shortint::ClassicPBSParameters, CompactPublicKey, ConfigBuilder, ServerKey};
-use threshold_fhe::{
-    execution::tfhe_internals::{
-        parameters::DKGParams,
-        public_keysets::FhePubKeySet,
-        test_feature::{gen_key_set, keygen_all_party_shares_from_keyset},
-    },
-    session_id::SessionId,
+use threshold_fhe::execution::tfhe_internals::{
+    parameters::DKGParams,
+    public_keysets::FhePubKeySet,
+    test_feature::{gen_key_set, keygen_all_party_shares_from_keyset},
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -34,6 +32,11 @@ use crate::{
     },
 };
 
+fn dummy_info() -> KeyGenMetadata {
+    let req_id = derive_request_id("dummy_info").unwrap();
+    KeyGenMetadata::new(req_id, req_id, HashMap::new(), vec![])
+}
+
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn write_crs() {
@@ -48,10 +51,10 @@ async fn write_crs() {
     };
 
     let mut rng = AesRng::seed_from_u64(100);
-    let sid = SessionId::from(0);
+    let crs_id = RequestId::new_random(&mut rng);
     let domain = dummy_domain();
     let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-    let (pp, crs_info) = async_generate_crs(&sig_sk, TEST_PARAM, Some(1), domain, sid, rng)
+    let (pp, crs_info) = async_generate_crs(&sig_sk, TEST_PARAM, Some(1), domain, &crs_id, rng)
         .await
         .unwrap();
     let req_id = derive_request_id("write_crs").unwrap();
@@ -166,7 +169,7 @@ async fn write_central_keys() {
     let key_info = KmsFheKeyHandles {
         client_key,
         decompression_key: None,
-        public_key_info: HashMap::new(),
+        public_key_info: dummy_info(),
     };
     let fhe_key_set = FhePubKeySet {
         public_key,
@@ -263,7 +266,7 @@ async fn write_threshold_empty_update() {
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            HashMap::new(),
+            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -281,7 +284,7 @@ async fn write_threshold_empty_update() {
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            HashMap::new(),
+            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -311,7 +314,7 @@ async fn write_threshold_keys_meta_update() {
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            HashMap::new(),
+            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -331,7 +334,6 @@ async fn write_threshold_keys_meta_update() {
         let guard = meta_store.read().await;
         assert!(guard.exists(&req_id));
     }
-
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
     crypto_storage
@@ -339,7 +341,7 @@ async fn write_threshold_keys_meta_update() {
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            HashMap::new(),
+            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -365,7 +367,7 @@ async fn write_threshold_keys_failed_storage() {
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            HashMap::new(),
+            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -397,7 +399,7 @@ async fn write_threshold_keys_failed_storage() {
             &new_req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
-            HashMap::new(),
+            dummy_info(),
             meta_store.clone(),
         )
         .await;
@@ -438,15 +440,15 @@ fn setup_threshold_store() -> (
 
     let fhe_key_set = keyset.public_keys.clone();
 
-    let (integer_server_key, _, _, _, sns_key, _, _) =
+    let (integer_server_key, _, _, _, sns_key, _, _, _) =
         keyset.public_keys.server_key.clone().into_raw_parts();
 
     let threshold_fhe_keys = ThresholdFheKeys {
-        private_keys: key_shares[0].to_owned(),
-        integer_server_key,
-        sns_key,
+        private_keys: Arc::new(key_shares[0].to_owned()),
+        integer_server_key: Arc::new(integer_server_key),
+        sns_key: sns_key.map(Arc::new),
         decompression_key: None,
-        pk_meta_data: HashMap::new(),
+        meta_data: dummy_info(),
     };
     (crypto_storage, threshold_fhe_keys, fhe_key_set)
 }

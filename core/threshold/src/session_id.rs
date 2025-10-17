@@ -24,6 +24,10 @@ impl SessionId {
     pub fn to_le_bytes(&self) -> [u8; SESSION_ID_BYTES] {
         self.0.to_le_bytes()
     }
+
+    pub fn to_be_bytes(&self) -> [u8; SESSION_ID_BYTES] {
+        self.0.to_be_bytes()
+    }
 }
 
 impl FromStr for SessionId {
@@ -73,7 +77,8 @@ mod tests {
     /// Encrypts a small message with deterministic randomness
     fn generate_cipher(_key_name: &str, message: u8) -> RadixOrBoolCiphertext {
         let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
-        let (ct, _id, _tag) = FheUint8::encrypt(message, &keys.client_key).into_raw_parts();
+        let (ct, _id, _tag, _rerand_metadata) =
+            FheUint8::encrypt(message, &keys.client_key).into_raw_parts();
         RadixOrBoolCiphertext::Radix(ct)
     }
 

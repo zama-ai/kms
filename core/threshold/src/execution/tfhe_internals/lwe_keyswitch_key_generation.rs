@@ -19,7 +19,7 @@ use itertools::Itertools;
 use tfhe::{
     core_crypto::{
         commons::math::decomposition::DecompositionLevel,
-        prelude::{ByteRandomGenerator, LweKeyswitchKey, SeededLweKeyswitchKey},
+        prelude::{LweKeyswitchKey, ParallelByteRandomGenerator, SeededLweKeyswitchKey},
     },
     shortint::parameters::{DecompositionBaseLog, DecompositionLevelCount, LweDimension},
 };
@@ -39,7 +39,7 @@ pub fn generate_lwe_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
 where
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
 {
     let decomp_base_log = lwe_keyswitch_key.decomposition_base_log();
     let decomp_level_count = lwe_keyswitch_key.decomposition_level_count();
@@ -93,7 +93,7 @@ pub fn allocate_and_generate_new_lwe_keyswitch_key<Z, Gen, const EXTENSION_DEGRE
 where
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
 {
     let mut new_lwe_keyswitch_key = LweKeySwitchKeyShare::new(
         decomp_base_log,
@@ -128,7 +128,7 @@ fn generate_ksk_share<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -163,12 +163,12 @@ where
 
 /// Generate the Key Switch Key from a Glwe key given in Lwe format,
 /// and an actual Lwe key
-#[instrument(name="Gen KSK",skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen KSK",skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_key_switch_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -196,12 +196,12 @@ where
 
 /// Generate the Key Switch Key from a Glwe key given in Lwe format,
 /// and an actual Lwe key
-#[instrument(name="Gen compressed KSK",skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen compressed KSK",skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_compressed_key_switch_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -284,9 +284,9 @@ mod tests {
 
     use super::allocate_and_generate_new_lwe_keyswitch_key;
 
-    #[test]
+    #[tokio::test]
     #[ignore] //Ignore for now, might be able to run on CI with bigger timeout though
-    fn test_lwe_keyswitch() {
+    async fn test_lwe_keyswitch() {
         //Testing with NIST params P=8
         let lwe_dimension = 1024_usize;
         let polynomial_size = 512_usize;
@@ -392,7 +392,8 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
-        );
+        )
+        .await;
 
         let mut lwe_key_shares = HashMap::new();
         let mut glwe_key_shares = HashMap::new();

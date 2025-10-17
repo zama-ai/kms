@@ -21,7 +21,7 @@ use kms_lib::{
     },
     vault::{
         aws::build_aws_sdk_config,
-        keychain::{awskms::build_aws_kms_client, make_keychain},
+        keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
         storage::{
             delete_at_request_id, make_storage, s3::build_s3_client, Storage, StorageForBytes,
             StorageType,
@@ -32,7 +32,7 @@ use kms_lib::{
 use observability::conf::TelemetryConfig;
 use observability::telemetry::init_tracing;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 use strum::EnumIs;
 use threshold_fhe::execution::runtime::party::Role;
 use url::Url;
@@ -78,6 +78,9 @@ struct Args {
     /// Optional AWS KMS key spec that encrypts the private storage
     #[clap(long, default_value = None, value_enum)]
     root_key_spec: Option<AwsKmsKeySpec>,
+    #[cfg(feature = "insecure")]
+    #[clap(long, default_value_t = false)]
+    mock_enclave: bool,
     #[clap(long, default_value_t = StorageCommand::File, value_enum)]
     private_storage: StorageCommand,
     #[clap(long, default_value = None)]
@@ -159,6 +162,10 @@ enum Mode {
         /// certificates for all parties if not.
         #[clap(long, default_value = "kms-party")]
         tls_subject: String,
+
+        /// Whether to include a wildcard SAN entry for the CA certificates
+        #[clap(long, default_value_t = false)]
+        tls_wildcard: bool,
     },
 }
 
@@ -180,6 +187,7 @@ struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
     signing_key_party_id: Option<usize>,
     num_parties: usize,
     tls_subject: String,
+    tls_wildcard: bool,
 }
 
 impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
@@ -193,6 +201,7 @@ impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
         signing_key_party_id: Option<usize>,
         num_parties: usize,
         tls_subject: String,
+        tls_wildcard: bool,
     ) -> anyhow::Result<Self> {
         if num_parties < 2 {
             anyhow::bail!("the number of parties should be larger or equal to 2");
@@ -220,6 +229,7 @@ impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
             signing_key_party_id,
             num_parties,
             tls_subject,
+            tls_wildcard,
         })
     }
 }
@@ -273,7 +283,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     // security module (used for remote attestation with AWS KMS only so far)
     let security_module = if need_awskms_client {
-        Some(make_security_module()?)
+        Some(Arc::new(make_security_module(
+            #[cfg(feature = "insecure")]
+            args.mock_enclave,
+        )?))
     } else {
         None
     };
@@ -285,6 +298,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             signing_key_party_id: _,
             num_parties: n,
             tls_subject: _,
+            tls_wildcard: _,
         } => n,
     };
     let mut pub_storages = Vec::with_capacity(amount_storages);
@@ -296,32 +310,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 signing_key_party_id: _,
                 num_parties: _,
                 tls_subject: _,
+                tls_wildcard: _,
             } => Some(Role::indexed_from_one(i)),
         };
-        pub_storages.push(
-            make_storage(
-                match args.public_storage {
-                    StorageCommand::File => args.public_file_path.as_ref().map(|path| {
-                        StorageConf::File(FileStorage {
-                            path: path.to_path_buf(),
-                        })
-                    }),
-                    StorageCommand::S3 => Some(StorageConf::S3(S3Storage {
-                        bucket: args
-                            .public_s3_bucket
-                            .as_ref()
-                            .expect("S3 bucket must be set for public storage")
-                            .clone(),
-                        prefix: args.public_s3_prefix.clone(),
-                    })),
-                },
-                StorageType::PUB,
-                party_role,
-                None,
-                s3_client.clone(),
-            )
-            .unwrap(),
-        );
+        let pub_proxy_storage = make_storage(
+            match args.public_storage {
+                StorageCommand::File => args.public_file_path.as_ref().map(|path| {
+                    StorageConf::File(FileStorage {
+                        path: path.to_path_buf(),
+                    })
+                }),
+                StorageCommand::S3 => Some(StorageConf::S3(S3Storage {
+                    bucket: args
+                        .public_s3_bucket
+                        .as_ref()
+                        .expect("S3 bucket must be set for public storage")
+                        .clone(),
+                    prefix: args.public_s3_prefix.clone(),
+                })),
+            },
+            StorageType::PUB,
+            party_role,
+            None,
+            s3_client.clone(),
+        )
+        .unwrap();
         let private_keychain = OptionFuture::from(
             args.root_key_id
                 .as_ref()
@@ -334,18 +347,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .as_ref()
                 .map(|k| {
-                    make_keychain(
+                    make_keychain_proxy(
                         k,
                         awskms_client.clone(),
-                        security_module.clone(),
-                        None,
-                        party_role,
-                        None,
+                        security_module.as_ref().map(Arc::clone),
+                        Some(&pub_proxy_storage),
                     )
                 }),
         )
         .await
         .transpose()?;
+        pub_storages.push(pub_proxy_storage);
         priv_vaults.push(Vault {
             storage: make_storage(
                 match args.private_storage {
@@ -397,6 +409,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             signing_key_party_id,
             num_parties,
             tls_subject,
+            tls_wildcard,
         } => {
             let mut cmdargs = ThresholdCmdArgs::new(
                 &mut pub_storages,
@@ -411,6 +424,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 num_parties,
                 tls_subject,
+                tls_wildcard,
             )?;
 
             if args.cmd == ConstructCommand::All {
@@ -558,6 +572,7 @@ async fn handle_threshold_cmd<PubS: StorageForBytes, PrivS: StorageForBytes>(
                             .collect(),
                     ),
                 },
+                args.tls_wildcard,
             )
             .await
             .expect("Could not access storage")

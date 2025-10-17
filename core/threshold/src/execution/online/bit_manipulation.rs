@@ -1,5 +1,6 @@
 use itertools::Itertools;
 use std::marker::PhantomData;
+use std::sync::Arc;
 use tracing::instrument;
 
 use crate::algebra::galois_rings::common::ResiduePoly;
@@ -134,7 +135,8 @@ where
         debug_assert_eq!(lhs.len() % Z::CHAR_LOG2, 0);
         debug_assert_eq!(rhs.len() % Z::CHAR_LOG2, 0);
 
-        let flattened = Bits::xor_list_secret_secret(&lhs, &rhs, preproc, session).await?;
+        let flattened =
+            Bits::xor_list_secret_secret(Arc::new(lhs), Arc::new(rhs), preproc, session).await?;
         Ok(BatchedBits::format_to_batch(flattened, batch_size))
     }
 
@@ -155,7 +157,8 @@ where
 
         let lhs = lhs.iter().flatten().cloned().collect::<SecretVec<Z>>();
         let rhs = rhs.iter().flatten().cloned().collect::<SecretVec<Z>>();
-        let flattened = Bits::and_list_secret_secret(&lhs, &rhs, preproc, session).await?;
+        let flattened =
+            Bits::and_list_secret_secret(Arc::new(lhs), Arc::new(rhs), preproc, session).await?;
         Ok(BatchedBits::format_to_batch(flattened, batch_size))
     }
 
@@ -207,7 +210,9 @@ where
         // AND(a, b) = a * b
         // so in the first step we just compute a * b for both XOR and AND
         // afterwards we do just linear combinations to compute XOR.
-        let ands = Bits::and_list_secret_secret(&lhs_all, &rhs_all, preproc, session).await?;
+        let ands =
+            Bits::and_list_secret_secret(Arc::new(lhs_all), Arc::new(rhs_all), preproc, session)
+                .await?;
         let xor_ = Bits::xor_with_prods(&lhs, &rhs, &ands[0..lhs.len()].to_vec());
 
         let res1 = Self::format_to_batch(xor_, lhs1.len());
@@ -216,7 +221,7 @@ where
         Ok((res1, res2))
     }
 
-    #[instrument(name="BitAdd (secret,clear)",skip(session,lhs,rhs,prep),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?lhs.len()))]
+    #[instrument(name="BitAdd (secret,clear)",skip(session,lhs,rhs,prep),fields(sid=?session.session_id(),my_role=?session.my_role(),batch_size=?lhs.len()))]
     async fn binary_adder_secret_clear<
         Ses: BaseSessionHandles,
         P: TriplePreprocessing<Z> + ?Sized,
@@ -303,14 +308,24 @@ where
         }
 
         // Perform the MUX described above, on all messages in one round
+        let sign_bits = Arc::new(sign_bits);
+        let recomposed_decryptions = Arc::new(recomposed_decryptions);
         let triples = preproc.next_triple_vec(sign_bits.len())?;
-        let prods = mult_list(&sign_bits, &recomposed_decryptions, triples, session).await?;
+        let prods = mult_list(
+            sign_bits,
+            Arc::clone(&recomposed_decryptions),
+            triples,
+            session,
+        )
+        .await?;
 
         // Compute plaintext_sum - sign_bit * plaintext_sum, final step of the MUX
+        let recomposed_decryptions = Arc::into_inner(recomposed_decryptions)
+            .ok_or_else(|| anyhow_error_and_log("Failed to unarc recomposed_decryption"))?;
         let res: Vec<Share<Z>> = prods
-            .iter()
-            .enumerate()
-            .map(|(i, prod)| &recomposed_decryptions[i] - prod)
+            .into_iter()
+            .zip_eq(recomposed_decryptions.into_iter())
+            .map(|(prod, recomposed_decryption)| recomposed_decryption - prod)
             .collect();
 
         Ok(res)
@@ -342,18 +357,20 @@ where
     }
 
     /// Computes XOR(\<a\>,\<b\>) for a and b vecs
-    #[instrument(name="XOR", skip(lhs,rhs,preproc,session),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?lhs.len()))]
+    #[instrument(name="XOR", skip(lhs,rhs,preproc,session),fields(sid=?session.session_id(),my_role=?session.my_role(),batch_size=?lhs.len()))]
     pub async fn xor_list_secret_secret<
         Ses: BaseSessionHandles,
         P: TriplePreprocessing<Z> + ?Sized,
     >(
-        lhs: &SecretVec<Z>,
-        rhs: &SecretVec<Z>,
+        lhs: Arc<SecretVec<Z>>,
+        rhs: Arc<SecretVec<Z>>,
         preproc: &mut P,
         session: &mut Ses,
     ) -> anyhow::Result<SecretVec<Z>> {
-        let ands = Self::and_list_secret_secret(lhs, rhs, preproc, session).await?;
-        Ok(Self::xor_with_prods(lhs, rhs, &ands))
+        let ands =
+            Self::and_list_secret_secret(Arc::clone(&lhs), Arc::clone(&rhs), preproc, session)
+                .await?;
+        Ok(Self::xor_with_prods(lhs.as_ref(), rhs.as_ref(), &ands))
     }
 
     /// Computes AND(\<a\>,\<b\>) for a and b vecs
@@ -361,8 +378,8 @@ where
         Ses: BaseSessionHandles,
         P: TriplePreprocessing<Z> + ?Sized,
     >(
-        lhs: &SecretVec<Z>,
-        rhs: &SecretVec<Z>,
+        lhs: Arc<SecretVec<Z>>,
+        rhs: Arc<SecretVec<Z>>,
         preproc: &mut P,
         session: &mut Ses,
     ) -> anyhow::Result<SecretVec<Z>> {
@@ -406,7 +423,7 @@ where
 
 /// Bit decomposition of the input, assuming the secret lies in the base ring and not the extension.
 /// Algorithm BitDec(<a>), Fig. 84 in the NIST Doc
-#[instrument(name="BitDec",skip(session,prep,inputs),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?inputs.len()))]
+#[instrument(name="BitDec",skip(session,prep,inputs),fields(sid=?session.session_id(),my_role=?session.my_role(),batch_size=?inputs.len()))]
 pub async fn bit_dec_batch<Z, const EXTENSION_DEGREE: usize, P, Ses: BaseSessionHandles>(
     session: &mut Ses,
     prep: &mut P,
@@ -492,6 +509,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::num::Wrapping;
+    use std::sync::Arc;
 
     use crate::algebra::structure_traits::Ring;
     use crate::execution::sharing::shamir::ShamirSharings;
@@ -529,8 +547,8 @@ mod tests {
         shares[&session.my_role()]
     }
 
-    #[test]
-    fn sunshine_xor() {
+    #[tokio::test]
+    async fn sunshine_xor() {
         let parties = 4;
         let threshold = 1;
         let plain_lhs: [u64; 5] = [0_u64, 1, 1, 0, 0];
@@ -551,8 +569,8 @@ mod tests {
                 .collect_vec();
             let mut preprocessing = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &session);
             let bits = Bits::<ResiduePolyF4Z64>::xor_list_secret_secret(
-                &lhs,
-                &rhs,
+                Arc::new(lhs),
+                Arc::new(rhs),
                 &mut preprocessing,
                 &mut session,
             )
@@ -578,7 +596,8 @@ mod tests {
             Some(delay_vec),
             &mut task,
             None,
-        );
+        )
+        .await;
 
         for cur_res in results {
             for (i, cur_ref) in plain_ref.iter().enumerate() {
@@ -587,8 +606,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn sunshine_bitsum() {
+    #[tokio::test]
+    async fn sunshine_bitsum() {
         let parties = 4;
         let threshold = 1;
 
@@ -622,7 +641,8 @@ mod tests {
             Some(delay_vec),
             &mut task,
             None,
-        );
+        )
+        .await;
 
         for cur_res in results {
             assert_eq!(ResiduePolyF4Z64::from_scalar(Wrapping(ref_val)), cur_res);
@@ -632,7 +652,7 @@ mod tests {
     #[rstest]
     #[case(12491094489948035603, 5955649583761516015)]
     #[case(1, 9223372036854775808)]
-    fn bit_adder(#[case] a: u64, #[case] b: u64) {
+    async fn bit_adder(#[case] a: u64, #[case] b: u64) {
         let parties = 4;
         let threshold = 1;
 
@@ -682,7 +702,8 @@ mod tests {
             Some(delay_vec),
             &mut task,
             None,
-        );
+        )
+        .await;
 
         for cur_res in results {
             assert_eq!(ResiduePolyF4Z64::from_scalar(ref_val), cur_res);
@@ -692,7 +713,7 @@ mod tests {
     #[rstest]
     #[case(1, 1, 1, 0)]
     #[case(321, 3213, 928541, 321952)]
-    fn sunshine_compress(#[case] a: u64, #[case] b: u64, #[case] c: u64, #[case] d: u64) {
+    async fn sunshine_compress(#[case] a: u64, #[case] b: u64, #[case] c: u64, #[case] d: u64) {
         let parties = 4;
         let threshold = 1;
 
@@ -798,7 +819,8 @@ mod tests {
             Some(delay_vec),
             &mut task,
             None,
-        )[0];
+        )
+        .await[0];
         let (xor1, xor2, and1, and2) = results;
         assert_eq!(xor1, xor2);
 
@@ -827,7 +849,7 @@ mod tests {
     #[case(2)]
     #[case(3)]
     #[case(4)]
-    fn sunshine_batched_bitdec(#[case] a: u64) {
+    async fn sunshine_batched_bitdec(#[case] a: u64) {
         let parties = 4;
         let threshold = 1;
 
@@ -872,7 +894,8 @@ mod tests {
             Some(delay_vec),
             &mut task,
             None,
-        )[0];
+        )
+        .await[0];
         assert_eq!(results.len(), ref_val.len());
         for i in 0..results.len() {
             assert_eq!(

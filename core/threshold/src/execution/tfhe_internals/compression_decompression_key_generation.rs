@@ -24,25 +24,22 @@ use crate::{
 use itertools::Itertools;
 use tfhe::{
     core_crypto::prelude::{
-        par_convert_standard_lwe_bootstrap_key_to_fourier, ByteRandomGenerator,
-        FourierLweBootstrapKey, LweBootstrapKey, SeededLweBootstrapKey,
+        par_convert_standard_lwe_bootstrap_key_to_fourier, FourierLweBootstrapKey, LweBootstrapKey,
+        ParallelByteRandomGenerator, SeededLweBootstrapKey,
     },
-    shortint::{
-        list_compression::{
-            CompressedCompressionKey, CompressedDecompressionKey, CompressionKey, DecompressionKey,
-        },
-        server_key::{ModulusSwitchConfiguration, ShortintBootstrappingKey},
+    shortint::list_compression::{
+        CompressedCompressionKey, CompressedDecompressionKey, CompressionKey, DecompressionKey,
     },
 };
 use tfhe_csprng::generators::SoftwareRandomGenerator;
 use tracing::instrument;
 
-#[instrument(name="Gen Decompression Key", skip(private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen Decompression Key", skip(private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     private_glwe_compute_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -77,23 +74,18 @@ where
     // Conversion to fourier domain
     par_convert_standard_lwe_bootstrap_key_to_fourier(&blind_rotate_key, &mut fourier_bsk);
 
-    let blind_rotate_key = ShortintBootstrappingKey::Classic {
-        bsk: fourier_bsk,
-        modulus_switch_noise_reduction_key: ModulusSwitchConfiguration::Standard,
-    };
-
     Ok(DecompressionKey {
-        blind_rotate_key,
+        blind_rotate_key: fourier_bsk,
         lwe_per_glwe: params.raw_compression_parameters.lwe_per_glwe,
     })
 }
 
-#[instrument(name="Gen compressed Decompression Key", skip(private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen compressed Decompression Key", skip(private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_compressed_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     private_glwe_compute_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -131,7 +123,7 @@ where
 fn generate_packing_key_switching_key_shares_for_compression<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     private_glwe_compute_key_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -161,12 +153,12 @@ where
     ))
 }
 
-#[instrument(name="Gen Compression and Decompression Key", skip(private_glwe_compute_key_as_lwe, private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen Compression and Decompression Key", skip(private_glwe_compute_key_as_lwe, private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 async fn generate_compression_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     private_glwe_compute_key_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -213,12 +205,12 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-#[instrument(name="Gen compressed Compression and Decompression Key", skip(private_glwe_compute_key_as_lwe, private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen compressed Compression and Decompression Key", skip(private_glwe_compute_key_as_lwe, private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 async fn generate_compressed_compression_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     private_glwe_compute_key_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,

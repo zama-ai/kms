@@ -161,6 +161,14 @@ impl StorageForBytes for RamStorage {
         data_id: &RequestId,
         data_type: &str,
     ) -> anyhow::Result<()> {
+        if self.data_exists(data_id, data_type).await? {
+            tracing::warn!(
+                "The data {}-{} already exists. Keeping the data without overwriting",
+                data_id,
+                data_type
+            );
+            return Ok(());
+        }
         self.internal_storage
             .insert((*data_id, data_type.to_string()), bytes.to_vec());
         Ok(())
@@ -191,6 +199,14 @@ impl Storage for RamStorage {
         data_id: &RequestId,
         data_type: &str,
     ) -> anyhow::Result<()> {
+        if self.data_exists(data_id, data_type).await? {
+            tracing::warn!(
+                "The data {}-{} already exists. Keeping the data without overwriting",
+                data_id,
+                data_type
+            );
+            return Ok(());
+        }
         let mut serialized = Vec::new();
         safe_serialize(data, &mut serialized, SAFE_SER_SIZE_LIMIT)?;
         self.internal_storage
@@ -219,5 +235,17 @@ pub mod tests {
         let mut storage = RamStorage::new();
         test_storage_read_store_methods(&mut storage).await;
         test_batch_helper_methods(&mut storage).await;
+    }
+
+    /// Test that files don't get silently overwritten
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_overwrite_logic_ram() {
+        let mut storage = RamStorage::new();
+        test_store_bytes_does_not_overwrite_existing_bytes(&mut storage).await;
+        test_store_data_does_not_overwrite_existing_data(&mut storage).await;
+        assert!(logs_contain(
+            "already exists. Keeping the data without overwriting"
+        ));
     }
 }

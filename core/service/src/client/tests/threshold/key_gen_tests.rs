@@ -1,10 +1,12 @@
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
+    use crate::client::tests::threshold::common::threshold_handles;
     use crate::client::client_wasm::Client;
     use crate::consts::MAX_TRIES;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
+    use crate::engine::base::INSECURE_PREPROCESSING_ID;
     use crate::engine::threshold::service::ThresholdFheKeys;
     use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::StorageReader;
@@ -33,6 +35,8 @@ use crate::consts::TEST_PARAM;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 #[cfg(feature = "slow_tests")]
 use crate::util::rate_limiter::RateLimiterConfig;
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+use std::path::Path;
 #[cfg(feature = "slow_tests")]
 use std::sync::Arc;
 #[cfg(feature = "slow_tests")]
@@ -72,21 +76,23 @@ impl TestKeyGenResult {
 #[serial]
 async fn test_insecure_dkg(#[case] amount_parties: usize) {
     let key_id: RequestId = derive_request_id(&format!(
-        "test_inscure_dkg_key_{amount_parties}_{TEST_PARAM:?}"
+        "test_insecure_dkg_key_{amount_parties}_{TEST_PARAM:?}"
     ))
     .unwrap();
     purge(None, None, None, &key_id, amount_parties).await;
     let (_kms_servers, kms_clients, internal_client) =
-        super::common::threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
+        threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
     let keys = run_threshold_keygen(
         FheParameter::Test,
         &kms_clients,
         &internal_client,
-        None,
+        &INSECURE_PREPROCESSING_ID,
         &key_id,
         None,
         None,
         true,
+        None,
+        0,
     )
     .await;
     _ = keys.clone().get_standard();
@@ -114,16 +120,18 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
     .unwrap();
     purge(None, None, None, &key_id, amount_parties).await;
     let (_kms_servers, kms_clients, internal_client) =
-        super::common::threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
     let keys = run_threshold_keygen(
         param,
         &kms_clients,
         &internal_client,
-        None,
+        &INSECURE_PREPROCESSING_ID,
         &key_id,
         None,
         None,
         true,
+        None,
+        0,
     )
     .await;
 
@@ -157,7 +165,6 @@ async fn test_threshold_sns_compression_keygen() {
 #[cfg(all(feature = "slow_tests", feature = "insecure"))]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-#[tracing_test::traced_test]
 async fn test_insecure_threshold_sns_compression_keygen() {
     run_threshold_sns_compression_keygen(4, FheParameter::Test, &TEST_THRESHOLD_KEY_ID_4P, true)
         .await;
@@ -167,7 +174,21 @@ async fn test_insecure_threshold_sns_compression_keygen() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn secure_threshold_keygen_test() {
-    preproc_and_keygen(4, FheParameter::Test, false, 1, false).await;
+    preproc_and_keygen(4, FheParameter::Test, false, 1, false, None, None).await;
+}
+
+#[cfg(feature = "slow_tests")]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn secure_threshold_keygen_test_crash_online() {
+    preproc_and_keygen(4, FheParameter::Test, false, 1, false, None, Some(vec![2])).await;
+}
+
+#[cfg(feature = "slow_tests")]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn secure_threshold_keygen_test_crash_preprocessing() {
+    preproc_and_keygen(4, FheParameter::Test, false, 1, false, Some(vec![3]), None).await;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -176,11 +197,13 @@ pub(crate) async fn run_threshold_keygen(
     parameter: FheParameter,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &Client,
-    preproc_req_id: Option<RequestId>,
+    preproc_req_id: &RequestId,
     keygen_req_id: &RequestId,
     decompression_keygen: Option<(RequestId, RequestId)>,
     sns_compression_keygen: Option<RequestId>,
     insecure: bool,
+    data_root_path: Option<&Path>,
+    expected_num_parties_crashed: usize,
 ) -> TestKeyGenResult {
     let keyset_config = match (decompression_keygen, sns_compression_keygen) {
         (None, None) => None,
@@ -234,11 +257,13 @@ pub(crate) async fn run_threshold_keygen(
 
     wait_for_keygen_result(
         req_keygen.request_id.clone().try_into().unwrap(),
-        preproc_req_id,
+        *preproc_req_id,
         kms_clients,
         internal_client,
         insecure,
         decompression_keygen.is_some(),
+        data_root_path,
+        expected_num_parties_crashed,
     )
     .await
 }
@@ -251,9 +276,9 @@ async fn launch_dkg(
     insecure: bool,
 ) -> Vec<Result<tonic::Response<Empty>, tonic::Status>> {
     let mut tasks_gen = JoinSet::new();
-    for i in 1..=kms_clients.len() as u32 {
+    for kms_client in kms_clients.values() {
         //Send kg request
-        let mut cur_client = kms_clients.get(&i).unwrap().clone();
+        let mut cur_client = kms_client.clone();
         let req_clone = req_keygen.clone();
         tasks_gen.spawn(async move {
             if insecure {
@@ -281,13 +306,16 @@ async fn launch_dkg(
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
+#[allow(clippy::too_many_arguments)]
 async fn wait_for_keygen_result(
     req_get_keygen: RequestId,
-    req_preproc: Option<RequestId>,
+    req_preproc: RequestId,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &Client,
     insecure: bool,
     decompression_keygen: bool,
+    data_root_path: Option<&Path>,
+    expected_num_parties_crashed: usize,
 ) -> TestKeyGenResult {
     use threshold_fhe::execution::{
         runtime::party::Role, tfhe_internals::test_feature::to_hl_client_key,
@@ -305,9 +333,10 @@ async fn wait_for_keygen_result(
         .await;
 
         let mut tasks = JoinSet::new();
-        for i in 1..=kms_clients.len() as u32 {
+        for (i, kms_client) in kms_clients {
             let req_clone = req_get_keygen.into();
-            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            let i = *i;
+            let mut cur_client = kms_client.clone();
             tasks.spawn(async move {
                 (
                     i,
@@ -353,9 +382,9 @@ async fn wait_for_keygen_result(
         for (idx, kg_res) in finished.into_iter() {
             let role = Role::indexed_from_one(idx as usize);
             let kg_res = kg_res.unwrap().into_inner();
-            let storage = FileStorage::new(None, StorageType::PUB, Some(role)).unwrap();
+            let storage = FileStorage::new(data_root_path, StorageType::PUB, Some(role)).unwrap();
             let decompression_key: Option<DecompressionKey> = internal_client
-                .retrieve_key(&kg_res, PubDataType::DecompressionKey, &storage)
+                .retrieve_key_no_verification(&kg_res, PubDataType::DecompressionKey, &storage)
                 .await
                 .unwrap();
             assert!(decompression_key.is_some());
@@ -380,41 +409,40 @@ async fn wait_for_keygen_result(
         let mut all_threshold_fhe_keys = HashMap::new();
         let mut final_public_key = None;
         let mut final_server_key = None;
+
         for (idx, kg_res) in finished.into_iter() {
             let role = Role::indexed_from_one(idx as usize);
             let kg_res = kg_res.unwrap().into_inner();
-            let storage = FileStorage::new(None, StorageType::PUB, Some(role)).unwrap();
-            let pk = internal_client
-                .retrieve_public_key(&kg_res, &storage)
-                .await
-                .unwrap();
-            assert!(pk.is_some());
-            if role.one_based() == 1 {
-                serialized_ref_pk = bc2wrap::serialize(pk.as_ref().unwrap()).unwrap();
-            } else {
-                assert_eq!(
-                    serialized_ref_pk,
-                    bc2wrap::serialize(pk.as_ref().unwrap()).unwrap()
+            let storage = FileStorage::new(data_root_path, StorageType::PUB, Some(role)).unwrap();
+
+            let (server_key, public_key) = internal_client
+                .retrieve_server_key_and_public_key(
+                    &req_preproc,
+                    &req_get_keygen,
+                    &kg_res,
+                    &domain,
+                    &storage,
                 )
-            }
-            let server_key: Option<tfhe::ServerKey> = internal_client
-                .retrieve_server_key(&kg_res, &storage)
                 .await
+                .inspect_err(|e| tracing::error!("error retrieving server and public key: {e}"))
+                .unwrap()
                 .unwrap();
-            assert!(server_key.is_some());
+
             if role.one_based() == 1 {
-                serialized_ref_server_key =
-                    bc2wrap::serialize(server_key.as_ref().unwrap()).unwrap();
+                serialized_ref_pk = bc2wrap::serialize(&public_key).unwrap();
+                serialized_ref_server_key = bc2wrap::serialize(&server_key).unwrap();
             } else {
+                assert_eq!(serialized_ref_pk, bc2wrap::serialize(&public_key).unwrap());
                 assert_eq!(
                     serialized_ref_server_key,
-                    bc2wrap::serialize(server_key.as_ref().unwrap()).unwrap()
-                )
+                    bc2wrap::serialize(&server_key).unwrap()
+                );
             }
 
             let key_id =
                 RequestId::from_str(kg_res.request_id.unwrap().request_id.as_str()).unwrap();
-            let priv_storage = FileStorage::new(None, StorageType::PRIV, Some(role)).unwrap();
+            let priv_storage =
+                FileStorage::new(data_root_path, StorageType::PRIV, Some(role)).unwrap();
             let mut threshold_fhe_keys: ThresholdFheKeys = priv_storage
                 .read_data(&key_id, &PrivDataType::FheKeyInfo.to_string())
                 .await
@@ -423,16 +451,14 @@ async fn wait_for_keygen_result(
             threshold_fhe_keys.sns_key = None;
             all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
             if final_public_key.is_none() {
-                final_public_key = match pk.unwrap() {
-                    kms_grpc::rpc_types::WrappedPublicKeyOwned::Compact(inner) => Some(inner),
-                };
+                final_public_key = Some(public_key);
             }
             if final_server_key.is_none() {
-                final_server_key = server_key;
+                final_server_key = Some(server_key);
             }
         }
 
-        let threshold = kms_clients.len().div_ceil(3) - 1;
+        let threshold = (kms_clients.len() + expected_num_parties_crashed).div_ceil(3) - 1;
         let (lwe_sk, glwe_sk, sns_glwe_sk, sns_compression_sk) =
             try_reconstruct_shares(internal_client.params, threshold, all_threshold_fhe_keys);
         out = Some(TestKeyGenResult::Standard((
@@ -462,7 +488,7 @@ async fn wait_for_keygen_result(
         let keygen_req_data = internal_client
             .key_gen_request(
                 &other_key_gen_id,
-                req_preproc,
+                &req_preproc,
                 Some(FheParameter::Test),
                 None,
                 None,
@@ -477,6 +503,7 @@ async fn wait_for_keygen_result(
     out.unwrap()
 }
 
+/// __NOTE__: Parties that are crashed during preproc will also be crashed during keygen
 #[cfg(feature = "slow_tests")]
 pub(crate) async fn run_threshold_decompression_keygen(
     amount_parties: usize,
@@ -484,28 +511,24 @@ pub(crate) async fn run_threshold_decompression_keygen(
     insecure: bool,
 ) {
     let preproc_id_1 = if insecure {
-        None
+        *INSECURE_PREPROCESSING_ID
     } else {
-        Some(
-            derive_request_id(&format!(
-                "decom_dkg_preproc_{amount_parties}_{parameter:?}_1"
-            ))
-            .unwrap(),
-        )
+        derive_request_id(&format!(
+            "decom_dkg_preproc_{amount_parties}_{parameter:?}_1"
+        ))
+        .unwrap()
     };
     let key_id_1: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_1")).unwrap();
     purge(None, None, None, &key_id_1, amount_parties).await;
 
     let preproc_id_2 = if insecure {
-        None
+        *INSECURE_PREPROCESSING_ID
     } else {
-        Some(
-            derive_request_id(&format!(
-                "decom_dkg_preproc_{amount_parties}_{parameter:?}_2"
-            ))
-            .unwrap(),
-        )
+        derive_request_id(&format!(
+            "decom_dkg_preproc_{amount_parties}_{parameter:?}_2"
+        ))
+        .unwrap()
     };
     let key_id_2: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_2")).unwrap();
@@ -522,7 +545,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let dkg_param: WrappedDKGParams = parameter.into();
     let (kms_servers, kms_clients, internal_client) =
-        super::common::threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
     if !insecure {
         run_preproc(
@@ -530,9 +553,10 @@ pub(crate) async fn run_threshold_decompression_keygen(
             parameter,
             &kms_clients,
             &internal_client,
-            &preproc_id_1.unwrap(),
+            &preproc_id_1,
             None,
             None,
+            0,
         )
         .await;
     }
@@ -541,11 +565,13 @@ pub(crate) async fn run_threshold_decompression_keygen(
         parameter,
         &kms_clients,
         &internal_client,
-        preproc_id_1,
+        &preproc_id_1,
         &key_id_1,
         None,
         None,
         insecure,
+        None,
+        0,
     )
     .await;
     let (client_key_1, _public_key_1, server_key_1) = keys1.get_standard();
@@ -556,9 +582,10 @@ pub(crate) async fn run_threshold_decompression_keygen(
             parameter,
             &kms_clients,
             &internal_client,
-            &preproc_id_2.unwrap(),
+            &preproc_id_2,
             None,
             None,
+            0,
         )
         .await;
     }
@@ -567,11 +594,13 @@ pub(crate) async fn run_threshold_decompression_keygen(
         parameter,
         &kms_clients,
         &internal_client,
-        preproc_id_2,
+        &preproc_id_2,
         &key_id_2,
         None,
         None,
         insecure,
+        None,
+        0,
     )
     .await;
     let (client_key_2, _public_key_2, _server_key_2) = keys2.get_standard();
@@ -585,6 +614,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         &preproc_id_3,
         None,
         None,
+        0,
     )
     .await;
 
@@ -593,11 +623,13 @@ pub(crate) async fn run_threshold_decompression_keygen(
         parameter,
         &kms_clients,
         &internal_client,
-        Some(preproc_id_3),
+        &preproc_id_3,
         &key_id_3,
         Some((key_id_1, key_id_2)),
         None,
         insecure,
+        None,
+        0,
     )
     .await
     .get_decompression_only();
@@ -628,14 +660,12 @@ async fn run_threshold_sns_compression_keygen(
     use threshold_fhe::execution::tfhe_internals::test_feature::run_sns_compression_test;
     // for generating the sns compression key
     let preproc_id = if insecure {
-        None
+        *INSECURE_PREPROCESSING_ID
     } else {
-        Some(
-            derive_request_id(&format!(
-                "sns_com_dkg_preproc_{amount_parties}_{parameter:?}"
-            ))
-            .unwrap(),
-        )
+        derive_request_id(&format!(
+            "sns_com_dkg_preproc_{amount_parties}_{parameter:?}"
+        ))
+        .unwrap()
     };
     let sns_compression_req_id: RequestId =
         derive_request_id(&format!("sns_com_dkg_key_{amount_parties}_{parameter:?}")).unwrap();
@@ -644,7 +674,7 @@ async fn run_threshold_sns_compression_keygen(
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let dkg_param: WrappedDKGParams = parameter.into();
     let (kms_servers, kms_clients, internal_client) =
-        super::common::threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
     // generate the sns compression key by overwriting the first key
     if !insecure {
@@ -653,9 +683,10 @@ async fn run_threshold_sns_compression_keygen(
             parameter,
             &kms_clients,
             &internal_client,
-            &preproc_id.unwrap(),
+            &preproc_id,
             None,
             Some(*base_key_id),
+            0,
         )
         .await;
     }
@@ -664,11 +695,13 @@ async fn run_threshold_sns_compression_keygen(
         parameter,
         &kms_clients,
         &internal_client,
-        preproc_id,
+        &preproc_id,
         &sns_compression_req_id,
         None,
         Some(*base_key_id),
         insecure,
+        None,
+        0,
     )
     .await;
     let (client_key_2, _public_key_2, server_key_2) = keys2.get_standard();
@@ -692,12 +725,15 @@ async fn run_threshold_sns_compression_keygen(
 }
 
 #[cfg(feature = "slow_tests")]
+/// __NOTE__: Parties that are crashed during preproc will also be crashed during keygen
 pub(crate) async fn preproc_and_keygen(
     amount_parties: usize,
     parameter: FheParameter,
     insecure: bool,
     iterations: usize,
     concurrent: bool,
+    party_ids_to_crash_preproc: Option<Vec<usize>>,
+    party_ids_to_crash_keygen: Option<Vec<usize>>,
 ) {
     for i in 0..iterations {
         let req_preproc: RequestId = derive_request_id(&format!(
@@ -725,7 +761,7 @@ pub(crate) async fn preproc_and_keygen(
     };
 
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (_kms_servers, kms_clients, internal_client) = super::common::threshold_handles(
+    let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
         *dkg_param,
         amount_parties,
         true,
@@ -733,6 +769,17 @@ pub(crate) async fn preproc_and_keygen(
         None,
     )
     .await;
+
+    let mut expected_num_parties_crashed =
+        party_ids_to_crash_preproc.as_ref().map_or(0, |v| v.len());
+
+    //Crash the parties that should be crashed during preproc
+    for party_id in party_ids_to_crash_preproc.clone().unwrap_or_default() {
+        tracing::warn!("Crashin party {party_id} during preproc (on purpose)");
+        let kms_server = kms_servers.remove(&(party_id as u32)).unwrap();
+        kms_server.assert_shutdown().await;
+        let _kms_client = kms_clients.remove(&(party_id as u32)).unwrap();
+    }
 
     if concurrent {
         let arc_clients = Arc::new(kms_clients);
@@ -757,6 +804,7 @@ pub(crate) async fn preproc_and_keygen(
                         &cur_id,
                         None,
                         None,
+                        expected_num_parties_crashed,
                     )
                     .await
                 }
@@ -764,6 +812,27 @@ pub(crate) async fn preproc_and_keygen(
         }
         // Ensure preprocessing is done, otherwise we risk getting blocked by the rate limiter in keygen
         preprocset.join_all().await;
+
+        // Taking back ownership of the clients to remove those we need to crash
+        let mut kms_clients = Arc::try_unwrap(arc_clients).unwrap();
+        // Now crash the parties that should be crashed during keygen
+        for party_id in party_ids_to_crash_keygen.unwrap_or_default() {
+            if party_ids_to_crash_preproc
+                .clone()
+                .unwrap_or_default()
+                .contains(&party_id)
+            {
+                // party already crashed during preproc
+                continue;
+            }
+            tracing::warn!("Crashin party {party_id} during keygen (on purpose)");
+            let kms_server = kms_servers.remove(&(party_id as u32)).unwrap();
+            kms_server.assert_shutdown().await;
+            let _kms_client = kms_clients.remove(&(party_id as u32)).unwrap();
+            expected_num_parties_crashed += 1;
+        }
+
+        let arc_clients = Arc::new(kms_clients);
         let mut keyset = JoinSet::new();
         for i in 0..iterations {
             let key_id: RequestId =
@@ -779,11 +848,13 @@ pub(crate) async fn preproc_and_keygen(
                         parameter,
                         &clients_clone,
                         &internalclient_clone,
-                        Some(preproc_ids_clone),
+                        &preproc_ids_clone,
                         &key_id,
                         None,
                         None,
                         insecure,
+                        None,
+                        expected_num_parties_crashed,
                     )
                     .await
                 }
@@ -811,11 +882,33 @@ pub(crate) async fn preproc_and_keygen(
                 &cur_id,
                 None,
                 None,
+                expected_num_parties_crashed,
             )
             .await;
             preproc_ids.insert(i, cur_id);
         }
+        // Now crash the parties that should be crashed during keygen
+        for party_id in party_ids_to_crash_keygen.unwrap_or_default() {
+            if party_ids_to_crash_preproc
+                .clone()
+                .unwrap_or_default()
+                .contains(&party_id)
+            {
+                // party already crashed during preproc
+                continue;
+            }
+            tracing::warn!("Crashin party {party_id} during keygen (on purpose)");
+            let kms_server = kms_servers.remove(&(party_id as u32)).unwrap();
+            kms_server.assert_shutdown().await;
+            let _kms_client = kms_clients.remove(&(party_id as u32)).unwrap();
+            expected_num_parties_crashed += 1;
+        }
         for i in 0..iterations {
+            use crate::{
+                client::tests::threshold::public_decryption_tests::run_decryption_threshold,
+                util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
+            };
+
             let key_id: RequestId =
                 derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameter:?}_{i}"))
                     .unwrap();
@@ -823,16 +916,36 @@ pub(crate) async fn preproc_and_keygen(
                 parameter,
                 &kms_clients,
                 &internal_client,
-                Some(preproc_ids.get(&i).unwrap().to_owned()),
+                preproc_ids.get(&i).unwrap(),
                 &key_id,
                 None,
                 None,
                 insecure,
+                None,
+                expected_num_parties_crashed,
             )
             .await;
             // blockchain parameters always have mod switch noise reduction key
             let (client_key, _, server_key) = keyset.get_standard();
             crate::client::key_gen::tests::check_conformance(server_key, client_key);
+
+            // Run a DDec
+            run_decryption_threshold(
+                amount_parties,
+                &mut kms_servers,
+                &mut kms_clients,
+                &mut internal_client,
+                &key_id,
+                vec![TestingPlaintext::U8(u8::MAX)],
+                EncryptionConfig {
+                    compression: true,
+                    precompute_sns: true,
+                },
+                None,
+                1,
+                None,
+            )
+            .await;
         }
         tracing::info!("Finished sequential preproc and keygen");
     }
@@ -846,6 +959,7 @@ pub(crate) async fn preproc_and_keygen(
 // *** Incorrect guard value: 0
 // issue: https://github.com/zama-ai/kms-core/issues/663
 #[cfg(feature = "slow_tests")]
+#[allow(clippy::too_many_arguments)]
 async fn run_preproc(
     amount_parties: usize,
     parameter: FheParameter,
@@ -854,6 +968,7 @@ async fn run_preproc(
     preproc_req_id: &RequestId,
     decompression_keygen: Option<(RequestId, RequestId)>,
     sns_compression_keygen: Option<RequestId>,
+    expected_num_parties_crashed: usize,
 ) {
     let keyset_config = match (decompression_keygen, sns_compression_keygen) {
         (None, None) => None,
@@ -870,14 +985,16 @@ async fn run_preproc(
         }
     };
 
+    let domain = dummy_domain();
+
     let preproc_request = internal_client
-        .preproc_request(preproc_req_id, Some(parameter), keyset_config)
+        .preproc_request(preproc_req_id, Some(parameter), keyset_config, &domain)
         .unwrap();
 
     // Execute preprocessing
     let mut tasks_gen = JoinSet::new();
-    for i in 1..=amount_parties as u32 {
-        let mut cur_client = kms_clients.get(&i).unwrap().clone();
+    for (_, cur_client) in kms_clients.iter() {
+        let mut cur_client = cur_client.clone();
         let req_clone = preproc_request.clone();
         tasks_gen.spawn(async move {
             cur_client
@@ -889,10 +1006,19 @@ async fn run_preproc(
     preproc_res.iter().for_each(|x| {
         assert!(x.is_ok());
     });
-    assert_eq!(preproc_res.len(), amount_parties);
+    assert_eq!(
+        preproc_res.len() + expected_num_parties_crashed,
+        amount_parties
+    );
 
     // the responses should be empty
-    let _responses = poll_key_gen_preproc_result(preproc_request, kms_clients, MAX_TRIES).await;
+    let responses = poll_key_gen_preproc_result(preproc_request, kms_clients, MAX_TRIES).await;
+    assert!(responses.len() + expected_num_parties_crashed == amount_parties);
+    for response in responses {
+        internal_client
+            .process_preproc_response(preproc_req_id, &domain, &response)
+            .unwrap();
+    }
 }
 
 //Check status of preproc request
@@ -1017,15 +1143,15 @@ fn try_reconstruct_shares(
             sns_lwe_shares,
             dkg_sns_param
                 .sns_params
-                .glwe_dimension
-                .to_equivalent_lwe_dimension(dkg_sns_param.sns_params.polynomial_size)
+                .glwe_dimension()
+                .to_equivalent_lwe_dimension(dkg_sns_param.sns_params.polynomial_size())
                 .0,
             threshold,
         )
         .into_iter()
         .map(|x| x as u128)
         .collect(),
-        dkg_sns_param.sns_params.polynomial_size,
+        dkg_sns_param.sns_params.polynomial_size(),
     );
 
     let sns_compression_key_shares = all_threshold_fhe_keys

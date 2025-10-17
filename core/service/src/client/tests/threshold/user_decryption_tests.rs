@@ -31,7 +31,7 @@ use kms_grpc::kms::v1::{TypedCiphertext, UserDecryptionRequest, UserDecryptionRe
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 use kms_grpc::RequestId;
 use serial_test::serial;
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -45,7 +45,7 @@ use tokio::task::JoinSet;
 #[case(true, TestingPlaintext::U8(88), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(true, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(false, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
-#[case(true, TestingPlaintext::U80((1u128 << 80) - 1), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
+#[case(true, TestingPlaintext::U64(64), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(true, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[case(false, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[tokio::test(flavor = "multi_thread")]
@@ -78,14 +78,14 @@ async fn test_user_decryption_threshold(
 }
 
 #[rstest::rstest]
-#[case(TestingPlaintext::U32(u32::MAX), &TEST_THRESHOLD_KEY_ID_4P, vec![1])]
-#[case(TestingPlaintext::U32(u32::MAX), &TEST_THRESHOLD_KEY_ID_4P, vec![4])]
+#[case(TestingPlaintext::U32(u32::MAX), &TEST_THRESHOLD_KEY_ID_4P, vec![Role::indexed_from_one(1)])]
+#[case(TestingPlaintext::U32(u32::MAX), &TEST_THRESHOLD_KEY_ID_4P, vec![Role::indexed_from_one(4)])]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_user_decryption_threshold_malicious(
     #[case] pt: TestingPlaintext,
     #[case] key_id: &RequestId,
-    #[case] malicious_set: Vec<u32>,
+    #[case] malicious_set: Vec<Role>,
 ) {
     user_decryption_threshold(
         TEST_PARAM,
@@ -101,7 +101,7 @@ async fn test_user_decryption_threshold_malicious(
         true, // secure
         4,    // no. of parties
         None,
-        Some(malicious_set),
+        Some(HashSet::from_iter(malicious_set.into_iter())),
         None,
     )
     .await;
@@ -126,7 +126,12 @@ async fn test_user_decryption_threshold_malicious_failure() {
         true, // secure
         4,    // no. of parties
         None,
-        Some(vec![1, 4]),
+        Some(
+            [1, 4]
+                .iter()
+                .map(|id| Role::indexed_from_one(*id as usize))
+                .collect(),
+        ),
         None,
     )
     .await;
@@ -151,7 +156,12 @@ async fn test_user_decryption_threshold_all_malicious_failure() {
         true, // secure
         4,    // no. of parties
         None,
-        Some(vec![1, 2, 3, 4]), // all parties are malicious
+        Some(
+            [1, 2, 3, 4]
+                .iter()
+                .map(|id| Role::indexed_from_one(*id as usize))
+                .collect(),
+        ), // all parties are malicious
         None,
     )
     .await;
@@ -403,7 +413,12 @@ async fn default_user_decryption_threshold_with_crash(
         parallelism,
         secure,
         amount_parties,
-        party_ids_to_crash,
+        party_ids_to_crash.map(|party_ids| {
+            party_ids
+                .iter()
+                .map(|id| Role::indexed_from_zero(*id))
+                .collect()
+        }),
         None,
         None,
     )
@@ -423,8 +438,8 @@ pub(crate) async fn user_decryption_threshold(
     parallelism: usize,
     secure: bool,
     amount_parties: usize,
-    party_ids_to_crash: Option<Vec<usize>>,
-    malicious_parties: Option<Vec<u32>>,
+    party_ids_to_crash: Option<HashSet<Role>>,
+    malicious_parties: Option<HashSet<Role>>,
     decryption_mode: Option<DecryptionMode>,
 ) {
     assert!(parallelism > 0);
@@ -432,7 +447,7 @@ pub(crate) async fn user_decryption_threshold(
     let (mut kms_servers, mut kms_clients, mut internal_client) =
         threshold_handles(dkg_params, amount_parties, true, None, decryption_mode).await;
     let (ct, ct_format, fhe_type) =
-        compute_cipher_from_stored_key(None, msg, key_id, enc_config).await;
+        compute_cipher_from_stored_key(None, msg, key_id, 1, enc_config).await;
 
     // make requests
     let reqs: Vec<_> = (0..parallelism)
@@ -472,7 +487,7 @@ pub(crate) async fn user_decryption_threshold(
     let party_ids_to_crash = party_ids_to_crash.unwrap_or_default();
     for j in 0..parallelism {
         for i in 1..=amount_parties as u32 {
-            if party_ids_to_crash.contains(&(i as usize)) {
+            if party_ids_to_crash.contains(&Role::indexed_from_one(i as usize)) {
                 // After the first "parallel" iteration the party is already crashed
                 if j > 0 {
                     continue;
@@ -503,7 +518,7 @@ pub(crate) async fn user_decryption_threshold(
     let mut resp_tasks = JoinSet::new();
     for j in 0..parallelism {
         for i in 1..=amount_parties as u32 {
-            if party_ids_to_crash.contains(&(i as usize)) {
+            if party_ids_to_crash.contains(&Role::indexed_from_one(i as usize)) {
                 continue;
             }
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
@@ -628,8 +643,8 @@ async fn process_batch_threshold_user_decryption(
     msg: TestingPlaintext,
     secure: bool,
     amount_parties: usize,
-    malicious_parties: Option<Vec<u32>>,
-    party_ids_to_crash: Vec<usize>,
+    malicious_parties: Option<HashSet<Role>>,
+    party_ids_to_crash: HashSet<Role>,
     reqs: Vec<(
         UserDecryptionRequest,
         UnifiedPublicEncKey,
@@ -677,7 +692,8 @@ async fn process_batch_threshold_user_decryption(
             responses.iter_mut().for_each(|resp| {
                 if let Some(payload) = &mut resp.payload {
                     if let Some(mal_parties) = &malicious_parties {
-                        if mal_parties.contains(&payload.party_id) {
+                        if mal_parties.contains(&Role::indexed_from_one(payload.party_id as usize))
+                        {
                             let orig_party_id = payload.party_id;
                             // Modify the party ID maliciously
                             if payload.party_id == 1 {

@@ -68,8 +68,10 @@
 //! node --test tests/js
 //! ```
 use crate::client::client_wasm::{Client, ServerIdentities};
+use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
+#[cfg(feature = "wasm_tests")]
 use crate::client::user_decryption_wasm::{
-    ParsedUserDecryptionRequest, ParsedUserDecryptionRequestHex, TestingUserDecryptionTranscript,
+    ParsedUserDecryptionRequestHex, TestingUserDecryptionTranscript,
 };
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::hybrid_ml_kem;

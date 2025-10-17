@@ -1,11 +1,12 @@
 use itertools::{EitherOrBoth, Itertools};
+use rayon::prelude::*;
 use tfhe::{
     boolean::prelude::LweDimension,
     core_crypto::{
         commons::{
             math::random::CompressionSeed,
             parameters::{LweCiphertextCount, LweSize},
-            traits::ByteRandomGenerator,
+            traits::ParallelByteRandomGenerator,
         },
         prelude::{
             CiphertextModulus, ContiguousEntityContainerMut, LweCiphertextList,
@@ -219,7 +220,7 @@ pub fn encrypt_lwe_ciphertext<Gen, Z, const EXTENSION_DEGREE: usize>(
     encoded: ResiduePoly<Z, EXTENSION_DEGREE>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) where
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
@@ -235,7 +236,7 @@ pub fn encrypt_lwe_ciphertext_list<Gen, Z, const EXTENSION_DEGREE: usize>(
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) -> anyhow::Result<()>
 where
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
@@ -253,16 +254,18 @@ where
         EncryptionType::Bits64,
     )?;
 
-    for ((encoded_plaintext, ciphertext), mut loop_generator) in
-        encoded.iter().zip_eq(output.iter_mut()).zip_eq(gen_iter)
-    {
-        encrypt_lwe_ciphertext(
-            lwe_secret_key_share,
-            ciphertext,
-            *encoded_plaintext,
-            &mut loop_generator,
-        );
-    }
+    encoded
+        .par_iter()
+        .zip_eq(output.par_iter_mut())
+        .zip_eq(gen_iter)
+        .for_each(|((encoded_plaintext, ciphertext), mut loop_generator)| {
+            encrypt_lwe_ciphertext(
+                lwe_secret_key_share,
+                ciphertext,
+                *encoded_plaintext,
+                &mut loop_generator,
+            );
+        });
 
     Ok(())
 }
@@ -274,7 +277,7 @@ fn fill_lwe_mask_and_body_for_encryption<Z, Gen, const EXTENSION_DEGREE: usize>(
     encoded: ResiduePoly<Z, EXTENSION_DEGREE>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) where
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
@@ -349,8 +352,8 @@ mod tests {
 
     use super::{encrypt_lwe_ciphertext, LweCiphertextShare, LweSecretKeyShare};
 
-    #[test]
-    fn test_lwe_encryption() {
+    #[tokio::test]
+    async fn test_lwe_encryption() {
         //Testing with NIST params P=8
         let lwe_dimension = 1024_usize;
         let message_log_modulus = 3_usize;
@@ -431,7 +434,8 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
-        );
+        )
+        .await;
 
         //Reconstruct everything and decrypt using tfhe-rs
 

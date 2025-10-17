@@ -2,7 +2,7 @@
 # This is used to define the number of peers and their IDs
 kmsPeers:
   # Defines either the peer ID when count=1 or the start ID of a set of peers when count>1
-  id: 1
+  # id: 1
   # The number of peers managed by the StatefulSets
   count: 1
 
@@ -26,14 +26,20 @@ kmsCore:
   # This is used to load environment variables from a configmap
   envFrom:
     configmap:
-      name:
+      name: mpc-party
       key:
         coreClientS3Endpoint: CORE_CLIENT__S3_ENDPOINT
+        thresholdId: KMS_CORE__THRESHOLD__MY_ID
         privateVaultStorageBucket: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
-        publicVaultStorageBucket: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
+        privateVaultStoragePrefix: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
         privateVaultKeychainAWSKMSRootKeySpec: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
         privateVaultKeychainAWSKMSRootKeyID: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
-
+        publicVaultStorageBucket: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
+        publicVaultStoragePrefix: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX
+        backupVaultStorageBucket: KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET
+        backupVaultStoragePrefix: KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX
+        backupVaultKeychainAWSKMSRootKeySpec: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
+        backupVaultKeychainAWSKMSRootKeyID: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
   rateLimiter:
     bucketSize: 50000
   # Add the following to enable threshold mode:
@@ -80,30 +86,33 @@ kmsCore:
         - pcr0: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
           pcr1: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
           pcr2: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-    # Threshold value is the number of corruptions that the protocol handles.
     # This value appears in the config file as `threshold`.
-    multiplier: 2
-    maxInterval: 1
+    multiplier: 2.0
+    maxInterval: 60
     maxElapsedTime: 300
     networkTimeout: 300
     initialIntervalMs: 100
-
-    thresholdValue: 1
+    enableSysMetrics: true
+    refreshIntervalMs: 5000
+    tokioWorkerThreads: 6
+    rayonNumThreads: 43
+    # Threshold value is the number of corruptions that the protocol handles.
+    # 1 for 4 parties, 4 for 13 parties
+    thresholdValue: 4
     decCapacity: 10000
     minDecCache: 6000
     # Number of sessions to pre-process should be equal to number of vCPUs
-    numSessionsPreproc: 2
+    numSessionsPreproc: 64
     decryptionMode: "NoiseFloodSmall"
   # Add the following to enable nitro enclave:
   # Nitro enclave needs specific instance types
   nitroEnclave:
     enabled: false
     signed: false
-    debug: true
     # Enclave CPU count, must be a multiple of 2 since whole cores (not hyperthreads) are sliced off and dedicated to the enclave
-    cpuCount: 6
+    cpuCount: 48
     # Enclave Memory in GiB
-    memoryGiB: 20
+    memoryGiB: 96
     grpcPeerProxy:
       resources: {}
         # requests:
@@ -139,12 +148,21 @@ kmsCore:
     s3:
       enabled: true
       bucket: kms-public
-      path: kms
+      prefix: ""
   privateVault:
     s3:
       enabled: false
       bucket: kms-private
-      path: kms
+      prefix: ""
+    awskms:
+      enabled: false
+      rootKeyId: 00000000-0000-0000-0000-000000000000
+      rootKeySpec: symm
+  backupVault:
+    s3:
+      enabled: false
+      bucket: kms-private-backup
+      prefix: ""
     awskms:
       enabled: false
       rootKeyId: 00000000-0000-0000-0000-000000000000
@@ -190,13 +208,10 @@ kmsCoreClient:
       name:
       privateVaultStorageKey:
       publicVaultStorageKey:
-  num_majority: 2
-  num_reconstruct: 3
-  decryption_mode: "NoiseFloodSmall"
-  fhe_parameter: Test
-  storage:
-    # storageClassName: gp3
-    capacity: 1Gi
+  num_majority: 5
+  num_reconstruct: 9
+  decryption_mode: NoiseFloodSmall
+  fhe_parameter: Default
   resources:
     requests: {}
       # memory: 1Gi
@@ -235,8 +250,8 @@ kmsGenKeys:
 
 kubeUtils:
   image:
-    name: ghcr.io/zama-ai/kube-utils
-    tag: 0.2.0
+    name: ghcr.io/zama-ai/security-hub/infra/kube-utils
+    tag: 0.4.0-safe
     pullPolicy: Always
 
 runMode: dev
@@ -250,24 +265,19 @@ tracing:
   endpoint: "http://otel-deployment-opentelemetry-collector.observability.svc.cluster.local:4317"
   otlp_timeout_ms: 10000
 
+
+# Minio: If we want to use local s3 storage, we can use Minio
+# i.e: by deploying Minio operator: https://docs.min.io/community/minio-object-store/operations/deployments/k8s-deploy-operator-helm-on-kubernetes.html?ref=github
+# or Minio chart community maintained: https://github.com/minio/minio/tree/master/helm/minio
+#
 minio:
   enabled: false
-  fullnameOverride: minio
-  auth:
-    rootUser: minio-admin
-    rootPassword: minio-admin
-  provisioning:
-    enabled: true
-    buckets:
-      - name: kms-public
-        region: eu-west-1
-    users:
-      - username: kms-access-key-id
-        password: kms-secret-access-key
-        policies:
-          - readwrite
-    extraCommands:
-      - "mc anonymous set public provisioning/kms-public"
+  # If enabled, the minio endpoint will be used to store the keys. Example: http://minio:9000
+  endpoint:
+  # If enabled, the minio username will be used to store the keys
+  username:
+  # If enabled, the minio password will be used to store the keys
+  password:
 
 rustLog: info
 

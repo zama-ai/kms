@@ -2,6 +2,7 @@ syntax = "proto3";
 package kms.v1;
 
 // Initialization request for bootstrapping the threshold KMS.
+// This request will be removed in favor of NewKmsContextRequest.
 message InitRequest {
     // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
     RequestId request_id = 1;
@@ -11,7 +12,7 @@ message InitRequest {
 message Empty {}
 
 /// A unique 32 Byte / 256 Bit ID, to be used to identify a request and
-/// for retrieving the computed result later on. 
+/// for retrieving the computed result later on.
 /// Must be encoded in lower-case hex. The string must NOT contain a `0x` prefix.
 message RequestId { string request_id = 1; }
 
@@ -79,10 +80,24 @@ message KeySetConfig {
 message KeyGenPreprocRequest {
   // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
   RequestId request_id = 1;
+
   // The FHE parameters for key generation.
   FheParameter params = 2;
+
   // The keyset configuration that controls what kind of key to generate.
   KeySetConfig keyset_config = 3;
+
+  // The EIP712 domain used for signing the response.
+  Eip712DomainMsg domain = 4;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 5;
+
+  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  RequestId epoch_id = 6;
 }
 
 enum KeySetCompressionConfig {
@@ -95,7 +110,11 @@ enum KeySetCompressionConfig {
 // It is intentionally left empty,
 // we may extend it later with a signature on the preproc request ID
 // potentially.
-message KeyGenPreprocResult {}
+message KeyGenPreprocResult {
+  // Preprocessing ID used for keygen
+  RequestId preprocessing_id = 1;
+  bytes external_signature = 2;
+}
 
 // Request for generating new keys under a certain handle and return a URI where
 // they can be accessed.
@@ -103,9 +122,18 @@ message KeyGenRequest {
   // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
   RequestId request_id = 1;
 
-  // The FHE parameters for key generation. This must match
-  // what was used in the preprocessing step.
-  FheParameter params = 2;
+  // The FHE parameters for key generation.
+  //
+  // When used in the secure endpoint:
+  // If it's not set, it will use the paramter that was used in the preprocessing step,
+  // referenced by preproc_id.
+  // If it's set, we assume the parameter used in preprocessing is compatible
+  // with the parameter set here (which can be the same).
+  //
+  // When used in the insecure endpoint:
+  // If it's not set, the default parameter will be used.
+  // If it is set, the specified parameter will be used.
+  optional FheParameter params = 2;
 
   // The 32 Byte / 256 Bit request ID that generated the preprocessing
   // materials.
@@ -122,29 +150,58 @@ message KeyGenRequest {
   // For certain keyset_config, additional information is needed,
   // this is given by the documentation of KeySetAddedInfo.
   KeySetAddedInfo keyset_added_info = 6;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 7;
+
+  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  RequestId epoch_id = 8;
+}
+
+message KeyDigest {
+  // The type of the generated key, e.g., "ServerKey", "PublicKey".
+  string key_type = 1;
+
+  // The digest of the generated key.
+  bytes digest = 2;
 }
 
 message KeyGenResult {
   // The 32 Byte / 256 Bit ID of the key generation request, without `0x` prefix.
   RequestId request_id = 1;
 
-  // The results of the key generation, a map from key type (e.g. Public,
-  // Server, Sns key) to the signed key data.
-  map<string, SignedPubDataHandle> key_results = 2;
-}
+  // Preprocessing ID used for keygen
+  RequestId preprocessing_id = 2;
 
-// The result of generation of a public key
-message SignedPubDataHandle {
-  // The key handle;
-  // This is a 256 bits `SHAKE-256` hash of the `tfhe::safe_serialization` of the
-  // underlying struct using [`DSEP_HANDLE`] as domain seperator. 
-  // This handle serves as the `URI` to locate the actual object in the `storage`.
-  string key_handle = 1;
-  // Plain ECDSA Signature on the key handle.
-  bytes signature = 2;
-  // The signature on the key for the external recipient
-  // (e.g. using EIP712 for fhevm)
-  bytes external_signature = 3;
+  // Mapping of key type string to digest
+  // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5]).
+  // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
+  repeated KeyDigest key_digests = 3;
+
+  // EIP-712 signature on the key generation result.
+  // The structure signed has the following fields:
+  // struct KeygenVerification {
+  //     /// @notice The ID of the preprocessing keygen request.
+  //     uint256 prepKeygenId;
+  //     /// @notice The ID of the generated key.
+  //     uint256 keyId;
+  //     /// @notice The generated digests of keys.
+  //     KeyDigest[] keyDigests;
+  // }
+  // enum KeyType {
+  //     SERVER,
+  //     PUBLIC
+  // }
+  // struct KeyDigest {
+  //     /// @notice The type of the generated key.
+  //     KeyType keyType;
+  //     /// @notice The digest of the generated key.
+  //     bytes digest;
+  // }
+  bytes external_signature = 4;
 }
 
 // Keeping the fields in lowercase is important because
@@ -162,20 +219,47 @@ message CrsGenRequest {
   // The 32 Byte / 256 Bit ID of the crs generation request, without `0x`
   // prefix.
   RequestId request_id = 1;
+
+  // The FHE parameters for CRS generation.
   FheParameter params = 2;
+
   // This is the maximum number of bits that can be proven,
   // e.g. 64 for a single FheUint64 or 8 x FheUint8 values.
   // If this is not provided, then it defaults to ZK_DEFAULT_MAX_NUM_CLEARTEXT.
   optional uint32 max_num_bits = 3;
+
+  // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 4;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 5;
 }
 
 message CrsGenResult {
   // The 32 Byte / 256 Bit ID of the crs generation request, without `0x`
   // prefix.
   RequestId request_id = 1;
-  // The struct holding the signature and the handle of the CRS
-  SignedPubDataHandle crs_results = 2;
+
+  // The digest of the generated CRS.
+  // It is hashed with the domain separator DSEP_PUBDATA_CRS="PDAT_CRS".
+  bytes crs_digest = 2;
+
+  // This is the maximum number of bits that can be proven.
+  uint32 max_num_bits = 3;
+
+  // EIP-712 signature on the CRS generation result using the following structure:
+  // struct CrsgenVerification {
+  //     /// @notice The ID of the generated CRS, which is the request ID that started the CRS generation.
+  //     uint256 crsId;
+  //     /// @notice The max bit length of the generated CRS.
+  //     uint256 maxBitLength;
+  //     /// @notice The digest of the generated CRS.
+  //     bytes crsDigest;
+  // }
+  bytes external_signature = 4;
 }
 
 // This enum tells the KMS how to deserialize ciphertexts.
@@ -226,6 +310,15 @@ message PublicDecryptionRequest {
 
   // Extra data from the gateway.
   bytes extra_data = 5;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 6;
+
+  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  RequestId epoch_id = 7;
 }
 
 // KMS-internal Public Decryption Response Payload, containing meta data, plaintexts
@@ -262,9 +355,9 @@ message PublicDecryptionResponse {
   bytes extra_data = 4;
 }
 
-// Eip712 domain information. 
-// Any constraints specified in the [standard](https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator) _must_ be fulfilled.  
-// Furthermore, be aware that all parameters will eventually be parsed into Solidity types. 
+// Eip712 domain information.
+// Any constraints specified in the [standard](https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator) _must_ be fulfilled.
+// Furthermore, be aware that all parameters will eventually be parsed into Solidity types.
 message Eip712DomainMsg {
   string name = 1;
   string version = 2;
@@ -297,6 +390,15 @@ message UserDecryptionRequest {
 
   // Extra data from the gateway.
   bytes extra_data = 7;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 8;
+
+  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  RequestId epoch_id = 9;
 }
 
 message UserDecryptionResponse {
@@ -420,22 +522,22 @@ message KmsContext {
   int32 threshold = 5;
 }
 
-// The information held by the custodian nodes in a custodian context.
-message CustodianNode {
-  // The human-readable name of the custodian node.
-  string name = 1;
-  // The public encryption key of the custodian node,
-  // that the KMS parties use to back their shares to the custodian.
-  bytes public_encryption_key = 2;
+message CustodianSetupMessage {
+  // The 1-indexed role of the custodian
+  uint64 custodian_role = 1;
+  // Human readable name and unique identifier of the given custodian
+  string name = 2;
+  // Binary blob containing keys and other information in a versioned, universal binary format
+  bytes payload = 3;
 }
 
 // The context of the custodian nodes.
 message CustodianContext {
-  // The list of custodian nodes in the context that are
+  // The list of setup messages of the custodian nodes in the context that are
   // responsible for backing up and recovering key materials.
   // The number of custodian nodes does not need to match the number of KMS nodes,
   // they are operated independently.
-  repeated CustodianNode custodian_nodes = 1;
+  repeated CustodianSetupMessage custodian_nodes = 1;
 
   // A monotonically increasing counter stored on the Gateway
   // that is increased by 1 every time a new context of a specific type is generated.
@@ -449,7 +551,7 @@ message CustodianContext {
   // It does not need to match the KMS context threshold
   // and we only need to ensure a majority of custodian nodes are honest
   // since the backup and recovery steps are synchronous.
-  int32 threshold = 4;
+  uint32 threshold = 4;
 }
 
 // Request to create a new KMS context.
@@ -481,7 +583,117 @@ message DestroyCustodianContextRequest {
 message OperatorPublicKey {
   // The public key that a custodian can use to encrypt a backup share
   bytes public_key = 1;
+  // TODO(#2748) should also contain the verification key
   // The attestation document that proves the public key is generated within an
   // enclave initialized from a trusted software build
   bytes attestation_document = 2;
+}
+
+message CustodianRecoveryInitRequest {
+  // Allow overwriting in case an ephemeral key has already been set
+  bool overwrite_ephemeral_key = 1;
+}
+
+// The data constructed by a single custodian to help a single operator recover their private master decryption key
+message CustodianRecoveryOutput {
+  bytes signature = 1;
+  bytes ciphertext = 2;
+  // The 1-indexed role of the custodian
+  uint64 custodian_role = 3;
+  uint64 operator_role = 4;
+}
+
+// The recovery request which contains the needed recovery data from all the custodians,
+// which is sent to the KMS to recover the private backup master decryption key
+message CustodianRecoveryRequest {
+  RequestId custodian_context_id = 1;
+  repeated CustodianRecoveryOutput custodian_recovery_outputs = 2;
+}
+
+// The data constructed by a given operator towards a given custodian after it has constructed a recovery request
+message OperatorBackupOutput {
+  bytes ciphertext = 1;
+  bytes signature = 2;
+}
+
+// The request constructed by a KMS to initiate custodian based backup recovery
+message RecoveryRequest {
+  // The ephemeral encryption key of the operator used when signcrypting the recovered data during transit to the operator.
+  bytes enc_key = 1;
+  /// The ciphertexts that are the backup. Indexed by the custodian role.
+  map<uint64, OperatorBackupOutput> cts = 2;
+  /// The request ID under which the backup was created.
+  RequestId backup_id = 3;
+  /// The role of the operator
+  uint64 operator_role = 4;
+}
+
+// Response containing available key material information
+message KeyMaterialAvailabilityResponse {
+  // Key IDs for generated FHE keys
+  repeated string fhe_key_ids = 1;
+
+  // Key IDs for generated CRS
+  repeated string crs_ids = 2;
+
+  // Key IDs for preprocessing material (threshold only)
+  repeated string preprocessing_ids = 3;
+
+  // Storage backend information
+  string storage_info = 4;
+}
+
+// Health status levels
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_OPTIMAL = 1;     // All nodes online and reachable
+  HEALTH_STATUS_HEALTHY = 2;     // Sufficient 2/3 majority but not all nodes
+  HEALTH_STATUS_DEGRADED = 3;    // Above minimum threshold but below 2/3
+  HEALTH_STATUS_UNHEALTHY = 4;   // Insufficient nodes for operations
+}
+
+// Node type for KMS deployment
+enum NodeType {
+  NODE_TYPE_UNSPECIFIED = 0;
+  NODE_TYPE_CENTRALIZED = 1;
+  NODE_TYPE_THRESHOLD = 2;
+}
+
+// Health information for a peer node
+message PeerHealth {
+  // Peer party ID (for threshold mode)
+  uint32 peer_id = 1;
+  // Peer endpoint address
+  string endpoint = 2;
+  // Whether the peer is reachable
+  bool reachable = 3;
+  // Connection latency in milliseconds
+  uint32 latency_ms = 4;
+  // Error message if peer is unreachable
+  string error = 5;
+}
+
+message PeersFromContext {
+  RequestId context_id = 1;
+  uint32 my_party_id = 2;
+  uint32 threshold_required = 3; // Minimum nodes needed
+  uint32 nodes_reachable = 4; // Currently reachable nodes
+  HealthStatus status = 5; // Overall health status
+  repeated PeerHealth peers = 6;
+}
+
+// Response containing comprehensive health status
+message HealthStatusResponse {
+  // Health status of all peers for every contexts
+  repeated PeersFromContext peers_from_all_contexts = 1;
+
+  // Self key material IDs and storage info
+  repeated string my_fhe_key_ids = 2;
+  repeated string my_crs_ids = 3;
+  repeated string my_preprocessing_key_ids = 4;
+  string my_storage_info = 5;
+
+  // Runtime configuration info
+  NodeType node_type = 6;
+
 }

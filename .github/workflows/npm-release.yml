@@ -1,4 +1,4 @@
-name: Publish npm release
+name: npm-release
 
 on:
   release:
@@ -7,28 +7,73 @@ on:
 permissions: {}
 
 jobs:
-  start-runner:
-    uses: ./.github/workflows/common-testing-big-instance.yml
-    with:
-      working-directory: './core/service'
-      args-tests: '-F testing --lib'
-      run-wasm: true
-      package-name: 'kms'
-      npm-release: true
-      app-cache-dir: 'kms'
-    permissions:
-      packages: read
-      contents: read
-      id-token: write
-    secrets:
-      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+  npm-release:
+    name: npm-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: true
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: true
+
+      # WASM handling
+      - name: Install
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install node
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 20
+
+      # NPM package handling
+      - name: Set NPM version tag to latest
+        if: ${{ !github.event.release.prerelease }}
+        run: |
+          echo "NPM_TAG=latest" >> "${GITHUB_ENV}"
+
+      - name: Set NPM version tag to prerelease
+        if: ${{ github.event.release.prerelease }}
+        run: |
+          echo "NPM_TAG=prerelease" >> "${GITHUB_ENV}"
+
+      # Node package build and publish
+      - name: NPM build node package
+        working-directory: ./core/service
+        run: |
+          rm -rf pkg
+          wasm-pack build --target nodejs . --no-default-features
+          sed -i 's/"kms"/"node-tkms"/g' pkg/package.json
+          echo "# node-tkms" > pkg/README.md
+
+      - name: NPM publish Node package
+        uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          package: ./core/service/pkg/package.json
+          dry-run: false
+          provenance: true # change to true when repo is public (see #1048)
+          tag: ${{ env.NPM_TAG }}
+
+      # Web package build and publish
+      - name: NPM build web package
+        working-directory: ./core/service
+        run: |
+          rm -rf pkg
+          wasm-pack build --target web . --no-default-features
+          sed -i 's/"kms"/"tkms"/g' pkg/package.json
+          echo "# tkms" > pkg/README.md
+
+      - name: NPM publish web package
+        uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          package: ./core/service/pkg/package.json
+          dry-run: false
+          provenance: true # change to true when repo is public (see #1048)
+          tag: ${{ env.NPM_TAG }}
+
+      - name: Remove aws credentials file
+        run: |
+          rm -rf ~/.aws

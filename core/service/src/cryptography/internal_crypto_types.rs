@@ -6,6 +6,7 @@ use ml_kem::{EncodedSizeUser, KemCore};
 use nom::AsBytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
+use std::sync::Arc;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -187,7 +188,6 @@ impl<C: KemCore> Visitor<'_> for PublicEncKeyVisitor<C> {
             Ok(array) => array,
             Err(_) => {
                 let msg = "ML-KEM Public Enc Key Byte array of incorrect length";
-                tracing::error!(msg);
                 return Err(serde::de::Error::custom(msg));
             }
         };
@@ -265,7 +265,6 @@ impl<C: KemCore> Visitor<'_> for PrivateEncKeyVisitor<C> {
             Ok(array) => array,
             Err(_) => {
                 let msg = "ML-KEM Private Enc Key Byte array of incorrect length";
-                tracing::warn!(msg);
                 return Err(serde::de::Error::custom(msg));
             }
         };
@@ -306,6 +305,13 @@ impl PublicSigKey {
         }
     }
 
+    pub fn from_sk(sk: &PrivateSigKey) -> Self {
+        let pk = SigningKey::verifying_key(&sk.sk.0).to_owned();
+        PublicSigKey {
+            pk: WrappedVerifyingKey(pk),
+        }
+    }
+
     pub fn pk(&self) -> &k256::ecdsa::VerifyingKey {
         &self.pk.0
     }
@@ -341,6 +347,14 @@ impl std::hash::Hash for WrappedVerifyingKey {
 
 impl From<PrivateSigKey> for PublicSigKey {
     fn from(value: PrivateSigKey) -> Self {
+        let pk = SigningKey::verifying_key(&value.sk.0).to_owned();
+        PublicSigKey {
+            pk: WrappedVerifyingKey(pk),
+        }
+    }
+}
+impl From<Arc<PrivateSigKey>> for PublicSigKey {
+    fn from(value: Arc<PrivateSigKey>) -> Self {
         let pk = SigningKey::verifying_key(&value.sk.0).to_owned();
         PublicSigKey {
             pk: WrappedVerifyingKey(pk),

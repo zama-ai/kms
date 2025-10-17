@@ -10,6 +10,15 @@ start-compose-threshold:
 stop-compose-threshold:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml down --volumes --remove-orphans
 
+build-compose-threshold-custodian:
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold-custodian.yml -f docker-compose-core-gateway-threshold.yml build
+
+start-compose-threshold-custodian:
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold-custodian.yml up -d --wait
+
+stop-compose-threshold-custodian:
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold-custodian.yml down --volumes --remove-orphans
+
 build-compose-centralized:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml build
 
@@ -18,6 +27,15 @@ start-compose-centralized:
 
 stop-compose-centralized:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml down --volumes --remove-orphans
+
+build-compose-centralized-custodian:
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized-custodian.yml build
+
+start-compose-centralized-custodian:
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized-custodian.yml up -d --wait
+
+stop-compose-centralized-custodian:
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized-custodian.yml down --volumes --remove-orphans
 
 ## TODO not sure what we do about these:
 # start-compose-threshold-observability:
@@ -31,6 +49,25 @@ stop-compose-centralized:
 
 test-backward-compatibility: pull-lfs-files
 	cargo test --test backward_compatibility_* -- --include-ignored
+
+test-backward-compatibility-local:
+	cargo test --test backward_compatibility_* -- --include-ignored --no-capture
+
+clean-backward-compatibility-data:
+	rm -f backward-compatibility/data/kms.ron
+	rm -f backward-compatibility/data/kms-grpc.ron
+	rm -f backward-compatibility/data/threshold-fhe.ron
+	rm -rf backward-compatibility/data/0_11_0
+	rm -rf backward-compatibility/data/0_11_1
+
+generate-backward-compatibility-v0.11.0:
+	cd backward-compatibility/generate-v0.11.0 && cargo run --release
+
+generate-backward-compatibility-v0.11.1:
+	cd backward-compatibility/generate-v0.11.1 && cargo run --release
+
+generate-backward-compatibility-all: clean-backward-compatibility-data generate-backward-compatibility-v0.11.0 generate-backward-compatibility-v0.11.1
+	@echo "✅ Generated backward compatibility data for all versions"
 
 # Check if Git LFS is installed and enabled
 check-git-lfs:

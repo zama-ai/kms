@@ -21,19 +21,22 @@ use kms_grpc::{
 };
 use kms_lib::{
     backup::{
-        custodian::{Custodian, CustodianSetupMessage},
-        operator::{Operator, OperatorBackupOutput},
+        custodian::{Custodian, InternalCustodianSetupMessage},
+        operator::{InnerOperatorBackupOutput, Operator},
     },
     cryptography::{
         backup_pke,
         internal_crypto_types::{gen_sig_keys, PrivateSigKey, PublicSigKey},
     },
-    engine::{base::KmsFheKeyHandles, threshold::service::ThresholdFheKeys},
+    engine::{
+        base::{KeyGenMetadata, KmsFheKeyHandles},
+        threshold::service::ThresholdFheKeys,
+    },
     util::key_setup::FhePublicKey,
     vault::keychain::AppKeyBlob,
 };
 use rand::SeedableRng;
-use std::{collections::HashMap, env, path::Path};
+use std::{collections::HashMap, env, path::Path, sync::Arc};
 use tfhe::integer::compression_keys::DecompressionKey;
 use threshold_fhe::execution::{
     runtime::party::Role, tfhe_internals::public_keysets::FhePubKeySet,
@@ -128,7 +131,7 @@ fn test_kms_fhe_key_handles(
     let original_versionized: KmsFheKeyHandles = load_and_unversionize(dir, test, format)?;
 
     // Retrieve the key parameters from the original KMS handle
-    let (original_integer_key, _, _, _, _, _) =
+    let (original_integer_key, _, _, _, _, _, _) =
         original_versionized.client_key.clone().into_raw_parts();
     let original_key_params = original_integer_key.parameters();
 
@@ -152,9 +155,13 @@ fn test_kms_fhe_key_handles(
     let decompression_key: Option<DecompressionKey> =
         load_and_unversionize_auxiliary(dir, test, &test.decompression_key_filename, format)?;
 
+    let key_id = RequestId::zeros();
+    let preproc_id = RequestId::zeros();
     let new_versionized = KmsFheKeyHandles::new(
         &private_sig_key,
         client_key,
+        &key_id,
+        &preproc_id,
         &fhe_pub_key_set,
         decompression_key,
         &dummy_domain(),
@@ -162,7 +169,7 @@ fn test_kms_fhe_key_handles(
     .unwrap();
 
     // Retrieve the key parameters from the new KMS handle
-    let (new_integer_key, _, _, _, _, _) = new_versionized.client_key.clone().into_raw_parts();
+    let (new_integer_key, _, _, _, _, _, _) = new_versionized.client_key.clone().into_raw_parts();
     let new_key_params = new_integer_key.parameters();
 
     // Compare the key parameters and the public key info. We cannot directly compare KmsFheKeyHandles
@@ -194,6 +201,10 @@ fn test_threshold_fhe_keys(
     let sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey> =
         load_and_unversionize_auxiliary(dir, test, &test.sns_key_filename, format)?;
 
+    // NOTE: we use the old HashMap type here, instead of KeyGenMetadata
+    // this is ok because we never explicitly write pk_meta_data to dist so there's no need
+    // to read the new type KeyGenMetadata.
+    // But we still need to fetch the correct information so that we can do the comparison.
     let pk_meta_data: HashMap<PubDataType, SignedPubDataHandleInternal> =
         load_and_unversionize_auxiliary(dir, test, &test.info_filename, format)?;
 
@@ -203,11 +214,11 @@ fn test_threshold_fhe_keys(
     let original_versionized: ThresholdFheKeys = load_and_unversionize(dir, test, format)?;
 
     let new_versionized = ThresholdFheKeys {
-        private_keys,
-        integer_server_key,
-        sns_key,
-        decompression_key,
-        pk_meta_data,
+        private_keys: Arc::new(private_keys),
+        integer_server_key: Arc::new(integer_server_key),
+        sns_key: sns_key.map(Arc::new),
+        decompression_key: decompression_key.map(Arc::new),
+        meta_data: KeyGenMetadata::LegacyV0(pk_meta_data),
     };
 
     // Retrieve the key parameters from the new KMS handle
@@ -224,11 +235,11 @@ fn test_threshold_fhe_keys(
             ),
             format,
         ))
-    } else if original_versionized.pk_meta_data != new_versionized.pk_meta_data {
+    } else if original_versionized.meta_data != new_versionized.meta_data {
         Err(test.failure(
             format!(
                 "Invalid KMS FHE key handles because of different public key info:\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized.pk_meta_data, new_versionized.pk_meta_data
+                original_versionized.meta_data, new_versionized.meta_data
             ),
             format,
         ))
@@ -243,10 +254,11 @@ fn test_custodian_setup_message(
     test: &CustodianSetupMessageTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let original_custodian_setup_message: CustodianSetupMessage =
+    let original_custodian_setup_message: InternalCustodianSetupMessage =
         load_and_unversionize(dir, test, format)?;
 
     let mut rng = AesRng::seed_from_u64(test.seed);
+    let name = "Testname".to_string();
     let (verification_key, signing_key) = gen_sig_keys(&mut rng);
     let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
     let custodian = Custodian::new(
@@ -257,12 +269,11 @@ fn test_custodian_setup_message(
         public_key,
     )
     .unwrap();
-    let mut new_custodian_setup_message = custodian.generate_setup_message(&mut rng).unwrap();
+    let mut new_custodian_setup_message = custodian.generate_setup_message(&mut rng, name).unwrap();
 
     // the timestamp will never match, so we modify it manually
     // the timestamp also affects the signature, so modify it as well
-    new_custodian_setup_message.msg.timestamp = original_custodian_setup_message.msg.timestamp;
-    new_custodian_setup_message.signature = original_custodian_setup_message.signature.clone();
+    new_custodian_setup_message.timestamp = original_custodian_setup_message.timestamp;
 
     if original_custodian_setup_message != new_custodian_setup_message {
         Err(test.failure(
@@ -282,7 +293,7 @@ fn test_operator_backup_output(
     test: &OperatorBackupOutputTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let original_operator_backup_output: OperatorBackupOutput =
+    let original_operator_backup_output: InnerOperatorBackupOutput =
         load_and_unversionize(dir, test, format)?;
 
     let mut rng = AesRng::seed_from_u64(test.seed);
@@ -303,31 +314,32 @@ fn test_operator_backup_output(
         .collect();
     let custodian_messages: Vec<_> = custodians
         .iter()
-        .map(|c| c.generate_setup_message(&mut rng).unwrap())
+        .enumerate()
+        .map(|(i, c)| {
+            c.generate_setup_message(&mut rng, format!("Custodian-{i}"))
+                .unwrap()
+        })
         .collect();
 
     let operator = {
-        let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         Operator::new(
             Role::indexed_from_zero(0),
-            custodian_messages,
+            custodian_messages.clone(),
             signing_key,
-            verification_key,
-            private_key,
-            public_key,
             test.custodian_threshold,
+            custodian_messages.len(), // Testing a sunshine case where all custodians are present
         )
         .unwrap()
     };
-
-    let new_operator_backup_output = &operator
+    let (cts, _commitments) = &operator
         .secret_share_and_encrypt(
             &mut rng,
             &test.plaintext,
             RequestId::from_bytes(test.backup_id),
         )
-        .unwrap()[&operator.role()];
+        .unwrap();
+    let new_operator_backup_output = &cts[&operator.role()];
     if original_operator_backup_output != *new_operator_backup_output {
         Err(test.failure(
             format!(

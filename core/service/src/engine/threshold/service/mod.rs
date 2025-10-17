@@ -15,12 +15,10 @@ mod kms_impl;
 pub use kms_impl::*;
 
 // Module components
-mod backup_operator;
-mod context_manager;
 mod crs_generator;
 mod initiator;
 mod key_generator;
 mod preprocessor;
 mod public_decryptor;
-mod session;
+pub(crate) mod session;
 mod user_decryptor;

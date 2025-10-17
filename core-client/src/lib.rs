@@ -4,40 +4,53 @@
 /// This library also includes an associated CLI.
 use aes_prng::AesRng;
 use alloy_primitives::Signature;
-use alloy_sol_types::Eip712Domain;
+use alloy_sol_types::{Eip712Domain, SolStruct};
 use anyhow::anyhow;
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, CrsGenResult, FheParameter, KeyGenPreprocResult, KeyGenResult,
-    PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext, TypedPlaintext,
+    CiphertextFormat, CrsGenResult, CustodianContext, CustodianRecoveryInitRequest,
+    CustodianRecoveryOutput, CustodianRecoveryRequest, Empty, FheParameter, KeyGenPreprocResult,
+    KeyGenResult, NewCustodianContextRequest, PublicDecryptionRequest, PublicDecryptionResponse,
+    TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
+use kms_grpc::rpc_types::{protobuf_to_alloy_domain, InternalCustodianRecoveryOutput, PubDataType};
+use kms_grpc::solidity_types::{CrsgenVerification, KeygenVerification};
 use kms_grpc::{KeyId, RequestId};
+use kms_lib::backup::custodian::InternalCustodianSetupMessage;
+use kms_lib::backup::operator::InternalRecoveryRequest;
 use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
-use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
-use kms_lib::util::file_handling::{read_element, write_element};
+use kms_lib::engine::base::compute_pt_message_hash;
+use kms_lib::engine::base::{
+    hash_sol_struct, safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
+};
+use kms_lib::util::file_handling::{
+    read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
+};
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::util::key_setup::test_tools::{
-    compute_cipher_from_stored_key, load_crs_from_storage, load_pk_from_storage,
-    load_server_key_from_storage, EncryptionConfig, TestingPlaintext,
+    compute_cipher_from_stored_key, load_material_from_storage, load_pk_from_storage,
+    EncryptionConfig, TestingPlaintext,
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
-use kms_lib::DecryptionMode;
+use kms_lib::vault::storage::{make_storage, read_text_at_request_id};
+use kms_lib::vault::Vault;
+use kms_lib::{conf, DecryptionMode};
 use observability::conf::Settings;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Once};
 use strum_macros::{Display, EnumString};
-use tfhe::named::Named;
-use tfhe::Versionize;
+use tfhe::zk::CompactPkeCrs;
+use tfhe::{CompactPublicKey, ServerKey};
 use threshold_fhe::execution::runtime::party::Role;
+use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
 use threshold_fhe::hashing::{hash_element, DomainSep};
 use tokio::sync::RwLock;
 use tokio::task::JoinSet;
@@ -69,76 +82,133 @@ macro_rules! retry {
     };
 }
 
-#[derive(Serialize, Clone, Validate, Default, Debug)]
+#[derive(Serialize, Clone, Validate, Debug)]
 #[validate(schema(function = validate_core_client_conf))]
 pub struct CoreClientConfig {
-    /// S3 endpoint from which to fetch keys
-    /// NOTE: We should probably move away from that and use the key-url
+    // The mode of the KMS ("centralized" or "threshold"). Threshold by default.
+    pub kms_type: KmsType,
+    // List of configurations for the cores
     #[validate(length(min = 1))]
-    pub s3_endpoint: String,
-    /// Key folder where to store the keys
-    #[validate(length(min = 1))]
-    pub object_folder: Vec<String>,
+    pub cores: Vec<CoreConf>,
     pub decryption_mode: Option<DecryptionMode>,
+    #[validate(range(min = 1))]
     pub num_majority: usize,
+    #[validate(range(min = 1))]
     pub num_reconstruct: usize,
-    #[validate(length(min = 1))]
-    pub core_addresses: Vec<String>,
     pub fhe_params: Option<FheParameter>,
 }
 
-fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationError> {
-    let num_parties = conf.core_addresses.len();
+#[derive(Deserialize, Serialize, Clone, Validate, Default, Debug)]
+pub struct CoreConf {
+    /// The ID of the given KMS server (monotonically increasing positive integer starting at 1)
+    #[validate(range(min = 1))]
+    pub party_id: usize,
+    /// The address of the given KMS server, including the port
+    #[validate(length(min = 1))]
+    pub address: String,
+    /// The S3 endpoint where the public material of the given server can be reached
+    #[validate(length(min = 1))]
+    pub s3_endpoint: String,
+    /// The folder at the S3 endpoint where the data is stored
+    pub object_folder: String,
+}
 
-    if conf.object_folder.len() != conf.core_addresses.len() {
-        return Err(
-            ValidationError::new("Address/Object length mismatch").with_message(
+fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationError> {
+    // The number of parties in the configuration, this may not be the actual number of KMS parties IRL. But is just the ones we currently communicate with.
+    let num_parties = conf.cores.len();
+
+    for cur_core in &conf.cores {
+        if cur_core.party_id == 0 || cur_core.party_id > num_parties {
+            return Err(ValidationError::new("Incorrect Party ID").with_message(
                 format!(
-                    "Number of object folders ({}) must match number of core addresses ({})",
-                    conf.object_folder.len(),
-                    conf.core_addresses.len(),
+                    "Party ID must be between 1 and the number of parties ({}), but was {}.",
+                    num_parties, cur_core.party_id
                 )
                 .into(),
-            ),
-        );
+            ));
+        }
+        if conf
+            .cores
+            .iter()
+            .filter(|x| x.party_id == cur_core.party_id)
+            .count()
+            > 1
+        {
+            return Err(ValidationError::new("Duplicate Party ID").with_message(
+                format!(
+                    "Party ID {} is duplicated in the configuration.",
+                    cur_core.party_id
+                )
+                .into(),
+            ));
+        }
+        if conf
+            .cores
+            .iter()
+            .filter(|x| x.address == cur_core.address)
+            .count()
+            > 1
+        {
+            return Err(ValidationError::new("Duplicate Address").with_message(
+                format!(
+                    "Address {} is duplicated in the configuration.",
+                    cur_core.address
+                )
+                .into(),
+            ));
+        }
+    }
+    if conf.num_majority > num_parties {
+        return Err(ValidationError::new("Majority Vote Count Error").with_message(format!("Number for majority votes ({}) must be smaller than or equal to the number of parties the CLI communicates with ({}).", conf.num_majority, num_parties).into()));
+    }
+    if conf.num_reconstruct > num_parties {
+        return Err(ValidationError::new("Reconstruction Count Error").with_message(format!("Number for reconstruction shares ({}) must be smaller than or equal to the number of parties the CLI communicates with ({}).", conf.num_reconstruct, num_parties).into()));
+    }
+    if conf.num_reconstruct < conf.num_majority {
+        return Err(ValidationError::new("Reconstruction Count Error").with_message(format!("Number for reconstruction shares ({}) must be greater than or equal to the number of majority votes ({}).", conf.num_reconstruct, conf.num_majority).into()));
     }
 
     if num_parties > 1 {
-        // threshold config
-        let threshold = (num_parties - 1) / 3; // Note that this is floored division. We assumt that 3t+1=n for now.
-
-        // a majority is more than t parties agreeing. But we could also set it to a higher value up to num_parties.
-        if conf.num_majority <= threshold || conf.num_majority > num_parties {
-            return Err(ValidationError::new("Threshold Majority Vote Count Error").with_message(format!("Number for majority votes ({}) must be greater than the threshold ({}) and smaller than the number of parties ({}).", conf.num_majority, threshold, num_parties).into()));
-        }
-
-        // reconstruction needs at least t+2 parties responses. But we could also set it to a higher value up to num_parties.
-        if conf.num_reconstruct < threshold + 2 || conf.num_reconstruct > num_parties {
-            return Err(ValidationError::new("Threshold Reconstruction Count Error").with_message(format!("Number for reconstruction shares ({}) must be at least t+2 ({}) and smaller than the number of parties ({}).", conf.num_reconstruct, threshold + 2, num_parties).into()));
+        // Should be a threshold config
+        if conf.kms_type != KmsType::Threshold {
+            return Err(ValidationError::new("KMS Type Error").with_message(format!("KMS mode must be 'threshold' when there are multiple cores ({} cores configured).", num_parties).into()));
         }
     } else {
-        // centralized config, here both values must be 1.
-        if conf.num_majority != 1 {
-            return Err(
-                ValidationError::new("Centralized Majority Vote Count Error").with_message(
-                    format!(
+        // We may be in the centralized or threshold mode (communicating with a single server)
+        if conf.kms_type == KmsType::Centralized {
+            if conf.num_majority != 1 {
+                return Err(
+                    ValidationError::new("Centralized Majority Vote Count Error").with_message(
+                        format!(
                     "Number for majority votes ({}) must be equal to 1 for a centralized config.",
                     conf.num_majority,
                 )
-                    .into(),
-                ),
-            );
-        }
-        if conf.num_reconstruct != 1 {
-            return Err(
-                ValidationError::new("Centralized Reconstruction Count Error").with_message(
-                    format!(
+                        .into(),
+                    ),
+                );
+            }
+            if conf.num_reconstruct != 1 {
+                return Err(
+                    ValidationError::new("Centralized Reconstruction Count Error").with_message(
+                        format!(
                     "Number for reconstruction ({}) must be equal to 1 for a centralized config.",
                     conf.num_reconstruct,
                 )
-                    .into(),
-                ),
-            );
+                        .into(),
+                    ),
+                );
+            }
+            if conf.cores.first().expect("no party IDs found").party_id != 1 {
+                return Err(
+                    ValidationError::new("Centralized Party ID Error").with_message(
+                        format!(
+                    "Party ID of the single core in a centralized config must be 1, but was {}.",
+                    conf.cores.first().unwrap().party_id
+                )
+                        .into(),
+                    ),
+                );
+            }
         }
     }
 
@@ -150,26 +220,26 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
     where
         D: serde::Deserializer<'de>,
     {
-        #[derive(Deserialize, Clone, Default, Debug)]
+        #[derive(Deserialize, Clone, Debug)]
         pub struct CoreClientConfigBuffer {
-            pub s3_endpoint: String,
-            pub object_folder: Vec<String>,
+            // The mode of the KMS ("centralized" or "threshold"). Threshold by default.
+            pub kms_type: KmsType,
+            // List of configurations for the cores
+            pub cores: Vec<CoreConf>,
             pub decryption_mode: Option<DecryptionMode>,
             pub num_majority: usize,
             pub num_reconstruct: usize,
-            pub core_addresses: Vec<String>,
             pub fhe_params: Option<FheParameter>,
         }
 
         let temp = CoreClientConfigBuffer::deserialize(deserializer)?;
 
         let conf = CoreClientConfig {
-            s3_endpoint: temp.s3_endpoint,
-            object_folder: temp.object_folder,
+            kms_type: temp.kms_type,
+            cores: temp.cores,
             decryption_mode: temp.decryption_mode,
             num_majority: temp.num_majority,
             num_reconstruct: temp.num_reconstruct,
-            core_addresses: temp.core_addresses,
             fhe_params: temp.fhe_params,
         };
 
@@ -381,17 +451,17 @@ pub struct CipherParameters {
     #[clap(long, short = 'e')]
     pub to_encrypt: String,
     /// Data type of `to_encrypt`.
-    /// Expected one of ebool, euint4, ..., euint2048
+    /// Expected one of ebool, euint8, ..., euint256
     #[clap(long, short = 'd')]
     pub data_type: FheType,
-    /// Boolean to activate ciphertext compression or not. Default: False.
-    #[clap(long, short = 'c')]
-    pub compression: bool,
-    /// Boolean to do SnS preprocessing on the ciphertext or not.
+    /// Disable ciphertext compression. Default: False, i.e. compression is used.
+    #[clap(long, alias = "nc")]
+    pub no_compression: bool,
+    /// Disable SnS preprocessing on the ciphertext on the core-client.
     /// SnS preprocessing performs a PBS to convert 64-bit ciphertexts to 128-bit ones.
-    /// Default: False.
-    #[clap(long)]
-    pub precompute_sns: bool,
+    /// Default: False, i.e. the SnS is precomputed on the core client.
+    #[clap(long, alias = "ns")]
+    pub no_precompute_sns: bool,
     /// Key identifier to use for public/user decryption.
     #[clap(long, short = 'k')]
     pub key_id: KeyId,
@@ -497,9 +567,34 @@ pub struct CrsParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct NewCustodianContextParameters {
+    #[clap(long, short = 't')]
+    pub threshold: u32,
+    #[clap(long, short = 'm')]
+    pub setup_msg_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct ResultParameters {
     #[clap(long, short = 'i')]
     pub request_id: RequestId,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct RecoveryInitParameters {
+    #[clap(long, short = 'o', default_value_t = false)]
+    pub overwrite_ephemeral_key: bool,
+    #[clap(long, short = 'r')]
+    pub operator_recovery_resp_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Parser, Clone)]
+
+pub struct RecoveryParameters {
+    #[clap(long, short = 'i')]
+    pub custodian_context_id: RequestId,
+    #[clap(long, short = 'r')]
+    pub custodian_recovery_outputs: Vec<PathBuf>,
 }
 
 #[derive(Debug, Subcommand, Clone)]
@@ -520,8 +615,11 @@ pub enum CCCommand {
     CrsGenResult(ResultParameters),
     InsecureCrsGen(CrsParameters),
     InsecureCrsGenResult(ResultParameters),
+    NewCustodianContext(NewCustodianContextParameters),
     GetOperatorPublicKey(NoParameters),
-    CustodianBackupRestore(NoParameters),
+    CustodianRecoveryInit(RecoveryInitParameters),
+    CustodianBackupRecovery(RecoveryParameters),
+    BackupRestore(NoParameters),
     DoNothing(NoParameters),
 }
 
@@ -541,13 +639,16 @@ pub struct CmdConfig {
     #[clap(long, default_value = "30")]
     #[validate(range(min = 1))]
     pub max_iter: usize,
-    /// Should we expect a response from every KMS core or not
+    /// Set this if you expect a response from every KMS core
     #[clap(long, short = 'a', default_value_t = false)]
     pub expect_all_responses: bool,
+    /// Set this if you want to download the generated keys/CRSes from all KMS cores
+    #[clap(long, short = 'd', default_value_t = false)]
+    pub download_all: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString, Display)]
-pub enum KmsMode {
+pub enum KmsType {
     #[strum(serialize = "centralized")]
     #[serde(rename = "centralized")]
     Centralized,
@@ -555,7 +656,6 @@ pub enum KmsMode {
     #[serde(rename = "threshold")]
     Threshold,
 }
-
 /// a dummy Eip-712 domain for testing
 fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     alloy_sol_types::eip712_domain!(
@@ -616,13 +716,11 @@ pub async fn fetch_ctxt_from_file(
 
 /// encrypt a given value and return the ciphertext
 /// parameters:
-/// - `to_encrypt`: the value to encrypt in little endian byte order
-/// - `fhe_type`: the type of the value to encrypt
-/// - `key_id`: the key identifier to use for encryption
-/// - `keys_folder`: the folder where the keys are stored
-/// - `compressed`: whether to compress the ciphertext or not
+/// - `keys_folder`: the root of the storage of the core client
+/// - `party_id`: the 1-indexed ID of the KMS core whose public keys we will use (should not matter as long as the server is online)
 pub async fn encrypt(
     keys_folder: &Path,
+    party_id: usize,
     cipher_params: CipherParameters,
 ) -> Result<EncryptionResult, Box<dyn std::error::Error + 'static>> {
     let to_encrypt = parse_hex(cipher_params.to_encrypt.as_str())?;
@@ -652,9 +750,10 @@ pub async fn encrypt(
         Some(keys_folder),
         typed_to_encrypt,
         &cipher_params.key_id.into(),
+        party_id,
         EncryptionConfig {
-            compression: cipher_params.compression,
-            precompute_sns: cipher_params.precompute_sns,
+            compression: !cipher_params.no_compression,
+            precompute_sns: !cipher_params.no_precompute_sns,
         },
     )
     .await;
@@ -685,11 +784,16 @@ fn join_vars(args: &[&str]) -> String {
 }
 
 // TODO: handle auth
-// TODO: add option to either use local  key or remote key
-pub async fn fetch_object(endpoint: &str, folder: &str, object_id: &str) -> anyhow::Result<Bytes> {
-    let object_key = object_id.to_string();
+// TODO: add option to either use local key or remote key
+pub async fn fetch_element(
+    endpoint: &str,
+    folder: &str,
+    element_id: &str,
+) -> anyhow::Result<Bytes> {
+    let element_key = element_id.to_string();
     // Construct the URL
-    let url = join_vars(&[endpoint, folder, object_key.as_str()]);
+    let url = join_vars(&[endpoint, folder, element_key.as_str()]);
+    tracing::debug!("Fetching element: {url}");
 
     // If URL we fetch it
     if url.starts_with("http") {
@@ -699,7 +803,7 @@ pub async fn fetch_object(endpoint: &str, folder: &str, object_id: &str) -> anyh
 
         if response.status().is_success() {
             let bytes = response.bytes().await?;
-            tracing::info!("Successfully downloaded {} bytes for object {object_id} from endpoint {endpoint}/{folder}", bytes.len());
+            tracing::info!("Successfully downloaded {} bytes for element {element_id} from endpoint {endpoint}/{folder}", bytes.len());
             // Here you can process the bytes as needed
             Ok(bytes)
         } else {
@@ -708,19 +812,22 @@ pub async fn fetch_object(endpoint: &str, folder: &str, object_id: &str) -> anyh
             tracing::error!("Error: {}", response_status);
             tracing::error!("Response: {}", response_content);
             Err(anyhow::anyhow!(format!(
-                "Couldn't fetch object {object_id} from endpoint {endpoint}/{folder}\nStatus: {}\nResponse: {}",
+                "Couldn't fetch element {element_id} from endpoint {endpoint}/{folder}\nStatus: {}\nResponse: {}",
                 response_status, response_content
             ),))
         }
     } else {
-        let key_path = Path::new(endpoint).join(folder).join(object_id);
+        // read from local file system
+        let key_path = Path::new(endpoint).join(folder).join(element_id);
         let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
             anyhow!(
                 "Failed to read byte file at {:?} with error: {e}",
                 &key_path
             )
         })?;
-        Ok(Bytes::from(byte_res))
+        let res = Bytes::from(byte_res);
+        tracing::info!("Successfully read {} bytes for element {element_id} from local path {endpoint}/{folder}", res.len());
+        Ok(res)
     }
 }
 
@@ -770,71 +877,86 @@ pub fn setup_logging() {
 
 /// This fetches material which is global
 /// i.e. everything related to CRS and FHE public materials
-async fn fetch_global_pub_object_and_write_to_file(
+async fn fetch_global_pub_element_and_write_to_file(
     destination_prefix: &Path,
     s3_endpoint: &str,
-    object_id: &str,
-    object_name: &str,
-    object_folder: &str,
+    element_id: &str,
+    element_name: &str,
+    element_folder: &str,
 ) -> anyhow::Result<()> {
     // Fetch pub-key from storage and dump it for later use
-    let folder = destination_prefix.join("PUB").join(object_name);
-    let content = fetch_object(
+    let folder = destination_prefix.join(element_folder).join(element_name);
+    let content = fetch_element(
         s3_endpoint,
-        &format!("{object_folder}/{object_name}"),
-        object_id,
+        &format!("{element_folder}/{element_name}"),
+        element_id,
     )
     .await?;
-    write_bytes_to_file(&folder, object_id, content.as_ref()).await
+    write_bytes_to_file(&folder, element_id, content.as_ref()).await
 }
 
-/// This fetches material which is local
-/// i.e. everything related to parties verification keys
-async fn fetch_local_key_and_write_to_file(
-    destination_prefix: &Path,
-    s3_endpoint: &str,
-    object_id: &str,
-    object_name: &str,
-    object_folder: &[String],
-) -> anyhow::Result<()> {
-    // Fetch pub-key from storage and dump it for later use
-    if object_folder.len() == 1 {
-        fetch_global_pub_object_and_write_to_file(
-            destination_prefix,
-            s3_endpoint,
-            object_id,
-            object_name,
-            object_folder.first().unwrap(),
+/// This reads the kms ethereum address from local file system
+async fn read_kms_addresses_local(
+    path: &Path,
+    sim_conf: &CoreClientConfig,
+) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
+    let mut addr_strings = Vec::with_capacity(sim_conf.cores.len());
+
+    for cur_core in &sim_conf.cores {
+        let cur_role = Role::indexed_from_one(cur_core.party_id);
+        let vault = {
+            let store_path = Some(conf::Storage::File(conf::FileStorage {
+                path: path.to_path_buf(),
+            }));
+            let party_role = match sim_conf.kms_type {
+                KmsType::Centralized => None, // in centralized mode, there is only one party, so no need to specify role to access the right storage
+                KmsType::Threshold => Some(cur_role),
+            };
+            let storage =
+                make_storage(store_path, StorageType::PUB, party_role, None, None).unwrap();
+            Vault {
+                storage,
+                keychain: None,
+            }
+        };
+
+        let content = read_text_at_request_id(
+            &vault,
+            &SIGNING_KEY_ID,
+            &PubDataType::VerfAddress.to_string(),
         )
-        .await
-    } else {
-        for (party_idx, folder_name) in object_folder.iter().enumerate() {
-            let folder = destination_prefix
-                .join(format!("PUB-p{}", party_idx + 1))
-                .join(object_name);
-            let content = fetch_object(
-                s3_endpoint,
-                &format!("{folder_name}/{object_name}"),
-                object_id,
-            )
-            .await?;
-            write_bytes_to_file(&folder, object_id, content.as_ref()).await?;
-        }
-        Ok(())
+        .await?;
+        addr_strings.push(content);
     }
+
+    // turn bytes read into Address type
+    let kms_addrs: Vec<_> = addr_strings
+        .iter()
+        .map(|x| {
+            alloy_primitives::Address::parse_checksummed(x, None)
+                .unwrap_or_else(|e| panic!("invalid ethereum address: {x:?} - {e}"))
+        })
+        .collect();
+
+    Ok(kms_addrs)
 }
 
-/// This fetches the kms ethereum address from local storage
-async fn fetch_kms_addresses(
+/// This fetches the KMS ethereum address from S3
+#[expect(dead_code)]
+async fn fetch_kms_addresses_remote(
     sim_conf: &CoreClientConfig,
 ) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
     let key_id = &SIGNING_KEY_ID.to_string();
-    let mut addr_bytes = Vec::with_capacity(sim_conf.object_folder.len());
+    let mut addr_bytes = Vec::with_capacity(sim_conf.cores.len());
 
-    for folder_name in &sim_conf.object_folder {
-        let content = fetch_object(
-            &sim_conf.s3_endpoint.clone(),
-            &format!("{}/{}", folder_name, "VerfAddress"),
+    for cur_core in &sim_conf.cores {
+        let content = fetch_element(
+            &cur_core.s3_endpoint.clone(),
+            &format!(
+                "{}/{}",
+                cur_core.object_folder,
+                &PubDataType::VerfAddress.to_string()
+            ),
             key_id,
         )
         .await?;
@@ -858,13 +980,11 @@ async fn fetch_kms_addresses(
     Ok(kms_addrs)
 }
 
-/// check that the external signature on the CRS or pubkey is valid, i.e. was made by one of the supplied addresses
-fn check_ext_pubdata_signature<D: Serialize + Versionize + Named>(
-    data: &D,
-    external_sig: &[u8],
+fn recover_address_from_ext_signature<S: SolStruct>(
+    data: &S,
     domain: &Eip712Domain,
-    kms_addrs: &[alloy_primitives::Address],
-) -> anyhow::Result<()> {
+    external_sig: &[u8],
+) -> anyhow::Result<alloy_primitives::Address> {
     // convert received data into proper format for EIP-712 verification
     if external_sig.len() != 65 {
         return Err(anyhow!(
@@ -879,17 +999,60 @@ fn check_ext_pubdata_signature<D: Serialize + Versionize + Named>(
     tracing::debug!("ext. signature: {:?}", sig);
     tracing::debug!("EIP-712 domain: {:?}", domain);
 
-    let hash = compute_external_pubdata_message_hash(data, domain)?;
+    let hash = hash_sol_struct(data, domain)?;
 
     let addr = sig.recover_address_from_prehash(&hash)?;
     tracing::info!("reconstructed address: {}", addr);
+
+    Ok(addr)
+}
+
+/// check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
+fn check_standard_keyset_ext_signature(
+    public_key: &CompactPublicKey,
+    server_key: &ServerKey,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    external_sig: &[u8],
+    domain: &Eip712Domain,
+    kms_addrs: &[alloy_primitives::Address],
+) -> anyhow::Result<()> {
+    let server_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
+    let public_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
+
+    let sol_type = KeygenVerification::new(prep_id, key_id, server_key_digest, public_key_digest);
+    let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
     // check that the address is in the list of known KMS addresses
     if kms_addrs.contains(&addr) {
         Ok(())
     } else {
         Err(anyhow!(
-            "External crs/pubkey signature verification failed!"
+            "External signature verification failed for keygen as it does not contain the right address!"
+        ))
+    }
+}
+
+/// check that the external signature on the CRS is valid, i.e. was made by one of the supplied addresses
+fn check_crsgen_ext_signature(
+    crs: &CompactPkeCrs,
+    crs_id: &RequestId,
+    external_sig: &[u8],
+    domain: &Eip712Domain,
+    kms_addrs: &[alloy_primitives::Address],
+) -> anyhow::Result<()> {
+    let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, crs)?;
+
+    let max_num_bits = max_num_bits_from_crs(crs);
+    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest);
+    let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
+
+    // check that the address is in the list of known KMS addresses
+    if kms_addrs.contains(&addr) {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "External signature verification failed for crsgen as it does not contain the right address!"
         ))
     }
 }
@@ -919,7 +1082,7 @@ fn check_ext_pt_signature(
     tracing::debug!("PTs: {:?}", plaintexts);
     tracing::debug!("ext. handles: {:?}", external_handles);
 
-    let hash = compute_pt_message_hash(external_handles, plaintexts, domain, extra_data);
+    let hash = compute_pt_message_hash(external_handles, plaintexts, domain, extra_data)?;
 
     let addr = sig.recover_address_from_prehash(&hash)?;
     tracing::info!("recovered address: {}", addr);
@@ -970,81 +1133,77 @@ fn check_external_decryption_signature(
     Ok(())
 }
 
-/// retrieve public verification keys and Ethereum addresses of the MPC servers
-async fn fetch_verf_keys(
-    cc_conf: &CoreClientConfig,
-    destination_prefix: &Path,
-) -> anyhow::Result<()> {
-    tracing::info!("Fetching verification keys");
-
-    // Fetch objects associated with Signature keys
-    for object_name in ["VerfAddress", "VerfKey"] {
-        fetch_local_key_and_write_to_file(
-            destination_prefix,
-            cc_conf.s3_endpoint.as_str(),
-            &SIGNING_KEY_ID.to_string(),
-            object_name,
-            &cc_conf.object_folder,
-        )
-        .await?;
-    }
-    Ok(())
-}
-
-/// Fetch all remote objects associated with TFHE keys and store locally for the core client
-async fn fetch_key(
-    key_id: &str,
+/// Fetch all remote elements and store them locally for the core client
+/// Return the server IDs of all servers that were successfully contacted
+/// or an error if no server could be contacted
+/// element_id: the id of the element to fetch (key id or crs id)
+/// element_types: the types of elements to fetch (e.g. public key, server key, CRS)
+/// sim_conf: the core client configuration
+/// destination_prefix: the local folder to store the fetched elements
+/// download_all: whether to download from all cores or just the first one
+/// returns: the party IDs of the cores that were successfully contacted, unsorted
+async fn fetch_elements(
+    element_id: &str,
+    element_types: &[PubDataType],
     sim_conf: &CoreClientConfig,
     destination_prefix: &Path,
-) -> anyhow::Result<()> {
-    let object_names = vec![
-        PubDataType::PublicKey,
-        PubDataType::PublicKeyMetadata,
-        PubDataType::ServerKey,
-    ];
-    tracing::info!("Fetching public key, server key and sns key with id {key_id}");
-    for object_name in object_names {
-        fetch_global_pub_object_and_write_to_file(
-            destination_prefix,
-            sim_conf.s3_endpoint.as_str(),
-            key_id,
-            &object_name.to_string(),
-            sim_conf.object_folder.first().unwrap(),
-        )
-        .await?;
-    }
-    Ok(())
-}
+    download_all: bool,
+) -> anyhow::Result<Vec<usize>> {
+    tracing::info!("Fetching {:?} with id {element_id}", element_types);
 
-/// Fetch the remote CRS and store locally for the core client
-async fn fetch_crs(
-    crs_id: &str,
-    cc_conf: &CoreClientConfig,
-    destination_prefix: &Path,
-) -> anyhow::Result<()> {
-    tracing::info!("Fetching CRS with id {crs_id}");
-    fetch_global_pub_object_and_write_to_file(
-        destination_prefix,
-        cc_conf.s3_endpoint.as_str(),
-        crs_id,
-        "CRS",
-        cc_conf.object_folder.first().unwrap(),
-    )
-    .await?;
-    Ok(())
+    // set of core ids, to track which cores we successfully contacted
+    let mut successful_core_ids: HashSet<usize> = HashSet::new();
+
+    // go over list of cores to retrieve the public elements from
+    'cores: for cur_core in &sim_conf.cores {
+        let mut all_elements = true;
+        // try to fetch all elements from this core
+        'elements: for element_name in element_types {
+            if fetch_global_pub_element_and_write_to_file(
+                destination_prefix,
+                cur_core.s3_endpoint.as_str(),
+                element_id,
+                &element_name.to_string(),
+                &cur_core.object_folder,
+            )
+            .await
+            .is_err()
+            {
+                tracing::warn!("Could not fetch element {element_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
+                all_elements = false;
+                break 'elements;
+            }
+        }
+        // if we were able to retrieve all elements, add the core id to the set of successful nodes
+        if all_elements {
+            successful_core_ids.insert(cur_core.party_id);
+            // if we only want to download from one core, break here
+            if !download_all {
+                break 'cores;
+            }
+        }
+    }
+
+    if successful_core_ids.is_empty() {
+        Err(anyhow::anyhow!(
+                "Could not fetch all of [{element_types:?}] with id {element_id} from any core. At least one core is required to proceed."
+            ))
+    } else {
+        Ok(successful_core_ids.into_iter().collect())
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn do_keygen(
     internal_client: &mut Client,
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cc_conf: &CoreClientConfig,
     cmd_conf: &CmdConfig,
     num_parties: usize,
     kms_addrs: &[alloy_primitives::Address],
     param: FheParameter,
-    preproc_id: Option<RequestId>,
+    preproc_id: RequestId,
     insecure: bool,
     shared_config: &SharedKeyGenParameters,
     destination_prefix: &Path,
@@ -1074,7 +1233,7 @@ async fn do_keygen(
         .map(kms_grpc::kms::v1::KeySetAddedInfo::from);
     let dkg_req = internal_client.key_gen_request(
         &req_id,
-        preproc_id,
+        &preproc_id,
         Some(param),
         keyset_config,
         keyset_added_info,
@@ -1092,7 +1251,7 @@ async fn do_keygen(
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
 
-    for ce in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter() {
         let req_cloned = dkg_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
@@ -1130,6 +1289,7 @@ async fn do_keygen(
         req_id,
         domain,
         resp_response_vec,
+        cmd_conf.download_all,
     )
     .await?;
 
@@ -1139,7 +1299,7 @@ async fn do_keygen(
 #[allow(clippy::too_many_arguments)]
 async fn do_crsgen(
     internal_client: &mut Client,
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cc_conf: &CoreClientConfig,
     cmd_conf: &CmdConfig,
@@ -1160,7 +1320,7 @@ async fn do_crsgen(
     };
 
     let crs_req =
-        internal_client.crs_gen_request(&req_id, max_num_bits, Some(param), dummy_domain())?;
+        internal_client.crs_gen_request(&req_id, max_num_bits, Some(param), &dummy_domain())?;
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
     //we have an issue in the (Insecure)CrsGenResult commands
@@ -1173,7 +1333,7 @@ async fn do_crsgen(
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
 
-    for ce in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter() {
         let req_cloned = crs_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
@@ -1211,6 +1371,7 @@ async fn do_crsgen(
         req_id,
         domain,
         resp_response_vec,
+        cmd_conf.download_all,
     )
     .await?;
 
@@ -1220,7 +1381,7 @@ async fn do_crsgen(
 #[allow(clippy::too_many_arguments)]
 async fn do_preproc(
     internal_client: &mut Client,
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cmd_conf: &CmdConfig,
     num_parties: usize,
@@ -1229,12 +1390,15 @@ async fn do_preproc(
     let req_id = RequestId::new_random(rng);
 
     let max_iter = cmd_conf.max_iter;
-    let pp_req = internal_client.preproc_request(&req_id, Some(param), None)?; //TODO keyset config
+    // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
+    // this function is only used for testing.
+    let domain = dummy_domain();
+    let pp_req = internal_client.preproc_request(&req_id, Some(param), None, &domain)?; //TODO keyset config
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
 
-    for ce in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter() {
         let req_cloned = pp_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
@@ -1250,16 +1414,19 @@ async fn do_preproc(
     }
     assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
-    let _ = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    for response in responses {
+        internal_client.process_preproc_response(&req_id, &domain, &response)?;
+    }
 
     Ok(req_id)
 }
 
 async fn do_get_operator_pub_keys(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) -> anyhow::Result<Vec<String>> {
     let mut req_tasks = JoinSet::new();
-    for ce in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client
@@ -1292,15 +1459,117 @@ async fn do_get_operator_pub_keys(
     Ok(backup_pks)
 }
 
-async fn do_custodian_backup_restore(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
-) -> anyhow::Result<()> {
+async fn do_new_custodian_context(
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    rng: &mut AesRng,
+    threshold: u32,
+    custodian_setup_msg: Vec<InternalCustodianSetupMessage>,
+) -> anyhow::Result<RequestId> {
+    let context_id = RequestId::new_random(rng);
     let mut req_tasks = JoinSet::new();
-    for ce in core_endpoints.iter_mut() {
+    let mut custodian_nodes = Vec::new();
+    for cur_setup in custodian_setup_msg {
+        custodian_nodes.push(cur_setup.try_into()?);
+    }
+    let new_context = CustodianContext {
+        custodian_nodes,
+        context_id: Some(context_id.into()),
+        previous_context_id: None, // TODO(#2748) not really used now, should be refactored
+        threshold,
+    };
+    for (_party_id, ce) in core_endpoints.iter() {
+        let mut cur_client = ce.clone();
+        let new_context_cloned = new_context.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .new_custodian_context(tonic::Request::new(NewCustodianContextRequest {
+                    active_context: None, // TODO(#2748) not really used now, should be refactored
+                    new_context: Some(new_context_cloned),
+                }))
+                .await
+        });
+    }
+    while let Some(inner) = req_tasks.join_next().await {
+        let _ = inner??;
+    }
+
+    Ok(context_id)
+}
+
+async fn do_custodian_recovery_init(
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    overwrite_ephemeral_key: bool,
+) -> anyhow::Result<Vec<InternalRecoveryRequest>> {
+    let mut req_tasks = JoinSet::new();
+    for (_party_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client
-                .custodian_backup_restore(tonic::Request::new(kms_grpc::kms::v1::Empty {}))
+                .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+                    overwrite_ephemeral_key,
+                }))
+                .await
+        });
+    }
+
+    let mut res = Vec::new();
+    while let Some(inner) = req_tasks.join_next().await {
+        let cur_rec_req = inner??;
+        let cur_inner_rec = cur_rec_req.into_inner();
+        res.push(cur_inner_rec.try_into()?);
+    }
+
+    Ok(res)
+}
+
+async fn do_custodian_backup_recovery(
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    custodian_context_id: RequestId,
+    custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
+) -> anyhow::Result<()> {
+    let mut req_tasks = JoinSet::new();
+    for (core_idx, ce) in core_endpoints.iter() {
+        let mut cur_client = ce.clone();
+        let core_idx = *core_idx as usize;
+        // We assume the core client endpoints are ordered by the server identity
+        let mut cur_recoveries = Vec::new();
+        for cur_recover in custodian_recovery_outputs.iter() {
+            // Find the recoveries designated for the correct server
+            if cur_recover.operator_role == Role::indexed_from_one(core_idx) {
+                cur_recoveries.push(CustodianRecoveryOutput {
+                    signature: cur_recover.signature.clone(),
+                    ciphertext: cur_recover.ciphertext.clone(),
+                    custodian_role: cur_recover.custodian_role.one_based() as u64,
+                    operator_role: cur_recover.operator_role.one_based() as u64,
+                });
+            }
+        }
+        req_tasks.spawn(async move {
+            cur_client
+                .custodian_backup_recovery(tonic::Request::new(CustodianRecoveryRequest {
+                    custodian_context_id: Some(custodian_context_id.into()),
+                    custodian_recovery_outputs: cur_recoveries,
+                }))
+                .await
+        });
+    }
+
+    while let Some(inner) = req_tasks.join_next().await {
+        let _ = inner??;
+    }
+
+    Ok(())
+}
+
+async fn do_restore_from_backup(
+    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+) -> anyhow::Result<()> {
+    let mut req_tasks = JoinSet::new();
+    for (_party_id, ce) in core_endpoints.iter_mut() {
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .restore_from_backup(tonic::Request::new(Empty {}))
                 .await
         });
     }
@@ -1334,38 +1603,8 @@ pub async fn execute_cmd(
 
     tracing::info!("Core Client Config: {:?}", cc_conf);
 
-    // if it's a public/user decryption, fetch the key and crs
-    match command {
-        CCCommand::PublicDecrypt(cipher_args) | CCCommand::UserDecrypt(cipher_args) => {
-            tracing::info!("Fetching verification keys. ({command:?})");
-            fetch_verf_keys(&cc_conf, destination_prefix).await?;
-
-            //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-            if let CipherArguments::FromArgs(cipher_params) = cipher_args {
-                tracing::info!("Fetching tfhe keys. ({command:?})");
-                fetch_key(&cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
-            }
-        }
-        CCCommand::Encrypt(cipher_params) => {
-            tracing::info!("Fetching tfhe keys. ({command:?})");
-            fetch_key(&cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
-        }
-        CCCommand::KeyGen(_)
-        | CCCommand::InsecureKeyGen(_)
-        | CCCommand::CrsGen(_)
-        | CCCommand::InsecureCrsGen(_)
-        | CCCommand::PreprocKeyGen(_) => {
-            tracing::info!("Fetching verification keys. ({command:?})");
-            fetch_verf_keys(&cc_conf, destination_prefix).await?;
-        }
-        _ => {
-            tracing::info!("No need to fetch key and CRS. ({command:?})");
-        }
-    }
-
     let mut rng = AesRng::from_entropy();
-
-    let num_parties = cc_conf.core_addresses.len();
+    let num_parties = cc_conf.cores.len();
 
     ensure_client_keys_exist(Some(destination_prefix), &SIGNING_KEY_ID, true).await;
 
@@ -1373,130 +1612,163 @@ pub async fn execute_cmd(
     let client_storage: FileStorage =
         FileStorage::new(Some(destination_prefix), StorageType::CLIENT, None).unwrap();
     let mut internal_client: Option<Client> = None;
-    let mut core_endpoints_req = Vec::with_capacity(num_parties);
-    let mut core_endpoints_resp = Vec::with_capacity(num_parties);
+    let mut core_endpoints_req = HashMap::with_capacity(num_parties);
+    let mut core_endpoints_resp = HashMap::with_capacity(num_parties);
 
-    let param = cc_conf.fhe_params.unwrap_or(FheParameter::Test);
+    // use secure default params if nothing is set
+    let param = cc_conf.fhe_params.unwrap_or(FheParameter::Default);
     let client_param = match param {
         FheParameter::Test => TEST_PARAM,
         _ => DEFAULT_PARAM,
     };
 
+    // Vector of KMS ethereum addresses
+    let mut addr_vec = Vec::new();
+
     if let CCCommand::Encrypt(_) = command {
-        //Don't need to connect if we just do an encrypt
-    } else if num_parties == 1 {
-        // central cores
-
-        let address = cc_conf
-            .core_addresses
-            .first()
-            .expect("No core address provided")
-            .clone();
-
-        tracing::info!("Centralized Core Client - connecting to: {}", address);
-
-        // make sure address starts with http://
-        let url = if address.starts_with("http://") {
-            address
-        } else {
-            "http://".to_string() + &address
-        };
-
-        let core_endpoint_req = retry!(
-            CoreServiceEndpointClient::connect(url.clone()).await,
-            5,
-            100
-        )?;
-        core_endpoints_req.push(core_endpoint_req);
-
-        let core_endpoint_resp = retry!(
-            CoreServiceEndpointClient::connect(url.clone()).await,
-            5,
-            100
-        )?;
-        core_endpoints_resp.push(core_endpoint_resp);
-
-        // there's only 1 party, so use index 1
-        pub_storage.insert(
-            1,
-            FileStorage::new(Some(destination_prefix), StorageType::PUB, None).unwrap(),
-        );
-        internal_client = Some(
-            Client::new_client(
-                client_storage,
-                pub_storage,
-                &client_param,
-                cc_conf.decryption_mode,
-            )
-            .await
-            .unwrap(),
-        );
-        tracing::info!("Centralized Client setup done.");
+        //Don't need to fetch or connect if we just do an encrypt
+    } else if let CCCommand::DoNothing(_) = command {
+        // Don't need to fetch or connect if we just do nothing
     } else {
-        // threshold cores
-        let addresses = cc_conf.core_addresses.clone();
+        // Otherwise always fetch the public verfication keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
+        tracing::info!("Fetching verification keys. ({command:?})");
+        let public_verf_types = vec![PubDataType::VerfAddress, PubDataType::VerfKey];
+        let _ = fetch_elements(
+            &SIGNING_KEY_ID.to_string(),
+            &public_verf_types,
+            &cc_conf,
+            destination_prefix,
+            true, // we always need to download all verification keys
+        )
+        .await?;
 
-        tracing::info!("Threshold Core Client - connecting to: {:?}", addresses);
+        // read the addresses we just fetched from disk
+        addr_vec.append(&mut read_kms_addresses_local(destination_prefix, &cc_conf).await?);
 
-        for (i, address) in addresses.iter().enumerate() {
-            // make sure address starts with http://
-            let url = if address.starts_with("http://") {
-                address.clone()
-            } else {
-                "http://".to_string() + address
-            };
+        match cc_conf.kms_type {
+            KmsType::Centralized => {
+                let address = cc_conf
+                    .cores
+                    .first()
+                    .expect("No core address provided")
+                    .address
+                    .clone();
 
-            tracing::info!("Connecting to {:?}", url);
+                tracing::info!("Centralized Core Client - connecting to: {}", address);
 
-            let core_endpoint_req = retry!(
-                CoreServiceEndpointClient::connect(url.clone()).await,
-                5,
-                100
-            )?;
-            core_endpoints_req.push(core_endpoint_req);
+                // make sure address starts with http://
+                let url = if address.starts_with("http://") {
+                    address
+                } else {
+                    "http://".to_string() + &address
+                };
 
-            let core_endpoint_resp = retry!(
-                CoreServiceEndpointClient::connect(url.clone()).await,
-                5,
-                100
-            )?;
-            core_endpoints_resp.push(core_endpoint_resp);
+                let core_endpoint_req = retry!(
+                    CoreServiceEndpointClient::connect(url.clone()).await,
+                    5,
+                    100
+                )?;
+                // Centralized is always party 1
+                core_endpoints_req.insert(1, core_endpoint_req);
 
-            pub_storage.insert(
-                i as u32 + 1,
-                FileStorage::new(
-                    Some(destination_prefix),
-                    StorageType::PUB,
-                    Some(Role::indexed_from_zero(i)),
-                )
-                .unwrap(),
-            );
-        }
+                let core_endpoint_resp = retry!(
+                    CoreServiceEndpointClient::connect(url.clone()).await,
+                    5,
+                    100
+                )?;
+                core_endpoints_resp.insert(1, core_endpoint_resp);
 
-        internal_client = Some(
-            Client::new_client(
-                client_storage,
-                pub_storage,
-                &client_param,
-                cc_conf.decryption_mode,
-            )
-            .await
-            .unwrap(),
-        );
+                // there's only 1 party, so use index 1
+                pub_storage.insert(
+                    1,
+                    FileStorage::new(Some(destination_prefix), StorageType::PUB, None).unwrap(),
+                );
+                internal_client = Some(
+                    Client::new_client(
+                        client_storage,
+                        pub_storage,
+                        &client_param,
+                        cc_conf.decryption_mode,
+                    )
+                    .await
+                    .unwrap(),
+                );
+                tracing::info!("Centralized Client setup done.");
+            }
+            KmsType::Threshold => {
+                // threshold cores
+                tracing::info!(
+                    "Threshold Core Client - connecting to n={:?} KMS servers",
+                    cc_conf.cores.len()
+                );
 
-        tracing::info!("Threshold Client setup done.");
+                for cur_core in &cc_conf.cores {
+                    // make sure address starts with http://
+                    let url = if cur_core.address.starts_with("http://") {
+                        cur_core.address.clone()
+                    } else {
+                        "http://".to_string() + cur_core.address.as_str()
+                    };
+
+                    tracing::info!(
+                        "Connecting to party {:?} via URL {:?}",
+                        cur_core.party_id,
+                        url
+                    );
+
+                    let core_endpoint_req = retry!(
+                        CoreServiceEndpointClient::connect(url.clone()).await,
+                        5,
+                        100
+                    )?;
+                    core_endpoints_req.insert(cur_core.party_id as u32, core_endpoint_req);
+
+                    let core_endpoint_resp = retry!(
+                        CoreServiceEndpointClient::connect(url.clone()).await,
+                        5,
+                        100
+                    )?;
+                    core_endpoints_resp.insert(cur_core.party_id as u32, core_endpoint_resp);
+
+                    pub_storage.insert(
+                        cur_core.party_id as u32,
+                        FileStorage::new(
+                            Some(destination_prefix),
+                            StorageType::PUB,
+                            Some(Role::indexed_from_one(cur_core.party_id)),
+                        )
+                        .unwrap(),
+                    );
+                }
+                internal_client = Some(
+                    Client::new_client(
+                        client_storage,
+                        pub_storage,
+                        &client_param,
+                        cc_conf.decryption_mode,
+                    )
+                    .await
+                    .unwrap(),
+                );
+                tracing::info!("Threshold Client setup done.");
+            }
+        };
     }
-
     tracing::info!(
         "Parties: {}. FHE Parameters: {}",
         num_parties,
         param.as_str_name()
     );
 
-    let kms_addrs = Arc::new(fetch_kms_addresses(&cc_conf).await?);
+    let kms_addrs = Arc::new(addr_vec);
+
+    let key_types = vec![
+        PubDataType::PublicKey,
+        PubDataType::PublicKeyMetadata,
+        PubDataType::ServerKey,
+    ];
 
     let command_timer_start = tokio::time::Instant::now();
-
     // Execute the command
     let res = match command {
         CCCommand::PublicDecrypt(cipher_args) => {
@@ -1506,7 +1778,6 @@ pub async fn execute_cmd(
             } else {
                 cc_conf.num_majority
             };
-
             let EncryptionResult {
                 cipher: ciphertext,
                 ct_format,
@@ -1517,7 +1788,22 @@ pub async fn execute_cmd(
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
-                    encrypt(destination_prefix, cipher_parameters.clone()).await?
+                    //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
+                    tracing::info!("Fetching keys {key_types:?}. ({command:?})");
+                    let party_ids = fetch_elements(
+                        &cipher_parameters.key_id.as_str(),
+                        &key_types,
+                        &cc_conf,
+                        destination_prefix,
+                        false,
+                    )
+                    .await?;
+                    encrypt(
+                        destination_prefix,
+                        *party_ids.first().expect("no party IDs found"),
+                        cipher_parameters.clone(),
+                    )
+                    .await?
                 }
             };
 
@@ -1540,8 +1826,8 @@ pub async fn execute_cmd(
                 let req_id = RequestId::new_random(&mut rng);
                 let internal_client = internal_client.clone();
                 let ct_batch = ct_batch.clone();
-                let mut core_endpoints_req = core_endpoints_req.clone();
-                let mut core_endpoints_resp = core_endpoints_resp.clone();
+                let core_endpoints_req = core_endpoints_req.clone();
+                let core_endpoints_resp = core_endpoints_resp.clone();
                 let ptxt = ptxt.clone();
                 let kms_addrs = kms_addrs.clone();
 
@@ -1560,7 +1846,7 @@ pub async fn execute_cmd(
                     // make parallel requests by calling [decrypt] in a thread
                     let mut req_tasks = JoinSet::new();
 
-                    for ce in core_endpoints_req.iter_mut() {
+                    for (_party_id, ce) in core_endpoints_req.iter() {
                         let req_cloned = dec_req.clone();
                         let mut cur_client = ce.clone();
                         req_tasks.spawn(async move {
@@ -1583,7 +1869,7 @@ pub async fn execute_cmd(
                     );
 
                     let resp_response_vec = get_public_decrypt_responses(
-                        &mut core_endpoints_resp,
+                        &core_endpoints_resp,
                         Some(dec_req),
                         Some(ptxt),
                         req_id,
@@ -1633,7 +1919,22 @@ pub async fn execute_cmd(
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
-                    encrypt(destination_prefix, cipher_parameters.clone()).await?
+                    //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
+                    tracing::info!("Fetching keys {key_types:?}. ({command:?})");
+                    let party_ids = fetch_elements(
+                        &cipher_parameters.key_id.as_str(),
+                        &key_types,
+                        &cc_conf,
+                        destination_prefix,
+                        false,
+                    )
+                    .await?;
+                    encrypt(
+                        destination_prefix,
+                        *party_ids.first().expect("no party IDs found"),
+                        cipher_parameters.clone(),
+                    )
+                    .await?
                 }
             };
 
@@ -1653,8 +1954,8 @@ pub async fn execute_cmd(
                 internal_client,
                 ct_batch,
                 key_id,
-                core_endpoints_req.clone(),
-                core_endpoints_resp.clone(),
+                &core_endpoints_req,
+                &core_endpoints_resp,
                 ptxt,
                 num_parties,
                 max_iter,
@@ -1670,14 +1971,14 @@ pub async fn execute_cmd(
             tracing::info!("Key generation with parameter {}.", param.as_str_name());
             let req_id = do_keygen(
                 &mut internal_client,
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
                 num_parties,
                 &kms_addrs,
                 param,
-                Some(*preproc_id),
+                *preproc_id,
                 false,
                 shared_args,
                 destination_prefix,
@@ -1692,16 +1993,17 @@ pub async fn execute_cmd(
                 "Insecure key generation with parameter {}.",
                 param.as_str_name()
             );
+            let dummy_preproc_id = RequestId::new_random(&mut rng);
             let req_id = do_keygen(
                 &mut internal_client,
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
                 num_parties,
                 &kms_addrs,
                 param,
-                None,
+                dummy_preproc_id,
                 true,
                 shared_args,
                 destination_prefix,
@@ -1716,7 +2018,7 @@ pub async fn execute_cmd(
 
             let req_id = do_crsgen(
                 &mut internal_client,
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
@@ -1739,7 +2041,7 @@ pub async fn execute_cmd(
 
             let req_id = do_crsgen(
                 &mut internal_client,
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
@@ -1759,7 +2061,7 @@ pub async fn execute_cmd(
 
             let req_id = do_preproc(
                 &mut internal_client,
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 &mut rng,
                 cmd_config,
                 num_parties,
@@ -1773,12 +2075,26 @@ pub async fn execute_cmd(
             vec![(None, String::new())]
         }
         CCCommand::Encrypt(cipher_parameters) => {
-            encrypt(destination_prefix, cipher_parameters.clone()).await?;
+            tracing::info!("Fetching keys {key_types:?}. ({command:?})");
+            let party_ids = fetch_elements(
+                &cipher_parameters.key_id.as_str(),
+                &key_types,
+                &cc_conf,
+                destination_prefix,
+                false,
+            )
+            .await?;
+            encrypt(
+                destination_prefix,
+                *party_ids.first().expect("no party IDs found"),
+                cipher_parameters.clone(),
+            )
+            .await?;
             vec![(None, "Encryption generated".to_string())]
         }
         CCCommand::PreprocKeyGenResult(result_parameters) => {
             let req_id: RequestId = result_parameters.request_id;
-            let _ = get_preproc_keygen_responses(&mut core_endpoints_req, req_id, max_iter).await?;
+            let _ = get_preproc_keygen_responses(&core_endpoints_req, req_id, max_iter).await?;
             vec![(Some(req_id), "preproc result queried".to_string())]
         }
         CCCommand::KeyGenResult(result_parameters) => {
@@ -1789,7 +2105,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_keygen_responses(
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 req_id,
                 max_iter,
                 false,
@@ -1807,6 +2123,7 @@ pub async fn execute_cmd(
                 req_id,
                 dummy_domain(),
                 resp_response_vec,
+                cmd_config.download_all,
             )
             .await?;
             vec![(Some(req_id), "keygen result queried".to_string())]
@@ -1819,7 +2136,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_keygen_responses(
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 req_id,
                 max_iter,
                 true,
@@ -1837,6 +2154,7 @@ pub async fn execute_cmd(
                 req_id,
                 dummy_domain(),
                 resp_response_vec,
+                cmd_config.download_all,
             )
             .await?;
             vec![(Some(req_id), "insecure keygen result queried".to_string())]
@@ -1849,7 +2167,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_public_decrypt_responses(
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 None,
                 None,
                 req_id,
@@ -1871,7 +2189,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_crsgen_responses(
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 req_id,
                 max_iter,
                 false,
@@ -1889,6 +2207,7 @@ pub async fn execute_cmd(
                 req_id,
                 dummy_domain(),
                 resp_response_vec,
+                cmd_config.download_all,
             )
             .await?;
             vec![(Some(req_id), "crs gen result queried".to_string())]
@@ -1901,7 +2220,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_crsgen_responses(
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 req_id,
                 max_iter,
                 true,
@@ -1919,17 +2238,77 @@ pub async fn execute_cmd(
                 req_id,
                 dummy_domain(),
                 resp_response_vec,
+                cmd_config.download_all,
             )
             .await?;
             vec![(Some(req_id), "insecure crs gen result queried".to_string())]
         }
+        CCCommand::NewCustodianContext(new_custodian_context_parameters) => {
+            let mut setup_msgs = Vec::new();
+            for cur_path in &new_custodian_context_parameters.setup_msg_paths {
+                let cur_setup: InternalCustodianSetupMessage =
+                    safe_read_element_versioned(cur_path).await?;
+                setup_msgs.push(cur_setup);
+            }
+            let context_id = do_new_custodian_context(
+                &core_endpoints_req,
+                &mut rng,
+                new_custodian_context_parameters.threshold,
+                setup_msgs,
+            )
+            .await?;
+            vec![(
+                Some(context_id),
+                "new custodian context created".to_string(),
+            )]
+        }
         CCCommand::GetOperatorPublicKey(NoParameters {}) => {
-            let pks = do_get_operator_pub_keys(&mut core_endpoints_req).await?;
+            let pks = do_get_operator_pub_keys(&core_endpoints_req).await?;
             pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
         }
-        CCCommand::CustodianBackupRestore(NoParameters {}) => {
-            do_custodian_backup_restore(&mut core_endpoints_req).await?;
-            vec![(None, "custodian backup restore complete".to_string())]
+        CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
+            overwrite_ephemeral_key,
+            operator_recovery_resp_paths,
+        }) => {
+            let res =
+                do_custodian_recovery_init(&core_endpoints_req, *overwrite_ephemeral_key).await?;
+            assert_eq!(res.len(), operator_recovery_resp_paths.len());
+            for (op_zero_idx, cur_path) in operator_recovery_resp_paths.iter().enumerate() {
+                let cur_res = res
+                    .iter()
+                    .find(|&x| x.operator_role() == Role::indexed_from_zero(op_zero_idx))
+                    .unwrap();
+                safe_write_element_versioned(cur_path, cur_res).await?;
+            }
+            vec![(
+                Some(res[0].backup_id()),
+                "custodian recovery init queried and recovery request stored".to_string(),
+            )]
+        }
+        CCCommand::CustodianBackupRecovery(RecoveryParameters {
+            custodian_context_id,
+            custodian_recovery_outputs,
+        }) => {
+            let mut custodian_outputs = Vec::new();
+            for recovery_path in custodian_recovery_outputs {
+                let read_recovery: InternalCustodianRecoveryOutput =
+                    safe_read_element_versioned(&recovery_path).await?;
+                custodian_outputs.push(read_recovery);
+            }
+            do_custodian_backup_recovery(
+                &core_endpoints_req,
+                *custodian_context_id,
+                custodian_outputs,
+            )
+            .await?;
+            vec![(
+                Some(*custodian_context_id),
+                "custodian backup restore complete".to_string(),
+            )]
+        }
+        CCCommand::BackupRestore(NoParameters {}) => {
+            do_restore_from_backup(&mut core_endpoints_req).await?;
+            vec![(None, "backup restore complete".to_string())]
         }
     };
 
@@ -1944,13 +2323,13 @@ pub async fn execute_cmd(
 
 // Prints the timings for the command execution, showing latency and throughput based on the measured durations.
 fn print_timings(cmd: &str, durations: &mut [tokio::time::Duration], start: tokio::time::Instant) {
-    // compute total time that is elapsed since we send the first request
+    // compute total time that is elapsed since we sent the first request
     let total_elapsed = start.elapsed();
 
     // compute latency values
     let avg = durations.iter().sum::<tokio::time::Duration>() / durations.len() as u32;
     durations.sort();
-    let median = if durations.len() % 2 == 0 {
+    let median = if durations.len().is_multiple_of(2) {
         (durations[durations.len() / 2 - 1] + durations[durations.len() / 2]) / 2
     } else {
         durations[durations.len() / 2]
@@ -1979,8 +2358,8 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
     internal_client: Arc<RwLock<Client>>,
     ct_batch: Vec<TypedCiphertext>,
     key_id: KeyId,
-    core_endpoints_req: Vec<CoreServiceEndpointClient<Channel>>,
-    core_endpoints_resp: Vec<CoreServiceEndpointClient<Channel>>,
+    core_endpoints_req: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints_resp: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     ptxt: TypedPlaintext,
     num_parties: usize,
     max_iter: usize,
@@ -1995,8 +2374,8 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
         let req_id = RequestId::new_random(rng);
         let internal_client = internal_client.clone();
         let ct_batch = ct_batch.clone();
-        let mut core_endpoints_req = core_endpoints_req.clone();
-        let mut core_endpoints_resp = core_endpoints_resp.clone();
+        let core_endpoints_req = core_endpoints_req.clone();
+        let core_endpoints_resp = core_endpoints_resp.clone();
         let original_plaintext = ptxt.clone();
 
         // start timing measurement for this request
@@ -2016,7 +2395,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
             // make parallel requests by calling user decryption in a thread
             let mut req_tasks = JoinSet::new();
 
-            for ce in &mut core_endpoints_req {
+            for ce in core_endpoints_req.values() {
                 let req_cloned = user_decrypt_req.clone();
                 let mut cur_client = ce.clone();
                 req_tasks.spawn(async move {
@@ -2041,7 +2420,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
 
             // get all responses
             let mut resp_tasks = JoinSet::new();
-            for ce in &mut core_endpoints_resp {
+            for ce in core_endpoints_resp.values() {
                 let mut cur_client = ce.clone();
                 let req_id_clone = user_decrypt_req.request_id.as_ref().unwrap().clone();
 
@@ -2160,7 +2539,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
 
 #[allow(clippy::too_many_arguments)]
 async fn get_public_decrypt_responses(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     dec_req: Option<PublicDecryptionRequest>,
     expected_answer: Option<TypedPlaintext>,
     request_id: RequestId,
@@ -2173,8 +2552,9 @@ async fn get_public_decrypt_responses(
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter_mut().enumerate() {
+    for (core_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
+        let core_id = *core_id; // Copy the key so it is owned in the async block
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
@@ -2230,7 +2610,7 @@ async fn get_public_decrypt_responses(
         .map(|(_, resp)| resp)
         .collect();
 
-    //If an expected answer is provided consider it,
+    //If an expected answer is provided, then consider it,
     //otherwise consider the first answer
     let ptxt = expected_answer.unwrap_or_else(|| {
         resp_response_vec
@@ -2295,14 +2675,15 @@ async fn get_public_decrypt_responses(
 }
 
 async fn get_preproc_keygen_responses(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
 ) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, client) in core_endpoints.iter_mut().enumerate() {
+    for (core_id, client) in core_endpoints.iter() {
         let mut client = client.clone();
+        let core_id = *core_id; // Copy the key so it is owned in the async block
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete preprocessing
             tokio::time::sleep(tokio::time::Duration::from_millis(
@@ -2352,7 +2733,7 @@ async fn get_preproc_keygen_responses(
 }
 
 async fn get_keygen_responses(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
     insecure: bool,
@@ -2361,8 +2742,9 @@ async fn get_keygen_responses(
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter_mut().enumerate() {
+    for (core_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
+        let core_id = *core_id; // Copy the key so it is owned in the async block
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
@@ -2428,7 +2810,7 @@ async fn get_keygen_responses(
 }
 
 async fn get_crsgen_responses(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
     insecure: bool,
@@ -2437,8 +2819,9 @@ async fn get_crsgen_responses(
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter_mut().enumerate() {
+    for (core_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
+        let core_id = *core_id; // Copy the key so it is owned in the async block
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
@@ -2495,6 +2878,7 @@ async fn get_crsgen_responses(
     Ok(resp_response_vec)
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn fetch_and_check_keygen(
     num_expected_responses: usize,
     cc_conf: &CoreClientConfig,
@@ -2503,6 +2887,7 @@ async fn fetch_and_check_keygen(
     request_id: RequestId,
     domain: Eip712Domain,
     responses: Vec<KeyGenResult>,
+    download_all: bool,
 ) -> anyhow::Result<()> {
     assert!(
         responses.len() >= num_expected_responses,
@@ -2511,11 +2896,37 @@ async fn fetch_and_check_keygen(
         responses.len()
     );
 
-    // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
-    // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
-    fetch_key(&request_id.to_string(), cc_conf, destination_prefix).await?;
-    let pk = load_pk_from_storage(Some(destination_prefix), &request_id).await;
-    let sk = load_server_key_from_storage(Some(destination_prefix), &request_id).await;
+    // Download the generated keys.
+    let key_types = vec![
+        PubDataType::PublicKey,
+        PubDataType::PublicKeyMetadata,
+        PubDataType::ServerKey,
+    ];
+    let party_ids = fetch_elements(
+        &request_id.to_string(),
+        &key_types,
+        cc_conf,
+        destination_prefix,
+        download_all,
+    )
+    .await?;
+
+    // Even if we did not download all keys, we still check that they are identical
+    // by checking all signatures against the first downloaded keyset.
+    // If all signatures match, then all keys must be identical.
+    let public_key = load_pk_from_storage(
+        Some(destination_prefix),
+        &request_id,
+        *party_ids.first().expect("no party IDs found"),
+    )
+    .await;
+    let server_key: ServerKey = load_material_from_storage(
+        Some(destination_prefix),
+        &request_id,
+        PubDataType::ServerKey,
+        *party_ids.first().expect("no party IDs found"),
+    )
+    .await;
 
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;
@@ -2526,31 +2937,27 @@ async fn fetch_and_check_keygen(
             "Request ID of response does not match the transaction"
         );
 
-        let extpksig = if let Some(spdh) = response
-            .key_results
-            .get(&PubDataType::PublicKey.to_string())
-        {
-            &spdh.external_signature
-        } else {
-            return Err(anyhow!("No external pubkey signature in response"));
-        };
-        check_ext_pubdata_signature(&pk, extpksig, &domain, kms_addrs)?;
-
-        let extsksig = if let Some(spdh) = response
-            .key_results
-            .get(&PubDataType::ServerKey.to_string())
-        {
-            &spdh.external_signature
-        } else {
-            return Err(anyhow!("No external pubkey signature in response"));
-        };
-        check_ext_pubdata_signature(&sk, extsksig, &domain, kms_addrs)?;
+        let external_signature = response.external_signature;
+        let prep_id = response.preprocessing_id.ok_or(anyhow!(
+            "No preprocessing ID in keygen response, cannot verify external signature"
+        ))?;
+        check_standard_keyset_ext_signature(
+            &public_key,
+            &server_key,
+            &prep_id.try_into()?,
+            &request_id,
+            &external_signature,
+            &domain,
+            kms_addrs,
+        )
+        .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
 
         tracing::info!("EIP712 verification of Public Key and Server Key successful.");
     }
     Ok(())
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn fetch_and_check_crsgen(
     num_expected_responses: usize,
     cc_conf: &CoreClientConfig,
@@ -2559,6 +2966,7 @@ async fn fetch_and_check_crsgen(
     request_id: RequestId,
     domain: Eip712Domain,
     responses: Vec<CrsGenResult>,
+    download_all: bool,
 ) -> anyhow::Result<()> {
     assert!(
         responses.len() >= num_expected_responses,
@@ -2567,10 +2975,26 @@ async fn fetch_and_check_crsgen(
         responses.len()
     );
 
-    // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
-    // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
-    fetch_crs(&request_id.to_string(), cc_conf, destination_prefix).await?;
-    let crs = load_crs_from_storage(Some(destination_prefix), &request_id).await;
+    // Download the generated CRS.
+    let party_ids = fetch_elements(
+        &request_id.to_string(),
+        &[PubDataType::CRS],
+        cc_conf,
+        destination_prefix,
+        download_all,
+    )
+    .await?;
+
+    // Even if we did not download all CRSes, we still check that they are identical
+    // by checking all signatures against the first downloaded CRS.
+    // If all signatures match, then all CRSes must be identical.
+    let crs: CompactPkeCrs = load_material_from_storage(
+        Some(destination_prefix),
+        &request_id,
+        PubDataType::CRS,
+        *party_ids.first().expect("no party IDs found"),
+    )
+    .await;
 
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;
@@ -2580,13 +3004,10 @@ async fn fetch_and_check_crsgen(
             request_id, resp_req_id,
             "Request ID of response does not match the transaction"
         );
+        let external_signature = response.external_signature;
 
-        let extpksig = if let Some(spdh) = response.crs_results {
-            spdh.external_signature
-        } else {
-            return Err(anyhow!("No external CRS signature in response"));
-        };
-        check_ext_pubdata_signature(&crs, &extpksig, &domain, kms_addrs)?;
+        check_crsgen_ext_signature(&crs, &request_id, &external_signature, &domain, kms_addrs)
+            .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
 
         tracing::info!("EIP712 verification of CRS successful.");
     }
@@ -2607,6 +3028,7 @@ mod tests {
     };
     use std::{env, str::FromStr};
     use tfhe::zk::CompactPkeCrs;
+    use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
 
     #[test]
     fn test_parse_hex() {
@@ -2626,7 +3048,7 @@ mod tests {
         assert!(parse_hex("0xzz").is_err());
         assert!(parse_hex("0x1234g").is_err());
         assert!(parse_hex("0x12345g").is_err());
-        assert!(parse_hex("Ox01").is_err()); // leading O instead of 0
+        assert!(parse_hex("Ox01").is_err()); // leading O (letter) instead of 0 (digit)
     }
 
     #[test]
@@ -2673,17 +3095,18 @@ mod tests {
         .await;
 
         // compute a small CRS for testing
+        let crs_id = &TEST_CENTRAL_CRS_ID;
         ensure_central_crs_exists(
             &mut pub_storage,
             &mut priv_storage,
             TEST_PARAM,
-            &TEST_CENTRAL_CRS_ID,
+            crs_id,
             true,
         )
         .await;
         let crs: CompactPkeCrs = read_versioned_at_request_id(
             &pub_storage,
-            &RequestId::from_str(&TEST_CENTRAL_CRS_ID.to_string()).unwrap(),
+            &RequestId::from_str(&crs_id.to_string()).unwrap(),
             &PubDataType::CRS.to_string(),
         )
         .await
@@ -2709,25 +3132,30 @@ mod tests {
             // No salt
         );
 
+        let max_num_bits = max_num_bits_from_crs(&crs);
+        let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
+        let crs_sol_struct = CrsgenVerification::new(crs_id, max_num_bits, crs_digest);
+
         // sign with EIP712
-        let sig = compute_external_pubdata_signature(&sk, &crs, &domain).unwrap();
+        let external_sig =
+            compute_external_pubdata_signature(&sk, &crs_sol_struct, &domain).unwrap();
 
         // check that the signature verifies and unwraps without error
-        check_ext_pubdata_signature(&crs, &sig, &domain, &[addr]).unwrap();
+        check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, &[addr]).unwrap();
 
         // check that verification fails for a wrong address
         let wrong_address = alloy_primitives::address!("0EdA6bf26964aF942Eed9e03e53442D37aa960EE");
         assert!(
-            check_ext_pubdata_signature(&crs, &sig, &domain, &[wrong_address])
+            check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, &[wrong_address])
                 .unwrap_err()
                 .to_string()
-                .contains("External crs/pubkey signature verification failed!")
+                .contains("External signature verification failed for crsgen as it does not contain the right address")
         );
 
         // check that verification fails for signature that is too short
         let short_sig = [0_u8; 37];
         assert!(
-            check_ext_pubdata_signature(&crs, &short_sig, &domain, &[addr])
+            check_crsgen_ext_signature(&crs, crs_id, &short_sig, &domain, &[addr])
                 .unwrap_err()
                 .to_string()
                 .contains("Expected external signature of length 65 Bytes, but got 37")
@@ -2736,7 +3164,7 @@ mod tests {
         // check that verification fails for a byte string that is not a signature
         let malformed_sig = [23_u8; 65];
         assert!(
-            check_ext_pubdata_signature(&crs, &malformed_sig, &domain, &[addr])
+            check_crsgen_ext_signature(&crs, crs_id, &malformed_sig, &domain, &[addr])
                 .unwrap_err()
                 .to_string()
                 .contains("signature error")
@@ -2745,10 +3173,10 @@ mod tests {
         // check that verification fails for a signature that does not match the message
         let wrong_sig = hex::decode("cf92fe4c0b7c72fd8571c9a6680f2cd7481ebed7a3c8c7c7a6e6eaf27f5654f36100c146e609e39950953602ed73a3c10c1672729295ed8b33009b375813e5801b").unwrap();
         assert!(
-            check_ext_pubdata_signature(&crs, &wrong_sig, &domain, &[addr])
+            check_crsgen_ext_signature(&crs, crs_id, &wrong_sig, &domain, &[addr])
                 .unwrap_err()
                 .to_string()
-                .contains("External crs/pubkey signature verification failed!")
+                .contains("External signature verification failed for crsgen as it does not contain the right address")
         );
     }
 }

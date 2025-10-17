@@ -19,7 +19,7 @@ use crate::{
 
 use itertools::Itertools;
 use tfhe::{
-    core_crypto::prelude::ByteRandomGenerator,
+    core_crypto::prelude::ParallelByteRandomGenerator,
     shortint::list_compression::{
         CompressedNoiseSquashingCompressionKey, NoiseSquashingCompressionKey,
     },
@@ -29,7 +29,7 @@ use tracing::instrument;
 fn generate_sns_compression_key_shares<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     glwe_secret_key_share_sns_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -78,12 +78,12 @@ where
     ))
 }
 
-#[instrument(name="Gen Sns Compression Key", skip(glwe_secret_key_share_sns_as_lwe, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen Sns Compression Key", skip(glwe_secret_key_share_sns_as_lwe, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_sns_compression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     glwe_secret_key_share_sns_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -118,12 +118,12 @@ where
     Ok((private_sns_compression_key_shares, compression_key))
 }
 
-#[instrument(name="Gen compressed Sns Compression Key", skip(glwe_secret_key_share_sns_as_lwe, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen compressed Sns Compression Key", skip(glwe_secret_key_share_sns_as_lwe, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_compressed_sns_compression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     glwe_secret_key_share_sns_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,

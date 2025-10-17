@@ -1,5 +1,4 @@
-# Main build workflow that handles both x86 and ARM builds
-name: Compile Rust Project and Run Tests
+name: common-testing
 
 on:
   workflow_call:
@@ -53,7 +52,13 @@ on:
       app-cache-dir:
         type: string
         required: true
+      nextest-test-threads:
+        type: string
+        required: false
+        default: "1"
     secrets:
+      CODECOV_TOKEN:
+        required: false
       GHCR_READ_TOKEN:
         required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
@@ -70,6 +75,10 @@ on:
         required: true
       SLACK_WEBHOOK:
         required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
+        required: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -78,12 +87,19 @@ env:
   DOCKER_BUILDKIT: 1
   NPM_TAG: ""
 
-permissions:
-  packages: read
+# No top-level permissions needed - job-level permissions are more specific
+permissions: {}
 
 jobs:
   compile-rust-unit-tests:
-    name: "Compile Rust & Unit Tests"
+    name: common-testing/compile-rust-unit-tests
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     timeout-minutes: 500
     runs-on: ${{ inputs.runs-on }}
     services:
@@ -135,6 +151,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: cgr.dev
+          username: ${{ secrets.CGR_USERNAME }}
+          password: ${{ secrets.CGR_PASSWORD }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
@@ -152,7 +174,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           buildkitd-flags: --debug
 
-
       ############################################################################
       # Rust toolchain setup
       #
@@ -160,58 +181,38 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8 # v1.10.1
         with:
           toolchain: ${{ env.RUST_IMAGE_VERSION }}
-          components: rustfmt, clippy, llvm-tools-preview
+          components: rustfmt, clippy, llvm-tools-preview, llvm-tools
           cache: false
+
+      - name: Install nextest and grcov
+        run: |
+          cargo install cargo-nextest --locked
+          cargo install grcov --locked
 
       ############################################################################
       # Setup cache for dockerfile and inject in docker
       #
       - name: Setup Cache
-        uses: runs-on/cache@197b09d6da1bf42f673fee18769c794b789a0c7d # v4
+        uses: runs-on/cache@197b09d6da1bf42f673fee18769c794b789a0c7d # v4.0.0
         id: cache
         env:
           RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
           RUNS_ON_AWS_REGION: eu-west-3
         with:
           path: |
-            var-cache-apk
-            var-lib-apk
-            usr-local-cargo-registry
-            usr-local-cargo-git
-            usr-local-cargo-bin
-            usr-local-cargo-registry-index
-            usr-local-cargo-registry-cache
-            usr-local-cargo-git-db
-            app-${{ inputs.app-cache-dir }}-target
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
+            /home/ubuntu/.cargo/bin/
+            /home/ubuntu/.cargo/registry/index/
+            /home/ubuntu/.cargo/registry/cache/
+            /home/ubuntu/.cargo/git/db/
+            ${{ github.workspace }}/target
           key: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: inject cache into docker
-        uses: reproducible-containers/buildkit-cache-dance@5b6db76d1da5c8b307d5d2e0706d266521b710de # v3.1.2
-        with:
-          cache-map: |
-            {
-              "var-cache-apk": "/var/cache/apk",
-              "var-lib-apk": "/var/lib/apk",
-              "usr-local-cargo-registry": "/usr/local/cargo/registry",
-              "usr-local-cargo-git": "/usr/local/cargo/git",
-              "usr-local-cargo-bin": "/usr/local/cargo/bin",
-              "usr-local-cargo-registry-index": "/usr/local/cargo/registry/index",
-              "usr-local-cargo-registry-cache": "/usr/local/cargo/registry/cache",
-              "usr-local-cargo-git-db": "/usr/local/cargo/git/db",
-              "app-${{ inputs.app-cache-dir }}-target": "/app/${{ inputs.app-cache-dir }}/target"
-            }
-          skip-extraction: ${{ steps.cache.outputs.cache-hit }}
 
       - name: Install Protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           version: "26.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
 
       - name: Setup usage of private repo
         env:
@@ -283,12 +284,27 @@ jobs:
           # some integration tests run docker compose
           # which builds images which need git access
           # building images in every integration test run is bad
+          #
+          # If we want to enable the coverage again we can use the snippets below:
+          # COVERAGE
+          # if [[ "${EVENT_NAME}" == 'schedule' ]]; then
+          #   export RUSTFLAGS="-Cinstrument-coverage"
+          #   export LLVM_PROFILE_FILE="cargo-test-%p-%m.profraw"
+          #   RUST_BACKTRACE=full cargo nextest run --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
+          #   ~/.cargo/bin/grcov . --binary-path "${GITHUB_WORKSPACE}/target/debug/deps/" -s . --branch --ignore-not-existing -o "${RUNNER_TEMP}/lcov" -t lcov
+          # else
+          #   RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+          # fi
           AWS_ACCESS_KEY_ID: "minioadmin"
           AWS_SECRET_ACCESS_KEY: "minioadmin"
           AWS_DEFAULT_REGION: "eu-north-1"
           AWS_ENDPOINT: "http://127.0.0.1:9000"
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
+          NEXTEST_RETRIES: 3
+          NEXTEST_TEST_THREADS: ${{inputs.nextest-test-threads}}
+          EVENT_NAME: ${{ github.event_name }}
+          RUNNER_TEMP: ${{ runner.temp }}
         run: |
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
@@ -300,7 +316,39 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
-          RUST_BACKTRACE=full cargo test ${ARGS_TESTS:+$ARGS_TESTS}
+          RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+
+      - name: Copy Test Results
+        if: (!cancelled() || !failure() && github.event_name == 'pull_request')
+        run: |
+          if find "${GITHUB_WORKSPACE}"/target/nextest/ci -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
+            echo "Files found in ${GITHUB_WORKSPACE}/target/nextest/ci"
+            ls -R "${GITHUB_WORKSPACE}"/target/nextest/ci
+            echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> "$GITHUB_ENV"
+            cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit.xml # zizmor: ignore[template-injection]
+            echo "EXIT_CODE=0" >> "$GITHUB_ENV"
+          else
+            echo "No junit test files found in ${GITHUB_WORKSPACE}/target/nextest/ci"
+            echo "EXIT_CODE=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+        shell: bash
+
+      - name: Upload Test Results
+        if: ((!cancelled() || !failure() && github.event_name == 'pull_request') && env.EXIT_CODE == 0)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: junit-test-report-${{ env.TIMESTAMP }}
+          path: /tmp/junit.xml
+
+      # COVERAGE
+      # - name: Upload coverage to Codecov
+      #   if: github.event_name == 'schedule'
+      #   uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7  # v5.5.1
+      #   with:
+      #     token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
+      #     files: '${{ runner.temp }}/lcov'
+      #     fail_ci_if_error: true
 
       - name: Set Slack color
         id: slack_color
@@ -340,42 +388,6 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
-      # Coverage reporting
-      - name: Run Tests with Coverage
-        if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
-        env:
-          # some integration tests run docker compose
-          # which builds images which need private git access
-          # building images in every integration test run is bad
-          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-          ARGS_TESTS: ${{inputs.args-tests}}
-        run: |
-          export CARGO_INCREMENTAL=0
-          export RUSTFLAGS='-Cinstrument-coverage'
-          export LLVM_PROFILE_FILE='cargo-test-%p-%m.profraw'
-          cargo test "${ARGS_TESTS}"
-          cargo install grcov
-          mkdir coverage
-          ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage/ -t markdown
-          ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o ./ -t lcov
-          cat coverage/markdown.md
-          cat coverage/markdown.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Report code coverage
-        if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
-        uses: romeovs/lcov-reporter-action@87a815f34ec27a5826abba44ce09bbc688da58fd # v0.4.0
-        with:
-          title: ${{inputs.package-name}}-test-coverage
-          lcov-file: lcov
-          working-directory: ${{ inputs.working-directory }}/
-
-      - name: Check minimum coverage
-        if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
-        uses: VeryGoodOpenSource/very_good_coverage@c953fca3e24a915e111cc6f55f03f756dcb3964c # v3.0.0
-        with:
-          path: "${{inputs.working-directory}}/lcov"
-          min_coverage: ${{ inputs.test-minimum-coverage }}
-
       # Documentation
       - name: Build Documentation
         if: ${{ inputs.build-publish-docs }}
@@ -388,86 +400,6 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./target/doc
           destination_dir: ${{ inputs.working-directory }}
-
-      # WASM handling
-      - name: Install
-        if: ${{ inputs.run-wasm }}
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
-
-      - name: Build wasm with tests
-        if: ${{ inputs.run-wasm }}
-        env:
-          WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
-        run: wasm-pack build --target nodejs . --no-default-features "${WASM_TEST_FEATURE}"
-
-      - name: Install node
-        if: ${{ inputs.run-wasm }}
-        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
-        with:
-          node-version: 20
-
-      - name: Generate wasm test files
-        if: ${{ inputs.run-wasm }}
-        env:
-          WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
-        run: |
-          cargo test test_user_decryption_threshold_and_write_transcript "${WASM_TEST_FEATURE}" --lib
-          cargo test test_user_decryption_centralized_and_write_transcript "${WASM_TEST_FEATURE}" --lib
-
-      - name: Test wasm
-        if: ${{ inputs.run-wasm }}
-        run: node --test tests/js
-
-      # NPM package handling
-      - name: Set NPM version tag to latest
-        if: ${{ !github.event.release.prerelease }}
-        run: |
-          echo "NPM_TAG=latest" >> "${GITHUB_ENV}"
-
-      - name: Set NPM version tag to prerelease
-        if: ${{ github.event.release.prerelease }}
-        run: |
-          echo "NPM_TAG=prerelease" >> "${GITHUB_ENV}"
-
-      # Node package build and publish
-      - name: NPM build node package
-        if: ${{ inputs.npm-release }}
-        working-directory: ./core/service
-        run: |
-          rm -rf pkg
-          wasm-pack build --target nodejs . --no-default-features
-          sed -i 's/"kms"/"node-tkms"/g' pkg/package.json
-          echo "# node-tkms" > pkg/README.md
-
-      - name: NPM publish Node package
-        if: ${{ inputs.npm-release }}
-        uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
-        with:
-          token: ${{ secrets.NPM_TOKEN }}
-          package: ./core/service/pkg/package.json
-          dry-run: false
-          provenance: false # change to true when repo is public (see #1048)
-          tag: ${{ env.NPM_TAG }}
-
-      # Web package build and publish
-      - name: NPM build web package
-        if: ${{ inputs.npm-release }}
-        working-directory: ./core/service
-        run: |
-          rm -rf pkg
-          wasm-pack build --target web . --no-default-features
-          sed -i 's/"kms"/"tkms"/g' pkg/package.json
-          echo "# tkms" > pkg/README.md
-
-      - name: NPM publish web package
-        if: ${{ inputs.npm-release }}
-        uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
-        with:
-          token: ${{ secrets.NPM_TOKEN }}
-          package: ./core/service/pkg/package.json
-          dry-run: false
-          provenance: false # change to true when repo is public (see #1048)
-          tag: ${{ env.NPM_TAG }}
 
       - name: Remove aws credentials file
         run: |

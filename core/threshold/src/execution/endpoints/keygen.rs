@@ -10,7 +10,7 @@ use crate::{
             preprocessing::{DKGPreprocessing, RandomPreprocessing},
             triple::open_list,
         },
-        runtime::session::BaseSessionHandles,
+        runtime::session::{BaseSessionHandles, DeSerializationRunTime},
         tfhe_internals::{
             compression_decompression_key::CompressionPrivateKeyShares,
             compression_decompression_key_generation::{
@@ -37,7 +37,8 @@ use crate::{
             parameters::{DKGParams, MSNRKConfiguration},
             private_keysets::{GenericPrivateKeySet, PrivateKeySet},
             public_keysets::{
-                CompressedFhePubKeySet, FhePubKeySet, RawCompressedPubKeySet, RawPubKeySet,
+                CompressedReRandomizationRawKeySwitchingKey, FhePubKeySet, RawCompressedPubKeySet,
+                RawPubKeySet, ReRandomizationRawKeySwitchingKey,
             },
             randomness::MPCEncryptionRandomGenerator,
             sns_compression_key::SnsCompressionPrivateKeyShares,
@@ -59,6 +60,7 @@ use tfhe::{
         server_key::{CompressedModulusSwitchConfiguration, ModulusSwitchConfiguration},
         ClassicPBSParameters,
     },
+    xof_key_set::CompressedXofKeySet,
 };
 use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 use tracing::instrument;
@@ -193,7 +195,7 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         preprocessing: &mut P,
         params: DKGParams,
         existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
-    ) -> anyhow::Result<(CompressedFhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+    ) -> anyhow::Result<(CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
         Z: BaseRing,
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
@@ -211,7 +213,7 @@ pub struct SecureOnlineDistributedKeyGen<Z: BaseRing, const EXTENSION_DEGREE: us
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTENSION_DEGREE>
     for SecureOnlineDistributedKeyGen<Z, EXTENSION_DEGREE>
 {
-    #[instrument(name="TFHE.Threshold-KeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+    #[instrument(name="TFHE.Threshold-KeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
     #[allow(private_bounds)]
     async fn keygen<
         S: BaseSessionHandles,
@@ -226,12 +228,30 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
     {
+        // Messages exchanged are big so we deserialize them on Rayon
+        session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
         if Z::BIT_LENGTH == 64 {
             if let DKGParams::WithSnS(_) = params {
                 return Err(anyhow_error_and_log(
-                    "Can not generate Switch and Squash key with ResiduePolyF8Z64".to_string(),
+                    "Can not generate Switch and Squash key in Z64".to_string(),
                 ));
             }
+        }
+
+        if Z::BIT_LENGTH
+            != params
+                .get_params_basics_handle()
+                .get_dkg_mode()
+                .expected_bit_length()
+        {
+            return Err(anyhow_error_and_log(format!(
+                "Inconsistent parameters: trying to do DKG in Z{} with DKGParams in Z{}",
+                Z::BIT_LENGTH,
+                params
+                    .get_params_basics_handle()
+                    .get_dkg_mode()
+                    .expected_bit_length()
+            )));
         }
 
         let (pub_key_set, priv_key_set) = distributed_keygen_from_optional_compression_sk(
@@ -251,7 +271,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         ))
     }
 
-    #[instrument(name="TFHE.Threshold-CompressedKeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+    #[instrument(name="TFHE.Threshold-CompressedKeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
     #[allow(private_bounds)]
     async fn compressed_keygen<
         S: BaseSessionHandles,
@@ -261,17 +281,35 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         preprocessing: &mut P,
         params: DKGParams,
         existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
-    ) -> anyhow::Result<(CompressedFhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+    ) -> anyhow::Result<(CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
     {
+        // Messages exchanged are big so we deserialize them on Rayon
+        session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
         if Z::BIT_LENGTH == 64 {
             if let DKGParams::WithSnS(_) = params {
                 return Err(anyhow_error_and_log(
-                    "Can not generate Switch and Squash key with ResiduePolyF8Z64".to_string(),
+                    "Can not generate Switch and Squash key with in Z64".to_string(),
                 ));
             }
+        }
+
+        if Z::BIT_LENGTH
+            != params
+                .get_params_basics_handle()
+                .get_dkg_mode()
+                .expected_bit_length()
+        {
+            return Err(anyhow_error_and_log(format!(
+                "Inconsistent parameters: trying to do DKG in Z{} with DKGParams in Z{}",
+                Z::BIT_LENGTH,
+                params
+                    .get_params_basics_handle()
+                    .get_dkg_mode()
+                    .expected_bit_length()
+            )));
         }
 
         let (pub_key_set, priv_key_set) =
@@ -394,8 +432,7 @@ where
     tracing::info!("(Party {my_role}) Generating KSK...Done");
 
     //Computing and opening BK can take a while, so we increase the timeout
-    //(in theory we should be in async setting here anyway)
-    session.network().set_timeout_for_bk()?;
+    session.network().set_timeout_for_bk().await;
     //Compute the bootstrapping keys
     let bk = generate_bootstrap_key(
         &glwe_secret_key_share,
@@ -419,8 +456,7 @@ where
             )?;
 
             //Computing and opening BK SNS can take a while, so we increase the timeout
-            //(in theory we should be in async setting here anyway)
-            session.network().set_timeout_for_bk_sns()?;
+            session.network().set_timeout_for_bk_sns().await;
 
             tracing::info!("(Party {my_role}) Generating SnS GLWE...Done");
             let bk_sns = generate_bootstrap_key(
@@ -553,6 +589,35 @@ where
             None => (None, None),
         };
 
+    let cpk_re_randomization_ksk = match (
+        params_basics_handle.get_pksk_params(),
+        params_basics_handle.get_rerand_ksk_params(),
+    ) {
+        (Some(pksk_params), Some(cpk_re_randomization_ksk_params)) => {
+            // If these are equal, we already have the KSK from the LWE sk of the PK
+            // and the glwe sk that's necessary for rerand
+            if pksk_params == cpk_re_randomization_ksk_params {
+                Some(ReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK)
+            } else {
+                Some(ReRandomizationRawKeySwitchingKey::DedicatedKSK(
+                    generate_key_switch_key(
+                        &lwe_hat_secret_key_share,
+                        &glwe_sk_share_as_lwe,
+                        &cpk_re_randomization_ksk_params,
+                        &mut mpc_encryption_rng,
+                        session,
+                        preprocessing,
+                    )
+                    .await?,
+                ))
+            }
+        }
+        (_, None) => None,
+        _ => {
+            panic!("Inconsistent ClientKey set-up for CompactPublicKey re-randomization.")
+        }
+    };
+
     let pub_key_set = RawPubKeySet {
         lwe_public_key,
         ksk,
@@ -563,6 +628,7 @@ where
         msnrk,
         msnrk_sns,
         seed,
+        cpk_re_randomization_ksk,
         sns_compression_key,
     };
 
@@ -687,7 +753,7 @@ where
 
     //Computing and opening BK can take a while, so we increase the timeout
     //(in theory we should be in async setting here anyway)
-    session.network().set_timeout_for_bk()?;
+    session.network().set_timeout_for_bk().await;
     //Compute the bootstrapping keys
     let bk = generate_compressed_bootstrap_key(
         &glwe_secret_key_share,
@@ -699,6 +765,27 @@ where
         seed,
     )
     .await?;
+
+    // If needed, compute the mod switch noise reduction key
+    let msnrk = match params_basics_handle.get_msnrk_configuration() {
+        MSNRKConfiguration::Standard => CompressedModulusSwitchConfiguration::Standard,
+        MSNRKConfiguration::DriftTechniqueNoiseReduction(msnrkparams) => {
+            CompressedModulusSwitchConfiguration::DriftTechniqueNoiseReduction(
+                generate_compressed_mod_switch_noise_reduction_key(
+                    &lwe_secret_key_share,
+                    &msnrkparams,
+                    &mut mpc_encryption_rng,
+                    session,
+                    preprocessing,
+                    seed,
+                )
+                .await?,
+            )
+        }
+        MSNRKConfiguration::CenteredMeanNoiseReduction => {
+            CompressedModulusSwitchConfiguration::CenteredMeanNoiseReduction
+        }
+    };
 
     //If needed, compute the SnS BK
     let (glwe_secret_key_share_sns, bk_sns, msnrk_sns) = match params {
@@ -713,7 +800,7 @@ where
 
             //Computing and opening BK SNS can take a while, so we increase the timeout
             //(in theory we should be in async setting here anyway)
-            session.network().set_timeout_for_bk_sns()?;
+            session.network().set_timeout_for_bk_sns().await;
 
             tracing::info!("(Party {my_role}) Generating SnS GLWE...Done");
             let bk_sns = generate_compressed_bootstrap_key(
@@ -796,30 +883,39 @@ where
         }
     };
 
-    // If needed, compute the mod switch noise reduction key
-    let msnrk = match params_basics_handle.get_msnrk_configuration() {
-        MSNRKConfiguration::Standard => CompressedModulusSwitchConfiguration::Standard,
-        MSNRKConfiguration::DriftTechniqueNoiseReduction(msnrkparams) => {
-            CompressedModulusSwitchConfiguration::DriftTechniqueNoiseReduction(
-                generate_compressed_mod_switch_noise_reduction_key(
-                    &lwe_secret_key_share,
-                    &msnrkparams,
-                    &mut mpc_encryption_rng,
-                    session,
-                    preprocessing,
-                    seed,
-                )
-                .await?,
-            )
-        }
-        MSNRKConfiguration::CenteredMeanNoiseReduction => {
-            CompressedModulusSwitchConfiguration::CenteredMeanNoiseReduction
-        }
-    };
-
     // note that glwe_secret_key_share_compression may be None even if compression_keys is Some
     // this is because we might have generated the compression keys from an existing compression sk share
     let (glwe_secret_key_share_compression, compression_keys) = compression_material;
+
+    let cpk_re_randomization_ksk = match (
+        params_basics_handle.get_pksk_params(),
+        params_basics_handle.get_rerand_ksk_params(),
+    ) {
+        (Some(pksk_params), Some(cpk_re_randomization_ksk_params)) => {
+            // If these are equal, we already have the KSK from the LWE sk of the PK
+            // and the glwe sk that's necessary for rerand
+            if pksk_params == cpk_re_randomization_ksk_params {
+                Some(CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK)
+            } else {
+                Some(CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(
+                    generate_compressed_key_switch_key(
+                        &lwe_hat_secret_key_share,
+                        &glwe_sk_share_as_lwe,
+                        &cpk_re_randomization_ksk_params,
+                        &mut mpc_encryption_rng,
+                        session,
+                        preprocessing,
+                        seed,
+                    )
+                    .await?,
+                ))
+            }
+        }
+        (_, None) => None,
+        _ => {
+            panic!("Inconsistent ClientKey set-up for CompactPublicKey re-randomization.")
+        }
+    };
 
     // If needed, compute the sns compression keys
     let sns_compression_materials =
@@ -861,8 +957,9 @@ where
         compression_keys,
         msnrk,
         msnrk_sns,
-        seed,
         sns_compression_key,
+        cpk_re_randomization_ksk,
+        seed,
     };
 
     let priv_key_set = GenericPrivateKeySet {
@@ -877,7 +974,7 @@ where
     Ok((pub_key_set, priv_key_set))
 }
 
-#[instrument(name="Gen Decompression Key Z128", skip(private_glwe_compute_key, private_compression_key, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen Decompression Key Z128", skip(private_glwe_compute_key, private_compression_key, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn distributed_decompression_keygen_z128<
     S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
@@ -919,7 +1016,7 @@ where
 
 /// NOTE: When we generate a standalone CompressedDecompressionKey via this fn, it needs to be decompressed
 /// using the decompression function WE provide [`decompressed_compressed_standalone_decompression_key_from_xof`], not the one from the TFHE-rs library.
-#[instrument(name="Gen compressed Decompression Key Z128", skip(private_glwe_compute_key, private_compression_key, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen compressed Decompression Key Z128", skip(private_glwe_compute_key, private_compression_key, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn distributed_compressed_decompression_keygen_z128<
     S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
@@ -978,7 +1075,7 @@ pub fn decompress_compressed_standalone_decompression_key_from_xof(
     (decompressed_key, count)
 }
 
-#[instrument(name="Gen sns compression Key Z128", skip(glwe_secret_key_share_sns_as_lwe, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen sns compression Key Z128", skip(glwe_secret_key_share_sns_as_lwe, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn distributed_sns_compression_keygen_z128<
     S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
@@ -1075,15 +1172,15 @@ pub mod tests {
             entities::{Fourier128LweBootstrapKey, GlweSecretKey, LweBootstrapKey, LweSecretKey},
         },
         integer::parameters::DynamicDistribution,
-        prelude::{CiphertextList, FheDecrypt, FheMin, FheTryEncrypt},
+        prelude::{CiphertextList, FheDecrypt, FheMin, FheTryEncrypt, ReRandomize},
         set_server_key,
         shortint::{
             client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
-            noise_squashing::NoiseSquashingKey,
+            noise_squashing::{NoiseSquashingKey, Shortint128BootstrappingKey},
             parameters::CoreCiphertextModulus,
             PBSParameters,
         },
-        CompressedCiphertextListBuilder, FheUint32, FheUint64, FheUint8,
+        CompressedCiphertextListBuilder, FheUint32, FheUint64, FheUint8, ReRandomizationContext,
     };
     use tfhe_csprng::seeders::Seeder;
 
@@ -1105,46 +1202,60 @@ pub mod tests {
         tests::helper::tests_and_benches::execute_protocol_small,
     };
 
+    // NOTE: Most tests below are ignored because they are very slow and mostly redundant.
+    // We only run:
+    // - keygen_params_test_bk_sns_f4 which runs DKG for the test params on a degree 4 extension
+    //   with a completely dummy preprocessing
+    // - integration_keygen_params_test_bk_sns_existing_compression_sk_f4 which runs DKG for the test
+    //   params on a degree 4 extension, using a less dummy preprocessing
+    //   (i.e. dummy preprocessing is used to fill DKGPreprocessing instead of directly used)
+
     const DUMMY_PREPROC_SEED: u64 = 42;
 
     #[cfg(not(target_arch = "aarch64"))]
     #[test]
     fn pure_tfhers_test() {
-        let params = crate::execution::tfhe_internals::parameters::NIST_PARAMS_P32_INTERNAL_FGLWE;
+        let params = crate::execution::tfhe_internals::parameters::BC_PARAMS;
         let classic_pbs = params.ciphertext_parameters;
         let dedicated_cpk_params = params.dedicated_compact_public_key_parameters.unwrap();
+        let compression_params = params.compression_decompression_parameters.unwrap();
+        let re_rand_ks_params = params.cpk_re_randomization_ksk_params.unwrap();
 
         let config = tfhe::ConfigBuilder::with_custom_parameters(classic_pbs)
-            .use_dedicated_compact_public_key_parameters(dedicated_cpk_params);
+            .use_dedicated_compact_public_key_parameters(dedicated_cpk_params)
+            .enable_compression(compression_params)
+            .enable_ciphertext_re_randomization(re_rand_ks_params);
 
         let client_key = tfhe::ClientKey::generate(config.clone());
         let server_key = tfhe::ServerKey::new(&client_key);
         let public_key = tfhe::CompactPublicKey::try_new(&client_key).unwrap();
 
         try_tfhe_pk_compactlist_computation(&client_key, &server_key, &public_key);
+        set_server_key(server_key);
+        try_tfhe_rerand(&client_key, &public_key);
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn old_keygen_params32_with_sns_f8() {
-        old_keygen_params32_with_sns::<8>()
+    async fn old_keygen_params32_with_sns_f8() {
+        old_keygen_params32_with_sns::<8>(false).await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn old_keygen_params32_with_sns_f4() {
-        old_keygen_params32_with_sns::<4>()
+    async fn old_keygen_params32_with_sns_f4() {
+        old_keygen_params32_with_sns::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn old_keygen_params32_with_sns_f3() {
-        old_keygen_params32_with_sns::<3>()
+    async fn old_keygen_params32_with_sns_f3() {
+        old_keygen_params32_with_sns::<3>(false).await
     }
 
-    fn old_keygen_params32_with_sns<const EXTENSION_DEGREE: usize>()
+    async fn old_keygen_params32_with_sns<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1158,32 +1269,35 @@ pub mod tests {
                 run_shortint_with_compact: false,
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
+                run_rerand: false,
+                run_compressed,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_no_sns_fglwe_f8() {
-        keygen_params32_no_sns_fglwe::<8>()
+    async fn keygen_params32_no_sns_fglwe_f8() {
+        keygen_params32_no_sns_fglwe::<8>(false).await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_no_sns_fglwe_f4() {
-        keygen_params32_no_sns_fglwe::<4>()
+    async fn keygen_params32_no_sns_fglwe_f4() {
+        keygen_params32_no_sns_fglwe::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_no_sns_fglwe_f3() {
-        keygen_params32_no_sns_fglwe::<3>()
+    async fn keygen_params32_no_sns_fglwe_f3() {
+        keygen_params32_no_sns_fglwe::<3>(false).await
     }
 
     ///Tests related to [`PARAMS_P32_NO_SNS_FGLWE`]
-    fn keygen_params32_no_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params32_no_sns_fglwe<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1197,32 +1311,35 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
+                run_rerand: false,
+                run_compressed,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_no_sns_fglwe_f8() {
-        keygen_params8_no_sns_fglwe::<8>()
+    async fn keygen_params8_no_sns_fglwe_f8() {
+        keygen_params8_no_sns_fglwe::<8>(false).await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_no_sns_fglwe_f4() {
-        keygen_params8_no_sns_fglwe::<4>()
+    async fn keygen_params8_no_sns_fglwe_f4() {
+        keygen_params8_no_sns_fglwe::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_no_sns_fglwe_f3() {
-        keygen_params8_no_sns_fglwe::<3>()
+    async fn keygen_params8_no_sns_fglwe_f3() {
+        keygen_params8_no_sns_fglwe::<3>(false).await
     }
 
     ///Tests related to [`PARAMS_P8_NO_SNS_FGLWE`]
-    fn keygen_params8_no_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params8_no_sns_fglwe<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1236,32 +1353,35 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: false,
                 run_fheuint_with_compression: false,
+                run_rerand: false,
+                run_compressed,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_no_sns_lwe_f8() {
-        keygen_params32_no_sns_lwe::<8>()
+    async fn keygen_params32_no_sns_lwe_f8() {
+        keygen_params32_no_sns_lwe::<8>(false).await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_no_sns_lwe_f4() {
-        keygen_params32_no_sns_lwe::<4>()
+    async fn keygen_params32_no_sns_lwe_f4() {
+        keygen_params32_no_sns_lwe::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_no_sns_lwe_f3() {
-        keygen_params32_no_sns_lwe::<3>()
+    async fn keygen_params32_no_sns_lwe_f3() {
+        keygen_params32_no_sns_lwe::<3>(false).await
     }
 
     ///Tests related to [`PARAMS_P32_NO_SNS_LWE`]
-    fn keygen_params32_no_sns_lwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params32_no_sns_lwe<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1275,32 +1395,35 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
+                run_rerand: false,
+                run_compressed,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_no_sns_lwe_f8() {
-        keygen_params8_no_sns_lwe::<8>()
+    async fn keygen_params8_no_sns_lwe_f8() {
+        keygen_params8_no_sns_lwe::<8>(false).await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_no_sns_lwe_f4() {
-        keygen_params8_no_sns_lwe::<4>()
+    async fn keygen_params8_no_sns_lwe_f4() {
+        keygen_params8_no_sns_lwe::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_no_sns_lwe_f3() {
-        keygen_params8_no_sns_lwe::<3>()
+    async fn keygen_params8_no_sns_lwe_f3() {
+        keygen_params8_no_sns_lwe::<3>(false).await
     }
 
     ///Tests related to [`PARAMS_P8_NO_SNS_LWE`]
-    fn keygen_params8_no_sns_lwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params8_no_sns_lwe<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1314,31 +1437,41 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: false,
                 run_fheuint_with_compression: false,
+                run_rerand: false,
+                run_compressed,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params_bk_sns_f8() {
-        keygen_params_bk_sns::<8>()
+    async fn keygen_params_test_bk_sns_f8() {
+        keygen_params_test_bk_sns::<8>(false).await
     }
 
-    #[test]
-    fn keygen_params_bk_sns_f4() {
-        keygen_params_bk_sns::<4>()
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn keygen_params_test_bk_sns_f4() {
+        keygen_params_test_bk_sns::<4>(false).await
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn keygen_params_test_compressed_bk_sns_f4() {
+        keygen_params_test_bk_sns::<4>(true).await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params_bk_sns_f3() {
-        keygen_params_bk_sns::<3>()
+    async fn keygen_params_test_bk_sns_f3() {
+        keygen_params_test_bk_sns::<3>(false).await
     }
 
     ///Tests related to [`PARAMS_TEST_BK_SNS`]
-    fn keygen_params_bk_sns<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params_test_bk_sns<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1352,38 +1485,58 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: true,
                 run_fheuint_with_compression: true,
+                run_rerand: true,
+                run_compressed,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "slow_tests")]
-    #[test]
-    fn integration_keygen_params_bk_sns_f8() {
-        integration_keygen_params_bk_sns::<8>(KeySetConfig::default())
+    #[tokio::test]
+    #[ignore] // Ignored because we run the same test for degree 4 extension
+    async fn integration_keygen_params_test_bk_sns_f8() {
+        integration_keygen_params_test_bk_sns::<8>(KeySetConfig::default(), false).await
     }
 
     #[cfg(feature = "slow_tests")]
-    #[test]
-    fn integration_keygen_params_bk_sns_f4() {
-        integration_keygen_params_bk_sns::<4>(KeySetConfig::default())
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn integration_keygen_params_test_bk_sns_f4() {
+        integration_keygen_params_test_bk_sns::<4>(KeySetConfig::default(), false).await
     }
 
     #[cfg(feature = "slow_tests")]
-    #[test]
-    fn integration_keygen_params_bk_sns_f3() {
-        integration_keygen_params_bk_sns::<3>(KeySetConfig::default())
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn integration_keygen_params_test_compressed_bk_sns_f4() {
+        integration_keygen_params_test_bk_sns::<4>(KeySetConfig::default(), true).await
     }
 
     #[cfg(feature = "slow_tests")]
-    #[test]
-    fn integration_keygen_params_bk_sns_existing_compression_sk_f4() {
-        integration_keygen_params_bk_sns::<4>(KeySetConfig::use_existing_compression_sk())
+    #[tokio::test]
+    #[ignore] // Ignored because we run the same test for degree 4 extension
+    async fn integration_keygen_params_test_bk_sns_f3() {
+        integration_keygen_params_test_bk_sns::<3>(KeySetConfig::default(), false).await
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn integration_keygen_params_test_bk_sns_existing_compression_sk_f4() {
+        integration_keygen_params_test_bk_sns::<4>(
+            KeySetConfig::use_existing_compression_sk(),
+            false,
+        )
+        .await
     }
 
     #[cfg(feature = "slow_tests")]
     ///Tests related to [`PARAMS_TEST_BK_SNS`] using _less fake_ preprocessing
-    fn integration_keygen_params_bk_sns<const EXTENSION_DEGREE: usize>(keyset_config: KeySetConfig)
-    where
+    async fn integration_keygen_params_test_bk_sns<const EXTENSION_DEGREE: usize>(
+        keyset_config: KeySetConfig,
+        run_compressed: bool,
+    ) where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
@@ -1398,8 +1551,9 @@ pub mod tests {
             threshold,
             temp_dir.path(),
             keyset_config,
-            false,
-        );
+            run_compressed,
+        )
+        .await;
 
         run_switch_and_squash(
             temp_dir.path(),
@@ -1421,31 +1575,32 @@ pub mod tests {
             num_parties,
             threshold,
             true,
+            false,
         );
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_with_sns_fglwe_f8() {
-        keygen_params32_with_sns_fglwe::<8>()
+    async fn keygen_params32_with_sns_fglwe_f8() {
+        keygen_params32_with_sns_fglwe::<8>(false).await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_with_sns_fglwe_f4() {
-        keygen_params32_with_sns_fglwe::<4>()
+    async fn keygen_params32_with_sns_fglwe_f4() {
+        keygen_params32_with_sns_fglwe::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_with_sns_fglwe_f3() {
-        keygen_params32_with_sns_fglwe::<3>()
+    async fn keygen_params32_with_sns_fglwe_f3() {
+        keygen_params32_with_sns_fglwe::<3>(false).await
     }
 
     ///Tests related to [`PARAMS_P32_SNS_FGLWE`]
-    fn keygen_params32_with_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params32_with_sns_fglwe<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1459,32 +1614,35 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
+                run_rerand: false,
+                run_compressed,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_with_sns_fglwe_f8() {
-        keygen_params8_with_sns_fglwe::<8>()
+    async fn keygen_params8_with_sns_fglwe_f8() {
+        keygen_params8_with_sns_fglwe::<8>(false).await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_with_sns_fglwe_f4() {
-        keygen_params8_with_sns_fglwe::<4>()
+    async fn keygen_params8_with_sns_fglwe_f4() {
+        keygen_params8_with_sns_fglwe::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_with_sns_fglwe_f3() {
-        keygen_params8_with_sns_fglwe::<3>()
+    async fn keygen_params8_with_sns_fglwe_f3() {
+        keygen_params8_with_sns_fglwe::<3>(false).await
     }
 
     ///Tests related to [`PARAMS_P8_REAL_WITH_SNS`]
-    fn keygen_params8_with_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params8_with_sns_fglwe<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1498,33 +1656,37 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: false,
                 run_fheuint_with_compression: false,
+                run_rerand: false,
+                run_compressed,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params_blockchain_without_sns_f8() {
-        keygen_params_blockchain_without_sns::<8>()
+    async fn keygen_params_blockchain_without_sns_f8() {
+        keygen_params_blockchain_without_sns::<8>(false).await
     }
 
-    #[test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     #[ignore]
-    fn keygen_params_blockchain_without_sns_f4() {
-        keygen_params_blockchain_without_sns::<4>()
+    async fn keygen_params_blockchain_without_sns_f4() {
+        keygen_params_blockchain_without_sns::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     #[ignore]
-    fn keygen_params_blockchain_without_sns_f3() {
-        keygen_params_blockchain_without_sns::<3>()
+    async fn keygen_params_blockchain_without_sns_f3() {
+        keygen_params_blockchain_without_sns::<3>(false).await
     }
 
     ///Tests related to [`BC_PARAMS_NO_SNS`]
-    fn keygen_params_blockchain_without_sns<const EXTENSION_DEGREE: usize>()
-    where
+    async fn keygen_params_blockchain_without_sns<const EXTENSION_DEGREE: usize>(
+        run_compressed: bool,
+    ) where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
@@ -1537,28 +1699,35 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: true,
                 run_fheuint_with_compression: true,
+                run_rerand: true,
+                run_compressed,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "slow_tests")]
-    #[test]
-    fn decompression_keygen_f4() {
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn decompression_keygen_f4() {
         let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
         run_real_decompression_dkg_and_save::<4>(params, num_parties, threshold, temp_dir.path())
+            .await
     }
 
     #[cfg(feature = "slow_tests")]
-    #[test]
-    fn sns_compression_keygen_f4() {
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn sns_compression_keygen_f4() {
         let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
         run_real_sns_compression_dkg_and_save::<4>(params, num_parties, threshold, temp_dir.path())
+            .await
     }
 
     struct KeygenTestConfig {
@@ -1566,9 +1735,11 @@ pub mod tests {
         run_shortint_with_compact: bool,
         run_fheuint: bool,
         run_fheuint_with_compression: bool,
+        run_rerand: bool,
+        run_compressed: bool,
     }
 
-    fn run_keygen_test<const EXTENSION_DEGREE: usize>(
+    async fn run_keygen_test<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
@@ -1579,7 +1750,14 @@ pub mod tests {
     {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path(), false);
+        run_dkg_and_save(
+            params,
+            num_parties,
+            threshold,
+            temp_dir.path(),
+            config.run_compressed,
+        )
+        .await;
 
         if config.run_switch_and_squash {
             run_switch_and_squash(
@@ -1619,6 +1797,7 @@ pub mod tests {
                 num_parties,
                 threshold,
                 config.run_fheuint_with_compression,
+                config.run_rerand,
             );
         }
     }
@@ -1703,7 +1882,7 @@ pub mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    fn run_real_decompression_dkg_and_save<const EXTENSION_DEGREE: usize>(
+    async fn run_real_decompression_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
@@ -1766,7 +1945,7 @@ pub mod tests {
             session
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(240))
-                .unwrap();
+                .await;
             let mut dkg_preproc =
                 generate_preproc_from_params(&params, keyset_config, &mut session).await;
 
@@ -1833,7 +2012,8 @@ pub mod tests {
                 None,
                 &mut task,
                 Some(prefix_path.to_str().unwrap().to_string()),
-            );
+            )
+            .await;
 
         // check that the decompression keys are the same
         let decompression_key = results.pop().unwrap().1;
@@ -1852,7 +2032,7 @@ pub mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    fn run_real_sns_compression_dkg_and_save<const EXTENSION_DEGREE: usize>(
+    async fn run_real_sns_compression_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
@@ -1888,7 +2068,7 @@ pub mod tests {
             let mut tmp = gen_key_set(params, &mut rng);
             let ck_parts = tmp.client_key.into_raw_parts();
             tmp.client_key = tfhe::ClientKey::from_raw_parts(
-                ck_parts.0, ck_parts.1, ck_parts.2, ck_parts.3, None, ck_parts.5,
+                ck_parts.0, ck_parts.1, ck_parts.2, ck_parts.3, None, ck_parts.5, ck_parts.6,
             );
             tmp
         };
@@ -1915,7 +2095,7 @@ pub mod tests {
             session
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(240))
-                .unwrap();
+                .await;
             let mut dkg_preproc =
                 generate_preproc_from_params(&params, keyset_config, &mut session).await;
 
@@ -1966,7 +2146,8 @@ pub mod tests {
                 None,
                 &mut task,
                 Some(prefix_path.to_str().unwrap().to_string()),
-            );
+            )
+            .await;
 
         // reconstruct the shares
         let all_shares = results
@@ -2019,7 +2200,7 @@ pub mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    fn run_real_dkg_and_save<const EXTENSION_DEGREE: usize>(
+    async fn run_real_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
@@ -2060,7 +2241,7 @@ pub mod tests {
             session
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(240))
-                .unwrap();
+                .await;
             let mut dkg_preproc =
                 generate_preproc_from_params(&params, keyset_config, &mut session).await;
 
@@ -2079,7 +2260,14 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
-                (compressed_pk.decompress(), sk)
+                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
+                (
+                    FhePubKeySet {
+                        public_key,
+                        server_key,
+                    },
+                    sk,
+                )
             } else {
                 super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
                     &mut session,
@@ -2114,7 +2302,8 @@ pub mod tests {
                 None,
                 &mut task,
                 None,
-            );
+            )
+            .await;
 
         let pk_ref = results[0].1.clone();
 
@@ -2132,7 +2321,7 @@ pub mod tests {
 
     ///Runs the DKG protocol with [`DummyPreprocessing`]
     /// and [`FakeBitGenEven`]. Saves the results to file.
-    fn run_dkg_and_save<const EXTENSION_DEGREE: usize>(
+    async fn run_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
@@ -2146,26 +2335,34 @@ pub mod tests {
             let my_role = session.my_role();
             let mut dkg_preproc = DummyPreprocessing::new(DUMMY_PREPROC_SEED, &session);
 
-            let (pk, sk) =
-                if run_compressed {
-                    let (compressed_pk, sk) = super::SecureOnlineDistributedKeyGen128::<
-                        EXTENSION_DEGREE,
-                    >::compressed_keygen(
-                        &mut session, &mut dkg_preproc, params, None
-                    )
-                    .await
-                    .unwrap();
-                    (compressed_pk.decompress(), sk)
-                } else {
-                    super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
+            let (pk, sk) = if run_compressed {
+                let (compressed_pk, sk) =
+                    super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::compressed_keygen(
                         &mut session,
                         &mut dkg_preproc,
                         params,
                         None,
                     )
                     .await
-                    .unwrap()
-                };
+                    .unwrap();
+                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
+                (
+                    FhePubKeySet {
+                        public_key,
+                        server_key,
+                    },
+                    sk,
+                )
+            } else {
+                super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
+                    &mut session,
+                    &mut dkg_preproc,
+                    params,
+                    None,
+                )
+                .await
+                .unwrap()
+            };
 
             (my_role, pk, sk)
         };
@@ -2181,7 +2378,8 @@ pub mod tests {
                 NetworkMode::Async,
                 Some(delay_vec),
                 &mut task,
-            );
+            )
+            .await;
 
         let pk_ref = results[0].1.clone();
 
@@ -2224,11 +2422,11 @@ pub mod tests {
 
         let sns_raw_private_key = GlweSecretKey::from_container(
             big_sk_glwe.clone().unwrap().into_container(),
-            params.sns_params.polynomial_size,
+            params.sns_params.polynomial_size(),
         );
 
         let pk: FhePubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
-        let (integer_server_key, _, _, _, ck, _, _) = pk.server_key.clone().into_raw_parts();
+        let (integer_server_key, _, _, _, ck, _, _, _) = pk.server_key.clone().into_raw_parts();
         let ck = ck.unwrap();
 
         set_server_key(pk.server_key);
@@ -2295,17 +2493,35 @@ pub mod tests {
         drop(bsk_out);
 
         let ck_bis = {
-            let (_, mod_switch, pt_modulus, pt_carry, ct_modulus) =
+            let (key, pt_modulus, pt_carry, ct_modulus) =
                 ck.clone().into_raw_parts().into_raw_parts();
+            let mod_switch = match key {
+                Shortint128BootstrappingKey::Classic {
+                    bsk: _bsk,
+                    modulus_switch_noise_reduction_key,
+                } => modulus_switch_noise_reduction_key,
+                Shortint128BootstrappingKey::MultiBit {
+                    bsk: _bsk,
+                    thread_count: _thread_count,
+                    deterministic_execution: _deterministic_execution,
+                } => panic!("Do not support multibit for now"),
+            };
+
             tfhe::integer::noise_squashing::NoiseSquashingKey::from_raw_parts(
                 NoiseSquashingKey::from_raw_parts(
-                    fbsk_out, mod_switch, pt_modulus, pt_carry, ct_modulus,
+                    Shortint128BootstrappingKey::Classic {
+                        bsk: fbsk_out,
+                        modulus_switch_noise_reduction_key: mod_switch,
+                    },
+                    pt_modulus,
+                    pt_carry,
+                    ct_modulus,
                 ),
             )
         };
 
         let small_ct: FheUint64 = expanded_encrypt(&ddec_pk, message as u64, 64).unwrap();
-        let (raw_ct, _id, _tag) = small_ct.clone().into_raw_parts();
+        let (raw_ct, _id, _tag, _rerand_metadata) = small_ct.clone().into_raw_parts();
         let large_ct = ck
             .squash_radix_ciphertext_noise(&integer_server_key, &raw_ct)
             .unwrap();
@@ -2354,6 +2570,7 @@ pub mod tests {
                 None,
                 None,
                 None,
+                None,
                 tfhe::Tag::default(),
             );
             try_tfhe_pk_compactlist_computation(&tfhe_sk, &pk.server_key, &pk.public_key);
@@ -2367,6 +2584,7 @@ pub mod tests {
         num_parties: usize,
         threshold: usize,
         do_compression_test: bool,
+        with_rerand: bool,
     ) where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
@@ -2393,12 +2611,16 @@ pub mod tests {
             None,
             None,
             None,
+            None,
             tfhe::Tag::default(),
         );
 
         try_tfhe_fheuint_computation(&tfhe_sk);
         if do_compression_test {
             try_tfhe_compression_computation(&tfhe_sk);
+        }
+        if with_rerand {
+            try_tfhe_rerand(&tfhe_sk, &pk.public_key);
         }
     }
 
@@ -2575,5 +2797,66 @@ pub mod tests {
         let decompressed: FheUint8 = compressed.get(2).unwrap().unwrap();
         let decrypted: u8 = decompressed.decrypt(client_key);
         assert_eq!(decrypted, clear_c);
+    }
+
+    fn try_tfhe_rerand(cks: &tfhe::ClientKey, cpk: &tfhe::CompactPublicKey) {
+        let compact_public_encryption_domain_separator = *b"TFHE.Enc";
+        let rerand_domain_separator = *b"TFHE.Rrd";
+
+        // Case where we want to compute FheUint64 + FheUint64 and re-randomize those inputs
+        {
+            let clear_a = rand::random::<u64>();
+            let clear_b = rand::random::<u64>();
+            let compact_ctxt_list = tfhe::CompactCiphertextList::builder(cpk)
+                .push(clear_a)
+                .push(clear_b)
+                .build_packed();
+            let expander = compact_ctxt_list.expand().unwrap();
+            let mut a: tfhe::FheUint64 = expander.get(0).unwrap().unwrap();
+            let mut b: tfhe::FheUint64 = expander.get(1).unwrap().unwrap();
+
+            // Simulate a 256 bits hash added as metadata
+            let rand_a: [u8; 256 / 8] = core::array::from_fn(|_| rand::random());
+            let rand_b: [u8; 256 / 8] = core::array::from_fn(|_| rand::random());
+            a.re_randomization_metadata_mut().set_data(&rand_a);
+            b.re_randomization_metadata_mut().set_data(&rand_b);
+
+            let mut builder = CompressedCiphertextListBuilder::new();
+            builder.push(a);
+            builder.push(b);
+            let list = builder.build().unwrap();
+
+            let mut a: FheUint64 = list.get(0).unwrap().unwrap();
+            let mut b: FheUint64 = list.get(1).unwrap().unwrap();
+
+            assert_eq!(a.re_randomization_metadata().data(), &rand_a);
+            assert_eq!(b.re_randomization_metadata().data(), &rand_b);
+
+            // Simulate a 256 bits nonce
+            let nonce: [u8; 256 / 8] = core::array::from_fn(|_| rand::random());
+
+            let mut re_rand_context = ReRandomizationContext::new(
+                rerand_domain_separator,
+                // First is the function description, second is a nonce
+                [b"FheUint64+FheUint64".as_slice(), nonce.as_slice()],
+                compact_public_encryption_domain_separator,
+            );
+
+            // Add ciphertexts to the context
+
+            re_rand_context.add_ciphertext(&a);
+            re_rand_context.add_ciphertext(&b);
+
+            let mut seed_gen = re_rand_context.finalize();
+
+            a.re_randomize(cpk, seed_gen.next_seed().unwrap()).unwrap();
+
+            b.re_randomize(cpk, seed_gen.next_seed().unwrap()).unwrap();
+
+            let c = a + b;
+            let dec: u64 = c.decrypt(cks);
+
+            assert_eq!(clear_a.wrapping_add(clear_b), dec);
+        }
     }
 }

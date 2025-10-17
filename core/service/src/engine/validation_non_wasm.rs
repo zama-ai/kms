@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
+use kms_grpc::identifiers::ContextId;
+use kms_grpc::kms::v1::CrsGenRequest;
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
 use kms_grpc::{
@@ -11,9 +13,11 @@ use kms_grpc::{
     },
     rpc_types::optional_protobuf_to_alloy_domain,
 };
+use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::hashing::DomainSep;
 
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::engine::base::retrieve_parameters;
 use crate::{
     anyhow_error_and_log,
     cryptography::{
@@ -62,12 +66,15 @@ pub(crate) enum RequestIdParsingErr {
     KeyGenResponse,
     UserDecResponse,
     PublicDecResponse,
+
+    CustodianContext,
+    BackupRecovery,
 }
 
 impl std::fmt::Display for RequestIdParsingErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RequestIdParsingErr::Other(msg) => write!(f, "Other request ID error: {}", msg),
+            RequestIdParsingErr::Other(msg) => write!(f, "Other request ID error: {msg}"),
             RequestIdParsingErr::Context => write!(f, "Invalid context ID"),
             RequestIdParsingErr::Init => write!(f, "Invalid init ID"),
 
@@ -100,6 +107,12 @@ impl std::fmt::Display for RequestIdParsingErr {
             RequestIdParsingErr::PublicDecResponse => {
                 write!(f, "Invalid get public decryption result response ID")
             }
+            RequestIdParsingErr::CustodianContext => {
+                write!(f, "Invalid new custodian context result response ID")
+            }
+            RequestIdParsingErr::BackupRecovery => {
+                write!(f, "Invalid new backup recovery result response ID")
+            }
         }
     }
 }
@@ -113,7 +126,7 @@ pub(crate) fn parse_optional_proto_request_id(
         .clone()
         .ok_or(BoxedStatus::from(tonic::Status::new(
             tonic::Code::InvalidArgument,
-            format!("{}: {request_id:?}", id_type),
+            format!("{id_type}: {request_id:?}"),
         )))?;
 
     parse_proto_request_id(&req_id, id_type)
@@ -126,7 +139,20 @@ pub(crate) fn parse_proto_request_id(
     request_id.try_into().map_err(|_| {
         BoxedStatus::from(tonic::Status::new(
             tonic::Code::InvalidArgument,
-            format!("{}: {request_id:?}", id_type),
+            format!("{id_type}: {request_id:?}"),
+        ))
+    })
+}
+
+// TODO we may need to generalize this into other types of IDs
+pub(crate) fn parse_proto_context_id(
+    request_id: &kms_grpc::kms::v1::RequestId,
+    id_type: RequestIdParsingErr,
+) -> Result<ContextId, BoxedStatus> {
+    request_id.try_into().map_err(|_| {
+        BoxedStatus::from(tonic::Status::new(
+            tonic::Code::InvalidArgument,
+            format!("{id_type}: {request_id:?}"),
         ))
     })
 }
@@ -198,18 +224,23 @@ pub fn validate_user_decrypt_req(
         ))
     })?;
     // NOTE: we need to do some backward compatibility support here so
-    // first try to deserialize it using the old format
+    // first try to deserialize it using the old format (ML-KEM1024 encoded with bincode)
     let client_enc_key = match bc2wrap::deserialize::<PublicEncKey<ml_kem::MlKem1024>>(&req.enc_key)
     {
         Ok(inner) => {
+            // we got an old MlKem1024 public key, wrap it in the enum
             tracing::warn!("🔒 Using MlKem1024 public encryption key");
             UnifiedPublicEncKey::MlKem1024(inner)
         }
+        // in case the old deserialization fails, try the new format
         Err(_) => tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
             std::io::Cursor::new(&req.enc_key),
             crate::consts::SAFE_SER_SIZE_LIMIT,
         )
         .map_err(|e| {
+            tracing::error!(
+                "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
+            );
             BoxedStatus::from(tonic::Status::new(
                 tonic::Code::InvalidArgument,
                 format!("Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"),
@@ -487,6 +518,44 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
     }
 }
 
+pub(crate) fn validate_crs_gen_request(
+    req: CrsGenRequest,
+) -> Result<(RequestId, DKGParams, Eip712Domain, Option<ContextId>), BoxedStatus> {
+    let req_id =
+        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
+    let params = retrieve_parameters(Some(req.params))?;
+
+    // This verification is more strict than the checks in [compute_witness_dim]
+    // because it only allows powers of 2. But there are no strong reasons
+    // to use max_num_bits that are not powers of 2 so we enforce it here.
+    if let Some(max_num_bits) = req.max_num_bits {
+        verify_max_num_bits(max_num_bits as usize)?;
+    }
+
+    // context_id is not used at the moment, but we validate it if present
+    let context_id = match &req.context_id {
+        Some(ctx) => Some(parse_proto_context_id(ctx, RequestIdParsingErr::Context)?),
+        None => None,
+    };
+
+    let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+
+    Ok((req_id, params, eip712_domain, context_id))
+}
+
+/// The max_num_bits should be a power of 2 between 1 and 2048 (inclusive)
+fn verify_max_num_bits(max_num_bits: usize) -> Result<(), BoxedStatus> {
+    if max_num_bits > 0 && max_num_bits <= 2048 && usize::is_power_of_two(max_num_bits) {
+        Ok(())
+    } else {
+        Err(tonic::Status::invalid_argument(format!(
+            "max_num_bits must be a power of 2 between 1 and 2048, got {}",
+            max_num_bits
+        ))
+        .into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -520,7 +589,7 @@ mod tests {
     use super::{
         validate_public_decrypt_meta_data, validate_public_decrypt_req,
         validate_public_decrypt_responses_against_request, validate_user_decrypt_req,
-        verify_user_decrypt_eip712, DSEP_PUBLIC_DECRYPTION,
+        verify_max_num_bits, verify_user_decrypt_eip712, DSEP_PUBLIC_DECRYPTION,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
         ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
@@ -556,6 +625,8 @@ mod tests {
                 key_id: None,
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -571,6 +642,8 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -589,6 +662,8 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -604,6 +679,8 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -619,6 +696,8 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             let (_, _, _, _domain) = validate_public_decrypt_req(&req).unwrap();
         }
@@ -667,6 +746,8 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -684,6 +765,8 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -704,6 +787,8 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -721,6 +806,8 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -738,6 +825,8 @@ mod tests {
                 client_address: client_address.to_checksum(Some(1)),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             assert!(
                 validate_user_decrypt_req(&req).unwrap_err().to_string().contains(
@@ -758,6 +847,8 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: bad_enc_pk_buf,
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -775,6 +866,8 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req).is_ok());
         }
@@ -823,7 +916,7 @@ mod tests {
         );
         let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
 
-        let req = kms_grpc::kms::v1::UserDecryptionRequest {
+        let req = UserDecryptionRequest {
             request_id: Some(v1::RequestId {
                 request_id: "dummy request ID".to_owned(),
             }),
@@ -833,6 +926,8 @@ mod tests {
             typed_ciphertexts: vec![typed_ciphertext],
             domain: Some(domain_msg),
             extra_data: vec![],
+            context_id: None,
+            epoch_id: None,
         };
 
         {
@@ -1252,6 +1347,8 @@ mod tests {
             ),
             domain: None,
             extra_data: vec![],
+            context_id: None,
+            epoch_id: None,
         };
 
         let resp0 = {
@@ -1360,6 +1457,8 @@ mod tests {
                 ),
                 domain: None,
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
@@ -1390,6 +1489,8 @@ mod tests {
                 ),
                 domain: None,
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
@@ -1425,6 +1526,8 @@ mod tests {
                 ),
                 domain: None,
                 extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
@@ -1554,5 +1657,16 @@ mod tests {
                 resp1.payload.clone()
             );
         }
+    }
+
+    #[test]
+    fn test_max_num_bits_verification() {
+        // max_num_bits should be at most 2048
+        assert!(verify_max_num_bits(2048).is_ok());
+        assert!(verify_max_num_bits(1024).is_ok());
+        assert!(verify_max_num_bits(1).is_ok());
+        assert!(verify_max_num_bits(0).is_err());
+        assert!(verify_max_num_bits(2049).is_err());
+        assert!(verify_max_num_bits(123).is_err());
     }
 }

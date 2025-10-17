@@ -2,14 +2,23 @@ use super::internal_crypto_types::PrivateSigKey;
 use anyhow::{bail, ensure};
 use enum_dispatch::enum_dispatch;
 use k256::pkcs8::EncodePrivateKey;
+use kms_grpc::identifiers::ContextId;
+#[cfg(feature = "insecure")]
+use nsm_nitro_enclave_utils::{driver::dev::DevNitro, pcr::Pcrs};
+#[cfg(feature = "insecure")]
+use rcgen::{BasicConstraints, PKCS_ECDSA_P384_SHA384};
 use rcgen::{
     CertificateParams, CustomExtension, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose, PublicKeyData, PKCS_ECDSA_P256K1_SHA256, PKCS_ECDSA_P256_SHA256,
+    KeyPair, KeyUsagePurpose, PublicKeyData, SerialNumber, PKCS_ECDSA_P256K1_SHA256,
+    PKCS_ECDSA_P256_SHA256,
 };
+use threshold_fhe::networking::tls::extract_subject_from_cert;
 use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
 use x509_parser::pem::{parse_x509_pem, Pem};
 
 pub mod nitro;
+#[cfg(feature = "insecure")]
+pub mod nitro_mock;
 
 #[allow(async_fn_in_trait)]
 #[enum_dispatch]
@@ -28,7 +37,12 @@ pub trait SecurityModule {
     /// certificate can be used for establishing TLS connections where both
     /// sides can not only verify each other's identities but also software
     /// versions.
-    async fn wrap_x509_cert(&self, cert_pem: Pem) -> anyhow::Result<(Pem, Pem)> {
+    async fn wrap_x509_cert(
+        &self,
+        context_id: ContextId,
+        cert_pem: Pem,
+        wildcard: bool,
+    ) -> anyhow::Result<(Pem, Pem)> {
         let cert = cert_pem.parse_x509()?;
 
         // The subject name and at least one distinguished name should be set to
@@ -36,15 +50,34 @@ pub trait SecurityModule {
         // to each other using DNS addresses in the peer list, and TLS
         // connections would fail if certificates aren't issued for these DNS
         // addresses.
-        let subject = threshold_fhe::networking::tls::extract_subject_from_cert(&cert)?;
+        let subject = extract_subject_from_cert(&cert)?;
 
-        let mut cp = CertificateParams::new(vec![subject.clone()])?;
+        let sans_vec = [
+            if wildcard {
+                vec![format!("*.{}", subject.clone())]
+            } else {
+                vec![]
+            },
+            vec![
+                subject.clone(),
+                "localhost".to_string(),
+                "192.168.0.1".to_string(),
+                "127.0.0.1".to_string(),
+                "0:0:0:0:0:0:0:1".to_string(),
+            ],
+        ]
+        .concat();
+
+        let mut cp = CertificateParams::new(sans_vec)?;
 
         cp.is_ca = IsCa::ExplicitNoCa;
 
         let mut distinguished_name = DistinguishedName::new();
         distinguished_name.push(DnType::CommonName, subject);
         cp.distinguished_name = distinguished_name;
+        cp.serial_number = Some(SerialNumber::from_slice(
+            &context_id.derive_session_id()?.to_be_bytes(),
+        ));
 
         // Key usages
         let Some(key_usage) = cert.key_usage()? else {
@@ -79,7 +112,9 @@ pub trait SecurityModule {
         // Enclave-terminated TLS sessions will use this keypair, not the one in
         // `cert`.
         let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
-        let attestation_document = self.attest_pk_bytes(keypair.der_bytes().to_vec()).await?;
+        let attestation_document = self
+            .attest_pk_bytes(keypair.subject_public_key_info())
+            .await?;
 
         cp.custom_extensions = vec![
             // This custom extension is meant to carry an AWS Nitro attestation
@@ -113,8 +148,10 @@ pub trait SecurityModule {
     /// certificates with the party EIP712 signing keys managed in the enclave.
     async fn issue_x509_cert(
         &self,
-        ca_cert_pem: Pem,
+        context_id: ContextId,
+        ca_cert_pem: &Pem,
         ca_key: &PrivateSigKey,
+        wildcard: bool,
     ) -> anyhow::Result<(Pem, Pem)> {
         let ca_cert_x509 = ca_cert_pem.parse_x509()?;
         let Some(key_usage) = ca_cert_x509.key_usage()? else {
@@ -130,19 +167,40 @@ pub trait SecurityModule {
         // to each other using DNS addresses in the peer list, and TLS
         // connections would fail if certificates aren't issued for these DNS
         // addresses.
-        let subject = threshold_fhe::networking::tls::extract_subject_from_cert(&ca_cert_x509)?;
+        let subject = extract_subject_from_cert(&ca_cert_x509)?;
+
+        let sans_vec = [
+            if wildcard {
+                vec![format!("*.{}", subject.clone())]
+            } else {
+                vec![]
+            },
+            vec![
+                subject.clone(),
+                "localhost".to_string(),
+                "192.168.0.1".to_string(),
+                "127.0.0.1".to_string(),
+                "0:0:0:0:0:0:0:1".to_string(),
+            ],
+        ]
+        .concat();
 
         let sk_der = ca_key.sk().to_pkcs8_der()?;
         let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
             &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
             &PKCS_ECDSA_P256K1_SHA256,
         )?;
-        let ca_cert_params = CertificateParams::from_ca_cert_der(&ca_cert_pem.contents.into())?;
+        let ca_cert_params =
+            CertificateParams::from_ca_cert_der(&ca_cert_pem.contents.as_slice().into())?;
 
-        let mut tls_cp = CertificateParams::new(vec![subject.clone()])?;
+        let mut tls_cp = CertificateParams::new(sans_vec)?;
+        tls_cp.is_ca = IsCa::ExplicitNoCa;
         let mut distinguished_name = DistinguishedName::new();
         distinguished_name.push(DnType::CommonName, subject);
         tls_cp.distinguished_name = distinguished_name;
+        tls_cp.serial_number = Some(SerialNumber::from_slice(
+            &context_id.derive_session_id()?.to_be_bytes(),
+        ));
 
         // Key usages
         tls_cp.key_usages = vec![
@@ -160,7 +218,7 @@ pub trait SecurityModule {
         // `cert`.
         let tls_keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
         let attestation_document = self
-            .attest_pk_bytes(tls_keypair.der_bytes().to_vec())
+            .attest_pk_bytes(tls_keypair.subject_public_key_info())
             .await?;
 
         tls_cp.custom_extensions = vec![
@@ -173,6 +231,7 @@ pub trait SecurityModule {
         ];
 
         let tls_cert = tls_cp.signed_by(&tls_keypair, &ca_cert_params, &ca_keypair)?;
+
         Ok((
             parse_x509_pem(tls_cert.pem().as_ref())?.1,
             parse_x509_pem(tls_keypair.serialize_pem().as_ref())?.1,
@@ -180,13 +239,39 @@ pub trait SecurityModule {
     }
 }
 
-#[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 #[enum_dispatch(SecurityModule)]
 pub enum SecurityModuleProxy {
     Nitro(nitro::Nitro),
+    #[cfg(feature = "insecure")]
+    MockNitro(DevNitro),
 }
 
-pub fn make_security_module() -> anyhow::Result<SecurityModuleProxy> {
-    let security_module = nitro::Nitro::new()?;
-    Ok(SecurityModuleProxy::from(security_module))
+pub fn make_security_module(
+    #[cfg(feature = "insecure")] mock_enclave: bool,
+) -> anyhow::Result<SecurityModuleProxy> {
+    #[cfg(not(feature = "insecure"))]
+    let security_module = SecurityModuleProxy::from(nitro::Nitro::new()?);
+    #[cfg(feature = "insecure")]
+    let security_module = if mock_enclave {
+        let sk = p384::SecretKey::from_sec1_der(&crate::consts::MOCK_NITRO_SIGNING_KEY_BYTES)
+            .expect("Failed to load mock Nitro key");
+        let sk_der = sk.to_pkcs8_der()?;
+        let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
+            &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
+            &PKCS_ECDSA_P384_SHA384,
+        )?;
+        let mut ca_cp = CertificateParams::new(vec!["mock-nitro".to_string()])?;
+        ca_cp.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
+        ca_cp.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+        let ca_cert = ca_cp.self_signed(&ca_keypair)?;
+        SecurityModuleProxy::from(
+            DevNitro::builder(sk, ca_cert.der().to_vec().into())
+                .pcrs(Pcrs::zeros())
+                .build(),
+        )
+    } else {
+        SecurityModuleProxy::from(nitro::Nitro::new()?)
+    };
+    Ok(security_module)
 }

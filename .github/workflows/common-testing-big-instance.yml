@@ -1,11 +1,11 @@
-name: Run Testing On Big Instance
+name: common-testing-big-instance
 on:
   workflow_call:
     inputs:
       args-tests:
         type: string
         required: false
-        default: ''
+        default: ""
       working-directory:
         type: string
         required: true
@@ -28,7 +28,7 @@ on:
       wasm-test-feature:
         type: string
         required: false
-        default: '-F wasm_tests'
+        default: "-F wasm_tests"
       package-name:
         type: string
         required: true
@@ -47,11 +47,17 @@ on:
       slab-backend:
         type: string
         required: false
-        default: 'big-instance'
+        default: "big-instance"
       app-cache-dir:
         type: string
         required: true
+      nextest-test-threads:
+        type: string
+        required: false
+        default: "1"
     secrets:
+      CODECOV_TOKEN:
+        required: false
       SLAB_ACTION_TOKEN:
         required: true
       SLAB_BASE_URL:
@@ -74,16 +80,20 @@ on:
         required: true
       SLACK_WEBHOOK:
         required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
+        required: true
 
 env:
   CARGO_TERM_COLOR: always
 
-permissions:
-  packages: read
+# No top-level permissions needed - job-level permissions are more specific
+permissions: {}
 
 jobs:
   start-runner:
-    name: Start self-hosted EC2 runner
+    name: common-testing-big-instance/start-runner
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
@@ -100,6 +110,14 @@ jobs:
           profile: ${{ inputs.slab-backend }}
 
   run-build:
+    name: common-testing-big-instance/run-build
+    permissions:
+      actions: read # Required to read workflow run information and download artifacts
+      checks: write # Required to create GitHub checks for test results
+      contents: read # Required to checkout repository code
+      issues: write # Required to create comments on issues
+      packages: read # Required to read GitHub packages/container registry
+      pull-requests: write # Required to create comments on pull requests
     needs: start-runner
     uses: ./.github/workflows/common-testing.yml
     secrets:
@@ -111,6 +129,9 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
     with:
       runs-on: ${{ needs.start-runner.outputs.label }}
       build-publish-docs: ${{ inputs.build-publish-docs }}
@@ -124,9 +145,10 @@ jobs:
       test-coverage: ${{ inputs.test-coverage }}
       npm-release: ${{ inputs.npm-release }}
       app-cache-dir: ${{ inputs.app-cache-dir }}
+      nextest-test-threads: ${{ inputs.nextest-test-threads }}
 
   stop-runner:
-    name: Stops self-hosted EC2 runner
+    name: common-testing-big-instance/stop-runner
     needs:
       - start-runner
       - run-build
@@ -141,5 +163,3 @@ jobs:
           slab-url: ${{ secrets.SLAB_BASE_URL }}
           job-secret: ${{ secrets.JOB_SECRET }}
           label: ${{ needs.start-runner.outputs.label }}
-
-

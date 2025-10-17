@@ -1,16 +1,11 @@
 //! gRPC-based networking.
 
-mod gen {
-    #![allow(clippy::derive_partial_eq_without_eq)]
-    tonic::include_proto!("ddec_networking");
-}
-
-use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
-use self::gen::{SendValueRequest, SendValueResponse};
+use super::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
+use super::gen::{HealthCheckRequest, HealthCheckResponse, SendValueRequest, SendValueResponse};
 use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
-use super::tls::{extract_subject_from_cert, SendingServiceTLSConfig};
+use super::tls::extract_subject_from_cert;
 use super::NetworkMode;
-use crate::execution::runtime::party::{Identity, RoleAssignment};
+use crate::execution::runtime::party::{MpcIdentity, Role, RoleAssignment};
 use crate::networking::constants::{
     DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_ELAPSED_TIME,
     MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL, MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY,
@@ -18,15 +13,21 @@ use crate::networking::constants::{
     NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
     SESSION_CLEANUP_INTERVAL_SECS, SESSION_STATUS_UPDATE_INTERVAL_SECS,
 };
+use crate::networking::health_check::HealthCheckSession;
 use crate::networking::Networking;
 use crate::session_id::SessionId;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, OnceLock, RwLock, Weak};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock, Weak};
+
+use tokio::sync::{
+    mpsc::{channel, Receiver, Sender},
+    Mutex, RwLock,
+};
 use tokio::time::{Duration, Instant};
+
 use tonic::transport::server::TcpConnectInfo;
 use tonic::transport::CertificateDer;
 use x509_parser::parse_x509_certificate;
@@ -198,11 +199,10 @@ impl OptionConfigWrapper {
 #[derive(Debug, Clone)]
 pub struct GrpcNetworkingManager {
     // Session reference storage to prevent premature cleanup under high concurrency
-    pub session_store: Arc<SessionStore>,
+    pub(crate) session_store: Arc<SessionStore>,
     // Keeps tracks of how many sessions were opened by each party
     // NOTE: Always lock session_store before opened_sessions_tracker to prevent deadlocks
-    pub opened_sessions_tracker: Arc<DashMap<Identity, u64>>,
-    owner: Identity,
+    pub opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     conf: OptionConfigWrapper,
     pub sending_service: GrpcSendingService,
     #[cfg(feature = "testing")]
@@ -277,9 +277,9 @@ impl GrpcNetworkingManager {
 
     /// Owner should be the external address
     pub fn new(
-        owner: Identity,
-        tls_conf: Option<SendingServiceTLSConfig>,
+        tls_conf: Option<tokio_rustls::rustls::client::ClientConfig>,
         conf: Option<CoreToCoreNetworkConfig>,
+        peer_tcp_proxy: bool,
     ) -> anyhow::Result<Self> {
         #[cfg(feature = "testing")]
         let force_tls = tls_conf.is_some();
@@ -309,12 +309,53 @@ impl GrpcNetworkingManager {
         Ok(GrpcNetworkingManager {
             session_store,
             opened_sessions_tracker: Arc::new(DashMap::new()),
-            owner,
             conf,
-            sending_service: GrpcSendingService::new(tls_conf, conf)?,
+            sending_service: GrpcSendingService::new(tls_conf, conf, peer_tcp_proxy)?,
             #[cfg(feature = "testing")]
             force_tls,
         })
+    }
+
+    pub async fn make_healthcheck_session(
+        &self,
+        context_id: SessionId,
+        role_assignment: &RoleAssignment,
+        my_role: Role,
+    ) -> anyhow::Result<HealthCheckSession> {
+        let mut others = role_assignment.clone();
+
+        // Removing self from the role_assignment map
+        // as we only want to connect to others.
+        // Store my own identity in the session
+        let owner = match others.remove(&my_role) {
+            Some(owner) => owner,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "My role {:?} not found in role assignment {:?}",
+                    my_role,
+                    role_assignment
+                ));
+            }
+        };
+
+        let mut connection_channels = HashMap::new();
+        for (role, identity) in others.inner.into_iter() {
+            let channel = self
+                .sending_service
+                .connect_to_party(identity.clone())
+                .await?;
+            connection_channels.insert((role, identity), channel);
+        }
+
+        Ok(HealthCheckSession::new(
+            owner,
+            my_role,
+            context_id,
+            // We use the same timeout in HealthCheck than
+            // in Sync MPC protocols
+            self.conf.get_network_timeout(),
+            connection_channels,
+        ))
     }
 
     /// Create a new session from the network manager.
@@ -322,19 +363,30 @@ impl GrpcNetworkingManager {
     /// All the communication are performed using sessions.
     /// There may be multiple session in parallel,
     /// identified by different session IDs.
-    pub fn make_session(
+    pub async fn make_network_session(
         &self,
         session_id: SessionId,
-        roles: RoleAssignment,
+        context_id: SessionId, // not the true context ID as it's a session ID derived from the context ID
+        role_assignment: &RoleAssignment,
+        my_role: Role,
         network_mode: NetworkMode,
     ) -> anyhow::Result<Arc<impl Networking>> {
-        let party_count = roles.len();
-        let mut others = Vec::with_capacity(party_count.saturating_sub(1));
-        for (_role, identity) in roles {
-            if identity != self.owner {
-                others.push(identity.clone());
+        let party_count = role_assignment.len();
+        let mut others = role_assignment.clone();
+
+        // Removing self from the role_assignment map
+        // as we only want to connect to others.
+        // Store my own identity in the session
+        let owner = match others.remove(&my_role) {
+            Some(owner) => owner,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "My role {:?} not found in role assignment {:?}",
+                    my_role,
+                    role_assignment
+                ));
             }
-        }
+        };
 
         let timeout = match network_mode {
             NetworkMode::Async => *NETWORK_TIMEOUT_ASYNC,
@@ -347,47 +399,27 @@ impl GrpcNetworkingManager {
                 let mutable_status = status.get_mut();
 
                 let message_store = if let SessionStatus::Inactive(message_store) = mutable_status {
+                    // Upgrade the message store from the uninitialized state to the initialized state
+                    message_store.0.init(
+                        self.conf.get_message_limit(),
+                        &others,
+                        Arc::clone(&self.opened_sessions_tracker),
+                    );
                     message_store.clone()
                 } else {
                     return Err(anyhow::anyhow!(
                         "Session {:?} already exists and is not inactive for {}",
                         session_id,
-                        self.owner
+                        owner
                     ));
                 };
 
-                message_store.0.retain(|other_identity,_| {
-                    if !others.contains(other_identity) {
-                        tracing::warn!(
-                            "Session {:?} already has a message queue for {:?}, but it is not in the roles list.",
-                            session_id,
-                            other_identity
-                        );
-                        false
-                    } else {
-                        //NOTE: I hold the session store write lock here, so this is safe
-                        self.opened_sessions_tracker
-                            .entry(other_identity.clone())
-                            .and_modify(|count| {*count = count.saturating_sub(1);})
-                            .or_insert(0);
-                        true
-                    }
-                });
-
-                for identity in others.iter() {
-                    if !message_store.0.contains_key(identity) {
-                        let (tx, rx) = channel::<NetworkRoundValue>(self.conf.get_message_limit());
-                        message_store
-                            .0
-                            .insert(identity.clone(), (Arc::new(tx), Arc::new(Mutex::new(rx))));
-                    }
-                }
-
-                let connection_channel = self.sending_service.add_connections(others)?;
+                let connection_channel = self.sending_service.add_connections(&others).await?;
 
                 let session = Arc::new(NetworkSession {
-                    owner: self.owner.clone(),
+                    owner: owner.clone(),
                     session_id,
+                    context_id,
                     sending_channels: connection_channel,
                     receiving_channels: message_store.0,
                     round_counter: tokio::sync::RwLock::new(0),
@@ -406,20 +438,20 @@ impl GrpcNetworkingManager {
                 session
             }
             dashmap::Entry::Vacant(vacant) => {
-                let message_store = DashMap::with_capacity(party_count);
-                for identity in others.iter() {
-                    let (tx, rx) = channel::<NetworkRoundValue>(self.conf.get_message_limit());
-                    message_store
-                        .insert(identity.clone(), (Arc::new(tx), Arc::new(Mutex::new(rx))));
-                }
+                let connection_channel = self.sending_service.add_connections(&others).await?;
 
-                let connection_channel = self.sending_service.add_connections(others)?;
+                let message_queue = MessageQueueStore::new_initialized(
+                    self.conf.get_message_limit(),
+                    &others,
+                    Arc::clone(&self.opened_sessions_tracker),
+                );
 
                 let session = Arc::new(NetworkSession {
-                    owner: self.owner.clone(),
+                    owner: owner.clone(),
                     session_id,
+                    context_id,
                     sending_channels: connection_channel,
-                    receiving_channels: message_store,
+                    receiving_channels: message_queue,
                     round_counter: tokio::sync::RwLock::new(0),
                     network_mode,
                     conf: self.conf,
@@ -441,7 +473,7 @@ impl GrpcNetworkingManager {
             "[SESSION_CREATION] Starting session {:?} with {} parties. (Owner: {:?})",
             session_id,
             party_count,
-            self.owner
+            owner,
         );
 
         Ok(session)
@@ -453,16 +485,160 @@ impl GrpcNetworkingManager {
 #[derive(Debug)]
 pub struct NetworkRoundValue {
     pub value: Vec<u8>,
+    pub context_id: SessionId,
     pub round_counter: usize,
 }
 
-pub(crate) type MessageQueueStore = DashMap<
-    Identity,
-    (
-        Arc<Sender<NetworkRoundValue>>,
-        Arc<Mutex<Receiver<NetworkRoundValue>>>,
+#[derive(Debug, Clone)]
+pub(crate) struct InitializedMessageQueueStore {
+    // role assignment is needed because the message store
+    // needs to translate between identity and role
+    tx: DashMap<MpcIdentity, Arc<Sender<NetworkRoundValue>>>,
+    rx: DashMap<Role, Arc<Mutex<Receiver<NetworkRoundValue>>>>,
+}
+
+#[allow(clippy::type_complexity)]
+#[derive(Debug, Clone)]
+pub(crate) enum MessageQueueStore {
+    Uninitialized(
+        DashMap<
+            MpcIdentity,
+            (
+                Arc<Sender<NetworkRoundValue>>,
+                Arc<Mutex<Receiver<NetworkRoundValue>>>,
+            ),
+        >,
     ),
->;
+    Initialized(InitializedMessageQueueStore),
+}
+
+impl MessageQueueStore {
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn new_uninitialized(
+        channel_maps: DashMap<
+            MpcIdentity,
+            (
+                Arc<Sender<NetworkRoundValue>>,
+                Arc<Mutex<Receiver<NetworkRoundValue>>>,
+            ),
+        >,
+    ) -> Self {
+        MessageQueueStore::Uninitialized(channel_maps)
+    }
+
+    pub(crate) fn new_initialized(
+        channel_size_limit: usize,
+        others: &RoleAssignment,
+        opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
+    ) -> Self {
+        let mut out = Self::new_uninitialized(DashMap::new());
+        out.init(channel_size_limit, others, opened_sessions_tracker);
+        out
+    }
+
+    pub(crate) fn init(
+        &mut self,
+        channel_size_limit: usize,
+        others: &RoleAssignment,
+        opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
+    ) {
+        if let MessageQueueStore::Uninitialized(channel_maps) = &self {
+            let tx_map = DashMap::with_capacity(channel_maps.len());
+            let rx_map = DashMap::with_capacity(channel_maps.len());
+
+            // If an identity is in channel_maps and also in role_assignment,
+            // then we insert it to the initialized message queue.
+            // If an identity is not in channel_maps but in role_assignment,
+            // then we create a new channel for it.
+            for (role, identity) in others.iter() {
+                let mpc_id = identity.mpc_identity();
+                if let Some(entry) = channel_maps.get(&mpc_id) {
+                    opened_sessions_tracker
+                        .entry(mpc_id.clone())
+                        .and_modify(|count| {
+                            *count = count.saturating_sub(1);
+                        })
+                        .or_insert(0);
+                    let (tx, rx) = entry.value();
+                    tx_map.insert(entry.key().clone(), tx.clone());
+                    rx_map.insert(*role, rx.clone());
+                } else {
+                    let (tx, rx) = channel::<NetworkRoundValue>(channel_size_limit);
+                    tx_map.insert(identity.mpc_identity(), Arc::new(tx));
+                    rx_map.insert(*role, Arc::new(Mutex::new(rx)));
+                }
+            }
+
+            *self = MessageQueueStore::Initialized(InitializedMessageQueueStore {
+                tx: tx_map,
+                rx: rx_map,
+            });
+        } else {
+            tracing::warn!("MessageQueueStore is already initialized");
+        }
+    }
+
+    pub(crate) fn get_tx(
+        &self,
+        mpc_identity: &MpcIdentity,
+    ) -> Result<Option<Arc<Sender<NetworkRoundValue>>>, Box<tonic::Status>> {
+        match &self {
+            MessageQueueStore::Initialized(store) => Ok(store
+                .tx
+                .get(mpc_identity)
+                .map(|entry| entry.value().clone())),
+            MessageQueueStore::Uninitialized(_) => Err(Box::new(tonic::Status::internal(
+                "trying to get tx message queue on id {mpc_identity} when it is not initialized",
+            ))),
+        }
+    }
+
+    pub(crate) fn get_rx(
+        &self,
+        role: &Role,
+    ) -> anyhow::Result<Option<Arc<Mutex<Receiver<NetworkRoundValue>>>>> {
+        match &self {
+            MessageQueueStore::Initialized(store) => {
+                Ok(store.rx.get(role).map(|entry| entry.value().clone()))
+            }
+            MessageQueueStore::Uninitialized(_) => Err(anyhow::anyhow!(
+                "trying to get rx message queue on role {role} when it is not initialized",
+            )),
+        }
+    }
+
+    // this must be performed on the uninitialized message queue
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn entry(
+        &self,
+        mpc_identity: MpcIdentity,
+    ) -> anyhow::Result<
+        dashmap::mapref::entry::Entry<
+            '_,
+            MpcIdentity,
+            (
+                Arc<Sender<NetworkRoundValue>>,
+                Arc<Mutex<Receiver<NetworkRoundValue>>>,
+            ),
+        >,
+    > {
+        match &self {
+            MessageQueueStore::Uninitialized(inner) => Ok(inner.entry(mpc_identity)),
+            MessageQueueStore::Initialized(_) => Err(anyhow::anyhow!(
+                "entry can only be performed on uninitialized message queue"
+            )),
+        }
+    }
+
+    pub(crate) fn iter_keys(&self) -> Result<impl Iterator<Item = Role> + '_, Box<tonic::Status>> {
+        match &self {
+            MessageQueueStore::Uninitialized(_) => Err(Box::new(tonic::Status::internal(
+                "trying to iterate keys when message queue is not initialized",
+            ))),
+            MessageQueueStore::Initialized(inner) => Ok(inner.rx.iter().map(|entry| *entry.key())),
+        }
+    }
+}
 
 pub(crate) type SessionStore = DashMap<SessionId, SessionStatus>;
 
@@ -472,7 +648,7 @@ pub(crate) type SessionStore = DashMap<SessionId, SessionStatus>;
 /// - Completed: The session has been completed and the timestamp of completion is stored.
 /// - Inactive: The session is inactive (I haven't yet heard about the request) and has a message queue store for senders.
 /// - Active: The session is active (I know about the request) and holds a weak reference to the `NetworkSession`.
-pub enum SessionStatus {
+pub(crate) enum SessionStatus {
     Completed(Instant),
     Inactive((MessageQueueStore, Instant)),
     Active(Weak<NetworkSession>),
@@ -490,7 +666,8 @@ pub enum TlsExtensionGetter {
 #[derive(Default)]
 pub struct NetworkingImpl {
     session_store: Arc<SessionStore>,
-    opened_sessions_tracker: Arc<DashMap<Identity, u64>>,
+    // key is the MPC identity
+    opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     channel_size_limit: usize,
     max_opened_inactive_sessions: u64,
     max_waiting_time_for_message_queue: Duration,
@@ -502,9 +679,10 @@ pub struct NetworkingImpl {
 }
 
 impl NetworkingImpl {
-    pub fn new(
+    #[allow(clippy::too_many_arguments)]
+    fn new(
         session_store: Arc<SessionStore>,
-        opened_sessions_tracker: Arc<DashMap<Identity, u64>>,
+        opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
         channel_size_limit: usize,
         max_opened_inactive_sessions: u64,
         max_waiting_time_for_message_queue: Duration,
@@ -546,17 +724,25 @@ impl NetworkingImpl {
                 // to avoid blocking the sender
                 Ok(None)
             }
-
+            // Session is inactive, we may need to create a new channel for the sender
             SessionStatus::Inactive(message_queue) => {
                 tracing::debug!(
                     "Session {:?} found in session_store but is inactive.",
                     tag.session_id
                 );
-                match message_queue.0.entry(tag.sender.clone()) {
+                // Check if the sender already has a channel, if it does, return it
+                // if it doesn't then create a new one.
+                // Note that we need to do this atomically to avoid race conditions.
+                match message_queue.0.entry(tag.sender.clone()).map_err(|e| {
+                    tonic::Status::internal(format!(
+                        "Failed to access message queue for session {:?}: {}",
+                        tag.session_id, e
+                    ))
+                })? {
                     dashmap::Entry::Occupied(occupied_entry) => {
                         Ok(Some(occupied_entry.get().0.clone()))
                     }
-                    dashmap::Entry::Vacant(vacant_entry) => {
+                    dashmap::Entry::Vacant(vacant_entry_tx) => {
                         let mut opened_session_tracker_entry = self
                             .opened_sessions_tracker
                             .entry(tag.sender.clone())
@@ -579,7 +765,7 @@ impl NetworkingImpl {
                         // Create a new channel for the sender
                         let (tx, rx) = channel::<NetworkRoundValue>(self.channel_size_limit);
                         let tx = Arc::new(tx);
-                        vacant_entry.insert((Arc::clone(&tx), Arc::new(Mutex::new(rx))));
+                        vacant_entry_tx.insert((Arc::clone(&tx), Arc::new(Mutex::new(rx))));
 
                         // Update the opened sessions tracker
                         *opened_session_tracker_entry += 1;
@@ -596,13 +782,17 @@ impl NetworkingImpl {
                 // Attempt to upgrade weak reference to strong reference
                 if let Some(session) = weak_session.upgrade() {
                     // Get the message queue from the session's receiving channels
-                    if let Some(session_store) = session.receiving_channels.get(&tag.sender) {
-                        Ok(Some(session_store.value().0.clone()))
+                    if let Some(session_store) = session
+                        .receiving_channels
+                        .get_tx(&tag.sender)
+                        .map_err(|e| *e)?
+                    {
+                        Ok(Some(session_store.clone()))
                     } else {
                         let available_senders: Vec<_> = session
                             .receiving_channels
-                            .iter()
-                            .map(|entry| entry.key().clone())
+                            .iter_keys()
+                            .map_err(|e| *e)?
                             .collect();
 
                         tracing::warn!(
@@ -638,9 +828,9 @@ lazy_static::lazy_static! {
         DashMap::new();
 }
 
-fn parse_identity_from_cert(
+fn parse_identity_context_from_cert(
     certs: Arc<Vec<CertificateDer<'static>>>,
-) -> Result<String, Box<tonic::Status>> {
+) -> Result<(String, SessionId), Box<tonic::Status>> {
     if certs.len() != 1 {
         // it shouldn't happen because we expect TLS certificates to
         // be signed by party CA certificates directly, without any
@@ -651,13 +841,107 @@ fn parse_identity_from_cert(
     parse_x509_certificate(certs[0].as_ref())
         .map_err(|e| Box::new(tonic::Status::new(tonic::Code::Aborted, e.to_string())))
         .and_then(|(_rem, cert)| {
+            let context_id = u128::from_be_bytes(cert.serial.to_bytes_be().try_into().unwrap());
             extract_subject_from_cert(&cert)
+                .map(|res| (res, SessionId::from(context_id)))
                 .map_err(|e| Box::new(tonic::Status::new(tonic::Code::Aborted, e.to_string())))
         })
 }
 
+// Verify that the sender in the tag matches the identity extracted from the TLS certificate
+fn sender_verification(
+    #[cfg(feature = "testing")] force_tls: bool,
+    tag_sender: &MpcIdentity,
+    valid_tls_sender: Option<String>,
+) -> Result<(), Box<tonic::Status>> {
+    if let Some(sender) = valid_tls_sender {
+        // tag.sender is an the MPC identity, this should match the CN in the certificate
+        if sender != tag_sender.0 {
+            return Err(Box::new(tonic::Status::new(
+                tonic::Code::Unauthenticated,
+                format!(
+                    "wrong sender: expected {sender} to be in in tag {}",
+                    tag_sender
+                ),
+            )));
+        }
+        tracing::debug!("TLS Check went fine for sender: {:?}", sender);
+    } else {
+        tracing::warn!(
+            "Could not find a TLS certificate in the request to verify user's identity."
+        );
+
+        // With testing feature, TLS is optional
+        #[cfg(feature = "testing")]
+        {
+            if force_tls {
+                // If force_tls is enabled, we require a TLS certificate
+                tracing::error!("Force TLS is enabled, but no certificate found in the request.");
+                return Err(Box::new(tonic::Status::new(
+                    tonic::Code::Unauthenticated,
+                    "Could not find a TLS certificate in the request to verify user's identity."
+                        .to_string(),
+                )));
+            } else {
+                tracing::warn!("Force TLS is disabled, and no certificate found in the request.");
+            }
+        }
+
+        // Without testing feature, TLS is mandatory
+        #[cfg(not(feature = "testing"))]
+        {
+            tracing::error!(
+                "Could not find a TLS certificate in the request to verify user's identity."
+            );
+            return Err(Box::new(tonic::Status::new(
+                tonic::Code::Unauthenticated,
+                "Could not find a TLS certificate in the request to verify user's identity."
+                    .to_string(),
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl Gnetworking for NetworkingImpl {
+    async fn health_check(
+        &self,
+        request: tonic::Request<HealthCheckRequest>,
+    ) -> std::result::Result<tonic::Response<HealthCheckResponse>, tonic::Status> {
+        // Perform the exact same check as we do for a "real" MPC message
+        let valid_tls_sender_and_context = match self.tls_extension {
+            TlsExtensionGetter::TlsConnectInfo => request
+                .extensions()
+                .get::<tonic::transport::server::TlsConnectInfo<TcpConnectInfo>>()
+                .and_then(|i| i.peer_certs().map(parse_identity_context_from_cert)),
+            TlsExtensionGetter::SslConnectInfo => request
+                .extensions()
+                .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
+                .and_then(|i| i.peer_certs().map(parse_identity_context_from_cert)),
+        }
+        .transpose()
+        .map_err(|boxed| *boxed)?;
+        let request = request.into_inner();
+        let health_tag = bc2wrap::deserialize_safe::<HealthTag>(&request.tag).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("failed to parse value: {} as a HealthTag", e),
+            )
+        })?;
+
+        sender_verification(
+            #[cfg(feature = "testing")]
+            self.force_tls,
+            &health_tag.sender,
+            valid_tls_sender_and_context.map(|(sender, _)| sender),
+        )
+        .map_err(|e| *e)?;
+
+        tracing::info!("Received a HealthPing from {}", health_tag.sender);
+        Ok(tonic::Response::new(HealthCheckResponse::default()))
+    }
+
     async fn send_value(
         &self,
         request: tonic::Request<SendValueRequest>,
@@ -669,23 +953,48 @@ impl Gnetworking for NetworkingImpl {
         // in this case it's party1.com.
         // We also require party1.com to be the subject and the issuer CN too,
         // since we're using self-signed certificates at the moment.
-        let valid_tls_sender = match self.tls_extension {
+        let valid_tls_sender_and_context = match self.tls_extension {
             TlsExtensionGetter::TlsConnectInfo => request
                 .extensions()
                 .get::<tonic::transport::server::TlsConnectInfo<TcpConnectInfo>>()
-                .and_then(|i| i.peer_certs().map(parse_identity_from_cert)),
+                .and_then(|i| i.peer_certs().map(parse_identity_context_from_cert)),
             TlsExtensionGetter::SslConnectInfo => request
                 .extensions()
                 .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
-                .and_then(|i| i.peer_certs().map(parse_identity_from_cert)),
+                .and_then(|i| i.peer_certs().map(parse_identity_context_from_cert)),
         }
         .transpose()
         .map_err(|boxed| *boxed)?;
 
         let request = request.into_inner();
-        let tag = bc2wrap::deserialize::<Tag>(&request.tag).map_err(|_e| {
-            tonic::Status::new(tonic::Code::Aborted, "failed to parse value".to_string())
+        let tag = bc2wrap::deserialize_safe::<Tag>(&request.tag).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("failed to parse value: {}", e),
+            )
         })?;
+
+        // Extract context ID
+        // If TLS is used, it is taken from the certificate and is trusted
+        let context_id = match valid_tls_sender_and_context {
+            Some((_, context_id)) => context_id,
+            None => tag.context_id,
+        };
+
+        sender_verification(
+            #[cfg(feature = "testing")]
+            self.force_tls,
+            &tag.sender,
+            valid_tls_sender_and_context.map(|(sender, _)| sender),
+        )
+        .map_err(|e| *e)?;
+
+        tracing::debug!(
+            "Starting session lookup for session_id={:?}, sender={:?}, round={}",
+            tag.session_id,
+            tag.sender,
+            tag.round_counter
+        );
 
         #[cfg(feature = "choreographer")]
         {
@@ -699,64 +1008,6 @@ impl Gnetworking for NetworkingImpl {
                 }
             };
         }
-
-        if let Some(sender) = valid_tls_sender {
-            // tag.sender is an Identity(hostname, port) struct, so we can directly access the hostname
-            // We only need the hostname component since the tls_sender does not include the port
-            let host = &tag.sender.hostname();
-            if sender != *host {
-                return Err(tonic::Status::new(
-                    tonic::Code::Unauthenticated,
-                    format!("wrong sender: expected {host:?} to be in {sender:?}"),
-                ));
-            }
-            tracing::debug!("TLS Check went fine for sender: {:?}", sender);
-        } else {
-            tracing::warn!(
-                "Could not find a TLS certificate in the request to verify user's identity."
-            );
-
-            // With testing feature, TLS is optional
-            #[cfg(feature = "testing")]
-            {
-                if self.force_tls {
-                    // If force_tls is enabled, we require a TLS certificate
-                    tracing::error!(
-                        "Force TLS is enabled, but no certificate found in the request."
-                    );
-                    return Err(tonic::Status::new(
-                        tonic::Code::Unauthenticated,
-                        "Could not find a TLS certificate in the request to verify user's identity."
-                            .to_string(),
-                    ));
-                } else {
-                    tracing::warn!(
-                        "Force TLS is disabled, and no certificate found in the request."
-                    );
-                }
-            }
-
-            // Without testing feature, TLS is mandatory
-            #[cfg(not(feature = "testing"))]
-            {
-                tracing::error!(
-                    "Could not find a TLS certificate in the request to verify user's identity."
-                );
-                return Err(tonic::Status::new(
-                    tonic::Code::Unauthenticated,
-                    "Could not find a TLS certificate in the request to verify user's identity."
-                        .to_string(),
-                ));
-            }
-        }
-        tracing::debug!("passed sender verification, tag is {:?}", tag);
-
-        tracing::debug!(
-            "Starting session lookup for session_id={:?}, sender={:?}, round={}",
-            tag.session_id,
-            tag.sender,
-            tag.round_counter
-        );
 
         // First try with only read lock to avoid blocking
         let tx = if let Some(session_status) = self.session_store.get(&tag.session_id) {
@@ -792,7 +1043,7 @@ impl Gnetworking for NetworkingImpl {
                     if *opened_session_tracker_entry >= self.max_opened_inactive_sessions {
                         tracing::warn!(
                             "Too many inactive sessions opened by {:?}. Got {}, Max allowed: {}",
-                            tag.sender,
+                            &tag.sender,
                             *opened_session_tracker_entry,
                             self.max_opened_inactive_sessions
                         );
@@ -805,16 +1056,19 @@ impl Gnetworking for NetworkingImpl {
                         ));
                     }
                     // Create a new session with an inactive status
-                    let message_store = DashMap::new();
+                    let channel_maps = DashMap::new();
                     let (tx, rx) = channel::<NetworkRoundValue>(self.channel_size_limit);
                     let tx = Arc::new(tx);
-                    message_store.insert(
+                    channel_maps.insert(
                         tag.sender.clone(),
                         (Arc::clone(&tx), Arc::new(Mutex::new(rx))),
                     );
 
                     // Insert the new session into the store
-                    vacant_entry.insert(SessionStatus::Inactive((message_store, Instant::now())));
+                    vacant_entry.insert(SessionStatus::Inactive((
+                        MessageQueueStore::new_uninitialized(channel_maps),
+                        Instant::now(),
+                    )));
                     *opened_session_tracker_entry += 1;
                     tx
                 }
@@ -826,6 +1080,7 @@ impl Gnetworking for NetworkingImpl {
             self.max_waiting_time_for_message_queue,
             tx.send(NetworkRoundValue {
                 value: request.value,
+                context_id,
                 round_counter: tag.round_counter,
             }),
         )
@@ -835,7 +1090,7 @@ impl Gnetworking for NetworkingImpl {
             tracing::warn!(
             "Failed to process value for session {:?}, sender {:?}, round {}. Queue has been full for {} seconds.",
             tag.session_id,
-            tag.sender,
+            &tag.sender,
             tag.round_counter,
             self.max_waiting_time_for_message_queue.as_secs()
         );
@@ -854,8 +1109,15 @@ impl Gnetworking for NetworkingImpl {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Tag {
-    session_id: SessionId,
-    sender: Identity,
-    round_counter: usize,
+pub struct Tag {
+    pub(crate) session_id: SessionId,
+    pub(crate) sender: MpcIdentity,
+    pub(crate) context_id: SessionId,
+    pub(crate) round_counter: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HealthTag {
+    pub(crate) sender: MpcIdentity,
+    pub(crate) context_id: SessionId,
 }

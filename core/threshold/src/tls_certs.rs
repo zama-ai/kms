@@ -1,12 +1,18 @@
 use anyhow::anyhow;
 use clap::Parser;
+use k256::{ecdsa::SigningKey, pkcs8::EncodePrivateKey};
 use rcgen::BasicConstraints::Constrained;
 use rcgen::{
-    Certificate, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256,
+    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
+    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, SerialNumber,
+    PKCS_ECDSA_P256K1_SHA256, PKCS_ECDSA_P256_SHA256,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
+
+/// This is the serial number derived from DEFAULT_MPC_CONTEXT.derive_session_id().unwrap().
+pub const DEFAULT_SESSION_ID_FROM_CONTEXT: u128 = 75144625629816062620302474174838463545;
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy)]
 enum CertFileType {
@@ -71,6 +77,13 @@ pub struct Cli {
 
     #[clap(long, value_enum, default_value_t = CertFileType::Pem, help = "the output file type, select between pem and der")]
     output_file_type: CertFileType,
+
+    #[clap(
+        long,
+        default_value_t = false,
+        help = "whether to include a wildcard SAN entry for the CA certificates"
+    )]
+    wildcard: bool,
 }
 
 /// Validates if a user-specified CA name is valid.
@@ -105,17 +118,52 @@ async fn write_bytes<S: AsRef<std::ffi::OsStr> + ?Sized, B: AsRef<[u8]>>(
 fn create_ca_cert(
     ca_name: &str,
     is_ca: &IsCa,
+    wildcard: bool,
 ) -> anyhow::Result<(KeyPair, Certificate, CertificateParams)> {
-    validate_ca_name(ca_name)?;
     let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
-    let mut cp = CertificateParams::new(vec![
-        ca_name.to_string(),
-        "127.0.0.1".to_string(),
-        "localhost".to_string(),
-        "192.168.0.1".to_string(),
-        "0:0:0:0:0:0:0:1".to_string(),
-        "::1".to_string(),
-    ])?;
+    create_ca_cert_from_keypair(&keypair, ca_name, is_ca, wildcard)
+        .map(|(cert, params)| (keypair, cert, params))
+}
+
+pub fn create_ca_cert_from_signing_key(
+    ca_name: &str,
+    wildcard: bool,
+    sk: &SigningKey,
+) -> anyhow::Result<(Vec<u8>, Certificate)> {
+    let is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
+    let sk_der = sk.to_pkcs8_der()?;
+    let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
+        &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
+        &PKCS_ECDSA_P256K1_SHA256,
+    )?;
+    create_ca_cert_from_keypair(&ca_keypair, ca_name, &is_ca, wildcard)
+        .map(|(cert, params)| (params.key_identifier(&ca_keypair), cert))
+}
+
+fn create_ca_cert_from_keypair(
+    keypair: &KeyPair,
+    ca_name: &str,
+    is_ca: &IsCa,
+    wildcard: bool,
+) -> anyhow::Result<(Certificate, CertificateParams)> {
+    validate_ca_name(ca_name)?;
+    let sans_vec = [
+        if wildcard {
+            vec![format!("*.{ca_name}")]
+        } else {
+            vec![]
+        },
+        vec![
+            ca_name.to_string(),
+            "127.0.0.1".to_string(),
+            "localhost".to_string(),
+            "192.168.0.1".to_string(),
+            "0:0:0:0:0:0:0:1".to_string(),
+            "::1".to_string(),
+        ],
+    ]
+    .concat();
+    let mut cp = CertificateParams::new(sans_vec)?;
 
     // set distinguished name of CA cert
     let mut distinguished_name = DistinguishedName::new();
@@ -141,10 +189,14 @@ fn create_ca_cert(
         ExtendedKeyUsagePurpose::ClientAuth,
     ];
 
+    cp.serial_number = Some(SerialNumber::from_slice(
+        &DEFAULT_SESSION_ID_FROM_CONTEXT.to_be_bytes(),
+    ));
+
     // self-sign cert with CA key
     tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
-    let cert = cp.self_signed(&keypair)?;
-    Ok((keypair, cert, cp))
+    let cert = cp.self_signed(keypair)?;
+    Ok((cert, cp))
 }
 
 /// create a keypair and certificate for each of the `num_cores`, signed by the given CA
@@ -153,19 +205,28 @@ fn create_core_certs(
     num_cores: usize,
     ca_keypair: &KeyPair,
     ca_cert_params: &CertificateParams,
+    wildcard: bool,
 ) -> anyhow::Result<HashMap<usize, (KeyPair, Certificate)>> {
     let core_cert_bundle: HashMap<usize, (KeyPair, Certificate)> = (1..=num_cores)
         .map(|i: usize| {
             let core_name = format!("core{i}.{ca_name}");
             let core_keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
-            let mut cp = CertificateParams::new(vec![
-                core_name.clone(),
-                "localhost".to_string(),
-                "192.168.0.1".to_string(),
-                "127.0.0.1".to_string(),
-                "0:0:0:0:0:0:0:1".to_string(),
-            ])
-            .unwrap();
+            let sans_vec = [
+                if wildcard {
+                    vec![format!("*.{}", core_name.clone())]
+                } else {
+                    vec![]
+                },
+                vec![
+                    core_name.clone(),
+                    "localhost".to_string(),
+                    "192.168.0.1".to_string(),
+                    "127.0.0.1".to_string(),
+                    "0:0:0:0:0:0:0:1".to_string(),
+                ],
+            ]
+            .concat();
+            let mut cp = CertificateParams::new(sans_vec).unwrap();
 
             // set core cert CA flag to false
             cp.is_ca = IsCa::ExplicitNoCa;
@@ -187,6 +248,10 @@ fn create_core_certs(
                 ExtendedKeyUsagePurpose::ServerAuth,
                 ExtendedKeyUsagePurpose::ClientAuth,
             ];
+
+            cp.serial_number = Some(SerialNumber::from_slice(
+                &DEFAULT_SESSION_ID_FROM_CONTEXT.to_be_bytes(),
+            ));
 
             tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
             let core_cert = cp
@@ -252,7 +317,8 @@ pub async fn entry_point() -> anyhow::Result<()> {
 
     let mut all_certs = vec![];
     for ca_name in ca_set {
-        let (ca_keypair, ca_cert, ca_cert_params) = create_ca_cert(&ca_name, &is_ca)?;
+        let (ca_keypair, ca_cert, ca_cert_params) =
+            create_ca_cert(&ca_name, &is_ca, args.wildcard)?;
 
         write_certs_and_keys(
             &args.output_dir,
@@ -265,8 +331,13 @@ pub async fn entry_point() -> anyhow::Result<()> {
 
         // only generate core certs, if specifically desired (currently not the default)
         if args.num_cores > 0 {
-            let core_certs =
-                create_core_certs(&ca_name, args.num_cores, &ca_keypair, &ca_cert_params)?;
+            let core_certs = create_core_certs(
+                &ca_name,
+                args.num_cores,
+                &ca_keypair,
+                &ca_cert_params,
+                args.wildcard,
+            )?;
 
             // write all core keypairs and certificates to disk
             for (core_id, (core_keypair, core_cert)) in core_certs.iter() {
@@ -309,26 +380,45 @@ pub async fn entry_point() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_ca_cert, create_core_certs, validate_ca_name};
-    use rcgen::{BasicConstraints::Constrained, Certificate, IsCa};
-    use webpki::{EndEntityCert, ErrorExt, TlsClientTrustAnchors, TrustAnchor};
+    use super::{
+        create_ca_cert, create_ca_cert_from_signing_key, create_core_certs, validate_ca_name,
+    };
+    use k256::{ecdsa::SigningKey, pkcs8::EncodePrivateKey};
+    use rand::rngs::OsRng;
+    use rcgen::{
+        BasicConstraints::Constrained, Certificate, CertificateParams, IsCa, KeyPair,
+        PKCS_ECDSA_P256K1_SHA256,
+    };
+    use tokio_rustls::rustls::pki_types::{PrivatePkcs8KeyDer, UnixTime};
+    use webpki::{anchor_from_trusted_cert, EndEntityCert, KeyUsage};
 
-    fn signed_verify(leaf_cert: &Certificate, ca_cert: &Certificate) -> Result<(), ErrorExt> {
-        let ee = EndEntityCert::try_from(leaf_cert.der().as_ref()).unwrap();
-        let ta = [TrustAnchor::try_from_cert_der(ca_cert.der().as_ref()).unwrap()];
-        let tcta = TlsClientTrustAnchors(&ta);
-        let wt = webpki::Time::try_from(std::time::SystemTime::now()).unwrap();
+    fn signed_verify(leaf_cert: &Certificate, ca_cert: &Certificate) -> anyhow::Result<()> {
+        let ee = EndEntityCert::try_from(leaf_cert.der())?;
+        let ta = [anchor_from_trusted_cert(ca_cert.der())?];
 
-        ee.verify_is_valid_tls_client_cert_ext(&[&webpki::ECDSA_P256_SHA256], &tcta, &[], wt)
+        ee.verify_for_usage(
+            &[
+                webpki::aws_lc_rs::ECDSA_P256_SHA256,
+                webpki::aws_lc_rs::ECDSA_P256K1_SHA256,
+            ],
+            &ta,
+            &[],
+            UnixTime::now(),
+            KeyUsage::server_auth(),
+            None,
+            None,
+        )?;
+        Ok(())
     }
 
     #[test]
     fn test_cert_chain() {
         let ca_name = "party.kms.zama.ai";
         let is_ca = IsCa::Ca(Constrained(1));
-        let (ca_keypair, ca_cert, ca_cert_params) = create_ca_cert(ca_name, &is_ca).unwrap();
+        let (ca_keypair, ca_cert, ca_cert_params) = create_ca_cert(ca_name, &is_ca, false).unwrap();
 
-        let core_certs = create_core_certs(ca_name, 2, &ca_keypair, &ca_cert_params).unwrap();
+        let core_certs =
+            create_core_certs(ca_name, 2, &ca_keypair, &ca_cert_params, false).unwrap();
 
         // check that we can import the CA cert into the trust store
         let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
@@ -337,7 +427,7 @@ mod tests {
 
         // create another CA cert, that did not sign the core certs for negative testing
         let (_ca_keypair_wrong, ca_cert_wrong, _ca_cert_params_wrong) =
-            create_ca_cert(ca_name, &is_ca).unwrap();
+            create_ca_cert(ca_name, &is_ca, false).unwrap();
 
         // check all core certs
         for c in core_certs {
@@ -359,7 +449,8 @@ mod tests {
         let ca_name = "p1.kms.zama.ai";
         let is_ca = IsCa::NoCa;
 
-        let (_ca_keypair, ca_cert, _ca_cert_params) = create_ca_cert(ca_name, &is_ca).unwrap();
+        let (_ca_keypair, ca_cert, _ca_cert_params) =
+            create_ca_cert(ca_name, &is_ca, false).unwrap();
 
         // check that we can import the CA cert into the trust store
         let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
@@ -368,7 +459,7 @@ mod tests {
 
         // create another CA cert, that did not sign the core certs for negative testing
         let (_ca_keypair_wrong, ca_cert_wrong, _ca_cert_params_wrong) =
-            create_ca_cert(ca_name, &is_ca).unwrap();
+            create_ca_cert(ca_name, &is_ca, false).unwrap();
 
         let verif = signed_verify(&ca_cert, &ca_cert);
 
@@ -384,6 +475,29 @@ mod tests {
     }
 
     #[test]
+    fn test_ca_cert_from_signing_key_verify() {
+        let ca_name = "p1.kms.zama.ai";
+        let sk = SigningKey::random(&mut OsRng);
+        let (_ca_cert_ki, ca_cert) = create_ca_cert_from_signing_key(ca_name, false, &sk).unwrap();
+
+        let sk_der = sk.to_pkcs8_der().unwrap();
+        let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
+            &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
+            &PKCS_ECDSA_P256K1_SHA256,
+        )
+        .unwrap();
+        let ca_cert_params = CertificateParams::from_ca_cert_der(ca_cert.der()).unwrap();
+
+        let core_certs =
+            create_core_certs(ca_name, 2, &ca_keypair, &ca_cert_params, false).unwrap();
+
+        for c in core_certs {
+            let verif = signed_verify(&c.1 .1, &ca_cert);
+            assert!(verif.is_ok(), "certificate validation failed!");
+        }
+    }
+
+    #[test]
     fn test_ca_name_validation() {
         assert!(
             validate_ca_name("party").is_ok(),
@@ -393,5 +507,17 @@ mod tests {
             validate_ca_name("party/is#bad!").is_err(),
             "this should have been an invalid CA name."
         );
+    }
+
+    #[test]
+    fn test_serial_number() {
+        let ca_name = "p1.kms.zama.ai";
+        let is_ca = IsCa::NoCa;
+
+        let (_ca_keypair, ca_cert, _ca_cert_params) =
+            create_ca_cert(ca_name, &is_ca, false).unwrap();
+        let (_, cert) = x509_parser::parse_x509_certificate(ca_cert.der().as_ref()).unwrap();
+        let sid = u128::from_be_bytes(cert.serial.to_bytes_be().try_into().unwrap());
+        assert_eq!(sid, super::DEFAULT_SESSION_ID_FROM_CONTEXT);
     }
 }

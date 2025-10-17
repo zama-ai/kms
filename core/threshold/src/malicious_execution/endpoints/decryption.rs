@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use crate::{
     algebra::{
         base_ring::Z128,
@@ -22,13 +24,13 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
 {
     async fn decrypt<
         S: BaseSessionHandles,
-        P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,
+        P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + 'static,
         T,
     >(
         _session: &mut S,
-        _preprocessing: &mut P,
-        _keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
-        _ciphertext: &SnsRadixOrBoolCiphertext,
+        _preprocessing: Arc<Mutex<P>>,
+        _keyshares: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
+        _ciphertext: Arc<SnsRadixOrBoolCiphertext>,
         _ddec_key_type: SnsDecryptionKeyType,
     ) -> anyhow::Result<T>
     where

@@ -1,8 +1,10 @@
 //! Settings based on [`config-rs`] crate which follows 12-factor configuration model.
 //! Configuration file by default is under `config` folder.
 //!
+use std::collections::HashMap;
+
 use crate::choreography::choreographer::NetworkTopology;
-use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
+use crate::execution::runtime::party::{Identity, Role};
 use observability::conf::TelemetryConfig;
 use serde::{Deserialize, Serialize};
 use tonic::transport::Uri;
@@ -27,7 +29,11 @@ impl From<&ChoreoParty> for Role {
 
 impl From<&ChoreoParty> for Identity {
     fn from(party: &ChoreoParty) -> Identity {
-        Identity(party.logical_address.clone(), party.logical_port)
+        Identity::new(
+            party.logical_address.clone(),
+            party.logical_port,
+            Some(party.logical_address.clone()),
+        )
     }
 }
 
@@ -60,8 +66,8 @@ pub struct ThresholdTopology {
     pub threshold: u32,
 }
 
-impl From<&ThresholdTopology> for RoleAssignment {
-    fn from(topology: &ThresholdTopology) -> RoleAssignment {
+impl From<&ThresholdTopology> for HashMap<Role, Identity> {
+    fn from(topology: &ThresholdTopology) -> HashMap<Role, Identity> {
         topology
             .peers
             .iter()
@@ -98,6 +104,7 @@ impl ThresholdTopology {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct ChoreoConf {
     pub threshold_topology: ThresholdTopology,
+    pub malicious_roles: Option<Vec<Role>>,
     pub telemetry: Option<TelemetryConfig>,
 
     pub cert_file: Option<String>,

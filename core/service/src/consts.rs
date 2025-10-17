@@ -1,7 +1,7 @@
 #[cfg(feature = "non-wasm")]
 use crate::engine::base::derive_request_id;
 #[cfg(feature = "non-wasm")]
-use kms_grpc::RequestId;
+use kms_grpc::{identifiers::ContextId, RequestId};
 use threshold_fhe::execution::tfhe_internals::parameters::{
     DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS,
 };
@@ -60,7 +60,8 @@ cfg_if::cfg_if! {
             pub static ref TEST_CENTRAL_KEY_ID: RequestId =
                 derive_request_id("TEST_CENTRAL_KEY_ID").unwrap();
             pub static ref TEST_THRESHOLD_KEY_ID_4P: RequestId =
-                derive_request_id("TEST_THRESHOLD_KEY_ID_4P").unwrap();
+
+            derive_request_id("TEST_THRESHOLD_KEY_ID_4P").unwrap();
             pub static ref TEST_THRESHOLD_KEY_ID_10P: RequestId =
                 derive_request_id("TEST_THRESHOLD_KEY_ID_10P").unwrap();
             pub static ref TEST_THRESHOLD_KEY_ID_13P: RequestId =
@@ -139,4 +140,26 @@ lazy_static::lazy_static! {
     // We do so, since there is ever only one conceptual signing key per party (at least for now).
     // This is a bit hackish, but it works for now.
     pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
+
+    pub static ref DEFAULT_MPC_CONTEXT: ContextId = ContextId::from_bytes([
+        1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
+        4,
+    ]);
+}
+
+#[test]
+fn test_context_derivation() {
+    let context_id = *DEFAULT_MPC_CONTEXT;
+    let sid = context_id.derive_session_id().unwrap();
+    assert_eq!(
+        threshold_fhe::session_id::SessionId::from(
+            threshold_fhe::tls_certs::DEFAULT_SESSION_ID_FROM_CONTEXT
+        ),
+        sid
+    );
+}
+
+#[cfg(feature = "insecure")]
+lazy_static::lazy_static! {
+    pub static ref MOCK_NITRO_SIGNING_KEY_BYTES: Vec<u8> = include_bytes!("../certs/mock_nitro_signing_key.der").into();
 }

@@ -29,6 +29,7 @@ use crate::choreography::requests::{
 };
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
+use crate::execution::constants::DEFAULT_CHOREOGRAPHY_CONTEXT_ID;
 use crate::execution::endpoints::decryption::{
     combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
     task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, OfflineNoiseFloodSession,
@@ -54,7 +55,7 @@ use crate::execution::online::preprocessing::{
     PreprocessorFactory,
 };
 use crate::execution::online::reshare::{reshare_sk_same_sets, ResharePreprocRequired};
-use crate::execution::runtime::party::{Identity, Role};
+use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
 use crate::execution::runtime::session::ParameterHandles;
 use crate::execution::runtime::session::ToBaseSession;
 use crate::execution::runtime::session::{BaseSession, BaseSessionHandles};
@@ -67,25 +68,33 @@ use crate::execution::tfhe_internals::private_keysets::PrivateKeySet;
 use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
 use crate::malicious_execution::runtime::malicious_session::GenericSmallSessionStruct;
-use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
-use crate::networking::value::BroadcastValue;
-use crate::networking::{NetworkMode, NetworkingStrategy};
+use crate::networking::{
+    constants::MAX_EN_DECODE_MESSAGE_SIZE, grpc::GrpcNetworkingManager, value::BroadcastValue,
+    NetworkMode,
+};
 use crate::{execution::small_execution::prss::PRSSInit, session_id::SessionId};
 use aes_prng::AesRng;
 use async_trait::async_trait;
 use clap::ValueEnum;
 use dashmap::DashMap;
+use futures_util::{
+    future::{join_all, try_join_all},
+    TryFutureExt,
+};
 use gen::{CrsGenRequest, CrsGenResponse};
 use itertools::Itertools;
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::Wrapping;
 use std::sync::{Arc, Mutex};
 use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::ServerKey;
 use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::{
+    sync::RwLock,
+    task::{JoinHandle, JoinSet},
+};
 use tracing::{instrument, Instrument};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, ValueEnum, Serialize, Deserialize)]
@@ -155,8 +164,24 @@ type DKGPreprocSnsStore<const EXTENSION_DEGREE: usize> = DashMap<
         Box<dyn DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
     ),
 >;
-type KeyStore<const EXTENSION_DEGREE: usize> =
-    DashMap<SessionId, Arc<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>>;
+
+struct KeyBucket<const EXTENSION_DEGREE: usize> {
+    pub_keyset: Arc<FhePubKeySet>,
+    priv_keyset: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
+    params: DKGParams,
+}
+
+impl<const EXTENSION_DEGREE: usize> KeyBucket<EXTENSION_DEGREE> {
+    pub fn new(keys: (FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>), params: DKGParams) -> Self {
+        Self {
+            pub_keyset: Arc::new(keys.0),
+            priv_keyset: Arc::new(keys.1),
+            params,
+        }
+    }
+}
+
+type KeyStore<const EXTENSION_DEGREE: usize> = DashMap<SessionId, Arc<KeyBucket<EXTENSION_DEGREE>>>;
 type DDecPreprocNFStore<const EXTENSION_DEGREE: usize> =
     DashMap<SessionId, Vec<InMemoryNoiseFloodPreprocessing<EXTENSION_DEGREE>>>;
 type DDecPreprocBitDecStore<const EXTENSION_DEGREE: usize> =
@@ -234,8 +259,8 @@ pub struct GrpcChoreography<
     PRSSInitStrategy: PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     PRSSInitStrategy: PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>,
 {
-    own_identity: Identity,
-    networking_strategy: Arc<NetworkingStrategy>,
+    my_role: Role,
+    networking_manager: Arc<GrpcNetworkingManager>,
     factory: Arc<Mutex<Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>>>,
     data: GrpcDataStores<
         EXTENSION_DEGREE,
@@ -314,15 +339,15 @@ where
     LargeOfflineStrategyZ128: Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, LargeSession>,
 {
     pub fn new(
-        own_identity: Identity,
-        networking_strategy: NetworkingStrategy,
+        my_role: Role,
+        networking_manager: Arc<GrpcNetworkingManager>,
         factory: Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>,
     ) -> Self {
-        tracing::debug!("Starting Party with identity: {own_identity}");
+        tracing::debug!("Starting Party with role: {my_role}");
         println!("{}", Self::describe_self());
         GrpcChoreography {
-            own_identity,
-            networking_strategy: Arc::new(networking_strategy),
+            my_role,
+            networking_manager,
             factory: Arc::new(Mutex::new(factory)),
             data: GrpcDataStores::default(),
             _marker_prss_strat: std::marker::PhantomData,
@@ -401,17 +426,19 @@ where
     async fn create_base_session(
         &self,
         request_sid: SessionId,
+        context_id: SessionId,
         threshold: u8,
-        role_assignments: HashMap<Role, Identity>,
+        role_assignment: Arc<RwLock<RoleAssignment>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<BaseSession> {
         Ok(self
             .create_base_sessions(
                 request_sid,
+                context_id,
                 1,
                 threshold,
-                role_assignments,
+                role_assignment,
                 network_mode,
                 seed,
             )
@@ -428,12 +455,15 @@ where
             )?)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn create_base_sessions(
         &self,
         request_sid: SessionId,
+        context_id: SessionId,
         num_sessions: usize,
         threshold: u8,
-        role_assignments: HashMap<Role, Identity>,
+        // TODO does not need to be Arc
+        role_assignment: Arc<RwLock<RoleAssignment>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<Vec<BaseSession>> {
@@ -442,34 +472,38 @@ where
             .map(|_| gen_random_sid(&mut session_id_generator, request_sid.into()))
             .collect_vec();
 
-        //Fetch my Role for the role_assignment
-        let mut my_role_idx = 0;
-        for (role, identity) in role_assignments.iter() {
-            if *identity == self.own_identity {
-                my_role_idx = role.one_based() as u64;
-            }
-        }
+        let roles = role_assignment
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>();
+
         let mut base_sessions = Vec::new();
         for (idx, session_id) in sids.into_iter().enumerate() {
-            let params = SessionParameters::new(
-                threshold,
-                session_id,
-                self.own_identity.clone(),
-                role_assignments.clone(),
-            )
-            .unwrap();
-            //We are executing offline phase, so requires Sync network
-            let networking =
-                (self.networking_strategy)(session_id, role_assignments.clone(), network_mode)
-                    .await
-                    .map_err(|e| {
-                        tonic::Status::new(
-                            tonic::Code::Aborted,
-                            format!("Failed to create networking: {e:?}"),
-                        )
-                    })?;
+            let networking = self
+                .networking_manager
+                .make_network_session(
+                    session_id,
+                    context_id,
+                    &*role_assignment.read().await,
+                    self.my_role,
+                    network_mode,
+                )
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create networking: {e:?}"),
+                    )
+                })
+                .await?;
+            let params =
+                SessionParameters::new(threshold, session_id, self.my_role, roles.clone()).unwrap();
             let aes_rng = if let Some(seed) = seed {
-                AesRng::seed_from_u64(seed + my_role_idx + (idx as u64))
+                let mut computed_seed = Wrapping(seed);
+                computed_seed += Wrapping((self.my_role.one_based() * num_sessions) as u64);
+                computed_seed += Wrapping(idx as u64);
+                AesRng::seed_from_u64(computed_seed.0)
             } else {
                 AesRng::from_entropy()
             };
@@ -550,13 +584,14 @@ where
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+        let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let prss_params: PrssInitParams = bc2wrap::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
@@ -571,8 +606,9 @@ where
         let mut base_session = self
             .create_base_session(
                 session_id,
+                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 threshold,
-                role_assignments.clone(),
+                role_assignment,
                 NetworkMode::Sync,
                 request.seed,
             )
@@ -606,7 +642,7 @@ where
                         SupportedPRSSSetup::ResiduePolyZ128(prss_setup),
                     );
                     tracing::info!("PRSS Setup for ResiduePoly128 Done.");
-                    fill_network_memory_info_single_session(base_session);
+                    fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -634,7 +670,7 @@ where
                         SupportedPRSSSetup::ResiduePolyZ64(prss_setup),
                     );
                     tracing::info!("PRSS Setup for ResiduePoly64 Done.");
-                    fill_network_memory_info_single_session(base_session);
+                    fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -664,13 +700,14 @@ where
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+        let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let preproc_params: PreprocKeyGenParams =
             bc2wrap::deserialize(&request.params).map_err(|e| {
@@ -691,9 +728,10 @@ where
         let base_sessions = self
             .create_base_sessions(
                 start_sid,
+                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 num_sessions as usize,
                 threshold,
-                role_assignments.clone(),
+                role_assignment,
                 NetworkMode::Sync,
                 request.seed,
             )
@@ -740,7 +778,7 @@ where
                             .await
                             .unwrap()
                     };
-                    fill_network_memory_info_multiple_sessions(sessions);
+                    fill_network_memory_info_multiple_sessions(sessions).await;
                     result_store.insert(start_sid, (dkg_params, preproc));
                 };
                 self.data.status_store.insert(
@@ -771,7 +809,7 @@ where
                             .await
                             .unwrap()
                     };
-                    fill_network_memory_info_multiple_sessions(sessions);
+                    fill_network_memory_info_multiple_sessions(sessions).await;
                     result_store.insert(start_sid, (dkg_params, preproc));
                 };
                 self.data.status_store.insert(
@@ -811,7 +849,7 @@ where
                             .await
                             .unwrap()
                     };
-                    fill_network_memory_info_multiple_sessions(sessions);
+                    fill_network_memory_info_multiple_sessions(sessions).await;
                     result_store.insert(start_sid, (dkg_params, preproc));
                 };
                 self.data.status_store.insert(
@@ -840,7 +878,7 @@ where
                             .await
                             .unwrap()
                     };
-                    fill_network_memory_info_multiple_sessions(sessions);
+                    fill_network_memory_info_multiple_sessions(sessions).await;
                     result_store.insert(start_sid, (dkg_params, preproc));
                 };
                 self.data.status_store.insert(
@@ -881,13 +919,14 @@ where
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+        let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let kg_params: ThresholdKeyGenParams =
             bc2wrap::deserialize(&request.params).map_err(|e| {
@@ -904,8 +943,9 @@ where
         let mut base_session = self
             .create_base_session(
                 session_id,
+                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 threshold,
-                role_assignments.clone(),
+                role_assignment,
                 NetworkMode::Async,
                 request.seed,
             )
@@ -943,8 +983,8 @@ where
                     )
                     .await
                     .unwrap();
-                    key_store.insert(session_id, Arc::new(keys));
-                    fill_network_memory_info_single_session(base_session);
+                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
+                    fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -966,8 +1006,8 @@ where
                     )
                     .await
                     .unwrap();
-                    key_store.insert(session_id, Arc::new(keys));
-                    fill_network_memory_info_single_session(base_session);
+                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
+                    fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -998,8 +1038,8 @@ where
                     )
                     .await
                     .unwrap();
-                    key_store.insert(session_id, Arc::new(keys));
-                    fill_network_memory_info_single_session(base_session);
+                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
+                    fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1021,8 +1061,8 @@ where
                     )
                     .await
                     .unwrap();
-                    key_store.insert(session_id, Arc::new(keys));
-                    fill_network_memory_info_single_session(base_session);
+                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
+                    fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1060,19 +1100,21 @@ where
         let dkg_params = kg_result_params.dkg_params;
 
         if let Some(dkg_params) = dkg_params {
-            let role_assignments: HashMap<Role, Identity> =
+            let role_assignment: HashMap<Role, Identity> =
                 bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
                         format!("Failed to parse role assignment: {e:?}"),
                     )
                 })?;
+            let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
             let mut base_session = self
                 .create_base_session(
                     session_id,
+                    *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                     0,
-                    role_assignments.clone(),
+                    role_assignment,
                     NetworkMode::Sync,
                     request.seed,
                 )
@@ -1092,9 +1134,10 @@ where
                         format!("Failed to do centralised key generation {e:?}"),
                     )
                 })?;
-            self.data
-                .key_store
-                .insert(session_id, Arc::new(keys.clone()));
+            self.data.key_store.insert(
+                session_id,
+                Arc::new(KeyBucket::new(keys.clone(), dkg_params)),
+            );
             return Ok(tonic::Response::new(ThresholdKeyGenResultResponse {
                 pub_keyset: bc2wrap::serialize(&keys.0).map_err(|e| {
                     tonic::Status::new(
@@ -1107,7 +1150,7 @@ where
             let keys = self.data.key_store.get(&session_id);
             if let Some(keys) = keys {
                 return Ok(tonic::Response::new(ThresholdKeyGenResultResponse {
-                    pub_keyset: bc2wrap::serialize(&keys.0).map_err(|e| {
+                    pub_keyset: bc2wrap::serialize(&keys.pub_keyset).map_err(|e| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
                             format!("Failed to serialize pubkey: {e:?}"),
@@ -1144,13 +1187,14 @@ where
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+        let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let preproc_params: PreprocDecryptParams =
             bc2wrap::deserialize(&request.params).map_err(|e| {
@@ -1174,7 +1218,7 @@ where
                     format!("Can not find key that corresponds to session ID {key_sid}"),
                 )
             })?
-            .1
+            .priv_keyset
             .parameters
             .message_modulus_log();
         let num_bits_message = ctxt_type.get_num_bits_rep();
@@ -1188,9 +1232,10 @@ where
                 let base_sessions = self
                     .create_base_sessions(
                         session_id,
+                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         num_sessions,
                         threshold,
-                        role_assignments.clone(),
+                        role_assignment,
                         NetworkMode::Sync,
                         request.seed,
                     )
@@ -1244,7 +1289,7 @@ where
                     let preprocessings = preprocessings.into_iter().map(|p| p.1).collect_vec();
                     let _ = store.insert(session_id, preprocessings);
 
-                    fill_network_memory_info_multiple_sessions(sessions);
+                    fill_network_memory_info_multiple_sessions(sessions).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1257,9 +1302,10 @@ where
                 let base_sessions = self
                     .create_base_sessions(
                         session_id,
+                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         num_sessions,
                         threshold,
-                        role_assignments.clone(),
+                        role_assignment,
                         NetworkMode::Sync,
                         request.seed,
                     )
@@ -1327,7 +1373,7 @@ where
                     let preprocessings = preprocessings.into_iter().map(|p| p.1).collect_vec();
                     let _ = store.insert(session_id, preprocessings);
 
-                    fill_network_memory_info_multiple_sessions(sessions);
+                    fill_network_memory_info_multiple_sessions(sessions).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1350,8 +1396,9 @@ where
                 let base_session = self
                     .create_base_session(
                         session_id,
+                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         threshold,
-                        role_assignments.clone(),
+                        role_assignment,
                         NetworkMode::Sync,
                         request.seed,
                     )
@@ -1387,7 +1434,8 @@ where
                             store.insert(session_id, vec![preproc]);
                         }
                     }
-                    fill_network_memory_info_single_session(small_session.session.into_inner());
+                    fill_network_memory_info_single_session(small_session.session.into_inner())
+                        .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1399,8 +1447,9 @@ where
                 let base_session = self
                     .create_base_session(
                         session_id,
+                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         threshold,
-                        role_assignments.clone(),
+                        role_assignment,
                         NetworkMode::Sync,
                         request.seed,
                     )
@@ -1437,7 +1486,8 @@ where
                         };
                     }
 
-                    fill_network_memory_info_single_session(large_session.session.into_inner());
+                    fill_network_memory_info_single_session(large_session.session.into_inner())
+                        .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1478,13 +1528,16 @@ where
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+
+        let roles = role_assignment.keys().cloned().collect();
+        let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let decrypt_params: ThresholdDecryptParams = bc2wrap::deserialize(&request.params)
             .map_err(|e| {
@@ -1525,27 +1578,34 @@ where
             let num_sessions = throughput.num_sessions;
             let num_copies = throughput.num_copies;
             let chunk_size = num_copies.div_ceil(num_sessions);
-            let role_assignments = role_assignments.clone();
             let prss_setup = self.data.prss_setup.clone();
-            let sns_key = Arc::new(key_ref.0.server_key.noise_squashing_key().unwrap());
-            let server_key = Arc::new(key_ref.0.server_key.as_ref());
-            let ks = get_key_switching_key(key_ref.0.server_key.as_ref()).map_err(|_| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    "Failed to retrieve ksk from server key",
-                )
-            })?;
+            let sns_key = Arc::new(
+                key_ref
+                    .pub_keyset
+                    .server_key
+                    .noise_squashing_key()
+                    .expect("Failed to get noise squashing key"),
+            );
+            let server_key = Arc::new(key_ref.pub_keyset.server_key.as_ref());
+            let ks =
+                get_key_switching_key(key_ref.pub_keyset.server_key.as_ref()).map_err(|_| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        "Failed to retrieve ksk from server key",
+                    )
+                })?;
             //Throughput number of ctxts is dictated by num_sessions*num_copies
             //we thus only take the 1st ctxt here
             let num_blocks = ctxts[0].len();
             let ctxt = ctxts[0].clone();
 
             //Create one session for bcast
-            let bcast_session = self
+            let mut bcast_session = self
                 .create_base_session(
                     session_id,
+                    *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                     threshold,
-                    role_assignments.clone(),
+                    role_assignment.clone(),
                     NetworkMode::Sync,
                     None,
                 )
@@ -1563,9 +1623,10 @@ where
                     let base_sessions = self
                         .create_base_sessions(
                             new_session_id,
+                            *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                             num_sessions,
                             threshold,
-                            role_assignments.clone(),
+                            role_assignment.clone(),
                             NetworkMode::Async,
                             request.seed,
                         )
@@ -1592,7 +1653,7 @@ where
                     //Do bcast after the Sns to sync parties
                     let _ = SyncReliableBroadcast::default()
                         .broadcast_from_all(
-                            &bcast_session,
+                            &mut bcast_session,
                             BroadcastValue::from(Z128::from_u128(42)),
                         )
                         .await;
@@ -1628,18 +1689,21 @@ where
                         // May panic
                         {
                             let decrypt_span = tracing::info_span!("Online-NoiseFloodSmall");
-                            let key_ref = key_ref.clone();
                             tracing::info!(
                                 "Starting session with id {} to decrypt {} ctxts",
                                 small_session.session.borrow().session_id(),
                                 ctxts.len()
                             );
+
+                            let key_shares = key_ref.priv_keyset.clone();
                             decryption_tasks.spawn(
                                 async move {
-                                    let mut noiseflood_preprocessing = small_session
-                                        .init_prep_noiseflooding(ctxts.len() * num_blocks)
-                                        .await
-                                        .unwrap();
+                                    let noiseflood_preprocessing = Arc::new(Mutex::new(
+                                        small_session
+                                            .init_prep_noiseflooding(ctxts.len() * num_blocks)
+                                            .await
+                                            .unwrap(),
+                                    ));
 
                                     let mut base_session =
                                         small_session.session.into_inner().base_session;
@@ -1654,9 +1718,9 @@ where
                                                 SecureOnlineNoiseFloodDecryption,
                                             >(
                                                 &mut base_session,
-                                                &mut noiseflood_preprocessing,
-                                                &key_ref.1,
-                                                &ctxt,
+                                                noiseflood_preprocessing.clone(),
+                                                key_shares.clone(),
+                                                Arc::new(ctxt),
                                                 SnsDecryptionKeyType::SnsKey,
                                             )
                                             .await
@@ -1680,7 +1744,7 @@ where
                         vec_res.push(all_res[0]);
 
                         res_store.insert(session_id, vec_res);
-                        fill_network_memory_info_multiple_sessions(vec_base_sessions);
+                        fill_network_memory_info_multiple_sessions(vec_base_sessions).await;
                     };
                     let throughput_span = tracing::info_span!(
                         "Throughput-NoiseFloodSmall",
@@ -1701,9 +1765,10 @@ where
                     let base_sessions = self
                         .create_base_sessions(
                             new_session_id,
+                            *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                             num_sessions * num_blocks,
                             threshold,
-                            role_assignments.clone(),
+                            role_assignment.clone(),
                             NetworkMode::Async,
                             request.seed,
                         )
@@ -1717,7 +1782,7 @@ where
                     //Do bcast to sync parties
                     let _ = SyncReliableBroadcast::default()
                         .broadcast_from_all(
-                            &bcast_session,
+                            &mut bcast_session,
                             BroadcastValue::from(Z128::from_u128(42)),
                         )
                         .await;
@@ -1803,7 +1868,7 @@ where
                                                 >(
                                                     &mut base_session,
                                                     &mut inner_preprocessings,
-                                                    &key_ref.1,
+                                                    key_ref.priv_keyset.as_ref(),
                                                     &ks,
                                                     inner_blocks_ctxt,
                                                 )
@@ -1869,7 +1934,7 @@ where
                         vec_res.push(all_res[0]);
 
                         res_store.insert(session_id, vec_res);
-                        fill_network_memory_info_multiple_sessions(vec_base_sessions);
+                        fill_network_memory_info_multiple_sessions(vec_base_sessions).await;
                     };
                     let throughput_span = tracing::info_span!(
                         "Throughput-BitDecSmall",
@@ -1890,26 +1955,25 @@ where
 
             //This is "regular" testing
         } else {
-            let params = SessionParameters::new(
-                threshold,
-                session_id,
-                self.own_identity.clone(),
-                role_assignments.clone(),
-            )
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    format!("Failed to create a base session parameters: {e:?}"),
-                )
-            })?;
+            let params = SessionParameters::new(threshold, session_id, self.my_role, roles)
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create a base session parameters: {e:?}"),
+                    )
+                })?;
             //This is running the online phase of ddec, so can work in Async network
-            let networking = (self.networking_strategy)(
-                session_id,
-                role_assignments.clone(),
-                NetworkMode::Async,
-            )
-            .await
-            .unwrap();
+            let networking = self
+                .networking_manager
+                .make_network_session(
+                    session_id,
+                    *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
+                    &*role_assignment.read().await,
+                    self.my_role,
+                    NetworkMode::Async,
+                )
+                .await
+                .unwrap();
 
             //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
             let mut base_session = BaseSession::new(params, networking, AesRng::from_entropy())
@@ -1960,9 +2024,10 @@ where
                     let base_sessions = self
                         .create_base_sessions(
                             session_id,
+                            *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                             num_sessions,
                             threshold,
-                            role_assignments.clone(),
+                            role_assignment.clone(),
                             NetworkMode::Async,
                             request.seed,
                         )
@@ -1974,15 +2039,6 @@ where
 
                     //First, rework the ctxt layout to match sessions'
                     let mut ctxts_w_session_layout = vec![Vec::new(); num_sessions];
-                    if ctxts.len() != ctxts_w_session_layout.len() {
-                        return Err(tonic::Status::new(
-                            tonic::Code::Aborted,
-                            format!(
-                                "Error in decryption parameters; number of sessions; {:?}, does not match number of ciphertext chunks; {:?}",
-                                ctxts_w_session_layout.len(), ctxts.len()
-                            ),
-                        ));
-                    }
                     ctxts.into_iter().for_each(|ctxt| {
                         ctxt.owned_blocks()
                             .into_iter()
@@ -1990,8 +2046,8 @@ where
                             .for_each(|(block, ctxts)| ctxts.push(block));
                     });
 
-                    let ks =
-                        get_key_switching_key(key_ref.0.server_key.as_ref()).map_err(|_| {
+                    let ks = get_key_switching_key(key_ref.pub_keyset.server_key.as_ref())
+                        .map_err(|_| {
                             tonic::Status::new(
                                 tonic::Code::Aborted,
                                 "Failed to retrieve ksk from server key",
@@ -2018,7 +2074,7 @@ where
                                         task_decryption_bitdec_par::<EXTENSION_DEGREE, _, _, u64>(
                                             &mut session,
                                             &mut inner_preprocessings,
-                                            &key_share.1,
+                                            &key_share.priv_keyset,
                                             &ksk,
                                             ctxts_blocks,
                                         )
@@ -2063,7 +2119,7 @@ where
                             .collect_vec();
 
                         res_store.insert(session_id, res);
-                        fill_network_memory_info_multiple_sessions(sessions);
+                        fill_network_memory_info_multiple_sessions(sessions).await;
                     };
                     self.data.status_store.insert(
                         session_id,
@@ -2071,7 +2127,12 @@ where
                     );
                 }
                 DecryptionMode::NoiseFloodSmall | DecryptionMode::NoiseFloodLarge => {
-                    if key_ref.0.server_key.noise_squashing_key().is_none() {
+                    if key_ref
+                        .pub_keyset
+                        .server_key
+                        .noise_squashing_key()
+                        .is_none()
+                    {
                         return Err(tonic::Status::new(tonic::Code::Aborted,format!("Asked for NoiseFlood decrypt but there is no Switch and Squash key for key at session ID {key_sid}")));
                     }
                     let preprocessings = if let Some(preproc_sid) = preproc_sid {
@@ -2096,13 +2157,14 @@ where
                             .collect_vec()
                     };
                     let my_future = || async move {
-                        let server_key = key_ref.0.server_key.as_ref();
+                        let server_key = key_ref.pub_keyset.server_key.as_ref();
                         let mut res = Vec::new();
-                        let sns_key = key_ref.0.server_key.noise_squashing_key();
-                        for (ctxt, mut preprocessing) in
+                        let sns_key = key_ref.pub_keyset.server_key.noise_squashing_key();
+                        for (ctxt, preprocessing) in
                             ctxts.into_iter().zip_eq(preprocessings.into_iter())
                         // May panic
                         {
+                            let preprocessing = Arc::new(Mutex::new(preprocessing));
                             let ct_large = if let Some(sns_key) = sns_key {
                                 match ctxt {
                                     RadixOrBoolCiphertext::Radix(ct) => {
@@ -2122,6 +2184,7 @@ where
                             } else {
                                 panic!("Missing key (it was there just before)")
                             };
+                            let key_shares = key_ref.priv_keyset.clone();
                             res.push(
                                 run_decryption_noiseflood_64::<
                                     EXTENSION_DEGREE,
@@ -2130,9 +2193,9 @@ where
                                     SecureOnlineNoiseFloodDecryption,
                                 >(
                                     &mut base_session,
-                                    &mut preprocessing,
-                                    &key_ref.1,
-                                    &ct_large,
+                                    preprocessing,
+                                    key_shares,
+                                    Arc::new(ct_large),
                                     SnsDecryptionKeyType::SnsKey,
                                 )
                                 .await
@@ -2146,7 +2209,7 @@ where
                             )
                         }
                         res_store.insert(session_id, res);
-                        fill_network_memory_info_single_session(base_session);
+                        fill_network_memory_info_single_session(base_session).await;
                     };
                     self.data.status_store.insert(
                         session_id,
@@ -2225,13 +2288,14 @@ where
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+        let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let crs_params: CrsGenParams = bc2wrap::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
@@ -2246,8 +2310,9 @@ where
         let mut base_session = self
             .create_base_session(
                 session_id,
+                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 threshold,
-                role_assignments.clone(),
+                role_assignment.clone(),
                 NetworkMode::Sync,
                 request.seed,
             )
@@ -2271,7 +2336,7 @@ where
                 .await
                 .unwrap();
             crs_store.insert(session_id, pp.inner);
-            fill_network_memory_info_single_session(base_session);
+            fill_network_memory_info_single_session(base_session).await;
         };
 
         self.data.status_store.insert(
@@ -2383,7 +2448,7 @@ where
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
@@ -2401,15 +2466,16 @@ where
         let session_type = reshare_params.session_type;
         //We use the new_key_sid as the session_id for the protocol
         let session_id = reshare_params.new_key_sid;
-        let num_parties = role_assignments.len();
+        let num_parties = role_assignment.len();
 
         //Create 3 sessions, 2 for preproc (z64 and z128), 1 for actual reshare
         let mut base_sessions = self
             .create_base_sessions(
                 session_id,
+                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 3,
                 threshold,
-                role_assignments,
+                Arc::new(RwLock::new(RoleAssignment::from(role_assignment))),
                 NetworkMode::Sync,
                 request.seed,
             )
@@ -2450,12 +2516,12 @@ where
             //NOTE: we need a mutable access to the keyset because reshare will zeroize it
             //however since this is a clone it doesn't do much...
             //Wondering whether it really should be reshare's role to zeroize stuff ?
-            let public_key_set = key_ref.0.clone();
-            let mut old_private_key_set = key_ref.1.clone();
+            let public_key_set = key_ref.pub_keyset.clone();
+            let old_private_key_set = key_ref.priv_keyset.as_ref().clone();
+            let params = key_ref.as_ref().params;
 
             //Perform preprocessing
-            let num_needed_preproc =
-                ResharePreprocRequired::new_same_set(num_parties, &old_private_key_set);
+            let num_needed_preproc = ResharePreprocRequired::new_same_set(num_parties, params);
 
             let (mut preprocessing_64, mut preprocessing_128, sessions) = match session_type {
                 SessionType::Small => {
@@ -2536,7 +2602,8 @@ where
                 &mut preprocessing_128,
                 &mut preprocessing_64,
                 &mut reshare_base_session,
-                &mut old_private_key_set,
+                &mut Some(old_private_key_set),
+                params,
             )
             .await
             .unwrap();
@@ -2545,11 +2612,15 @@ where
             //NOTE: we do not delete the old one as moby is only for testing purposes
             key_store.insert(
                 reshare_params.new_key_sid,
-                Arc::new((public_key_set, new_private_key_set)),
+                Arc::new(KeyBucket {
+                    pub_keyset: public_key_set,
+                    priv_keyset: Arc::new(new_private_key_set),
+                    params,
+                }),
             );
             let mut sessions = sessions.into_iter().collect_vec();
             sessions.push(reshare_base_session);
-            fill_network_memory_info_multiple_sessions(sessions);
+            fill_network_memory_info_multiple_sessions(sessions).await;
         };
 
         self.data.status_store.insert(
@@ -2575,37 +2646,48 @@ where
 /// - total number of bytes sent across all sessions
 /// - total number of bytes received across all sessions
 /// - peak memory usage in bytes as given by the custom allocator
-pub(crate) fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(sessions: Vec<B>) {
+pub(crate) async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
+    sessions: Vec<B>,
+) {
     let span = tracing::Span::current();
     // Take the max number of rounds across all sessions
     // (as they ran in parallel the sum isn't really a good measure)
-    let num_rounds = sessions.iter().fold(0, |cur_max, sess| {
-        cur_max.max(sess.network().get_current_round().unwrap())
-    });
+    let num_rounds_per_session = join_all(
+        sessions
+            .iter()
+            .map(|session| session.network().get_current_round()),
+    )
+    .await;
+    let num_rounds_per_session = sessions
+        .iter()
+        .zip(num_rounds_per_session)
+        .filter(|(_, rounds)| *rounds > 0)
+        .collect_vec();
+    let num_rounds = num_rounds_per_session
+        .iter()
+        .fold(0, |cur_max, (_, rounds)| cur_max.max(*rounds));
 
     span.record("total_num_sessions", sessions.len());
     span.record("network_round", num_rounds);
-    let total_num_byte_sent = sessions
-        .iter()
-        .map(|sess| {
-            if sess.network().get_current_round().unwrap() > 0 {
-                sess.network().get_num_byte_sent().unwrap()
-            } else {
-                0
-            }
-        })
-        .sum::<usize>();
 
-    let total_num_byte_received = sessions
-        .iter()
-        .map(|sess| {
-            if sess.network().get_current_round().unwrap() > 0 {
-                sess.network().get_num_byte_received().unwrap()
-            } else {
-                0
-            }
-        })
-        .sum::<usize>();
+    let total_num_byte_sent = join_all(
+        num_rounds_per_session
+            .iter()
+            .map(|(session, _)| session.network().get_num_byte_sent()),
+    )
+    .await
+    .iter()
+    .sum::<usize>();
+
+    let total_num_byte_received = try_join_all(
+        num_rounds_per_session
+            .iter()
+            .map(|(session, _)| session.network().get_num_byte_received()),
+    )
+    .await
+    .unwrap()
+    .iter()
+    .sum::<usize>();
 
     span.record("network_sent", total_num_byte_sent);
     span.record("network_received", total_num_byte_received);
@@ -2614,8 +2696,8 @@ pub(crate) fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
     span.record("peak_mem", MEM_ALLOCATOR.get().unwrap().peak_usage());
 }
 
-pub(crate) fn fill_network_memory_info_single_session<B: BaseSessionHandles>(session: B) {
-    fill_network_memory_info_multiple_sessions(vec![session]);
+pub(crate) async fn fill_network_memory_info_single_session<B: BaseSessionHandles>(session: B) {
+    fill_network_memory_info_multiple_sessions(vec![session]).await;
 }
 
 #[cfg(feature = "testing")]

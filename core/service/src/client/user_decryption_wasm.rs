@@ -18,7 +18,8 @@ use itertools::Itertools;
 use kms_grpc::kms::v1::{
     TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
 };
-use kms_grpc::rpc_types::{fhe_types_to_num_blocks, UserDecryptionLinker};
+use kms_grpc::rpc_types::fhe_types_to_num_blocks;
+use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::FheTypes;
@@ -958,8 +959,17 @@ pub fn compute_link(
     let handles = req
         .ciphertext_handles
         .iter()
-        .map(|x| alloy_primitives::FixedBytes::<32>::left_padding_from(&x.0))
-        .collect::<Vec<_>>();
+        .enumerate()
+        .map(|(idx, c)| {
+            if c.0.len() > 32 {
+                anyhow::bail!(
+                    "external_handle at index {idx} too long: {} bytes (max 32)",
+                    c.0.len()
+                );
+            }
+            Ok(alloy_primitives::FixedBytes::<32>::left_padding_from(&c.0))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let linker = UserDecryptionLinker {
         publicKey: req.enc_key.clone().into(),
