@@ -252,7 +252,7 @@ async fn write_threshold_empty_update() {
 
     // Check no errors happened
     assert!(!logs_contain(&format!(
-        "while updating KeyGen meta store for {req_id}"
+        "while updating meta store for {req_id}"
     )));
     assert!(!logs_contain(&format!(
         "PK already exists in pk_cache for {req_id}"
@@ -262,7 +262,7 @@ async fn write_threshold_empty_update() {
     )));
     // write to an empty meta store should fail
     crypto_storage
-        .write_threshold_keys_with_meta_store(
+        .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
@@ -271,7 +271,7 @@ async fn write_threshold_empty_update() {
         )
         .await;
     // Check that the expected error happened
-    assert!(logs_contain("while updating KeyGen meta store for"));
+    assert!(logs_contain("while updating meta store for"));
 
     // update the meta store and the write should be ok
     {
@@ -280,7 +280,7 @@ async fn write_threshold_empty_update() {
         guard.insert(&req_id).unwrap();
     }
     crypto_storage
-        .write_threshold_keys_with_meta_store(
+        .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
@@ -310,7 +310,7 @@ async fn write_threshold_keys_meta_update() {
         guard.insert(&req_id).unwrap();
     }
     crypto_storage
-        .write_threshold_keys_with_meta_store(
+        .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
@@ -320,13 +320,13 @@ async fn write_threshold_keys_meta_update() {
         .await;
     // Check that no errors were logged
     assert!(!logs_contain(&format!(
-        "while updating KeyGen meta store for {req_id}"
+        "while updating meta store for {req_id}"
     )));
     assert!(!logs_contain(&format!(
         "PK already exists in pk_cache for {req_id}"
     )));
     assert!(logs_contain(&format!(
-        "Finished DKG for Request Id {req_id}."
+        "Finished storing key for Key Id {req_id}."
     )));
 
     // check the meta store is correct
@@ -337,7 +337,7 @@ async fn write_threshold_keys_meta_update() {
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
     crypto_storage
-        .write_threshold_keys_with_meta_store(
+        .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
@@ -345,7 +345,7 @@ async fn write_threshold_keys_meta_update() {
             meta_store.clone(),
         )
         .await;
-    assert!(logs_contain("while updating KeyGen meta store for"));
+    assert!(logs_contain("while updating meta store for"));
 }
 
 #[tokio::test]
@@ -363,7 +363,7 @@ async fn write_threshold_keys_failed_storage() {
         guard.insert(&req_id).unwrap();
     }
     crypto_storage
-        .write_threshold_keys_with_meta_store(
+        .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
@@ -373,13 +373,13 @@ async fn write_threshold_keys_failed_storage() {
         .await;
     // Check that no errors were logged
     assert!(!logs_contain(&format!(
-        "while updating KeyGen meta store for {req_id}"
+        "while updating meta store for {req_id}"
     )));
     assert!(!logs_contain(&format!(
         "PK already exists in pk_cache for {req_id}"
     )));
     assert!(logs_contain(&format!(
-        "Finished DKG for Request Id {req_id}."
+        "Finished storing key for Key Id {req_id}."
     )));
 
     // check the meta store is correct
@@ -395,7 +395,7 @@ async fn write_threshold_keys_failed_storage() {
     }
     let new_req_id = derive_request_id("write_threshold_keys_failed_storage_2").unwrap();
     crypto_storage
-        .write_threshold_keys_with_meta_store(
+        .write_threshold_keys_with_dkg_meta_store(
             &new_req_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
@@ -404,9 +404,7 @@ async fn write_threshold_keys_failed_storage() {
         )
         .await;
     // Check that no errors were logged
-    assert!(!logs_contain(
-        "while updating KeyGen meta store for {new_req_id}"
-    ));
+    assert!(!logs_contain("while updating meta store for {new_req_id}"));
 
     // check the meta store is correct
     {

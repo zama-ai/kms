@@ -11,7 +11,7 @@ use crate::{
         communication::{
             broadcast::{
                 cast_threshold_vote, gather_votes, receive_contribution_from_all_senders,
-                receive_echos_from_all_batched, Broadcast, RoleValueMap,
+                receive_echos_from_all_batched, reset_timeout, Broadcast, RoleValueMap,
             },
             p2p::send_to_all,
         },
@@ -303,5 +303,82 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
 
         //Stop voting now
         Ok(round1_data)
+    }
+}
+
+/// Malicious implementation of the [`Broadcast`] protocol
+/// but it may send a malicious timestamp specified during construction
+/// instead of the real (current) timestamp.
+/// If the malicious timestamp is not specified during construction,
+/// then the real timestamp is used.
+#[derive(Clone)]
+pub struct MaliciousTimestampedBroadcast<B> {
+    pub(crate) malicious_timestamp: Option<std::time::SystemTime>,
+    pub(crate) bcast: B,
+}
+
+impl<B: Broadcast> ProtocolDescription for MaliciousTimestampedBroadcast<B> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{indent}-MaliciousTimestampedBroadcast",)
+    }
+}
+
+#[async_trait]
+impl<B: Broadcast> Broadcast for MaliciousTimestampedBroadcast<B> {
+    async fn execute<Z: Ring, S: BaseSessionHandles>(
+        &self,
+        session: &mut S,
+        senders: &HashSet<Role>,
+        my_message: Option<BroadcastValue<Z>>,
+    ) -> anyhow::Result<RoleValueMap<Z>> {
+        self.bcast.execute(session, senders, my_message).await
+    }
+
+    async fn broadcast_from_all_w_corrupt_set_update<Z: Ring, Ses: BaseSessionHandles>(
+        &self,
+        session: &mut Ses,
+        mut my_message: BroadcastValue<Z>,
+    ) -> anyhow::Result<RoleValueMap<Z>> {
+        my_message.timestamp = Some(
+            self.malicious_timestamp
+                .unwrap_or_else(std::time::SystemTime::now),
+        );
+
+        let r_before = session.network().get_current_round().await;
+        let deadline_before = session.network().get_deadline_current_round().await;
+        let timeout_before = session.network().get_timeout_current_round().await;
+
+        let res = self
+            .bcast
+            .broadcast_w_corrupt_set_update(session, session.roles().clone(), Some(my_message))
+            .await?;
+        let r_bcast = session.network().get_current_round().await - r_before;
+        debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
+
+        reset_timeout(session, deadline_before, timeout_before, &res).await;
+        Ok(res)
+    }
+
+    async fn broadcast_from_all<Z: Ring, S: BaseSessionHandles>(
+        &self,
+        session: &mut S,
+        mut my_message: BroadcastValue<Z>,
+    ) -> anyhow::Result<RoleValueMap<Z>> {
+        my_message.timestamp = Some(
+            self.malicious_timestamp
+                .unwrap_or_else(std::time::SystemTime::now),
+        );
+
+        let r_before = session.network().get_current_round().await;
+        let deadline_before = session.network().get_deadline_current_round().await;
+        let timeout_before = session.network().get_timeout_current_round().await;
+
+        let res = self.bcast.broadcast_from_all(session, my_message).await?;
+        let r_bcast = session.network().get_current_round().await - r_before;
+        debug_assert_eq!(session.threshold() as usize + 3, r_bcast);
+
+        reset_timeout(session, deadline_before, timeout_before, &res).await;
+        Ok(res)
     }
 }

@@ -13,11 +13,11 @@ on:
       runs-on:
         type: string
         required: false
-        default: "ubuntu-latest"
+        default: 'ubuntu-latest'
       args-tests:
         type: string
         required: false
-        default: ""
+        default: ''
       run-minio:
         type: boolean
         required: false
@@ -33,7 +33,7 @@ on:
       wasm-test-feature:
         type: string
         required: false
-        default: "-F wasm_tests"
+        default: '-F wasm_tests'
       package-name:
         type: string
         required: true
@@ -55,7 +55,7 @@ on:
       nextest-test-threads:
         type: string
         required: false
-        default: "1"
+        default: '1'
     secrets:
       CODECOV_TOKEN:
         required: false
@@ -85,7 +85,7 @@ env:
   DOCKER_BUILD_TEST_CORE_CLIENT: 1
   CARGO_INCREMENTAL: 0
   DOCKER_BUILDKIT: 1
-  NPM_TAG: ""
+  NPM_TAG: ''
 
 # No top-level permissions needed - job-level permissions are more specific
 permissions: {}
@@ -136,7 +136,7 @@ jobs:
       # need to do it right after and then manually pull LFS files
       - name: setup gitlfs from binary
         env:
-          GIT_LFS_VERSION: "3.6.1"
+          GIT_LFS_VERSION: '3.6.1'
         run: |
           wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
           tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
@@ -183,7 +183,7 @@ jobs:
           toolchain: ${{ env.RUST_IMAGE_VERSION }}
           components: rustfmt, clippy, llvm-tools-preview, llvm-tools
           cache: false
-          
+
       - name: Install nextest and grcov
         run: |
           cargo install cargo-nextest --locked
@@ -193,7 +193,7 @@ jobs:
       # Setup cache for dockerfile and inject in docker
       #
       - name: Setup Cache
-        uses: runs-on/cache@197b09d6da1bf42f673fee18769c794b789a0c7d # v4
+        uses: runs-on/cache@a10d0f887093e2bc9de875be9edf8ab98c94a154 # v4.3.0
         id: cache
         env:
           RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
@@ -211,7 +211,7 @@ jobs:
       - name: Install Protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
-          version: "26.x"
+          version: '26.x'
           repo-token: ${{ secrets.GITHUB_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
 
       - name: Setup usage of private repo
@@ -295,10 +295,10 @@ jobs:
           # else
           #   RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
           # fi
-          AWS_ACCESS_KEY_ID: "minioadmin"
-          AWS_SECRET_ACCESS_KEY: "minioadmin"
-          AWS_DEFAULT_REGION: "eu-north-1"
-          AWS_ENDPOINT: "http://127.0.0.1:9000"
+          AWS_ACCESS_KEY_ID: 'minioadmin'
+          AWS_SECRET_ACCESS_KEY: 'minioadmin'
+          AWS_DEFAULT_REGION: 'eu-north-1'
+          AWS_ENDPOINT: 'http://127.0.0.1:9000'
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_RETRIES: 3
@@ -369,8 +369,8 @@ jobs:
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
           SLACK_USERNAME: ${{ secrets.BOT_USERNAME }}
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          SLACK_ICON_EMOJI: ":github-octocat:"
-          SLACK_TITLE: "Nightly Tests Result"
+          SLACK_ICON_EMOJI: ':github-octocat:'
+          SLACK_TITLE: 'Nightly Tests Result'
           SLACK_COLOR: ${{ steps.slack_color.outputs.color }}
           SLACK_MESSAGE: "${{ steps.tests.outcome }} \nFor args: ${{ inputs.args-tests }}"
 
@@ -384,7 +384,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: logs-${{ inputs.package-name }}-${{ github.workflow }}-${{ github.run_number }}-${{ github.job }}-${{ steps.unique-id.outputs.id }}
-          path: "**/*.log"
+          path: '**/*.log'
           retention-days: 30
           if-no-files-found: ignore
 

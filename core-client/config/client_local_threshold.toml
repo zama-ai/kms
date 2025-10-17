@@ -32,7 +32,7 @@ object_folder = "PUB-p1"
 [[cores]]
 party_id = 2
 address = "localhost:50200"
-s3_endpoint = "http://localhost:9000/kms/"
+s3_endpoint = "http://localhost:9000/kms"
 object_folder = "PUB-p2"
 
 [[cores]]

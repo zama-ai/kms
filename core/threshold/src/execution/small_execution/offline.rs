@@ -6,12 +6,13 @@ use tracing::instrument;
 
 use super::prss::PRSSPrimitives;
 use crate::error::error_handler::log_error_wrapper;
-use crate::execution::communication::broadcast::SyncReliableBroadcast;
+use crate::execution::communication::broadcast::{SyncReliableBroadcast, TimestampedBroadcast};
 use crate::execution::config::BatchParams;
 use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
 use crate::execution::runtime::session::BaseSessionHandles;
 use crate::execution::sharing::shamir::RevealOp;
+use crate::networking::value::BroadcastValueInner;
 use crate::thread_handles::spawn_compute_bound;
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Ring},
@@ -67,8 +68,11 @@ impl<BCast: Broadcast + Default> Default for RealSmallPreprocessing<BCast> {
     }
 }
 
-/// Alias for [`RealSmallPreprocessing`] with a secure implementation of [`PRSSPrimitives`] and [`Broadcast`]
-pub type SecureSmallPreprocessing = RealSmallPreprocessing<SyncReliableBroadcast>;
+/// Alias for [`RealSmallPreprocessing`] with a secure implementation of [`PRSSPrimitives`] and [`Broadcast`].
+/// The secure implementation of [`Broadcast`] is [`TimestampedBroadcast`] so that we send timestamps along with
+/// the broadcasted values to reduce "resynchronize" timeouts.
+pub type SecureSmallPreprocessing =
+    RealSmallPreprocessing<TimestampedBroadcast<SyncReliableBroadcast>>;
 
 #[async_trait]
 impl<
@@ -90,14 +94,13 @@ impl<
 
         // In case of malicious behavior not all triples might have been constructed, so we have to continue making triples until the batch is done
         while base_preprocessing.triples_len() < batch_sizes.triples {
-            base_preprocessing.append_triples(
-                next_triple_batch(
-                    small_session,
-                    batch_sizes.triples - base_preprocessing.triples_len(),
-                    &self.broadcast,
-                )
-                .await?,
-            );
+            let triples = next_triple_batch(
+                small_session,
+                batch_sizes.triples - base_preprocessing.triples_len(),
+                &self.broadcast,
+            )
+            .await?;
+            base_preprocessing.append_triples(triples);
         }
         if batch_sizes.randoms > 0 {
             base_preprocessing
@@ -114,7 +117,7 @@ async fn next_random_batch<Z: Ring, Ses: SmallSessionHandles<Z>>(
     session: &mut Ses,
 ) -> anyhow::Result<Vec<Share<Z>>> {
     let my_role = session.my_role();
-    //Create telemetry span to record all calls to PRSS.Next
+    // Create telemetry span to record all calls to PRSS.Next
     let res = session
         .prss_as_mut()
         .prss_next_vec(my_role, amount)
@@ -150,44 +153,49 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
         .przs_next_vec(my_role, threshold, amount)
         .await?;
 
-    let (vec_x_single, vec_y_single, vec_v_single, vec_d_double) = spawn_compute_bound( move ||{
-    let mut all_prss = all_prss.into_iter();
-    let all_prss_ref = all_prss.by_ref();
-    let vec_x_single: Vec<_> = all_prss_ref.take(amount).collect();
-    let vec_y_single: Vec<_> = all_prss_ref.take(amount).collect();
-    let vec_v_single: Vec<_> = all_prss_ref.take(amount).collect();
+    let (vec_x_single, vec_y_single, vec_v_single, vec_d_double) = spawn_compute_bound(move || {
+        let mut all_prss = all_prss.into_iter();
+        let all_prss_ref = all_prss.by_ref();
+        let vec_x_single: Vec<_> = all_prss_ref.take(amount).collect();
+        let vec_y_single: Vec<_> = all_prss_ref.take(amount).collect();
+        let vec_v_single: Vec<_> = all_prss_ref.take(amount).collect();
 
-    if vec_x_single.len() != amount
-        || vec_y_single.len() != amount
-        || vec_v_single.len() != amount
-        || vec_z_double.len() != amount
-    {
-        return Err(anyhow::anyhow!(
-            "BUG: Not all expected values were generated, x={}, y={}, v={}, z={}. Expected {amount}.",
-            vec_x_single.len(),
-            vec_y_single.len(),
-            vec_v_single.len(),
-            vec_z_double.len(),
-        ));
-    }
+        if vec_x_single.len() != amount
+            || vec_y_single.len() != amount
+            || vec_v_single.len() != amount
+            || vec_z_double.len() != amount
+        {
+            return Err(anyhow::anyhow!(
+                "BUG: Not all expected values were generated, x={}, y={}, v={}, z={}. Expected {amount}.",
+                vec_x_single.len(),
+                vec_y_single.len(),
+                vec_v_single.len(),
+                vec_z_double.len(),
+            ));
+        }
 
-    let res = vec_x_single
-        .iter()
-        .zip_eq(vec_y_single.iter())
-        .zip_eq(vec_v_single.iter())
-        .zip_eq(vec_z_double.into_iter())
-        .map(|(((x, y), v), z)| *x * *y + (z + *v))
-        .collect_vec();
+        let res = vec_x_single
+            .iter()
+            .zip_eq(vec_y_single.iter())
+            .zip_eq(vec_v_single.iter())
+            .zip_eq(vec_z_double.into_iter())
+            .map(|(((x, y), v), z)| *x * *y + (z + *v))
+            .collect_vec();
 
-    Ok((vec_x_single, vec_y_single, vec_v_single, res))
+        Ok((vec_x_single, vec_y_single, vec_v_single, res))
     }).await??;
 
+    let val: BroadcastValue<Z> = vec_d_double.into();
     let broadcast_res = broadcast
-        .broadcast_from_all_w_corrupt_set_update(session, vec_d_double.into())
+        .broadcast_from_all_w_corrupt_set_update(session, val)
         .await?;
 
-    //Try reconstructing 2t sharings of d, a None means reconstruction failed.
-    let recons_vec_d = reconstruct_d_values(session, amount, broadcast_res.clone()).await?;
+    // Try reconstructing 2t sharings of d, a None means reconstruction failed.
+    let raw_broadcast_res: HashMap<_, _> = broadcast_res
+        .into_iter()
+        .map(|x| (x.0, x.1.inner))
+        .collect();
+    let recons_vec_d = reconstruct_d_values(session, amount, raw_broadcast_res.clone()).await?;
 
     let mut triples = Vec::with_capacity(amount);
     let mut bad_triples_idx = Vec::new();
@@ -214,7 +222,7 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
     // If non-correctable malicious behaviour has been detected
     if !bad_triples_idx.is_empty() {
         // Recover the individual d shares from broadcast
-        let d_shares = parse_d_shares(session, amount, broadcast_res)?;
+        let d_shares = parse_d_shares(session, amount, &raw_broadcast_res)?;
         for i in bad_triples_idx {
             check_d(
                 session,
@@ -230,6 +238,7 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
             .await?;
         }
     }
+
     Ok(triples)
 }
 
@@ -239,7 +248,7 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
 async fn reconstruct_d_values<Z, Ses: BaseSessionHandles>(
     session: &mut Ses,
     amount: usize,
-    d_recons: HashMap<Role, BroadcastValue<Z>>,
+    d_recons: HashMap<Role, BroadcastValueInner<Z>>,
 ) -> anyhow::Result<Vec<Option<Z>>>
 where
     Z: ErrorCorrect,
@@ -249,7 +258,7 @@ where
     // I.e. transpose the result and convert the role and value into indexed values
     for (cur_role, cur_values) in d_recons {
         match cur_values {
-            BroadcastValue::RingVector(cur_values) => {
+            BroadcastValueInner::RingVector(cur_values) => {
                 if cur_values.len() != amount {
                     tracing::warn!(
                             "I am party {:?} and party {:?} did not broadcast the correct amount of shares and is thus malicious",
@@ -311,14 +320,14 @@ where
 fn parse_d_shares<Z: Ring, Ses: BaseSessionHandles>(
     session: &mut Ses,
     amount: usize,
-    d_recons: HashMap<Role, BroadcastValue<Z>>,
+    d_recons: &HashMap<Role, BroadcastValueInner<Z>>,
 ) -> anyhow::Result<Vec<HashMap<Role, Option<Z>>>> {
     let mut res = Vec::with_capacity(amount);
     for i in 0..amount {
         let mut cur_map = HashMap::new();
-        for (cur_role, cur_values) in &d_recons {
+        for (cur_role, cur_values) in d_recons {
             match cur_values {
-                BroadcastValue::RingVector(cur_values) => {
+                BroadcastValueInner::RingVector(cur_values) => {
                     if cur_values.len() > i {
                         cur_map.insert(*cur_role, Some(cur_values[i]));
                     } else {
@@ -422,6 +431,7 @@ mod test {
     use crate::malicious_execution::small_execution::malicious_prss::{
         MaliciousPrssDrop, MaliciousPrssHonestInitLieAll, MaliciousPrssHonestInitRobustThenRandom,
     };
+    use crate::networking::value::BroadcastValueInner;
     use crate::networking::NetworkMode;
     use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
     use crate::tests::randomness_check::execute_all_randomness_tests_loose;
@@ -442,7 +452,6 @@ mod test {
                 prf::PRSSConversions,
             },
         },
-        networking::value::BroadcastValue,
         tests::helper::testing::get_networkless_base_session_for_parties,
     };
 
@@ -834,13 +843,13 @@ mod test {
         let d_recons = HashMap::from([
             (
                 Role::indexed_from_one(1),
-                BroadcastValue::RingVector(Vec::from([ResiduePolyF4Z128::from_scalar(Wrapping(
-                    42,
-                ))])),
+                BroadcastValueInner::RingVector(Vec::from([ResiduePolyF4Z128::from_scalar(
+                    Wrapping(42),
+                )])),
             ),
             (
                 Role::indexed_from_one(2),
-                BroadcastValue::RingValue(ResiduePolyF4Z128::from_scalar(Wrapping(13))),
+                BroadcastValueInner::RingValue(ResiduePolyF4Z128::from_scalar(Wrapping(13))),
             ),
         ]);
         assert!(session.corrupt_roles().is_empty());

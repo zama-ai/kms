@@ -1,19 +1,19 @@
-//! Data generation for kms-core v0.11
+//! Data generation for kms-core v0.11.0
 //! This file provides the code that is used to generate all the data to serialize and versionize
-//! for kms-core v0.11
+//! for kms-core v0.11.0
 
 use aes_prng::AesRng;
-use kms_0_11::cryptography::internal_crypto_types::gen_sig_keys;
-use kms_0_11::engine::base::KmsFheKeyHandles;
-use kms_0_11::engine::centralized::central_kms::generate_client_fhe_key;
-use kms_0_11::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
-use kms_0_11::util::key_setup::FhePublicKey;
+use kms_0_11_0::cryptography::internal_crypto_types::gen_sig_keys;
+use kms_0_11_0::engine::base::KmsFheKeyHandles;
+use kms_0_11_0::engine::centralized::central_kms::generate_client_fhe_key;
+use kms_0_11_0::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
+use kms_0_11_0::util::key_setup::FhePublicKey;
 use std::{borrow::Cow, fs::create_dir_all, path::PathBuf};
 use tfhe_1_3::shortint::parameters::{LweCiphertextCount, NoiseSquashingCompressionParameters};
-use threshold_fhe_0_11::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-use threshold_fhe_0_11::execution::endpoints::keygen::FhePubKeySet;
-use threshold_fhe_0_11::execution::small_execution::prf::PrfKey;
-use threshold_fhe_0_11::{
+use threshold_fhe_0_11_0::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use threshold_fhe_0_11_0::execution::endpoints::keygen::FhePubKeySet;
+use threshold_fhe_0_11_0::execution::small_execution::prf::PrfKey;
+use threshold_fhe_0_11_0::{
     execution::{
         runtime::party::Role,
         tfhe_internals::{
@@ -24,8 +24,8 @@ use threshold_fhe_0_11::{
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
 
-use kms_0_11::vault::keychain::AppKeyBlob;
-use kms_grpc_0_11::rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal};
+use kms_0_11_0::vault::keychain::AppKeyBlob;
+use kms_grpc_0_11_0::rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal};
 use rand::{RngCore, SeedableRng};
 use tfhe_1_3::{
     core_crypto::commons::{
@@ -46,22 +46,19 @@ use tfhe_1_3::{
 };
 use tokio::runtime::Runtime;
 
-use crate::parameters::SwitchAndSquashCompressionParametersTest;
-use crate::{
-    generate::{
-        store_versioned_auxiliary_05, store_versioned_test_05, KMSCoreVersion, TEST_DKG_PARAMS_SNS,
-    },
-    parameters::{
-        ClassicPBSParametersTest, DKGParamsRegularTest, DKGParamsSnSTest,
-        SwitchAndSquashParametersTest,
-    },
-    KmsFheKeyHandlesTest, PRSSSetupTest, PrivateSigKeyTest, PublicSigKeyTest,
-    SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS, ThresholdFheKeysTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_MODULE_NAME,
+use backward_compatibility::parameters::{
+    ClassicPBSParametersTest, DKGParamsRegularTest, DKGParamsSnSTest,
+    SwitchAndSquashCompressionParametersTest, SwitchAndSquashParametersTest,
 };
-use crate::{
-    AppKeyBlobTest, PrfKeyTest, PubDataTypeTest, PublicKeyTypeTest, TestMetadataKmsGrpc,
-    KMS_GRPC_MODULE_NAME,
+use backward_compatibility::{
+    AppKeyBlobTest, KmsFheKeyHandlesTest, PRSSSetupTest, PrfKeyTest, PrivateSigKeyTest,
+    PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, SignedPubDataHandleInternalTest,
+    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest,
+    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+};
+
+use crate::generate::{
+    store_versioned_auxiliary_05, store_versioned_test_05, KMSCoreVersion, TEST_DKG_PARAMS_SNS,
 };
 
 // Macro to store a versioned test
@@ -78,98 +75,90 @@ macro_rules! store_versioned_auxiliary {
     };
 }
 
-impl From<DKGParamsSnSTest> for DKGParamsSnS {
-    fn from(value: DKGParamsSnSTest) -> Self {
-        DKGParamsSnS {
-            regular_params: value.regular_params.into(),
-            sns_params: value.sns_params.into(),
-            sns_compression_params: Some(value.sns_compression_parameters.into()),
-        }
+fn convert_dkg_params_sns(value: DKGParamsSnSTest) -> DKGParamsSnS {
+    DKGParamsSnS {
+        regular_params: convert_dkg_params_regular(value.regular_params),
+        sns_params: convert_sns_parameters(value.sns_params),
+        sns_compression_params: Some(convert_sns_compression_parameters(
+            value.sns_compression_parameters,
+        )),
     }
 }
 
 // Parameters `dedicated_compact_public_key_parameters` and `compression_decompression_parameters`
 // are set to None because they are optional tfhe-rs types, which means their backward compatibility
 // is already tested.
-impl From<DKGParamsRegularTest> for DKGParamsRegular {
-    fn from(value: DKGParamsRegularTest) -> Self {
-        DKGParamsRegular {
-            sec: value.sec,
-            ciphertext_parameters: value.ciphertext_parameters.into(),
-            dedicated_compact_public_key_parameters: None,
-            flag: value.flag,
-            compression_decompression_parameters: None,
-        }
+fn convert_dkg_params_regular(value: DKGParamsRegularTest) -> DKGParamsRegular {
+    DKGParamsRegular {
+        sec: value.sec,
+        ciphertext_parameters: convert_classic_pbs_parameters(value.ciphertext_parameters),
+        dedicated_compact_public_key_parameters: None,
+        flag: value.flag,
+        compression_decompression_parameters: None,
     }
 }
 
-impl From<ClassicPBSParametersTest> for ClassicPBSParameters {
-    fn from(value: ClassicPBSParametersTest) -> Self {
-        ClassicPBSParameters {
-            lwe_dimension: LweDimension(value.lwe_dimension),
-            glwe_dimension: GlweDimension(value.glwe_dimension),
-            polynomial_size: PolynomialSize(value.polynomial_size),
-            lwe_noise_distribution: DynamicDistribution::TUniform(TUniform::new(
-                value.lwe_noise_gaussian,
-            )),
-            glwe_noise_distribution: DynamicDistribution::TUniform(TUniform::new(0)),
-            pbs_base_log: DecompositionBaseLog(value.pbs_base_log),
-            pbs_level: DecompositionLevelCount(value.pbs_level),
-            ks_base_log: DecompositionBaseLog(value.ks_base_log),
-            ks_level: DecompositionLevelCount(value.ks_level),
-            message_modulus: MessageModulus(value.message_modulus),
-            carry_modulus: CarryModulus(value.carry_modulus),
-            max_noise_level: MaxNoiseLevel::new(value.max_noise_level),
-            log2_p_fail: value.log2_p_fail,
-            ciphertext_modulus: CiphertextModulus::new_native(),
-            encryption_key_choice: {
-                match &*value.encryption_key_choice {
-                    "big" => EncryptionKeyChoice::Big,
-                    "small" => EncryptionKeyChoice::Small,
-                    _ => panic!("Invalid encryption key choice"),
-                }
-            },
-            // no need to test this as it's from tfhe-rs
-            modulus_switch_noise_reduction_params:
-                tfhe_1_3::shortint::prelude::ModulusSwitchType::Standard,
-        }
+fn convert_classic_pbs_parameters(value: ClassicPBSParametersTest) -> ClassicPBSParameters {
+    ClassicPBSParameters {
+        lwe_dimension: LweDimension(value.lwe_dimension),
+        glwe_dimension: GlweDimension(value.glwe_dimension),
+        polynomial_size: PolynomialSize(value.polynomial_size),
+        lwe_noise_distribution: DynamicDistribution::TUniform(TUniform::new(
+            value.lwe_noise_gaussian,
+        )),
+        glwe_noise_distribution: DynamicDistribution::TUniform(TUniform::new(0)),
+        pbs_base_log: DecompositionBaseLog(value.pbs_base_log),
+        pbs_level: DecompositionLevelCount(value.pbs_level),
+        ks_base_log: DecompositionBaseLog(value.ks_base_log),
+        ks_level: DecompositionLevelCount(value.ks_level),
+        message_modulus: MessageModulus(value.message_modulus),
+        carry_modulus: CarryModulus(value.carry_modulus),
+        max_noise_level: MaxNoiseLevel::new(value.max_noise_level),
+        log2_p_fail: value.log2_p_fail,
+        ciphertext_modulus: CiphertextModulus::new_native(),
+        encryption_key_choice: {
+            match &*value.encryption_key_choice {
+                "big" => EncryptionKeyChoice::Big,
+                "small" => EncryptionKeyChoice::Small,
+                _ => panic!("Invalid encryption key choice"),
+            }
+        },
+        // no need to test this as it's from tfhe-rs
+        modulus_switch_noise_reduction_params:
+            tfhe_1_3::shortint::prelude::ModulusSwitchType::Standard,
     }
 }
 
-impl From<SwitchAndSquashParametersTest> for NoiseSquashingParameters {
-    fn from(value: SwitchAndSquashParametersTest) -> Self {
-        NoiseSquashingParameters {
-            glwe_dimension: GlweDimension(value.glwe_dimension),
-            glwe_noise_distribution: DynamicDistribution::new_t_uniform(
-                value.glwe_noise_distribution,
-            ),
-            polynomial_size: PolynomialSize(value.polynomial_size),
-            decomp_base_log: DecompositionBaseLog(value.pbs_base_log),
-            decomp_level_count: DecompositionLevelCount(value.pbs_level),
-            ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-            modulus_switch_noise_reduction_params:
-                tfhe_1_3::shortint::prelude::ModulusSwitchType::Standard,
-            message_modulus: MessageModulus(value.message_modulus),
-            carry_modulus: CarryModulus(value.carry_modulus),
-        }
+fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashingParameters {
+    NoiseSquashingParameters {
+        glwe_dimension: GlweDimension(value.glwe_dimension),
+        glwe_noise_distribution: DynamicDistribution::new_t_uniform(value.glwe_noise_distribution),
+        polynomial_size: PolynomialSize(value.polynomial_size),
+        decomp_base_log: DecompositionBaseLog(value.pbs_base_log),
+        decomp_level_count: DecompositionLevelCount(value.pbs_level),
+        ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
+        modulus_switch_noise_reduction_params:
+            tfhe_1_3::shortint::prelude::ModulusSwitchType::Standard,
+        message_modulus: MessageModulus(value.message_modulus),
+        carry_modulus: CarryModulus(value.carry_modulus),
     }
 }
 
-impl From<SwitchAndSquashCompressionParametersTest> for NoiseSquashingCompressionParameters {
-    fn from(value: SwitchAndSquashCompressionParametersTest) -> Self {
-        NoiseSquashingCompressionParameters {
-            packing_ks_level: DecompositionLevelCount(value.packing_ks_level),
-            packing_ks_base_log: DecompositionBaseLog(value.packing_ks_base_log),
-            packing_ks_polynomial_size: PolynomialSize(value.packing_ks_polynomial_size),
-            packing_ks_glwe_dimension: GlweDimension(value.packing_ks_glwe_dimension),
-            lwe_per_glwe: LweCiphertextCount(value.lwe_per_glwe),
-            packing_ks_key_noise_distribution: DynamicDistribution::new_t_uniform(
-                value.packing_ks_key_noise_distribution,
-            ),
-            ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-            message_modulus: MessageModulus(value.message_modulus),
-            carry_modulus: CarryModulus(value.carry_modulus),
-        }
+fn convert_sns_compression_parameters(
+    value: SwitchAndSquashCompressionParametersTest,
+) -> NoiseSquashingCompressionParameters {
+    NoiseSquashingCompressionParameters {
+        packing_ks_level: DecompositionLevelCount(value.packing_ks_level),
+        packing_ks_base_log: DecompositionBaseLog(value.packing_ks_base_log),
+        packing_ks_polynomial_size: PolynomialSize(value.packing_ks_polynomial_size),
+        packing_ks_glwe_dimension: GlweDimension(value.packing_ks_glwe_dimension),
+        lwe_per_glwe: LweCiphertextCount(value.lwe_per_glwe),
+        packing_ks_key_noise_distribution: DynamicDistribution::new_t_uniform(
+            value.packing_ks_key_noise_distribution,
+        ),
+        ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
+        message_modulus: MessageModulus(value.message_modulus),
+        carry_modulus: CarryModulus(value.carry_modulus),
     }
 }
 
@@ -341,8 +330,9 @@ impl KmsV0_11 {
             &KMS_FHE_KEY_HANDLES_TEST.sig_key_filename,
         );
 
-        let dkg_params: DKGParams =
-            DKGParams::WithSnS(KMS_FHE_KEY_HANDLES_TEST.dkg_parameters_sns.into());
+        let dkg_params: DKGParams = DKGParams::WithSnS(convert_dkg_params_sns(
+            KMS_FHE_KEY_HANDLES_TEST.dkg_parameters_sns,
+        ));
         let seed = Some(Seed(KMS_FHE_KEY_HANDLES_TEST.seed));
 
         let client_key = generate_client_fhe_key(dkg_params, seed);
@@ -424,8 +414,9 @@ impl KmsV0_11 {
             THRESHOLD_FHE_KEYS_TEST.threshold,
             role,
         );
-        let dkg_params: DKGParams =
-            DKGParams::WithSnS(THRESHOLD_FHE_KEYS_TEST.dkg_parameters_sns.into());
+        let dkg_params: DKGParams = DKGParams::WithSnS(convert_dkg_params_sns(
+            THRESHOLD_FHE_KEYS_TEST.dkg_parameters_sns,
+        ));
 
         let rt = Runtime::new().unwrap();
         let (fhe_pub_key_set, private_key_set) = rt.block_on(async {
@@ -652,7 +643,7 @@ impl KmsGrpcV0_11 {
 }
 
 impl KMSCoreVersion for V0_11 {
-    const VERSION_NUMBER: &'static str = "0.11";
+    const VERSION_NUMBER: &'static str = "0.11.0";
 
     // Without this, some keys will be generated differently every time we run the script
     fn seed_prng(seed: u128) {

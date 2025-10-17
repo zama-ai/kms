@@ -877,7 +877,6 @@ where
 
     /// Read the public key from a cache, if it does not exist,
     /// attempt to read it from the public storage backend.
-    #[cfg(test)]
     pub(crate) async fn read_cloned_pk(
         &self,
         req_id: &RequestId,
@@ -890,7 +889,20 @@ where
         .await
     }
 
-    #[cfg(test)]
+    /// Read the server key
+    /// from the public storage backend.
+    pub(crate) async fn read_cloned_server_key(
+        &self,
+        req_id: &RequestId,
+    ) -> anyhow::Result<tfhe::ServerKey> {
+        Self::read_cloned_crypto_material::<tfhe::ServerKey, _>(
+            Arc::new(RwLock::new(HashMap::new())),
+            req_id,
+            self.public_storage.clone(),
+        )
+        .await
+    }
+
     pub(crate) async fn read_cloned_crypto_material<T, S>(
         cache: Arc<RwLock<HashMap<RequestId, T>>>,
         req_id: &RequestId,

@@ -11,22 +11,27 @@ members = [
     "tools/kms-health-check",
 ]
 
-# The backward-compatibility module is excluded from the workspace in order to avoid dependency
-# conflicts. This is related to the fact that it needs to import the different packages (kms,
-# threshold-fhe) to test with specific versions when generating the data. However, the
-# workspace already has these dependencies by nature, creating a name conflict like described in
+# The backward-compatibility modules are excluded from the workspace to avoid dependency conflicts.
+#
+# backward-compatibility/                - Test loading/execution logic with current dependencies
+# backward-compatibility/generate-v0.11.0 - Data generation for v0.11.0 with old KMS version dependencies
+# backward-compatibility/generate-v0.11.1 - Data generation for v0.11.1 with old KMS version dependencies
+#
+# The generate crates need to import old KMS versions (e.g., v0.11.0, v0.11.1) which conflict with the
+# current workspace dependencies, creating name conflicts as described in:
 # https://github.com/rust-lang/cargo/issues/12891
-# Note that it's not possible to only generate the lock file using specific features as the resolver
+#
+# Note: It's not possible to only generate the lock file using specific features as the resolver
 # builds the graph as if all features are enabled:
 # https://doc.rust-lang.org/cargo/reference/resolver.html#features
-exclude = ["backward-compatibility"]
+exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11.0", "backward-compatibility/generate-v0.11.1"]
 
 [workspace.package]
 authors = ["Zama"]
 publish = true
 edition = "2021"
 license = "BSD-3-Clause-Clear"
-version = "0.12.0"
+version = "0.12.1"
 
 [workspace.dependencies]
 # ⚠️ WORKSPACE DEPENDENCY MANAGEMENT BEST PRACTICES ⚠️
@@ -68,11 +73,11 @@ aes = "=0.8.4"  # AES encryption - LOW RISK: RustCrypto org, very popular (135M+
 aes-gcm = { version = "=0.10.3", features = ["std"] }  # AES-GCM authenticated encryption - LOW RISK: RustCrypto org, 62M+ downloads
 aes-gcm-siv = "=0.11.1"  # AES-GCM-SIV authenticated encryption - LOW RISK: RustCrypto org, nonce misuse resistant, 9M+ downloads
 aes-prng = "=0.2.1"  # AES-based PRNG for deterministic randomness - LOW RISK: Maintained by @mortendahl (ZAMA) and Dragos
-alloy-dyn-abi = "=1.3.1"  # Ethereum ABI encoding - LOW RISK: Alloy/Paradigm team, reputable, growing ecosystem
-alloy-primitives = "=1.3.1"  # Ethereum primitives - LOW RISK: Alloy/Paradigm team
-alloy-signer = "=1.0.36"  # Ethereum signing abstraction - LOW RISK: Alloy/Paradigm team
-alloy-signer-local = "=1.0.36"  # Local Ethereum signer - LOW RISK: Alloy/Paradigm team
-alloy-sol-types = "=1.3.1"  # Solidity types & EIP-712 - LOW RISK: Alloy/Paradigm team
+alloy-dyn-abi = "=1.4.1"  # Ethereum ABI encoding - LOW RISK: Alloy/Paradigm team, reputable, growing ecosystem
+alloy-primitives = "=1.4.1"  # Ethereum primitives - LOW RISK: Alloy/Paradigm team
+alloy-signer = "=1.0.38"  # Ethereum signing abstraction - LOW RISK: Alloy/Paradigm team
+alloy-signer-local = "=1.0.38"  # Local Ethereum signer - LOW RISK: Alloy/Paradigm team
+alloy-sol-types = "=1.4.1"  # Solidity types & EIP-712 - LOW RISK: Alloy/Paradigm team
 anyhow = "=1.0.98"  # Error handling - MEDIUM RISK: Reputable individual maintainer (dtolnay), 410M downloadss
 assert_cmd = "=2.0.17"  # Assert command for testing - LOW RISK: assert-rs team, 1M+ downloads
 async-std = { version = "=1.13.1", features = ["attributes", "tokio1"] }  # Async runtime for testing - LOW RISK: async-rs team, 55M+ downloads

@@ -1,0 +1,126 @@
+kmsPeers:
+  # Number of replicas managed by each statefulset
+  count: 1
+kmsConnector:
+  enabled: false
+kmsCoreClient:
+  enabled: false
+  image:
+    tag:
+
+kmsCore:
+  image:
+    name: ghcr.io/zama-ai/kms/core-service
+    tag:
+  envFrom:
+    configmap:
+      key:
+        coreClientS3Endpoint: CORE_CLIENT__S3_ENDPOINT
+        privateVaultStorageBucket: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
+        privateVaultStoragePrefix: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
+        privateVaultKeychainAWSKMSRootKeySpec: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
+        privateVaultKeychainAWSKMSRootKeyID: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
+        publicVaultStorageBucket: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
+        publicVaultStoragePrefix: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX
+        backupVaultStorageBucket: KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET
+        backupVaultStoragePrefix: KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX
+        backupVaultKeychainAWSKMSRootKeySpec: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
+        backupVaultKeychainAWSKMSRootKeyID: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
+  thresholdMode:
+      initializationScript:
+        enabled: true
+      enabled: true
+      multiplier: 2.0
+      maxInterval: 60
+      initialIntervalMs: 100
+      cleanupIntervalSecs: 2
+      thresholdValue: 1
+      #=============================================================
+      #==========RESOURCERS TO ADJUST BASED ON ENVIRONMENT==========
+      # If you launch the deployment locally, adjust these resources
+      # according to your system and available resources
+      numSessionsPreproc: 12
+      #=============================================================
+      peersList:
+        - id: 1
+          host: kms-service-threshold-1-kms-test-threshold-core-1
+          port: 50001
+        - id: 2
+          host: kms-service-threshold-2-kms-test-threshold-core-2
+          port: 50001
+        - id: 3
+          host: kms-service-threshold-3-kms-test-threshold-core-3
+          port: 50001
+        - id: 4
+          host: kms-service-threshold-4-kms-test-threshold-core-4
+          port: 50001
+  publicVault:
+    s3:
+      enabled: true
+      bucket: kms-public
+  privateVault:
+    s3:
+      enabled: true
+      bucket: kms-private
+  rateLimiter:
+    bucketSize: 50000
+  aws:
+    region: eu-west-1
+  storage:
+    storageClassName: gp3
+    capacity: 5Gi
+  serviceMonitor:
+    enabled: false
+  #=============================================================
+  #==========RESOURCERS TO ADJUST BASED ON ENVIRONMENT==========
+  # If you launch the deployment locally, adjust these resources
+  # according to your system and available resources
+  resources:
+    requests:
+      memory: 24Gi
+      cpu: 12
+    limits:
+      memory: 24Gi
+      cpu: 12
+  #=============================================================
+      ephemeralStorage: 1Gi
+      grpcTimeout: 360
+      grpcMaxMessageSize: 104857600
+
+mtls:
+  enabled: false
+environment: dev
+redis:
+  enabled: false
+  host: "redis://redis-master.common.svc.cluster.local"
+tracing:
+  enabled: false
+  endpoint: "http://observability-zws-dev-observability-alloy.observability.svc.cluster.local:4317"
+
+kubeUtils:
+  image:
+    name: ghcr.io/zama-ai/security-hub/infra/kube-utils
+    tag: v0.4.3
+    pullPolicy: Always
+
+socat:
+  image:
+    name: alpine/socat
+    tag: latest
+rustLog: info
+kyverno:
+  enabled: false
+kmsInit:
+  enabled: false
+podSecurityContext:
+  # To set when the image will support non root user
+  runAsUser: 10003
+  runAsGroup: 10002
+  fsGroup: 10002
+  runAsNonRoot: true
+
+minio:
+  enabled: true
+  endpoint: "http://minio:9000"
+  username: kms-access-key-id
+  password: kms-secret-access-key
