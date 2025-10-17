@@ -56,6 +56,7 @@ use crate::{
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
+                resharer::RealResharer,
                 session::{SessionPreparer, SessionPreparerManager},
                 user_decryptor::SecureNoiseFloodPartialDecryptor,
             },
@@ -186,6 +187,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
     RealContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
+    RealResharer<PubS, PrivS>,
 >;
 
 #[cfg(feature = "insecure")]
@@ -208,6 +210,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
     RealContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
+    RealResharer<PubS, PrivS>,
 >;
 
 #[allow(clippy::too_many_arguments)]
@@ -545,6 +548,19 @@ where
         crypto_storage.inner.clone(),
         security_module,
     );
+
+    let resharer = RealResharer {
+        base_kms: base_kms.new_instance().await,
+        crypto_storage: crypto_storage.clone(),
+        session_preparer_getter: session_preparer_getter.clone(),
+        tracker: Arc::clone(&tracker),
+        rate_limiter: rate_limiter.clone(),
+        // Provide reshare its own meta store, not tracked by the metastore status service
+        // as this is currently a temporary fix.
+        // Also not filled with existing keys as we will use the same key_id as the DKG one
+        // for reshared key (so the meta store has to be empty for that key id)
+        reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+    };
     // Update backup vault if it exists
     // This ensures that all files in the private storage are also in the backup vault
     // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
@@ -564,6 +580,7 @@ where
         insecure_crs_generator,
         context_manager,
         backup_operator,
+        resharer,
         session_preparer_getter,
         Arc::clone(&tracker),
         thread_core_health_reporter,
