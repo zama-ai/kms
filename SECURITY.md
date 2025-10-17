@@ -8,7 +8,7 @@ Currently only v0.12.0 or newer is supported.
 
 ## Reporting a Vulnerability
 
-If you find a security-related bug in this project, we kindly ask you for responsible disclosure and for giving us
+If you find a security-related bug in this project, we kindly ask you to responsibly disclose it and give us
 appropriate time to react, analyze and develop a fix to mitigate the found security vulnerability.
 
 Please report any vulnerability privately using the [GitHub security advisory report](https://github.com/zama-ai/kms/security/advisories/new).
