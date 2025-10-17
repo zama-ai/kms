@@ -12,7 +12,7 @@ members = [
 ]
 
 # The backward-compatibility modules are excluded from the workspace to avoid dependency conflicts.
-# 
+#
 # backward-compatibility/                - Test loading/execution logic with current dependencies
 # backward-compatibility/generate-v0.11.0 - Data generation for v0.11.0 with old KMS version dependencies
 # backward-compatibility/generate-v0.11.1 - Data generation for v0.11.1 with old KMS version dependencies
@@ -31,7 +31,7 @@ authors = ["Zama"]
 publish = true
 edition = "2021"
 license = "BSD-3-Clause-Clear"
-version = "0.12.0"
+version = "0.12.1"
 
 [workspace.dependencies]
 # ⚠️ WORKSPACE DEPENDENCY MANAGEMENT BEST PRACTICES ⚠️
