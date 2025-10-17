@@ -1,4 +1,7 @@
 use crate::backup::custodian::DSEP_BACKUP_CUSTODIAN;
+use crate::cryptography::internal_crypto_types::{
+    Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
+};
 use crate::engine::utils::query_key_material_availability;
 use crate::{
     anyhow_error_and_log,
@@ -8,7 +11,6 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         attestation::{SecurityModule, SecurityModuleProxy},
-        backup_pke::{self, BackupPrivateKey},
         internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature},
         signcryption::internal_verify_sig,
     },
@@ -56,7 +58,7 @@ pub struct RealBackupOperator<
     crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     security_module: Option<Arc<SecurityModuleProxy>>,
     // Ephemeral decryption key only set and used during custodian based backup recovery
-    ephemeral_dec_key: Arc<Mutex<Option<BackupPrivateKey>>>,
+    ephemeral_dec_key: Arc<Mutex<Option<UnifiedPrivateEncKey>>>,
 }
 
 impl<PubS, PrivS> RealBackupOperator<PubS, PrivS>
@@ -85,10 +87,13 @@ where
         &self,
         backup_id: RequestId,
         recovery_request: RecoveryRequestPayload,
-    ) -> anyhow::Result<(RecoveryRequest, BackupPrivateKey)> {
+    ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey)> {
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
-        let (backup_pub_key, backup_priv_key) = backup_pke::keygen(&mut rng)?;
+        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (backup_priv_key, backup_pub_key) = enc
+            .keygen()
+            .map_err(|e| anyhow::anyhow!("Failure in ephemeral key generation for backup: {e}"))?;
         let verification_key: PublicSigKey = (*self.base_kms.sig_key).clone().into();
         let mut cts = HashMap::new();
         for (cur_cus_role, cur_cus_ct) in recovery_request.cts {
@@ -98,7 +103,7 @@ where
             // Sanity check that public data has not been corrupted since we constructed it during custodian init
             internal_verify_sig(
                 &DSEP_BACKUP_RECOVERY,
-                &cur_cus_ct.ciphertext,
+                &cur_cus_ct.ciphertext.cipher,
                 &signature,
                 &verification_key,
             )?;
@@ -136,6 +141,7 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 {
+    // TODO is this method still needed
     async fn get_operator_public_key(
         &self,
         _request: Request<Empty>,
@@ -324,7 +330,7 @@ where
                                 format!("Failed to verify the backup decryption request: {e}"),
                             )
                         })?;
-                        let backup_dec_key: BackupPrivateKey = safe_deserialize(std::io::Cursor::new(&serialized_dec_key), SAFE_SER_SIZE_LIMIT).map_err(|e| {
+                        let backup_dec_key: UnifiedPrivateEncKey = safe_deserialize(std::io::Cursor::new(&serialized_dec_key), SAFE_SER_SIZE_LIMIT).map_err(|e| {
                             Status::new(
                                 tonic::Code::Internal,
                                 format!("Failed to deserialize backup decryption key: {e}"),
@@ -754,7 +760,7 @@ mod tests {
     use super::*;
     use crate::{
         backup::custodian::{CustodianSetupMessagePayload, InternalCustodianContext, HEADER},
-        cryptography::{backup_pke::keygen, internal_crypto_types::gen_sig_keys},
+        cryptography::internal_crypto_types::gen_sig_keys,
         engine::base::derive_request_id,
     };
     use aes_prng::AesRng;
@@ -768,7 +774,8 @@ mod tests {
     fn dummy_recovery_material(threshold: u32) -> RecoveryValidationMaterial {
         let mut rng = AesRng::seed_from_u64(0);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let (enc_key, _dec_key) = keygen(&mut rng).unwrap();
+        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (_, enc_key) = enc.keygen().unwrap();
         let backup_id = derive_request_id("test").unwrap();
         let commitments = BTreeMap::new();
         // Dummy payload; but needs to be a properly serialized payload

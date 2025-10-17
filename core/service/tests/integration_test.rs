@@ -574,9 +574,8 @@ mod kms_custodian_binary_tests {
             seed_phrase::custodian_from_seed_phrase,
             KMS_CUSTODIAN, SEED_PHRASE_DESC,
         },
-        cryptography::{
-            backup_pke::{self, BackupPrivateKey},
-            internal_crypto_types::gen_sig_keys,
+        cryptography::internal_crypto_types::{
+            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
         },
         engine::base::derive_request_id,
         util::file_handling::{safe_read_element_versioned, safe_write_element_versioned},
@@ -780,8 +779,8 @@ mod kms_custodian_binary_tests {
     ) -> (
         RecoveryValidationMaterial,
         Operator,
-        BackupPrivateKey,
-        BackupPrivateKey,
+        UnifiedPrivateEncKey,
+        UnifiedPrivateEncKey,
     ) {
         let request_path = root_path.join(format!(
             "operator-{operator_role}{MAIN_SEPARATOR}{backup_id}-request.bin"
@@ -793,7 +792,8 @@ mod kms_custodian_binary_tests {
         let mut rng = AesRng::seed_from_u64(40);
         // Note that in the actual deployment, the operator keys are generated before the encryption keys
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (ephemeral_pub_key, ephemeral_priv_key) = backup_pke::keygen(&mut rng).unwrap();
+        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (ephemeral_priv_key, ephemeral_pub_key) = enc.keygen().unwrap();
         let operator: Operator = Operator::new(
             operator_role,
             setup_msgs.clone(),
@@ -802,7 +802,7 @@ mod kms_custodian_binary_tests {
             setup_msgs.len(),
         )
         .unwrap();
-        let (backup_pke, backup_ske) = backup_pke::keygen(&mut rng).unwrap();
+        let (backup_ske, backup_pke) = enc.keygen().unwrap();
         let (ct_map, commitments) = operator
             .secret_share_and_encrypt(
                 &mut rng,
@@ -860,7 +860,7 @@ mod kms_custodian_binary_tests {
         operator: &Operator,
         recovery_material: &RecoveryValidationMaterial,
         backup_id: RequestId,
-        dec_key: &BackupPrivateKey,
+        dec_key: &UnifiedPrivateEncKey,
     ) -> Vec<u8> {
         let mut outputs = Vec::new();
         for custodian_index in 1..=amount_custodians {

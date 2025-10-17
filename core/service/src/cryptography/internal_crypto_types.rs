@@ -67,7 +67,7 @@ pub enum UnifiedPublicEncKeyVersioned {
     V0(UnifiedPublicEncKey),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedPublicEncKeyVersioned)]
 #[expect(clippy::large_enum_variant)]
 pub enum UnifiedPublicEncKey {
@@ -163,6 +163,13 @@ impl UnifiedPublicEncKey {
 // uses to encrypt its payload
 // The only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys
 pub struct PublicEncKey<C: KemCore>(pub(crate) C::EncapsulationKey);
+
+impl<C: KemCore> Eq for PublicEncKey<C> {}
+impl<C: KemCore> PartialEq for PublicEncKey<C> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_bytes().as_bytes() == other.0.as_bytes().as_bytes()
+    }
+}
 
 impl<C: KemCore> Serialize for PublicEncKey<C> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -814,12 +821,16 @@ pub enum UnifiedCipherVersioned {
     V0(UnifiedCipher),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedCipherVersioned)]
 pub struct UnifiedCipher {
     // The safe_serialization of the ciphertext specified by the encryption_type
     pub cipher: Vec<u8>,
     pub encryption_type: EncryptionSchemeType,
+}
+
+impl Named for UnifiedCipher {
+    const NAME: &'static str = "signcryption::UnifiedCipher";
 }
 
 impl UnifiedCipher {
@@ -903,7 +914,7 @@ pub enum UnifiedSigncryptionVersioned {
 #[versionize(UnifiedSigncryptionVersioned)]
 pub struct UnifiedSigncryption {
     pub payload: Vec<u8>,
-    pub encryption_type: EncryptionSchemeType,
+    pub encryption_type: EncryptionSchemeType, // TODO do we need any future validation for downgrade attacks, and is it fine to fail if meta data is incorrect? (Should be)
     pub signing_type: SigningSchemeType,
 }
 impl UnifiedSigncryption {
@@ -985,6 +996,7 @@ impl UnifiedDesigncryptionKey {
     }
 }
 
+// TODO should just be for tests
 /// Convinence type for efficiency
 #[derive(Clone, Debug)]
 pub struct UnifiedSigncryptionKeyPair<'a> {

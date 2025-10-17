@@ -7,7 +7,6 @@ cfg_if::cfg_if! {
         use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
         use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
         use crate::consts::SAFE_SER_SIZE_LIMIT;
-        use crate::cryptography::backup_pke::BackupPrivateKey;
         use crate::cryptography::internal_crypto_types::PrivateSigKey;
         use crate::engine::base::INSECURE_PREPROCESSING_ID;
         use crate::util::key_setup::test_tools::purge_priv;
@@ -622,7 +621,7 @@ async fn emulate_custodian(
         outputs_for_operators.insert(idx, Vec::new());
     }
     for (cur_idx, cur_mnemonic) in mnemonics.iter().enumerate() {
-        let custodian: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian: Custodian =
             custodian_from_seed_phrase(cur_mnemonic, Role::indexed_from_zero(cur_idx)).unwrap();
         for cur_recovery_req in &recovery_requests {
             let pub_storage = FileStorage::new(

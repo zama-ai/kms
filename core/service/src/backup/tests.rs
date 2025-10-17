@@ -5,9 +5,9 @@ use crate::{
         operator::{InnerOperatorBackupOutput, RecoveryValidationMaterial},
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
-    cryptography::{
-        backup_pke::{self, BackupPrivateKey, BackupPublicKey},
-        internal_crypto_types::{gen_sig_keys, PublicSigKey},
+    cryptography::internal_crypto_types::{
+        gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, PublicSigKey,
+        UnifiedPrivateEncKey, UnifiedPublicEncKey,
     },
     engine::base::derive_request_id,
 };
@@ -32,16 +32,10 @@ fn operator_setup() {
     let custodians: Vec<_> = (0..custodian_count)
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
-            let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
-            custodian::Custodian::new(
-                custodian_role,
-                signing_key,
-                verification_key,
-                private_key,
-                public_key,
-            )
-            .unwrap()
+            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+            let (dec_key, enc_key) = enc.keygen().unwrap();
+            custodian::Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
         })
         .collect();
     let custodian_messages: Vec<_> = custodians
@@ -105,16 +99,10 @@ fn custodian_reencrypt() {
     let custodians: Vec<_> = (0..custodian_count)
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
-            let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
-            custodian::Custodian::new(
-                custodian_role,
-                signing_key,
-                verification_key,
-                private_key,
-                public_key,
-            )
-            .unwrap()
+            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+            let (dec_key, enc_key) = enc.keygen().unwrap();
+            custodian::Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
         })
         .collect();
     let custodian_messages: Vec<_> = custodians
@@ -161,14 +149,15 @@ fn custodian_reencrypt() {
         .collect::<Vec<_>>();
 
     let verification_key = operators[0].verification_key();
-    let (ephemeral_enc_key, _ephemeral_dec_key) = backup_pke::keygen(&mut rng).unwrap();
+    let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+    let (_ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
 
     // tweak the ciphertext, so that signature verification fails
     {
         let operator_role = Role::indexed_from_zero(0);
         let mut bad_cts = cts.clone();
         if let Some(z) = bad_cts[0].0.get_mut(&operator_role) {
-            z.ciphertext[0] ^= 1;
+            z.ciphertext.cipher[0] ^= 1;
         }
 
         let err = custodians[0]
@@ -406,7 +395,8 @@ fn full_flow_malicious_custodian_init() {
             custodian_count,
         )
         .unwrap();
-        let (_backup_enc_key, backup_priv_key) = backup_pke::keygen(&mut rng).unwrap();
+        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (backup_priv_key, _backup_enc_key) = enc.keygen().unwrap();
         let res = operator.secret_share_and_encrypt(
             &mut rng,
             &bc2wrap::serialize(&backup_priv_key).unwrap(),
@@ -538,7 +528,7 @@ fn full_flow_malicious_operator() {
             .unwrap()
             .clone();
         first_backup.iter_mut().for_each(|(_, v)| {
-            v.ciphertext[0] ^= 1;
+            v.ciphertext.cipher[0] ^= 1;
         });
         let _ = payload_for_custodians_malicious.insert(
             Role::indexed_from_one(1),
@@ -596,12 +586,12 @@ fn operator_handle_init(
     custodian_threshold: usize,
     custodian_count: usize,
 ) -> (
-    BTreeMap<Role, (Operator, RecoveryValidationMaterial, BackupPrivateKey)>, // Operator role to (Operator, validation material, ephemeral decryption key)
+    BTreeMap<Role, (Operator, RecoveryValidationMaterial, UnifiedPrivateEncKey)>, // Operator role to (Operator, validation material, ephemeral decryption key)
     BTreeMap<
         Role,
         (
             PublicSigKey,
-            BackupPublicKey,
+            UnifiedPublicEncKey,
             BTreeMap<Role, InnerOperatorBackupOutput>,
         ),
     >, // Operator role to verf key, ephemeral key and backup ct map
@@ -628,11 +618,12 @@ fn operator_handle_init(
             custodian_count,
         )
         .unwrap();
-        let (backup_enc_key, backup_priv_key) = backup_pke::keygen(rng).unwrap();
+        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, rng);
+        let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let (cur_op_output, cur_comm) = operator
             .secret_share_and_encrypt(
                 rng,
-                &bc2wrap::serialize(&backup_priv_key).unwrap(),
+                &bc2wrap::serialize(&backup_dec_key).unwrap(),
                 *backup_id,
             )
             .unwrap();
@@ -646,7 +637,7 @@ fn operator_handle_init(
         .unwrap();
         operators.insert(
             operator_role,
-            (operator, validation_material, backup_priv_key),
+            (operator, validation_material, backup_dec_key),
         );
         payload_for_custodians.insert(
             operator_role,
@@ -664,7 +655,7 @@ fn custodian_recover(
         Role,
         (
             PublicSigKey,
-            BackupPublicKey,
+            UnifiedPublicEncKey,
             BTreeMap<Role, InnerOperatorBackupOutput>,
         ),
     >, // Operator role to verf key, ephemeral key and backup ct map
@@ -700,7 +691,7 @@ fn custodian_recover(
 
 fn operator_recover(
     reencryptions: &BTreeMap<Role, BTreeMap<Role, InternalCustodianRecoveryOutput>>,
-    operators: &BTreeMap<Role, (Operator, RecoveryValidationMaterial, BackupPrivateKey)>,
+    operators: &BTreeMap<Role, (Operator, RecoveryValidationMaterial, UnifiedPrivateEncKey)>,
     backup_id: &RequestId,
 ) -> BTreeMap<Role, Vec<u8>> {
     let mut res = BTreeMap::new();

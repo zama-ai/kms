@@ -2,8 +2,10 @@ use crate::anyhow_error_and_log;
 use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{Operator, RecoveryRequestPayload, RecoveryValidationMaterial};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::backup_pke::{self, BackupPrivateKey, BackupPublicKey};
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::cryptography::internal_crypto_types::{
+    Encryption, EncryptionScheme, EncryptionSchemeType, PrivateSigKey, UnifiedPrivateEncKey,
+    UnifiedPublicEncKey,
+};
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::ThresholdFheKeys;
@@ -195,13 +197,14 @@ where
 
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric keys for the operator to use to encrypt the backup
-        let (backup_enc_key, backup_priv_key) = backup_pke::keygen(&mut rng)?;
+        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (backup_dec_key, backup_enc_key) = enc.keygen()?;
         let inner_context = InternalCustodianContext::new(context, backup_enc_key.clone())?;
         let (recovery_request_payload, commitments) = gen_recovery_request_payload(
             &mut rng,
             &self.base_kms.sig_key,
             backup_enc_key.clone(),
-            backup_priv_key,
+            backup_dec_key,
             &inner_context,
             self.my_role,
         )
@@ -303,8 +306,8 @@ where
 async fn gen_recovery_request_payload(
     rng: &mut AesRng,
     sig_key: &PrivateSigKey,
-    backup_enc_key: BackupPublicKey,
-    backup_priv_key: BackupPrivateKey,
+    backup_enc_key: UnifiedPublicEncKey,
+    backup_priv_key: UnifiedPrivateEncKey,
     custodian_context: &InternalCustodianContext,
     my_role: Role,
 ) -> anyhow::Result<(RecoveryRequestPayload, RecoveryValidationMaterial)> {
@@ -494,13 +497,14 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(40);
         let backup_id = RequestId::new_random(&mut rng);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let (ephemeral_enc_key, ephemeral_dec_key) = backup_pke::keygen(&mut rng).unwrap();
+        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
         let mnemonic = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
-        let custodian1: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian1: Custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(1)).unwrap();
-        let custodian2: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian2: Custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(2)).unwrap();
-        let custodian3: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian3: Custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(3)).unwrap();
         let setup_msg_1 = custodian1
             .generate_setup_message(&mut rng, "Custodian-1".to_string())

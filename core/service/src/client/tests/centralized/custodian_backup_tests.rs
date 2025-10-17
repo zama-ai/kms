@@ -8,7 +8,6 @@ use crate::client::tests::centralized::custodian_context_tests::run_new_cus_cont
 use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized;
 use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
-use crate::cryptography::backup_pke::BackupPrivateKey;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::util::key_setup::test_tools::{purge_backup, read_backup_files};
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
@@ -379,7 +378,7 @@ async fn emulate_custodian(
     let backup_id = recovery_request.backup_id.clone().unwrap();
     let mut cus_outputs = Vec::new();
     for (cur_idx, cur_mnemonic) in mnemonics.iter().enumerate() {
-        let custodian: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian: Custodian =
             custodian_from_seed_phrase(cur_mnemonic, Role::indexed_from_zero(cur_idx)).unwrap();
         let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
         let verf_key = read_versioned_at_request_id(

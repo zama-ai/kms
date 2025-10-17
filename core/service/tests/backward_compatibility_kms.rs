@@ -24,9 +24,9 @@ use kms_lib::{
         custodian::{Custodian, InternalCustodianSetupMessage},
         operator::{InnerOperatorBackupOutput, Operator},
     },
-    cryptography::{
-        backup_pke,
-        internal_crypto_types::{gen_sig_keys, PrivateSigKey, PublicSigKey},
+    cryptography::internal_crypto_types::{
+        gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, PrivateSigKey,
+        PublicSigKey,
     },
     engine::{
         base::{KeyGenMetadata, KmsFheKeyHandles},
@@ -259,16 +259,11 @@ fn test_custodian_setup_message(
 
     let mut rng = AesRng::seed_from_u64(test.seed);
     let name = "Testname".to_string();
-    let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-    let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
-    let custodian = Custodian::new(
-        Role::indexed_from_zero(0),
-        signing_key,
-        verification_key,
-        private_key,
-        public_key,
-    )
-    .unwrap();
+    let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+    let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+    let (dec_key, enc_key) = enc.keygen().unwrap();
+    let custodian =
+        Custodian::new(Role::indexed_from_zero(0), signing_key, enc_key, dec_key).unwrap();
     let mut new_custodian_setup_message = custodian.generate_setup_message(&mut rng, name).unwrap();
 
     // the timestamp will never match, so we modify it manually
@@ -300,16 +295,10 @@ fn test_operator_backup_output(
     let custodians: Vec<_> = (0..test.custodian_count)
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
-            let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
-            Custodian::new(
-                custodian_role,
-                signing_key,
-                verification_key,
-                private_key,
-                public_key,
-            )
-            .unwrap()
+            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+            let (dec_key, enc_key) = enc.keygen().unwrap();
+            Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
         })
         .collect();
     let custodian_messages: Vec<_> = custodians
