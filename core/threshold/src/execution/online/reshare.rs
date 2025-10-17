@@ -377,6 +377,13 @@ where
     // Broadcast our part of the resharing if we have keys to reshare,
     // If we have nothing to reshare, we just broadcast Bot
     let broadcast_value = if let Some(input_shares) = input_shares {
+        if input_shares.len() != expected_input_len {
+            return Err(anyhow_error_and_log(format!(
+                "Expected the amount of input shares; {}, and expected_input_len; {}, to be equal",
+                expected_input_len,
+                input_shares.len()
+            )));
+        }
         let vj = opened
             .iter()
             .zip_eq(input_shares.clone())
