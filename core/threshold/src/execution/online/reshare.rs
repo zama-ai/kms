@@ -29,7 +29,7 @@ use crate::{
             },
         },
     },
-    networking::value::BroadcastValue,
+    networking::value::{BroadcastValue, BroadcastValueInner},
 };
 use itertools::{izip, Itertools};
 use std::collections::HashMap;
@@ -393,9 +393,9 @@ where
 
         // We are resharing to the same set,
         // so we go straight to the sync-broadcast
-        BroadcastValue::RingVector(vj)
+        vj.into()
     } else {
-        BroadcastValue::Bot
+        BroadcastValue::new(BroadcastValueInner::Bot)
     };
 
     let broadcast_result = SyncReliableBroadcast::default()
@@ -405,9 +405,9 @@ where
     // compute v_{i,j} - <r_{i,j}>^{S_2}_k, k = 0,1,...,n1-1
     let mut s_share_vec = vec![vec![]; expected_input_len];
     for (sender, msg) in broadcast_result {
-        let vs = if let BroadcastValue::RingVector(vs) = msg {
+        let vs = if let BroadcastValueInner::RingVector(vs) = msg.inner {
             vs
-        } else if let BroadcastValue::Bot = msg {
+        } else if let BroadcastValueInner::Bot = msg.inner {
             tracing::warn!("During resharing, received Bot from {}", sender);
             Vec::new()
         } else {

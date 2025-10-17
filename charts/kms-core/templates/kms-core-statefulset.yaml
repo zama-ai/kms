@@ -552,10 +552,6 @@ spec:
                   key: {{ .Values.kmsCore.envFrom.configmap.key.thresholdId }}
             {{- end }}
             {{- end }}
-            - name: TOKIO_WORKER_THREADS
-              value: {{ .Values.kmsCore.thresholdMode.tokioWorkerThreads | quote }}
-            - name: RAYON_NUM_THREADS
-              value: {{ .Values.kmsCore.thresholdMode.rayonNumThreads | quote }}
             - name: "NO_COLOR"
               value: "true"
             - name: RUN_MODE

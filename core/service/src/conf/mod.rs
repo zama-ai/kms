@@ -6,7 +6,7 @@ use observability::{
     telemetry::{init_telemetry, SdkMeterProvider, SdkTracerProvider},
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{cmp, path::PathBuf};
 use strum_macros::EnumIs;
 use url::Url;
 use validator::{Validate, ValidationErrors};
@@ -33,8 +33,33 @@ pub struct CoreConfig {
     pub rate_limiter_conf: Option<RateLimiterConfig>,
     #[validate(nested)]
     pub threshold: Option<ThresholdPartyConf>,
+    #[validate(nested)]
+    pub internal_config: Option<InternalConfig>,
     #[cfg(feature = "insecure")]
     pub mock_enclave: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize, Validate, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct InternalConfig {
+    #[validate(range(min = 1))]
+    pub num_tokio_threads: usize,
+    #[validate(range(min = 1))]
+    pub num_rayon_threads: usize,
+}
+
+impl Default for InternalConfig {
+    fn default() -> Self {
+        let num_threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        let num_tokio_threads = num_threads.div_ceil(8);
+        let num_rayon_threads = cmp::max(1, num_threads.saturating_sub(num_tokio_threads));
+        InternalConfig {
+            num_tokio_threads,
+            num_rayon_threads,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Validate, Clone, Debug)]

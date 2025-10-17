@@ -1,10 +1,5 @@
 use dashmap::DashMap;
-use std::{
-    collections::HashMap,
-    net::IpAddr,
-    str::FromStr,
-    sync::{Arc, OnceLock},
-};
+use std::{collections::HashMap, net::IpAddr, str::FromStr, sync::Arc};
 
 use super::gen::gnetworking_client::GnetworkingClient;
 use backoff::exponential::ExponentialBackoff;
@@ -377,7 +372,7 @@ pub struct NetworkSession {
     // If Network mode is sync, we need to keep track of the values below to make sure
     // we are within time bound
     pub(crate) conf: OptionConfigWrapper,
-    pub(crate) init_time: OnceLock<Instant>,
+    pub(crate) init_time: RwLock<Option<Instant>>,
     pub(crate) current_network_timeout: RwLock<Duration>,
     pub(crate) next_network_timeout: RwLock<Duration>,
     pub(crate) max_elapsed_time: RwLock<Duration>,
@@ -488,7 +483,9 @@ impl Networking for NetworkSession {
 
         *max_elapsed_time += *current_round_timeout;
 
-        //Update next round timeout
+        // Update next round timeout
+        // most of the time it might not change
+        // but this is needed because next_round_timeout might've been updated
         *current_round_timeout = *next_round_timeout;
 
         //Update round counter
@@ -498,17 +495,31 @@ impl Networking for NetworkSession {
             *net_round,
             self.owner,
             *current_round_timeout
-        )
+        );
     }
 
-    ///Used to compute the timeout in network functions
-    async fn get_timeout_current_round(&self) -> Instant {
-        let init_time = self.init_time.get_or_init(Instant::now);
+    ///Used to compute the deadline in network functions
+    async fn get_deadline_current_round(&self) -> Instant {
+        let mut init_time_guard = self.init_time.write().await;
+        let init_time = *(*init_time_guard).get_or_insert(Instant::now());
+
         let (max_elapsed_time, network_timeout) = (
             self.max_elapsed_time.read().await,
             self.current_network_timeout.read().await,
         );
-        *init_time + *network_timeout + *max_elapsed_time
+        init_time + *network_timeout + *max_elapsed_time
+    }
+
+    async fn get_timeout_current_round(&self) -> Duration {
+        *self.current_network_timeout.read().await
+    }
+
+    async fn reset_timeout(&self, init_time: Instant, elapsed_time: Duration) {
+        let mut init_time_guard = self.init_time.write().await;
+        *init_time_guard = Some(init_time);
+
+        let mut elapsed_time_guard = self.max_elapsed_time.write().await;
+        *elapsed_time_guard = elapsed_time;
     }
 
     async fn get_current_round(&self) -> usize {
@@ -589,7 +600,7 @@ mod tests {
         session_id::SessionId,
     };
     use std::collections::HashMap;
-    use std::sync::{Arc, OnceLock};
+    use std::sync::Arc;
     use std::time::Duration;
 
     #[tokio::test(flavor = "multi_thread")]
@@ -794,7 +805,7 @@ mod tests {
             num_byte_sent: RwLock::new(0),
             network_mode: crate::networking::NetworkMode::Async,
             conf: OptionConfigWrapper { conf: None },
-            init_time: OnceLock::new(),
+            init_time: RwLock::new(None),
             current_network_timeout: RwLock::new(Duration::from_secs(10)),
             next_network_timeout: RwLock::new(Duration::from_secs(10)),
             max_elapsed_time: RwLock::new(Duration::from_secs(0)),

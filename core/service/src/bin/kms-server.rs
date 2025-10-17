@@ -5,7 +5,7 @@ use k256::ecdsa::SigningKey;
 use kms_grpc::rpc_types::PubDataType;
 use kms_lib::{
     conf::{
-        init_conf_kms_core_telemetry,
+        init_conf, init_conf_kms_core_telemetry,
         threshold::{PeerConf, ThresholdPartyConf, TlsConf},
         CoreConfig,
     },
@@ -33,6 +33,7 @@ use std::{env, net::ToSocketAddrs, sync::Arc, thread};
 use threshold_fhe::{
     execution::runtime::party::Role,
     networking::tls::{build_ca_certs_map, AttestedVerifier},
+    thread_handles::init_rayon_thread_pool,
 };
 use tokio::net::TcpListener;
 use tokio_rustls::rustls::{
@@ -260,25 +261,47 @@ async fn build_tls_config(
     Ok((server_config, client_config))
 }
 
+fn main() -> anyhow::Result<()> {
+    let args = KmsArgs::parse();
+    let core_config = init_conf::<CoreConfig>(&args.config_file)?;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(
+            core_config
+                .internal_config
+                .unwrap_or_default()
+                .num_tokio_threads,
+        )
+        .build()?;
+    rt.block_on(main_exec())
+}
+
 /// Starts a KMS server.
 /// We support two execution modes, `centralized` or `threshold`, that have to be specified with the `mode` parameter in the configuration file.
 /// See the help page for additional details.
 /// Note that key material MUST exist when starting the server and be stored in the path specified by the configuration file.
 /// Please consult the `kms-gen-keys` binary for details on generating key material.
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main_exec() -> anyhow::Result<()> {
     let args = KmsArgs::parse();
     let (core_config, tracer_provider, meter_provider) =
         init_conf_kms_core_telemetry::<CoreConfig>(&args.config_file).await?;
 
+    // Initialize the rayon pool used inside MPC protocols
+    let num_rayon_threads = init_rayon_thread_pool(
+        core_config
+            .internal_config
+            .clone()
+            .unwrap_or_default()
+            .num_rayon_threads,
+    )
+    .await?;
+
     tracing::info!("Starting KMS Server with core config: {:?}", &core_config);
 
     tracing::info!(
-        "Multi-threading values: TOKIO_WORKER_THREADS: {:?}, tokio::num_workers: {}, RAYON_NUM_THREADS: {:?}, rayon::current_num_threads: {}, available_parallelism: {}.",
-        env::var_os("TOKIO_WORKER_THREADS").unwrap_or_else(|| "not set".into()),
+        "Multi-threading values: tokio::num_workers: {}, rayon_num_threads: {}, total_num_cpus: {}",
         tokio::runtime::Handle::current().metrics().num_workers(),
-        env::var_os("RAYON_NUM_THREADS").unwrap_or_else(||  "not set".into()),
-        rayon::current_num_threads(),
+        num_rayon_threads,
         thread::available_parallelism()?.get(),
     );
 

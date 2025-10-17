@@ -23,6 +23,7 @@ cfg_if::cfg_if! {
     use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
     use threshold_fhe::execution::runtime::party::Role;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+    use threshold_fhe::execution::tfhe_internals::test_feature::to_hl_client_key;
     use tokio::task::JoinSet;
     use tonic::transport::Channel;
 }}
@@ -35,12 +36,15 @@ use crate::consts::TEST_PARAM;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 #[cfg(feature = "slow_tests")]
 use crate::util::rate_limiter::RateLimiterConfig;
+use alloy_dyn_abi::Eip712Domain;
+use kms_grpc::kms::v1::KeyGenResult;
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use std::path::Path;
 #[cfg(feature = "slow_tests")]
 use std::sync::Arc;
 #[cfg(feature = "slow_tests")]
 use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
+use tonic::{Response, Status};
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 #[allow(dead_code)]
@@ -61,7 +65,7 @@ impl TestKeyGenResult {
         }
     }
 
-    fn get_standard(self) -> (tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey) {
+    pub(crate) fn get_standard(self) -> (tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey) {
         match self {
             TestKeyGenResult::DecompressionOnly(_) => panic!("expected to find standard"),
             TestKeyGenResult::Standard(inner) => inner,
@@ -94,7 +98,8 @@ async fn test_insecure_dkg(#[case] amount_parties: usize) {
         None,
         0,
     )
-    .await;
+    .await
+    .0;
     _ = keys.clone().get_standard();
 
     let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
@@ -133,7 +138,8 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
         None,
         0,
     )
-    .await;
+    .await
+    .0;
 
     // check that we have the new mod switch key
     let (client_key, _, server_key) = keys.clone().get_standard();
@@ -204,7 +210,7 @@ pub(crate) async fn run_threshold_keygen(
     insecure: bool,
     data_root_path: Option<&Path>,
     expected_num_parties_crashed: usize,
-) -> TestKeyGenResult {
+) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
     let keyset_config = match (decompression_keygen, sns_compression_keygen) {
         (None, None) => None,
         (None, Some(_overwrite_keyset_id)) => Some(KeySetConfig {
@@ -316,10 +322,7 @@ async fn wait_for_keygen_result(
     decompression_keygen: bool,
     data_root_path: Option<&Path>,
     expected_num_parties_crashed: usize,
-) -> TestKeyGenResult {
-    use threshold_fhe::execution::{
-        runtime::party::Role, tfhe_internals::test_feature::to_hl_client_key,
-    };
+) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
     let domain = dummy_domain();
 
     let mut finished = Vec::new();
@@ -377,6 +380,7 @@ async fn wait_for_keygen_result(
     assert_eq!(finished.len(), kms_clients.len());
 
     let mut out = None;
+    let mut all_private_keys = None;
     if decompression_keygen {
         let mut serialized_ref_decompression_key = Vec::new();
         for (idx, kg_res) in finished.into_iter() {
@@ -404,77 +408,18 @@ async fn wait_for_keygen_result(
             }
         }
     } else {
-        let mut serialized_ref_pk = Vec::new();
-        let mut serialized_ref_server_key = Vec::new();
-        let mut all_threshold_fhe_keys = HashMap::new();
-        let mut final_public_key = None;
-        let mut final_server_key = None;
-
-        for (idx, kg_res) in finished.into_iter() {
-            let role = Role::indexed_from_one(idx as usize);
-            let kg_res = kg_res.unwrap().into_inner();
-            let storage = FileStorage::new(data_root_path, StorageType::PUB, Some(role)).unwrap();
-
-            let (server_key, public_key) = internal_client
-                .retrieve_server_key_and_public_key(
-                    &req_preproc,
-                    &req_get_keygen,
-                    &kg_res,
-                    &domain,
-                    &storage,
-                )
-                .await
-                .inspect_err(|e| tracing::error!("error retrieving server and public key: {e}"))
-                .unwrap()
-                .unwrap();
-
-            if role.one_based() == 1 {
-                serialized_ref_pk = bc2wrap::serialize(&public_key).unwrap();
-                serialized_ref_server_key = bc2wrap::serialize(&server_key).unwrap();
-            } else {
-                assert_eq!(serialized_ref_pk, bc2wrap::serialize(&public_key).unwrap());
-                assert_eq!(
-                    serialized_ref_server_key,
-                    bc2wrap::serialize(&server_key).unwrap()
-                );
-            }
-
-            let key_id =
-                RequestId::from_str(kg_res.request_id.unwrap().request_id.as_str()).unwrap();
-            let priv_storage =
-                FileStorage::new(data_root_path, StorageType::PRIV, Some(role)).unwrap();
-            let mut threshold_fhe_keys: ThresholdFheKeys = priv_storage
-                .read_data(&key_id, &PrivDataType::FheKeyInfo.to_string())
-                .await
-                .unwrap();
-            // we do not need the sns key to reconstruct, remove it to save memory
-            threshold_fhe_keys.sns_key = None;
-            all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
-            if final_public_key.is_none() {
-                final_public_key = Some(public_key);
-            }
-            if final_server_key.is_none() {
-                final_server_key = Some(server_key);
-            }
-        }
-
-        let threshold = (kms_clients.len() + expected_num_parties_crashed).div_ceil(3) - 1;
-        let (lwe_sk, glwe_sk, sns_glwe_sk, sns_compression_sk) =
-            try_reconstruct_shares(internal_client.params, threshold, all_threshold_fhe_keys);
-        out = Some(TestKeyGenResult::Standard((
-            to_hl_client_key(
-                &internal_client.params,
-                lwe_sk,
-                glwe_sk,
-                None,
-                None,
-                Some(sns_glwe_sk),
-                sns_compression_sk,
-            )
-            .unwrap(),
-            final_public_key.unwrap(),
-            final_server_key.unwrap(),
-        )));
+        let res = verify_keygen_responses(
+            finished,
+            data_root_path,
+            internal_client,
+            &req_preproc,
+            &req_get_keygen,
+            &domain,
+            kms_clients.len() + expected_num_parties_crashed,
+        )
+        .await
+        .unwrap();
+        (out, all_private_keys) = (Some(res.0), Some(res.1));
     }
 
     if !insecure {
@@ -500,7 +445,7 @@ async fn wait_for_keygen_result(
             assert_eq!(response.unwrap_err().code(), tonic::Code::NotFound);
         }
     }
-    out.unwrap()
+    (out.unwrap(), all_private_keys)
 }
 
 /// __NOTE__: Parties that are crashed during preproc will also be crashed during keygen
@@ -573,7 +518,8 @@ pub(crate) async fn run_threshold_decompression_keygen(
         None,
         0,
     )
-    .await;
+    .await
+    .0;
     let (client_key_1, _public_key_1, server_key_1) = keys1.get_standard();
 
     if !insecure {
@@ -602,7 +548,8 @@ pub(crate) async fn run_threshold_decompression_keygen(
         None,
         0,
     )
-    .await;
+    .await
+    .0;
     let (client_key_2, _public_key_2, _server_key_2) = keys2.get_standard();
 
     // We always need to run preproc for the last keygen
@@ -632,6 +579,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         0,
     )
     .await
+    .0
     .get_decompression_only();
 
     for handle in kms_servers.into_values() {
@@ -703,7 +651,8 @@ async fn run_threshold_sns_compression_keygen(
         None,
         0,
     )
-    .await;
+    .await
+    .0;
     let (client_key_2, _public_key_2, server_key_2) = keys2.get_standard();
 
     for handle in kms_servers.into_values() {
@@ -758,6 +707,7 @@ pub(crate) async fn preproc_and_keygen(
         crsgen: 1,
         preproc: 100,
         keygen: 100,
+        reshare: 1,
     };
 
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
@@ -857,6 +807,7 @@ pub(crate) async fn preproc_and_keygen(
                         expected_num_parties_crashed,
                     )
                     .await
+                    .0
                 }
             });
         }
@@ -924,7 +875,8 @@ pub(crate) async fn preproc_and_keygen(
                 None,
                 expected_num_parties_crashed,
             )
-            .await;
+            .await
+            .0;
             // blockchain parameters always have mod switch noise reduction key
             let (client_key, _, server_key) = keyset.get_standard();
             crate::client::key_gen::tests::check_conformance(server_key, client_key);
@@ -960,7 +912,7 @@ pub(crate) async fn preproc_and_keygen(
 // issue: https://github.com/zama-ai/kms-core/issues/663
 #[cfg(feature = "slow_tests")]
 #[allow(clippy::too_many_arguments)]
-async fn run_preproc(
+pub(crate) async fn run_preproc(
     amount_parties: usize,
     parameter: FheParameter,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -1190,4 +1142,93 @@ fn try_reconstruct_shares(
         sns_glwe_sk,
         sns_compression_private_key,
     )
+}
+
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+pub(crate) async fn verify_keygen_responses(
+    finished: Vec<(u32, Result<Response<KeyGenResult>, Status>)>,
+    data_root_path: Option<&Path>,
+    internal_client: &Client,
+    req_preproc: &RequestId,
+    req_get_keygen: &RequestId,
+    domain: &Eip712Domain,
+    total_num_parties: usize,
+) -> Option<(TestKeyGenResult, HashMap<Role, ThresholdFheKeys>)> {
+    use itertools::Itertools;
+
+    let mut serialized_ref_pk = Vec::new();
+    let mut serialized_ref_server_key = Vec::new();
+    let mut all_threshold_fhe_keys = HashMap::new();
+    let mut final_public_key = None;
+    let mut final_server_key = None;
+
+    for (idx, kg_res) in finished.into_iter().sorted_by_key(|(idx, _)| *idx) {
+        let role = Role::indexed_from_one(idx as usize);
+        let kg_res = kg_res.unwrap().into_inner();
+        let storage = FileStorage::new(data_root_path, StorageType::PUB, Some(role)).unwrap();
+
+        let (server_key, public_key) = internal_client
+            .retrieve_server_key_and_public_key(
+                req_preproc,
+                req_get_keygen,
+                &kg_res,
+                domain,
+                &storage,
+            )
+            .await
+            .inspect_err(|e| tracing::error!("error retrieving server and public key: {e}"))
+            .unwrap()
+            .unwrap();
+
+        if role.one_based() == 1 {
+            serialized_ref_pk = bc2wrap::serialize(&public_key).unwrap();
+            serialized_ref_server_key = bc2wrap::serialize(&server_key).unwrap();
+        } else {
+            assert_eq!(serialized_ref_pk, bc2wrap::serialize(&public_key).unwrap());
+            assert_eq!(
+                serialized_ref_server_key,
+                bc2wrap::serialize(&server_key).unwrap()
+            );
+        }
+
+        let key_id = RequestId::from_str(kg_res.request_id.unwrap().request_id.as_str()).unwrap();
+        let priv_storage = FileStorage::new(data_root_path, StorageType::PRIV, Some(role)).unwrap();
+        let mut threshold_fhe_keys: ThresholdFheKeys = priv_storage
+            .read_data(&key_id, &PrivDataType::FheKeyInfo.to_string())
+            .await
+            .unwrap();
+        // we do not need the sns key to reconstruct, remove it to save memory
+        threshold_fhe_keys.sns_key = None;
+        all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
+        if final_public_key.is_none() {
+            final_public_key = Some(public_key);
+        }
+        if final_server_key.is_none() {
+            final_server_key = Some(server_key);
+        }
+    }
+
+    let threshold = total_num_parties.div_ceil(3) - 1;
+    let (lwe_sk, glwe_sk, sns_glwe_sk, sns_compression_sk) = try_reconstruct_shares(
+        internal_client.params,
+        threshold,
+        all_threshold_fhe_keys.clone(),
+    );
+    Some((
+        TestKeyGenResult::Standard((
+            to_hl_client_key(
+                &internal_client.params,
+                lwe_sk,
+                glwe_sk,
+                None,
+                None,
+                Some(sns_glwe_sk),
+                sns_compression_sk,
+            )
+            .unwrap(),
+            final_public_key.unwrap(),
+            final_server_key.unwrap(),
+        )),
+        all_threshold_fhe_keys,
+    ))
 }

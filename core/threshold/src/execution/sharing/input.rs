@@ -70,7 +70,7 @@ where
     } else {
         let networking = Arc::clone(session.network());
         let data = tokio::spawn(timeout_at(
-            session.network().get_timeout_current_round().await,
+            session.network().get_deadline_current_round().await,
             async move {
                 networking
                     .receive(&Role::indexed_from_one(input_party_id))

@@ -20,5 +20,6 @@ mod initiator;
 mod key_generator;
 mod preprocessor;
 mod public_decryptor;
+mod resharer;
 pub(crate) mod session;
 mod user_decryptor;

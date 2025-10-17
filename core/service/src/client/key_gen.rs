@@ -7,8 +7,8 @@ use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::kms::v1::{
-    FheParameter, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
-    KeySetAddedInfo, KeySetConfig,
+    FheParameter, InitiateResharingRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
+    KeyGenRequest, KeyGenResult, KeySetAddedInfo, KeySetConfig,
 };
 use kms_grpc::rpc_types::{
     alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
@@ -83,6 +83,26 @@ impl Client {
             request_id: Some((*request_id).into()),
             context_id: None,
             domain: Some(domain),
+            epoch_id: None,
+        })
+    }
+
+    pub fn reshare_request(
+        &self,
+        request_id: &RequestId,
+        key_id: &RequestId,
+        preproc_id: &RequestId,
+        param: Option<FheParameter>,
+        domain: &Eip712Domain,
+    ) -> anyhow::Result<InitiateResharingRequest> {
+        let domain = alloy_to_protobuf_domain(domain)?;
+        Ok(InitiateResharingRequest {
+            request_id: Some((*request_id).into()),
+            context_id: None,
+            key_id: Some((*key_id).into()),
+            key_parameters: param.unwrap_or_default().into(),
+            domain: Some(domain),
+            preproc_id: Some((*preproc_id).into()),
             epoch_id: None,
         })
     }

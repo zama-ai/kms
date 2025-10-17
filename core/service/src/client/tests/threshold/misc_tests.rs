@@ -293,6 +293,7 @@ async fn test_ratelimiter() {
         crsgen: 100,
         preproc: 1,
         keygen: 1,
+        reshare: 1,
     };
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(TEST_PARAM, 4, true, Some(rate_limiter_conf), None).await;
