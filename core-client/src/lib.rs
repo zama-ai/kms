@@ -597,6 +597,14 @@ pub struct RecoveryParameters {
     pub custodian_recovery_outputs: Vec<PathBuf>,
 }
 
+#[derive(Debug, Parser, Clone)]
+pub struct ReshareParameters {
+    // ID of the key to reshare
+    pub key_id: RequestId,
+    // ID of the preprocessing used to generate the key
+    pub preproc_id: RequestId,
+}
+
 #[derive(Debug, Subcommand, Clone)]
 pub enum CCCommand {
     PreprocKeyGen(NoParameters),
@@ -620,6 +628,7 @@ pub enum CCCommand {
     CustodianRecoveryInit(RecoveryInitParameters),
     CustodianBackupRecovery(RecoveryParameters),
     BackupRestore(NoParameters),
+    Reshare(ReshareParameters),
     DoNothing(NoParameters),
 }
 
@@ -1581,6 +1590,152 @@ async fn do_restore_from_backup(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+pub async fn do_reshare(
+    internal_client: &mut Client,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    rng: &mut AesRng,
+    cmd_conf: &CmdConfig,
+    cc_conf: &CoreClientConfig,
+    destination_prefix: &Path,
+    kms_addrs: &[alloy_primitives::Address],
+    num_parties: usize,
+    param: FheParameter,
+    key_id: RequestId,
+    preproc_id: RequestId,
+    max_retries: usize,
+) -> anyhow::Result<()> {
+    let request_id = RequestId::new_random(rng);
+    // Create the request
+    let request = internal_client.reshare_request(
+        &request_id,
+        &key_id,
+        &preproc_id,
+        Some(param),
+        &dummy_domain(),
+    )?;
+
+    // Send the request
+    let mut req_tasks = JoinSet::new();
+    for (party_id, ce) in core_endpoints.iter() {
+        let req_cloned = request.clone();
+        let mut cur_client = ce.clone();
+        let party_id = *party_id;
+        req_tasks.spawn(async move {
+            (
+                party_id,
+                cur_client
+                    .initiate_resharing(tonic::Request::new(req_cloned))
+                    .await,
+            )
+        });
+    }
+
+    let mut results = Vec::new();
+    while let Some(inner) = req_tasks.join_next().await {
+        let (party_id, result) = inner?;
+        let result = result?.into_inner();
+        assert_eq!(result.request_id, Some(request_id.into()));
+        results.push((party_id, result));
+    }
+
+    if cmd_conf.expect_all_responses {
+        assert_eq!(results.len(), num_parties); // check that we have responses from all parties
+    }
+
+    // Poll the result endpoint
+
+    let mut response_tasks = JoinSet::new();
+    for (party_id, ce) in core_endpoints.iter() {
+        let mut cur_client = ce.clone();
+
+        let party_id = *party_id;
+        response_tasks.spawn(async move {
+            let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
+                tonic::Request::new(request_id.into());
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+            ))
+            .await;
+            let mut response = cur_client.get_resharing_result(response_request).await;
+
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(
+                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                ))
+                .await;
+                let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
+                    tonic::Request::new(request_id.into());
+                response = cur_client.get_resharing_result(response_request).await;
+                ctr += 1;
+                if ctr >= max_retries {
+                    break;
+                }
+            }
+
+            (party_id, response)
+        });
+    }
+
+    let mut response_vec = Vec::new();
+    while let Some(response) = response_tasks.join_next().await {
+        let (party_id, resp) = response?;
+        let resp = resp?.into_inner();
+        assert_eq!(resp.request_id, Some(request_id.into()));
+        assert_eq!(resp.key_id, Some(key_id.into()));
+        assert_eq!(resp.preprocessing_id, Some(preproc_id.into()));
+        response_vec.push((party_id, resp));
+    }
+
+    // Process and verify the responses
+    if cmd_conf.expect_all_responses {
+        assert_eq!(response_vec.len(), num_parties); // check that we have responses from all parties
+    }
+
+    let key_types = vec![
+        PubDataType::PublicKey,
+        PubDataType::PublicKeyMetadata,
+        PubDataType::ServerKey,
+    ];
+    let party_ids = fetch_elements(
+        &request_id.to_string(),
+        &key_types,
+        cc_conf,
+        destination_prefix,
+        true,
+    )
+    .await?;
+    let public_key = load_pk_from_storage(
+        Some(destination_prefix),
+        &request_id,
+        *party_ids.first().expect("no party IDs found"),
+    )
+    .await;
+    let server_key: ServerKey = load_material_from_storage(
+        Some(destination_prefix),
+        &request_id,
+        PubDataType::ServerKey,
+        *party_ids.first().expect("no party IDs found"),
+    )
+    .await;
+
+    for response in response_vec {
+        check_standard_keyset_ext_signature(
+            &public_key,
+            &server_key,
+            &preproc_id,
+            &request_id,
+            &response.1.external_signature,
+            &dummy_domain(),
+            kms_addrs,
+        )?;
+    }
+    Ok(())
+}
+
 /// execute a command based on the provided configuration
 pub async fn execute_cmd(
     cmd_config: &CmdConfig,
@@ -2309,6 +2464,25 @@ pub async fn execute_cmd(
         CCCommand::BackupRestore(NoParameters {}) => {
             do_restore_from_backup(&mut core_endpoints_req).await?;
             vec![(None, "backup restore complete".to_string())]
+        }
+        CCCommand::Reshare(ReshareParameters { key_id, preproc_id }) => {
+            do_reshare(
+                &mut internal_client.expect("Reshare requires a KMS client"),
+                &core_endpoints_req,
+                &mut rng,
+                cmd_config,
+                &cc_conf,
+                destination_prefix,
+                &kms_addrs,
+                num_parties,
+                param,
+                *key_id,
+                *preproc_id,
+                max_iter,
+            )
+            .await
+            .unwrap();
+            vec![(None, "Reshare complete".to_string())]
         }
     };
 
