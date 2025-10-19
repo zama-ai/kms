@@ -103,7 +103,7 @@ impl GrpcSendingService {
             None => "http",
         };
         tracing::debug!("Creating {} channel to '{}'", proto, receiver);
-        
+
         // Determine the actual endpoint to connect to
         // If using peer_tcp_proxy (enclave mode), rewrite to localhost regardless of TLS
         let endpoint: Uri = if self.peer_tcp_proxy {
