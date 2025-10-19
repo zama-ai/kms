@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Project
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           repository: 'zama-zws/zws-gitops'
           ref: ${{ inputs.branch-name }}
@@ -51,7 +51,7 @@ jobs:
           persist-credentials: true
 
       - name: Change image tag
-        uses: mikefarah/yq@8bf425b4d1344db7cd469a8d10a390876e0c77fd  # v4.45.1
+        uses: mikefarah/yq@8bf425b4d1344db7cd469a8d10a390876e0c77fd # v4.45.1
         env:
           ARGOCD_NAMESPACE: ${{ inputs.argocd-namespace }}
           ARGOCD_APP_NAME: ${{ inputs.argocd-app-name }}
@@ -63,7 +63,7 @@ jobs:
 
       - name: Add enclave deployment
         if: ${{ inputs.enclave-deployment }}
-        uses: mikefarah/yq@8bf425b4d1344db7cd469a8d10a390876e0c77fd  # v4.45.1
+        uses: mikefarah/yq@8bf425b4d1344db7cd469a8d10a390876e0c77fd # v4.45.1
         env:
           ARGOCD_NAMESPACE: ${{ inputs.argocd-namespace }}
           ARGOCD_APP_NAME: ${{ inputs.argocd-app-name }}
