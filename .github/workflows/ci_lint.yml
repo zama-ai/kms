@@ -51,7 +51,7 @@ jobs:
           persist-credentials: false
 
       - name: Run zizmor
-        uses: zizmorcore/zizmor-action@a4c6c3bb9f28d73aa75605af2bacf69eb177cefa # v1.5.1
+        uses: zizmorcore/zizmor-action@e673c3917a1aef3c65c972347ed84ccd013ecda4 # v0.2.0
         with:
           persona: pedantic
           version: 1.15.2
