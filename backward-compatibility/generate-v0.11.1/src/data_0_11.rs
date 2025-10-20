@@ -52,10 +52,14 @@ use backward_compatibility::parameters::{
 };
 use backward_compatibility::{
     AppKeyBlobTest, KmsFheKeyHandlesTest, PRSSSetupTest, PrfKeyTest, PrivateSigKeyTest,
-    PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, SignedPubDataHandleInternalTest,
-    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, SigncryptionPayloadTest,
+    SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
+    ThresholdFheKeysTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
+    KMS_MODULE_NAME,
 };
+
+use kms_0_11_1::cryptography::signcryption::SigncryptionPayload;
+use kms_grpc_0_11_1::kms::v1::TypedPlaintext;
 
 use crate::generate::{
     store_versioned_auxiliary_05, store_versioned_test_05, KMSCoreVersion, TEST_DKG_PARAMS_SNS,
@@ -256,6 +260,16 @@ const APP_KEY_BLOB_TEST: AppKeyBlobTest = AppKeyBlobTest {
 };
 
 // KMS test
+fn signcryption_payload_test() -> SigncryptionPayloadTest {
+    SigncryptionPayloadTest {
+        test_filename: Cow::Borrowed("signcryption_payload"),
+        plaintext_bytes: vec![1, 2, 3, 4, 5],
+        fhe_type: 8, // FheTypes::Uint8
+        link: vec![0xde, 0xad, 0xbe, 0xef],
+    }
+}
+
+// KMS test
 // NOTE: this is not used in v0.11 yet, so we avoid doing these extra tests
 /*
 const CUSTODIAN_SETUP_MESSAGE_TEST: CustodianSetupMessageTest = CustodianSetupMessageTest {
@@ -316,7 +330,28 @@ impl KmsV0_11 {
         };
 
         store_versioned_test!(&app_key_blob, dir, &APP_KEY_BLOB_TEST.test_filename);
+
         TestMetadataKMS::AppKeyBlob(APP_KEY_BLOB_TEST)
+    }
+
+    #[allow(clippy::ptr_arg)]
+    fn gen_signcryption_payload(dir: &PathBuf) -> TestMetadataKMS {
+        let test = signcryption_payload_test();
+
+        let payload = SigncryptionPayload {
+            plaintext: TypedPlaintext {
+                bytes: test.plaintext_bytes.clone(),
+                fhe_type: test.fhe_type,
+            },
+            link: test.link.clone(),
+        };
+
+        // SigncryptionPayload doesn't use tfhe-versionable, serialize directly with bincode
+        let serialized = bincode::serialize(&payload).unwrap();
+        let filename = format!("{}.bincode", test.test_filename);
+        std::fs::write(dir.join(&filename), serialized).unwrap();
+
+        TestMetadataKMS::SigncryptionPayload(test)
     }
 
     fn gen_kms_fhe_key_handles(dir: &PathBuf) -> TestMetadataKMS {
@@ -661,9 +696,10 @@ impl KMSCoreVersion for V0_11 {
         vec![
             KmsV0_11::gen_private_sig_key(&dir),
             KmsV0_11::gen_public_sig_key(&dir),
+            KmsV0_11::gen_app_key_blob(&dir),
+            KmsV0_11::gen_signcryption_payload(&dir),
             KmsV0_11::gen_kms_fhe_key_handles(&dir),
             KmsV0_11::gen_threshold_fhe_keys(&dir),
-            KmsV0_11::gen_app_key_blob(&dir),
             // KmsV0_11::gen_custodian_setup_message(&dir),
             // KmsV0_11::gen_operator_backup_output(&dir),
         ]

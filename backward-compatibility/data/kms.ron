@@ -18,6 +18,39 @@
     (
         kms_core_version_min: "0.11.0",
         kms_core_module: "kms",
+        metadata: AppKeyBlob((
+            test_filename: "app_key_blob",
+            root_key_id: "root_key_id",
+            data_key_blob: "data_key_blob",
+            ciphertext: "ciphertext",
+            iv: "iv",
+            auth_tag: "auth_tag",
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11.0",
+        kms_core_module: "kms",
+        metadata: SigncryptionPayload((
+            test_filename: "signcryption_payload",
+            plaintext_bytes: [
+                1,
+                2,
+                3,
+                4,
+                5,
+            ],
+            fhe_type: 8,
+            link: [
+                222,
+                173,
+                190,
+                239,
+            ],
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11.0",
+        kms_core_module: "kms",
         metadata: KmsFheKeyHandles((
             test_filename: "kms_fhe_key_handles",
             client_key_filename: "client_key_handle",
@@ -127,18 +160,6 @@
                     carry_modulus: 4,
                 ),
             ),
-        )),
-    ),
-    (
-        kms_core_version_min: "0.11.0",
-        kms_core_module: "kms",
-        metadata: AppKeyBlob((
-            test_filename: "app_key_blob",
-            root_key_id: "root_key_id",
-            data_key_blob: "data_key_blob",
-            ciphertext: "ciphertext",
-            iv: "iv",
-            auth_tag: "auth_tag",
         )),
     ),
     (
@@ -160,6 +181,39 @@
     (
         kms_core_version_min: "0.11.1",
         kms_core_module: "kms",
+        metadata: AppKeyBlob((
+            test_filename: "app_key_blob",
+            root_key_id: "root_key_id",
+            data_key_blob: "data_key_blob",
+            ciphertext: "ciphertext",
+            iv: "iv",
+            auth_tag: "auth_tag",
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11.1",
+        kms_core_module: "kms",
+        metadata: SigncryptionPayload((
+            test_filename: "signcryption_payload",
+            plaintext_bytes: [
+                1,
+                2,
+                3,
+                4,
+                5,
+            ],
+            fhe_type: 8,
+            link: [
+                222,
+                173,
+                190,
+                239,
+            ],
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11.1",
+        kms_core_module: "kms",
         metadata: KmsFheKeyHandles((
             test_filename: "kms_fhe_key_handles",
             client_key_filename: "client_key_handle",
@@ -269,18 +323,6 @@
                     carry_modulus: 4,
                 ),
             ),
-        )),
-    ),
-    (
-        kms_core_version_min: "0.11.1",
-        kms_core_module: "kms",
-        metadata: AppKeyBlob((
-            test_filename: "app_key_blob",
-            root_key_id: "root_key_id",
-            data_key_blob: "data_key_blob",
-            ciphertext: "ciphertext",
-            iv: "iv",
-            auth_tag: "auth_tag",
         )),
     ),
 ]

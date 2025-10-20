@@ -350,6 +350,34 @@ impl TestType for OperatorBackupOutputTest {
     }
 }
 
+// KMS test
+/// Test metadata for SigncryptionPayload backward compatibility.
+///
+/// SigncryptionPayload is serialized with bc2wrap and embedded in user decryption responses.
+/// This test ensures that data serialized with older versions (v0.11.x) can still be
+/// deserialized by the current version, preventing breaking changes to the binary format.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SigncryptionPayloadTest {
+    pub test_filename: Cow<'static, str>,
+    pub plaintext_bytes: Vec<u8>,
+    pub fhe_type: i32,
+    pub link: Vec<u8>,
+}
+
+impl TestType for SigncryptionPayloadTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "SigncryptionPayload".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 /// KMS metadata
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum TestMetadataKMS {
@@ -358,6 +386,7 @@ pub enum TestMetadataKMS {
     KmsFheKeyHandles(KmsFheKeyHandlesTest),
     ThresholdFheKeys(ThresholdFheKeysTest),
     AppKeyBlob(AppKeyBlobTest),
+    SigncryptionPayload(SigncryptionPayloadTest),
     // CustodianSetupMessage(CustodianSetupMessageTest),
     // OperatorBackupOutput(OperatorBackupOutputTest),
 }

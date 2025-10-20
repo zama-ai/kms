@@ -13,7 +13,8 @@ use backward_compatibility::{
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
     AppKeyBlobTest, CustodianSetupMessageTest, KmsFheKeyHandlesTest, OperatorBackupOutputTest,
-    PrivateSigKeyTest, PublicSigKeyTest, TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
+    PrivateSigKeyTest, PublicSigKeyTest, SigncryptionPayloadTest, TestMetadataKMS, TestType,
+    Testcase, ThresholdFheKeysTest,
 };
 use kms_grpc::{
     rpc_types::{PubDataType, SignedPubDataHandleInternal},
@@ -27,6 +28,7 @@ use kms_lib::{
     cryptography::{
         backup_pke,
         internal_crypto_types::{gen_sig_keys, PrivateSigKey, PublicSigKey},
+        signcryption::SigncryptionPayload,
     },
     engine::{
         base::{KeyGenMetadata, KmsFheKeyHandles},
@@ -94,6 +96,51 @@ fn test_app_key_blob(
             format!(
                 "Invalid app key blob:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_signcryption_payload(
+    dir: &Path,
+    test: &SigncryptionPayloadTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    // Load the serialized SigncryptionPayload
+    // Note: SigncryptionPayload doesn't use tfhe-versionable, so we deserialize directly
+    let original: SigncryptionPayload = match format {
+        DataFormat::Bincode => {
+            let path = dir.join(format!("{}.bincode", test.test_filename()));
+            let bytes = std::fs::read(&path).map_err(|e| {
+                test.failure(
+                    format!("Failed to read file {}: {}", path.display(), e),
+                    format,
+                )
+            })?;
+            bc2wrap::deserialize(&bytes).map_err(|e| {
+                test.failure(
+                    format!("Failed to deserialize SigncryptionPayload: {}", e),
+                    format,
+                )
+            })?
+        }
+    };
+
+    // Create expected payload from metadata
+    let expected = SigncryptionPayload {
+        plaintext: kms_grpc::kms::v1::TypedPlaintext {
+            bytes: test.plaintext_bytes.clone(),
+            fhe_type: test.fhe_type,
+        },
+        link: test.link.clone(),
+    };
+
+    // Compare
+    if original != expected {
+        Err(test.failure(
+            format!("Invalid SigncryptionPayload:\n Expected :\n{expected:?}\nGot:\n{original:?}"),
             format,
         ))
     } else {
@@ -378,6 +425,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::AppKeyBlob(test) => {
                 test_app_key_blob(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::SigncryptionPayload(test) => {
+                test_signcryption_payload(test_dir.as_ref(), test, format).into()
             } // Self::Metadata::CustodianSetupMessage(test) => {
               //     test_custodian_setup_message(test_dir.as_ref(), test, format).into()
               // }

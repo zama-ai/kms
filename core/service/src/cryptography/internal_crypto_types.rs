@@ -196,6 +196,23 @@ impl<C: KemCore> Visitor<'_> for PublicEncKeyVisitor<C> {
     }
 }
 
+/// Unified wrapper for ephemeral private encryption keys.
+///
+/// # Versioning: Not Required (Ephemeral Only)
+///
+/// This type is intentionally NOT versioned because it is only used for ephemeral operations:
+/// - Created during user decryption request generation
+/// - Used immediately for decrypting server responses
+/// - Never persisted to storage
+/// - Never sent over gRPC (client-side only)
+///
+/// **WARNING:** If this type ever needs to be persisted or transmitted, it MUST be versioned
+/// by implementing `Versionize`, `VersionsDispatch`, and `Named` traits.
+///
+/// # Current Usage
+/// - `user_decryption_wasm.rs`, `user_decryption_non_wasm.rs`
+/// - Lifetime: Single request/response cycle
+/// - Scope: Local to client application
 #[derive(Clone, Serialize, Deserialize)]
 #[expect(clippy::large_enum_variant)]
 pub enum UnifiedPrivateEncKey {
