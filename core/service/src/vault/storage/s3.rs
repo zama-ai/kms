@@ -51,8 +51,8 @@ impl S3Storage {
             None => format!("{storage_type}"),
         };
         let prefix = match prefix {
-            Some(p) => format!("{p}/{extra_prefix}"),
-            None => extra_prefix,
+            Some(p) if !p.is_empty() => format!("{p}/{extra_prefix}"),
+            _ => extra_prefix,
         };
         Ok(S3Storage {
             s3_client,
@@ -75,7 +75,7 @@ impl S3Storage {
                 Some(old_data) => {
                     let size_changed = old_data.len() != data.len();
                     let data_changed = old_data != data;
-                    tracing::debug!("Updated cache entry for bucket={}, key={}, size_changed={}, data_changed={}, size={}", 
+                    tracing::debug!("Updated cache entry for bucket={}, key={}, size_changed={}, data_changed={}, size={}",
                         &self.bucket, key, size_changed, data_changed, data.len());
                 }
                 None => {
