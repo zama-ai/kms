@@ -1,7 +1,8 @@
 name: kind-testing
 
 on:
-  pull_request:
+  schedule:
+    - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
 
 permissions: {}
 
