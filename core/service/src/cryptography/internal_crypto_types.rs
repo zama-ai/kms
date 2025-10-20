@@ -494,7 +494,10 @@ pub enum EncryptionSchemeTypeVersioned {
 #[versionize(EncryptionSchemeTypeVersioned)]
 pub enum EncryptionSchemeType {
     MlKem512,
-    #[deprecated]
+    #[deprecated(
+        since = "0.12.0",
+        note = "Use MlKem512 instead. MlKem1024 is only for legacy compatibility with relayer-sdk v0.2.0-0 and older."
+    )]
     MlKem1024,
 }
 
@@ -505,24 +508,18 @@ pub trait EncryptionScheme: Send + Sync {
     fn keygen(&mut self) -> Result<(UnifiedPrivateEncKey, UnifiedPublicEncKey), CryptographyError>;
 }
 
-pub trait CryptoRand: CryptoRng + RngCore + Send + Sync {}
-impl<T: CryptoRng + RngCore + Send + Sync> CryptoRand for T {}
-
-pub struct Encryption<'a> {
+pub struct Encryption<'a, R: CryptoRng + RngCore + Send + Sync> {
     scheme_type: EncryptionSchemeType,
-    rng: &'a mut dyn CryptoRand,
+    rng: &'a mut R,
 }
 
-impl<'a> Encryption<'a> {
-    pub fn new(
-        scheme_type: EncryptionSchemeType,
-        rng: &'a mut (impl CryptoRng + RngCore + Send + Sync + 'static),
-    ) -> Self {
+impl<'a, R: CryptoRng + RngCore + Send + Sync> Encryption<'a, R> {
+    pub fn new(scheme_type: EncryptionSchemeType, rng: &'a mut R) -> Self {
         Self { scheme_type, rng }
     }
 }
 
-impl<'a> EncryptionScheme for Encryption<'a> {
+impl<'a, R: CryptoRng + RngCore + Send + Sync> EncryptionScheme for Encryption<'a, R> {
     fn scheme_type(&self) -> EncryptionSchemeType {
         self.scheme_type.clone()
     }

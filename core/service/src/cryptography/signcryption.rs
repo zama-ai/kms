@@ -14,7 +14,7 @@ use super::internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature};
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
 #[cfg(test)]
-use crate::cryptography::internal_crypto_types::{CryptoRand, UnifiedSigncryptionKeyPairOwned};
+use crate::cryptography::internal_crypto_types::UnifiedSigncryptionKeyPairOwned;
 use crate::cryptography::internal_crypto_types::{
     Designcrypt, DesigncryptFHEPlaintext, Signcrypt, SigncryptFHEPlaintext,
     UnifiedDesigncryptionKey, UnifiedPrivateEncKey, UnifiedPublicEncKey, UnifiedSigncryption,
@@ -372,7 +372,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
 /// client's blockchain signing key
 #[cfg(test)]
 pub(crate) fn ephemeral_signcryption_key_generation(
-    rng: &mut (impl CryptoRand + 'static),
+    rng: &mut (impl CryptoRng + RngCore + Send + Sync + 'static),
     client_verf_key_id: &[u8],
     server_sig_key: Option<&PrivateSigKey>,
 ) -> UnifiedSigncryptionKeyPairOwned {
