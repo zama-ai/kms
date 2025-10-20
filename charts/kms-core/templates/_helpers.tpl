@@ -112,6 +112,100 @@ args:
             "timeout" .timeout) }}
 {{- end -}}
 
+{{/* takes the chart root context and renders the pod-local parent-side TUN bridge
+      and DNS proxy used for enclave egress as a native Kubernetes sidecar.
+      The tunnel values must match init_enclave.sh. */}}
+{{- define "enclaveNetworkTunnelContainer" -}}
+name: enclave-network-tunnel
+image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
+imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
+securityContext:
+  allowPrivilegeEscalation: true
+  privileged: true
+  runAsUser: 0
+restartPolicy: Always
+command:
+  - /bin/sh
+args:
+  - -c
+  - |
+    set -eu
+    TUN_IF={{ .Values.kmsCore.nitroEnclave.networkTunnel.interfaceName | quote }}
+    TUN_ADDR={{ .Values.kmsCore.nitroEnclave.networkTunnel.parentAddress | quote }}
+    TUN_HOST="${TUN_ADDR%/*}"
+    TUN_SUBNET={{ .Values.kmsCore.nitroEnclave.networkTunnel.subnet | quote }}
+    VSOCK_PORT={{ .Values.kmsCore.nitroEnclave.networkTunnel.vsockPort | quote }}
+    UPSTREAM_DNS=""
+    SOCAT_PID=""
+    DNSPROXY_PID=""
+
+    while read -r key value _; do
+      if [ "$key" = "nameserver" ]; then
+        UPSTREAM_DNS="$value"
+        break
+      fi
+    done < /etc/resolv.conf
+
+    if [ -z "$UPSTREAM_DNS" ]; then
+      echo "enclave-network-tunnel: cannot determine upstream nameserver from /etc/resolv.conf" >&2
+      exit 1
+    fi
+
+    cleanup() {
+      if [ -n "$SOCAT_PID" ]; then
+        kill "$SOCAT_PID" 2>/dev/null || true
+      fi
+      if [ -n "$DNSPROXY_PID" ]; then
+        kill "$DNSPROXY_PID" 2>/dev/null || true
+      fi
+    }
+
+    trap cleanup EXIT INT TERM
+
+    sysctl -w net.ipv4.ip_forward=1 || echo 1 > /proc/sys/net/ipv4/ip_forward
+    iptables -t nat -C POSTROUTING -s "$TUN_SUBNET" -o eth0 -j MASQUERADE 2>/dev/null || \
+      iptables -t nat -A POSTROUTING -s "$TUN_SUBNET" -o eth0 -j MASQUERADE
+    iptables -C FORWARD -i "$TUN_IF" -j ACCEPT 2>/dev/null || \
+      iptables -A FORWARD -i "$TUN_IF" -j ACCEPT
+    iptables -C FORWARD -o "$TUN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || \
+      iptables -A FORWARD -o "$TUN_IF" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+    echo "enclave-network-tunnel: starting parent-side TUN bridge on $TUN_HOST via $UPSTREAM_DNS"
+    socat -d0 \
+      VSOCK-LISTEN:$VSOCK_PORT,fork,reuseaddr \
+      TUN:$TUN_ADDR,tun-name=$TUN_IF,iff-up &
+    SOCAT_PID=$!
+
+    for _ in $(seq 1 30); do
+      if ifconfig "$TUN_IF" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+
+    if ! ifconfig "$TUN_IF" >/dev/null 2>&1; then
+      echo "enclave-network-tunnel: tunnel interface $TUN_IF did not come up" >&2
+      exit 1
+    fi
+
+    dnsproxy -l "$TUN_HOST" -u "$UPSTREAM_DNS" &
+    DNSPROXY_PID=$!
+
+    while kill -0 "$SOCAT_PID" 2>/dev/null && kill -0 "$DNSPROXY_PID" 2>/dev/null; do
+      sleep 1
+    done
+
+    if ! kill -0 "$SOCAT_PID" 2>/dev/null; then
+      SOCAT_STATUS=0
+      wait "$SOCAT_PID" || SOCAT_STATUS=$?
+      exit "$SOCAT_STATUS"
+    fi
+
+    DNSPROXY_STATUS=0
+    wait "$DNSPROXY_PID" || DNSPROXY_STATUS=$?
+    exit "$DNSPROXY_STATUS"
+{{- end -}}
+
 {{- define "kmsInitJobName" -}}
 {{- $kmsCoreNameDefault := printf "%s-%s" .Release.Name "threshold-init" }}
 {{- default $kmsCoreNameDefault .Values.kmsInit.nameOverride | trunc 52 | trimSuffix "-" -}}
