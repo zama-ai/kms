@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
@@ -425,7 +425,7 @@ impl GrpcNetworkingManager {
                     round_counter: tokio::sync::RwLock::new(0),
                     network_mode,
                     conf: self.conf,
-                    init_time: RwLock::new(None),
+                    init_time: OnceLock::new(),
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),
@@ -455,7 +455,7 @@ impl GrpcNetworkingManager {
                     round_counter: tokio::sync::RwLock::new(0),
                     network_mode,
                     conf: self.conf,
-                    init_time: RwLock::new(None),
+                    init_time: OnceLock::new(),
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),
