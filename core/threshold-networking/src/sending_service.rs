@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
+    error::Error,
     net::IpAddr,
     str::FromStr,
     sync::{Arc, OnceLock},
@@ -51,11 +52,7 @@ impl ArcSendValueRequest {
 #[async_trait]
 pub trait SendingService: Send + Sync {
     /// Init and start the sending service
-    fn new(
-        tls_certs: Option<ClientConfig>,
-        conf: OptionConfigWrapper,
-        peer_tcp_proxy: bool,
-    ) -> anyhow::Result<Self>
+    fn new(tls_certs: Option<ClientConfig>, conf: OptionConfigWrapper) -> anyhow::Result<Self>
     where
         Self: std::marker::Sized;
 
@@ -86,8 +83,6 @@ pub struct GrpcSendingService {
     pub(crate) config: OptionConfigWrapper,
     /// A ready-made TLS identity (certificate, keypair and CA roots)
     pub(crate) tls_config: Option<ClientConfig>,
-    /// Whether to use TCP proxies on localhost to access peers
-    peer_tcp_proxy: bool,
     /// Keep in memory channels we already have available
     channel_map: Arc<RwLock<ChannelMap>>,
 }
@@ -124,22 +119,11 @@ impl GrpcSendingService {
         tracing::debug!("Creating {} channel to '{}'", proto, receiver);
         // When running within the AWS Nitro enclave, we have to go through
         // vsock proxies to make TCP connections to peers.
-        let endpoint: Uri = if self.peer_tcp_proxy {
-            format!("{proto}://localhost:{}", receiver.port())
-                .parse::<Uri>()
-                .map_err(|_e| {
-                    anyhow_error_and_log(format!(
-                        "failed to parse peer proxy address with port: {}",
-                        receiver.port()
-                    ))
-                })?
-        } else {
-            format!("{proto}://{receiver}").parse().map_err(|_e| {
-                anyhow_error_and_log(format!(
-                    "failed to parse peer network address as endpoint: {receiver}"
-                ))
-            })?
-        };
+        let endpoint: Uri = format!("{proto}://{receiver}").parse().map_err(|_e| {
+            anyhow_error_and_log(format!(
+                "failed to parse peer network address as endpoint: {receiver}"
+            ))
+        })?;
 
         let channel = match &self.tls_config {
             Some(client_config) => {
@@ -279,9 +263,10 @@ impl GrpcSendingService {
                 Err(status) => {
                     incorrectly_sent += 1;
                     tracing::warn!(
-                        "Failed to send message to {other_role_kind} after {incorrectly_sent} retries: {} - {}",
+                        "Failed to send message to {other_role_kind} after {incorrectly_sent} retries: {} - {} (source: {:?})",
                         status.code(),
-                        status.message()
+                        status.message(),
+                        status.source()
                     );
                 }
             };
@@ -312,15 +297,10 @@ impl GrpcSendingService {
 impl SendingService for GrpcSendingService {
     /// Communicates with the service thread to spin up a new connection with `other`
     /// __NOTE__: This requires the service to be running already
-    fn new(
-        tls_config: Option<ClientConfig>,
-        config: OptionConfigWrapper,
-        peer_tcp_proxy: bool,
-    ) -> anyhow::Result<Self> {
+    fn new(tls_config: Option<ClientConfig>, config: OptionConfigWrapper) -> anyhow::Result<Self> {
         Ok(Self {
             config,
             tls_config,
-            peer_tcp_proxy,
             channel_map: Arc::new(RwLock::new(HashMap::new())),
         })
     }
@@ -724,7 +704,7 @@ mod tests {
         let sender_handle = {
             let role_assignment = role_assignment.clone();
             tokio::spawn(async move {
-                let networking = GrpcNetworkingManager::new(None, None, false).unwrap();
+                let networking = GrpcNetworkingManager::new(None, None).unwrap();
                 let network_session = networking
                     .make_network_session(sid, &role_assignment, role_1, NetworkMode::Sync)
                     .await
@@ -759,7 +739,7 @@ mod tests {
 
         // First receiver (role_2) - starts after delay, receives first message, then shuts down
         let first_receiver_handle = {
-            let networking = GrpcNetworkingManager::new(None, None, false).unwrap();
+            let networking = GrpcNetworkingManager::new(None, None).unwrap();
             let role_assignment = role_assignment.clone();
             let id_2 = id_2.clone();
             tokio::spawn(async move {
@@ -801,7 +781,7 @@ mod tests {
 
         // Second receiver (role_2) - starts after longer delay, receives second message
         let second_receiver_handle = {
-            let networking = GrpcNetworkingManager::new(None, None, false).unwrap();
+            let networking = GrpcNetworkingManager::new(None, None).unwrap();
             let role_assignment = role_assignment.clone();
             tokio::spawn(async move {
                 // Wait before starting server to make sure sender retries
@@ -1037,7 +1017,7 @@ mod tests {
             others.remove(&role);
 
             // Spin up gRPC server for current Role
-            let networking = GrpcNetworkingManager::new(None, None, false).unwrap();
+            let networking = GrpcNetworkingManager::new(None, None).unwrap();
             let networking_server = networking.new_server(TlsExtensionGetter::default());
             let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(300));
             let core_router = tonic::transport::Server::builder()
