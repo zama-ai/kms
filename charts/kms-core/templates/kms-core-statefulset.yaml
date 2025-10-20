@@ -89,7 +89,7 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
-              {{- if .Values.kmsCore.privateVault.s3.prefix }}
+            {{- if .Values.kmsCore.privateVault.s3.prefix }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
               valueFrom:
                 configMapKeyRef:
