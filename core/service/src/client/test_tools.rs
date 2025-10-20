@@ -141,7 +141,6 @@ pub async fn setup_threshold_no_client<
                 mpc_listener,
                 sk,
                 None,
-                false,
                 run_prss,
                 rl_conf,
                 mpc_core_rx.map(drop),

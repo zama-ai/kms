@@ -279,7 +279,6 @@ impl GrpcNetworkingManager {
     pub fn new(
         tls_conf: Option<tokio_rustls::rustls::client::ClientConfig>,
         conf: Option<CoreToCoreNetworkConfig>,
-        peer_tcp_proxy: bool,
     ) -> anyhow::Result<Self> {
         #[cfg(feature = "testing")]
         let force_tls = tls_conf.is_some();
@@ -310,7 +309,7 @@ impl GrpcNetworkingManager {
             session_store,
             opened_sessions_tracker: Arc::new(DashMap::new()),
             conf,
-            sending_service: GrpcSendingService::new(tls_conf, conf, peer_tcp_proxy)?,
+            sending_service: GrpcSendingService::new(tls_conf, conf)?,
             #[cfg(feature = "testing")]
             force_tls,
         })

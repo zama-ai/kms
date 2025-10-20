@@ -477,9 +477,8 @@ impl InnerSessionPreparer {
                 )
             })),
         };
-        let networking_manager = Arc::new(RwLock::new(
-            GrpcNetworkingManager::new(None, None, false).unwrap(),
-        ));
+        let networking_manager =
+            Arc::new(RwLock::new(GrpcNetworkingManager::new(None, None).unwrap()));
 
         Self {
             base_kms,

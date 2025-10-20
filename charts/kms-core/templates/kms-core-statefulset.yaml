@@ -149,7 +149,7 @@ spec:
               name: config-files
             - mountPath: {{ .Values.kmsCore.workdir }}
               name: workdir
-        {{- if .Values.kmsCore.nitroEnclave.enabled }}
+        {{- if .Values.kmsCore.nitroEnclave.enabled }}        
         {{- /* Init Enclave Config Socket, hardcoded to 4000 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
         - {{ include "proxyFromEnclave"
                (dict "name" "enclave-config"
@@ -168,17 +168,13 @@ spec:
                      "vsockPort" 3000
                      "to" "STDOUT"
                ) | indent 10 | trim }}
-        {{- if .Values.kmsCore.nitroEnclave.ports.imds }}
-        {{- /* Init AWS IMDS Proxy Socket */}}
-        - {{ include "proxyFromEnclaveTcp"
-               (dict "name" "aws-imds-proxy"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.imds
-                     "address" "169.254.169.254"
-                     "port" 80
-                ) | indent 10 | trim }}
-        {{- end }}
-        {{- if .Values.kmsCore.nitroEnclave.ports.sts }}
+        {{- /* Init Enclave Network Tunnel Socket, hardcoded to 2000 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
+        - {{ include "proxyFromEnclave"
+               (dict "name" "enclave-network-tunnel"
+               "image" .Values.kubeUtils.image
+               "vsockPort" 2000
+               "to" "TUN:10.118.0.1/24,iff-up"
+               ) | indent 10 | trim }}
         {{- /* Init Enclave Web Identity Token Socket, hardcoded to 4100 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
         - {{ include "proxyFromEnclave"
                (dict "name" "enclave-web-identity-token"
@@ -186,44 +182,12 @@ spec:
                      "vsockPort" 4100
           "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
           ) | indent 10 | trim }}
-        {{- /* Init AWS STS Proxy Socket */}}
-        - {{ include "proxyFromEnclaveTcp"
-               (dict "name" "aws-sts-proxy"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.sts
-                     "address" (printf "sts.%s.amazonaws.com" .Values.kmsCore.aws.region)
-                     "port" 443
-                ) | indent 10 | trim }}
-        {{- end }}
-        {{- /* Init AWS S3 Proxy Socket */}}
-        - {{ include "proxyFromEnclaveTcp"
-               (dict "name" "aws-s3-proxy"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.s3
-                     "address" (printf "s3.%s.amazonaws.com" .Values.kmsCore.aws.region)
-                     "port" 443
-                ) | indent 10 | trim }}
-        {{- /* Init AWS KMS Proxy Socket */}}
-        - {{ include "proxyFromEnclaveTcp"
-               (dict "name" "aws-kms-proxy"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.awskms
-                     "address" (printf "kms.%s.amazonaws.com" .Values.kmsCore.aws.region)
-                     "port" 443
-                ) | indent 10 | trim }}
         {{- /* Init Metrics Endpoint Proxy Socket */}}
         - {{ include "proxyToEnclaveTcp"
                (dict "name" "metrics-endpoint-proxy"
                      "image" .Values.kubeUtils.image
                      "cid" .Values.kmsCore.nitroEnclave.cid
                      "port" .Values.kmsCore.ports.metrics
-                ) | indent 10 | trim }}
-        {{- /* Init Enclave Tracing Socket */}}
-        - {{ include "proxyFromEnclave"
-               (dict "name" "kms-core-enclave-tracing"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.tracing
-                     "to" (printf "TCP:%s" (urlParse .Values.tracing.endpoint).host)
                 ) | indent 10 | trim }}
         {{- /* Init GRPC Client Proxy Socket */}}
         - {{ include "proxyToEnclaveTcp"
@@ -244,36 +208,6 @@ spec:
           resources:
           {{- toYaml . | nindent 12 }}
           {{- end }}
-        {{- /* Init GRPC External Peers Proxy Sockets */}}
-        {{- if .Values.kmsCore.thresholdMode.peersList }}
-          {{- range .Values.kmsCore.thresholdMode.peersList }}
-        - {{ include "proxyFromEnclaveTcp"
-               (dict "name" (printf "enclave-peer-proxy-%d" (int .id))
-                     "image" $.Values.kubeUtils.image
-                     "vsockPort" (add $.Values.kmsCore.nitroEnclave.ports.peer .id)
-                     "address" .host
-                     "port" .port
-                ) | indent 10 | trim }}
-          {{- with $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources }}
-          resources:
-          {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- end }}
-        {{- else }}
-          {{- range $i := $peersIDList }}
-        - {{ include "proxyFromEnclaveTcp"
-               (dict "name" (printf "enclave-peer-proxy-%d" (int $i))
-                     "image" $.Values.kubeUtils.image
-                     "vsockPort" (add $.Values.kmsCore.nitroEnclave.ports.peer $i)
-                     "address" (printf "%s-%d" $kmsCoreName (int $i))
-                     "port" $.Values.kmsCore.ports.peer
-                ) | indent 10 | trim }}
-          {{- with $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources }}
-          resources:
-          {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- end }}
-        {{- end }}
         {{- end }}
         {{- else }}
         {{- /* Generate init keys for non-enclave kms-core service */}}
@@ -401,6 +335,10 @@ spec:
           args:
             - -c
             - |
+              sudo sysctl -w net.ipv4.ip_forward=1
+              sudo iptables -t nat -A POSTROUTING -s 10.118.0.2 -j MASQUERADE
+
+              cd
               echo "### BEGIN - enclave.json ###"
               cat /var/lib/kms-core/config/enclave.json
               echo "### END - enclave.json ###"

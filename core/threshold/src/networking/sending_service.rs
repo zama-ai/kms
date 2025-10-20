@@ -55,11 +55,7 @@ impl ArcSendValueRequest {
 #[async_trait]
 pub trait SendingService: Send + Sync {
     /// Init and start the sending service
-    fn new(
-        tls_certs: Option<ClientConfig>,
-        conf: OptionConfigWrapper,
-        peer_tcp_proxy: bool,
-    ) -> anyhow::Result<Self>
+    fn new(tls_certs: Option<ClientConfig>, conf: OptionConfigWrapper) -> anyhow::Result<Self>
     where
         Self: std::marker::Sized;
 
@@ -82,8 +78,6 @@ pub struct GrpcSendingService {
     pub(crate) config: OptionConfigWrapper,
     /// A ready-made TLS identity (certificate, keypair and CA roots)
     pub(crate) tls_config: Option<ClientConfig>,
-    /// Whether to use TCP proxies on localhost to access peers
-    peer_tcp_proxy: bool,
     /// Keep in memory channels we already have available
     channel_map:
         DashMap<Identity, GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>,
@@ -134,22 +128,6 @@ impl GrpcSendingService {
                         ))
                     })?
                     .to_owned();
-
-                // If we have a list of trusted software hashes, we're running
-                // within the AWS Nitro enclave and we have to use vsock proxies
-                // to make TCP connections to peers.
-                let endpoint = if self.peer_tcp_proxy {
-                    format!("https://localhost:{}", receiver.port())
-                        .parse::<Uri>()
-                        .map_err(|_e| {
-                            anyhow_error_and_log(format!(
-                                "failed to parse proxy identity with port: {}",
-                                receiver.port()
-                            ))
-                        })?
-                } else {
-                    endpoint
-                };
 
                 tracing::debug!(
                     "Attempting TLS connection to address {:?} with MPC identity {:?}",
@@ -269,15 +247,10 @@ impl GrpcSendingService {
 impl SendingService for GrpcSendingService {
     /// Communicates with the service thread to spin up a new connection with `other`
     /// __NOTE__: This requires the service to be running already
-    fn new(
-        tls_config: Option<ClientConfig>,
-        config: OptionConfigWrapper,
-        peer_tcp_proxy: bool,
-    ) -> anyhow::Result<Self> {
+    fn new(tls_config: Option<ClientConfig>, config: OptionConfigWrapper) -> anyhow::Result<Self> {
         Ok(Self {
             config,
             tls_config,
-            peer_tcp_proxy,
             thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
             channel_map: DashMap::new(),
         })
@@ -615,7 +588,7 @@ mod tests {
             let my_port = id.port();
             let id = id.clone();
 
-            let networking_1 = GrpcNetworkingManager::new(None, None, false).unwrap();
+            let networking_1 = GrpcNetworkingManager::new(None, None).unwrap();
 
             let network_session_1 = networking_1
                 .make_network_session(
@@ -674,7 +647,7 @@ mod tests {
             }));
         }
 
-        let networking_2 = GrpcNetworkingManager::new(None, None, false).unwrap();
+        let networking_2 = GrpcNetworkingManager::new(None, None).unwrap();
         let networking_server_2 = networking_2.new_server(TlsExtensionGetter::default());
         let network_session_2 = networking_2
             .make_network_session(

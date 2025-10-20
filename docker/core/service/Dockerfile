@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 ################################################################
-## Second stage builds the kms-core binaries
+## First stage builds the kms-core binaries
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS kms-core
 
 # By default, cargo build --release.
@@ -11,7 +11,7 @@ ARG APP_CACHE_DIR=kms
 
 # Fetch dependencies and build binaries
 WORKDIR /app/kms
-COPY . .
+COPY --exclude=docker/ . .
 RUN mkdir -p /app/kms/core/service/bin
 
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
@@ -28,12 +28,23 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
        /app/kms/target/${LTO_RELEASE}/kms-custodian \
     ./core/service/bin
 
+# Second stage: build raw IP proxies for enclave
+FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS enclave-utils
 
 ARG YQ_VERSION=v4.47.2
-# Overridable arg to allow building for different architectures
+ # Overridable arg to allow building for different architectures
 ARG TARGETARCH=amd64
 RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH} && \
     chmod +x /usr/bin/yq
+
+ARG DNSPROXY_VERSION=v0.77.0
+# Overridable arg to allow building for different architectures
+ARG TARGETARCH=amd64
+WORKDIR /tmp
+RUN wget -qO dnsproxy.tar.gz https://github.com/AdGuardTeam/dnsproxy/releases/download/${DNSPROXY_VERSION}/dnsproxy-linux-${TARGETARCH}-${DNSPROXY_VERSION}.tar.gz && \
+    tar xzf dnsproxy.tar.gz && \
+    cp linux-${TARGETARCH}/dnsproxy /usr/bin/dnsproxy && \
+    chmod +x /usr/bin/dnsproxy
 
 ################################################################
 ## Third stage: Copy the binaries from preceding stages
@@ -46,20 +57,20 @@ RUN apk update && apk add --no-cache \
     libssl3 \
     socat \
     net-tools \
+    iptables \
     libgcc \
     libstdc++
 
 WORKDIR /app/kms/core/service
 
-COPY --from=kms-core /usr/bin/yq /usr/bin/yq
-RUN chmod +x /usr/bin/yq
-
 COPY ./core/service/config/ /app/kms/core/service/config
 
 # Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="/app/kms/core/service/bin:$PATH"
-# Copy the binaries from the kms-core and go-runtime stages
+# Copy the binaries from the kms-core and enclave-utils stages
 COPY --from=kms-core /app/kms/core/service/bin/ ./bin/
+COPY --from=enclave-utils /usr/bin/yq /usr/bin/yq
+COPY --from=enclave-utils /usr/bin/dnsproxy /usr/bin/dnsproxy
 
 # Copy parent-side and enclave-side init scripts
 COPY ./docker/core/service/start_parent_proxies.sh ./bin/

@@ -33,11 +33,7 @@ where
         .transpose()?;
 
     // the networking manager is shared between the two services
-    let networking = Arc::new(GrpcNetworkingManager::new(
-        tls_conf,
-        settings.net_conf,
-        false,
-    )?);
+    let networking = Arc::new(GrpcNetworkingManager::new(tls_conf, settings.net_conf)?);
     let networking_server = networking.new_server(TlsExtensionGetter::TlsConnectInfo);
 
     let factory = match &settings.redis {

@@ -415,9 +415,7 @@ mod tests {
     }
 
     fn test_network_manager() -> Arc<RwLock<GrpcNetworkingManager>> {
-        Arc::new(RwLock::new(
-            GrpcNetworkingManager::new(None, None, false).unwrap(),
-        ))
+        Arc::new(RwLock::new(GrpcNetworkingManager::new(None, None).unwrap()))
     }
 
     async fn make_initiator<

@@ -101,14 +101,13 @@ spec:
                      "vsockPort" 3000
                      "to" "STDOUT"
                ) | indent 10 | trim }}
-        {{- /* Init AWS IMDS Proxy Socket */}}
-        - {{ include "proxyFromEnclaveTcp"
-               (dict "name" "aws-imds-proxy"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.imds
-                     "address" "169.254.169.254"
-                     "port" 80
-                ) | indent 10 | trim }}
+        {{- /* Init Enclave Network Tunnel Socket, hardcoded to 2000 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
+        - {{ include "proxyFromEnclave"
+               (dict "name" "enclave-network-tunnel"
+               "image" .Values.kubeUtils.image
+               "vsockPort" 2000
+               "to" "TUN:10.118.0.1/24,iff-up"
+               ) | indent 10 | trim }}
         {{- /* Init Enclave Web Identity Token Socket, hardcoded to 4100 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
         - {{ include "proxyFromEnclave"
                (dict "name" "enclave-web-identity-token"
@@ -116,30 +115,6 @@ spec:
                      "vsockPort" 4100
           "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
           ) | indent 10 | trim }}
-        {{- /* Init AWS STS Proxy Socket */}}
-        - {{ include "proxyFromEnclaveTcp"
-               (dict "name" "aws-sts-proxy"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.sts
-                     "address" (printf "sts.%s.amazonaws.com" .Values.kmsCore.aws.region)
-                     "port" 443
-                ) | indent 10 | trim }}
-        {{- /* Init AWS S3 Proxy Socket */}}
-        - {{ include "proxyFromEnclaveTcp"
-               (dict "name" "aws-s3-proxy"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.s3
-                     "address" (printf "s3.%s.amazonaws.com" .Values.kmsCore.aws.region)
-                     "port" 443
-                ) | indent 10 | trim }}
-        {{- /* Init AWS KMS Proxy Socket */}}
-        - {{ include "proxyFromEnclaveTcp"
-               (dict "name" "aws-kms-proxy"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.awskms
-                     "address" (printf "kms.%s.amazonaws.com" .Values.kmsCore.aws.region)
-                     "port" 443
-                ) | indent 10 | trim }}
         {{- /* Generate signing key and CA certificate */}}
       containers:
         - image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
@@ -150,6 +125,8 @@ spec:
           args:
             - -c
             - |
+              sudo sysctl -w net.ipv4.ip_forward=1
+              sudo iptables -t nat -A POSTROUTING -s 10.118.0.2 -j MASQUERADE
               echo "### BEGIN - enclave.json ###"
               cat /var/lib/kms-core/config/enclave.json
               echo "### END - enclave.json ###"

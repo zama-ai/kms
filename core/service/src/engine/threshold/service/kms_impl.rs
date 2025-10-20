@@ -220,7 +220,6 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     mpc_listener: TcpListener,
     sk: PrivateSigKey,
     tls_config: Option<(ServerConfig, ClientConfig)>,
-    peer_tcp_proxy: bool,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     shutdown_signal: F,
@@ -268,7 +267,6 @@ where
             .as_ref()
             .map(|(_, client_config)| client_config.clone()),
         config.core_to_core_net,
-        peer_tcp_proxy,
     )?));
 
     // the initial MPC node might not accept any peers because initially there's no context
