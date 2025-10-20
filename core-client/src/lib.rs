@@ -1604,7 +1604,7 @@ pub async fn do_reshare(
     key_id: RequestId,
     preproc_id: RequestId,
     max_retries: usize,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<RequestId> {
     let request_id = RequestId::new_random(rng);
     // Create the request
     let request = internal_client.reshare_request(
@@ -1691,9 +1691,7 @@ pub async fn do_reshare(
     }
 
     // Process and verify the responses
-    if cmd_conf.expect_all_responses {
-        assert_eq!(response_vec.len(), num_parties); // check that we have responses from all parties
-    }
+    assert_eq!(response_vec.len(), num_parties); // check that we have responses from all parties
 
     let key_types = vec![
         PubDataType::PublicKey,
@@ -1701,7 +1699,7 @@ pub async fn do_reshare(
         PubDataType::ServerKey,
     ];
     let party_ids = fetch_elements(
-        &request_id.to_string(),
+        &key_id.to_string(),
         &key_types,
         cc_conf,
         destination_prefix,
@@ -1710,13 +1708,13 @@ pub async fn do_reshare(
     .await?;
     let public_key = load_pk_from_storage(
         Some(destination_prefix),
-        &request_id,
+        &key_id,
         *party_ids.first().expect("no party IDs found"),
     )
     .await;
     let server_key: ServerKey = load_material_from_storage(
         Some(destination_prefix),
-        &request_id,
+        &key_id,
         PubDataType::ServerKey,
         *party_ids.first().expect("no party IDs found"),
     )
@@ -1727,13 +1725,13 @@ pub async fn do_reshare(
             &public_key,
             &server_key,
             &preproc_id,
-            &request_id,
+            &key_id,
             &response.1.external_signature,
             &dummy_domain(),
             kms_addrs,
         )?;
     }
-    Ok(())
+    Ok(request_id)
 }
 
 /// execute a command based on the provided configuration
@@ -2466,7 +2464,7 @@ pub async fn execute_cmd(
             vec![(None, "backup restore complete".to_string())]
         }
         CCCommand::Reshare(ReshareParameters { key_id, preproc_id }) => {
-            do_reshare(
+            let request_id = do_reshare(
                 &mut internal_client.expect("Reshare requires a KMS client"),
                 &core_endpoints_req,
                 &mut rng,
@@ -2482,7 +2480,10 @@ pub async fn execute_cmd(
             )
             .await
             .unwrap();
-            vec![(None, "Reshare complete".to_string())]
+            vec![
+                (Some(request_id), "Reshare complete".to_string()),
+                (Some(*key_id), "Key ready to be used".to_string()),
+            ]
         }
     };
 
