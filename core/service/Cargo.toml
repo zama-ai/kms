@@ -1,5 +1,7 @@
 [package]
 name = "kms"
+repository.workspace = true
+description.workspace = true
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

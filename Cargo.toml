@@ -32,6 +32,8 @@ publish = true
 edition = "2021"
 license = "BSD-3-Clause-Clear"
 version = "0.12.1"
+repository = "https://github.com/zama-ai/kms"
+description = "Key Management System for the Zama Protocol."
 
 [workspace.dependencies]
 # ⚠️ WORKSPACE DEPENDENCY MANAGEMENT BEST PRACTICES ⚠️
