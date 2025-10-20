@@ -437,14 +437,14 @@ pub async fn build_aws_kms_client(
     aws_sdk_config: &SdkConfig,
     aws_kms_endpoint: Option<Url>,
 ) -> AWSKMSClient {
-    let region = aws_sdk_config.region().expect("AWS region must be set");
+    //    let region = aws_sdk_config.region().expect("AWS region must be set");
     let awskms_config = match aws_kms_endpoint {
         Some(p) => {
             let https_connector = HttpsConnectorBuilder::new()
                 .with_native_roots()
                 .https_only()
                 // Overrides the hostname checked during the TLS handshake
-                .with_server_name(format!("kms.{region}.amazonaws.com"))
+                // .with_server_name(format!("kms.{region}.amazonaws.com"))
                 .enable_http1()
                 .build();
             let http_client = HyperClientBuilder::new().build(https_connector);

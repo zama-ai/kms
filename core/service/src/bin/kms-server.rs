@@ -659,17 +659,6 @@ async fn main_exec() -> anyhow::Result<()> {
                 }
             };
 
-            #[cfg(not(feature = "insecure"))]
-            let need_peer_tcp_proxy = need_security_module;
-            #[cfg(feature = "insecure")]
-            let need_peer_tcp_proxy =
-                need_security_module && !core_config.mock_enclave.is_some_and(|m| m);
-
-            if need_peer_tcp_proxy {
-                tracing::warn!("KMS server will connect to peers through vsock proxies");
-            } else {
-                tracing::warn!("KMS server will connect to peers directly");
-            };
             let service_config = core_config.service.clone();
             let (kms, (health_reporter, health_service), metastore_status_service) =
                 new_real_threshold_kms(
@@ -681,7 +670,6 @@ async fn main_exec() -> anyhow::Result<()> {
                     mpc_listener,
                     base_kms,
                     tls_identity,
-                    need_peer_tcp_proxy,
                     false,
                     std::future::pending(),
                 )
