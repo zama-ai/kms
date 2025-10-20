@@ -1,16 +1,11 @@
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
 use crate::cryptography::internal_crypto_types::{
-    Decrypt, Encrypt, PrivateSigKey, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+    Designcrypt, Encrypt, PrivateSigKey, UnifiedDesigncryptionKey, UnifiedPrivateEncKey,
+    UnifiedPublicEncKey,
 };
 use crate::cryptography::signcryption::internal_sign;
 use crate::engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr};
-use crate::{
-    consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::{
-        internal_crypto_types::{PublicSigKey, Signature},
-        signcryption::internal_verify_sig,
-    },
-};
+use crate::{consts::SAFE_SER_SIZE_LIMIT, cryptography::internal_crypto_types::PublicSigKey};
 use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
 use kms_grpc::rpc_types::InternalCustodianRecoveryOutput;
 use kms_grpc::RequestId;
@@ -70,8 +65,8 @@ pub struct InternalCustodianSetupMessage {
     pub name: String, // This is the human readable name of the custodian
     pub random_value: [u8; 32],
     pub timestamp: u64,
-    pub public_enc_key: UnifiedPublicEncKey, // TODO backup or ephemeral?
-    pub public_verf_key: PublicSigKey,
+    pub public_enc_key: UnifiedPublicEncKey, // The public encrypt key of the custodian
+    pub public_verf_key: PublicSigKey,       // The custodian's verification key
 }
 
 impl Named for InternalCustodianSetupMessage {
@@ -199,7 +194,7 @@ impl InternalCustodianContext {
 pub struct Custodian {
     role: Role,
     signing_key: PrivateSigKey,
-    enc_key: UnifiedPublicEncKey, // TODO backup?
+    enc_key: UnifiedPublicEncKey,
     dec_key: UnifiedPrivateEncKey,
 }
 
@@ -233,7 +228,7 @@ impl Custodian {
     // we end up returning an error when signing the encrypted share.
     #[allow(unknown_lints)]
     #[allow(non_local_effect_before_error_return)]
-    /// Obtain the operator public key for reencryption,
+    /// Obtain the operator ephemeral public key for reencryption,
     /// decrypt the given ciphertext encrypted under the custodian's public key
     /// and then encrypt it under the operator's public key
     /// finally sign the ciphertext under the custodian's signing key.
@@ -244,7 +239,7 @@ impl Custodian {
         rng: &mut R,
         backup: &InnerOperatorBackupOutput,
         operator_verification_key: &PublicSigKey,
-        operator_pk: &UnifiedPublicEncKey, // TODO Ephemeral?
+        operator_ephem_enc_key: &UnifiedPublicEncKey,
         backup_id: RequestId,
         operator_role: Role,
     ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
@@ -252,21 +247,20 @@ impl Custodian {
             "Verifying and re-encrypting backup for operator: {}",
             operator_role
         );
-        // TODO change to signcryption
-        // check the signature
-        let signature = Signature {
-            sig: k256::ecdsa::Signature::from_slice(&backup.signature)?,
-        };
-        internal_verify_sig(
-            &DSEP_BACKUP_RECOVERY,
-            &backup.ciphertext.cipher,
-            &signature,
-            operator_verification_key,
-        )
-        .map_err(|e| BackupError::SignatureVerificationError(e.to_string()))?;
-        tracing::debug!("Signature verified for operator: {}", operator_role);
-        // recovered share
-        let backup_material: BackupMaterial = self.dec_key.decrypt(&backup.ciphertext)?;
+        let designcrypt_key = UnifiedDesigncryptionKey::new(
+            self.dec_key.to_owned(),
+            self.enc_key.to_owned(),
+            operator_verification_key.to_owned(),
+            self.signing_key.verf_key().verf_key_id(),
+        );
+        let backup_material: BackupMaterial = designcrypt_key
+            .designcrypt(&DSEP_BACKUP_RECOVERY, &backup.signcryption)
+            .map_err(|e| {
+                tracing::warn!(
+                    "Deigncryption failed for backup {backup_id} for operator {operator_role}: {e}"
+                );
+                BackupError::CustodianRecoveryError
+            })?;
         tracing::debug!("Decrypted ciphertext for operator: {}", operator_role);
         // check the decrypted result
         if !backup_material.matches_expected_metadata(
@@ -285,7 +279,7 @@ impl Custodian {
 
         // re-encrypted share and sign it
         // TODO should be using signcryption here
-        let st_i_j = operator_pk.encrypt(rng, &backup_material)?;
+        let st_i_j = operator_ephem_enc_key.encrypt(rng, &backup_material)?;
         let sigt_i_j = internal_sign(&DSEP_BACKUP_CUSTODIAN, &st_i_j.cipher, &self.signing_key)
             .map_err(|e| BackupError::SigningError(e.to_string()))?;
         tracing::debug!("Signed re-encrypted share for operator: {}", operator_role);
@@ -320,8 +314,7 @@ impl Custodian {
         })
     }
 
-    // TODO backup???
-    pub fn public_key(&self) -> &UnifiedPublicEncKey {
+    pub fn public_enc_key(&self) -> &UnifiedPublicEncKey {
         &self.enc_key
     }
 

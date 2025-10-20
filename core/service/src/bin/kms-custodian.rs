@@ -130,7 +130,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 tracing::warn!("Verification failed: Public verification key does not match the generated key!");
                 validation_ok = false;
             }
-            if &setup_msg.public_enc_key != recovered_keys.public_key() {
+            if &setup_msg.public_enc_key != recovered_keys.public_enc_key() {
                 tracing::warn!(
                     "Verification failed: Public encryption key does not match the generated key!"
                 );
@@ -153,16 +153,10 @@ async fn main() -> Result<(), anyhow::Error> {
                 "Decrypting ciphertexts for custodian role: {}",
                 params.custodian_role
             );
-            let verf_key: PublicSigKey =
+            let operator_verf_key: PublicSigKey =
                 safe_read_element_versioned(&params.operator_verf_key).await?;
             let recovery_request: InternalRecoveryRequest =
                 safe_read_element_versioned(&params.recovery_request_path).await?;
-            if !recovery_request
-                .is_valid(&verf_key)
-                .expect("Failed to validate recovery request")
-            {
-                return Err(anyhow::anyhow!("Invalid RecoveryRequest data"));
-            }
             // Logic for decrypting payloads
             let custodian = custodian_from_seed_phrase(
                 &params.seed_phrase,
@@ -183,7 +177,7 @@ async fn main() -> Result<(), anyhow::Error> {
             let res = custodian.verify_reencrypt(
                 &mut rng,
                 custodian_backup,
-                &verf_key,
+                &operator_verf_key,
                 recovery_request.ephm_enc_key(),
                 recovery_request.backup_id(),
                 recovery_request.operator_role(),

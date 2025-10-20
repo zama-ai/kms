@@ -6,6 +6,9 @@ const EXTENDED_DERIVES: &str =
 
 fn default_builder() -> Builder {
     tonic_build::configure()
+        .type_attribute("OperatorBackupOutput", EXTENDED_DERIVES)
+        .type_attribute("EncryptionSchemeType", DERIVES)
+        .type_attribute("SigningSchemeType", DERIVES)
         .type_attribute("PublicDecryptionRequest", DERIVES)
         .type_attribute("PublicDecryptionResponsePayload", DERIVES)
         .type_attribute("ExternalDecryptionResult", DERIVES)

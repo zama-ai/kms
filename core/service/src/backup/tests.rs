@@ -157,7 +157,7 @@ fn custodian_reencrypt() {
         let operator_role = Role::indexed_from_zero(0);
         let mut bad_cts = cts.clone();
         if let Some(z) = bad_cts[0].0.get_mut(&operator_role) {
-            z.ciphertext.cipher[0] ^= 1;
+            z.signcryption.payload[0] ^= 1;
         }
 
         let err = custodians[0]
@@ -178,7 +178,7 @@ fn custodian_reencrypt() {
         let operator_role = Role::indexed_from_zero(0);
         let mut bad_cts = cts.clone();
         if let Some(z) = bad_cts[0].0.get_mut(&operator_role) {
-            z.signature[0] ^= 1;
+            z.signcryption.payload[0] ^= 1;
         }
 
         let err = custodians[0]
@@ -528,7 +528,7 @@ fn full_flow_malicious_operator() {
             .unwrap()
             .clone();
         first_backup.iter_mut().for_each(|(_, v)| {
-            v.ciphertext.cipher[0] ^= 1;
+            v.signcryption.payload[0] ^= 1;
         });
         let _ = payload_for_custodians_malicious.insert(
             Role::indexed_from_one(1),

@@ -1,5 +1,4 @@
 use crate::backup::custodian::Custodian;
-use crate::backup::operator::InternalRecoveryRequest;
 use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::test_tools::centralized_custodian_handles;
 #[cfg(feature = "insecure")]
@@ -388,9 +387,6 @@ async fn emulate_custodian(
         )
         .await
         .unwrap();
-        let internal_recovery_req: InternalRecoveryRequest =
-            recovery_request.to_owned().try_into().unwrap();
-        assert!(internal_recovery_req.is_valid(&verf_key).unwrap());
         let cur_cus_reenc = recovery_request.cts.get(&((cur_idx + 1) as u64)).unwrap();
         let cur_enc_key = safe_deserialize(
             std::io::Cursor::new(&recovery_request.enc_key),
@@ -400,7 +396,7 @@ async fn emulate_custodian(
         let cur_out = custodian
             .verify_reencrypt(
                 rng,
-                &cur_cus_reenc.to_owned().into(),
+                &cur_cus_reenc.to_owned().try_into().unwrap(),
                 &verf_key,
                 &cur_enc_key,
                 backup_id.clone().try_into().unwrap(),

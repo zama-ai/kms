@@ -5,9 +5,7 @@ use crate::cryptography::internal_crypto_types::{
 use crate::engine::utils::query_key_material_availability;
 use crate::{
     anyhow_error_and_log,
-    backup::operator::{
-        Operator, RecoveryRequestPayload, RecoveryValidationMaterial, DSEP_BACKUP_RECOVERY,
-    },
+    backup::operator::{Operator, RecoveryRequestPayload, RecoveryValidationMaterial},
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         attestation::{SecurityModule, SecurityModuleProxy},
@@ -94,20 +92,9 @@ where
         let (backup_priv_key, backup_pub_key) = enc
             .keygen()
             .map_err(|e| anyhow::anyhow!("Failure in ephemeral key generation for backup: {e}"))?;
-        let verification_key: PublicSigKey = (*self.base_kms.sig_key).clone().into();
         let mut cts = HashMap::new();
         for (cur_cus_role, cur_cus_ct) in recovery_request.cts {
-            let signature = Signature {
-                sig: k256::ecdsa::Signature::from_slice(&cur_cus_ct.signature)?,
-            };
-            // Sanity check that public data has not been corrupted since we constructed it during custodian init
-            internal_verify_sig(
-                &DSEP_BACKUP_RECOVERY,
-                &cur_cus_ct.ciphertext.cipher,
-                &signature,
-                &verification_key,
-            )?;
-            cts.insert(cur_cus_role.one_based() as u64, cur_cus_ct.into());
+            cts.insert(cur_cus_role.one_based() as u64, cur_cus_ct.try_into()?);
         }
         let mut serialized_priv_key = Vec::new();
         safe_serialize(

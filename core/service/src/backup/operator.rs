@@ -8,8 +8,8 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         internal_crypto_types::{
-            Decrypt, Encrypt, EncryptionSchemeType, PrivateSigKey, PublicSigKey, Signature,
-            UnifiedPrivateEncKey,
+            Decrypt, Designcrypt, Encrypt, EncryptionSchemeType, PrivateSigKey, PublicSigKey,
+            Signature, UnifiedDesigncryptionKey, UnifiedPrivateEncKey, UnifiedSigncryption,
         },
         signcryption::{internal_sign, internal_verify_sig},
     },
@@ -99,7 +99,7 @@ impl InternalRecoveryRequest {
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
         backup_id: RequestId,
         operator_role: Role,
-        verf_key: Option<&PublicSigKey>,
+        design_key: Option<&UnifiedDesigncryptionKey>,
     ) -> anyhow::Result<Self> {
         let res = InternalRecoveryRequest {
             ephem_enc_key,
@@ -107,8 +107,8 @@ impl InternalRecoveryRequest {
             backup_id,
             operator_role,
         };
-        if let Some(verf_key) = verf_key {
-            if !res.is_valid(verf_key)? {
+        if let Some(design_key) = design_key {
+            if !res.is_valid(design_key)? {
                 return Err(anyhow_error_and_log("Invalid RecoveryRequest data"));
             }
         }
@@ -116,7 +116,7 @@ impl InternalRecoveryRequest {
     }
 
     /// Validate that the data in the request is sensible.
-    pub fn is_valid(&self, verf_key: &PublicSigKey) -> anyhow::Result<bool> {
+    pub fn is_valid(&self, designcrypt_key: &UnifiedDesigncryptionKey) -> anyhow::Result<bool> {
         if !self.backup_id.is_valid() {
             tracing::warn!("InternalRecoveryRequest has an invalid backup ID");
             return Ok(false);
@@ -126,17 +126,12 @@ impl InternalRecoveryRequest {
             return Ok(false);
         }
         for cur in self.cts.values() {
-            if internal_verify_sig(
-                &DSEP_BACKUP_RECOVERY,
-                &cur.ciphertext.cipher,
-                &Signature {
-                    sig: k256::ecdsa::Signature::from_slice(&cur.signature)?,
-                },
-                verf_key,
-            )
-            .is_err()
+            // We ignore the result, but just ensure that designcryption works
+            if designcrypt_key
+                .validate_signcryption(&DSEP_BACKUP_RECOVERY, &cur.signcryption)
+                .is_err()
             {
-                tracing::warn!("InternalRecoveryRequest signature verification failed");
+                tracing::warn!("InternalRecoveryRequest contains an invalid signcryption");
                 return Ok(false);
             }
         }
@@ -178,16 +173,12 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
             safe_deserialize(std::io::Cursor::new(&value.enc_key), SAFE_SER_SIZE_LIMIT).map_err(
                 |e| anyhow_error_and_log(format!("Could not deserialize enc_key: {e:?}")),
             )?;
-        let cts = value
-            .cts
-            .iter()
-            .map(|(cur_role_idx, cur_backup_out)| {
-                (
-                    Role::indexed_from_one(*cur_role_idx as usize),
-                    cur_backup_out.clone().into(),
-                )
-            })
-            .collect();
+        let mut cts = BTreeMap::new();
+        for (cur_role_idx, cur_backup_out) in value.cts {
+            let role = Role::indexed_from_one(cur_role_idx as usize);
+            let inner_ct: InnerOperatorBackupOutput = cur_backup_out.try_into()?;
+            cts.insert(role, inner_ct);
+        }
         let backup_id: RequestId =
             parse_optional_proto_request_id(&value.backup_id, RequestIdParsingErr::BackupRecovery)?;
         Ok(Self {
@@ -203,8 +194,8 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
 pub struct Operator {
     my_role: Role,
     custodian_keys: HashMap<Role, (UnifiedPublicEncKey, PublicSigKey)>,
-    signer: PrivateSigKey,
-    // the public component of [signer] above
+    signing_key: PrivateSigKey,
+    // the public component of [signing_key] above
     verification_key: PublicSigKey,
     threshold: usize,
 }
@@ -214,7 +205,7 @@ impl std::fmt::Debug for Operator {
         f.debug_struct("Operator")
             .field("my_id", &self.my_role)
             .field("custodian_keys", &self.custodian_keys)
-            .field("signer", &"ommitted")
+            .field("signing_key", &"ommitted")
             .field("verification_key", &self.verification_key)
             .field("threshold", &self.threshold)
             .finish()
@@ -232,33 +223,35 @@ pub enum InnerOperatorBackupOutputVersioned {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(InnerOperatorBackupOutputVersioned)]
 pub struct InnerOperatorBackupOutput {
-    /// Ciphertext under the custodian's public key, using nested encryption.
-    pub ciphertext: UnifiedCipher,
-    /// Signature by the operator.
-    pub signature: Vec<u8>, // TODO(#2782) should be versionized
+    pub signcryption: UnifiedSigncryption,
 }
 
 impl Named for InnerOperatorBackupOutput {
     const NAME: &'static str = "backup::InnerOperatorBackupOutput";
 }
 
-impl From<OperatorBackupOutput> for InnerOperatorBackupOutput {
-    fn from(value: OperatorBackupOutput) -> Self {
-        Self {
-            ciphertext: UnifiedCipher::new(
-                value.ciphertext,
-                EncryptionSchemeType::MlKem512, // TODO should come from cipher after signcryption is added
-            ),
-            signature: value.signature,
-        }
+impl TryFrom<OperatorBackupOutput> for InnerOperatorBackupOutput {
+    type Error = anyhow::Error;
+
+    fn try_from(value: OperatorBackupOutput) -> Result<Self, Self::Error> {
+        Ok(Self {
+            signcryption: UnifiedSigncryption {
+                payload: value.signcryption,
+                encryption_type: value.encryption_type.try_into()?,
+                signing_type: value.signing_type.try_into()?,
+            },
+        })
     }
 }
-impl From<InnerOperatorBackupOutput> for OperatorBackupOutput {
-    fn from(value: InnerOperatorBackupOutput) -> Self {
-        Self {
-            ciphertext: value.ciphertext.cipher,
-            signature: value.signature,
-        }
+impl TryFrom<InnerOperatorBackupOutput> for OperatorBackupOutput {
+    type Error = anyhow::Error;
+
+    fn try_from(value: InnerOperatorBackupOutput) -> Result<Self, Self::Error> {
+        Ok(Self {
+            signcryption: value.signcryption.payload,
+            encryption_type: value.signcryption.encryption_type as i32,
+            signing_type: value.signcryption.signing_type as i32,
+        })
     }
 }
 
@@ -502,7 +495,7 @@ impl Operator {
     pub fn new(
         my_role: Role,
         custodian_messages: Vec<InternalCustodianSetupMessage>,
-        signer: PrivateSigKey,
+        signing_key: PrivateSigKey,
         threshold: usize,
         amount_custodians: usize,
     ) -> Result<Self, BackupError> {
@@ -580,11 +573,11 @@ impl Operator {
             tracing::error!("{msg}");
             return Err(BackupError::SetupError(msg));
         }
-        let verf_key = signer.clone().into();
+        let verf_key = signing_key.clone().into();
         Ok(Self {
             my_role,
             custodian_keys,
-            signer,
+            signing_key,
             verification_key: verf_key,
             threshold,
         })
@@ -688,10 +681,11 @@ impl Operator {
             };
             // TODO should be signcryption
             let ciphertext = enc_pk.encrypt(rng, &backup_material)?;
-            let signature = internal_sign(&DSEP_BACKUP_RECOVERY, &ciphertext.cipher, &self.signer)
-                .map_err(|e| BackupError::OperatorError(e.to_string()))?
-                .sig
-                .to_vec();
+            let _signature =
+                internal_sign(&DSEP_BACKUP_RECOVERY, &ciphertext.cipher, &self.signing_key)
+                    .map_err(|e| BackupError::OperatorError(e.to_string()))?
+                    .sig
+                    .to_vec();
             // Commitment by the operator, which is a hash of [BackupMaterial].
             //
             // We cannot use the regular commitment routines from commitment.rs
@@ -710,8 +704,11 @@ impl Operator {
             ct_shares.insert(
                 role_j,
                 InnerOperatorBackupOutput {
-                    ciphertext,
-                    signature,
+                    signcryption: UnifiedSigncryption {
+                        payload: ciphertext.cipher, // TODO
+                        encryption_type: EncryptionSchemeType::MlKem512,
+                        signing_type: (&self.signing_key).into(),
+                    },
                 },
             );
             commitments.insert(role_j, msg_digest);

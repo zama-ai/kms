@@ -1055,6 +1055,7 @@ pub enum CustodianRecoveryOutputVersioned {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(CustodianRecoveryOutputVersioned)]
 pub struct InternalCustodianRecoveryOutput {
+    // TODO should be changed to signcryption
     pub signature: Vec<u8>,  // sigt_i_j
     pub ciphertext: Vec<u8>, // st_i_j
     pub custodian_role: Role,

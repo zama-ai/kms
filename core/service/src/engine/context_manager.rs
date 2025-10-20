@@ -358,6 +358,7 @@ mod tests {
         },
         cryptography::internal_crypto_types::{
             gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, PublicSigKey,
+            UnifiedDesigncryptionKey,
         },
         engine::context::{NodeInfo, SoftwareVersion},
         util::meta_store::MetaStore,
@@ -496,9 +497,16 @@ mod tests {
     async fn test_gen_recovery_request_payloads() {
         let mut rng = AesRng::seed_from_u64(40);
         let backup_id = RequestId::new_random(&mut rng);
+        let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
         let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
         let (ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
+        let design_key = UnifiedDesigncryptionKey::new(
+            ephemeral_dec_key.clone(),
+            ephemeral_enc_key.clone(),
+            verf_key.clone(),
+            client_verf_key.verf_key_id(),
+        );
         let mnemonic = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
         let custodian1: Custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(1)).unwrap();
@@ -542,9 +550,9 @@ mod tests {
             recovery_request_payload.cts,
             backup_id,
             Role::indexed_from_one(1),
-            Some(&verf_key),
+            Some(&design_key),
         )
         .unwrap();
-        assert!(internal_rec_req.is_valid(&verf_key).unwrap());
+        assert!(internal_rec_req.is_valid(&design_key).unwrap());
     }
 }

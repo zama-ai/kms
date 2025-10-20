@@ -837,7 +837,7 @@ mod kms_custodian_binary_tests {
             ciphertexts,
             backup_id,
             operator_role,
-            Some(&verification_key),
+            None,
         )
         .unwrap();
         safe_write_element_versioned(&Path::new(&operator_verf_path), &verification_key)

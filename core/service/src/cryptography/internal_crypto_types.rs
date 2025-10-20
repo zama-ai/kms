@@ -7,7 +7,7 @@ use kms_grpc::kms::v1::FheParameter;
 use ml_kem::{EncodedSizeUser, KemCore, MlKem1024, MlKem512};
 use nom::AsBytes;
 use rand::{CryptoRng, RngCore};
-use serde::de::Visitor;
+use serde::de::{DeserializeOwned, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::sync::Arc;
 use strum::Display;
@@ -505,6 +505,32 @@ pub enum EncryptionSchemeType {
     MlKem1024,
 }
 
+// Observe that since we serialize this enum, we need to implement a separate variant to keep it versioned properly
+impl From<kms_grpc::kms::v1::EncryptionSchemeType> for EncryptionSchemeType {
+    fn from(value: kms_grpc::kms::v1::EncryptionSchemeType) -> Self {
+        // Map the gRPC enum to your local enum
+        match value {
+            kms_grpc::kms::v1::EncryptionSchemeType::Mlkem512 => EncryptionSchemeType::MlKem512,
+            kms_grpc::kms::v1::EncryptionSchemeType::Mlkem1024 => EncryptionSchemeType::MlKem1024,
+        }
+    }
+}
+
+impl TryFrom<i32> for EncryptionSchemeType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(EncryptionSchemeType::MlKem512),
+            1 => Ok(EncryptionSchemeType::MlKem1024),
+            // Future encryption schemes can be added here
+            _ => Err(anyhow::anyhow!(
+                "Unsupported EncryptionSchemeType: {:?}",
+                value
+            )),
+        }
+    }
+}
 pub trait EncryptionScheme: Send + Sync {
     /// Return the type of encryption scheme used by this instance
     fn scheme_type(&self) -> EncryptionSchemeType;
@@ -575,6 +601,29 @@ pub enum SigningSchemeTypeVersioned {
 pub enum SigningSchemeType {
     Ecdsa256k1,
     // Eventually we will support post quantum signatures as well
+}
+
+impl From<kms_grpc::kms::v1::SigningSchemeType> for SigningSchemeType {
+    fn from(value: kms_grpc::kms::v1::SigningSchemeType) -> Self {
+        // Map the gRPC enum to your local enum
+        match value {
+            kms_grpc::kms::v1::SigningSchemeType::Ecdsa256k1 => SigningSchemeType::Ecdsa256k1,
+        }
+    }
+}
+impl TryFrom<i32> for SigningSchemeType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(SigningSchemeType::Ecdsa256k1),
+            // Future signing schemes can be added here
+            _ => Err(anyhow::anyhow!(
+                "Unsupported SigningSchemeType: {:?}",
+                value
+            )),
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
@@ -751,6 +800,7 @@ impl PrivateSigKey {
     }
 }
 
+// TODO should be normal methods and not from
 impl From<PrivateSigKey> for SigningSchemeType {
     fn from(_value: PrivateSigKey) -> Self {
         // Only one scheme for now
@@ -843,15 +893,8 @@ impl UnifiedCipher {
 }
 
 pub trait Signcrypt {
-    // TODO(#2782) should be generalized to the following
-    // fn signcrypt<T: Serialize + tfhe::Versionize + tfhe::named::Named>(
-    //     &self,
-    //     rng: &mut (impl CryptoRng + RngCore),
-    //     dsep: &DomainSep,
-    //     msg: &T,
-    // ) -> Result<UnifiedSigncryption, CryptographyError> {
     /// Signcrypt a message of type T with a specified domain separator.
-    fn signcrypt<T: Serialize + AsRef<[u8]>>(
+    fn signcrypt<T: Serialize + tfhe::Versionize + tfhe::named::Named>(
         &self,
         rng: &mut (impl CryptoRng + RngCore),
         dsep: &DomainSep,
@@ -860,21 +903,24 @@ pub trait Signcrypt {
 }
 
 pub trait Designcrypt {
-    // TODO(#2782) should eventually look like this
-    // fn designcrypt<T: Serialize + tfhe::Versionize + tfhe::named::Named>(
-    //     &self,
-    //     signcryption: &UnifiedSigncryption,
-    // ) -> Result<T, CryptographyError>;
     /// Decrypt a signcrypted message and verify the signature before returning the result.
     /// If the signature verification fails, an error is returned.
     ///
     /// This fn also checks that the provided link parameter corresponds to the link in the signcryption
     /// payload.
-    fn designcrypt(
+    fn designcrypt<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
         &self,
         dsep: &DomainSep,
         cipher: &UnifiedSigncryption,
-    ) -> Result<Vec<u8>, CryptographyError>;
+    ) -> Result<T, CryptographyError>;
+
+    /// Validate the signature of a signcrypted message without decrypting the payload.
+    /// This can be used to check authenticity if decryption is not needed.
+    fn validate_signcryption(
+        &self,
+        dsep: &DomainSep,
+        signcryption: &UnifiedSigncryption,
+    ) -> Result<(), CryptographyError>;
 }
 
 pub trait SigncryptFHEPlaintext: Signcrypt {
@@ -943,6 +989,7 @@ pub struct UnifiedSigncryptionKey {
     pub receiver_enc_key: UnifiedPublicEncKey,
     pub receiver_id: Vec<u8>, // Identifier for the receiver's encryption key, e.g. blockchain address
 }
+// TODO implement and use reference toyes where possible
 
 impl Zeroize for UnifiedSigncryptionKey {
     fn zeroize(&mut self) {
@@ -994,6 +1041,8 @@ impl UnifiedDesigncryptionKey {
             receiver_id,
         }
     }
+
+    //  TODO this file should be split up and this moved to signcryption
 }
 
 // TODO should just be for tests

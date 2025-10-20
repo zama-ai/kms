@@ -89,7 +89,10 @@ mod tests {
         // Observe that keys don't depend directly on name or role
         let regenerated_custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(2)).unwrap();
-        assert_eq!(custodian.public_key(), regenerated_custodian.public_key());
+        assert_eq!(
+            custodian.public_enc_key(),
+            regenerated_custodian.public_enc_key()
+        );
         assert_eq!(
             custodian.verification_key(),
             regenerated_custodian.verification_key()
@@ -118,8 +121,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            regeneratred_custodian.public_key(),
-            prune_custodian.public_key()
+            regeneratred_custodian.public_enc_key(),
+            prune_custodian.public_enc_key()
         );
         assert_eq!(
             regeneratred_custodian.verification_key(),

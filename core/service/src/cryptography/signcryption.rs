@@ -11,6 +11,7 @@
 //! For encryption a hybrid encryption scheme is used based on ML-KEM and AES GCM.
 
 use super::internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature};
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
 #[cfg(test)]
@@ -24,7 +25,9 @@ use crate::{anyhow_tracked, consts::SIG_SIZE};
 use ::signature::{Signer, Verifier};
 use kms_grpc::kms::v1::TypedPlaintext;
 use rand::{CryptoRng, RngCore};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::FheTypes;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_fhe::hashing::{serialize_hash_element, DomainSep, DIGEST_BYTES};
@@ -123,56 +126,15 @@ impl Signcrypt for UnifiedSigncryptionKey {
         msg: &T,
     ) -> Result<UnifiedSigncryption, CryptographyError>
     where
-        T: Serialize + AsRef<[u8]>,
+        T: Serialize + tfhe::Versionize + tfhe::named::Named,
     {
-        // Adds the hash digest of the receivers public encryption key to the message to sign
-        // Sign msg || H(client_verf_key) || H(client_pub_key)
-        // Note that H(client_verf_key) = client_address
-        // Only serialize the inner structure to ensure backwards compatibility!!!
-        let serialized_enc_key = match &self.receiver_enc_key {
-            UnifiedPublicEncKey::MlKem512(public_enc_key) => {
-                serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
-                    .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
-            }
-            UnifiedPublicEncKey::MlKem1024(public_enc_key) => {
-                serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
-                    .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
-            }
-        };
-        let to_sign = [msg.as_ref(), &self.receiver_id, &serialized_enc_key].concat();
-        let sig = internal_sign(dsep, &to_sign, &self.signing_key)
-            .map_err(|e| CryptographyError::SigningError(e.to_string()))?
-            .sig;
-
-        // Encrypt msg || sig || H(server_verification_key) || H(server_enc_pub_key)
-        // OBSERVE: serialization is simply r concatenated with s. That is NOT an Ethereum compatible
-        // signature since we preclude the v value.
-        // The verification key is serialized based on the SEC1 standard.
-        let verf_key_hash = &serialize_hash_element(
-            &DSEP_SIGNCRYPTION,
-            // LEGACY: this is horrible! We are using address above be here we use digest! This should be changed to use  &self.signing_key.verf_key().verf_key_id(),
-            // Idem below
-            &PublicSigKey::from_sk(&self.signing_key),
-        )
-        .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?;
-        let to_encrypt = [msg.as_ref(), &sig.to_bytes(), verf_key_hash].concat();
-
-        let ciphertext = match &self.receiver_enc_key {
-            UnifiedPublicEncKey::MlKem512(public_enc_key) => {
-                hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(rng, &to_encrypt, &public_enc_key.0)
-            }
-            UnifiedPublicEncKey::MlKem1024(public_enc_key) => {
-                hybrid_ml_kem::enc::<ml_kem::MlKem1024, _>(rng, &to_encrypt, &public_enc_key.0)
-            }
-        }?;
-        // LEGACY: approach to serialization
-        let res = UnifiedSigncryption {
-            payload: bc2wrap::serialize(&ciphertext)
-                .map_err(|e| CryptographyError::BincodeError(e.to_string()))?,
-            encryption_type: (&self.receiver_enc_key).into(),
-            signing_type: (&self.signing_key).into(),
-        };
-        Ok(res)
+        let mut serialized_msg = Vec::new();
+        safe_serialize(msg, &mut serialized_msg, SAFE_SER_SIZE_LIMIT).map_err(|e| {
+            CryptographyError::SerializationError(format!(
+                "Could not serialize message for signcryption: {e}",
+            ))
+        })?;
+        inner_signcryption(self, rng, dsep, &serialized_msg)
     }
 }
 
@@ -190,38 +152,100 @@ impl SigncryptFHEPlaintext for UnifiedSigncryptionKey {
             link: link.to_owned(),
         };
         // LEGACY Code: should be using safe_serialization
-        self.signcrypt(rng, dsep, &bc2wrap::serialize(&signcryption_msg)?)
+        inner_signcryption(self, rng, dsep, &bc2wrap::serialize(&signcryption_msg)?)
     }
 }
 
+// Implements the actual signcryption but without serialization
+fn inner_signcryption<T: Serialize + AsRef<[u8]>>(
+    signcrypt_key: &UnifiedSigncryptionKey,
+    rng: &mut (impl CryptoRng + RngCore),
+    dsep: &DomainSep,
+    msg: &T,
+) -> Result<UnifiedSigncryption, CryptographyError> {
+    // Adds the hash digest of the receivers public encryption key to the message to sign
+    // Sign msg || H(client_verf_key) || H(client_pub_key)
+    // Note that H(client_verf_key) = client_address
+    // Only serialize the inner structure to ensure backwards compatibility!!!
+    let serialized_enc_key = match &signcrypt_key.receiver_enc_key {
+        UnifiedPublicEncKey::MlKem512(public_enc_key) => {
+            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
+                .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
+        }
+        UnifiedPublicEncKey::MlKem1024(public_enc_key) => {
+            serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
+                .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
+        }
+    };
+    let to_sign = [
+        msg.as_ref(),
+        &signcrypt_key.receiver_id,
+        &serialized_enc_key,
+    ]
+    .concat();
+    let sig = internal_sign(dsep, &to_sign, &signcrypt_key.signing_key)
+        .map_err(|e| CryptographyError::SigningError(e.to_string()))?
+        .sig;
+
+    // Encrypt msg || sig || H(server_verification_key) || H(server_enc_pub_key)
+    // OBSERVE: serialization is simply r concatenated with s. That is NOT an Ethereum compatible
+    // signature since we preclude the v value.
+    // The verification key is serialized based on the SEC1 standard.
+    let verf_key_hash = serialize_hash_element(
+        &DSEP_SIGNCRYPTION,
+        // LEGACY: this is horrible! We are using address above be here we use digest! This should be changed to use  &self.signing_key.verf_key().verf_key_id(),
+        // Idem below
+        &PublicSigKey::from_sk(&signcrypt_key.signing_key),
+    )
+    .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?;
+    let to_encrypt = [
+        msg.as_ref(),
+        sig.to_bytes().as_ref(),
+        verf_key_hash.as_ref(),
+    ]
+    .concat();
+
+    let ciphertext = match &signcrypt_key.receiver_enc_key {
+        UnifiedPublicEncKey::MlKem512(public_enc_key) => {
+            hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(rng, &to_encrypt, &public_enc_key.0)
+        }
+        UnifiedPublicEncKey::MlKem1024(public_enc_key) => {
+            hybrid_ml_kem::enc::<ml_kem::MlKem1024, _>(rng, &to_encrypt, &public_enc_key.0)
+        }
+    }?;
+    // LEGACY: approach to serialization
+    Ok(UnifiedSigncryption {
+        payload: bc2wrap::serialize(&ciphertext)
+            .map_err(|e| CryptographyError::BincodeError(e.to_string()))?,
+        encryption_type: (&signcrypt_key.receiver_enc_key).into(),
+        signing_type: (&signcrypt_key.signing_key).into(),
+    })
+}
+
 impl Designcrypt for UnifiedDesigncryptionKey {
-    /// Validate a signcryption and decrypt the payload if everything validates correctly.
-    ///
-    /// Returns Err if validation fails and Ok(message) if validation succeeds.
-    fn designcrypt(
+    fn designcrypt<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
         &self,
         dsep: &DomainSep,
         cipher: &UnifiedSigncryption,
-    ) -> Result<Vec<u8>, CryptographyError> {
-        if cipher.encryption_type != (&self.encryption_key).into() {
-            return Err(CryptographyError::VerificationError(
-                "encryption type of cipher does not match the decryption key type".to_string(),
-            ));
-        }
-        // LEGACY Code: should be using safe_deserialization
-        let deserialized_payload: HybridKemCt = bc2wrap::deserialize(&cipher.payload)
-            .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
-        let decrypted_plaintext = match &self.decryption_key {
-            UnifiedPrivateEncKey::MlKem512(dec_key) => {
-                hybrid_ml_kem::dec::<ml_kem::MlKem512>(deserialized_payload, &dec_key.0)
-            }
-            UnifiedPrivateEncKey::MlKem1024(dec_key) => {
-                hybrid_ml_kem::dec::<ml_kem::MlKem1024>(deserialized_payload, &dec_key.0)
-            }
-        }?;
-        let (msg, sig) = parse_msg(decrypted_plaintext, &self.sender_verf_key)?;
-        check_format_and_signature(dsep, msg.clone(), &sig, self)?;
-        Ok(msg)
+    ) -> Result<T, CryptographyError> {
+        let msg_vec = inner_designcrypt(self, dsep, cipher)?;
+        safe_deserialize(std::io::Cursor::new(&msg_vec), SAFE_SER_SIZE_LIMIT)
+            .map_err(CryptographyError::SerializationError)
+    }
+
+    fn validate_signcryption(
+        &self,
+        dsep: &DomainSep,
+        signcryption: &UnifiedSigncryption,
+    ) -> Result<(), CryptographyError> {
+        // Since we use sign-then-encrypt, we need to decrypt first to get the message for signature verification
+        let _ = inner_designcrypt(self, dsep, signcryption).map_err(|e| {
+            CryptographyError::VerificationError(format!(
+                "failed to decrypt signcryption for validation: {}",
+                e
+            ))
+        })?;
+        Ok(())
     }
 }
 
@@ -237,7 +261,7 @@ impl DesigncryptFHEPlaintext for UnifiedDesigncryptionKey {
             encryption_type: (&self.encryption_key).into(),
             signing_type: (&self.sender_verf_key).into(),
         };
-        let decrypted_signcryption = self.designcrypt(dsep, &parsed_signcryption)?;
+        let decrypted_signcryption = inner_designcrypt(self, dsep, &parsed_signcryption)?;
         // LEGACY should be using safe_deserialization
         let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize(&decrypted_signcryption)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
@@ -248,6 +272,33 @@ impl DesigncryptFHEPlaintext for UnifiedDesigncryptionKey {
         }
         Ok(signcrypted_msg)
     }
+}
+
+/// Implements the actual designcryption process, but without any deserialization
+fn inner_designcrypt(
+    design_key: &UnifiedDesigncryptionKey,
+    dsep: &DomainSep,
+    cipher: &UnifiedSigncryption,
+) -> Result<Vec<u8>, CryptographyError> {
+    if cipher.encryption_type != (&design_key.encryption_key).into() {
+        return Err(CryptographyError::VerificationError(
+            "encryption type of cipher does not match the decryption key type".to_string(),
+        ));
+    }
+    // LEGACY Code: should be using safe_deserialization
+    let deserialized_payload: HybridKemCt = bc2wrap::deserialize(&cipher.payload)
+        .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
+    let decrypted_plaintext = match &design_key.decryption_key {
+        UnifiedPrivateEncKey::MlKem512(dec_key) => {
+            hybrid_ml_kem::dec::<ml_kem::MlKem512>(deserialized_payload, &dec_key.0)
+        }
+        UnifiedPrivateEncKey::MlKem1024(dec_key) => {
+            hybrid_ml_kem::dec::<ml_kem::MlKem1024>(deserialized_payload, &dec_key.0)
+        }
+    }?;
+    let (msg, sig) = parse_msg(decrypted_plaintext, &design_key.sender_verf_key)?;
+    check_format_and_signature(dsep, msg.clone(), &sig, design_key)?;
+    Ok(msg)
 }
 
 /// Helper method for parsing a signcrypted message consisting of the _true_ msg || sig ||
@@ -411,6 +462,7 @@ mod tests {
         check_format_and_signature, internal_sign, internal_verify_sig, parse_msg, DIGEST_BYTES,
         DSEP_SIGNCRYPTION, SIG_SIZE,
     };
+    use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use tfhe::FheTypes;
@@ -430,7 +482,7 @@ mod tests {
     #[test]
     fn sunshine() {
         let (mut rng, client_signcryption_keys) = test_setup();
-        let msg = "A relatively long message that we wish to be able to later validate".as_bytes();
+        let msg = TestType { i: 1333 };
         let cipher = client_signcryption_keys
             .signcrypt_key
             .signcrypt(&mut rng, b"TESTTEST", &msg)
@@ -446,7 +498,7 @@ mod tests {
     fn sunshine_encoding_decoding() {
         // test the bincode serialization because that is what we use for all of kms
         let (mut rng, client_signcryption_keys) = test_setup();
-        let msg = "A relatively long message that we wish to be able to later validate".as_bytes();
+        let msg = TestType { i: 1333 };
         let cipher = client_signcryption_keys
             .signcrypt_key
             .signcrypt(&mut rng, b"TESTTEST", &msg)
@@ -490,7 +542,7 @@ mod tests {
     #[test]
     fn bad_signcryption() {
         let (mut rng, client_signcryption_keys) = test_setup();
-        let msg = "A relatively long message that we wish to be able to later validate".as_bytes();
+        let msg = TestType { i: 1333 };
         let correct_cipher = client_signcryption_keys
             .signcrypt_key
             .signcrypt(&mut rng, b"TESTTEST", &msg)
@@ -503,7 +555,7 @@ mod tests {
 
             assert!(client_signcryption_keys
                 .designcrypt_key
-                .designcrypt(b"TESTTEST", &cipher)
+                .designcrypt::<TestType>(b"TESTTEST", &cipher)
                 .is_err());
         }
 
@@ -513,7 +565,7 @@ mod tests {
             cipher.encryption_type = EncryptionSchemeType::MlKem1024;
             assert!(client_signcryption_keys
                 .designcrypt_key
-                .designcrypt(b"TESTTEST", &cipher)
+                .designcrypt::<TestType>(b"TESTTEST", &cipher)
                 .is_err());
         }
 
@@ -527,7 +579,7 @@ mod tests {
             );
             assert!(wrong_keys
                 .designcrypt_key
-                .designcrypt(b"TESTTEST", &correct_cipher)
+                .designcrypt::<TestType>(b"TESTTEST", &correct_cipher)
                 .is_err());
         }
 
@@ -548,7 +600,7 @@ mod tests {
                 client_signcryption_keys.designcrypt_key.receiver_id.clone(),
             );
             assert!(wrong_keys
-                .designcrypt(b"TESTTEST", &correct_cipher)
+                .designcrypt::<TestType>(b"TESTTEST", &correct_cipher)
                 .is_err());
         }
 
@@ -556,14 +608,14 @@ mod tests {
         {
             assert!(client_signcryption_keys
                 .designcrypt_key
-                .designcrypt(b"blahblah", &correct_cipher)
+                .designcrypt::<TestType>(b"blahblah", &correct_cipher)
                 .is_err());
         }
 
         // happy path should still work at the end
         let decrypted_msg = client_signcryption_keys
             .designcrypt_key
-            .designcrypt(b"TESTTEST", &correct_cipher)
+            .designcrypt::<TestType>(b"TESTTEST", &correct_cipher)
             .unwrap();
         assert_eq!(msg, decrypted_msg);
     }
