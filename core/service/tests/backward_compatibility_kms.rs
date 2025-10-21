@@ -14,8 +14,10 @@ use backward_compatibility::{
     tests::{run_all_tests, TestedModule},
     AppKeyBlobTest, CustodianSetupMessageTest, KmsFheKeyHandlesTest, OperatorBackupOutputTest,
     PrivateSigKeyTest, PublicSigKeyTest, TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
+    TypedPlaintextTest,
 };
 use kms_grpc::{
+    kms::v1::TypedPlaintext,
     rpc_types::{PubDataType, SignedPubDataHandleInternal},
     RequestId,
 };
@@ -67,6 +69,48 @@ fn test_private_sig_key(
             format!(
                 "Invalid private sig key:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_typed_plaintext(
+    dir: &Path,
+    test: &TypedPlaintextTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    // Load the serialized TypedPlaintext
+    // Note: TypedPlaintext doesn't use tfhe-versionable, so we deserialize directly
+    let original: TypedPlaintext = match format {
+        DataFormat::Bincode => {
+            let path = dir.join(format!("{}.bincode", test.test_filename()));
+            let bytes = std::fs::read(&path).map_err(|e| {
+                test.failure(
+                    format!("Failed to read file {}: {}", path.display(), e),
+                    format,
+                )
+            })?;
+            bc2wrap::deserialize(&bytes).map_err(|e| {
+                test.failure(
+                    format!("Failed to deserialize TypedPlaintext: {}", e),
+                    format,
+                )
+            })?
+        }
+    };
+
+    // Create expected plaintext
+    let expected = kms_grpc::kms::v1::TypedPlaintext {
+        bytes: test.plaintext_bytes.clone(),
+        fhe_type: test.fhe_type,
+    };
+
+    // Compare
+    if original != expected {
+        Err(test.failure(
+            format!("Invalid TypedPlaintext:\n Expected :\n{expected:?}\nGot:\n{original:?}"),
             format,
         ))
     } else {
@@ -358,6 +402,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::PrivateSigKey(test) => {
                 test_private_sig_key(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::TypedPlaintext(test) => {
+                test_typed_plaintext(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::KmsFheKeyHandles(test) => {
                 test_kms_fhe_key_handles(test_dir.as_ref(), test, format).into()

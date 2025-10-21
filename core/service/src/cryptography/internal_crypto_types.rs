@@ -2,12 +2,13 @@ use crate::consts::{DEFAULT_PARAM, SAFE_SER_SIZE_LIMIT, SIG_SIZE, TEST_PARAM};
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
 use crate::cryptography::signcryption::SigncryptionPayload;
+use aes_prng::AesRng;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::kms::v1::OperatorBackupOutput;
 use ml_kem::{EncodedSizeUser, KemCore, MlKem1024, MlKem512};
 use nom::AsBytes;
-use rand::{CryptoRng, RngCore};
+use rand::{CryptoRng, RngCore, SeedableRng};
 use serde::de::{DeserializeOwned, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::sync::Arc;
@@ -502,7 +503,10 @@ pub enum EncryptionSchemeTypeVersioned {
 #[versionize(EncryptionSchemeTypeVersioned)]
 pub enum EncryptionSchemeType {
     MlKem512,
-    #[deprecated]
+    #[deprecated(
+        since = "0.12.0",
+        note = "Use MlKem512 instead. MlKem1024 is only for legacy compatibility with relayer-sdk v0.2.0-0 and older."
+    )]
     MlKem1024,
 }
 
@@ -539,24 +543,18 @@ pub trait EncryptionScheme: Send + Sync {
     fn keygen(&mut self) -> Result<(UnifiedPrivateEncKey, UnifiedPublicEncKey), CryptographyError>;
 }
 
-pub trait CryptoRand: CryptoRng + RngCore + Send + Sync {}
-impl<T: CryptoRng + RngCore + Send + Sync> CryptoRand for T {}
-
-pub struct Encryption<'a> {
+pub struct Encryption<'a, R: CryptoRng + RngCore + Send + Sync> {
     scheme_type: EncryptionSchemeType,
-    rng: &'a mut dyn CryptoRand,
+    rng: &'a mut R,
 }
 
-impl<'a> Encryption<'a> {
-    pub fn new(
-        scheme_type: EncryptionSchemeType,
-        rng: &'a mut (impl CryptoRng + RngCore + Send + Sync + 'static),
-    ) -> Self {
+impl<'a, R: CryptoRng + RngCore + Send + Sync> Encryption<'a, R> {
+    pub fn new(scheme_type: EncryptionSchemeType, rng: &'a mut R) -> Self {
         Self { scheme_type, rng }
     }
 }
 
-impl<'a> EncryptionScheme for Encryption<'a> {
+impl<'a, R: CryptoRng + RngCore + Send + Sync> EncryptionScheme for Encryption<'a, R> {
     fn scheme_type(&self) -> EncryptionSchemeType {
         self.scheme_type
     }
@@ -814,14 +812,23 @@ impl From<&PrivateSigKey> for SigningSchemeType {
         SigningSchemeType::Ecdsa256k1
     }
 }
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct WrappedSigningKey(k256::ecdsa::SigningKey);
 impl_generic_versionize!(WrappedSigningKey);
 
 impl Zeroize for WrappedSigningKey {
+    // We want to allow unused assignments here as we are intentionally overwriting the key material
+    #[warn(unused_assignments)]
     fn zeroize(&mut self) {
-        let mut bytes = self.0.to_bytes();
-        bytes.zeroize();
+        let mut rng = AesRng::seed_from_u64(0);
+        // The simplest way is to overwrite the entire key with a random, static key, since we cannot directly zerorize the content of the key
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        // SAFETY: We're modifying a local copy of the key bytes, but this does not modify the actual key in memory.
+        // To securely zeroize the key, use the Zeroize trait on the underlying scalar or key type if available.
+        unsafe {
+            std::ptr::write(self, sk.sk);
+        }
     }
 }
 
@@ -927,7 +934,7 @@ pub trait Designcrypt {
 pub trait SigncryptFHEPlaintext: Signcrypt {
     /// Signcrypt a plaintext message with a specified domain separator and FHE type.
     /// The link parameter is used to bind the signcryption to a specific context or session.
-    /// The link should be unique for each signcryption operation to prevent replay attacks.    
+    /// The link should be unique for each signcryption operation to prevent replay attacks.
     /// The method is exclusively used to encrypt partially decrypted FHE ciphertexts for user decryption.
     fn signcrypt_plaintext(
         &self,
@@ -1173,16 +1180,19 @@ mod tests {
     use crate::cryptography::{
         hybrid_ml_kem::{self, HybridKemCt},
         internal_crypto_types::{
-            Encryption, EncryptionScheme, EncryptionSchemeType, PrivateEncKey, PublicEncKey,
+            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, PrivateEncKey,
+            PublicEncKey,
         },
     };
-    use rand::rngs::OsRng;
+    use aes_prng::AesRng;
+    use rand::SeedableRng;
     use serde::{Deserialize, Serialize};
     use tokio_rustls::rustls::crypto::cipher::NONCE_LEN;
+    use zeroize::Zeroize;
 
     #[test]
     fn test_pke_serialize_size() {
-        let mut rng = OsRng;
+        let mut rng = AesRng::seed_from_u64(0);
         let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
         let (sk, pk) = encryption.keygen().unwrap();
         let pk_buf = bc2wrap::serialize(&pk.unwrap_ml_kem_512()).unwrap();
@@ -1223,5 +1233,15 @@ mod tests {
         assert_eq!(decoded_wrapping.0.nonce, decoded_unwrapped.nonce);
         assert_eq!(decoded_wrapping.0.kem_ct, decoded_unwrapped.kem_ct);
         assert_eq!(decoded_wrapping.0.payload_ct, decoded_unwrapped.payload_ct);
+    }
+
+    #[test]
+    fn validate_zeroize_signing_key() {
+        let mut rng = AesRng::seed_from_u64(1);
+        let (_pk, mut sk) = gen_sig_keys(&mut rng);
+        let old_sk = sk.clone();
+        sk.zeroize();
+        // Validate a change happens from zeroize
+        assert_ne!(sk, old_sk);
     }
 }

@@ -173,8 +173,8 @@ mod tests {
         #[test]
         fn pke_wrong_key(msg: Vec<u8>) {
             let mut rng = OsRng;
-            let (_sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng, );
-            let (sk, _pk) = keygen::<ml_kem::MlKem512, _>(&mut rng, );
+            let (_sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng);
+            let (sk, _pk) = keygen::<ml_kem::MlKem512, _>(&mut rng);
             let ct = enc::<ml_kem::MlKem512, _>(&mut rng, &msg, &pk).unwrap();
             assert_eq!(ct.kem_ct.len(), ML_KEM_512_CT_LENGTH);
             let err = dec::<ml_kem::MlKem512>(ct, &sk).unwrap_err();
@@ -184,7 +184,7 @@ mod tests {
         #[test]
         fn pke_wrong_ct(msg: Vec<u8>) {
             let mut rng = OsRng;
-            let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng, );
+            let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng);
             let mut ct = enc::<ml_kem::MlKem512, _>(&mut rng, &msg, &pk).unwrap();
             assert_eq!(ct.kem_ct.len(), ML_KEM_512_CT_LENGTH);
             ct.payload_ct[0] ^= 1;
@@ -195,7 +195,7 @@ mod tests {
         #[test]
         fn pke_wrong_nonce(msg: Vec<u8>) {
             let mut rng = OsRng;
-            let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng, );
+            let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng);
             let mut ct = enc::<ml_kem::MlKem512, _>(&mut rng, &msg, &pk).unwrap();
             assert_eq!(ct.kem_ct.len(), ML_KEM_512_CT_LENGTH);
             ct.nonce[ct.nonce.len()-1] ^= 1;
@@ -206,7 +206,7 @@ mod tests {
         #[test]
         fn pke_wrong_kem(msg: Vec<u8>) {
             let mut rng = OsRng;
-            let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng, );
+            let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng);
             let mut ct = enc::<ml_kem::MlKem512, _>(&mut rng, &msg, &pk).unwrap();
             assert_eq!(ct.kem_ct.len(), ML_KEM_512_CT_LENGTH);
             let len = ct.kem_ct.len();

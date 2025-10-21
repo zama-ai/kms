@@ -116,6 +116,32 @@ impl TestType for PublicSigKeyTest {
     }
 }
 
+/// Test metadata for TypedPlaintext backward compatibility.
+///
+/// TypedPlaintext is serialized with bc2wrap and embedded in user decryption responses.
+/// This test ensures that data serialized with older versions (v0.11.x) can still be
+/// deserialized by the current version, preventing breaking changes to the binary format.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TypedPlaintextTest {
+    pub test_filename: Cow<'static, str>,
+    pub plaintext_bytes: Vec<u8>,
+    pub fhe_type: i32,
+}
+
+impl TestType for TypedPlaintextTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "TypedPlaintext".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 // KMS-grpc test
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SignedPubDataHandleInternalTest {
@@ -355,6 +381,7 @@ impl TestType for OperatorBackupOutputTest {
 pub enum TestMetadataKMS {
     PrivateSigKey(PrivateSigKeyTest),
     PublicSigKey(PublicSigKeyTest),
+    TypedPlaintext(TypedPlaintextTest),
     KmsFheKeyHandles(KmsFheKeyHandlesTest),
     ThresholdFheKeys(ThresholdFheKeysTest),
     AppKeyBlob(AppKeyBlobTest),
