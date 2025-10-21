@@ -195,7 +195,7 @@ mod tests {
         #[test]
         fn pke_wrong_nonce(msg: Vec<u8>) {
             let mut rng = OsRng;
-            let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng, );
+            let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng);
             let mut ct = enc::<ml_kem::MlKem512, _>(&mut rng, &msg, &pk).unwrap();
             assert_eq!(ct.kem_ct.len(), ML_KEM_512_CT_LENGTH);
             ct.nonce[ct.nonce.len()-1] ^= 1;
