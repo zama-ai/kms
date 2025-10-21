@@ -18,6 +18,21 @@
     (
         kms_core_version_min: "0.11.0",
         kms_core_module: "kms",
+        metadata: TypedPlaintext((
+            test_filename: "typed_plaintext",
+            plaintext_bytes: [
+                1,
+                2,
+                3,
+                4,
+                5,
+            ],
+            fhe_type: 8,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11.0",
+        kms_core_module: "kms",
         metadata: KmsFheKeyHandles((
             test_filename: "kms_fhe_key_handles",
             client_key_filename: "client_key_handle",
@@ -155,6 +170,21 @@
         metadata: PublicSigKey((
             test_filename: "public_sig_key",
             state: 100,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11.1",
+        kms_core_module: "kms",
+        metadata: TypedPlaintext((
+            test_filename: "typed_plaintext",
+            plaintext_bytes: [
+                1,
+                2,
+                3,
+                4,
+                5,
+            ],
+            fhe_type: 8,
         )),
     ),
     (
