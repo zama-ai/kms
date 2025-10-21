@@ -24,7 +24,7 @@ use crate::{
         },
         small_execution::prf::{chi, phi, psi, PhiAes},
     },
-    networking::value::{BroadcastValue, BroadcastValueInner},
+    networking::value::BroadcastValue,
     session_id::SessionId,
     thread_handles::spawn_compute_bound,
     ProtocolDescription,
@@ -701,7 +701,7 @@ where
             .broadcast
             .broadcast_from_all_w_corrupt_set_update::<Z, S>(
                 session,
-                psi_values.into(), // BroadcastValue::PRSSVotes
+                BroadcastValue::PRSSVotes(psi_values),
             )
             .await?;
 
@@ -743,7 +743,7 @@ where
             .broadcast
             .broadcast_from_all_w_corrupt_set_update::<Z, S>(
                 session,
-                chi_values.into(), // BroadcastValue::PRSSVotes
+                BroadcastValue::PRSSVotes(chi_values),
             )
             .await?;
 
@@ -773,8 +773,8 @@ fn sort_votes<Z: Ring, S: BaseSessionHandles>(
     let mut count: HashMap<PartySet, ValueVotes<Z>> = HashMap::new();
     for (role, broadcast_val) in broadcast_result {
         //Destructure bcast value into the voting vector
-        let vec_pairs = match &broadcast_val.inner {
-            BroadcastValueInner::PRSSVotes(vec_values) => vec_values,
+        let vec_pairs = match broadcast_val {
+            BroadcastValue::PRSSVotes(vec_values) => vec_values,
             // If the party does not broadcast the type as expected they are considered malicious
             _ => {
                 session.add_corrupt(*role);
@@ -1686,15 +1686,15 @@ mod tests {
         let broadcast_result = HashMap::from([
             (
                 Role::indexed_from_one(1),
-                BroadcastValue::new(BroadcastValueInner::PRSSVotes(values.clone())),
+                BroadcastValue::PRSSVotes(values.clone()),
             ),
             (
                 Role::indexed_from_one(2),
-                BroadcastValue::new(BroadcastValueInner::PRSSVotes(values.clone())),
+                BroadcastValue::PRSSVotes(values.clone()),
             ),
             (
                 Role::indexed_from_one(3),
-                BroadcastValue::new(BroadcastValueInner::PRSSVotes(values.clone())),
+                BroadcastValue::PRSSVotes(values.clone()),
             ),
         ]);
 
@@ -1728,19 +1728,17 @@ mod tests {
         let broadcast_result = HashMap::from([
             (
                 Role::indexed_from_one(1),
-                BroadcastValue::new(BroadcastValueInner::PRSSVotes(values.clone())),
+                BroadcastValue::PRSSVotes(values.clone()),
             ),
             (
                 Role::indexed_from_one(2),
-                BroadcastValue::new(BroadcastValueInner::RingValue(
-                    ResiduePolyF4Z64::from_scalar(Wrapping(333)),
-                )),
+                BroadcastValue::RingValue(ResiduePolyF4Z64::from_scalar(Wrapping(333))),
             ), // Not the broadcast type
             (
                 Role::indexed_from_one(3),
-                BroadcastValue::new(BroadcastValueInner::RingVector(Vec::from([
-                    ResiduePolyF4Z64::from_scalar(Wrapping(42)),
-                ]))),
+                BroadcastValue::RingVector(Vec::from([ResiduePolyF4Z64::from_scalar(Wrapping(
+                    42,
+                ))])),
             ), // Not the right broadcast type again
         ]);
 

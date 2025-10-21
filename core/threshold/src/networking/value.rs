@@ -20,7 +20,6 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
-use std::time::SystemTime;
 #[cfg(any(test, feature = "testing"))]
 use tfhe::zk::CompactPkeCrs;
 
@@ -38,25 +37,7 @@ const DSEP_BRACH: DomainSep = *b"BRACHABC";
 /// It is also important to ensure that types are of constant size across systems,
 /// since the raw data will be hashed. In particular this means that `usize` CANNOT be used any types.
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
-pub struct BroadcastValue<Z: Eq + Zero + Sized> {
-    pub(crate) inner: BroadcastValueInner<Z>,
-
-    /// This timestamp should not be set manually, it is set automatically
-    /// by the broadcast protocol when the message is ready to be sent.
-    pub(crate) timestamp: Option<SystemTime>,
-}
-
-impl<Z: Eq + Zero + Sized> BroadcastValue<Z> {
-    pub(crate) fn new(inner: BroadcastValueInner<Z>) -> Self {
-        Self {
-            inner,
-            timestamp: None,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
-pub(crate) enum BroadcastValueInner<Z: Eq + Zero + Sized> {
+pub enum BroadcastValue<Z: Eq + Zero + Sized> {
     Bot,
     RingVector(Vec<Z>),
     RingValue(Z),
@@ -71,17 +52,17 @@ pub(crate) enum BroadcastValueInner<Z: Eq + Zero + Sized> {
 
 impl<Z: Eq + Zero + Sized> BroadcastValue<Z> {
     pub fn type_name(&self) -> String {
-        match self.inner {
-            BroadcastValueInner::Bot => "Bot".to_string(),
-            BroadcastValueInner::RingVector(_) => "RingVector".to_string(),
-            BroadcastValueInner::RingValue(_) => "RingValue".to_string(),
-            BroadcastValueInner::PRSSVotes(_) => "PRSSVotes".to_string(),
-            BroadcastValueInner::Round2VSS(_) => "Round2VSS".to_string(),
-            BroadcastValueInner::Round3VSS(_) => "Round3VSS".to_string(),
-            BroadcastValueInner::Round4VSS(_) => "Round4VSS".to_string(),
-            BroadcastValueInner::LocalSingleShare(_) => "LocalSingleShare".to_string(),
-            BroadcastValueInner::LocalDoubleShare(_) => "LocalDoubleShare".to_string(),
-            BroadcastValueInner::PartialProof(_) => "PartialProof".to_string(),
+        match self {
+            BroadcastValue::Bot => "Bot".to_string(),
+            BroadcastValue::RingVector(_) => "RingVector".to_string(),
+            BroadcastValue::RingValue(_) => "RingValue".to_string(),
+            BroadcastValue::PRSSVotes(_) => "PRSSVotes".to_string(),
+            BroadcastValue::Round2VSS(_) => "Round2VSS".to_string(),
+            BroadcastValue::Round3VSS(_) => "Round3VSS".to_string(),
+            BroadcastValue::Round4VSS(_) => "Round4VSS".to_string(),
+            BroadcastValue::LocalSingleShare(_) => "LocalSingleShare".to_string(),
+            BroadcastValue::LocalDoubleShare(_) => "LocalDoubleShare".to_string(),
+            BroadcastValue::PartialProof(_) => "PartialProof".to_string(),
         }
     }
 }
@@ -100,91 +81,13 @@ impl<Z: Eq + Zero + Serialize> BroadcastValue<Z> {
 
 impl<Z: Ring> From<Z> for BroadcastValue<Z> {
     fn from(value: Z) -> Self {
-        Self {
-            inner: BroadcastValueInner::RingValue(value),
-            timestamp: None,
-        }
+        BroadcastValue::RingValue(value)
     }
 }
 
 impl<Z: Ring> From<Vec<Z>> for BroadcastValue<Z> {
     fn from(value: Vec<Z>) -> Self {
-        Self {
-            inner: BroadcastValueInner::RingVector(value),
-            timestamp: None,
-        }
-    }
-}
-
-impl<Z: Ring> From<(Vec<Z>, SystemTime)> for BroadcastValue<Z> {
-    fn from(value: (Vec<Z>, SystemTime)) -> Self {
-        Self {
-            inner: BroadcastValueInner::RingVector(value.0),
-            timestamp: Some(value.1),
-        }
-    }
-}
-
-impl<Z: Ring> From<Vec<(PartySet, Vec<Z>)>> for BroadcastValue<Z> {
-    fn from(value: Vec<(PartySet, Vec<Z>)>) -> Self {
-        Self {
-            inner: BroadcastValueInner::PRSSVotes(value),
-            timestamp: None,
-        }
-    }
-}
-
-impl<Z: Ring> From<Vec<VerificationValues<Z>>> for BroadcastValue<Z> {
-    fn from(value: Vec<VerificationValues<Z>>) -> Self {
-        Self {
-            inner: BroadcastValueInner::Round2VSS(value),
-            timestamp: None,
-        }
-    }
-}
-
-impl<Z: Ring> From<BTreeMap<(Role, Role, Role), Vec<Z>>> for BroadcastValue<Z> {
-    fn from(value: BTreeMap<(Role, Role, Role), Vec<Z>>) -> Self {
-        Self {
-            inner: BroadcastValueInner::Round3VSS(value),
-            timestamp: None,
-        }
-    }
-}
-
-impl<Z: Ring> From<BTreeMap<(Role, Role), ValueOrPoly<Z>>> for BroadcastValue<Z> {
-    fn from(value: BTreeMap<(Role, Role), ValueOrPoly<Z>>) -> Self {
-        Self {
-            inner: BroadcastValueInner::Round4VSS(value),
-            timestamp: None,
-        }
-    }
-}
-
-impl<Z: Ring> From<MapsSharesChallenges<Z>> for BroadcastValue<Z> {
-    fn from(value: MapsSharesChallenges<Z>) -> Self {
-        Self {
-            inner: BroadcastValueInner::LocalSingleShare(value),
-            timestamp: None,
-        }
-    }
-}
-
-impl<Z: Ring> From<MapsDoubleSharesChallenges<Z>> for BroadcastValue<Z> {
-    fn from(value: MapsDoubleSharesChallenges<Z>) -> Self {
-        Self {
-            inner: BroadcastValueInner::LocalDoubleShare(value),
-            timestamp: None,
-        }
-    }
-}
-
-impl<Z: Ring> From<ceremony::PartialProof> for BroadcastValue<Z> {
-    fn from(value: ceremony::PartialProof) -> Self {
-        Self {
-            inner: BroadcastValueInner::PartialProof(value),
-            timestamp: None,
-        }
+        BroadcastValue::RingVector(value)
     }
 }
 

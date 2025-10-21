@@ -11,7 +11,7 @@ use futures_util::future::{join, join4};
 use std::cmp::min;
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::OnceLock;
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     Mutex,
@@ -25,15 +25,15 @@ use tokio::time::Duration;
 //This is using mutexes for everything round related to be able to
 //mutate state without needing self to be mutable in functions' signature
 pub struct LocalNetworking {
-    current_network_timeout: RwLock<Duration>,
-    next_network_timeout: RwLock<Duration>,
-    max_elapsed_time: RwLock<Duration>,
+    current_network_timeout: Mutex<Duration>,
+    next_network_timeout: Mutex<Duration>,
+    max_elapsed_time: Mutex<Duration>,
     pairwise_channels: SimulatedPairwiseChannels,
     pub owner: Role,
     pub send_counter: DashMap<Role, usize>,
     pub network_round: Arc<Mutex<usize>>,
     already_sent: Arc<Mutex<HashSet<(Role, usize)>>>,
-    pub init_time: RwLock<Option<Instant>>,
+    pub init_time: OnceLock<Instant>,
     network_mode: NetworkMode,
     //If set, the party will sleep for the given duration at the start of each round
     delayed_party: Option<Duration>,
@@ -42,15 +42,15 @@ pub struct LocalNetworking {
 impl Default for LocalNetworking {
     fn default() -> Self {
         Self {
-            current_network_timeout: RwLock::new(*NETWORK_TIMEOUT),
-            next_network_timeout: RwLock::new(*NETWORK_TIMEOUT),
-            max_elapsed_time: RwLock::new(Duration::ZERO),
+            current_network_timeout: Mutex::new(*NETWORK_TIMEOUT),
+            next_network_timeout: Mutex::new(*NETWORK_TIMEOUT),
+            max_elapsed_time: Mutex::new(Duration::ZERO),
             pairwise_channels: Default::default(),
             owner: Default::default(),
             send_counter: Default::default(),
             network_round: Default::default(),
             already_sent: Default::default(),
-            init_time: RwLock::new(None), // init_time will be initialized on first access
+            init_time: OnceLock::new(), // init_time will be initialized on first access
             network_mode: NetworkMode::Sync,
             delayed_party: None,
         }
@@ -96,8 +96,8 @@ impl LocalNetworkingProducer {
             pairwise_channels: Arc::clone(&self.pairwise_channels),
             owner,
             network_mode,
-            current_network_timeout: RwLock::new(timeout),
-            next_network_timeout: RwLock::new(timeout),
+            current_network_timeout: Mutex::new(timeout),
+            next_network_timeout: Mutex::new(timeout),
             delayed_party,
             ..Default::default()
         }
@@ -188,15 +188,15 @@ impl Networking for LocalNetworking {
 
     async fn increase_round_counter(&self) {
         if let Some(duration) = self.delayed_party {
-            tokio::time::sleep(duration).await;
+            std::thread::sleep(duration);
         }
         //Locking all mutexes in same place
         //Update max_elapsed_time
         let (mut max_elapsed_time, mut current_round_timeout, next_round_timeout, mut net_round) =
             join4(
-                self.max_elapsed_time.write(),
-                self.current_network_timeout.write(),
-                self.next_network_timeout.read(),
+                self.max_elapsed_time.lock(),
+                self.current_network_timeout.lock(),
+                self.next_network_timeout.lock(),
                 self.network_round.lock(),
             )
             .await;
@@ -215,30 +215,17 @@ impl Networking for LocalNetworking {
         )
     }
 
-    async fn get_timeout_current_round(&self) -> Duration {
-        *self.current_network_timeout.read().await
-    }
-
-    async fn get_deadline_current_round(&self) -> Instant {
+    async fn get_timeout_current_round(&self) -> Instant {
         // initialize init_time on first access
         // this avoids running into timeouts when large computations happen after the test runtime is set up and before the first message is received.
-        let mut init_time_guard = self.init_time.write().await;
-        let init_time = *(*init_time_guard).get_or_insert(Instant::now());
+        let init_time = self.init_time.get_or_init(Instant::now);
 
         let (max_elapsed_time, network_timeout) = join(
-            self.max_elapsed_time.read(),
-            self.current_network_timeout.read(),
+            self.max_elapsed_time.lock(),
+            self.current_network_timeout.lock(),
         )
         .await;
-        init_time + *network_timeout + *max_elapsed_time
-    }
-
-    async fn reset_timeout(&self, init_time: Instant, elapsed_time: Duration) {
-        let mut init_time_guard = self.init_time.write().await;
-        *init_time_guard = Some(init_time);
-
-        let mut elapsed_time_guard = self.max_elapsed_time.write().await;
-        *elapsed_time_guard = elapsed_time;
+        *init_time + *network_timeout + *max_elapsed_time
     }
 
     async fn get_current_round(&self) -> usize {
@@ -248,7 +235,7 @@ impl Networking for LocalNetworking {
     async fn set_timeout_for_next_round(&self, timeout: Duration) {
         match self.get_network_mode() {
             NetworkMode::Sync => {
-                let mut next_network_timeout = self.next_network_timeout.write().await;
+                let mut next_network_timeout = self.next_network_timeout.lock().await;
                 *next_network_timeout = timeout;
             }
             NetworkMode::Async => {
