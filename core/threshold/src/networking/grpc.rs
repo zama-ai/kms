@@ -283,6 +283,10 @@ impl GrpcNetworkingManager {
     ) -> anyhow::Result<Self> {
         #[cfg(feature = "testing")]
         let force_tls = tls_conf.is_some();
+        #[cfg(feature = "testing")]
+        if !force_tls {
+            tracing::warn!("force_tls is DISABLED. Testing feature is enabled - this is NOT recommended in production environments.");
+        }
 
         #[cfg(not(feature = "testing"))]
         if tls_conf.is_none() {
@@ -867,10 +871,6 @@ fn sender_verification(
         }
         tracing::debug!("TLS Check went fine for sender: {:?}", sender);
     } else {
-        tracing::warn!(
-            "Could not find a TLS certificate in the request to verify user's identity."
-        );
-
         // With testing feature, TLS is optional
         #[cfg(feature = "testing")]
         {
@@ -883,7 +883,8 @@ fn sender_verification(
                         .to_string(),
                 )));
             } else {
-                tracing::warn!("Force TLS is disabled, and no certificate found in the request.");
+                // since we log this on _every_ send call and only use this for testing builds, we use debug level to reduce log spam
+                tracing::debug!("Force TLS is disabled, and no certificate found in the request.");
             }
         }
 
