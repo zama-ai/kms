@@ -101,7 +101,7 @@ async fn test_insecure_central_autobackup_after_deletion() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn test_insecure_central_crs_backup() {
+async fn nightly_test_insecure_central_crs_backup() {
     let param = FheParameter::Test;
     let dkg_param: WrappedDKGParams = param.into();
     let req_id: RequestId =
