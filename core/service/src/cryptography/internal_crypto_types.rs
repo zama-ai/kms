@@ -866,7 +866,7 @@ pub trait Designcrypt {
 pub trait SigncryptFHEPlaintext: Signcrypt {
     /// Signcrypt a plaintext message with a specified domain separator and FHE type.
     /// The link parameter is used to bind the signcryption to a specific context or session.
-    /// The link should be unique for each signcryption operation to prevent replay attacks.    
+    /// The link should be unique for each signcryption operation to prevent replay attacks.
     /// The method is exclusively used to encrypt partially decrypted FHE ciphertexts for user decryption.
     fn signcrypt_plaintext(
         &self,
