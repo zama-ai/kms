@@ -1,7 +1,7 @@
 use crate::{
     anyhow_error_and_log,
     conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain as KeychainConf, SecretSharingKeychain},
-    cryptography::{attestation::SecurityModuleProxy, backup_pke::BackupCiphertext},
+    cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::BackupCiphertext},
     vault::storage::StorageReader,
 };
 use aes_gcm_siv::{AeadInPlace, Aes256GcmSiv, KeyInit, Nonce};

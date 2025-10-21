@@ -23,7 +23,6 @@ pub mod util {
 pub mod cryptography {
     #[cfg(feature = "non-wasm")]
     pub mod attestation;
-    pub mod backup_pke;
     pub mod decompression;
     pub mod error;
     pub mod hybrid_ml_kem;

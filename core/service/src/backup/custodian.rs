@@ -33,7 +33,6 @@ pub enum InternalCustodianRecoveryOutputVersioned {
 }
 
 /// This is the message that a custodian sends to an operator after starting recovery.
-/// TODO this should be changed to use proper signcryption to ensure that the operator role is signed as well
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(InternalCustodianRecoveryOutputVersioned)]
 pub struct InternalCustodianRecoveryOutput {
