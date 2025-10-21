@@ -506,34 +506,14 @@ pub struct CipherWithParams {
 pub enum KeySetType {
     #[default]
     Standard,
+    // TODO(#2799)
     // DecompressionOnly, // we'll support this in the future
-    AddSnsCompressionKey,
 }
 
 impl From<KeySetType> for kms_grpc::kms::v1::KeySetType {
     fn from(value: KeySetType) -> Self {
         match value {
             KeySetType::Standard => kms_grpc::kms::v1::KeySetType::Standard,
-            KeySetType::AddSnsCompressionKey => kms_grpc::kms::v1::KeySetType::AddSnsCompressionKey,
-        }
-    }
-}
-
-#[derive(Args, Debug, Clone)]
-pub struct KeySetAddedInfo {
-    #[clap(long)]
-    base_keyset_id_for_sns_compression_key: Option<RequestId>,
-}
-
-impl From<KeySetAddedInfo> for kms_grpc::kms::v1::KeySetAddedInfo {
-    fn from(value: KeySetAddedInfo) -> Self {
-        kms_grpc::kms::v1::KeySetAddedInfo {
-            compression_keyset_id: None,
-            from_keyset_id_decompression_only: None,
-            to_keyset_id_decompression_only: None,
-            base_keyset_id_for_sns_compression_key: value
-                .base_keyset_id_for_sns_compression_key
-                .map(|x| x.into()),
         }
     }
 }
@@ -542,8 +522,9 @@ impl From<KeySetAddedInfo> for kms_grpc::kms::v1::KeySetAddedInfo {
 pub struct SharedKeyGenParameters {
     #[clap(value_enum, long, short = 't')]
     pub keyset_type: Option<KeySetType>,
-    #[command(flatten)]
-    pub keyset_added_info: Option<KeySetAddedInfo>,
+    // TODO(#2799)
+    // #[command(flatten)]
+    // pub keyset_added_info: Option<KeySetAddedInfo>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -1227,16 +1208,12 @@ async fn do_keygen(
                 keyset_type: kms_grpc::kms::v1::KeySetType::from(x) as i32,
                 standard_keyset_config: None,
             });
-    let keyset_added_info = shared_config
-        .keyset_added_info
-        .clone()
-        .map(kms_grpc::kms::v1::KeySetAddedInfo::from);
     let dkg_req = internal_client.key_gen_request(
         &req_id,
         &preproc_id,
         Some(param),
         keyset_config,
-        keyset_added_info,
+        None,
         dummy_domain(),
     )?;
 

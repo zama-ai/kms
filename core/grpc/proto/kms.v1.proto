@@ -27,12 +27,6 @@ enum KeySetType {
   // Only a decompression key is generated using this variant,
   // which is used for supporting key rotation.
   DecompressionOnly = 1;
-
-  // Generate a SNS compression key only, and then add it to an existing keyset.
-  // The existing keyset must be specified in `KeySetAddedInfo`
-  // and the resulting keyset will have all the same keys except the SNS compression key
-  // and the shares of the SNS compression private key.
-  AddSnsCompressionKey = 2;
 }
 
 // Configuration for the standard key type.
@@ -60,10 +54,6 @@ message KeySetAddedInfo {
 
   // Must be set if KeySetType::DecompressionOnly is used
   RequestId to_keyset_id_decompression_only = 3;
-
-  // Must be set if KeySetType::AddSnsCompressionKey is used
-  // The specified key will be used as the base keyset for generating the SNS compression key.
-  RequestId base_keyset_id_for_sns_compression_key = 4;
 }
 
 // The keyset configuration message.

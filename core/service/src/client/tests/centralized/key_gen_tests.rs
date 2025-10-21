@@ -1,8 +1,5 @@
 use crate::client::client_wasm::Client;
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
-#[cfg(feature = "slow_tests")]
-use crate::consts::DEFAULT_CENTRAL_KEY_ID;
-use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
@@ -57,30 +54,6 @@ async fn test_decompression_key_gen_centralized() {
             compression_keyset_id: None,
             from_keyset_id_decompression_only: Some(request_id_1.into()),
             to_keyset_id_decompression_only: Some(request_id_2.into()),
-            base_keyset_id_for_sns_compression_key: None,
-        }),
-    )
-    .await;
-}
-
-// TODO(2674)
-// test centralized sns compression keygen using the testing parameters
-// this test will use an existing base key stored under the key ID `TEST_CENTRAL_KEY_ID`
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-async fn test_sns_compression_key_gen_centralized() {
-    let request_id = derive_request_id("test_sns_compression_key_gen_centralized").unwrap();
-    // Delete potentially old data
-    purge(None, None, None, &request_id, 1).await;
-    key_gen_centralized(
-        &request_id,
-        FheParameter::Test,
-        None,
-        Some(KeySetAddedInfo {
-            compression_keyset_id: None,
-            from_keyset_id_decompression_only: None,
-            to_keyset_id_decompression_only: None,
-            base_keyset_id_for_sns_compression_key: Some((*TEST_CENTRAL_KEY_ID).into()),
         }),
     )
     .await;
@@ -122,31 +95,6 @@ async fn default_decompression_key_gen_centralized() {
             compression_keyset_id: None,
             from_keyset_id_decompression_only: Some(request_id_1.into()),
             to_keyset_id_decompression_only: Some(request_id_2.into()),
-            base_keyset_id_for_sns_compression_key: None,
-        }),
-    )
-    .await;
-}
-
-// TODO(2674)
-// test centralized sns compression keygen using the default parameters
-// this test will use an existing base key stored under the key ID `DEFAULT_CENTRAL_KEY_ID`
-#[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-async fn default_sns_compression_key_gen_centralized() {
-    let request_id = derive_request_id("default_sns_compression_key_gen_centralized").unwrap();
-    // Delete potentially old data
-    purge(None, None, None, &request_id, 1).await;
-    key_gen_centralized(
-        &request_id,
-        FheParameter::Test,
-        None,
-        Some(KeySetAddedInfo {
-            compression_keyset_id: None,
-            from_keyset_id_decompression_only: None,
-            to_keyset_id_decompression_only: None,
-            base_keyset_id_for_sns_compression_key: Some((*DEFAULT_CENTRAL_KEY_ID).into()),
         }),
     )
     .await;
@@ -300,25 +248,6 @@ pub async fn run_key_gen_centralized(
     match keyset_type {
         KeySetType::Standard => {
             basic_checks(&inner_resp).await;
-        }
-        KeySetType::AddSnsCompressionKey => {
-            basic_checks(&inner_resp).await;
-
-            // check that the integer server key are the same, before and after the sns compression key gen
-            let new_keyset_id: RequestId = keyset_added_info
-                .clone()
-                .unwrap()
-                .base_keyset_id_for_sns_compression_key
-                .unwrap()
-                .try_into()
-                .unwrap();
-            crate::client::key_gen::tests::identical_keys_except_sns_compression_from_storage(
-                internal_client,
-                &pub_storage,
-                key_req_id,
-                &new_keyset_id,
-            )
-            .await;
         }
         KeySetType::DecompressionOnly => {
             // setup storage

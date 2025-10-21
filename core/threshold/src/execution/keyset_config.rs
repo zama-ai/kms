@@ -24,7 +24,6 @@ pub enum KeySetCompressionConfig {
 pub enum KeySetConfig {
     Standard(StandardKeySetConfig),
     DecompressionOnly,
-    AddSnsCompressionKey,
 }
 
 impl Default for KeySetConfig {
