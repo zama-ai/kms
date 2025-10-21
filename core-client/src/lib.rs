@@ -599,9 +599,11 @@ pub struct RecoveryParameters {
 
 #[derive(Debug, Parser, Clone)]
 pub struct ReshareParameters {
-    // ID of the key to reshare
+    /// ID of the key to reshare
+    #[clap(long, short = 'k')]
     pub key_id: RequestId,
-    // ID of the preprocessing used to generate the key
+    /// ID of the preprocessing used to generate the key
+    #[clap(long, short = 'i')]
     pub preproc_id: RequestId,
 }
 
