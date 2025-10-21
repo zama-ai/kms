@@ -982,7 +982,7 @@ impl UnifiedDesigncryptionKey {
     }
 }
 
-/// Convinence type for efficiency
+/// Convenience type for efficiency
 #[derive(Clone, Debug)]
 pub struct UnifiedSigncryptionKeyPair<'a> {
     pub signcrypt_key: &'a UnifiedSigncryptionKey,
