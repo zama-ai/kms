@@ -260,7 +260,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
             // Purge before we can overwrite, use a dummy_meta_store
             // as this was meant to update the meta store of DKG upon failing
-            let dummy_meta_store = RwLock::new(MetaStore::<KeyGenMetadata>::new(0, 0));
+            let dummy_meta_store = RwLock::new(MetaStore::<KeyGenMetadata>::new(1, 1));
+            // Dummy insert to avoid error logs during purge
+            dummy_meta_store.write().await.insert(&key_id_to_reshare)?;
             crypto_storage
                 .purge_key_material(&key_id_to_reshare, dummy_meta_store.write().await)
                 .await;

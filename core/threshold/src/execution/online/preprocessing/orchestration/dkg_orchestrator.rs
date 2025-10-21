@@ -408,10 +408,10 @@ where
         )?;
         let mut bit_producer_handles = bit_producer.start_bit_gen_even_production();
 
-        //Join on the triple producers as they finish before bit producers
+        //Join on the triple producers as they finish before bit producers, raising errors if any
         let mut res_sessions = Vec::new();
-        while let Some(Ok(Ok(session))) = triple_producer_handles.join_next().await {
-            res_sessions.push(session);
+        while let Some(session) = triple_producer_handles.join_next().await {
+            res_sessions.push(session??);
         }
 
         res_sessions.sort_by_key(|session| session.session_id());
@@ -428,12 +428,12 @@ where
         )?;
         let mut randomness_producer_handle = randomness_producer.start_random_production();
 
-        //Join on bits and randomness producers
-        while let Some(Ok(Ok(session))) = randomness_producer_handle.join_next().await {
-            res_sessions.push(session);
+        //Join on bits and randomness producers, raising errors if any
+        while let Some(session) = randomness_producer_handle.join_next().await {
+            res_sessions.push(session??);
         }
-        while let Some(Ok(Ok(session))) = bit_producer_handles.join_next().await {
-            res_sessions.push(session);
+        while let Some(session) = bit_producer_handles.join_next().await {
+            res_sessions.push(session??);
         }
 
         res_sessions.sort_by_key(|session| session.session_id());
