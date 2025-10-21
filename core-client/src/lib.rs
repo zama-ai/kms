@@ -1603,8 +1603,8 @@ pub async fn do_reshare(
     param: FheParameter,
     key_id: RequestId,
     preproc_id: RequestId,
-    max_retries: usize,
 ) -> anyhow::Result<RequestId> {
+    let max_iter = cmd_conf.max_iter;
     let request_id = RequestId::new_random(rng);
     // Create the request
     let request = internal_client.reshare_request(
@@ -1639,9 +1639,8 @@ pub async fn do_reshare(
         results.push((party_id, result));
     }
 
-    if cmd_conf.expect_all_responses {
-        assert_eq!(results.len(), num_parties); // check that we have responses from all parties
-    }
+    // We need to wait for all responses since a resharing is only successful is _all_ parties respond.
+    assert_eq!(results.len(), num_parties);
 
     // Poll the result endpoint
 
@@ -1671,7 +1670,7 @@ pub async fn do_reshare(
                     tonic::Request::new(request_id.into());
                 response = cur_client.get_resharing_result(response_request).await;
                 ctr += 1;
-                if ctr >= max_retries {
+                if ctr >= max_iter {
                     break;
                 }
             }
@@ -1698,6 +1697,7 @@ pub async fn do_reshare(
         PubDataType::PublicKeyMetadata,
         PubDataType::ServerKey,
     ];
+    // We try to download all because all parties needed to respond for a successful resharing
     let party_ids = fetch_elements(
         &key_id.to_string(),
         &key_types,
@@ -1706,6 +1706,13 @@ pub async fn do_reshare(
         true,
     )
     .await?;
+
+    assert_eq!(
+        party_ids.len(),
+        num_parties,
+        "Did not fetch keys from all parties after resharing!"
+    );
+
     let public_key = load_pk_from_storage(
         Some(destination_prefix),
         &key_id,
@@ -2476,7 +2483,6 @@ pub async fn execute_cmd(
                 param,
                 *key_id,
                 *preproc_id,
-                max_iter,
             )
             .await
             .unwrap();
