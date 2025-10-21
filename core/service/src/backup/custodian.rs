@@ -1,13 +1,14 @@
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
+use crate::cryptography::internal_crypto_types::UnifiedSigncryption;
 use crate::cryptography::internal_crypto_types::{
-    Designcrypt, Encrypt, PrivateSigKey, UnifiedDesigncryptionKey, UnifiedPrivateEncKey,
-    UnifiedPublicEncKey,
+    Designcrypt, PrivateSigKey, Signcrypt, UnifiedDesigncryptionKey, UnifiedPrivateEncKey,
+    UnifiedPublicEncKey, UnifiedSigncryptionKey,
 };
-use crate::cryptography::signcryption::internal_sign;
 use crate::engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr};
 use crate::{consts::SAFE_SER_SIZE_LIMIT, cryptography::internal_crypto_types::PublicSigKey};
-use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
-use kms_grpc::rpc_types::InternalCustodianRecoveryOutput;
+use kms_grpc::kms::v1::{
+    CustodianContext, CustodianRecoveryOutput, CustodianSetupMessage, OperatorBackupOutput,
+};
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,70 @@ use super::{
 
 pub(crate) const HEADER: &str = "ZAMA TKMS SETUP TEST OPERATORS-CUSTODIAN";
 pub(crate) const DSEP_BACKUP_CUSTODIAN: DomainSep = *b"BKUPCUST";
+
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum InternalCustodianRecoveryOutputVersioned {
+    V0(InternalCustodianRecoveryOutput),
+}
+
+/// This is the message that a custodian sends to an operator after starting recovery.
+/// TODO this should be changed to use proper signcryption to ensure that the operator role is signed as well
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(InternalCustodianRecoveryOutputVersioned)]
+pub struct InternalCustodianRecoveryOutput {
+    pub signcryption: UnifiedSigncryption,
+    pub custodian_role: Role,
+    pub operator_role: Role,
+}
+
+impl Named for InternalCustodianRecoveryOutput {
+    const NAME: &'static str = "backup::CustodianRecoveryOutput";
+}
+
+impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
+    type Error = anyhow::Error;
+
+    fn try_from(value: CustodianRecoveryOutput) -> Result<Self, Self::Error> {
+        if value.custodian_role == 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid custodian role in CustodianRecoveryOutput"
+            ));
+        }
+        if value.operator_role == 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid operator role in CustodianRecoveryOutput"
+            ));
+        }
+        let backup_output = &value.backup_output.ok_or_else(|| {
+            anyhow::anyhow!("backup output not part of the custodian recovery output")
+        })?;
+        Ok(InternalCustodianRecoveryOutput {
+            signcryption: UnifiedSigncryption::new(
+                backup_output.signcryption.clone(),
+                backup_output.encryption_type().into(),
+                backup_output.signing_type().into(),
+            ),
+            custodian_role: Role::indexed_from_one(value.custodian_role as usize),
+            operator_role: Role::indexed_from_one(value.operator_role as usize),
+        })
+    }
+}
+
+impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
+    type Error = anyhow::Error;
+
+    fn try_from(value: InternalCustodianRecoveryOutput) -> Result<Self, Self::Error> {
+        Ok(CustodianRecoveryOutput {
+            backup_output: Some(OperatorBackupOutput {
+                signcryption: value.signcryption.payload,
+                encryption_type: value.signcryption.encryption_type as i32,
+                signing_type: value.signcryption.signing_type as i32,
+            }),
+            custodian_role: value.custodian_role.one_based() as u64,
+            operator_role: value.operator_role.one_based() as u64,
+        })
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum CustodianSetupMessagePayloadVersioned {
@@ -229,11 +294,8 @@ impl Custodian {
     #[allow(unknown_lints)]
     #[allow(non_local_effect_before_error_return)]
     /// Obtain the operator ephemeral public key for reencryption,
-    /// decrypt the given ciphertext encrypted under the custodian's public key
-    /// and then encrypt it under the operator's public key
-    /// finally sign the ciphertext under the custodian's signing key.
-    /// - `ciphertext`: ct_{i, j}, for i-th operator and j-th custodian
-    /// - `operator_pk`: pk^{D_i}, for i-th operator
+    /// designcrypt the signcryption encrypted under the custodian's public key
+    /// and then signcrypt it it under the operator's public key
     pub fn verify_reencrypt<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
@@ -267,7 +329,7 @@ impl Custodian {
             backup_id,
             &self.signing_key.verf_key(),
             self.role,
-            operator_verification_key,
+            &operator_verification_key.verf_key_id(),
             operator_role,
         ) {
             tracing::error!(
@@ -278,14 +340,16 @@ impl Custodian {
         }
 
         // re-encrypted share and sign it
-        // TODO should be using signcryption here
-        let st_i_j = operator_ephem_enc_key.encrypt(rng, &backup_material)?;
-        let sigt_i_j = internal_sign(&DSEP_BACKUP_CUSTODIAN, &st_i_j.cipher, &self.signing_key)
-            .map_err(|e| BackupError::SigningError(e.to_string()))?;
+        let signcrypt_key = UnifiedSigncryptionKey::new(
+            self.signing_key.clone(),
+            operator_ephem_enc_key.clone(),
+            operator_verification_key.verf_key_id(),
+        );
+        let signcryption =
+            signcrypt_key.signcrypt(rng, &DSEP_BACKUP_CUSTODIAN, &backup_material)?;
         tracing::debug!("Signed re-encrypted share for operator: {}", operator_role);
         Ok(InternalCustodianRecoveryOutput {
-            signature: sigt_i_j.sig.to_vec(),
-            ciphertext: st_i_j.cipher,
+            signcryption,
             custodian_role: self.role,
             operator_role,
         })

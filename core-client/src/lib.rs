@@ -12,14 +12,14 @@ use core::str;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenResult, CustodianContext, CustodianRecoveryInitRequest,
     CustodianRecoveryOutput, CustodianRecoveryRequest, Empty, FheParameter, KeyGenPreprocResult,
-    KeyGenResult, NewCustodianContextRequest, PublicDecryptionRequest, PublicDecryptionResponse,
-    TypedCiphertext, TypedPlaintext,
+    KeyGenResult, NewCustodianContextRequest, OperatorBackupOutput, PublicDecryptionRequest,
+    PublicDecryptionResponse, TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain, InternalCustodianRecoveryOutput, PubDataType};
+use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::solidity_types::{CrsgenVerification, KeygenVerification};
 use kms_grpc::{KeyId, RequestId};
-use kms_lib::backup::custodian::InternalCustodianSetupMessage;
+use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage};
 use kms_lib::backup::operator::InternalRecoveryRequest;
 use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
@@ -1538,8 +1538,11 @@ async fn do_custodian_backup_recovery(
             // Find the recoveries designated for the correct server
             if cur_recover.operator_role == Role::indexed_from_one(core_idx) {
                 cur_recoveries.push(CustodianRecoveryOutput {
-                    signature: cur_recover.signature.clone(),
-                    ciphertext: cur_recover.ciphertext.clone(),
+                    backup_output: Some(OperatorBackupOutput {
+                        signcryption: cur_recover.signcryption.payload.clone(),
+                        encryption_type: cur_recover.signcryption.encryption_type as i32,
+                        signing_type: cur_recover.signcryption.signing_type as i32,
+                    }),
                     custodian_role: cur_recover.custodian_role.one_based() as u64,
                     operator_role: cur_recover.operator_role.one_based() as u64,
                 });

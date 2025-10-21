@@ -1,7 +1,10 @@
 use super::{custodian, error::BackupError, operator::Operator};
 use crate::{
     backup::{
-        custodian::{InternalCustodianContext, InternalCustodianSetupMessage},
+        custodian::{
+            InternalCustodianContext, InternalCustodianRecoveryOutput,
+            InternalCustodianSetupMessage,
+        },
         operator::{InnerOperatorBackupOutput, RecoveryValidationMaterial},
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
@@ -13,7 +16,7 @@ use crate::{
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
-use kms_grpc::{kms::v1::CustodianContext, rpc_types::InternalCustodianRecoveryOutput, RequestId};
+use kms_grpc::{kms::v1::CustodianContext, RequestId};
 use proptest::prelude::*;
 use rand::{rngs::OsRng, SeedableRng};
 use std::collections::BTreeMap;
@@ -586,7 +589,15 @@ fn operator_handle_init(
     custodian_threshold: usize,
     custodian_count: usize,
 ) -> (
-    BTreeMap<Role, (Operator, RecoveryValidationMaterial, UnifiedPrivateEncKey)>, // Operator role to (Operator, validation material, ephemeral decryption key)
+    BTreeMap<
+        Role,
+        (
+            Operator,
+            RecoveryValidationMaterial,
+            UnifiedPrivateEncKey,
+            UnifiedPublicEncKey,
+        ),
+    >, // Operator role to (Operator, validation material, ephemeral decryption key)
     BTreeMap<
         Role,
         (
@@ -637,7 +648,12 @@ fn operator_handle_init(
         .unwrap();
         operators.insert(
             operator_role,
-            (operator, validation_material, backup_dec_key),
+            (
+                operator,
+                validation_material,
+                backup_dec_key,
+                backup_enc_key.clone(),
+            ),
         );
         payload_for_custodians.insert(
             operator_role,
@@ -691,14 +707,28 @@ fn custodian_recover(
 
 fn operator_recover(
     reencryptions: &BTreeMap<Role, BTreeMap<Role, InternalCustodianRecoveryOutput>>,
-    operators: &BTreeMap<Role, (Operator, RecoveryValidationMaterial, UnifiedPrivateEncKey)>,
+    operators: &BTreeMap<
+        Role,
+        (
+            Operator,
+            RecoveryValidationMaterial,
+            UnifiedPrivateEncKey,
+            UnifiedPublicEncKey,
+        ),
+    >,
     backup_id: &RequestId,
 ) -> BTreeMap<Role, Vec<u8>> {
     let mut res = BTreeMap::new();
-    for (cur_op_role, (cur_op, cur_com, cur_emphemeral)) in operators {
+    for (cur_op_role, (cur_op, cur_com, cur_emphemeral_dec, cur_ephemeral_enc)) in operators {
         if let Some(cur_reencs) = reencryptions.get(cur_op_role) {
             let reencs_vec: Vec<_> = cur_reencs.values().cloned().collect();
-            match cur_op.verify_and_recover(&reencs_vec, cur_com, *backup_id, cur_emphemeral) {
+            match cur_op.verify_and_recover(
+                &reencs_vec,
+                cur_com,
+                *backup_id,
+                cur_emphemeral_dec,
+                cur_ephemeral_enc,
+            ) {
                 Ok(plaintext) => res.insert(*cur_op_role, plaintext),
                 Err(_) => continue, // Skip if recovery fails
             };

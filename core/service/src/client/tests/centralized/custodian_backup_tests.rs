@@ -337,16 +337,24 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     cus_rec_req
         .custodian_recovery_outputs
         .get_mut(0)
-        .unwrap()
-        // Flip a bit in the 11th byte
-        .ciphertext[11] ^= 1;
+        .map(|inner| {
+            inner
+                .backup_output
+                .as_mut()
+                // Flip a bit in the 11th byte
+                .map(|back_out| back_out.signcryption[11] ^= 1)
+        });
     // Then in custodian 3
     cus_rec_req
         .custodian_recovery_outputs
         .get_mut(2)
-        .unwrap()
-        // Flip a bit in the 7th byte
-        .ciphertext[7] ^= 1;
+        .map(|inner| {
+            inner
+                .backup_output
+                .as_mut()
+                // Flip a bit in the 7th byte
+                .map(|back_out| back_out.signcryption[7] ^= 1)
+        });
     let _recovery_output = kms_client
         .custodian_backup_recovery(tonic::Request::new(cus_rec_req))
         .await

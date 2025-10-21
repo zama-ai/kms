@@ -596,11 +596,10 @@ message CustodianRecoveryInitRequest {
 
 // The data constructed by a single custodian to help a single operator recover their private master decryption key
 message CustodianRecoveryOutput {
-  bytes signature = 1;
-  bytes ciphertext = 2;
+  OperatorBackupOutput backup_output = 1;
   // The 1-indexed role of the custodian
-  uint64 custodian_role = 3;
-  uint64 operator_role = 4;
+  uint64 custodian_role = 2;
+  uint64 operator_role = 3;
 }
 
 // The recovery request which contains the needed recovery data from all the custodians,

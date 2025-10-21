@@ -4,6 +4,7 @@ use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
 use crate::cryptography::signcryption::SigncryptionPayload;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use kms_grpc::kms::v1::FheParameter;
+use kms_grpc::kms::v1::OperatorBackupOutput;
 use ml_kem::{EncodedSizeUser, KemCore, MlKem1024, MlKem512};
 use nom::AsBytes;
 use rand::{CryptoRng, RngCore};
@@ -497,7 +498,7 @@ pub enum EncryptionSchemeTypeVersioned {
 }
 
 // TODO(#2782) separate into signature and encryption files
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, Versionize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, Versionize)]
 #[versionize(EncryptionSchemeTypeVersioned)]
 pub enum EncryptionSchemeType {
     MlKem512,
@@ -557,7 +558,7 @@ impl<'a> Encryption<'a> {
 
 impl<'a> EncryptionScheme for Encryption<'a> {
     fn scheme_type(&self) -> EncryptionSchemeType {
-        self.scheme_type.clone()
+        self.scheme_type
     }
 
     fn keygen(&mut self) -> Result<(UnifiedPrivateEncKey, UnifiedPublicEncKey), CryptographyError> {
@@ -974,6 +975,34 @@ impl UnifiedSigncryption {
             encryption_type,
             signing_type,
         }
+    }
+}
+
+impl TryFrom<OperatorBackupOutput> for UnifiedSigncryption {
+    type Error = anyhow::Error;
+
+    fn try_from(value: OperatorBackupOutput) -> Result<Self, Self::Error> {
+        let encryption_type = value.encryption_type().into();
+        let signing_type = value.signing_type().into();
+        Ok(UnifiedSigncryption::new(
+            value.signcryption,
+            encryption_type,
+            signing_type,
+        ))
+    }
+}
+
+impl TryFrom<&OperatorBackupOutput> for UnifiedSigncryption {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &OperatorBackupOutput) -> Result<Self, Self::Error> {
+        let encryption_type = value.encryption_type.try_into()?;
+        let signing_type = value.signing_type.try_into()?;
+        Ok(UnifiedSigncryption::new(
+            value.signcryption.clone(),
+            encryption_type,
+            signing_type,
+        ))
     }
 }
 

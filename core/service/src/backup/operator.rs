@@ -1,5 +1,5 @@
 use super::{
-    custodian::{InternalCustodianSetupMessage, DSEP_BACKUP_CUSTODIAN, HEADER},
+    custodian::{InternalCustodianSetupMessage, HEADER},
     error::BackupError,
     secretsharing,
 };
@@ -8,8 +8,8 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         internal_crypto_types::{
-            Decrypt, Designcrypt, Encrypt, EncryptionSchemeType, PrivateSigKey, PublicSigKey,
-            Signature, UnifiedDesigncryptionKey, UnifiedPrivateEncKey, UnifiedSigncryption,
+            Designcrypt, Encrypt, EncryptionSchemeType, PrivateSigKey, PublicSigKey, Signature,
+            UnifiedDesigncryptionKey, UnifiedPrivateEncKey, UnifiedSigncryption,
         },
         signcryption::{internal_sign, internal_verify_sig},
     },
@@ -19,12 +19,11 @@ use crate::{
     },
 };
 use crate::{
-    backup::custodian::InternalCustodianContext,
-    cryptography::internal_crypto_types::{UnifiedCipher, UnifiedPublicEncKey},
+    backup::custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
+    cryptography::internal_crypto_types::UnifiedPublicEncKey,
 };
 use kms_grpc::{
     kms::v1::{OperatorBackupOutput, RecoveryRequest},
-    rpc_types::InternalCustodianRecoveryOutput,
     RequestId,
 };
 use rand::{CryptoRng, Rng};
@@ -384,26 +383,26 @@ impl Named for RecoveryValidationMaterialPayload {
 
 #[allow(clippy::too_many_arguments)]
 fn checked_decryption_deserialize(
-    ephem_dec_key: &UnifiedPrivateEncKey,
-    ct: &[u8],
+    design_key: &UnifiedDesigncryptionKey,
+    signcryption: &UnifiedSigncryption,
     commitment: &[u8],
     backup_id: RequestId,
-    custodian_pk: &PublicSigKey,
     custodian_role: Role,
-    operator_pk: &PublicSigKey,
     operator_role: Role,
 ) -> Result<Vec<Share<ResiduePolyF4Z64>>, BackupError> {
-    let unified_ct = UnifiedCipher::new(ct.to_vec(), ephem_dec_key.into());
-    let backup_material: BackupMaterial = ephem_dec_key
-        .decrypt(&unified_ct)
-        .map_err(|e| BackupError::SafeDeserializationError(e.to_string()))?;
-
+    let backup_material: BackupMaterial = design_key
+        .designcrypt(&DSEP_BACKUP_RECOVERY, signcryption)
+        .map_err(|e| {
+            BackupError::OperatorError(format!(
+                "Failed to designcrypt backup share for custodian role {custodian_role}: {e}",
+            ))
+        })?;
     // check metadata
     if !backup_material.matches_expected_metadata(
         backup_id,
-        custodian_pk,
+        &design_key.sender_verf_key,
         custodian_role,
-        operator_pk,
+        &design_key.receiver_id,
         operator_role,
     ) {
         return Err(BackupError::OperatorError(
@@ -448,7 +447,7 @@ impl BackupMaterial {
         backup_id: RequestId,
         custodian_verf_key: &PublicSigKey,
         custodian_role: Role,
-        operator_pk: &PublicSigKey,
+        operator_pk_id: &[u8],
         operator_role: Role,
     ) -> bool {
         if self.backup_id != backup_id {
@@ -479,8 +478,8 @@ impl BackupMaterial {
             tracing::error!("custodian_pk mismatch");
             return false;
         }
-        if &self.operator_pk != operator_pk {
-            tracing::error!("operator_pk mismatch");
+        if self.operator_pk.verf_key_id() != operator_pk_id {
+            tracing::error!("operator_pk_id mismatch");
             return false;
         }
         true
@@ -726,7 +725,7 @@ impl Operator {
     }
 
     /// Operators that does the recovery collects all the materials
-    /// used during the backup protocol such as shares, keys and ciphertexts,
+    /// used during the backup protocol such as shares, keys and signcryptions,
     /// and then uses them to verify whether the shares are correct before
     /// doing the reconstruction.
     ///
@@ -738,37 +737,36 @@ impl Operator {
         recovery_material: &RecoveryValidationMaterial,
         backup_id: RequestId,
         ephm_dec_key: &UnifiedPrivateEncKey, // Note that this is the ephemeral decryption key, NOT the actual backup decryption key
+        ephm_enc_key: &UnifiedPublicEncKey,
     ) -> Result<Vec<u8>, BackupError> {
         // the output is ordered by custodian ID, from 0 to n-1
         // first check the signature and decrypt
         // decrypted_buf[j][i] where j = jth custodian, i = ith block
         let decrypted_buf = custodian_recovery_output
             .iter()
-            .map(|ct| {
-                let (_enc_key, verf_key) = self.custodian_keys.get(&ct.custodian_role).ok_or(
-                    BackupError::OperatorError(format!(
+            .map(|custodian_output| {
+                let (_, custodian_verf_key) = self
+                    .custodian_keys
+                    .get(&custodian_output.custodian_role)
+                    .ok_or(BackupError::OperatorError(format!(
                         "missing custodian key for {}",
-                        ct.custodian_role
-                    )),
-                )?;
-                // sigt_ij
-                let signature = Signature {
-                    sig: k256::ecdsa::Signature::from_slice(&ct.signature)?,
-                };
+                        custodian_output.custodian_role
+                    )))?;
                 let commitment = recovery_material
-                    .get(&ct.custodian_role)
+                    .get(&custodian_output.custodian_role)
                     .map_err(|_| BackupError::OperatorError("missing commitment".to_string()))?;
-                internal_verify_sig(&DSEP_BACKUP_CUSTODIAN, &ct.ciphertext, &signature, verf_key)
-                    .map_err(|e| BackupError::SignatureVerificationError(e.to_string()))?;
-                // st_ij
+                let design_key = UnifiedDesigncryptionKey::new(
+                    ephm_dec_key.clone(),
+                    ephm_enc_key.clone(),
+                    custodian_verf_key.clone(),
+                    self.verification_key.verf_key_id(),
+                );
                 checked_decryption_deserialize(
-                    ephm_dec_key,
-                    &ct.ciphertext,
+                    &design_key,
+                    &custodian_output.signcryption,
                     commitment,
                     backup_id,
-                    verf_key,
-                    ct.custodian_role,
-                    &self.verification_key,
+                    custodian_output.custodian_role,
                     self.my_role,
                 )
             })

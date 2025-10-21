@@ -480,16 +480,24 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
         cur_payload
             .custodian_recovery_outputs
             .get_mut(0)
-            .unwrap()
-            // Flip a bit in the 11th byte
-            .ciphertext[11] ^= 1;
+            .map(|inner| {
+                inner
+                    .backup_output
+                    .as_mut()
+                    // Flip a bit in the 11th byte
+                    .map(|back_out| back_out.signcryption[11] ^= 1)
+            });
         // Then in custodian 3
         cur_payload
             .custodian_recovery_outputs
             .get_mut(2)
-            .unwrap()
-            // Flip a bit in the 7th byte
-            .ciphertext[7] ^= 1;
+            .map(|inner| {
+                inner
+                    .backup_output
+                    .as_mut()
+                    // Flip a bit in the 7th byte
+                    .map(|back_out| back_out.signcryption[7] ^= 1)
+            });
     }
 
     let recovery_output = run_custodian_backup_recovery(&kms_clients, &cus_out).await;
