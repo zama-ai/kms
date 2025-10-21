@@ -4332,6 +4332,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "anyhow",
+ "bc2wrap",
  "cfg-if",
  "hex",
  "prost",

@@ -1465,4 +1465,27 @@ mod tests {
             "Expected log for unsupported FHE type not found."
         );
     }
+
+    #[test]
+    fn test_types_plaintext_ser() {
+        let plaintext = TypedPlaintext {
+            bytes: vec![1, 2, 3, 4, 5],
+            fhe_type: 8, // FheTypes::Uint8
+        };
+
+        let serialized = bc2wrap::serialize(&plaintext).expect("serialization should succeed");
+        println!("Serialized bytes: {:?}", serialized);
+        // LOCKED V0 FORMAT - DO NOT CHANGE
+        let expected_bytes = vec![
+            5, 0, 0, 0, 0, 0, 0, 0, // plaintext.bytes length
+            1, 2, 3, 4, 5, // plaintext.bytes content
+            8, 0, 0, 0, // plaintext.fhe_type
+        ];
+
+        assert_eq!(
+            serialized, expected_bytes,
+            "BREAKING CHANGE: TypedPlaintext format changed!\n\
+             This will break user decryption for existing ciphertexts."
+        );
+    }
 }

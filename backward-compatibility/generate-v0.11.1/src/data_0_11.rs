@@ -256,6 +256,14 @@ const APP_KEY_BLOB_TEST: AppKeyBlobTest = AppKeyBlobTest {
 };
 
 // KMS test
+fn signcryption_payload_test() -> TypedPlaintextTest {
+    TypedPlaintextTest {
+        test_filename: Cow::Borrowed("typed_plaintext"),
+        plaintext_bytes: vec![1, 2, 3, 4, 5],
+        fhe_type: 8, // FheTypes::Uint8
+    }
+}
+// KMS test
 // NOTE: this is not used in v0.11 yet, so we avoid doing these extra tests
 /*
 const CUSTODIAN_SETUP_MESSAGE_TEST: CustodianSetupMessageTest = CustodianSetupMessageTest {
@@ -661,6 +669,7 @@ impl KMSCoreVersion for V0_11 {
         vec![
             KmsV0_11::gen_private_sig_key(&dir),
             KmsV0_11::gen_public_sig_key(&dir),
+            KmsV0_11::gen_typed_plaintext(&dir),
             KmsV0_11::gen_kms_fhe_key_handles(&dir),
             KmsV0_11::gen_threshold_fhe_keys(&dir),
             KmsV0_11::gen_app_key_blob(&dir),
