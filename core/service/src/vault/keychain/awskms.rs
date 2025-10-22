@@ -1,6 +1,6 @@
 use super::{
     decrypt_under_data_key, encrypt_under_data_key, AppKeyBlob, EnvelopeLoad, EnvelopeStore,
-    Keychain,
+    Keychain, RootKeyMeasurements,
 };
 use crate::{
     anyhow_error_and_log, consts::SAFE_SER_SIZE_LIMIT, cryptography::attestation::SecurityModule,
@@ -16,13 +16,17 @@ use aws_sdk_kms::{
     primitives::Blob,
     types::{
         DataKeySpec::Aes256 as Aes256Type, EncryptionAlgorithmSpec, KeyEncryptionMechanism,
-        KeySpec::Rsa4096 as Rsa4096Type, KeyUsageType::EncryptDecrypt,
+        KeySpec::Rsa4096 as Rsa4096Type, KeyUsageType::EncryptDecrypt, OriginType,
         RecipientInfo as KMSRecipientInfo,
     },
     Client as AWSKMSClient,
 };
 use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
 use hyper_rustls::HttpsConnectorBuilder;
+use iam_rs::{
+    ConditionValue, IAMAction, IAMEffect, IAMOperator, IAMPolicy, IAMResource, IAMStatement,
+    IAMVersion,
+};
 use rand::{CryptoRng, Rng};
 use rasn::{
     ber::de::{Decoder, DecoderOptions},
@@ -42,6 +46,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::sync::Arc;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::{named::Named, Unversionize, Versionize};
+use threshold_fhe::networking::tls::ReleasePCRValues;
 use url::Url;
 
 // recipient enclave RSA keypair size
@@ -55,20 +60,30 @@ const AWS_KMS_ENVELOPED_DATA_RECIPIENT_VERSION: isize = 2;
 
 pub trait RootKey {
     fn enc_algo_spec(&self) -> EncryptionAlgorithmSpec;
+
+    fn measurements(&self) -> &RootKeyMeasurements;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Symm {
     pub key_id: String,
     pub enc_algo_spec: EncryptionAlgorithmSpec,
+    pub key_measurements: RootKeyMeasurements,
 }
 
 impl Symm {
-    pub fn new(key_id: String) -> Self {
-        Self {
+    pub async fn new(awskms_client: AWSKMSClient, key_id: String) -> anyhow::Result<Self> {
+        let (key_origin, mut key_policy) =
+            get_key_origin_and_policy(awskms_client.clone(), key_id.clone()).await?;
+        canonicalize_iam_policy(&mut key_policy);
+        Ok(Self {
             key_id,
             enc_algo_spec: EncryptionAlgorithmSpec::SymmetricDefault,
-        }
+            key_measurements: RootKeyMeasurements::AwsKms {
+                key_origin: key_origin.to_string(),
+                key_policy,
+            },
+        })
     }
 }
 
@@ -76,20 +91,28 @@ impl RootKey for Symm {
     fn enc_algo_spec(&self) -> EncryptionAlgorithmSpec {
         self.enc_algo_spec.clone()
     }
+
+    fn measurements(&self) -> &RootKeyMeasurements {
+        &self.key_measurements
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Asymm {
     pub key_id: String,
     pub enc_algo_spec: EncryptionAlgorithmSpec,
     pub pk: RsaPublicKey,
+    pub key_measurements: RootKeyMeasurements,
 }
 
 impl Asymm {
-    pub async fn new(awskms_client: AWSKMSClient, root_key_id: String) -> anyhow::Result<Self> {
+    pub async fn new(awskms_client: AWSKMSClient, key_id: String) -> anyhow::Result<Self> {
+        let (key_origin, mut key_policy) =
+            get_key_origin_and_policy(awskms_client.clone(), key_id.clone()).await?;
+        canonicalize_iam_policy(&mut key_policy);
         let get_public_key_response = awskms_client
             .get_public_key()
-            .key_id(root_key_id.clone())
+            .key_id(key_id.clone())
             .send()
             .await
             .map_err(|e| {
@@ -125,9 +148,13 @@ impl Asymm {
         let pk = RsaPublicKey::from_public_key_der(pk_bytes.as_ref())?;
 
         Ok(Self {
-            key_id: root_key_id,
+            key_id,
             enc_algo_spec: EncryptionAlgorithmSpec::RsaesOaepSha256,
             pk,
+            key_measurements: RootKeyMeasurements::AwsKms {
+                key_origin: key_origin.to_string(),
+                key_policy,
+            },
         })
     }
 }
@@ -135,6 +162,10 @@ impl Asymm {
 impl RootKey for Asymm {
     fn enc_algo_spec(&self) -> EncryptionAlgorithmSpec {
         self.enc_algo_spec.clone()
+    }
+
+    fn measurements(&self) -> &RootKeyMeasurements {
+        &self.key_measurements
     }
 }
 
@@ -183,7 +214,7 @@ impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> 
         // attestation is fresh and not older than 5 minutes
         let attestation = self
             .security_module
-            .attest_pk_bytes(self.recipient_pk.to_public_key_der()?.to_vec())
+            .attest(self.recipient_pk.to_public_key_der()?.to_vec(), None)
             .await
             .map_err(|e| anyhow!("Could not attest enclave public key: {e}"))?;
 
@@ -235,6 +266,10 @@ impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> 
             )
         })
     }
+
+    fn root_key_measurements(&self) -> &RootKeyMeasurements {
+        self.root_key.measurements()
+    }
 }
 
 impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKeychain<S, Symm, R> {
@@ -250,7 +285,7 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
         // attestation is fresh and not older than 5 minutes
         let attestation = self
             .security_module
-            .attest_pk_bytes(self.recipient_pk.to_public_key_der()?.to_vec())
+            .attest(self.recipient_pk.to_public_key_der()?.to_vec(), None)
             .await
             .map_err(|e| anyhow!("Could not attest enclave public key: {e}"))?;
 
@@ -321,6 +356,10 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
         )
         .await
     }
+
+    fn root_key_measurements(&self) -> &RootKeyMeasurements {
+        AWSKMSKeychain::<S, Symm, R>::root_key_measurements(self)
+    }
 }
 
 impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKeychain<S, Asymm, R> {
@@ -362,6 +401,10 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
                 .ok_or(anyhow::anyhow!("Expected single share encrypted value",))?,
         )
         .await
+    }
+
+    fn root_key_measurements(&self) -> &RootKeyMeasurements {
+        AWSKMSKeychain::<S, Asymm, R>::root_key_measurements(self)
     }
 }
 
@@ -493,4 +536,100 @@ pub fn decrypt_ciphertext_for_recipient(
             anyhow_error_and_log(format!("Cannot decrypt ciphertext for recipient: {e}"))
         })?;
     Ok(plaintext)
+}
+
+async fn get_key_origin_and_policy(
+    awskms_client: AWSKMSClient,
+    key_id: String,
+) -> anyhow::Result<(OriginType, IAMPolicy)> {
+    let describe_key_response = awskms_client.describe_key().key_id(&key_id).send().await?;
+    let key_origin = describe_key_response
+        .key_metadata
+        .ok_or_else(|| anyhow_error_and_log(format!("Cannot get metadata for root key {key_id}")))?
+        .origin
+        .ok_or_else(|| {
+            anyhow_error_and_log(format!("Cannot determine origin of root key {key_id}"))
+        })?;
+    let get_key_policy_response = awskms_client
+        .get_key_policy()
+        .key_id(&key_id)
+        .send()
+        .await?;
+    let key_policy_json = get_key_policy_response.policy.ok_or_else(|| {
+        anyhow_error_and_log(format!("Cannot determine key policy for root key {key_id}"))
+    })?;
+    let key_policy = IAMPolicy::from_json(&key_policy_json).map_err(|e| {
+        anyhow_error_and_log(format!(
+            "Cannot parse key policy for root key {key_id}: {e}"
+        ))
+    })?;
+    Ok((key_origin, key_policy))
+}
+
+fn canonicalize_iam_policy(policy: &mut IAMPolicy) {
+    policy.id = None;
+    for st in &mut policy.statement {
+        st.principal = None
+    }
+}
+
+pub fn make_root_key_policy(pcr_values: ReleasePCRValues) -> IAMPolicy {
+    IAMPolicy::with_version(IAMVersion::V20121017)
+        .with_id("storage_root_key")
+        .add_statement(
+            IAMStatement::new(IAMEffect::Allow)
+                .with_sid("public")
+                .with_action(IAMAction::Multiple(vec![
+                    "kms:DescribeKey".to_string(),
+                    "kms:GetKeyPolicy".to_string(),
+                    "kms:GetPublicKey".to_string(),
+                ]))
+                .with_resource(IAMResource::Single("*".to_string())),
+        )
+        .add_statement(
+            IAMStatement::new(IAMEffect::Allow)
+                .with_sid("enclave")
+                .with_action(IAMAction::Multiple(vec![
+                    "kms:Decrypt".to_string(),
+                    "kms:GenerateDataKey".to_string(),
+                ]))
+                .with_resource(IAMResource::Single("*".to_string()))
+                .with_condition(
+                    IAMOperator::StringEqualsIgnoreCase,
+                    "kms:RecipientAttestation:ImageSha384".to_string(),
+                    ConditionValue::String(hex::encode(&pcr_values.pcr0)),
+                )
+                .with_condition(
+                    IAMOperator::StringEqualsIgnoreCase,
+                    "kms:RecipientAttestation:PCR0".to_string(),
+                    ConditionValue::String(hex::encode(&pcr_values.pcr0)),
+                )
+                .with_condition(
+                    IAMOperator::StringEqualsIgnoreCase,
+                    "kms:RecipientAttestation:PCR1".to_string(),
+                    ConditionValue::String(hex::encode(&pcr_values.pcr1)),
+                )
+                .with_condition(
+                    IAMOperator::StringEqualsIgnoreCase,
+                    "kms:RecipientAttestation:PCR2".to_string(),
+                    ConditionValue::String(hex::encode(&pcr_values.pcr2)),
+                ),
+        )
+        .add_statement(
+            IAMStatement::new(IAMEffect::Allow)
+                .with_sid("infra")
+                .with_action(IAMAction::Multiple(vec![
+                    "kms:CreateKey".to_string(),
+                    "kms:DescribeKey".to_string(),
+                    "kms:DisableKey".to_string(),
+                    "kms:EnableKey".to_string(),
+                    "kms:GetKeyPolicy".to_string(),
+                    "kms:PutKeyPolicy".to_string(),
+                    "kms:ListKeyPolicies".to_string(),
+                    "kms:ListKeys".to_string(),
+                    "kms:ScheduleKeyDeletion".to_string(),
+                    "kms:CancelKeyDeletion".to_string(),
+                ]))
+                .with_resource(IAMResource::Single("*".to_string())),
+        )
 }

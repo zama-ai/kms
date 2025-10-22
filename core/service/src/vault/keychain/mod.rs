@@ -9,12 +9,14 @@ use aes_gcm_siv::{AeadInPlace, Aes256GcmSiv, KeyInit, Nonce};
 use aes_prng::AesRng;
 use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
+use iam_rs::IAMPolicy;
 use rand::SeedableRng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{convert::Into, sync::Arc};
 use strum_macros::EnumTryAs;
 use tfhe::{named::Named, Unversionize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
+use threshold_fhe::networking::tls::ReleasePCRValues;
 
 pub mod awskms;
 pub mod secretsharing;
@@ -52,6 +54,8 @@ pub trait Keychain {
         &self,
         envelope: &mut EnvelopeLoad,
     ) -> anyhow::Result<T>;
+
+    fn root_key_measurements(&self) -> &RootKeyMeasurements;
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -74,6 +78,30 @@ pub enum EnvelopeStore {
     OperatorBackupOutput(BackupCiphertext),
 }
 
+#[derive(EnumTryAs, Serialize, Deserialize, Debug)]
+pub enum RootKeyMeasurements {
+    AwsKms {
+        key_origin: String,
+        key_policy: IAMPolicy,
+    },
+    SecretSharing {},
+}
+
+pub fn verify_root_key_measurements(
+    pcr_values: ReleasePCRValues,
+    user_data: Vec<u8>,
+) -> anyhow::Result<bool> {
+    let (measurements, _): (RootKeyMeasurements, usize) =
+        bincode::serde::decode_from_slice(&user_data, bincode::config::standard())?;
+    match measurements {
+        RootKeyMeasurements::AwsKms {
+            key_origin,
+            key_policy,
+        } => Ok(key_origin == "AWS_KMS" && key_policy == awskms::make_root_key_policy(pcr_values)),
+        RootKeyMeasurements::SecretSharing {} => Ok(true),
+    }
+}
+
 pub async fn make_keychain_proxy(
     keychain_conf: &KeychainConf,
     awskms_client: Option<AWSKMSClient>,
@@ -91,9 +119,9 @@ pub async fn make_keychain_proxy(
             match root_key_spec {
                 AwsKmsKeySpec::Symm => KeychainProxy::from(awskms::AWSKMSKeychain::new(
                     rng,
-                    awskms_client,
+                    awskms_client.clone(),
                     security_module,
-                    awskms::Symm::new(root_key_id.clone()),
+                    awskms::Symm::new(awskms_client, root_key_id.clone()).await?,
                 )?),
                 AwsKmsKeySpec::Asymm => KeychainProxy::from(awskms::AWSKMSKeychain::new(
                     rng,

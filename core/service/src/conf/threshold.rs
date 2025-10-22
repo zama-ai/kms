@@ -106,6 +106,7 @@ pub enum TlsConf {
     FullAuto {
         trusted_releases: Vec<ReleasePCRValues>,
         ignore_aws_ca_chain: Option<bool>,
+        attest_private_vault_root_key: Option<bool>,
     },
 }
 

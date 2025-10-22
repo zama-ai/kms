@@ -59,6 +59,8 @@ pub type TrustRootValue = (
     HashSet<SessionId>,
 );
 
+type UserDataVerifier = dyn Fn(ReleasePCRValues, Vec<u8>) -> anyhow::Result<bool> + Send + Sync;
+
 /// Our custom verifier for our custom mTLS certificates extended with AWS Nitro
 /// attestation documents. It doesn't reimplement normal X.509 certificate
 /// verification and wraps around the well-tested
@@ -71,7 +73,6 @@ pub type TrustRootValue = (
 /// number. Depending on the context id and the certificate subject name, this
 /// verifier will choose a verifier with just one appropriate CA certificate in
 /// the trust root store to actually verify the certificate.
-#[derive(Debug)]
 pub struct AttestedVerifier {
     root_hint_subjects: Vec<DistinguishedName>,
     supported_algs: WebPkiSupportedAlgorithms,
@@ -82,6 +83,7 @@ pub struct AttestedVerifier {
     trust_roots: RwLock<HashMap<MpcIdentity, TrustRootValue>>,
     // Each context can specify a list of valid PCR values
     release_pcrs: RwLock<HashMap<SessionId, HashSet<ReleasePCRValues>>>,
+    user_data_verifier: Option<Arc<UserDataVerifier>>,
     // If the "semi-auto" TLS scheme is used, where the party TLS identity is
     // linked to some certificate issued and managed by some traditional PKI,
     // the enclave image should be signed by that certificate and the
@@ -96,8 +98,24 @@ pub struct AttestedVerifier {
     ignore_aws_ca_chain: bool,
 }
 
+/// We have to manually implement Debug for `AttestedVerifier` because Debug
+/// can't be derived for `user_data_verifier`.
+impl std::fmt::Debug for AttestedVerifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut f = f.debug_struct("AttestedVerifier");
+        let f = f
+            .field("root_hint_subjects", &self.root_hint_subjects)
+            .field("supported_algs", &self.supported_algs)
+            .field("pcr8_expected", &self.pcr8_expected);
+        #[cfg(feature = "testing")]
+        let f = f.field("mock_enclave", &self.mock_enclave);
+        f.finish()
+    }
+}
+
 impl AttestedVerifier {
     pub fn new(
+        user_data_verifier: Option<Arc<UserDataVerifier>>,
         pcr8_expected: bool,
         #[cfg(feature = "testing")] mock_enclave: bool,
         ignore_aws_ca_chain: bool,
@@ -112,6 +130,7 @@ Crypto provider should exist at this point"
                 .signature_verification_algorithms,
             trust_roots: RwLock::new(HashMap::new()),
             release_pcrs: RwLock::new(HashMap::new()),
+            user_data_verifier,
             pcr8_expected,
             #[cfg(feature = "testing")]
             mock_enclave,
@@ -277,6 +296,7 @@ impl ServerCertVerifier for AttestedVerifier {
             validate_wrapped_cert(
                 &cert,
                 release_pcrs,
+                self.user_data_verifier.as_ref().map(Arc::clone),
                 self.pcr8_expected,
                 CertVerifier::Server(server_verifier.clone(), server_name, ocsp_response),
                 intermediates,
@@ -372,6 +392,7 @@ impl ClientCertVerifier for AttestedVerifier {
             validate_wrapped_cert(
                 &cert,
                 release_pcrs,
+                self.user_data_verifier.as_ref().map(Arc::clone),
                 self.pcr8_expected,
                 CertVerifier::Client(client_verifier.clone()),
                 intermediates,
@@ -428,9 +449,11 @@ pub enum CertVerified {
     Server(ServerCertVerified),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_wrapped_cert(
     cert: &X509Certificate,
     trusted_releases: HashSet<ReleasePCRValues>,
+    user_data_verifier: Option<Arc<UserDataVerifier>>,
     pcr8_expected: bool,
     verifier: CertVerifier,
     intermediates: &[CertificateDer<'_>],
@@ -517,11 +540,14 @@ fn validate_wrapped_cert(
     let Some(pcr2) = attestation_doc.pcrs.get(&2) else {
         bail!("Bad certificate: PCR2 value not present in attestation document")
     };
-    if !trusted_releases.contains(&ReleasePCRValues {
+
+    let pcr_values = ReleasePCRValues {
         pcr0: pcr0.to_vec(),
         pcr1: pcr1.to_vec(),
         pcr2: pcr2.to_vec(),
-    }) {
+    };
+
+    if !trusted_releases.contains(&pcr_values) {
         bail!(
             "Bad certificate: untrusted release hash triple {}, {}, {} in attestation document",
             hex::encode(pcr0),
@@ -570,6 +596,17 @@ fn validate_wrapped_cert(
             bail!("Bad certificate: untrusted party certificate hash {} in attestation document, expected {}", hex::encode(party_cert_hash.as_slice()), hex::encode(pcr8.as_slice()))
         }
     }
+
+    let Some(user_data) = attestation_doc.user_data else {
+        bail!("Bad certificate: additional measurements not present in attestation document")
+    };
+
+    if let Some(user_data_verifier) = user_data_verifier {
+        ensure!(
+            user_data_verifier(pcr_values, user_data.into_vec())?,
+            "Bad certificate: additional measurements verification failed"
+        );
+    };
 
     Ok(())
 }
