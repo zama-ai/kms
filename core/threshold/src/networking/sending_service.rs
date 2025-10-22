@@ -108,9 +108,24 @@ impl GrpcSendingService {
             None => "http",
         };
         tracing::debug!("Creating {} channel to '{}'", proto, receiver);
-        let endpoint: Uri = format!("{proto}://{receiver}").parse().map_err(|_e| {
-            anyhow_error_and_log(format!("failed to parse identity as endpoint: {receiver}"))
-        })?;
+        // When running within the AWS Nitro enclave, we have to go through
+        // through vsock proxies to make TCP connections to peers.
+        let endpoint: Uri = if self.peer_tcp_proxy {
+            format!("https://localhost:{}", receiver.port())
+                .parse::<Uri>()
+                .map_err(|_e| {
+                    anyhow_error_and_log(format!(
+                        "failed to parse peer proxy address with port: {}",
+                        receiver.port()
+                    ))
+                })?
+        } else {
+            format!("{proto}://{receiver}").parse().map_err(|_e| {
+                anyhow_error_and_log(format!(
+                    "failed to parse peer network address as endpoint: {receiver}"
+                ))
+            })?
+        };
 
         let channel = match &self.tls_config {
             Some(client_config) => {
@@ -134,22 +149,6 @@ impl GrpcSendingService {
                         ))
                     })?
                     .to_owned();
-
-                // If we have a list of trusted software hashes, we're running
-                // within the AWS Nitro enclave and we have to use vsock proxies
-                // to make TCP connections to peers.
-                let endpoint = if self.peer_tcp_proxy {
-                    format!("https://localhost:{}", receiver.port())
-                        .parse::<Uri>()
-                        .map_err(|_e| {
-                            anyhow_error_and_log(format!(
-                                "failed to parse proxy identity with port: {}",
-                                receiver.port()
-                            ))
-                        })?
-                } else {
-                    endpoint
-                };
 
                 tracing::debug!(
                     "Attempting TLS connection to address {:?} with MPC identity {:?}",
