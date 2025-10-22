@@ -66,8 +66,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         request: Request<InitiateResharingRequest>,
     ) -> Result<Response<InitiateResharingResponse>, Status> {
-        let _permit = self.rate_limiter.start_reshare().await?;
-
         let inner = request.into_inner();
 
         tracing::info!(
@@ -100,6 +98,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
 
         let dkg_params = retrieve_parameters(Some(inner.key_parameters))?;
+
+        // Check for resource exhaustion once all the other checks are ok
+        // because resource exhaustion can be recovered by sending the exact same request
+        // but the errors above cannot be tried again.
+        let permit = self.rate_limiter.start_reshare().await?;
 
         // Refresh keys but ignore any error as we might not have them yet
         // (e.g. resharing due to a failed DKG)
@@ -166,7 +169,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 )
             })?;
         }
-        let task = async move {
+        let task = move |_permit| async move {
             let (session_id_z128, session_id_z64, session_id_reshare) = {
                 (
                     request_id.derive_session_id_with_counter(0)?,
@@ -282,7 +285,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             Ok(())
         };
         self.tracker.spawn(async move {
-            match task.await {
+            match task(permit).await {
                 Ok(_) => tracing::info!(
                     "Resharing completed successfully for request ID {:?} and key ID {:?}",
                     request_id,

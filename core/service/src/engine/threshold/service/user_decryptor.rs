@@ -482,8 +482,6 @@ impl<
             )
             .start();
 
-        let permit = self.rate_limiter.start_user_decrypt().await?;
-
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) = {
             let inner = inner.clone();
             spawn_compute_bound(move || validate_user_decrypt_req(inner.as_ref()))
@@ -504,12 +502,10 @@ impl<
             );
         })?;
 
-        timer.tags([(TAG_KEY_ID, key_id.as_str())]);
-
-        let meta_store = Arc::clone(&self.user_decrypt_meta_store);
-        let crypto_storage = self.crypto_storage.clone();
-        let rng = self.base_kms.new_rng().await;
-        let sig_key = Arc::clone(&self.base_kms.sig_key);
+        // Check for resource exhaustion once all the other checks are ok
+        // because resource exhaustion can be recovered by sending the exact same request
+        // but the errors above cannot be tried again.
+        let permit = self.rate_limiter.start_user_decrypt().await?;
 
         // Do some checks before we start modifying the database
         {
@@ -521,6 +517,13 @@ impl<
                 )));
             }
         }
+
+        timer.tags([(TAG_KEY_ID, key_id.as_str())]);
+
+        let meta_store = Arc::clone(&self.user_decrypt_meta_store);
+        let crypto_storage = self.crypto_storage.clone();
+        let rng = self.base_kms.new_rng().await;
+        let sig_key = Arc::clone(&self.base_kms.sig_key);
 
         self.crypto_storage
             .refresh_threshold_fhe_keys(&key_id)

@@ -43,8 +43,6 @@ pub async fn user_decrypt_impl<
         .tag(TAG_PARTY_ID, "central")
         .start();
 
-    let permit = service.rate_limiter.start_user_decrypt().await?;
-
     let inner = request.into_inner();
 
     let (typed_ciphertexts, link, client_enc_key, client_address, key_id, request_id, domain) =
@@ -64,7 +62,7 @@ pub async fn user_decrypt_impl<
 
     // if the request already exists, then return the AlreadyExists error
     // otherwise attempt to insert it to the meta store
-    {
+    let permit = {
         let mut guarded_meta_store = service.user_dec_meta_store.write().await;
         if guarded_meta_store.exists(&request_id) {
             return Err(tonic::Status::new(
@@ -76,6 +74,8 @@ pub async fn user_decrypt_impl<
             ));
         }
 
+        let permit = service.rate_limiter.start_user_decrypt().await?;
+
         // everything after this point should result in an abort error
         ok_or_tonic_abort(
             guarded_meta_store.insert(&request_id),
@@ -84,7 +84,9 @@ pub async fn user_decrypt_impl<
                 request_id
             ),
         )?;
-    }
+
+        permit
+    };
 
     timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 

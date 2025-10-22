@@ -48,7 +48,6 @@ pub async fn preprocessing_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<KeyGenPreprocRequest>,
 ) -> Result<Response<Empty>, Status> {
-    let _permit = service.rate_limiter.start_preproc().await?;
     let inner = request.into_inner();
     let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
     let request_id =
@@ -61,48 +60,47 @@ pub async fn preprocessing_impl<
     };
 
     //Ensure there's no entry in preproc buckets for that request_id
-    let entry_exists = {
-        let preprocessing_meta_store = service.preprocessing_meta_store.read().await;
-        preprocessing_meta_store.exists(&request_id)
-    };
+    if service
+        .preprocessing_meta_store
+        .read()
+        .await
+        .exists(&request_id)
+    {
+        return Err(tonic::Status::already_exists(format!(
+            "Preprocessing for request ID {request_id} already exists"
+        )));
+    }
+
+    let _permit = service.rate_limiter.start_preproc().await?;
+
     // If the entry did not exist before, start the preproc
     // NOTE: We currently consider an existing entry is NOT an error
-    if !entry_exists {
-        let mut preprocessing_meta_store = service.preprocessing_meta_store.write().await;
-        ok_or_tonic_abort(
-            preprocessing_meta_store.insert(&request_id),
-            "Could not insert preprocessing ID into meta store".to_string(),
-        )?;
+    let mut preprocessing_meta_store = service.preprocessing_meta_store.write().await;
+    ok_or_tonic_abort(
+        preprocessing_meta_store.insert(&request_id),
+        "Could not insert preprocessing ID into meta store".to_string(),
+    )?;
 
-        let params = retrieve_parameters(Some(inner.params))?;
-        let external_signature = compute_external_signature_preprocessing(
-            &service.base_kms.sig_key,
-            &request_id,
-            &domain,
-        )
-        .map_err(|e| e.to_string());
+    let params = retrieve_parameters(Some(inner.params))?;
+    let external_signature =
+        compute_external_signature_preprocessing(&service.base_kms.sig_key, &request_id, &domain)
+            .map_err(|e| e.to_string());
 
-        let preproc_bucket =
-            external_signature.map(|external_signature| CentralizedPreprocBucket {
-                preprocessing_id: request_id,
-                external_signature,
-                dkg_param: params,
-            });
+    let preproc_bucket = external_signature.map(|external_signature| CentralizedPreprocBucket {
+        preprocessing_id: request_id,
+        external_signature,
+        dkg_param: params,
+    });
 
-        ok_or_tonic_abort(
-            preprocessing_meta_store.update(&request_id, preproc_bucket),
-            "Could not update preprocessing ID in meta store".to_string(),
-        )?;
-        tracing::warn!(
-            "Received a preprocessing request for the central server {} - No action taken",
-            request_id
-        );
-        Ok(Response::new(Empty {}))
-    } else {
-        Err(tonic::Status::already_exists(format!(
-            "Preprocessing for request ID {request_id} already exists"
-        )))
-    }
+    ok_or_tonic_abort(
+        preprocessing_meta_store.update(&request_id, preproc_bucket),
+        "Could not update preprocessing ID in meta store".to_string(),
+    )?;
+    tracing::warn!(
+        "Received a preprocessing request for the central server {} - No action taken",
+        request_id
+    );
+    Ok(Response::new(Empty {}))
 }
 
 /// Retrieves the result of key generation preprocessing for centralized KMS.
