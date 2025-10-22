@@ -17,9 +17,9 @@ use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
 #[cfg(test)]
 use crate::cryptography::internal_crypto_types::UnifiedSigncryptionKeyPairOwned;
 use crate::cryptography::internal_crypto_types::{
-    Designcrypt, DesigncryptFHEPlaintext, Signcrypt, SigncryptFHEPlaintext,
-    UnifiedDesigncryptionKey, UnifiedPrivateEncKey, UnifiedPublicEncKey, UnifiedSigncryption,
-    UnifiedSigncryptionKey, UnifiedSigncryptionKeyPair,
+    Designcrypt, DesigncryptFHEPlaintext, HasEncryptionScheme, HasSigningScheme, Signcrypt,
+    SigncryptFHEPlaintext, UnifiedDesigncryptionKey, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+    UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedSigncryptionKeyPair,
 };
 use crate::{anyhow_tracked, consts::SIG_SIZE};
 use ::signature::{Signer, Verifier};
@@ -217,8 +217,8 @@ fn inner_signcryption<T: Serialize + AsRef<[u8]>>(
     Ok(UnifiedSigncryption {
         payload: bc2wrap::serialize(&ciphertext)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?,
-        encryption_type: (&signcrypt_key.receiver_enc_key).into(),
-        signing_type: (&signcrypt_key.signing_key).into(),
+        encryption_type: signcrypt_key.encryption_scheme_type(),
+        signing_type: signcrypt_key.signing_scheme_type(),
     })
 }
 
@@ -258,8 +258,8 @@ impl DesigncryptFHEPlaintext for UnifiedDesigncryptionKey {
     ) -> Result<SigncryptionPayload, CryptographyError> {
         let parsed_signcryption = UnifiedSigncryption {
             payload: signcryption.to_owned(),
-            encryption_type: (&self.encryption_key).into(),
-            signing_type: (&self.sender_verf_key).into(),
+            encryption_type: self.encryption_key.encryption_scheme_type(),
+            signing_type: self.sender_verf_key.signing_scheme_type(),
         };
         let decrypted_signcryption = inner_designcrypt(self, dsep, &parsed_signcryption)?;
         // LEGACY should be using safe_deserialization
@@ -280,7 +280,7 @@ fn inner_designcrypt(
     dsep: &DomainSep,
     cipher: &UnifiedSigncryption,
 ) -> Result<Vec<u8>, CryptographyError> {
-    if cipher.encryption_type != (&design_key.encryption_key).into() {
+    if cipher.encryption_type != design_key.encryption_key.encryption_scheme_type() {
         return Err(CryptographyError::VerificationError(
             "encryption type of cipher does not match the decryption key type".to_string(),
         ));

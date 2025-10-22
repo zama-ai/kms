@@ -92,17 +92,9 @@ impl tfhe::named::Named for UnifiedPublicEncKey {
     const NAME: &'static str = "UnifiedPublicEncKey";
 }
 
-impl From<UnifiedPublicEncKey> for EncryptionSchemeType {
-    fn from(value: UnifiedPublicEncKey) -> Self {
-        match value {
-            UnifiedPublicEncKey::MlKem512(_) => EncryptionSchemeType::MlKem512,
-            UnifiedPublicEncKey::MlKem1024(_) => EncryptionSchemeType::MlKem1024,
-        }
-    }
-}
-impl From<&UnifiedPublicEncKey> for EncryptionSchemeType {
-    fn from(value: &UnifiedPublicEncKey) -> Self {
-        match value {
+impl HasEncryptionScheme for UnifiedPublicEncKey {
+    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+        match self {
             UnifiedPublicEncKey::MlKem512(_) => EncryptionSchemeType::MlKem512,
             UnifiedPublicEncKey::MlKem1024(_) => EncryptionSchemeType::MlKem1024,
         }
@@ -353,6 +345,15 @@ impl UnifiedPrivateEncKey {
     }
 }
 
+impl HasEncryptionScheme for UnifiedPrivateEncKey {
+    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+        match self {
+            UnifiedPrivateEncKey::MlKem512(_) => EncryptionSchemeType::MlKem512,
+            UnifiedPrivateEncKey::MlKem1024(_) => EncryptionSchemeType::MlKem1024,
+        }
+    }
+}
+
 // Alias wrapping the ephemeral private decryption key the user's wallet constructs to receive the
 // server's encrypted payload
 // The only reason this format is not private is that it is needed to handle the legacy case, as we do this by distinguishing between 512 and 1024 bit keys
@@ -513,6 +514,10 @@ impl Decrypt for UnifiedPrivateEncKey {
     }
 }
 
+pub trait HasEncryptionScheme {
+    fn encryption_scheme_type(&self) -> EncryptionSchemeType;
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
 pub enum EncryptionSchemeTypeVersioned {
     V0(EncryptionSchemeType),
@@ -610,6 +615,10 @@ pub fn gen_sig_keys<R: rand::CryptoRng + rand::Rng>(rng: &mut R) -> (PublicSigKe
     (PublicSigKey::new(*pk), PrivateSigKey::new(sk))
 }
 
+pub trait HasSigningScheme {
+    fn signing_scheme_type(&self) -> SigningSchemeType;
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
 pub enum SigningSchemeTypeVersioned {
     V0(SigningSchemeType),
@@ -698,15 +707,10 @@ impl PublicSigKey {
         &self.pk.0
     }
 }
-impl From<PublicSigKey> for SigningSchemeType {
-    fn from(_value: PublicSigKey) -> Self {
-        // Only scheme for now
-        SigningSchemeType::Ecdsa256k1
-    }
-}
-impl From<&PublicSigKey> for SigningSchemeType {
-    fn from(_value: &PublicSigKey) -> Self {
-        // Only scheme for now
+
+impl HasSigningScheme for PublicSigKey {
+    fn signing_scheme_type(&self) -> SigningSchemeType {
+        // Only one scheme for now
         SigningSchemeType::Ecdsa256k1
     }
 }
@@ -819,15 +823,8 @@ impl PrivateSigKey {
     }
 }
 
-// TODO should be normal methods and not from
-impl From<PrivateSigKey> for SigningSchemeType {
-    fn from(_value: PrivateSigKey) -> Self {
-        // Only one scheme for now
-        SigningSchemeType::Ecdsa256k1
-    }
-}
-impl From<&PrivateSigKey> for SigningSchemeType {
-    fn from(_value: &PrivateSigKey) -> Self {
+impl HasSigningScheme for PrivateSigKey {
+    fn signing_scheme_type(&self) -> SigningSchemeType {
         // Only one scheme for now
         SigningSchemeType::Ecdsa256k1
     }
@@ -1068,6 +1065,17 @@ impl UnifiedSigncryptionKey {
     }
 }
 
+impl HasEncryptionScheme for UnifiedSigncryptionKey {
+    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+        self.receiver_enc_key.encryption_scheme_type()
+    }
+}
+impl HasSigningScheme for UnifiedSigncryptionKey {
+    fn signing_scheme_type(&self) -> SigningSchemeType {
+        self.signing_key.signing_scheme_type()
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
 pub enum UnifiedDesigncryptionKeyVersioned {
     V0(UnifiedDesigncryptionKey),
@@ -1101,12 +1109,34 @@ impl UnifiedDesigncryptionKey {
     //  TODO this file should be split up and this moved to signcryption
 }
 
+impl HasEncryptionScheme for UnifiedDesigncryptionKey {
+    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+        self.encryption_key.encryption_scheme_type()
+    }
+}
+
+impl HasSigningScheme for UnifiedDesigncryptionKey {
+    fn signing_scheme_type(&self) -> SigningSchemeType {
+        self.sender_verf_key.signing_scheme_type()
+    }
+}
 // TODO should just be for tests
 /// Convinence type for efficiency
 #[derive(Clone, Debug)]
 pub struct UnifiedSigncryptionKeyPair<'a> {
     pub signcrypt_key: &'a UnifiedSigncryptionKey,
     pub designcryption_key: &'a UnifiedDesigncryptionKey,
+}
+
+impl HasEncryptionScheme for UnifiedSigncryptionKeyPair<'_> {
+    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+        self.signcrypt_key.encryption_scheme_type()
+    }
+}
+impl HasSigningScheme for UnifiedSigncryptionKeyPair<'_> {
+    fn signing_scheme_type(&self) -> SigningSchemeType {
+        self.signcrypt_key.signing_scheme_type()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
@@ -1127,6 +1157,18 @@ impl UnifiedSigncryptionKeyPairOwned {
             signcrypt_key: &self.signcrypt_key,
             designcryption_key: &self.designcrypt_key,
         }
+    }
+}
+
+impl HasEncryptionScheme for UnifiedSigncryptionKeyPairOwned {
+    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+        self.designcrypt_key.encryption_scheme_type()
+    }
+}
+
+impl HasSigningScheme for UnifiedSigncryptionKeyPairOwned {
+    fn signing_scheme_type(&self) -> SigningSchemeType {
+        self.designcrypt_key.signing_scheme_type()
     }
 }
 

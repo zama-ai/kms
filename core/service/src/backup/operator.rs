@@ -8,8 +8,9 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         internal_crypto_types::{
-            Designcrypt, Encrypt, EncryptionSchemeType, PrivateSigKey, PublicSigKey, Signature,
-            UnifiedDesigncryptionKey, UnifiedPrivateEncKey, UnifiedSigncryption,
+            Designcrypt, Encrypt, EncryptionSchemeType, HasSigningScheme, PrivateSigKey,
+            PublicSigKey, Signature, UnifiedDesigncryptionKey, UnifiedPrivateEncKey,
+            UnifiedSigncryption,
         },
         signcryption::{internal_sign, internal_verify_sig},
     },
@@ -704,9 +705,9 @@ impl Operator {
                 role_j,
                 InnerOperatorBackupOutput {
                     signcryption: UnifiedSigncryption {
-                        payload: ciphertext.cipher, // TODO
+                        payload: ciphertext.cipher, // TODO 2782
                         encryption_type: EncryptionSchemeType::MlKem512,
-                        signing_type: (&self.signing_key).into(),
+                        signing_type: self.signing_key.signing_scheme_type(),
                     },
                 },
             );
