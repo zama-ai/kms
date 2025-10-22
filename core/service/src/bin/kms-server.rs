@@ -21,7 +21,9 @@ use kms_lib::{
     grpc::MetaStoreStatusServiceImpl,
     vault::{
         aws::build_aws_sdk_config,
-        keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
+        keychain::{
+            awskms::build_aws_kms_client, make_keychain_proxy, Keychain, RootKeyMeasurements,
+        },
         storage::{
             crypto_material::get_core_signing_key, make_storage, read_text_at_request_id,
             s3::build_s3_client, StorageCache, StorageType,
@@ -125,6 +127,7 @@ async fn build_tls_config(
     peers: &[PeerConf],
     tls_config: &TlsConf,
     security_module: Option<Arc<SecurityModuleProxy>>,
+    private_vault_root_key_measurements: Option<&RootKeyMeasurements>,
     public_vault: &Vault,
     sk: &PrivateSigKey,
     #[cfg(feature = "insecure")] mock_enclave: bool,
@@ -149,98 +152,131 @@ async fn build_tls_config(
         .collect::<anyhow::Result<Vec<_>>>()?;
     let ca_certs = build_ca_certs_map(ca_certs_list.into_iter())?;
 
-    let (cert, key, trusted_releases, pcr8_expected) = match tls_config {
-        TlsConf::Manual { ref cert, ref key } => {
-            tracing::info!("Using third-party TLS certificate without Nitro remote attestation");
-            let cert = cert.into_pem(my_id, peers)?;
-            let key = key.into_pem()?;
-            (cert, key, None, false)
-        }
-        // When remote attestation is used, the enclave generates a
-        // self-signed TLS certificate for a private key that never
-        // leaves its memory. This certificate includes the AWS
-        // Nitro attestation document and the certificate used
-        // by the MPC party to sign the enclave image it is
-        // running. The private key is not supplied, since it needs
-        // to be generated inside an AWS Nitro enclave.
-        TlsConf::SemiAuto {
-            ref cert,
-            ref trusted_releases,
-        } => {
-            let security_module = security_module.as_ref().unwrap_or_else(|| {
+    let (cert, key, trusted_releases, pcr8_expected, attest_private_vault_root_key) =
+        match tls_config {
+            TlsConf::Manual { ref cert, ref key } => {
+                tracing::info!(
+                    "Using third-party TLS certificate without Nitro remote attestation"
+                );
+                let cert = cert.into_pem(my_id, peers)?;
+                let key = key.into_pem()?;
+                (cert, key, None, false, false)
+            }
+            // When remote attestation is used, the enclave generates a
+            // self-signed TLS certificate for a private key that never
+            // leaves its memory. This certificate includes the AWS
+            // Nitro attestation document and the certificate used
+            // by the MPC party to sign the enclave image it is
+            // running. The private key is not supplied, since it needs
+            // to be generated inside an AWS Nitro enclave.
+            TlsConf::SemiAuto {
+                ref cert,
+                ref trusted_releases,
+                ref attest_private_vault_root_key,
+            } => {
+                let security_module = security_module.as_ref().unwrap_or_else(|| {
                             panic!("EIF signing certificate present but not security module, unable to construct TLS identity")
                         });
-            tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
-            let eif_signing_cert_pem = cert.into_pem(my_id, peers)?;
-            let (cert, key) = security_module
-                .wrap_x509_cert(context_id, eif_signing_cert_pem, true)
+                tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
+                let eif_signing_cert_pem = cert.into_pem(my_id, peers)?;
+                let (cert, key) = security_module
+                    .wrap_x509_cert(context_id, eif_signing_cert_pem, true)
+                    .await?;
+                (
+                    cert,
+                    key,
+                    Some(Arc::new(trusted_releases.clone())),
+                    true,
+                    attest_private_vault_root_key.unwrap_or(false),
+                )
+            }
+            TlsConf::FullAuto {
+                ref trusted_releases,
+                ref attest_private_vault_root_key,
+            } => {
+                let security_module = security_module
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("TLS identity and security module not present"));
+                let private_vault_root_key_measurements = private_vault_root_key_measurements.unwrap_or_else(|| panic!("TLS remote attestation enabled but private vault root key measurements unavailable, impossible to continue"));
+                tracing::info!(
+                    "Using TLS certificate with Nitro remote attestation signed by onboard CA"
+                );
+                let ca_cert_bytes = read_text_at_request_id(
+                    public_vault,
+                    &SIGNING_KEY_ID,
+                    &PubDataType::CACert.to_string(),
+                )
                 .await?;
-            (cert, key, Some(Arc::new(trusted_releases.clone())), true)
-        }
-        TlsConf::FullAuto {
-            ref trusted_releases,
-        } => {
-            let security_module = security_module
-                .as_ref()
-                .unwrap_or_else(|| panic!("TLS identity and security module not present"));
-            tracing::info!(
-                "Using TLS certificate with Nitro remote attestation signed by onboard CA"
-            );
-            let ca_cert_bytes = read_text_at_request_id(
-                public_vault,
-                &SIGNING_KEY_ID,
-                &PubDataType::CACert.to_string(),
-            )
-            .await?;
-            let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
+                let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
 
-            // check if the CA certificate matches the KMS signing key
-            let ca_cert_x509 = ca_cert.parse_x509()?;
-            if let x509_parser::public_key::PublicKey::EC(pk_sec1) =
-                ca_cert_x509.public_key().parsed()?
-            {
-                let ca_pk = Box::new(pk_sec1.data());
-                let sk_vk = sk.sk().verifying_key().to_encoded_point(false).to_bytes();
-                ensure!(
+                // check if the CA certificate matches the KMS signing key
+                let ca_cert_x509 = ca_cert.parse_x509()?;
+                if let x509_parser::public_key::PublicKey::EC(pk_sec1) =
+                    ca_cert_x509.public_key().parsed()?
+                {
+                    let ca_pk = Box::new(pk_sec1.data());
+                    let sk_vk = sk.sk().verifying_key().to_encoded_point(false).to_bytes();
+                    ensure!(
                     **ca_pk == *sk_vk,
                     "CA certificate public key {:?} doesn't correspond to the KMS verifying key {:?}",
                     hex::encode(*ca_pk),
                     hex::encode(sk_vk)
                 );
-            } else {
-                panic!("CA certificate public key isn't ECDSA");
-            };
+                } else {
+                    panic!("CA certificate public key isn't ECDSA");
+                };
 
-            let (cert, key) = security_module
-                .issue_x509_cert(context_id, &ca_cert, sk, true)
-                .await?;
+                let (cert, key) = security_module
+                    .issue_x509_cert(
+                        context_id,
+                        &ca_cert,
+                        sk,
+                        true,
+                        private_vault_root_key_measurements,
+                    )
+                    .await?;
 
-            // sanity check
-            EndEntityCert::try_from(&cert.contents.as_slice().into())?
-                .verify_for_usage(
-                    &[webpki::aws_lc_rs::ECDSA_P256K1_SHA256],
-                    &[anchor_from_trusted_cert(
-                        &ca_cert.contents.as_slice().into(),
-                    )?],
-                    &[],
-                    UnixTime::now(),
-                    KeyUsage::server_auth(),
-                    None,
-                    None,
+                // sanity check
+                EndEntityCert::try_from(&cert.contents.as_slice().into())?
+                    .verify_for_usage(
+                        &[webpki::aws_lc_rs::ECDSA_P256K1_SHA256],
+                        &[anchor_from_trusted_cert(
+                            &ca_cert.contents.as_slice().into(),
+                        )?],
+                        &[],
+                        UnixTime::now(),
+                        KeyUsage::server_auth(),
+                        None,
+                        None,
+                    )
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "TLS certificate signed by enclave CA is invalid, cannot proceed: {e}"
+                        )
+                    });
+
+                (
+                    cert,
+                    key,
+                    Some(Arc::new(trusted_releases.clone())),
+                    false,
+                    attest_private_vault_root_key.unwrap_or(false),
                 )
-                .unwrap_or_else(|e| {
-                    panic!("TLS certificate signed by enclave CA is invalid, cannot proceed: {e}")
-                });
-
-            (cert, key, Some(Arc::new(trusted_releases.clone())), false)
-        }
-    };
+            }
+        };
 
     let cert_chain = vec![CertificateDer::from_slice(cert.contents.as_slice()).into_owned()];
     let key_der = PrivateKeyDer::try_from(key.contents.as_slice())
         .unwrap_or_else(|e| panic!("Could not read TLS private key: {e}"))
         .clone_key();
     let verifier = Arc::new(AttestedVerifier::new(
+        if attest_private_vault_root_key {
+            Some(Arc::new(
+                kms_lib::vault::keychain::verify_root_key_measurements,
+            ))
+        } else {
+            None
+        },
         pcr8_expected,
         #[cfg(feature = "insecure")]
         mock_enclave,
@@ -554,6 +590,10 @@ async fn main_exec() -> anyhow::Result<()> {
                             peers,
                             tls_config,
                             security_module.clone(),
+                            private_vault
+                                .keychain
+                                .as_ref()
+                                .map(|x| x.root_key_measurements()),
                             &public_vault,
                             &sk,
                             #[cfg(feature = "insecure")]

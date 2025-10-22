@@ -1,4 +1,4 @@
-use super::{EnvelopeLoad, EnvelopeStore, Keychain};
+use super::{EnvelopeLoad, EnvelopeStore, Keychain, RootKeyMeasurements};
 use crate::cryptography::backup_pke::{BackupPrivateKey, BackupPublicKey};
 use crate::{
     anyhow_error_and_log,
@@ -161,6 +161,10 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
             }
             PrivDataType::ContextInfo => read_backup_data(&backup_ct.ciphertext, unwrapped_dec_key),
         }
+    }
+
+    fn root_key_measurements(&self) -> &RootKeyMeasurements {
+        &RootKeyMeasurements::SecretSharing {}
     }
 }
 
