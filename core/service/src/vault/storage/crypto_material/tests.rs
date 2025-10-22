@@ -246,9 +246,9 @@ async fn write_central_keys() {
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn write_threshold_empty_update() {
-    let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store();
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let req_id = derive_request_id("write_threshold_empty_update").unwrap();
+    let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
+    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
     // Check no errors happened
     assert!(!logs_contain(&format!(
@@ -299,9 +299,9 @@ async fn write_threshold_empty_update() {
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn write_threshold_keys_meta_update() {
-    let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store();
-    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let req_id = derive_request_id("write_threshold_keys_meta_update").unwrap();
+    let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
+    let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
     // update the meta store and the write should be ok
     {
@@ -351,10 +351,10 @@ async fn write_threshold_keys_meta_update() {
 #[tokio::test]
 #[tracing_test::traced_test]
 async fn write_threshold_keys_failed_storage() {
-    let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store();
+    let req_id = derive_request_id("write_threshold_keys_failed_storage").unwrap();
+    let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let pub_storage = crypto_storage.inner.public_storage.clone();
-    let req_id = derive_request_id("write_threshold_keys_failed_storage").unwrap();
 
     // update the meta store and the write should be ok
     {
@@ -414,7 +414,9 @@ async fn write_threshold_keys_failed_storage() {
     }
 }
 
-fn setup_threshold_store() -> (
+fn setup_threshold_store(
+    req_id: &RequestId,
+) -> (
     ThresholdCryptoMaterialStorage<FailingRamStorage, RamStorage>,
     ThresholdFheKeys,
     FhePubKeySet,
@@ -432,7 +434,7 @@ fn setup_threshold_store() -> (
         .to_classic_pbs_parameters();
 
     let mut rng = AesRng::seed_from_u64(100);
-    let keyset = gen_key_set(TEST_PARAM, &mut rng);
+    let keyset = gen_key_set(TEST_PARAM, req_id.into(), &mut rng);
     let key_shares =
         keygen_all_party_shares_from_keyset(&keyset, pbs_params, &mut rng, 4, 1).unwrap();
 
