@@ -111,7 +111,7 @@ impl GrpcSendingService {
         // When running within the AWS Nitro enclave, we have to go through
         // through vsock proxies to make TCP connections to peers.
         let endpoint: Uri = if self.peer_tcp_proxy {
-            format!("https://localhost:{}", receiver.port())
+            format!("{proto}://localhost:{}", receiver.port())
                 .parse::<Uri>()
                 .map_err(|_e| {
                     anyhow_error_and_log(format!(
@@ -170,7 +170,7 @@ impl GrpcSendingService {
                 Channel::new(https_connector, endpoint)
             }
             None => {
-                tracing::warn!("Building channel to {:?} without TLS", endpoint.host());
+                tracing::warn!("Building channel to {:?} without TLS", endpoint);
                 Channel::builder(endpoint)
                     .http2_adaptive_window(true)
                     .connect_lazy()
