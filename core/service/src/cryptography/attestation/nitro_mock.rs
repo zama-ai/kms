@@ -7,10 +7,10 @@ use nsm_nitro_enclave_utils::{
 use rand::{rngs::OsRng, RngCore};
 
 impl SecurityModule for DevNitro {
-    async fn attest_pk_bytes(&self, pk: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+    async fn attest(&self, pk: Vec<u8>, user_data: Option<Vec<u8>>) -> anyhow::Result<Vec<u8>> {
         let request = Request::Attestation {
             public_key: Some(pk.into()),
-            user_data: None,
+            user_data: user_data.map(|x| x.into()),
             nonce: None,
         };
         let Response::Attestation { document } = self.process_request(request) else {
