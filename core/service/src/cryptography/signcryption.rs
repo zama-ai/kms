@@ -803,7 +803,7 @@ mod tests {
                 bytes: vec![1, 2, 3, 4, 5],
                 fhe_type: 8, // FheTypes::Uint8
             },
-            link: vec![0xde, 0xad, 0xbe, 0xef],
+            link: vec![222, 173, 190, 239],
         };
 
         let serialized = bc2wrap::serialize(&payload).expect("serialization should succeed");
@@ -814,7 +814,7 @@ mod tests {
             1, 2, 3, 4, 5, // plaintext.bytes content
             8, 0, 0, 0, // plaintext.fhe_type
             4, 0, 0, 0, 0, 0, 0, 0, // link length
-            0xde, 0xad, 0xbe, 0xef, // link content
+            222, 173, 190, 239, // link content
         ];
 
         assert_eq!(

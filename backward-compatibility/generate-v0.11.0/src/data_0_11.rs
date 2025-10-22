@@ -266,7 +266,7 @@ fn signcryption_payload_test() -> SigncryptionPayloadTest {
         test_filename: Cow::Borrowed("signcryption_payload"),
         plaintext_bytes: vec![1, 2, 3, 4, 5],
         fhe_type: 8, // FheTypes::Uint8
-        link: vec![0xde, 0xad, 0xbe, 0xef],
+        link: vec![222, 173, 190, 239],
     }
 }
 
@@ -347,8 +347,9 @@ impl KmsV0_11 {
             link: test.link.clone(),
         };
 
-        // SigncryptionPayload doesn't use tfhe-versionable, serialize directly with bincode
-        let serialized = bincode::serialize(&payload).unwrap();
+        // SigncryptionPayload doesn't use tfhe-versionable, serialize with bc2wrap from v0.11.0
+        // This uses the exact bc2wrap implementation and bincode version from v0.11.0
+        let serialized = bc2wrap::serialize(&payload).unwrap();
         let filename = format!("{}.bincode", test.test_filename);
         std::fs::write(dir.join(&filename), serialized).unwrap();
 

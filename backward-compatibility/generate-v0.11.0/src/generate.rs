@@ -2,11 +2,10 @@
 
 use std::{
     borrow::Cow,
-    fs::{self, File},
+    fs,
     path::{Path, PathBuf},
 };
 
-use bincode::Options;
 use serde::Serialize;
 use tfhe_versionable_0_6::Versionize as Versionize_0_6;
 
@@ -67,9 +66,10 @@ pub const TEST_DKG_PARAMS_SNS: DKGParamsSnSTest = DKGParamsSnSTest {
 };
 
 pub fn save_bcode<Data: Serialize, P: AsRef<Path>>(msg: &Data, path: P) {
-    let mut file = File::create(path).unwrap();
-    let options = bincode::DefaultOptions::new().with_fixint_encoding();
-    options.serialize_into(&mut file, msg).unwrap();
+    // Use bincode 2.x API with legacy config to match bc2wrap behavior
+    let config = bincode::config::legacy().with_fixed_int_encoding();
+    let encoded = bincode::serde::encode_to_vec(msg, config).unwrap();
+    fs::write(path, encoded).unwrap();
 }
 
 /// Stores the test data in `dir`, encoded in bincode, using the right tfhe-versionable version
