@@ -44,7 +44,6 @@ pub async fn key_gen_impl<
 ) -> Result<Response<Empty>, Status> {
     let _timer = METRICS.time_operation(OP_KEYGEN).start();
 
-    let permit = service.rate_limiter.start_keygen().await?;
     let inner = request.into_inner();
     tracing::info!(
         "centralized key-gen with request id: {:?}",
@@ -75,7 +74,7 @@ pub async fn key_gen_impl<
     // also check that the request ID is not used yet
     // If all is ok write the request ID to the meta store
     // All validation must be done before inserting the request ID
-    let params = {
+    let (params, permit) = {
         // Note that the keygen meta store should be checked first
         // because we do not want to delete the preprocessing ID
         // if the keygen request cannot proceed.
@@ -86,6 +85,8 @@ pub async fn key_gen_impl<
                 format!("Key with ID {req_id} already exists"),
             ));
         };
+
+        let permit = service.rate_limiter.start_keygen().await?;
 
         let check_meta_store = {
             #[cfg(feature = "insecure")]
@@ -125,7 +126,7 @@ pub async fn key_gen_impl<
             guarded_meta_store.insert(&req_id),
             "Could not insert key generation into meta store".to_string(),
         )?;
-        params
+        (params, permit)
     };
 
     let meta_store = Arc::clone(&service.key_meta_map);

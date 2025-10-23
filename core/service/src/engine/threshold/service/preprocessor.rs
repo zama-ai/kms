@@ -246,8 +246,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         &self,
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let permit = self.rate_limiter.start_preproc().await?;
-
         let inner = request.into_inner();
         let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
         let request_id = parse_optional_proto_request_id(
@@ -259,30 +257,30 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         let dkg_params = retrieve_parameters(Some(inner.params))?;
 
         //Ensure there's no entry in preproc buckets for that request_id
-        let entry_exists = {
-            let map = self.preproc_buckets.read().await;
-            map.exists(&request_id)
-        };
+        if self.preproc_buckets.read().await.exists(&request_id) {
+            return Err(tonic::Status::already_exists(format!(
+                "Preprocessing for request ID {request_id} already exists"
+            )));
+        }
 
         let keyset_config = preproc_proto_to_keyset_config(&inner.keyset_config)?;
 
         // If the entry did not exist before, start the preproc
         // NOTE: We currently consider an existing entry is NOT an error
-        if !entry_exists {
-            tracing::info!("Starting preproc generation for Request ID {}", request_id);
-            // We don't increment the error counter here but rather in launch_dkg_preproc
-            let ctx = inner.context_id.map(|x| x.try_into()).transpose().map_err(
-                |e: kms_grpc::IdentifierError| {
-                    tonic::Status::new(tonic::Code::Internal, e.to_string())
-                },
-            )?;
-            ok_or_tonic_abort(self.launch_dkg_preproc(dkg_params, keyset_config, request_id,  ctx, &domain, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
-            Ok(Response::new(Empty {}))
-        } else {
-            Err(tonic::Status::already_exists(format!(
-                "Preprocessing for request ID {request_id} already exists"
-            )))
-        }
+        //
+        // We don't increment the error counter here but rather in launch_dkg_preproc
+        let ctx = inner.context_id.map(|x| x.try_into()).transpose().map_err(
+            |e: kms_grpc::IdentifierError| tonic::Status::new(tonic::Code::Internal, e.to_string()),
+        )?;
+
+        // Check for resource exhaustion once all the other checks are ok
+        // because resource exhaustion can be recovered by sending the exact same request
+        // but the errors above cannot be tried again.
+        let permit = self.rate_limiter.start_crsgen().await?;
+
+        tracing::info!("Starting preproc generation for Request ID {}", request_id);
+        ok_or_tonic_abort(self.launch_dkg_preproc(dkg_params, keyset_config, request_id,  ctx, &domain, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
+        Ok(Response::new(Empty {}))
     }
 
     async fn get_result(

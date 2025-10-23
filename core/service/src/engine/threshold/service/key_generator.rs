@@ -383,7 +383,6 @@ impl<
     ) -> Result<Response<Empty>, Status> {
         // Note: We increase the request counter only in launch_dkg
         // so we don't increase the error counter here either
-        let permit = self.rate_limiter.start_keygen().await?;
 
         let inner = request.into_inner();
         tracing::info!(
@@ -418,6 +417,11 @@ impl<
                 ));
             }
         }
+
+        // Check for resource exhaustion once all the other checks are ok
+        // because resource exhaustion can be recovered by sending the exact same request
+        // but the errors above cannot be tried again.
+        let permit = self.rate_limiter.start_keygen().await?;
 
         // TODO(zama-ai/kms-internal/issues/2722)
         // consider moving this block of code further down the stack,
