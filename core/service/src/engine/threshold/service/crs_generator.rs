@@ -92,8 +92,6 @@ impl<
         request: Request<CrsGenRequest>,
         insecure: bool,
     ) -> Result<Response<Empty>, Status> {
-        let permit = self.rate_limiter.start_crsgen().await?;
-
         let inner = request.into_inner();
         tracing::info!(
             "Starting crs generation on kms for request ID {:?}",
@@ -133,6 +131,11 @@ impl<
                 )));
             }
         }
+
+        // Check for resource exhaustion once all the other checks are ok
+        // because resource exhaustion can be recovered by sending the exact same request
+        // but the errors above cannot be tried again.
+        let permit = self.rate_limiter.start_crsgen().await?;
 
         // NOTE: everything inside this function will cause an Aborted error code
         // so before calling it we should do as much validation as possible without modifying state

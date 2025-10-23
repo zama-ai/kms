@@ -104,7 +104,7 @@ impl<BCast: Broadcast + Default> Ceremony for RushingCeremony<BCast> {
             r.rand_in_place(&mut session.rng());
             let proof: PartialProof =
                 make_partial_proof_deterministic(&pp, &tau, round + 1, &r, sid);
-            let vi: BroadcastValue<Z> = proof.into();
+            let vi = BroadcastValue::PartialProof::<Z>(proof);
             if *role == my_role {
                 let _ = self
                     .broadcast

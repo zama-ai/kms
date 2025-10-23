@@ -37,8 +37,6 @@ pub async fn crs_gen_impl<
     tracing::info!("Received CRS generation request");
     let _timer = METRICS.time_operation(OP_CRS_GEN_REQUEST).start();
 
-    let permit = service.rate_limiter.start_crsgen().await?;
-
     let inner = request.into_inner();
     let (req_id, params, eip712_domain, _context_id) = validate_crs_gen_request(inner.clone())?;
 
@@ -58,6 +56,8 @@ pub async fn crs_gen_impl<
             "Could not insert CRS generation into meta store".to_string(),
         )?;
     }
+
+    let permit = service.rate_limiter.start_crsgen().await?;
 
     let meta_store = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();

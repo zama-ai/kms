@@ -675,7 +675,7 @@ async fn transfer_network_value<S: BaseSessionHandles>(
     } else {
         // receive the value
         let networking = Arc::clone(session.network());
-        let timeout = session.network().get_deadline_current_round().await;
+        let timeout = session.network().get_timeout_current_round().await;
         tracing::debug!(
             "Waiting to receive value from input party with timeout {:?}",
             timeout

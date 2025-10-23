@@ -29,9 +29,48 @@ use threshold_fhe::hashing::{serialize_hash_element, DomainSep, DIGEST_BYTES};
 
 const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";
 
-/// Representation of the data stored in a signcryption,
-/// needed to facilitate FHE decryption and request linking.
-/// The result is linked to some byte array.
+/// Payload structure for signcrypted user decryption responses.
+///
+/// # Versioning Strategy
+///
+/// This type is serialized and embedded in user decryption responses using `bc2wrap::serialize()`.
+/// Changes to this structure would break compatibility with existing signcrypted ciphertexts.
+///
+/// ## Serialization Details
+///
+/// - **Serializer:** `bc2wrap` (wrapper around bincode v2 with legacy v1-compatible config)
+/// - **Format:** Bincode v1 legacy format (deterministic, little-endian)
+/// - **Stability:** Binary format is locked and cannot change
+/// - **Dependencies:** Changes to `bincode` or `serde` versions may break compatibility
+///
+/// **WARNING:** Upgrading `bc2wrap` dependencies (bincode, serde) requires careful testing
+/// with the backward compatibility test suite to ensure no breaking changes.
+///
+/// ## Why Not Using tfhe-versionable
+///
+/// This type contains `TypedPlaintext`, a protobuf-generated type that doesn't implement
+/// `Versionize`. While we could work around this, we chose to rely on bincode's structural
+/// stability for simplicity and to avoid breaking existing v0.11.x data.
+///
+/// ## Backward Compatibility Contract
+///
+/// **CRITICAL:** This struct is FROZEN - the binary format cannot change:
+/// - Cannot add fields (even at the end)
+/// - Cannot remove fields
+/// - Cannot change field types
+/// - Cannot reorder fields
+/// - Cannot rename fields
+///
+/// Any modification requires creating a new versioned type (e.g., `SigncryptionPayloadV1`)
+/// and implementing proper version dispatch.
+///
+/// ## Version History
+/// - V0 (current): Initial version with `plaintext: TypedPlaintext` and `link: Vec<u8>`
+///
+/// ## Testing
+/// - Unit test: `test_signcryption_payload_v0_serialization_locked` locks the binary format
+/// - BC tests: Verify v0.11.x data can be deserialized by current version
+/// - Both tests MUST pass before any changes to this type
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug)]
 pub struct SigncryptionPayload {
     pub plaintext: TypedPlaintext,
@@ -736,5 +775,52 @@ mod tests {
             &server_verf_key,
         )
         .unwrap_err();
+    }
+
+    // ============================================================================
+    // Backward Compatibility Tests for SigncryptionPayload
+    // ============================================================================
+
+    /// This test locks the binary serialization format of SigncryptionPayload.
+    ///
+    /// If this test fails, you have made a BREAKING CHANGE to SigncryptionPayload
+    /// that will prevent users from decrypting existing signcrypted ciphertexts.
+    ///
+    /// Breaking changes include:
+    /// - Reordering fields
+    /// - Changing field types
+    /// - Removing fields
+    /// - Renaming fields
+    ///
+    /// If you need to make changes, you MUST:
+    /// 1. Create a new version of the struct (e.g., SigncryptionPayloadV1)
+    /// 2. Implement migration logic from V0 to V1
+    /// 3. Update all serialization/deserialization code to handle both versions
+    #[test]
+    fn test_signcryption_payload_v0_serialization_locked() {
+        let payload = SigncryptionPayload {
+            plaintext: TypedPlaintext {
+                bytes: vec![1, 2, 3, 4, 5],
+                fhe_type: 8, // FheTypes::Uint8
+            },
+            link: vec![222, 173, 190, 239],
+        };
+
+        let serialized = bc2wrap::serialize(&payload).expect("serialization should succeed");
+
+        // LOCKED V0 FORMAT - DO NOT CHANGE
+        let expected_bytes = vec![
+            5, 0, 0, 0, 0, 0, 0, 0, // plaintext.bytes length
+            1, 2, 3, 4, 5, // plaintext.bytes content
+            8, 0, 0, 0, // plaintext.fhe_type
+            4, 0, 0, 0, 0, 0, 0, 0, // link length
+            222, 173, 190, 239, // link content
+        ];
+
+        assert_eq!(
+            serialized, expected_bytes,
+            "BREAKING CHANGE: SigncryptionPayload format changed!\n\
+             This will break user decryption for existing ciphertexts."
+        );
     }
 }
