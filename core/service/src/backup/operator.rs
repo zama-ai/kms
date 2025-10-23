@@ -401,9 +401,9 @@ fn checked_decryption_deserialize(
     // check metadata
     if !backup_material.matches_expected_metadata(
         backup_id,
-        &design_key.sender_verf_key,
+        design_key.sender_verf_key,
         custodian_role,
-        &design_key.receiver_id,
+        design_key.receiver_id,
         operator_role,
     ) {
         return Err(BackupError::OperatorError(
@@ -679,11 +679,9 @@ impl Operator {
                 operator_role: self.my_role,
                 shares,
             };
-            let signcryption_key = UnifiedSigncryptionKey::new(
-                self.signing_key.clone(),
-                ephem_enc_key.clone(),
-                custodian_verf_key.verf_key_id(),
-            );
+            let custodian_verf_id = custodian_verf_key.verf_key_id();
+            let signcryption_key =
+                UnifiedSigncryptionKey::new(&self.signing_key, ephem_enc_key, &custodian_verf_id);
             let signcryption = signcryption_key
                 .signcrypt(rng, &DSEP_BACKUP_RECOVERY, &backup_material)
                 .map_err(BackupError::InternalCryptographyError)?;
@@ -748,11 +746,12 @@ impl Operator {
                 let commitment = recovery_material
                     .get(&custodian_output.custodian_role)
                     .map_err(|_| BackupError::OperatorError("missing commitment".to_string()))?;
+                let operator_id = &self.verification_key.verf_key_id();
                 let design_key = UnifiedDesigncryptionKey::new(
-                    ephm_dec_key.clone(),
-                    ephm_enc_key.clone(),
-                    custodian_verf_key.clone(),
-                    self.verification_key.verf_key_id(),
+                    ephm_dec_key,
+                    ephm_enc_key,
+                    custodian_verf_key,
+                    operator_id,
                 );
                 checked_decryption_deserialize(
                     &design_key,

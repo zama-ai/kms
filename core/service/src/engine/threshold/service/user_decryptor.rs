@@ -56,7 +56,7 @@ use crate::{
     consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
         error::CryptographyError,
-        internal_crypto_types::{SigncryptFHEPlaintext, UnifiedSigncryptionKey},
+        internal_crypto_types::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
     },
     engine::{
         base::{
@@ -177,7 +177,7 @@ impl<
         rng: impl CryptoRng + RngCore + Send + 'static,
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
-        signcryption_key: Arc<UnifiedSigncryptionKey>,
+        signcryption_key: Arc<UnifiedSigncryptionKeyOwned>,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
@@ -315,7 +315,7 @@ impl<
             let (partial_signcryption, packing_factor) = match pdec {
                 Ok((pdec_serialized, packing_factor, time)) => {
                     let rng = rng.clone();
-                    let signcryption_key_clone = signcryption_key.clone();
+                    let signcryption_key_clone = Arc::clone(&signcryption_key);
                     let link_clone = link.clone();
 
                     let enc_res = spawn_compute_bound(move || {
@@ -499,7 +499,6 @@ impl<
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let rng = self.base_kms.new_rng().await;
-        let sig_key = Arc::clone(&self.base_kms.sig_key);
 
         // Do some checks before we start modifying the database
         {
@@ -545,6 +544,11 @@ impl<
             ),
         ];
 
+        let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
+            (*self.base_kms.sig_key).clone(),
+            client_enc_key,
+            client_address.to_vec(),
+        ));
         // the result of the computation is tracked the tracker
         self.tracker.spawn(
             async move {
@@ -552,11 +556,6 @@ impl<
                 let _timer = timer;
                 // explicitly move the rate limiter context
                 let _permit = permit;
-                let signcryption_key = Arc::new(UnifiedSigncryptionKey::new(
-                    (*sig_key).clone(),
-                    client_enc_key.clone(),
-                    client_address.to_vec(),
-                ));
 
                 // Note that we'll hold a read lock for some time
                 // but this should be ok since write locks
@@ -572,7 +571,7 @@ impl<
                             context_id,
                             rng,
                             typed_ciphertexts,
-                            link.clone(),
+                            link,
                             signcryption_key,
                             k,
                             dec_mode,

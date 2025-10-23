@@ -904,11 +904,7 @@ impl<
         client_enc_key: &UnifiedPublicEncKey,
         client_id: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
-        let signcryption_key = UnifiedSigncryptionKey::new(
-            sig_key.clone(),
-            client_enc_key.clone(),
-            client_id.to_vec(),
-        );
+        let signcryption_key = UnifiedSigncryptionKey::new(sig_key, client_enc_key, client_id);
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
         let plaintext = Self::public_decrypt(keys, ct, fhe_type, ct_format)?;
@@ -1619,12 +1615,12 @@ pub(crate) mod tests {
                     Some(kms.base_kms.sig_key.as_ref()),
                 );
                 // Change the decryption key
-                keys.designcrypt_key.decryption_key = bad_keys.designcrypt_key.decryption_key;
+                keys.designcryption_key.decryption_key = bad_keys.designcryption_key.decryption_key;
             }
             if sim_type == SimulationType::BadSigKey {
                 // Change the signing key
                 let (server_sig_pk, _server_sig_sk) = gen_sig_keys(&mut rng);
-                keys.designcrypt_key.sender_verf_key = server_sig_pk;
+                keys.designcryption_key.sender_verf_key = server_sig_pk;
             }
             keys
         };
@@ -1655,7 +1651,7 @@ pub(crate) mod tests {
         } else {
             raw_cipher.unwrap()
         };
-        let decrypted = client_key_pair.designcrypt_key.designcrypt_plaintext(
+        let decrypted = client_key_pair.designcryption_key.designcrypt_plaintext(
             &DSEP_USER_DECRYPTION,
             &raw_cipher,
             &link,

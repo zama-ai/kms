@@ -501,11 +501,12 @@ mod tests {
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
         let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
         let (ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
+        let client_id = client_verf_key.verf_key_id();
         let design_key = UnifiedDesigncryptionKey::new(
-            ephemeral_dec_key.clone(),
-            ephemeral_enc_key.clone(),
-            verf_key.clone(),
-            client_verf_key.verf_key_id(),
+            &ephemeral_dec_key,
+            &ephemeral_enc_key,
+            &verf_key,
+            &client_id,
         );
         let mnemonic = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
         let custodian1: Custodian =
@@ -539,7 +540,7 @@ mod tests {
             &mut rng,
             &sig_key,
             ephemeral_enc_key.clone(),
-            ephemeral_dec_key,
+            ephemeral_dec_key.clone(),
             &internal_context,
             Role::indexed_from_one(1),
         )

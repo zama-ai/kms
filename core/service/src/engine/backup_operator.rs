@@ -467,11 +467,13 @@ async fn filter_custodian_data(
                 continue;
             }
         };
+
+        let verf_key_id = my_verf_key.verf_key_id();
         let design_key = UnifiedDesigncryptionKey::new(
-            ephemeral_dec_key.clone(),
-            ephemeral_enc_key.clone(),
-            cur_verf.clone(),
-            my_verf_key.verf_key_id(),
+            ephemeral_dec_key,
+            ephemeral_enc_key,
+            cur_verf,
+            &verf_key_id,
         );
         let cur_signcryption = match &cur_recovery_output.backup_output {
             Some(cur_op_out) => cur_op_out.try_into()?,

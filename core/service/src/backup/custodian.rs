@@ -308,11 +308,12 @@ impl Custodian {
             "Verifying and re-encrypting backup for operator: {}",
             operator_role
         );
+        let custodian_id = self.signing_key.verf_key().verf_key_id();
         let designcrypt_key = UnifiedDesigncryptionKey::new(
-            self.dec_key.to_owned(),
-            self.enc_key.to_owned(),
-            operator_verification_key.to_owned(),
-            self.signing_key.verf_key().verf_key_id(),
+            &self.dec_key,
+            &self.enc_key,
+            operator_verification_key,
+            &custodian_id,
         );
         let backup_material: BackupMaterial = designcrypt_key
             .designcrypt(&DSEP_BACKUP_RECOVERY, &backup.signcryption)
@@ -339,10 +340,11 @@ impl Custodian {
         }
 
         // re-encrypted share and sign it
+        let operator_verf_id = operator_verification_key.verf_key_id();
         let signcrypt_key = UnifiedSigncryptionKey::new(
-            self.signing_key.clone(),
-            operator_ephem_enc_key.clone(),
-            operator_verification_key.verf_key_id(),
+            &self.signing_key,
+            operator_ephem_enc_key,
+            &operator_verf_id,
         );
         let signcryption =
             signcrypt_key.signcrypt(rng, &DSEP_BACKUP_CUSTODIAN, &backup_material)?;

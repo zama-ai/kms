@@ -1031,27 +1031,18 @@ impl TryFrom<&OperatorBackupOutput> for UnifiedSigncryption {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
-pub enum UnifiedSigncryptionKeyVersioned {
-    V0(UnifiedSigncryptionKey),
+pub enum UnifiedSigncryptionKeyOwnedVersioned {
+    V0(UnifiedSigncryptionKeyOwned),
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Versionize)]
-#[versionize(UnifiedSigncryptionKeyVersioned)]
-pub struct UnifiedSigncryptionKey {
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, Versionize)]
+#[versionize(UnifiedSigncryptionKeyOwnedVersioned)]
+pub struct UnifiedSigncryptionKeyOwned {
     pub signing_key: PrivateSigKey,
     pub receiver_enc_key: UnifiedPublicEncKey,
     pub receiver_id: Vec<u8>, // Identifier for the receiver's encryption key, e.g. blockchain address
 }
-// TODO implement and use reference toyes where possible
-
-impl Zeroize for UnifiedSigncryptionKey {
-    fn zeroize(&mut self) {
-        self.signing_key.zeroize();
-        // receiver_enc_key and receiver_id are public, no need to zeroize
-    }
-}
-
-impl UnifiedSigncryptionKey {
+impl UnifiedSigncryptionKeyOwned {
     pub fn new(
         signing_key: PrivateSigKey,
         receiver_enc_key: UnifiedPublicEncKey,
@@ -1063,27 +1054,109 @@ impl UnifiedSigncryptionKey {
             receiver_id,
         }
     }
+
+    pub fn reference<'a>(&'a self) -> UnifiedSigncryptionKey<'a> {
+        UnifiedSigncryptionKey {
+            signing_key: &self.signing_key,
+            receiver_enc_key: &self.receiver_enc_key,
+            receiver_id: &self.receiver_id,
+        }
+    }
 }
 
-impl HasEncryptionScheme for UnifiedSigncryptionKey {
+impl HasEncryptionScheme for UnifiedSigncryptionKeyOwned {
     fn encryption_scheme_type(&self) -> EncryptionSchemeType {
         self.receiver_enc_key.encryption_scheme_type()
     }
 }
-impl HasSigningScheme for UnifiedSigncryptionKey {
+impl HasSigningScheme for UnifiedSigncryptionKeyOwned {
     fn signing_scheme_type(&self) -> SigningSchemeType {
         self.signing_key.signing_scheme_type()
     }
 }
 
+/// Internal type for signcryption keys, storing only references to the real internal keys.
+/// Thus this type should not be serialized instead `UnifiedSigncryptionKeyOwned` should be used.
+#[derive(Clone, Debug)]
+pub struct UnifiedSigncryptionKey<'a> {
+    pub signing_key: &'a PrivateSigKey,
+    pub receiver_enc_key: &'a UnifiedPublicEncKey,
+    pub receiver_id: &'a [u8], // Identifier for the receiver's encryption key, e.g. blockchain address
+}
+
+impl<'a> UnifiedSigncryptionKey<'a> {
+    pub fn new(
+        signing_key: &'a PrivateSigKey,
+        receiver_enc_key: &'a UnifiedPublicEncKey,
+        receiver_id: &'a [u8],
+    ) -> Self {
+        Self {
+            signing_key,
+            receiver_enc_key,
+            receiver_id,
+        }
+    }
+}
+
+impl HasEncryptionScheme for UnifiedSigncryptionKey<'_> {
+    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+        self.receiver_enc_key.encryption_scheme_type()
+    }
+}
+impl HasSigningScheme for UnifiedSigncryptionKey<'_> {
+    fn signing_scheme_type(&self) -> SigningSchemeType {
+        self.signing_key.signing_scheme_type()
+    }
+}
+
+/// Internal reference type for designcryption keys, storing only references to the real internal keys.
+#[derive(Clone, Debug)]
+pub struct UnifiedDesigncryptionKey<'a> {
+    pub decryption_key: &'a UnifiedPrivateEncKey,
+    pub encryption_key: &'a UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
+    pub sender_verf_key: &'a PublicSigKey,
+    /// The ID of the receiver of the signcryption, e.g. blockchain address
+    pub receiver_id: &'a [u8],
+}
+
+impl<'a> UnifiedDesigncryptionKey<'a> {
+    pub fn new(
+        decryption_key: &'a UnifiedPrivateEncKey,
+        encryption_key: &'a UnifiedPublicEncKey,
+        sender_verf_key: &'a PublicSigKey,
+        receiver_id: &'a [u8],
+    ) -> Self {
+        Self {
+            sender_verf_key,
+            decryption_key,
+            encryption_key,
+            receiver_id,
+        }
+    }
+
+    //  TODO this file should be split up and this moved to signcryption
+}
+
+impl HasEncryptionScheme for UnifiedDesigncryptionKey<'_> {
+    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+        self.encryption_key.encryption_scheme_type()
+    }
+}
+
+impl HasSigningScheme for UnifiedDesigncryptionKey<'_> {
+    fn signing_scheme_type(&self) -> SigningSchemeType {
+        self.sender_verf_key.signing_scheme_type()
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
-pub enum UnifiedDesigncryptionKeyVersioned {
-    V0(UnifiedDesigncryptionKey),
+pub enum UnifiedDesigncryptionKeyOwnedVersioned {
+    V0(UnifiedDesigncryptionKeyOwned),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
-#[versionize(UnifiedDesigncryptionKeyVersioned)]
-pub struct UnifiedDesigncryptionKey {
+#[versionize(UnifiedDesigncryptionKeyOwnedVersioned)]
+pub struct UnifiedDesigncryptionKeyOwned {
     pub decryption_key: UnifiedPrivateEncKey,
     pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
     pub sender_verf_key: PublicSigKey,
@@ -1091,7 +1164,7 @@ pub struct UnifiedDesigncryptionKey {
     pub receiver_id: Vec<u8>,
 }
 
-impl UnifiedDesigncryptionKey {
+impl UnifiedDesigncryptionKeyOwned {
     pub fn new(
         decryption_key: UnifiedPrivateEncKey,
         encryption_key: UnifiedPublicEncKey,
@@ -1106,69 +1179,25 @@ impl UnifiedDesigncryptionKey {
         }
     }
 
-    //  TODO this file should be split up and this moved to signcryption
+    pub fn reference<'a>(&'a self) -> UnifiedDesigncryptionKey<'a> {
+        UnifiedDesigncryptionKey {
+            decryption_key: &self.decryption_key,
+            encryption_key: &self.encryption_key,
+            sender_verf_key: &self.sender_verf_key,
+            receiver_id: &self.receiver_id,
+        }
+    }
 }
 
-impl HasEncryptionScheme for UnifiedDesigncryptionKey {
+impl HasEncryptionScheme for UnifiedDesigncryptionKeyOwned {
     fn encryption_scheme_type(&self) -> EncryptionSchemeType {
         self.encryption_key.encryption_scheme_type()
     }
 }
 
-impl HasSigningScheme for UnifiedDesigncryptionKey {
+impl HasSigningScheme for UnifiedDesigncryptionKeyOwned {
     fn signing_scheme_type(&self) -> SigningSchemeType {
         self.sender_verf_key.signing_scheme_type()
-    }
-}
-// TODO should just be for tests
-/// Convinence type for efficiency
-#[derive(Clone, Debug)]
-pub struct UnifiedSigncryptionKeyPair<'a> {
-    pub signcrypt_key: &'a UnifiedSigncryptionKey,
-    pub designcryption_key: &'a UnifiedDesigncryptionKey,
-}
-
-impl HasEncryptionScheme for UnifiedSigncryptionKeyPair<'_> {
-    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
-        self.signcrypt_key.encryption_scheme_type()
-    }
-}
-impl HasSigningScheme for UnifiedSigncryptionKeyPair<'_> {
-    fn signing_scheme_type(&self) -> SigningSchemeType {
-        self.signcrypt_key.signing_scheme_type()
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
-pub enum UnifiedSigncryptionKeyPairOwnedVersioned {
-    V0(UnifiedSigncryptionKeyPairOwned),
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
-#[versionize(UnifiedSigncryptionKeyPairOwnedVersioned)]
-pub struct UnifiedSigncryptionKeyPairOwned {
-    pub signcrypt_key: UnifiedSigncryptionKey,
-    pub designcrypt_key: UnifiedDesigncryptionKey,
-}
-
-impl UnifiedSigncryptionKeyPairOwned {
-    pub fn reference<'a>(&'a self) -> UnifiedSigncryptionKeyPair<'a> {
-        UnifiedSigncryptionKeyPair {
-            signcrypt_key: &self.signcrypt_key,
-            designcryption_key: &self.designcrypt_key,
-        }
-    }
-}
-
-impl HasEncryptionScheme for UnifiedSigncryptionKeyPairOwned {
-    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
-        self.designcrypt_key.encryption_scheme_type()
-    }
-}
-
-impl HasSigningScheme for UnifiedSigncryptionKeyPairOwned {
-    fn signing_scheme_type(&self) -> SigningSchemeType {
-        self.designcrypt_key.signing_scheme_type()
     }
 }
 
