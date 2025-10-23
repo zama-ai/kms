@@ -1641,7 +1641,7 @@ pub async fn do_reshare(
         results.push((party_id, result));
     }
 
-    // We need to wait for all responses since a resharing is only successful is _all_ parties respond.
+    // We need to wait for all responses since a resharing is only successful if _all_ parties respond.
     assert_eq!(results.len(), num_parties);
 
     // Poll the result endpoint
