@@ -985,7 +985,7 @@ pub enum UnifiedSigncryptionVersioned {
 #[versionize(UnifiedSigncryptionVersioned)]
 pub struct UnifiedSigncryption {
     pub payload: Vec<u8>,
-    pub encryption_type: EncryptionSchemeType, // TODO do we need any future validation for downgrade attacks, and is it fine to fail if meta data is incorrect? (Should be)
+    pub encryption_type: EncryptionSchemeType,
     pub signing_type: SigningSchemeType,
 }
 impl UnifiedSigncryption {

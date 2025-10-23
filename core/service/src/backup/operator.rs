@@ -8,11 +8,11 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         internal_crypto_types::{
-            Designcrypt, Encrypt, EncryptionSchemeType, HasSigningScheme, PrivateSigKey,
-            PublicSigKey, Signature, UnifiedDesigncryptionKey, UnifiedPrivateEncKey,
-            UnifiedSigncryption,
+            Designcrypt, PrivateSigKey, PublicSigKey, Signature, Signcrypt,
+            UnifiedDesigncryptionKey, UnifiedPrivateEncKey, UnifiedSigncryption,
+            UnifiedSigncryptionKey,
         },
-        signcryption::{internal_sign, internal_verify_sig},
+        signcryption::internal_verify_sig,
     },
     engine::{
         base::safe_serialize_hash_element_versioned,
@@ -599,7 +599,8 @@ impl Operator {
     /// Construct a secret sharing of a `secret` and return a map of the basic backup recovery material,
     /// indexed by the role of each custodian. Also return a map of each commitment to the secret share,
     /// indexed by the role of each custodian.
-    pub fn secret_share_and_encrypt<R: Rng + CryptoRng>(
+    /// The payload is then signcrypted
+    pub fn secret_share_and_signcrypt<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
         secret: &[u8],
@@ -625,9 +626,8 @@ impl Operator {
         let shares = secretsharing::share(rng, secret, n, t)?;
 
         // For all `s_ij, j \in [n]`
-        // 4.1 Player `P_i` encrypts `s_ij` to custodian `B_j` to get `ct_ij = Enc(pk^{E_j}, s_ij)`.
-        // 4.2 Sign the ciphertext with the player's own signing key `sig_ij = Sign(sk^{S_i}, ct_ij)`.
-        // 4.3 Commit to all the shares `c_ij = Commit(s_ij)`.
+        // 4.1 Player `P_i` signcrypts `s_ij` to custodian `B_j` to get `ct_ij = Signcrypt(sk^{S_i}, pk^{E_j}, s_ij)`.
+        // 4.2 Commit to all the shares `c_ij = Commit(s_ij)`.
         //
         // This is done by preparing a map, mapping the 0-indexed party-id to their corresponding vector of shares.
         // Observer that the sharing is a vector since a sharing must be constructed for each byte in the secret.
@@ -663,7 +663,7 @@ impl Operator {
                     "share is not long enough: actual={actual_length} < minimum={minimum_expected_length}"
                 )));
             }
-            let (enc_pk, sig_pk) = match self.custodian_keys.get(&role_j) {
+            let (ephem_enc_key, custodian_verf_key) = match self.custodian_keys.get(&role_j) {
                 Some((enc_pk, sig_pk)) => (enc_pk, sig_pk),
                 None => {
                     // Note that we do not error out since we might now have gotten all the expected correct custodian setup messages
@@ -673,19 +673,20 @@ impl Operator {
             };
             let backup_material = BackupMaterial {
                 backup_id,
-                custodian_pk: sig_pk.clone(),
+                custodian_pk: custodian_verf_key.clone(),
                 custodian_role: role_j,
                 operator_pk: self.verification_key.clone(),
                 operator_role: self.my_role,
                 shares,
             };
-            // TODO should be signcryption
-            let ciphertext = enc_pk.encrypt(rng, &backup_material)?;
-            let _signature =
-                internal_sign(&DSEP_BACKUP_RECOVERY, &ciphertext.cipher, &self.signing_key)
-                    .map_err(|e| BackupError::OperatorError(e.to_string()))?
-                    .sig
-                    .to_vec();
+            let signcryption_key = UnifiedSigncryptionKey::new(
+                self.signing_key.clone(),
+                ephem_enc_key.clone(),
+                custodian_verf_key.verf_key_id(),
+            );
+            let signcryption = signcryption_key
+                .signcrypt(rng, &DSEP_BACKUP_RECOVERY, &backup_material)
+                .map_err(BackupError::InternalCryptographyError)?;
             // Commitment by the operator, which is a hash of [BackupMaterial].
             //
             // We cannot use the regular commitment routines from commitment.rs
@@ -701,16 +702,7 @@ impl Operator {
                     .map_err(|e| BackupError::OperatorError(e.to_string()))?;
 
             // 5. The ciphertext is stored by `Pij`, or stored on a non-malleable storage, e.g. a blockchain or a secure bank vault.
-            ct_shares.insert(
-                role_j,
-                InnerOperatorBackupOutput {
-                    signcryption: UnifiedSigncryption {
-                        payload: ciphertext.cipher, // TODO 2782
-                        encryption_type: EncryptionSchemeType::MlKem512,
-                        signing_type: self.signing_key.signing_scheme_type(),
-                    },
-                },
-            );
+            ct_shares.insert(role_j, InnerOperatorBackupOutput { signcryption });
             commitments.insert(role_j, msg_digest);
         }
 
@@ -800,7 +792,9 @@ mod tests {
     use super::*;
     use crate::{
         backup::custodian::CustodianSetupMessagePayload,
-        cryptography::internal_crypto_types::{gen_sig_keys, Encryption, EncryptionScheme},
+        cryptography::internal_crypto_types::{
+            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
+        },
         engine::base::derive_request_id,
     };
     use aes_prng::AesRng;

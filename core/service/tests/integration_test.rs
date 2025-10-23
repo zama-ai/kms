@@ -807,7 +807,7 @@ mod kms_custodian_binary_tests {
         .unwrap();
         let (backup_ske, backup_pke) = enc.keygen().unwrap();
         let (ct_map, commitments) = operator
-            .secret_share_and_encrypt(
+            .secret_share_and_signcrypt(
                 &mut rng,
                 &bc2wrap::serialize(&backup_ske).unwrap(),
                 backup_id,

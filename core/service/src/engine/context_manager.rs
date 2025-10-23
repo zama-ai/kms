@@ -329,7 +329,7 @@ async fn gen_recovery_request_payload(
         &mut serialized_priv_key,
         SAFE_SER_SIZE_LIMIT,
     )?;
-    let (ct_map, commitments) = operator.secret_share_and_encrypt(
+    let (ct_map, commitments) = operator.secret_share_and_signcrypt(
         rng,
         &serialized_priv_key,
         custodian_context.context_id,

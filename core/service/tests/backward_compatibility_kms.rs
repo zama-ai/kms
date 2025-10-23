@@ -366,7 +366,7 @@ fn test_operator_backup_output(
         .unwrap()
     };
     let (cts, _commitments) = &operator
-        .secret_share_and_encrypt(
+        .secret_share_and_signcrypt(
             &mut rng,
             &test.plaintext,
             RequestId::from_bytes(test.backup_id),

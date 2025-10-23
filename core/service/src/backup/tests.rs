@@ -146,7 +146,7 @@ fn custodian_reencrypt() {
         .zip_eq(&secrets)
         .map(|(operator, secret)| {
             operator
-                .secret_share_and_encrypt(&mut rng, secret, backup_id)
+                .secret_share_and_signcrypt(&mut rng, secret, backup_id)
                 .unwrap()
         })
         .collect::<Vec<_>>();
@@ -400,7 +400,7 @@ fn full_flow_malicious_custodian_init() {
         .unwrap();
         let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
         let (backup_priv_key, _backup_enc_key) = enc.keygen().unwrap();
-        let res = operator.secret_share_and_encrypt(
+        let res = operator.secret_share_and_signcrypt(
             &mut rng,
             &bc2wrap::serialize(&backup_priv_key).unwrap(),
             backup_id,
@@ -632,7 +632,7 @@ fn operator_handle_init(
         let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let (cur_op_output, cur_comm) = operator
-            .secret_share_and_encrypt(
+            .secret_share_and_signcrypt(
                 rng,
                 &bc2wrap::serialize(&backup_dec_key).unwrap(),
                 *backup_id,
