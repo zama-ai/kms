@@ -357,10 +357,12 @@ impl<
                         if res.is_err() {
                             // We use the more specific tag to increment the error counter
                             metrics::METRICS.increment_error_counter(op_tag, ERR_KEYGEN_FAILED);
+                            tracing::error!("Key generation of request {} failed.", req_id);
+                        } else {
+                            tracing::info!("Key generation of request {} exiting normally.", req_id);
                         }
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&req_id);
-                        tracing::info!("Key generation of request {} exiting normally.", req_id);
                     },
                     () = token.cancelled() => {
                         tracing::error!("Key generation of request {} exiting before completion because of a cancellation event.", req_id);
