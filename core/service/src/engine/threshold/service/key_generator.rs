@@ -423,6 +423,50 @@ impl<
         // but the errors above cannot be tried again.
         let permit = self.rate_limiter.start_keygen().await?;
 
+        // TODO(zama-ai/kms-internal/issues/2802)
+        // Wait for the round timeout in case I've not finished with preprocessing.
+        // Note that the round timeout should be the one in the synchronous setting,
+        // that's why we have to get it from the config and not the session,
+        // as the async session used in keygen will set the timeout to one year.
+        //
+        // This is not the complete solution for solving #2802, but a temporary workaround.
+        // So remove this block of code below when the proper fix is done.
+        {
+            let context_id = inner
+                .context_id
+                .as_ref()
+                .map(|id| id.try_into())
+                .transpose()
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::InvalidArgument,
+                        format!("invalid context id: {e}"),
+                    )
+                })?
+                .unwrap_or(*DEFAULT_MPC_CONTEXT);
+            let session_preparer = self
+                .session_preparer_getter
+                .get(&context_id)
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::InvalidArgument,
+                        format!("Missing context: {e}"),
+                    )
+                })?;
+            let conf = session_preparer
+                .get_core_to_core_config()
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Internal,
+                        format!("Empty session preparer: {e}"),
+                    )
+                })?;
+            let network_timeout = conf.get_network_timeout();
+            tokio::time::sleep(network_timeout).await;
+        }
+
         // TODO(zama-ai/kms-internal/issues/2722)
         // consider moving this block of code further down the stack,
         // preferrably right before running the threshold protocol,
