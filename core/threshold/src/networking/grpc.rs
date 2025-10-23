@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, OnceLock, Weak};
 
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
@@ -283,6 +283,10 @@ impl GrpcNetworkingManager {
     ) -> anyhow::Result<Self> {
         #[cfg(feature = "testing")]
         let force_tls = tls_conf.is_some();
+        #[cfg(feature = "testing")]
+        if !force_tls {
+            tracing::warn!("force_tls is DISABLED. Testing feature is enabled - this is NOT recommended in production environments.");
+        }
 
         #[cfg(not(feature = "testing"))]
         if tls_conf.is_none() {
@@ -425,7 +429,7 @@ impl GrpcNetworkingManager {
                     round_counter: tokio::sync::RwLock::new(0),
                     network_mode,
                     conf: self.conf,
-                    init_time: RwLock::new(None),
+                    init_time: OnceLock::new(),
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),
@@ -455,7 +459,7 @@ impl GrpcNetworkingManager {
                     round_counter: tokio::sync::RwLock::new(0),
                     network_mode,
                     conf: self.conf,
-                    init_time: RwLock::new(None),
+                    init_time: OnceLock::new(),
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),
@@ -867,10 +871,6 @@ fn sender_verification(
         }
         tracing::debug!("TLS Check went fine for sender: {:?}", sender);
     } else {
-        tracing::warn!(
-            "Could not find a TLS certificate in the request to verify user's identity."
-        );
-
         // With testing feature, TLS is optional
         #[cfg(feature = "testing")]
         {
@@ -883,7 +883,8 @@ fn sender_verification(
                         .to_string(),
                 )));
             } else {
-                tracing::warn!("Force TLS is disabled, and no certificate found in the request.");
+                // since we log this on _every_ send call and only use this for testing builds, we use debug level to reduce log spam
+                tracing::debug!("Force TLS is disabled, and no certificate found in the request.");
             }
         }
 

@@ -63,12 +63,12 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
         Ok(pubkey_raw)
     } else {
         let networking = Arc::clone(session.network());
-        let deadline = session.network().get_deadline_current_round().await;
+        let timeout = session.network().get_timeout_current_round().await;
         tracing::debug!(
-            "Waiting for receiving public key from input party with deadline {:?}",
-            deadline
+            "Waiting for receiving public key from input party with timeout {:?}",
+            timeout
         );
-        let data = tokio::spawn(timeout_at(deadline, async move {
+        let data = tokio::spawn(timeout_at(timeout, async move {
             networking
                 .receive(&Role::indexed_from_one(input_party_id))
                 .await
@@ -129,8 +129,8 @@ pub async fn transfer_secret_key<S: BaseSessionHandles>(
         Ok(PrivateBgvKeySet::from_eval_domain(ntt_shares))
     } else {
         let networking = Arc::clone(session.network());
-        let deadline = session.network().get_deadline_current_round().await;
-        let data = tokio::spawn(timeout_at(deadline, async move {
+        let timeout = session.network().get_timeout_current_round().await;
+        let data = tokio::spawn(timeout_at(timeout, async move {
             networking
                 .receive(&Role::indexed_from_one(input_party_id))
                 .await

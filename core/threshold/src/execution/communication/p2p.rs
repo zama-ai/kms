@@ -174,7 +174,7 @@ async fn internal_receive_from_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
         if check_fn(cur_sender, session)? {
             let networking = Arc::clone(session.network());
             let role_to_receive_from = *cur_sender;
-            let deadline = session.network().get_deadline_current_round().await;
+            let deadline = session.network().get_timeout_current_round().await;
 
             jobs.spawn(async move {
                 let received = timeout_at(deadline, networking.receive(&role_to_receive_from))
@@ -251,7 +251,7 @@ pub async fn generic_receive_from_all_senders<V, Z: Ring, B: BaseSessionHandles>
             let sender = *sender;
             let networking = Arc::clone(session.network());
             let my_role = session.my_role();
-            let timeout = session.network().get_deadline_current_round().await;
+            let timeout = session.network().get_timeout_current_round().await;
             let task = async move {
                 let stripped_message = timeout_at(timeout, networking.receive(&sender)).await;
                 match stripped_message {

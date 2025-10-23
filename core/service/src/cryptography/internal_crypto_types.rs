@@ -302,6 +302,10 @@ pub enum UnifiedPrivateEncKeyVersioned {
     V0(UnifiedPrivateEncKey),
 }
 
+/// # Current Usage
+/// - `user_decryption_wasm.rs`, `user_decryption_non_wasm.rs`, and custodian based backup (`core/service/src/backup`)
+/// - Lifetime: Lifetime of a custodian context
+/// - Scope: Lifetime of a backup (i.e. lifetime of a custodian context), but local to client application
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
 #[expect(clippy::large_enum_variant)]
 #[versionize(UnifiedPrivateEncKeyVersioned)]
