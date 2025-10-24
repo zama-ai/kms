@@ -102,6 +102,12 @@ pub struct RealKeyGenerator<
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub rate_limiter: RateLimiter,
     pub(crate) _kg: PhantomData<KG>,
+    // This is a lock to make sure calls to keygen are serialized.
+    // It's needed because we lock the meta store at different times before starting the keygen
+    // and if two concurrent keygen calls on the same key ID or preproc ID are made, they can interfere with each other.
+    // So the lock should be held during the whole keygen request, which should not be a big
+    // issue since starting the keygen should be fast as most of the expensive process happens in the background.
+    pub(crate) serial_lock: Arc<Mutex<()>>,
 }
 
 #[cfg(feature = "insecure")]
@@ -132,6 +138,7 @@ impl<
                 ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
                 _kg: std::marker::PhantomData,
+                serial_lock: Arc::new(Mutex::new(())),
             },
         }
     }
@@ -370,6 +377,10 @@ impl<
             inner.keyset_added_info,
             insecure
         );
+
+        // Acquire the serial lock to make sure no other keygen is running concurrently
+        let _guard = self.serial_lock.lock().await;
+
         let request_id =
             parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::KeyGenRequest)?;
 
@@ -1149,6 +1160,7 @@ mod tests {
                 ongoing,
                 rate_limiter,
                 _kg: PhantomData,
+                serial_lock: Arc::new(Mutex::new(())),
             }
         }
 
