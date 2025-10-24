@@ -91,7 +91,6 @@ pub(crate) async fn reshare(
         &internal_client,
         &req_preproc,
         None,
-        None,
         expected_num_parties_crashed,
     )
     .await;
@@ -102,7 +101,6 @@ pub(crate) async fn reshare(
         &internal_client,
         &req_preproc,
         &req_key,
-        None,
         None,
         false,
         None,

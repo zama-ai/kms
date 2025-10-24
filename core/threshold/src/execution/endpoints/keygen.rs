@@ -41,7 +41,6 @@ use crate::{
                 RawPubKeySet, ReRandomizationRawKeySwitchingKey,
             },
             randomness::MPCEncryptionRandomGenerator,
-            sns_compression_key::SnsCompressionPrivateKeyShares,
             sns_compression_key_generation::{
                 generate_compressed_sns_compression_keys, generate_sns_compression_keys,
             },
@@ -53,9 +52,7 @@ use num_integer::div_ceil;
 use tfhe::{
     core_crypto::entities::LweBootstrapKey,
     shortint::{
-        list_compression::{
-            CompressedDecompressionKey, DecompressionKey, NoiseSquashingCompressionKey,
-        },
+        list_compression::{CompressedDecompressionKey, DecompressionKey},
         parameters::LweCiphertextCount,
         server_key::{CompressedModulusSwitchConfiguration, ModulusSwitchConfiguration},
         ClassicPBSParameters,
@@ -1075,47 +1072,6 @@ pub fn decompress_compressed_standalone_decompression_key_from_xof(
     (decompressed_key, count)
 }
 
-#[instrument(name="Gen sns compression Key Z128", skip(glwe_secret_key_share_sns_as_lwe, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-pub async fn distributed_sns_compression_keygen_z128<
-    S: BaseSessionHandles,
-    P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
-    const EXTENSION_DEGREE: usize,
->(
-    session: &mut S,
-    preprocessing: &mut P,
-    params: DKGParams,
-    glwe_secret_key_share_sns_as_lwe: &LweSecretKeyShare<Z128, EXTENSION_DEGREE>,
-) -> anyhow::Result<(
-    SnsCompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>,
-    NoiseSquashingCompressionKey,
-)>
-where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
-{
-    let params_basics_handle = params.get_params_basics_handle();
-    let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
-    //Init the XOF with the seed computed above
-    // QU: Do we want to use the same DSEP as in the regualr KG?
-    let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
-        Z128,
-        SoftwareRandomGenerator,
-        EXTENSION_DEGREE,
-    >::new_from_seed(XofSeed::new_u128(seed, DSEP_KG));
-
-    let params = params_basics_handle
-        .get_sns_compression_params()
-        .ok_or_else(|| anyhow::anyhow!("missing sns compression parameters"))?;
-
-    generate_sns_compression_keys(
-        glwe_secret_key_share_sns_as_lwe,
-        params,
-        &mut mpc_encryption_rng,
-        session,
-        preprocessing,
-    )
-    .await
-}
-
 #[cfg(test)]
 pub mod tests {
     use super::OnlineDistributedKeyGen;
@@ -1718,18 +1674,6 @@ pub mod tests {
             .await
     }
 
-    #[cfg(feature = "slow_tests")]
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn sns_compression_keygen_f4() {
-        let params = PARAMS_TEST_BK_SNS;
-        let num_parties = 4;
-        let threshold = 1;
-        let temp_dir = tempfile::tempdir().unwrap();
-        run_real_sns_compression_dkg_and_save::<4>(params, num_parties, threshold, temp_dir.path())
-            .await
-    }
-
     struct KeygenTestConfig {
         run_switch_and_squash: bool,
         run_shortint_with_compact: bool,
@@ -2028,174 +1972,6 @@ pub mod tests {
             &keyset2.client_key,
             None,
             decompression_key,
-        );
-    }
-
-    #[cfg(feature = "slow_tests")]
-    async fn run_real_sns_compression_dkg_and_save<const EXTENSION_DEGREE: usize>(
-        params: DKGParams,
-        num_parties: usize,
-        threshold: usize,
-        prefix_path: &Path,
-    ) where
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
-    {
-        use std::collections::HashMap;
-
-        use tfhe::{
-            core_crypto::prelude::GlweSecretKeyOwned,
-            shortint::list_compression::NoiseSquashingCompressionPrivateKey,
-        };
-
-        use crate::{
-            execution::{
-                endpoints::keygen::distributed_sns_compression_keygen_z128,
-                sharing::share::Share,
-                tfhe_internals::{
-                    glwe_key::GlweSecretKeyShare,
-                    test_feature::{combine_and_run_sns_compression_test, gen_key_set},
-                },
-            },
-            file_handling::tests::{read_element, write_element},
-        };
-
-        let keyset_config = KeySetConfig::AddSnsCompressionKey;
-        let mut rng = aes_prng::AesRng::from_random_seed();
-
-        // here we need to remove the private sns compression key
-        let keyset = {
-            let mut tmp = gen_key_set(params, &mut rng);
-            let ck_parts = tmp.client_key.into_raw_parts();
-            tmp.client_key = tfhe::ClientKey::from_raw_parts(
-                ck_parts.0, ck_parts.1, ck_parts.2, ck_parts.3, None, ck_parts.5, ck_parts.6,
-            );
-            tmp
-        };
-
-        let (glwe_sns_key_poly_size, glwe_sns_key) = {
-            let k = keyset.get_raw_glwe_client_sns_key().unwrap();
-            (k.polynomial_size(), k.into_container())
-        };
-
-        // and then secret share the secret keys
-        let glwe_sns_key_shares =
-            binary_vec_to_shares128(glwe_sns_key, num_parties, threshold, &mut rng);
-        assert_eq!(glwe_sns_key_shares.len(), num_parties);
-
-        // We need to pass these shares into the FnMut,
-        // but FnMut doesn't allow us to move a reference
-        // so write these two shares into the temporary storage
-        // and then we'll read it in the task.
-        const GLWE_SNS_KEY_SHARES: &str = "glwe_sns_key_shares";
-        write_element(prefix_path.join(GLWE_SNS_KEY_SHARES), &glwe_sns_key_shares).unwrap();
-
-        let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
-                        prefix: Option<String>| async move {
-            session
-                .network()
-                .set_timeout_for_next_round(Duration::from_secs(240))
-                .await;
-            let mut dkg_preproc =
-                generate_preproc_from_params(&params, keyset_config, &mut session).await;
-
-            let my_role = session.my_role();
-            let prefix = prefix.unwrap();
-            let path_glwe_sns_key_shares = Path::new(&prefix).join(GLWE_SNS_KEY_SHARES);
-            let glwe_key_sns_shares = &read_element::<
-                Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>,
-                _,
-            >(path_glwe_sns_key_shares)
-            .unwrap()[&my_role];
-
-            let private_glwe_sns_key_share = GlweSecretKeyShare {
-                data: glwe_key_sns_shares.to_vec(),
-                polynomial_size: glwe_sns_key_poly_size,
-            };
-            let (sns_compression_shares, sns_compression_key) =
-                distributed_sns_compression_keygen_z128(
-                    &mut session,
-                    dkg_preproc.as_mut(),
-                    params,
-                    &private_glwe_sns_key_share.into_lwe_secret_key(),
-                )
-                .await
-                .unwrap();
-
-            // make sure we used up all the preprocessing materials
-            assert_eq!(0, dkg_preproc.bits_len());
-            assert_eq!(0, dkg_preproc.triples_len());
-            assert_eq!(0, dkg_preproc.randoms_len());
-
-            use strum::IntoEnumIterator;
-
-            for bound in crate::execution::tfhe_internals::parameters::NoiseBounds::iter() {
-                assert_eq!(0, dkg_preproc.noise_len(bound));
-            }
-
-            (my_role, (sns_compression_shares, sns_compression_key))
-        };
-
-        // Sync network because we also init the PRSS in the task
-        let mut results =
-            execute_protocol_small::<_, _, ResiduePoly<Z128, EXTENSION_DEGREE>, EXTENSION_DEGREE>(
-                num_parties,
-                threshold as u8,
-                None,
-                NetworkMode::Sync,
-                None,
-                &mut task,
-                Some(prefix_path.to_str().unwrap().to_string()),
-            )
-            .await;
-
-        // reconstruct the shares
-        let all_shares = results
-            .iter()
-            .map(|(role, (share, _))| (*role, share.post_packing_ks_key.clone().data))
-            .collect::<HashMap<_, _>>();
-        let sns_compression_glwe_sk_bits =
-            crate::execution::tfhe_internals::utils::reconstruct_bit_vec::<_, EXTENSION_DEGREE>(
-                all_shares,
-                match params {
-                    DKGParams::WithoutSnS(_) => panic!("expected sns compression params"),
-                    DKGParams::WithSnS(dkgparams_sn_s) => {
-                        dkgparams_sn_s.sns_compression_sk_num_bits()
-                    }
-                },
-                threshold,
-            )
-            .into_iter()
-            .map(|x| x as u128)
-            .collect::<Vec<_>>();
-
-        let sns_compression_params = match params {
-            DKGParams::WithoutSnS(_) => panic!("expected sns compression params"),
-            DKGParams::WithSnS(dkgparams_sn_s) => dkgparams_sn_s.sns_compression_params.unwrap(),
-        };
-        let sns_compression_private_key = NoiseSquashingCompressionPrivateKey::from_raw_parts(
-            GlweSecretKeyOwned::from_container(
-                sns_compression_glwe_sk_bits,
-                glwe_sns_key_poly_size,
-            ),
-            sns_compression_params,
-        );
-
-        // check that the compression keys are the same
-        let sns_compression_key = results.pop().unwrap().1 .1;
-        let decompression_key_bytes = bc2wrap::serialize(&sns_compression_key).unwrap();
-        for (_role, key) in results {
-            let buf = bc2wrap::serialize(&key.1).unwrap();
-            assert_eq!(buf, decompression_key_bytes);
-        }
-
-        // check that we can do the sns compression test
-        combine_and_run_sns_compression_test(
-            params,
-            &keyset.client_key,
-            sns_compression_key,
-            sns_compression_private_key,
-            None,
         );
     }
 

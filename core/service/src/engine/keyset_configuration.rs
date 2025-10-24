@@ -35,9 +35,6 @@ impl TryFrom<WrappedKeySetConfig> for ddec_keyset_config::KeySetConfig {
             kms_grpc::kms::v1::KeySetType::DecompressionOnly => {
                 Ok(ddec_keyset_config::KeySetConfig::DecompressionOnly)
             }
-            kms_grpc::kms::v1::KeySetType::AddSnsCompressionKey => {
-                Ok(ddec_keyset_config::KeySetConfig::AddSnsCompressionKey)
-            }
         }
     }
 }
@@ -82,8 +79,6 @@ impl InternalKeySetConfig {
     ///     Furthermore, within `keyset_added_info` the `from_keyset_id_decompression_only` and `to_keyset_id_decompression_only` must be set.
     /// If `keyset_config` is set to `Standard` with `KeySetCompressionConfig::UseExisting` compression,
     ///     then `keyset_added_info` must be provided and must have `compression_keyset_id` set.
-    /// If `keyset_config` is set to `AddSnsCompressionKey`, then `keyset_added_info` must be provided
-    ///     and must have `base_keyset_id_for_sns_compression_key` set.
     ///
     /// # Arguments
     /// * `keyset_config` - Optional keyset configuration.
@@ -154,23 +149,6 @@ impl InternalKeySetConfig {
                             }
                         }
                     }
-                    KeySetType::AddSnsCompressionKey => match &keyset_added_info {
-                        Some(inner_added_info) => {
-                            if inner_added_info
-                                .base_keyset_id_for_sns_compression_key
-                                .is_none()
-                            {
-                                return Err(anyhow!(
-                                    "`keyset_added_info` must contain `base_keyset_id_for_sns_compression_key` when `keyset_config` is set to `AddSnsCompressionKey`",
-                                ));
-                            }
-                        }
-                        None => {
-                            return Err(anyhow!(
-                                "`keyset_added_info` must be provided when `keyset_config` is set to `AddSnsCompressionKey`",
-                            ));
-                        }
-                    },
                 }
             }
             None => {
@@ -219,34 +197,6 @@ impl InternalKeySetConfig {
             }
             None => {
                 anyhow::bail!("Added info is required when only generating a decompression key")
-            }
-        })
-    }
-
-    // TODO(2674)
-    pub fn get_base_key_id_for_sns_compression_key(&self) -> anyhow::Result<RequestId> {
-        Ok(match &self.keyset_added_info {
-            Some(added_info) => {
-                match added_info.base_keyset_id_for_sns_compression_key.to_owned() {
-                    Some(inner) => parse_proto_request_id(
-                        &inner,
-                        RequestIdParsingErr::Other(
-                            "invalid base key ID for sns compression key".to_string(),
-                        ),
-                    )
-                    .map_err(|e| {
-                        anyhow::anyhow!(
-                            "Failed to parse base key ID for sns compression key: {}",
-                            e
-                        )
-                    })?,
-                    _ => anyhow::bail!("missing key ID for overwritting"),
-                }
-            }
-            None => {
-                anyhow::bail!(
-                    "Added info is required when a noise squashing compression key is generated"
-                )
             }
         })
     }
@@ -334,7 +284,6 @@ pub(crate) mod tests {
             compression_keyset_id: None,
             from_keyset_id_decompression_only: None,
             to_keyset_id_decompression_only: None,
-            base_keyset_id_for_sns_compression_key: None,
         };
         let result = InternalKeySetConfig::new(Some(keyset_config), Some(keyset_added_info));
         assert!(result.is_err());

@@ -17,7 +17,6 @@ use tfhe::{
             CompressionPrivateKeys, NoiseSquashingCompressionKey,
             NoiseSquashingCompressionPrivateKey,
         },
-        noise_squashing::NoiseSquashingPrivateKey,
         ClassicPBSParameters, PBSParameters,
     },
     zk::CompactPkeCrs,
@@ -45,7 +44,6 @@ use crate::{
         tfhe_internals::{
             compression_decompression_key::CompressionPrivateKeyShares,
             glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare, parameters::DkgMode,
-            sns_compression_key::SnsCompressionPrivateKeyShares,
         },
     },
     networking::value::NetworkValue,
@@ -497,80 +495,6 @@ where
     };
 
     Ok((transferred_pub_key, shared_sk))
-}
-
-// TODO(2674): remove this code once the SnS compression key upgrade is done
-pub async fn initialize_sns_compression_key_materials<
-    S: BaseSessionHandles,
-    const EXTENSION_DEGREE: usize,
->(
-    session: &mut S,
-    params: DKGParams,
-    sns_sk: Option<NoiseSquashingPrivateKey>,
-) -> anyhow::Result<(
-    SnsCompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>,
-    NoiseSquashingCompressionKey,
-)>
-where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
-{
-    let own_role = session.my_role();
-    let params_basic_handle = params.get_params_basics_handle();
-    let is_input_party = own_role.one_based() == INPUT_PARTY_ID;
-
-    let raw_sns_compression_params = params_basic_handle
-            .get_sns_compression_params().ok_or(anyhow::anyhow!(
-                "insecure sns compression key generation is not supported without SnS compression parameters",
-            ))?.raw_compression_parameters;
-    let sns_compression_sk: Option<NoiseSquashingCompressionPrivateKey> = if is_input_party {
-        Some(NoiseSquashingCompressionPrivateKey::new(
-            raw_sns_compression_params,
-        ))
-    } else {
-        None
-    };
-    let sns_compression_key = match (&sns_compression_sk, sns_sk) {
-        (None, None) => None,
-        (Some(sns_compression_sk), Some(sns_sk)) => {
-            Some(sns_sk.new_noise_squashing_compression_key(sns_compression_sk))
-        }
-        _ => anyhow::bail!("the party with the sns compression sk should also have the sns sk"),
-    };
-    let raw_sns_compression_sk_container128: Option<Vec<u128>> =
-        sns_compression_sk.map(|inner| inner.into_raw_parts().0.into_container());
-
-    let secrets = if let Some(compression_container) = raw_sns_compression_sk_container128 {
-        if is_input_party {
-            Some(
-                compression_container
-                    .iter()
-                    .map(|cur| {
-                        ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<u128>(*cur))
-                    })
-                    .collect_vec(),
-            )
-        } else {
-            anyhow::bail!("the input party should have the sns compression secret key")
-        }
-    } else {
-        None
-    };
-    let glwe_sns_compression_key_shares128 =
-        robust_input(session, &secrets, &own_role, INPUT_PARTY_ID).await?;
-
-    let final_sns_compression_key_shares = SnsCompressionPrivateKeyShares {
-        post_packing_ks_key: GlweSecretKeyShare {
-            data: glwe_sns_compression_key_shares128,
-            polynomial_size: raw_sns_compression_params.packing_ks_polynomial_size,
-        },
-        params: raw_sns_compression_params,
-    };
-
-    let final_sns_compression_key =
-        transfer_sns_compression_key(session, sns_compression_key, INPUT_PARTY_ID).await?;
-
-    Ok((final_sns_compression_key_shares, final_sns_compression_key))
 }
 
 pub async fn transfer_pub_key<S: BaseSessionHandles>(
