@@ -173,7 +173,7 @@ fn custodian_reencrypt() {
                 operator_role,
             )
             .unwrap_err();
-        assert!(matches!(err, BackupError::SignatureVerificationError(..)));
+        assert!(matches!(err, BackupError::CustodianRecoveryError));
     }
 
     // tweak the signature, so that signature verification also fails
@@ -194,7 +194,7 @@ fn custodian_reencrypt() {
                 operator_role,
             )
             .unwrap_err();
-        assert!(matches!(err, BackupError::SignatureVerificationError(..)));
+        assert!(matches!(err, BackupError::CustodianRecoveryError));
     }
 
     // use the wrong backup_id

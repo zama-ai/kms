@@ -166,7 +166,7 @@ async fn main() -> Result<(), anyhow::Error> {
             tracing::info!("Custodian initialized successfully");
             let mut rng = get_rng(params.randomness.as_ref());
             let custodian_backup: &InnerOperatorBackupOutput = recovery_request
-                .ciphertexts()
+                .signcryptions()
                 .get(&Role::indexed_from_one(params.custodian_role))
                 .unwrap_or_else(|| {
                     panic!(
@@ -178,7 +178,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 &mut rng,
                 custodian_backup,
                 &operator_verf_key,
-                recovery_request.ephm_enc_key(),
+                recovery_request.backup_enc_key(),
                 recovery_request.backup_id(),
                 recovery_request.operator_role(),
             )?;

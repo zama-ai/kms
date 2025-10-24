@@ -3,6 +3,7 @@ use super::{
     error::BackupError,
     secretsharing,
 };
+use crate::backup::custodian::DSEP_BACKUP_CUSTODIAN;
 use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
@@ -50,29 +51,6 @@ pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRECO";
 const TIMESTAMP_VALIDATION_WINDOW_SECS: u64 = 24 * 3600; // 1 day
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum InternalRecoveryRequestVersioned {
-    V0(InternalRecoveryRequest),
-}
-
-impl Named for InternalRecoveryRequest {
-    const NAME: &'static str = "backup::InternalRecoveryRequest";
-}
-
-/// The backup data returned to the custodians during recovery.
-/// WARNING: It is crucial that this is transported safely as it does not
-/// contain any authentication on the ephemeral encryption key [`enc_key`].
-/// This is because we have to assume that the operator has no access to the private storage
-/// when creating this object.
-#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
-#[versionize(InternalRecoveryRequestVersioned)]
-pub struct InternalRecoveryRequest {
-    ephem_enc_key: UnifiedPublicEncKey, // Ephemeral encryption key
-    cts: BTreeMap<Role, InnerOperatorBackupOutput>,
-    backup_id: RequestId,
-    operator_role: Role,
-}
-
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum RecoveryRequestPayloadVersioned {
     V0(RecoveryRequestPayload),
 }
@@ -93,56 +71,87 @@ impl Named for RecoveryRequestPayload {
     const NAME: &'static str = "backup::RecoveryRequestPayload";
 }
 
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum InternalRecoveryRequestVersioned {
+    V0(InternalRecoveryRequest),
+}
+
+impl Named for InternalRecoveryRequest {
+    const NAME: &'static str = "backup::InternalRecoveryRequest";
+}
+
+/// The backup data returned to the custodians during recovery.
+/// WARNING: It is crucial that this is transported safely as it does not
+/// contain any authentication on the backup encryption key [`enc_key`].
+/// This is because we have to assume that the operator has no access to the private storage
+/// when creating this object.
+#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
+#[versionize(InternalRecoveryRequestVersioned)]
+pub struct InternalRecoveryRequest {
+    backup_enc_key: UnifiedPublicEncKey, // Backup encryption key
+    cts: BTreeMap<Role, InnerOperatorBackupOutput>,
+    backup_id: RequestId,
+    operator_role: Role,
+}
+
 impl InternalRecoveryRequest {
+    /// Optimistically create a new internal recovery request, WITHOUT validating it against the custodians' designcryption keys.
     pub fn new(
-        ephem_enc_key: UnifiedPublicEncKey,
+        backup_enc_key: UnifiedPublicEncKey,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
         backup_id: RequestId,
         operator_role: Role,
-        design_key: Option<&UnifiedDesigncryptionKey>,
     ) -> anyhow::Result<Self> {
         let res = InternalRecoveryRequest {
-            ephem_enc_key,
+            backup_enc_key,
             cts,
             backup_id,
             operator_role,
         };
-        if let Some(design_key) = design_key {
-            if !res.is_valid(design_key)? {
-                return Err(anyhow_error_and_log("Invalid RecoveryRequest data"));
-            }
+        if !backup_id.is_valid() {
+            return Err(anyhow_error_and_log(
+                "InternalRecoveryRequest has an invalid backup ID",
+            ));
         }
         Ok(res)
     }
 
     /// Validate that the data in the request is sensible.
-    pub fn is_valid(&self, designcrypt_key: &UnifiedDesigncryptionKey) -> anyhow::Result<bool> {
+    pub fn is_valid(
+        &self,
+        custodian_role: Role,
+        designcrypt_key: &UnifiedDesigncryptionKey,
+    ) -> anyhow::Result<bool> {
         if !self.backup_id.is_valid() {
             tracing::warn!("InternalRecoveryRequest has an invalid backup ID");
             return Ok(false);
         }
-        if self.operator_role.one_based() == 0 {
-            tracing::warn!("InternalRecoveryRequest has an invalid operator role");
-            return Ok(false);
-        }
-        for cur in self.cts.values() {
-            // We ignore the result, but just ensure that designcryption works
-            if designcrypt_key
-                .validate_signcryption(&DSEP_BACKUP_RECOVERY, &cur.signcryption)
-                .is_err()
-            {
-                tracing::warn!("InternalRecoveryRequest contains an invalid signcryption");
+        let output = match self.cts.get(&custodian_role) {
+            Some(output) => output,
+            None => {
+                tracing::warn!(
+                    "InternalRecoveryRequest is missing ciphertext for custodian role {}",
+                    custodian_role
+                );
                 return Ok(false);
             }
+        };
+        // We ignore the result, but just ensure that designcryption works
+        if designcrypt_key
+            .validate_signcryption(&DSEP_BACKUP_RECOVERY, &output.signcryption)
+            .is_err()
+        {
+            tracing::warn!("InternalRecoveryRequest contains an invalid signcryption");
+            return Ok(false);
         }
         Ok(true)
     }
 
-    pub fn ephm_enc_key(&self) -> &UnifiedPublicEncKey {
-        &self.ephem_enc_key
+    pub fn backup_enc_key(&self) -> &UnifiedPublicEncKey {
+        &self.backup_enc_key
     }
 
-    pub fn ciphertexts(&self) -> HashMap<Role, &InnerOperatorBackupOutput> {
+    pub fn signcryptions(&self) -> HashMap<Role, &InnerOperatorBackupOutput> {
         self.cts.iter().map(|(role, ct)| (*role, ct)).collect()
     }
 
@@ -169,7 +178,7 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
     type Error = anyhow::Error;
 
     fn try_from(value: RecoveryRequest) -> Result<InternalRecoveryRequest, Self::Error> {
-        let ephem_enc_key: UnifiedPublicEncKey =
+        let backup_enc_key: UnifiedPublicEncKey =
             safe_deserialize(std::io::Cursor::new(&value.enc_key), SAFE_SER_SIZE_LIMIT).map_err(
                 |e| anyhow_error_and_log(format!("Could not deserialize enc_key: {e:?}")),
             )?;
@@ -182,7 +191,7 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
         let backup_id: RequestId =
             parse_optional_proto_request_id(&value.backup_id, RequestIdParsingErr::BackupRecovery)?;
         Ok(Self {
-            ephem_enc_key,
+            backup_enc_key,
             cts,
             backup_id,
             operator_role: Role::indexed_from_one(value.operator_role as usize),
@@ -392,7 +401,7 @@ fn checked_decryption_deserialize(
     operator_role: Role,
 ) -> Result<Vec<Share<ResiduePolyF4Z64>>, BackupError> {
     let backup_material: BackupMaterial = design_key
-        .designcrypt(&DSEP_BACKUP_RECOVERY, signcryption)
+        .designcrypt(&DSEP_BACKUP_CUSTODIAN, signcryption)
         .map_err(|e| {
             BackupError::OperatorError(format!(
                 "Failed to designcrypt backup share for custodian role {custodian_role}: {e}",
@@ -429,7 +438,7 @@ pub enum BackupMaterialVersioned {
     V0(BackupMaterial),
 }
 
-#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(BackupMaterialVersioned)]
 pub struct BackupMaterial {
     pub(crate) backup_id: RequestId,
@@ -663,7 +672,7 @@ impl Operator {
                     "share is not long enough: actual={actual_length} < minimum={minimum_expected_length}"
                 )));
             }
-            let (ephem_enc_key, custodian_verf_key) = match self.custodian_keys.get(&role_j) {
+            let (cus_enc_key, custodian_verf_key) = match self.custodian_keys.get(&role_j) {
                 Some((enc_pk, sig_pk)) => (enc_pk, sig_pk),
                 None => {
                     // Note that we do not error out since we might now have gotten all the expected correct custodian setup messages
@@ -681,7 +690,7 @@ impl Operator {
             };
             let custodian_verf_id = custodian_verf_key.verf_key_id();
             let signcryption_key =
-                UnifiedSigncryptionKey::new(&self.signing_key, ephem_enc_key, &custodian_verf_id);
+                UnifiedSigncryptionKey::new(&self.signing_key, cus_enc_key, &custodian_verf_id);
             let signcryption = signcryption_key
                 .signcrypt(rng, &DSEP_BACKUP_RECOVERY, &backup_material)
                 .map_err(BackupError::InternalCryptographyError)?;

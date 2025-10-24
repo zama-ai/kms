@@ -840,7 +840,6 @@ mod kms_custodian_binary_tests {
             ciphertexts,
             backup_id,
             operator_role,
-            None,
         )
         .unwrap();
         safe_write_element_versioned(&Path::new(&operator_verf_path), &verification_key)
@@ -863,8 +862,8 @@ mod kms_custodian_binary_tests {
         operator: &Operator,
         recovery_material: &RecoveryValidationMaterial,
         backup_id: RequestId,
-        dec_key: &UnifiedPrivateEncKey,
-        enc_key: &UnifiedPublicEncKey,
+        ephem_dec_key: &UnifiedPrivateEncKey,
+        ephem_enc_key: &UnifiedPublicEncKey,
     ) -> Vec<u8> {
         let mut outputs = Vec::new();
         for custodian_index in 1..=amount_custodians {
@@ -879,7 +878,13 @@ mod kms_custodian_binary_tests {
             outputs.push(payload);
         }
         operator
-            .verify_and_recover(&outputs, recovery_material, backup_id, dec_key, enc_key)
+            .verify_and_recover(
+                &outputs,
+                recovery_material,
+                backup_id,
+                ephem_dec_key,
+                ephem_enc_key,
+            )
             .unwrap()
     }
 }

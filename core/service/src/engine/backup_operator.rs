@@ -1,4 +1,5 @@
-use crate::backup::custodian::{InternalCustodianRecoveryOutput, DSEP_BACKUP_CUSTODIAN};
+use crate::backup::custodian::InternalCustodianRecoveryOutput;
+use crate::backup::operator::DSEP_BACKUP_RECOVERY;
 use crate::cryptography::internal_crypto_types::{
     Designcrypt, Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedDesigncryptionKey,
     UnifiedPrivateEncKey, UnifiedPublicEncKey,
@@ -486,7 +487,7 @@ async fn filter_custodian_data(
             }
         };
         if design_key
-            .validate_signcryption(&DSEP_BACKUP_CUSTODIAN, &cur_signcryption)
+            .validate_signcryption(&DSEP_BACKUP_RECOVERY, &cur_signcryption)
             .is_err()
         {
             tracing::warn!(
@@ -904,7 +905,9 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
-        assert!(logs_contain("Failed to parse signature for custodian"));
+        assert!(logs_contain(
+            "Could not validate signcryption for custodian"
+        ));
         assert!(result
             .unwrap_err()
             .to_string()

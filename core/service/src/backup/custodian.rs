@@ -308,7 +308,7 @@ impl Custodian {
             "Verifying and re-encrypting backup for operator: {}",
             operator_role
         );
-        let custodian_id = self.signing_key.verf_key().verf_key_id();
+        let custodian_id = self.verification_key().verf_key_id();
         let designcrypt_key = UnifiedDesigncryptionKey::new(
             &self.dec_key,
             &self.enc_key,
@@ -319,7 +319,7 @@ impl Custodian {
             .designcrypt(&DSEP_BACKUP_RECOVERY, &backup.signcryption)
             .map_err(|e| {
                 tracing::warn!(
-                    "Deigncryption failed for backup {backup_id} for operator {operator_role}: {e}"
+                    "Designcryption failed for backup {backup_id} for operator {operator_role}: {e}"
                 );
                 BackupError::CustodianRecoveryError
             })?;
@@ -377,6 +377,10 @@ impl Custodian {
             public_verf_key: self.verification_key().clone(),
             name: custodian_name,
         })
+    }
+
+    pub fn public_dec_key(&self) -> &UnifiedPrivateEncKey {
+        &self.dec_key
     }
 
     pub fn public_enc_key(&self) -> &UnifiedPublicEncKey {

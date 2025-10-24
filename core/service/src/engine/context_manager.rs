@@ -497,17 +497,9 @@ mod tests {
     async fn test_gen_recovery_request_payloads() {
         let mut rng = AesRng::seed_from_u64(40);
         let backup_id = RequestId::new_random(&mut rng);
-        let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
-        let (verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
         let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
-        let (ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
-        let client_id = client_verf_key.verf_key_id();
-        let design_key = UnifiedDesigncryptionKey::new(
-            &ephemeral_dec_key,
-            &ephemeral_enc_key,
-            &verf_key,
-            &client_id,
-        );
+        let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let mnemonic = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
         let custodian1: Custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(1)).unwrap();
@@ -535,12 +527,12 @@ mod tests {
             threshold: 1,
         };
         let internal_context =
-            InternalCustodianContext::new(context, ephemeral_enc_key.clone()).unwrap();
+            InternalCustodianContext::new(context, backup_enc_key.clone()).unwrap();
         let (recovery_request_payload, _commitments) = gen_recovery_request_payload(
             &mut rng,
-            &sig_key,
-            ephemeral_enc_key.clone(),
-            ephemeral_dec_key.clone(),
+            &server_sig_key,
+            backup_enc_key.clone(),
+            backup_dec_key.clone(),
             &internal_context,
             Role::indexed_from_one(1),
         )
@@ -551,9 +543,17 @@ mod tests {
             recovery_request_payload.cts,
             backup_id,
             Role::indexed_from_one(1),
-            Some(&design_key),
         )
         .unwrap();
-        assert!(internal_rec_req.is_valid(&design_key).unwrap());
+        let custodian_id = custodian1.verification_key().verf_key_id();
+        let design_key = UnifiedDesigncryptionKey::new(
+            custodian1.public_dec_key(),
+            custodian1.public_enc_key(),
+            &server_verf_key,
+            &custodian_id,
+        );
+        assert!(internal_rec_req
+            .is_valid(Role::indexed_from_one(1), &design_key)
+            .unwrap());
     }
 }
