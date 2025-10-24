@@ -124,6 +124,38 @@ pub mod tests_and_benches {
         TaskOutputT: Send + 'static,
         OutputT: Send + 'static,
     {
+        let mut f = |session: LargeSession, _: Option<String>| task(session);
+        execute_protocol_large_w_extra_data::<TaskOutputT, OutputT, Z, EXTENSION_DEGREE>(
+            parties,
+            threshold,
+            expected_rounds,
+            network_mode,
+            delay_vec,
+            None,
+            &mut f,
+        )
+        .await
+    }
+
+    pub async fn execute_protocol_large_w_extra_data<
+        TaskOutputT,
+        OutputT,
+        Z: Ring,
+        const EXTENSION_DEGREE: usize,
+    >(
+        parties: usize,
+        threshold: usize,
+        expected_rounds: Option<usize>,
+        network_mode: NetworkMode,
+        delay_vec: Option<Vec<Duration>>,
+        extra_data: Option<String>,
+        task: &mut dyn FnMut(LargeSession, Option<String>) -> TaskOutputT,
+    ) -> Vec<OutputT>
+    where
+        TaskOutputT: Future<Output = OutputT>,
+        TaskOutputT: Send + 'static,
+        OutputT: Send + 'static,
+    {
         let roles = generate_fixed_roles(parties);
         let delay_map = delay_vec.map(|delay_vec| {
             roles
@@ -143,7 +175,8 @@ pub mod tests_and_benches {
         let mut tasks = JoinSet::new();
         for party in roles.iter() {
             let session = test_runtime.large_session_for_party(session_id, *party);
-            tasks.spawn(task(session));
+            let extra_data = extra_data.clone();
+            tasks.spawn(task(session, extra_data));
         }
         let mut results = Vec::with_capacity(tasks.len());
         while let Some(v) = tasks.join_next().await {
@@ -399,9 +432,9 @@ pub mod tests {
     }
 
     /// Deterministic key generation
-    pub fn generate_keys(params: DKGParams) -> KeySet {
+    pub fn generate_keys(params: DKGParams, tag: tfhe::Tag) -> KeySet {
         let mut seeded_rng = AesRng::seed_from_u64(DEFAULT_SEED);
-        gen_key_set(params, &mut seeded_rng)
+        gen_key_set(params, tag, &mut seeded_rng)
     }
 
     /// Generates dummy parameters for unit tests with role 1. Parameters contain a single party, session ID = 1 and threshold = 0
@@ -668,7 +701,7 @@ pub mod tests {
         }
 
         // make sure keys exist (generate them if they do not)
-        ensure_keys_exist(SMALL_TEST_KEY_PATH, TEST_PARAMETERS);
-        ensure_keys_exist(REAL_KEY_PATH, REAL_PARAMETERS);
+        ensure_keys_exist(SMALL_TEST_KEY_PATH, TEST_PARAMETERS, tfhe::Tag::default());
+        ensure_keys_exist(REAL_KEY_PATH, REAL_PARAMETERS, tfhe::Tag::default());
     }
 }

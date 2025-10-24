@@ -16,11 +16,11 @@ pub mod tests {
     // TODO MULTIPLE PEOPLE SHOULD VALIDATE THAT THESE ARE INDEED THE PARAMETERS WE SHOULD RUN WITH!!!
     pub const REAL_PARAMETERS: DKGParams = BC_PARAMS_SNS;
 
-    pub fn ensure_keys_exist(path: &str, params: DKGParams) {
+    pub fn ensure_keys_exist(path: &str, params: DKGParams, tag: tfhe::Tag) {
         match read_element::<KeySet, _>(&path) {
             Ok(_key_bytes) => (),
             Err(_e) => {
-                let keys = generate_keys(params);
+                let keys = generate_keys(params, tag);
                 write_element(path, &keys).unwrap();
             }
         }

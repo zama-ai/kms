@@ -237,6 +237,7 @@ fn test_dkg_orchestrator_large(
     num_parties: usize,
     threshold: u8,
     params: DKGParams,
+    tag: tfhe::Tag,
 ) {
     use itertools::Itertools;
     use threshold_fhe::{
@@ -272,6 +273,7 @@ fn test_dkg_orchestrator_large(
     for party in roles {
         let runtimes = runtimes.clone();
         let rt_handle = rt.handle().clone();
+        let tag = tag.clone();
         handles.add(thread::spawn(move || {
             let _guard = rt_handle.enter();
             println!("Thread created for party {party}");
@@ -307,8 +309,7 @@ fn test_dkg_orchestrator_large(
             let dkg_session = sessions.get_mut(0).unwrap();
 
             let (pk, sk) = rt_handle.block_on(async {
-
-                SecureOnlineDistributedKeyGen::<Z64,{ResiduePolyF4Z64::EXTENSION_DEGREE}>::keygen(dkg_session, preproc.as_mut(), params, None)
+                SecureOnlineDistributedKeyGen::<Z64,{ResiduePolyF4Z64::EXTENSION_DEGREE}>::keygen(dkg_session, preproc.as_mut(), params, tag, None)
                     .await
                     .unwrap()
             });
@@ -359,7 +360,13 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
     let num_sessions = 10;
     let num_parties = 5;
     let threshold = 1;
-    test_dkg_orchestrator_large(num_sessions, num_parties, threshold, params);
+    test_dkg_orchestrator_large(
+        num_sessions,
+        num_parties,
+        threshold,
+        params,
+        tfhe::Tag::default(),
+    );
 }
 
 #[cfg(feature = "testing")]

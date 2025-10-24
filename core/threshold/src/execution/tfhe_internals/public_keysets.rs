@@ -120,7 +120,11 @@ impl RawPubKeySet {
         )
     }
 
-    pub fn compute_tfhe_hl_api_server_key(&self, params: DKGParams) -> tfhe::ServerKey {
+    pub fn compute_tfhe_hl_api_server_key(
+        &self,
+        params: DKGParams,
+        tag: tfhe::Tag,
+    ) -> tfhe::ServerKey {
         let shortint_key = self.compute_tfhe_shortint_server_key(params);
         let integer_key = tfhe::integer::ServerKey::from_raw_parts(shortint_key);
 
@@ -225,25 +229,26 @@ impl RawPubKeySet {
             noise_squashing_key,
             noise_squashing_compression_key,
             rerand_ksk,
-            tfhe::Tag::default(),
+            tag,
         )
     }
 
     pub fn compute_tfhe_hl_api_compact_public_key(
         &self,
         params: DKGParams,
+        tag: tfhe::Tag,
     ) -> tfhe::CompactPublicKey {
         let params = params
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
 
-        to_tfhe_hl_api_compact_public_key(self.lwe_public_key.clone(), params)
+        to_tfhe_hl_api_compact_public_key(self.lwe_public_key.clone(), params, tag)
     }
 
-    pub fn to_pubkeyset(&self, params: DKGParams) -> FhePubKeySet {
+    pub fn to_pubkeyset(&self, params: DKGParams, tag: tfhe::Tag) -> FhePubKeySet {
         FhePubKeySet {
-            public_key: self.compute_tfhe_hl_api_compact_public_key(params),
-            server_key: self.compute_tfhe_hl_api_server_key(params),
+            public_key: self.compute_tfhe_hl_api_compact_public_key(params, tag.clone()),
+            server_key: self.compute_tfhe_hl_api_server_key(params, tag),
         }
     }
 }
@@ -273,11 +278,12 @@ impl RawCompressedPubKeySet {
     pub fn compute_tfhe_hl_api_compressed_compact_public_key(
         &self,
         params: DKGParams,
+        tag: tfhe::Tag,
     ) -> tfhe::CompressedCompactPublicKey {
         let params = params
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
-        to_tfhe_hl_api_compressed_compact_public_key(self.lwe_public_key.clone(), params)
+        to_tfhe_hl_api_compressed_compact_public_key(self.lwe_public_key.clone(), params, tag)
     }
 
     pub fn compute_tfhe_shortint_compressed_server_key(
@@ -317,6 +323,7 @@ impl RawCompressedPubKeySet {
     pub fn compute_tfhe_hl_api_compressed_server_key(
         &self,
         params: DKGParams,
+        tag: tfhe::Tag,
     ) -> tfhe::CompressedServerKey {
         let shortint_key = self.compute_tfhe_shortint_compressed_server_key(params);
 
@@ -407,14 +414,19 @@ impl RawCompressedPubKeySet {
             noise_squashing_key,
             noise_squashing_compression_key,
             rerand_ksk,
-            tfhe::Tag::default(),
+            tag,
         )
     }
 
-    pub fn to_compressed_pubkeyset(&self, params: DKGParams) -> CompressedXofKeySet {
+    pub fn to_compressed_pubkeyset(
+        &self,
+        params: DKGParams,
+        tag: tfhe::Tag,
+    ) -> CompressedXofKeySet {
         let seed = XofSeed::new_u128(self.seed, DSEP_KG);
-        let public_key = self.compute_tfhe_hl_api_compressed_compact_public_key(params);
-        let server_key = self.compute_tfhe_hl_api_compressed_server_key(params);
+        let public_key =
+            self.compute_tfhe_hl_api_compressed_compact_public_key(params, tag.clone());
+        let server_key = self.compute_tfhe_hl_api_compressed_server_key(params, tag);
 
         CompressedXofKeySet::from_raw_parts(seed, public_key, server_key)
     }

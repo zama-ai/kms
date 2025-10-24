@@ -16,6 +16,7 @@ use kms_grpc::RequestId;
 use serial_test::serial;
 use std::path::Path;
 use std::str::FromStr;
+use tfhe::prelude::Tagged;
 use tonic::transport::Channel;
 
 use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
@@ -220,7 +221,7 @@ pub async fn run_key_gen_centralized(
     let domain_clone = domain.clone();
     let basic_checks = async |resp: &kms_grpc::kms::v1::KeyGenResult| {
         let req_id = resp.request_id.clone().unwrap();
-        let (server_key, _public_key) = internal_client
+        let (server_key, public_key) = internal_client
             .retrieve_server_key_and_public_key(
                 &preproc_id,
                 key_req_id,
@@ -235,12 +236,17 @@ pub async fn run_key_gen_centralized(
         // read the client key
         let handle: crate::engine::base::KmsFheKeyHandles = priv_storage
             .read_data(
-                &req_id.try_into().unwrap(),
+                &req_id.clone().try_into().unwrap(),
                 &PrivDataType::FhePrivateKey.to_string(),
             )
             .await
             .unwrap();
         let client_key = handle.client_key;
+
+        let tag: tfhe::Tag = RequestId::try_from(&req_id).unwrap().into();
+        assert_eq!(&tag, client_key.tag());
+        assert_eq!(&tag, public_key.tag());
+        assert_eq!(&tag, server_key.tag());
 
         crate::client::key_gen::tests::check_conformance(server_key, client_key);
     };

@@ -20,6 +20,7 @@ cfg_if::cfg_if! {
     use std::collections::HashMap;
     use std::str::FromStr;
     use tfhe::integer::compression_keys::DecompressionKey;
+    use tfhe::prelude::Tagged;
     use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
     use threshold_fhe::execution::runtime::party::Role;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -665,26 +666,34 @@ pub(crate) async fn preproc_and_keygen(
                 let internalclient_clone = Arc::clone(&arc_internalclient);
                 async move {
                     // todo proper use of insecure to skip preproc
-                    run_threshold_keygen(
-                        parameter,
-                        &clients_clone,
-                        &internalclient_clone,
-                        &preproc_ids_clone,
-                        &key_id,
-                        None,
-                        insecure,
-                        None,
-                        expected_num_parties_crashed,
+                    (
+                        key_id,
+                        run_threshold_keygen(
+                            parameter,
+                            &clients_clone,
+                            &internalclient_clone,
+                            &preproc_ids_clone,
+                            &key_id,
+                            None,
+                            insecure,
+                            None,
+                            expected_num_parties_crashed,
+                        )
+                        .await
+                        .0,
                     )
-                    .await
-                    .0
                 }
             });
         }
         let all_key_sets = keyset.join_all().await;
-        for keyset in all_key_sets {
+        for (key_id, keyset) in all_key_sets {
             // blockchain parameters always have mod switch noise reduction key
-            let (client_key, _, server_key) = keyset.get_standard();
+
+            let (client_key, public_key, server_key) = keyset.get_standard();
+            let tag: tfhe::Tag = key_id.into();
+            assert_eq!(&tag, client_key.tag());
+            assert_eq!(&tag, public_key.tag());
+            assert_eq!(&tag, server_key.tag());
             crate::client::key_gen::tests::check_conformance(server_key, client_key);
         }
         tracing::info!("Finished concurrent preproc and keygen");
@@ -746,7 +755,11 @@ pub(crate) async fn preproc_and_keygen(
             .await
             .0;
             // blockchain parameters always have mod switch noise reduction key
-            let (client_key, _, server_key) = keyset.get_standard();
+            let (client_key, public_key, server_key) = keyset.get_standard();
+            let tag: tfhe::Tag = key_id.into();
+            assert_eq!(&tag, client_key.tag());
+            assert_eq!(&tag, public_key.tag());
+            assert_eq!(&tag, server_key.tag());
             crate::client::key_gen::tests::check_conformance(server_key, client_key);
 
             // Run a DDec
@@ -1037,6 +1050,9 @@ pub(crate) async fn verify_keygen_responses(
             .unwrap()
             .unwrap();
 
+        assert_eq!(&tfhe::Tag::from(req_get_keygen), server_key.tag());
+        assert_eq!(&tfhe::Tag::from(req_get_keygen), public_key.tag());
+
         if role.one_based() == 1 {
             serialized_ref_pk = bc2wrap::serialize(&public_key).unwrap();
             serialized_ref_server_key = bc2wrap::serialize(&server_key).unwrap();
@@ -1075,6 +1091,7 @@ pub(crate) async fn verify_keygen_responses(
         TestKeyGenResult::Standard((
             to_hl_client_key(
                 &internal_client.params,
+                req_get_keygen.into(),
                 lwe_sk,
                 glwe_sk,
                 None,

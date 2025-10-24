@@ -603,10 +603,12 @@ mod tests {
         /// it's only used during testing with a mocked decryption protocol that does not actually load the keys.
         pub fn init_dummy<R: rand::Rng + rand::CryptoRng>(
             param: threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
+            tag: tfhe::Tag,
             rng: &mut R,
         ) -> (Self, FhePubKeySet) {
-            let keyset =
-                threshold_fhe::execution::tfhe_internals::test_feature::gen_key_set(param, rng);
+            let keyset = threshold_fhe::execution::tfhe_internals::test_feature::gen_key_set(
+                param, tag, rng,
+            );
 
             let server_key = keyset.public_keys.server_key.clone();
             let (

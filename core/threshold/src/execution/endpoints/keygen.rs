@@ -153,6 +153,7 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         session: &mut S,
         preprocessing: &mut P,
         params: DKGParams,
+        tag: tfhe::Tag,
         existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
@@ -191,6 +192,7 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         session: &mut S,
         preprocessing: &mut P,
         params: DKGParams,
+        tag: tfhe::Tag,
         existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
@@ -219,6 +221,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         session: &mut S,
         preprocessing: &mut P,
         params: DKGParams,
+        tag: tfhe::Tag,
         existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
@@ -259,7 +262,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         )
         .await?;
         Ok((
-            pub_key_set.to_pubkeyset(params),
+            pub_key_set.to_pubkeyset(params, tag),
             priv_key_set.finalize_keyset(
                 params
                     .get_params_basics_handle()
@@ -277,6 +280,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         session: &mut S,
         preprocessing: &mut P,
         params: DKGParams,
+        tag: tfhe::Tag,
         existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
@@ -318,7 +322,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
             )
             .await?;
         Ok((
-            pub_key_set.to_compressed_pubkeyset(params),
+            pub_key_set.to_compressed_pubkeyset(params, tag),
             priv_key_set.finalize_keyset(
                 params
                     .get_params_basics_handle()
@@ -1091,7 +1095,7 @@ pub mod tests {
             },
         },
         file_handling::tests::read_element,
-        tests::helper::tests_and_benches::execute_protocol_large,
+        tests::helper::tests_and_benches::execute_protocol_large_w_extra_data,
     };
     use crate::{
         execution::tfhe_internals::utils::tests::reconstruct_lwe_secret_key_from_file,
@@ -1128,7 +1132,7 @@ pub mod tests {
             entities::{Fourier128LweBootstrapKey, GlweSecretKey, LweBootstrapKey, LweSecretKey},
         },
         integer::parameters::DynamicDistribution,
-        prelude::{CiphertextList, FheDecrypt, FheMin, FheTryEncrypt, ReRandomize},
+        prelude::{CiphertextList, FheDecrypt, FheMin, FheTryEncrypt, ReRandomize, Tagged},
         set_server_key,
         shortint::{
             client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
@@ -1500,9 +1504,15 @@ pub mod tests {
         let num_parties = 4;
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
+        let tag = {
+            let mut tag = tfhe::Tag::default();
+            tag.set_data("hello tag".as_bytes());
+            tag
+        };
 
         run_real_dkg_and_save(
             params,
+            tag.clone(),
             num_parties,
             threshold,
             temp_dir.path(),
@@ -1514,6 +1524,7 @@ pub mod tests {
         run_switch_and_squash(
             temp_dir.path(),
             params.try_into().unwrap(),
+            tag.clone(),
             num_parties,
             threshold,
         );
@@ -1525,6 +1536,7 @@ pub mod tests {
             threshold,
             true,
         );
+
         run_tfhe_computation_fheuint::<EXTENSION_DEGREE>(
             temp_dir.path(),
             params,
@@ -1533,6 +1545,8 @@ pub mod tests {
             true,
             false,
         );
+
+        run_tag_test::<EXTENSION_DEGREE>(temp_dir.path(), params, num_parties, threshold, &tag);
     }
 
     #[cfg(feature = "extension_degree_8")]
@@ -1693,9 +1707,15 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         let temp_dir = tempfile::tempdir().unwrap();
+        let tag = {
+            let mut tag = tfhe::Tag::default();
+            tag.set_data("hello tag".as_bytes());
+            tag
+        };
 
         run_dkg_and_save(
             params,
+            tag.clone(),
             num_parties,
             threshold,
             temp_dir.path(),
@@ -1707,6 +1727,7 @@ pub mod tests {
             run_switch_and_squash(
                 temp_dir.path(),
                 params.try_into().unwrap(),
+                tag.clone(),
                 num_parties,
                 threshold,
             );
@@ -1744,6 +1765,8 @@ pub mod tests {
                 config.run_rerand,
             );
         }
+
+        run_tag_test::<EXTENSION_DEGREE>(temp_dir.path(), params, num_parties, threshold, &tag);
     }
 
     // taken from https://stackoverflow.com/questions/64498617/how-to-transpose-a-vector-of-vectors-in-rust
@@ -1850,8 +1873,9 @@ pub mod tests {
         // first we need to generate two server keys
         let keyset_config = KeySetConfig::DecompressionOnly;
         let mut rng = aes_prng::AesRng::from_random_seed();
-        let keyset1 = gen_key_set(params, &mut rng);
-        let keyset2 = gen_key_set(params, &mut rng);
+        let tag = tfhe::Tag::default();
+        let keyset1 = gen_key_set(params, tag.clone(), &mut rng);
+        let keyset2 = gen_key_set(params, tag, &mut rng);
 
         let compression_key_1_poly_size = keyset1
             .get_raw_compression_client_key()
@@ -1978,6 +2002,7 @@ pub mod tests {
     #[cfg(feature = "slow_tests")]
     async fn run_real_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
+        tag: tfhe::Tag,
         num_parties: usize,
         threshold: usize,
         prefix_path: &Path,
@@ -1988,8 +2013,15 @@ pub mod tests {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     {
         let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
-                        _bot: Option<String>| async move {
+                        tag: Option<String>| async move {
             use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
+            let tag = tag
+                .map(|s| {
+                    let mut tag = tfhe::Tag::default();
+                    tag.set_data(s.as_bytes());
+                    tag
+                })
+                .unwrap_or_default();
             let compression_sk_shares = if keyset_config.is_standard_using_existing_compression_sk()
             {
                 // we use dummy preprocessing to generate the existing compression sk
@@ -2032,11 +2064,18 @@ pub mod tests {
                         &mut session,
                         &mut dkg_preproc,
                         params,
+                        tag.clone(),
                         compression_sk_shares.as_ref(),
                     )
                     .await
                     .unwrap();
-                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
+                let (mut public_key, mut server_key) =
+                    compressed_pk.decompress().unwrap().into_raw_parts();
+                // TODO(https://github.com/zama-ai/tfhe-rs-internal/issues/1181)
+                // The tags are lost during decompression, we make a workaround to manually set the tag until this is fixed
+                // Once the issue above is resolve, we can remove the calls to tag_mut.
+                *public_key.tag_mut() = tag.clone();
+                *server_key.tag_mut() = tag;
                 (
                     FhePubKeySet {
                         public_key,
@@ -2049,6 +2088,7 @@ pub mod tests {
                     &mut session,
                     &mut dkg_preproc,
                     params,
+                    tag,
                     compression_sk_shares.as_ref(),
                 )
                 .await
@@ -2077,7 +2117,7 @@ pub mod tests {
                 NetworkMode::Sync,
                 None,
                 &mut task,
-                None,
+                Some(std::str::from_utf8(tag.as_slice()).unwrap().to_string()),
             )
             .await;
 
@@ -2099,6 +2139,7 @@ pub mod tests {
     /// and [`FakeBitGenEven`]. Saves the results to file.
     async fn run_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
+        tag: tfhe::Tag,
         num_parties: usize,
         threshold: usize,
         prefix_path: &Path,
@@ -2107,9 +2148,16 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
         ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     {
-        let mut task = |mut session: LargeSession| async move {
+        let mut task = |mut session: LargeSession, tag: Option<String>| async move {
             let my_role = session.my_role();
             let mut dkg_preproc = DummyPreprocessing::new(DUMMY_PREPROC_SEED, &session);
+            let tag = tag
+                .map(|s| {
+                    let mut tag = tfhe::Tag::default();
+                    tag.set_data(s.as_bytes());
+                    tag
+                })
+                .unwrap_or_default();
 
             let (pk, sk) = if run_compressed {
                 let (compressed_pk, sk) =
@@ -2117,11 +2165,18 @@ pub mod tests {
                         &mut session,
                         &mut dkg_preproc,
                         params,
+                        tag.clone(),
                         None,
                     )
                     .await
                     .unwrap();
-                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
+                let (mut public_key, mut server_key) =
+                    compressed_pk.decompress().unwrap().into_raw_parts();
+                // TODO(https://github.com/zama-ai/tfhe-rs-internal/issues/1181)
+                // The tags are lost during decompression, we make a workaround to manually set the tag until this is fixed
+                // Once the issue above is resolve, we can remove the calls to tag_mut.
+                *public_key.tag_mut() = tag.clone();
+                *server_key.tag_mut() = tag;
                 (
                     FhePubKeySet {
                         public_key,
@@ -2134,6 +2189,7 @@ pub mod tests {
                     &mut session,
                     &mut dkg_preproc,
                     params,
+                    tag,
                     None,
                 )
                 .await
@@ -2146,16 +2202,21 @@ pub mod tests {
         //Async because the preprocessing is Dummy
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results =
-            execute_protocol_large::<_, _, ResiduePoly<Z128, EXTENSION_DEGREE>, EXTENSION_DEGREE>(
-                num_parties,
-                threshold,
-                None,
-                NetworkMode::Async,
-                Some(delay_vec),
-                &mut task,
-            )
-            .await;
+        let results = execute_protocol_large_w_extra_data::<
+            _,
+            _,
+            ResiduePoly<Z128, EXTENSION_DEGREE>,
+            EXTENSION_DEGREE,
+        >(
+            num_parties,
+            threshold,
+            None,
+            NetworkMode::Async,
+            Some(delay_vec),
+            Some(std::str::from_utf8(tag.as_slice()).unwrap().to_string()),
+            &mut task,
+        )
+        .await;
 
         let pk_ref = results[0].1.clone();
 
@@ -2174,6 +2235,7 @@ pub mod tests {
     fn run_switch_and_squash<const EXTENSION_DEGREE: usize>(
         prefix_path: &Path,
         params: DKGParamsSnS,
+        tag: tfhe::Tag,
         num_parties: usize,
         threshold: usize,
     ) where
@@ -2210,6 +2272,7 @@ pub mod tests {
         let ddec_pk = pk.public_key;
         let ddec_sk = to_hl_client_key(
             &DKGParams::WithSnS(params),
+            tag,
             sk_lwe.clone(),
             sk_glwe,
             None,
@@ -2334,7 +2397,10 @@ pub mod tests {
         );
 
         set_server_key(pk.server_key.clone());
-        let shortint_pk = pk.server_key.clone().into_raw_parts().0.into_raw_parts();
+        let (shortint_pk, tag) = {
+            let (shorint_pk, _, _, _, _, _, _, tag) = pk.server_key.clone().into_raw_parts();
+            (shorint_pk.into_raw_parts(), tag)
+        };
         for _ in 0..100 {
             try_tfhe_shortint_computation(&shortint_sk, &shortint_pk);
         }
@@ -2347,10 +2413,37 @@ pub mod tests {
                 None,
                 None,
                 None,
-                tfhe::Tag::default(),
+                tag,
             );
             try_tfhe_pk_compactlist_computation(&tfhe_sk, &pk.server_key, &pk.public_key);
         }
+    }
+
+    ///Runs both shortint and fheuint computation
+    fn run_tag_test<const EXTENSION_DEGREE: usize>(
+        prefix_path: &Path,
+        params: DKGParams,
+        num_parties: usize,
+        threshold: usize,
+        expected_tag: &tfhe::Tag,
+    ) where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        let (_shortint_sk, pk) = retrieve_keys_from_files::<EXTENSION_DEGREE>(
+            params,
+            num_parties,
+            threshold,
+            prefix_path,
+        );
+
+        assert_eq!(expected_tag, pk.server_key.tag());
+        assert_eq!(expected_tag, pk.public_key.tag());
+
+        let msg = 12u64;
+        let small_ct: FheUint64 = expanded_encrypt(&pk.public_key, msg, 64).unwrap();
+
+        assert_eq!(expected_tag, small_ct.tag());
     }
 
     ///Runs both shortint and fheuint computation
@@ -2373,6 +2466,7 @@ pub mod tests {
         );
 
         set_server_key(pk.server_key.clone());
+        let tag = pk.server_key.tag();
 
         let shortint_pk = pk.server_key.clone().into_raw_parts().0.into_raw_parts();
         for _ in 0..100 {
@@ -2388,7 +2482,7 @@ pub mod tests {
             None,
             None,
             None,
-            tfhe::Tag::default(),
+            tag.clone(),
         );
 
         try_tfhe_fheuint_computation(&tfhe_sk);
