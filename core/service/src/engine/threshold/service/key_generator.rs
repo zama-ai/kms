@@ -212,27 +212,6 @@ impl<
         let context_id = context_id.unwrap_or(*DEFAULT_MPC_CONTEXT);
         let session_preparer = self.session_preparer_getter.get(&context_id).await?;
 
-        // TODO(zama-ai/kms-internal/issues/2802)
-        // Wait for the round timeout in case I've not finished with preprocessing.
-        // Note that the round timeout should be the one in the synchronous setting,
-        // that's why we have to get it from the config and not the session,
-        // as the async session used in keygen will set the timeout to one year.
-        //
-        // This is not the complete solution for solving #2802, but a temporary workaround.
-        // So remove this block of code below when the proper fix is done.
-        let keygen_delay = {
-            let conf = session_preparer
-                .get_core_to_core_config()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Internal,
-                        format!("Empty session preparer: {e}"),
-                    )
-                })?;
-            conf.get_network_timeout()
-        };
-
         //Retrieve the right metric tag
         let op_tag = match (
             &preproc_handle_w_mode,
@@ -296,10 +275,6 @@ impl<
         let req_id_clone = req_id;
         let opt_compression_key_id = internal_keyset_config.get_compression_id()?;
         let keygen_background = async move {
-            // TODO(zama-ai/kms-internal/issues/2802)
-            // Remove this sleep once the issue above is resolved.
-            tokio::time::sleep(keygen_delay).await;
-
             match internal_keyset_config.keyset_config() {
                 ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
                     Self::key_gen_background(
@@ -1163,24 +1138,6 @@ mod tests {
             };
             self.rate_limiter = RateLimiter::new(config);
         }
-
-        // TODO(zama-ai/kms-internal/issues/2802)
-        // Remove this function once the issue above is resolved.
-        async fn get_delay_duration(&self, context_id: ContextId) -> tokio::time::Duration {
-            let session_preparer = self.session_preparer_getter.get(&context_id).await.unwrap();
-
-            let conf = session_preparer
-                .get_core_to_core_config()
-                .await
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Internal,
-                        format!("Empty session preparer: {e}"),
-                    )
-                })
-                .unwrap();
-            conf.get_network_timeout()
-        }
     }
 
     impl<KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static>
@@ -1421,7 +1378,6 @@ mod tests {
         .await;
         let prep_id = prep_ids[0];
         let key_id = RequestId::new_random(&mut OsRng);
-        let context_id = *DEFAULT_MPC_CONTEXT;
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
@@ -1431,15 +1387,12 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
-            context_id: Some(RequestId::from(context_id).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: None,
         });
 
         // keygen should pass because the failure occurs in background process
         kg.key_gen(request).await.unwrap();
-
-        // TODO(zama-ai/kms-internal/issues/2758)
-        tokio::time::sleep(kg.get_delay_duration(context_id).await).await;
 
         // no need to wait because [get_result] is semi-blocking
         assert_eq!(
@@ -1511,7 +1464,6 @@ mod tests {
         .await;
         let prep_id = prep_ids[0];
         let key_id = RequestId::new_random(&mut OsRng);
-        let context_id = *DEFAULT_MPC_CONTEXT;
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let tonic_req = tonic::Request::new(KeyGenRequest {
@@ -1524,14 +1476,11 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
-            context_id: Some(RequestId::from(context_id).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             epoch_id: None,
         });
 
         kg.key_gen(tonic_req).await.unwrap();
-
-        // TODO(zama-ai/kms-internal/issues/2758)
-        tokio::time::sleep(kg.get_delay_duration(context_id).await).await;
 
         // no need to wait because [get_result] is semi-blocking
         kg.get_result(tonic::Request::new(key_id.into()))

@@ -263,10 +263,6 @@ impl GrpcSendingService {
         }
         tracing::info!("dropped grpc sending service");
     }
-
-    pub fn get_config(&self) -> OptionConfigWrapper {
-        self.config
-    }
 }
 
 #[async_trait]
