@@ -102,7 +102,7 @@ pub struct RealKeyGenerator<
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub rate_limiter: RateLimiter,
     pub(crate) _kg: PhantomData<KG>,
-    // This is a lock to make sure calls to keygen are serialized.
+    // This is a lock to make sure calls to keygen do not happen concurrently.
     // It's needed because we lock the meta store at different times before starting the keygen
     // and if two concurrent keygen calls on the same key ID or preproc ID are made, they can interfere with each other.
     // So the lock should be held during the whole keygen request, which should not be a big
@@ -446,6 +446,9 @@ impl<
         Ok(Response::new(Empty {}))
     }
 
+    /// Retrieve the preprocessing handle, parameters and preprocessing ID from the request.
+    /// This function does not delete the preprocessing handle from the meta store.
+    /// The caller must make sure the handle is delete from the meta store if it is consumed.
     async fn retrieve_preproc_handle(
         &self,
         insecure: bool,
