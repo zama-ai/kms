@@ -116,6 +116,12 @@ pub struct RealKeyGenerator<
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub rate_limiter: RateLimiter,
     pub(crate) _kg: PhantomData<KG>,
+    // This is a lock to make sure calls to keygen do not happen concurrently.
+    // It's needed because we lock the meta store at different times before starting the keygen
+    // and if two concurrent keygen calls on the same key ID or preproc ID are made, they can interfere with each other.
+    // So the lock should be held during the whole keygen request, which should not be a big
+    // issue since starting the keygen should be fast as most of the expensive process happens in the background.
+    pub(crate) serial_lock: Arc<Mutex<()>>,
 }
 
 #[cfg(feature = "insecure")]
@@ -146,6 +152,7 @@ impl<
                 ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
                 _kg: std::marker::PhantomData,
+                serial_lock: Arc::new(Mutex::new(())),
             },
         }
     }
@@ -217,6 +224,7 @@ impl<
         internal_keyset_config: InternalKeySetConfig,
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
+        preproc_id: Option<RequestId>,
         eip712_domain: &alloy_sol_types::Eip712Domain,
         context_id: Option<ContextId>,
         permit: OwnedSemaphorePermit,
@@ -296,6 +304,19 @@ impl<
         // we need to clone the req ID because async closures are not stable
         let req_id_clone = req_id;
         let opt_compression_key_id = internal_keyset_config.get_compression_id()?;
+
+        // right before keygen starts, we delete the preprocessing entry from the bucket
+        // so that it cannot be used again.
+        if let Some(preproc_id) = preproc_id {
+            tracing::info!(
+                    "Deleting preprocessing ID {} from bucket store before starting keygen for request ID {}",
+                    preproc_id,
+                    req_id_clone
+                );
+            let mut map = self.preproc_buckets.write().await;
+            map.delete(&preproc_id);
+        }
+
         let keygen_background = async move {
             match internal_keyset_config.keyset_config() {
                 ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
@@ -394,20 +415,23 @@ impl<
             inner.keyset_added_info,
             insecure
         );
+
+        // Acquire the serial lock to make sure no other keygen is running concurrently
+        let _guard = self.serial_lock.lock().await;
+
         let request_id =
             parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::KeyGenRequest)?;
 
         let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
 
         let internal_keyset_config =
-            InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info).map_err(
-                |e| {
+            InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info.clone())
+                .map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::InvalidArgument,
                         format!("Failed to parse KeySetConfig: {e}"),
                     )
-                },
-            )?;
+                })?;
 
         // Check for existance of request ID
         {
@@ -425,45 +449,11 @@ impl<
         // but the errors above cannot be tried again.
         let permit = self.rate_limiter.start_keygen().await?;
 
-        // TODO(zama-ai/kms-internal/issues/2722)
-        // consider moving this block of code further down the stack,
-        // preferrably right before running the threshold protocol,
-        // because if some error happens later on, e.g., in launch_dkg,
-        // then the preprocessing is essentially lost
-        //
-        // If inner.params is not set, then we need to retrieve the preprocessing
-        // unless we are in insecure mode.
-        // In the insecure mode the default parameters will be used if not set.
-        let (preproc_handle, dkg_params) = if insecure {
-            let dkg_params = retrieve_parameters(inner.params)?;
-            (PreprocHandleWithMode::Insecure, dkg_params)
-        } else {
-            let preproc_id = parse_optional_proto_request_id(
-                &inner.preproc_id,
-                RequestIdParsingErr::Other(
-                    "invalid preprocessing ID in keygen request".to_string(),
-                ),
-            )?;
-            let preproc = {
-                let mut map = self.preproc_buckets.write().await;
-                map.delete(&preproc_id)
-            };
-            let prep_bucket = handle_res_mapping(preproc, &preproc_id, "Preprocessing").await?;
-            if prep_bucket.preprocessing_id != preproc_id {
-                return Err(tonic::Status::internal(format!(
-                    "Preprocessing ID mismatch: expected {}, got {} in bucket",
-                    preproc_id, prep_bucket.preprocessing_id
-                )));
-            }
-            let dkg_param = match inner.params {
-                Some(fhe_param) => retrieve_parameters(Some(fhe_param))?,
-                None => prep_bucket.dkg_param,
-            };
-            (
-                PreprocHandleWithMode::Secure((preproc_id, prep_bucket.preprocessing_store)),
-                dkg_param,
-            )
-        };
+        // This function does not modify the meta store,
+        // so if the preproc handle is consumed,
+        // we need to delete it from the meta store later on.
+        let (preproc_handle, dkg_params, preproc_id) =
+            self.retrieve_preproc_handle(insecure, &inner).await?;
 
         ok_or_tonic_abort(
             self.launch_dkg(
@@ -471,6 +461,7 @@ impl<
                 internal_keyset_config,
                 preproc_handle,
                 request_id,
+                preproc_id,
                 &eip712_domain,
                 inner
                     .context_id
@@ -491,6 +482,50 @@ impl<
 
         //Always answer with Empty
         Ok(Response::new(Empty {}))
+    }
+
+    /// Retrieve the preprocessing handle, parameters and preprocessing ID from the request.
+    /// This function does not delete the preprocessing handle from the meta store.
+    /// The caller must make sure the handle is delete from the meta store if it is consumed.
+    async fn retrieve_preproc_handle(
+        &self,
+        insecure: bool,
+        inner: &KeyGenRequest,
+    ) -> Result<(PreprocHandleWithMode, DKGParams, Option<RequestId>), Status> {
+        // If inner.params is not set, then we need to retrieve the preprocessing
+        // unless we are in insecure mode.
+        // In the insecure mode the default parameters will be used if not set.
+        if insecure {
+            let dkg_params = retrieve_parameters(inner.params)?;
+            Ok((PreprocHandleWithMode::Insecure, dkg_params, None))
+        } else {
+            let preproc_id = parse_optional_proto_request_id(
+                &inner.preproc_id,
+                RequestIdParsingErr::Other(
+                    "invalid preprocessing ID in keygen request".to_string(),
+                ),
+            )?;
+            let preproc = {
+                let map = self.preproc_buckets.read().await;
+                map.retrieve(&preproc_id)
+            };
+            let prep_bucket = handle_res_mapping(preproc, &preproc_id, "Preprocessing").await?;
+            if prep_bucket.preprocessing_id != preproc_id {
+                return Err(tonic::Status::internal(format!(
+                    "Preprocessing ID mismatch: expected {}, got {} in bucket",
+                    preproc_id, prep_bucket.preprocessing_id
+                )));
+            }
+            let dkg_param = match inner.params {
+                Some(fhe_param) => retrieve_parameters(Some(fhe_param))?,
+                None => prep_bucket.dkg_param,
+            };
+            Ok((
+                PreprocHandleWithMode::Secure((preproc_id, prep_bucket.preprocessing_store)),
+                dkg_param,
+                Some(preproc_id),
+            ))
+        }
     }
 
     async fn inner_get_result(
@@ -1489,6 +1524,7 @@ mod tests {
                 ongoing,
                 rate_limiter,
                 _kg: PhantomData,
+                serial_lock: Arc::new(Mutex::new(())),
             }
         }
 

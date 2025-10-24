@@ -504,6 +504,7 @@ where
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
         _kg: PhantomData,
+        serial_lock: Arc::new(Mutex::new(())),
     };
 
     #[cfg(feature = "insecure")]
