@@ -1,4 +1,4 @@
-use crate::cryptography::backup_pke::BackupCiphertext;
+use crate::cryptography::internal_crypto_types::BackupCiphertext;
 use crate::util::file_handling::safe_read_element_versioned;
 use crate::util::key_setup::FhePublicKey;
 use crate::vault::storage::file::FileStorage;

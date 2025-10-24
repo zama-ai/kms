@@ -42,7 +42,8 @@ pub enum HybridKemCtVersioned {
 // [kem_ct] is a Vec.
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(HybridKemCtVersioned)]
-// TODO(#2782) implement a new version along with LegacySerialization to allow safe serialization of newer encryptions and only keep unversioned bincode for signcryption
+// WARNING: This type is currently using a legacy approach to serialization using bincode. When updating please also update the serialization to safe serialization
+// In connection with this the trait `LegacySerialization` must also be implemented and used!
 pub struct HybridKemCt {
     pub nonce: [u8; NONCE_LEN],
     // normally [kem_ct] is an array, but serde cannot serialize large arrays
