@@ -712,18 +712,6 @@ impl PublicSigKey {
         &self.pk.0
     }
 }
-impl From<PublicSigKey> for SigningSchemeType {
-    fn from(_value: PublicSigKey) -> Self {
-        // Only scheme for now
-        SigningSchemeType::Ecdsa256k1
-    }
-}
-impl From<&PublicSigKey> for SigningSchemeType {
-    fn from(_value: &PublicSigKey) -> Self {
-        // Only scheme for now
-        SigningSchemeType::Ecdsa256k1
-    }
-}
 
 impl HasSigningScheme for PublicSigKey {
     fn signing_scheme_type(&self) -> SigningSchemeType {
