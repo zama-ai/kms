@@ -1,3 +1,4 @@
+pub use crate::identifiers::{KeyId, RequestId, ID_LENGTH};
 use crate::kms::v1::UserDecryptionResponsePayload;
 use crate::kms::v1::{
     Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
@@ -15,8 +16,6 @@ use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::{
     Unversionize, UnversionizeError, Version, VersionizeOwned, VersionsDispatch,
 };
-
-pub use crate::identifiers::{KeyId, RequestId, ID_LENGTH};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {

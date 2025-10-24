@@ -304,6 +304,10 @@ pub enum UnifiedPrivateEncKeyVersioned {
     V0(UnifiedPrivateEncKey),
 }
 
+/// # Current Usage
+/// - `user_decryption_wasm.rs`, `user_decryption_non_wasm.rs`, and custodian based backup (`core/service/src/backup`)
+/// - Lifetime: Lifetime of a custodian context
+/// - Scope: Lifetime of a backup (i.e. lifetime of a custodian context), but local to client application
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
 #[expect(clippy::large_enum_variant)]
 #[versionize(UnifiedPrivateEncKeyVersioned)]
@@ -337,6 +341,7 @@ impl From<&UnifiedPrivateEncKey> for EncryptionSchemeType {
 
 impl UnifiedPrivateEncKey {
     /// Expect the inner type to be the default MlKem512 and return it, otherwise panic
+    /// // TODO still needed?
     pub fn unwrap_ml_kem_512(self) -> PrivateEncKey<ml_kem::MlKem512> {
         match self {
             UnifiedPrivateEncKey::MlKem512(pk) => pk,
@@ -705,6 +710,18 @@ impl PublicSigKey {
 
     pub fn pk(&self) -> &k256::ecdsa::VerifyingKey {
         &self.pk.0
+    }
+}
+impl From<PublicSigKey> for SigningSchemeType {
+    fn from(_value: PublicSigKey) -> Self {
+        // Only scheme for now
+        SigningSchemeType::Ecdsa256k1
+    }
+}
+impl From<&PublicSigKey> for SigningSchemeType {
+    fn from(_value: &PublicSigKey) -> Self {
+        // Only scheme for now
+        SigningSchemeType::Ecdsa256k1
     }
 }
 

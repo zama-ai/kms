@@ -66,8 +66,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         request: Request<InitiateResharingRequest>,
     ) -> Result<Response<InitiateResharingResponse>, Status> {
-        let _permit = self.rate_limiter.start_reshare().await?;
-
         let inner = request.into_inner();
 
         tracing::info!(
@@ -100,6 +98,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
 
         let dkg_params = retrieve_parameters(Some(inner.key_parameters))?;
+
+        // Check for resource exhaustion once all the other checks are ok
+        // because resource exhaustion can be recovered by sending the exact same request
+        // but the errors above cannot be tried again.
+        let permit = self.rate_limiter.start_reshare().await?;
 
         // Refresh keys but ignore any error as we might not have them yet
         // (e.g. resharing due to a failed DKG)
@@ -166,7 +169,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 )
             })?;
         }
-        let task = async move {
+        let task = move |_permit| async move {
             let (session_id_z128, session_id_z64, session_id_reshare) = {
                 (
                     request_id.derive_session_id_with_counter(0)?,
@@ -260,7 +263,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
             // Purge before we can overwrite, use a dummy_meta_store
             // as this was meant to update the meta store of DKG upon failing
-            let dummy_meta_store = RwLock::new(MetaStore::<KeyGenMetadata>::new(0, 0));
+            let dummy_meta_store = RwLock::new(MetaStore::<KeyGenMetadata>::new(1, 1));
+            // Dummy insert to avoid error logs during purge
+            dummy_meta_store.write().await.insert(&key_id_to_reshare)?;
             crypto_storage
                 .purge_key_material(&key_id_to_reshare, dummy_meta_store.write().await)
                 .await;
@@ -282,7 +287,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             Ok(())
         };
         self.tracker.spawn(async move {
-            match task.await {
+            match task(permit).await {
                 Ok(_) => tracing::info!(
                     "Resharing completed successfully for request ID {:?} and key ID {:?}",
                     request_id,

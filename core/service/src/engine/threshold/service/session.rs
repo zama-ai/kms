@@ -12,7 +12,11 @@ use threshold_fhe::{
         },
         small_execution::prss::{DerivePRSSState, PRSSSetup},
     },
-    networking::{grpc::GrpcNetworkingManager, health_check::HealthCheckSession, NetworkMode},
+    networking::{
+        grpc::{GrpcNetworkingManager, OptionConfigWrapper},
+        health_check::HealthCheckSession,
+        NetworkMode,
+    },
     session_id::SessionId,
     thread_handles::spawn_compute_bound,
 };
@@ -295,6 +299,17 @@ impl SessionPreparer {
                 inner: Some(inner.new_instance().await),
             },
         }
+    }
+
+    pub(crate) async fn get_core_to_core_config(&self) -> anyhow::Result<OptionConfigWrapper> {
+        let manager = self
+            .inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .networking_manager
+            .read()
+            .await;
+        Ok(manager.sending_service.get_config())
     }
 
     #[cfg(test)]

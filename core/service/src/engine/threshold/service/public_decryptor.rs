@@ -303,8 +303,6 @@ impl<
             )
             .start();
 
-        let permit = self.rate_limiter.start_pub_decrypt().await?;
-
         let (ciphertexts, key_id, req_id, eip712_domain) = {
             let inner_compute = Arc::clone(&inner);
             spawn_compute_bound(move || validate_public_decrypt_req(&inner_compute))
@@ -334,6 +332,11 @@ impl<
                 )));
             }
         }
+
+        // Check for resource exhaustion once all the other checks are ok
+        // because resource exhaustion can be recovered by sending the exact same request
+        // but the errors above cannot be tried again.
+        let permit = self.rate_limiter.start_pub_decrypt().await?;
 
         self.crypto_storage
             .refresh_threshold_fhe_keys(&key_id)

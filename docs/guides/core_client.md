@@ -534,6 +534,22 @@ Finally a concrete example of a command for a setup with 3 custodians is the fol
 $ cargo run -- -f config/client_local_threshold.toml new-custodian-context -t 1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-2 -m tests/data/keys/CUSTODIAN/setup-msg/setup-3
 ```
 
+### Reshare
+
+In case some parties crashed during the DKG process we currently support doing a reshare within the current set of parties.
+This will then allow __all__ parties (including the one that failed during DKG) to hold a share of the secret keys.
+
+Before executing reshare, we expect the TFHE public key material to be present in the public storage of all the parties. Which implies that if a party has crashed during DKG, we need to copy this material _somehow_.
+
+To execute a reshare, one then runs the command
+```{bash}
+cargo run --bin kms-core-client -- -f config/client_local_threshold.toml reshare -k <KEY_ID> -i <PREPROC_ID>
+```
+
+Where the `KEY_ID` corresponds to the ID of the key we want to reshare and the `PREPROC_ID` corresponds to the ID of the preprocessing that was used to generate said key.
+The `PREPROC_ID` is required because it is part of the metadata that is signed by the parties.
+
+__NOTE__: Currently, because this is meant to be used only in case of DKG fails, and is __not__ triggered by the GW, the reshared key will be stored under the __same__ key ID as previously (we internally overwrite the storage to achieve this).
 
 ## Example Commands
 - Generate a set of private and public FHE keys for testing in a threshold KMS using the default threshold config. This command will expect all responses (`-a`) and will output logs (`-l`).
