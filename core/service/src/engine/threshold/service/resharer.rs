@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use itertools::Itertools;
 use kms_grpc::{
-    identifiers::ContextId,
+    identifiers::{ContextId, RequestId},
     kms::v1::{
-        InitiateResharingRequest, InitiateResharingResponse, KeyDigest, RequestId,
-        ResharingResultResponse,
+        InitiateResharingRequest, InitiateResharingResponse, KeyDigest, ResharingResultResponse,
     },
     rpc_types::{optional_protobuf_to_alloy_domain, WrappedPublicKeyOwned},
     IdentifierError,
@@ -24,14 +23,14 @@ use tokio_util::task::TaskTracker;
 use tonic::{Request, Response, Status};
 
 use crate::{
-    consts::DEFAULT_MPC_CONTEXT,
+    consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
     engine::{
         base::{
             compute_info_standard_keygen, retrieve_parameters, BaseKmsStruct, KeyGenMetadata,
             DSEP_PUBDATA_KEY,
         },
         threshold::{
-            service::{session::SessionPreparerGetter, ThresholdFheKeys},
+            service::{session::ImmutableSessionMaker, ThresholdFheKeys},
             traits::Resharer,
         },
         validation::{
@@ -51,7 +50,7 @@ pub struct RealResharer<
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
-    pub session_preparer_getter: SessionPreparerGetter,
+    pub(crate) session_maker: ImmutableSessionMaker,
     pub reshare_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
@@ -80,6 +79,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 .try_into()
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
             None => *DEFAULT_MPC_CONTEXT,
+        };
+
+        let new_epoch_id: RequestId = match &inner.epoch_id {
+            Some(c) => c
+                .try_into()
+                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
+            None => RequestId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe to unwrap here because PRSS ID is hardcoded
         };
 
         let key_id_to_reshare =
@@ -146,13 +152,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         };
 
         let crypto_storage = self.crypto_storage.clone();
-        // Do the resharing
-        let session_preparer = self
-            .session_preparer_getter
-            .get(&old_context)
-            .await
-            .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?;
 
+        // Do the resharing
         let sk = Arc::clone(&self.base_kms.sig_key);
         let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
 
@@ -169,6 +170,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 )
             })?;
         }
+
+        // Need to move the session_maker inside the task otherwise we'll have lifetime issues
+        let session_maker = self.session_maker.clone();
         let task = move |_permit| async move {
             let (session_id_z128, session_id_z64, session_id_reshare) = {
                 (
@@ -181,12 +185,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // First thing, if I have a key, send the public material to everyone else.
 
             // Require 1 session in Z64 and 1 session in Z128
-            let mut session_z64 = session_preparer
-                .make_small_sync_session_z64(session_id_z64, old_context)
+            // TODO: when resharing is fully implemented, we need to use the new context *and* the old context
+            let mut session_z64 = session_maker
+                .make_small_sync_session_z64(session_id_z64, old_context, new_epoch_id)
                 .await?;
 
-            let mut session_z128 = session_preparer
-                .make_small_sync_session_z128(session_id_z128, old_context)
+            let mut session_z128 = session_maker
+                .make_small_sync_session_z128(session_id_z128, old_context, new_epoch_id)
                 .await?;
 
             // Figure out how much preprocessing we need
@@ -205,8 +210,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 .execute(&mut session_z128, num_needed_preproc.batch_params_128)
                 .await?;
 
-            //Perform online
-            let mut base_session = session_preparer
+            // Perform online
+            let mut base_session = session_maker
                 .make_base_session(session_id_reshare, old_context, NetworkMode::Sync)
                 .await?;
 
@@ -308,7 +313,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
     async fn get_resharing_result(
         &self,
-        request: Request<RequestId>,
+        request: Request<kms_grpc::kms::v1::RequestId>,
     ) -> Result<Response<ResharingResultResponse>, Status> {
         let request_id =
             parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::ReshareResponse)?;

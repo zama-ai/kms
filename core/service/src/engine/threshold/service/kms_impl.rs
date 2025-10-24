@@ -51,14 +51,12 @@ use crate::{
     engine::{
         backup_operator::RealBackupOperator,
         base::{BaseKmsStruct, CrsGenMetadata, KeyGenMetadata},
-        context_manager::RealContextManager,
+        context_manager::ThresholdContextManager,
         prepare_shutdown_signals,
         threshold::{
             service::{
-                public_decryptor::SecureNoiseFloodDecryptor,
-                resharer::RealResharer,
-                session::{SessionPreparer, SessionPreparerManager},
-                user_decryptor::SecureNoiseFloodPartialDecryptor,
+                public_decryptor::SecureNoiseFloodDecryptor, resharer::RealResharer,
+                session::SessionMaker, user_decryptor::SecureNoiseFloodPartialDecryptor,
             },
             threshold_kms::ThresholdKms,
         },
@@ -185,7 +183,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     >,
     RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
-    RealContextManager<PubS, PrivS>,
+    ThresholdContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
     RealResharer<PubS, PrivS>,
 >;
@@ -208,7 +206,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
     RealInsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
-    RealContextManager<PubS, PrivS>,
+    ThresholdContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
     RealResharer<PubS, PrivS>,
 >;
@@ -361,8 +359,6 @@ where
         });
     let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk)?;
 
-    let prss_setup_z128 = Arc::new(RwLock::new(None));
-    let prss_setup_z64 = Arc::new(RwLock::new(None));
     let preproc_buckets = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
     let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info)));
@@ -384,11 +380,9 @@ where
         key_info_versioned,
     );
 
-    // Note that the manager is empty, it needs to be filled with session preparers
-    // For testing this needs to be done manually.
-    let session_preparer_manager = SessionPreparerManager::empty(config.my_id.to_string());
-
-    // Optionally add a testing session preparer.
+    // TODO currently we need to insert a default context
+    // this can be removed when we have dynamic session preparers
+    let session_maker = SessionMaker::new(networking_manager, base_kms.rng.clone());
     let _ = match config.peers {
         Some(ref peers) => {
             let role_assignment = RoleAssignment {
@@ -397,23 +391,15 @@ where
                     .map(|peer_config| peer_config.into_role_identity())
                     .collect(),
             };
-            let session_preparer = SessionPreparer::new(
-                base_kms.new_instance().await,
-                config.threshold,
-                Role::indexed_from_one(config.my_id),
-                role_assignment.clone(),
-                networking_manager.clone(),
-                Arc::clone(&prss_setup_z128),
-                Arc::clone(&prss_setup_z64),
-            );
-            session_preparer_manager
-                .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
+            let my_role = Role::indexed_from_one(config.my_id);
+            let context_id = *DEFAULT_MPC_CONTEXT;
+            session_maker
+                .add_context(context_id, my_role, role_assignment, config.threshold)
                 .await;
             Some(())
         }
         None => None,
     };
-    let session_preparer_getter = session_preparer_manager.make_getter();
 
     let metastore_status_service = MetaStoreStatusServiceImpl::new(
         Some(dkg_pubinfo_meta_store.clone()),  // key_gen_store
@@ -433,15 +419,14 @@ where
             .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
             .await;
     }
+
+    let immutable_session_maker = session_maker.make_immutable();
+
     let initiator = RealInitiator {
-        prss_setup_z128: Arc::clone(&prss_setup_z128),
-        prss_setup_z64: Arc::clone(&prss_setup_z64),
         private_storage: crypto_storage.get_private_storage(),
-        session_preparer_manager,
-        networking_manager,
+        session_maker: session_maker.clone(),
         health_reporter: thread_core_health_reporter.clone(),
         _init: PhantomData,
-        threshold_config: config.clone(),
         base_kms: base_kms.new_instance().await,
     };
 
@@ -476,7 +461,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         user_decrypt_meta_store,
-        session_preparer_getter: session_preparer_getter.clone(),
+        session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         decryption_mode: config.decryption_mode,
@@ -487,7 +472,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         pub_dec_meta_store,
-        session_preparer_getter: session_preparer_getter.clone(),
+        session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         decryption_mode: config.decryption_mode,
@@ -499,7 +484,7 @@ where
         crypto_storage: crypto_storage.clone(),
         preproc_buckets: Arc::clone(&preproc_buckets),
         dkg_pubinfo_meta_store,
-        session_preparer_getter: session_preparer_getter.clone(),
+        session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
@@ -512,10 +497,10 @@ where
 
     let keygen_preprocessor = RealPreprocessor {
         sig_key: Arc::clone(&base_kms.sig_key),
+        session_maker: immutable_session_maker.clone(),
         preproc_buckets,
         preproc_factory,
         num_sessions_preproc,
-        session_preparer_getter: session_preparer_getter.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
@@ -526,7 +511,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         crs_meta_store,
-        session_preparer_getter: session_preparer_getter.clone(),
+        session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
@@ -536,11 +521,12 @@ where
     #[cfg(feature = "insecure")]
     let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
 
-    let context_manager = RealContextManager {
+    let context_manager = ThresholdContextManager {
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.inner.clone(),
         custodian_meta_store,
         my_role: Role::indexed_from_one(config.my_id),
+        session_maker,
     };
 
     let backup_operator = RealBackupOperator::new(
@@ -553,7 +539,7 @@ where
     let resharer = RealResharer {
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
-        session_preparer_getter: session_preparer_getter.clone(),
+        session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         // Provide reshare its own meta store, not tracked by the metastore status service
@@ -582,8 +568,8 @@ where
         context_manager,
         backup_operator,
         resharer,
-        session_preparer_getter,
         Arc::clone(&tracker),
+        immutable_session_maker,
         thread_core_health_reporter,
         abort_handle,
     );

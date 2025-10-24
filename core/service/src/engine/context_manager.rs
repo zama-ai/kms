@@ -6,6 +6,7 @@ use crate::cryptography::backup_pke::{self, BackupPrivateKey, BackupPublicKey};
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::ContextInfo;
+use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
 use crate::engine::validation::{parse_proto_context_id, RequestIdParsingErr};
@@ -21,7 +22,7 @@ use crate::{
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
-use kms_grpc::kms::v1::{CustodianContext, NewKmsContextRequest};
+use kms_grpc::kms::v1::CustodianContext;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::{kms::v1::Empty, utils::tonic_result::ok_or_tonic_abort};
 use std::sync::Arc;
@@ -31,7 +32,7 @@ use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::RwLock;
 use tonic::{Response, Status};
 
-pub struct RealContextManager<
+pub struct CentralizedContextManager<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 > {
@@ -42,7 +43,53 @@ pub struct RealContextManager<
 }
 
 #[tonic::async_trait]
-impl<PubS, PrivS> ContextManager for RealContextManager<PubS, PrivS>
+impl<PubS, PrivS> ContextManager for CentralizedContextManager<PubS, PrivS>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+{
+    async fn new_kms_context(
+        &self,
+        _request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        unimplemented!()
+    }
+
+    async fn destroy_kms_context(
+        &self,
+        _request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        unimplemented!()
+    }
+
+    async fn new_custodian_context(
+        &self,
+        _request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        unimplemented!()
+    }
+
+    async fn destroy_custodian_context(
+        &self,
+        _request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        unimplemented!()
+    }
+}
+
+pub struct ThresholdContextManager<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+> {
+    pub base_kms: BaseKmsStruct,
+    pub crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
+    pub custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
+    pub my_role: Role,
+    pub(crate) session_maker: SessionMaker,
+}
+
+#[tonic::async_trait]
+impl<PubS, PrivS> ContextManager for ThresholdContextManager<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
@@ -52,7 +99,7 @@ where
         request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
         // first verify that the context is valid
-        let NewKmsContextRequest {
+        let kms_grpc::kms::v1::NewKmsContextRequest {
             active_context,
             new_context,
         } = request.into_inner();
@@ -63,13 +110,11 @@ where
             .map_err(|e| Status::invalid_argument(format!("Invalid context info: {e}")))?;
 
         // verify new context
-        {
+        let my_role = {
             let storage_ref = self.crypto_storage.private_storage.clone();
             let guarded_priv_storage = storage_ref.lock().await;
-            // my_id is always 1 in the centralized case
             new_context
                 .verify(
-                    1,
                     &(*guarded_priv_storage),
                     active_context
                         .and_then(|c| ContextInfo::try_from(c).ok())
@@ -78,14 +123,23 @@ where
                 .await
                 .map_err(|e| {
                     Status::invalid_argument(format!("Failed to verify new context: {e}"))
-                })?;
-        }
+                })?
+        };
 
         // store the new context
         let res = self
             .crypto_storage
             .write_context_info(new_context.context_id(), &new_context, false)
             .await;
+
+        // update the session maker to include the new context
+        // it should not fail because we should have verified the context above
+        self.session_maker
+            .add_context_info(my_role, &new_context)
+            .await
+            .map_err(|e| {
+                Status::internal(format!("Failed to add context info to session maker: {e}"))
+            })?;
 
         ok_or_tonic_abort(
             res,
@@ -181,7 +235,7 @@ where
     Ok(())
 }
 
-impl<PubS, PrivS> RealContextManager<PubS, PrivS>
+impl<PubS, PrivS> ThresholdContextManager<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
@@ -365,7 +419,7 @@ mod tests {
     };
     use kms_grpc::{
         identifiers::ContextId,
-        kms::v1::DestroyKmsContextRequest,
+        kms::v1::{DestroyKmsContextRequest, NewKmsContextRequest},
         rpc_types::{KMSType, PrivDataType},
         RequestId,
     };
@@ -442,11 +496,13 @@ mod tests {
             active_context: None,
             new_context: Some(new_context.try_into().unwrap()),
         });
-        let context_manager = RealContextManager {
+        let session_maker = SessionMaker::dummy(None, None, base_kms.rng.clone());
+        let context_manager = ThresholdContextManager {
             base_kms,
             crypto_storage: crypto_storage.clone(),
             custodian_meta_store: Arc::new(RwLock::new(MetaStore::new(100, 10))),
             my_role: Role::indexed_from_one(1),
+            session_maker,
         };
 
         let response = context_manager.new_kms_context(request).await;

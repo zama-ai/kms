@@ -9,6 +9,7 @@ use tfhe::{
     Versionize,
 };
 use tfhe_versionable::VersionsDispatch;
+use threshold_fhe::execution::runtime::party::Role;
 
 use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
@@ -21,7 +22,6 @@ use crate::{
 
 const ERR_DUPLICATE_PARTY_IDS: &str = "Duplicate party_ids found in context";
 const ERR_DUPLICATE_NAMES: &str = "Duplicate names found in context";
-const ERR_INCONSISTENT_SIGNING_KEY: &str = "Inconsistent signing key in context";
 const ERR_INVALID_THRESHOLD_SINGLE_NODE: &str = "Invalid threshold for centralized context";
 const ERR_INVALID_THRESHOLD_MULTI_NODE: &str = "Invalid threshold for threshold context";
 const ERR_MISSING_PREVIOUS_CONTEXT: &str = "Missing previous context";
@@ -69,6 +69,36 @@ impl std::fmt::Display for SoftwareVersion {
             write!(f, "{}.{}.{}-{}", self.major, self.minor, self.patch, tag)
         } else {
             write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+        }
+    }
+}
+
+impl From<&str> for SoftwareVersion {
+    fn from(s: &str) -> Self {
+        let parts: Vec<&str> = s.split('-').collect();
+        let version_parts: Vec<&str> = parts[0].split('.').collect();
+        let major = version_parts
+            .first()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let minor = version_parts
+            .get(1)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let patch = version_parts
+            .get(2)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let tag = if parts.len() > 1 {
+            Some(parts[1].to_string())
+        } else {
+            None
+        };
+        SoftwareVersion {
+            major,
+            minor,
+            patch,
+            tag,
         }
     }
 }
@@ -183,32 +213,24 @@ impl ContextInfo {
     /// before the context passed to the KMS, it should have been validated on the gateway.
     pub async fn verify<S: StorageReader>(
         &self,
-        my_id: u32,
         storage: &S,
         previous_context: Option<&ContextInfo>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Role> {
         // Check the signing key is consistent with the private key in storage.
         let signing_key = get_core_signing_key(storage).await?;
+        let verification_key = signing_key.sk().verifying_key();
 
         let my_node = self
             .kms_nodes
             .iter()
-            .find(|node| node.party_id == my_id)
+            .find(|node| node.verification_key.pk() == verification_key)
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "Node with party_id {} not found in context {}",
-                    my_id,
+                    "Node with verification key {:?} not found in context {}",
+                    verification_key,
                     self.context_id()
                 )
             })?;
-
-        if my_node.verification_key.pk() != signing_key.sk().verifying_key() {
-            return Err(anyhow::anyhow!(
-                "{} {}",
-                ERR_INCONSISTENT_SIGNING_KEY,
-                self.context_id()
-            ));
-        }
 
         // check kms_nodes have unique party_ids
         let party_ids: std::collections::HashSet<_> =
@@ -315,7 +337,7 @@ impl ContextInfo {
             }
         }
 
-        Ok(())
+        Ok(Role::indexed_from_one(my_node.party_id as usize))
     }
 }
 
@@ -555,11 +577,29 @@ mod tests {
         .await
         .unwrap();
 
-        let result = context.verify(1, &storage, None).await;
+        let result = context.verify(&storage, None).await;
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Duplicate party_ids found in context"));
+            .contains(ERR_DUPLICATE_PARTY_IDS));
+    }
+
+    #[test]
+    fn parse_software_version() {
+        {
+            let version = SoftwareVersion::from("1.2.3-alpha");
+            assert_eq!(version.major, 1);
+            assert_eq!(version.minor, 2);
+            assert_eq!(version.patch, 3);
+            assert_eq!(version.tag, Some("alpha".to_string()));
+        }
+        {
+            let version = SoftwareVersion::from("zzz");
+            assert_eq!(version.major, 0);
+            assert_eq!(version.minor, 0);
+            assert_eq!(version.patch, 0);
+            assert_eq!(version.tag, None);
+        }
     }
 
     // TODO more tests will be added here once the context definition is fully fleshed out

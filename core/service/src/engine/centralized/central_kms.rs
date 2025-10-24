@@ -18,7 +18,7 @@ use crate::engine::base::CrsGenMetadata;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 #[cfg(feature = "non-wasm")]
-use crate::engine::context_manager::RealContextManager;
+use crate::engine::context_manager::CentralizedContextManager;
 #[cfg(feature = "non-wasm")]
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::traits::{BaseKms, Kms};
@@ -389,8 +389,12 @@ pub struct CentralizedKms<
     pub(crate) thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
 #[cfg(feature = "non-wasm")]
-pub type RealCentralizedKms<PubS, PrivS> =
-    CentralizedKms<PubS, PrivS, RealContextManager<PubS, PrivS>, RealBackupOperator<PubS, PrivS>>;
+pub type RealCentralizedKms<PubS, PrivS> = CentralizedKms<
+    PubS,
+    PrivS,
+    CentralizedContextManager<PubS, PrivS>,
+    RealBackupOperator<PubS, PrivS>,
+>;
 
 /// Perform asynchronous decryption and serialize the result
 #[cfg(feature = "non-wasm")]
@@ -875,7 +879,8 @@ impl<
             key_info,
         );
         let base_kms = BaseKmsStruct::new(KMSType::Centralized, sk)?;
-        let context_manager: RealContextManager<PubS, PrivS> = RealContextManager {
+
+        let context_manager: CentralizedContextManager<PubS, PrivS> = CentralizedContextManager {
             base_kms: base_kms.new_instance().await,
             crypto_storage: crypto_storage.inner.clone(),
             custodian_meta_store: Arc::clone(&custodian_meta_store),
