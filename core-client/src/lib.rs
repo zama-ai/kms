@@ -23,6 +23,7 @@ use kms_lib::backup::custodian::InternalCustodianSetupMessage;
 use kms_lib::backup::operator::InternalRecoveryRequest;
 use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
+use kms_lib::cryptography::internal_crypto_types::EncryptionSchemeType;
 use kms_lib::engine::base::compute_pt_message_hash;
 use kms_lib::engine::base::{
     hash_sol_struct, safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
@@ -2571,6 +2572,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                 ct_batch,
                 &req_id,
                 &key_id.into(),
+                EncryptionSchemeType::MlKem512,
             )?;
 
             let (user_decrypt_req, enc_pk, enc_sk) = user_decrypt_req_tuple;

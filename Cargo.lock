@@ -4332,6 +4332,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "anyhow",
+ "bc2wrap",
  "cfg-if",
  "hex",
  "prost",
@@ -4624,6 +4625,7 @@ dependencies = [
  "kem",
  "rand_core 0.6.4",
  "sha3",
+ "zeroize",
 ]
 
 [[package]]

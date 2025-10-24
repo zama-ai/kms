@@ -701,7 +701,16 @@ impl<
             )));
         }
 
-        let server_verf_key = self.base_kms.get_serialized_verf_key();
+        let server_verf_key = self
+            .base_kms
+            .sig_key
+            .verf_key()
+            .get_serialized_verf_key()
+            .map_err(|e| {
+                Status::internal(format!(
+                    "Failed to serialize server verification key: {e:?}"
+                ))
+            })?;
         let sig_payload = PublicDecryptionResponsePayload {
             plaintexts,
             verification_key: server_verf_key,

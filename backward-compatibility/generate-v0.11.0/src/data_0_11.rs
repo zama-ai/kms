@@ -8,25 +8,14 @@ use kms_0_11_0::engine::base::KmsFheKeyHandles;
 use kms_0_11_0::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_11_0::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
 use kms_0_11_0::util::key_setup::FhePublicKey;
+use kms_0_11_0::vault::keychain::AppKeyBlob;
+use kms_grpc_0_11_0::{
+    kms::v1::TypedPlaintext,
+    rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal},
+};
+use rand::{RngCore, SeedableRng};
 use std::{borrow::Cow, fs::create_dir_all, path::PathBuf};
 use tfhe_1_3::shortint::parameters::{LweCiphertextCount, NoiseSquashingCompressionParameters};
-use threshold_fhe_0_11_0::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-use threshold_fhe_0_11_0::execution::endpoints::keygen::FhePubKeySet;
-use threshold_fhe_0_11_0::execution::small_execution::prf::PrfKey;
-use threshold_fhe_0_11_0::{
-    execution::{
-        runtime::party::Role,
-        tfhe_internals::{
-            parameters::{DKGParams, DKGParamsRegular, DKGParamsSnS},
-            test_feature::initialize_key_material,
-        },
-    },
-    tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
-};
-
-use kms_0_11_0::vault::keychain::AppKeyBlob;
-use kms_grpc_0_11_0::rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal};
-use rand::{RngCore, SeedableRng};
 use tfhe_1_3::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
@@ -44,8 +33,24 @@ use tfhe_1_3::{
     },
     ServerKey,
 };
+use threshold_fhe_0_11_0::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use threshold_fhe_0_11_0::execution::endpoints::keygen::FhePubKeySet;
+use threshold_fhe_0_11_0::execution::small_execution::prf::PrfKey;
+use threshold_fhe_0_11_0::{
+    execution::{
+        runtime::party::Role,
+        tfhe_internals::{
+            parameters::{DKGParams, DKGParamsRegular, DKGParamsSnS},
+            test_feature::initialize_key_material,
+        },
+    },
+    tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
+};
 use tokio::runtime::Runtime;
 
+use crate::generate::{
+    store_versioned_auxiliary_05, store_versioned_test_05, KMSCoreVersion, TEST_DKG_PARAMS_SNS,
+};
 use backward_compatibility::parameters::{
     ClassicPBSParametersTest, DKGParamsRegularTest, DKGParamsSnSTest,
     SwitchAndSquashCompressionParametersTest, SwitchAndSquashParametersTest,
@@ -54,16 +59,11 @@ use backward_compatibility::{
     AppKeyBlobTest, KmsFheKeyHandlesTest, PRSSSetupTest, PrfKeyTest, PrivateSigKeyTest,
     PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, SigncryptionPayloadTest,
     SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
-    ThresholdFheKeysTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
-    KMS_MODULE_NAME,
+    ThresholdFheKeysTest, TypedPlaintextTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
+    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 
 use kms_0_11_0::cryptography::signcryption::SigncryptionPayload;
-use kms_grpc_0_11_0::kms::v1::TypedPlaintext;
-
-use crate::generate::{
-    store_versioned_auxiliary_05, store_versioned_test_05, KMSCoreVersion, TEST_DKG_PARAMS_SNS,
-};
 
 // Macro to store a versioned test
 macro_rules! store_versioned_test {
@@ -261,6 +261,15 @@ const APP_KEY_BLOB_TEST: AppKeyBlobTest = AppKeyBlobTest {
 };
 
 // KMS test
+fn typed_plaintext_test() -> TypedPlaintextTest {
+    TypedPlaintextTest {
+        test_filename: Cow::Borrowed("typed_plaintext"),
+        plaintext_bytes: vec![1, 2, 3, 4, 5],
+        fhe_type: 8, // FheTypes::Uint8
+    }
+}
+
+// KMS test
 fn signcryption_payload_test() -> SigncryptionPayloadTest {
     SigncryptionPayloadTest {
         test_filename: Cow::Borrowed("signcryption_payload"),
@@ -319,6 +328,22 @@ impl KmsV0_11 {
         store_versioned_test!(&public_sig_key, dir, &PUBLIC_SIG_KEY_TEST.test_filename);
 
         TestMetadataKMS::PublicSigKey(PUBLIC_SIG_KEY_TEST)
+    }
+
+    fn gen_typed_plaintext(dir: &PathBuf) -> TestMetadataKMS {
+        let test = typed_plaintext_test();
+
+        let plaintext = TypedPlaintext {
+            bytes: test.plaintext_bytes.clone(),
+            fhe_type: test.fhe_type,
+        };
+
+        // TypedPlaintext doesn't use tfhe-versionable, serialize directly with bincode
+        let serialized = bc2wrap::serialize(&plaintext).unwrap();
+        let filename = format!("{}.bincode", test.test_filename);
+        std::fs::write(dir.join(&filename), serialized).unwrap();
+
+        TestMetadataKMS::TypedPlaintext(test)
     }
 
     fn gen_app_key_blob(dir: &PathBuf) -> TestMetadataKMS {
@@ -698,6 +723,7 @@ impl KMSCoreVersion for V0_11 {
             KmsV0_11::gen_private_sig_key(&dir),
             KmsV0_11::gen_public_sig_key(&dir),
             KmsV0_11::gen_app_key_blob(&dir),
+            KmsV0_11::gen_typed_plaintext(&dir),
             KmsV0_11::gen_signcryption_payload(&dir),
             KmsV0_11::gen_kms_fhe_key_handles(&dir),
             KmsV0_11::gen_threshold_fhe_keys(&dir),

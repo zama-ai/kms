@@ -7,9 +7,11 @@ use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::decompression;
 #[cfg(feature = "non-wasm")]
+use crate::cryptography::internal_crypto_types::SigncryptFHEPlaintext;
+#[cfg(feature = "non-wasm")]
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::cryptography::internal_crypto_types::UnifiedSigncryptionKey;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
-use crate::cryptography::signcryption::{signcrypt, SigncryptionPayload};
 #[cfg(feature = "non-wasm")]
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
@@ -585,7 +587,7 @@ pub async fn async_user_decrypt<
             ct_format,
             req_digest,
             client_enc_key,
-            client_address,
+            client_address.as_ref(),
         )?;
         all_signcrypted_cts.push(TypedSigncryptedCiphertext {
             fhe_type: fhe_type as i32,
@@ -654,10 +656,6 @@ impl<
         msg: &T,
     ) -> anyhow::Result<crate::cryptography::internal_crypto_types::Signature> {
         self.base_kms.sign(dsep, msg)
-    }
-
-    fn get_serialized_verf_key(&self) -> Vec<u8> {
-        self.base_kms.get_serialized_verf_key()
     }
 
     fn digest<T: ?Sized + AsRef<[u8]>>(
@@ -904,29 +902,28 @@ impl<
         ct_format: CiphertextFormat,
         link: &[u8],
         client_enc_key: &UnifiedPublicEncKey,
-        client_address: &alloy_primitives::Address,
+        client_id: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
-        let plaintext = Self::public_decrypt(keys, ct, fhe_type, ct_format)?;
+        let signcryption_key = UnifiedSigncryptionKey::new(
+            sig_key.clone(),
+            client_enc_key.clone(),
+            client_id.to_vec(),
+        );
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
-        let signcryption_msg = SigncryptionPayload {
-            plaintext,
-            link: link.to_vec(),
-        };
-        let serialized_msg = bc2wrap::serialize(&signcryption_msg)?;
-
-        let enc_res = signcrypt(
+        let plaintext = Self::public_decrypt(keys, ct, fhe_type, ct_format)?;
+        let enc_res = signcryption_key.signcrypt_plaintext(
             rng,
             &DSEP_USER_DECRYPTION,
-            &serialized_msg,
-            client_enc_key,
-            client_address,
-            sig_key,
+            &plaintext.bytes,
+            fhe_type,
+            link,
         )?;
-        let res = bc2wrap::serialize(&enc_res)?;
+
         tracing::info!("Completed user decryption of ciphertext");
 
-        Ok(res)
+        // LEGACY: for legacy reasons we return the inner payload
+        Ok(enc_res.payload)
     }
 }
 
@@ -1129,12 +1126,9 @@ pub(crate) mod tests {
     };
     use crate::consts::{DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
-    use crate::cryptography::internal_crypto_types::{
-        gen_sig_keys, PrivateSigKey, UnifiedPublicEncKey,
-    };
-    use crate::cryptography::signcryption::{
-        decrypt_signcryption_with_link, ephemeral_signcryption_key_generation,
-    };
+    use crate::cryptography::error::CryptographyError;
+    use crate::cryptography::internal_crypto_types::{gen_sig_keys, DesigncryptFHEPlaintext};
+    use crate::cryptography::signcryption::ephemeral_signcryption_key_generation;
     use crate::dummy_domain;
     use crate::engine::base::{compute_handle, derive_request_id};
     use crate::engine::centralized::central_kms::RealCentralizedKms;
@@ -1148,11 +1142,11 @@ pub(crate) mod tests {
     use aes_prng::AesRng;
     use kms_grpc::rpc_types::{PrivDataType, WrappedPublicKey};
     use kms_grpc::RequestId;
-    use rand::{RngCore, SeedableRng};
+    use rand::SeedableRng;
     use serial_test::serial;
     use std::collections::HashMap;
+    use std::path::Path;
     use std::str::FromStr;
-    use std::{path::Path, sync::Arc};
     use tfhe::{set_server_key, FheTypes};
     use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
     use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
@@ -1569,20 +1563,6 @@ pub(crate) mod tests {
             .unwrap();
     }
 
-    fn set_wrong_sig_key<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-    >(
-        inner: &mut RealCentralizedKms<PubS, PrivS>,
-        rng: &mut AesRng,
-    ) {
-        // move to the next state so ensure we're generating a different ecdsa key
-        _ = rng.next_u64();
-        let wrong_ecdsa_key = k256::ecdsa::SigningKey::random(rng);
-        assert_ne!(&wrong_ecdsa_key, inner.base_kms.sig_key.sk());
-        inner.base_kms.sig_key = Arc::new(PrivateSigKey::new(wrong_ecdsa_key));
-    }
-
     async fn simulate_user_decrypt(
         sim_type: SimulationType,
         keys: &CentralizedTestingKeys,
@@ -1605,7 +1585,7 @@ pub(crate) mod tests {
         };
 
         let kms = {
-            let (mut inner, _health_service) = RealCentralizedKms::<RamStorage, RamStorage>::new(
+            let (inner, _health_service) = RealCentralizedKms::<RamStorage, RamStorage>::new(
                 new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
@@ -1622,25 +1602,32 @@ pub(crate) mod tests {
             if sim_type == SimulationType::BadFheKey {
                 set_wrong_client_key(&inner, key_handle, keys.params).await;
             }
-            if sim_type == SimulationType::BadSigKey {
-                set_wrong_sig_key(&mut inner, &mut rng);
-            }
             inner
         };
         let link = vec![42_u8, 42, 42];
-        let (_client_verf_key, client_sig_key) = gen_sig_keys(&mut rng);
+        let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
         let client_key_pair = {
-            let mut keys = ephemeral_signcryption_key_generation::<ml_kem::MlKem512>(
+            let mut keys = ephemeral_signcryption_key_generation(
                 &mut rng,
-                &client_sig_key,
+                &client_verf_key.verf_key_id(),
+                Some(kms.base_kms.sig_key.as_ref()),
             );
             if sim_type == SimulationType::BadEphemeralKey {
-                let bad_keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
-                keys.sk = bad_keys.sk;
+                let bad_keys = ephemeral_signcryption_key_generation(
+                    &mut rng,
+                    &client_verf_key.verf_key_id(),
+                    Some(kms.base_kms.sig_key.as_ref()),
+                );
+                // Change the decryption key
+                keys.designcrypt_key.decryption_key = bad_keys.designcrypt_key.decryption_key;
+            }
+            if sim_type == SimulationType::BadSigKey {
+                // Change the signing key
+                let (server_sig_pk, _server_sig_sk) = gen_sig_keys(&mut rng);
+                keys.designcrypt_key.sender_verf_key = server_sig_pk;
             }
             keys
         };
-        let unified_client_keys = UnifiedPublicEncKey::MlKem512(client_key_pair.pk.enc_key.clone());
         let mut rng = kms.base_kms.new_rng().await;
         let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage
@@ -1653,8 +1640,8 @@ pub(crate) mod tests {
             fhe_type,
             ct_format,
             &link,
-            &unified_client_keys,
-            &client_key_pair.pk.client_address,
+            &client_key_pair.signcrypt_key.receiver_enc_key,
+            &client_key_pair.signcrypt_key.receiver_id,
         );
         // if bad FHE key is used, then it *might* panic
         let raw_cipher = if sim_type == SimulationType::BadFheKey {
@@ -1668,32 +1655,30 @@ pub(crate) mod tests {
         } else {
             raw_cipher.unwrap()
         };
-        let decrypted = decrypt_signcryption_with_link(
+        let decrypted = client_key_pair.designcrypt_key.designcrypt_plaintext(
             &DSEP_USER_DECRYPTION,
             &raw_cipher,
             &link,
-            &client_key_pair.to_unified(),
-            &keys.centralized_kms_keys.sig_pk,
         );
         if sim_type == SimulationType::BadEphemeralKey {
             assert!(decrypted.is_err());
-            assert!(decrypted
-                .unwrap_err()
-                .to_string()
-                .contains("signcryption decryption failed"));
+            assert!(matches!(
+                decrypted.unwrap_err(),
+                CryptographyError::AesGcmError(..)
+            ));
             return;
         }
         if sim_type == SimulationType::BadSigKey {
             assert!(decrypted.is_err());
             return;
         }
-        let plaintext = decrypted.unwrap();
+        let decrypted = decrypted.unwrap();
         if sim_type == SimulationType::BadFheKey {
-            assert_ne!(plaintext.as_u64(), msg);
+            assert_ne!(decrypted.plaintext.as_u64(), msg);
         } else {
-            assert_eq!(plaintext.as_u64(), msg);
+            assert_eq!(decrypted.plaintext.as_u64(), msg);
         }
-        assert_eq!(plaintext.fhe_type().unwrap(), FheTypes::Uint64);
+        assert_eq!(decrypted.plaintext.fhe_type().unwrap(), FheTypes::Uint64);
     }
 
     #[test]

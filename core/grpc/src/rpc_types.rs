@@ -13,7 +13,9 @@ use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{FheTypes, Versionize};
-use tfhe_versionable::{Version, VersionsDispatch};
+use tfhe_versionable::{
+    Unversionize, UnversionizeError, Version, VersionizeOwned, VersionsDispatch,
+};
 use threshold_fhe::execution::runtime::party::Role;
 
 pub use crate::identifiers::{KeyId, RequestId, ID_LENGTH};
@@ -523,6 +525,43 @@ fn sub_slice<const N: usize>(vec: &[u8]) -> [u8; N] {
         }
     };
     padded
+}
+
+impl Versionize for TypedPlaintext {
+    type Versioned<'vers> = TypedPlaintextVersionsDispatch;
+
+    fn versionize(&self) -> Self::Versioned<'_> {
+        let ver = TypedPlaintext {
+            bytes: self.bytes.clone(),
+            fhe_type: self.fhe_type,
+        };
+        TypedPlaintextVersionsDispatch::V0(ver)
+    }
+}
+
+impl VersionizeOwned for TypedPlaintext {
+    type VersionedOwned = TypedPlaintextVersionsDispatchOwned;
+
+    fn versionize_owned(self) -> Self::VersionedOwned {
+        TypedPlaintextVersionsDispatchOwned::V0(self)
+    }
+}
+
+impl Unversionize for TypedPlaintext {
+    fn unversionize(versioned: Self::VersionedOwned) -> Result<Self, UnversionizeError> {
+        match versioned {
+            TypedPlaintextVersionsDispatchOwned::V0(v0) => Ok(v0),
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize)]
+pub enum TypedPlaintextVersionsDispatch {
+    V0(TypedPlaintext),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum TypedPlaintextVersionsDispatchOwned {
+    V0(TypedPlaintext),
 }
 
 /// Little endian encoding for easy serialization by allowing most significant bytes to be 0
@@ -1424,6 +1463,29 @@ mod tests {
         assert!(
             logs_contain("Received unsupported FHE type for ABI encoding"),
             "Expected log for unsupported FHE type not found."
+        );
+    }
+
+    #[test]
+    fn test_types_plaintext_ser() {
+        let plaintext = TypedPlaintext {
+            bytes: vec![1, 2, 3, 4, 5],
+            fhe_type: 8, // FheTypes::Uint8
+        };
+
+        let serialized = bc2wrap::serialize(&plaintext).expect("serialization should succeed");
+        println!("Serialized bytes: {:?}", serialized);
+        // LOCKED V0 FORMAT - DO NOT CHANGE
+        let expected_bytes = vec![
+            5, 0, 0, 0, 0, 0, 0, 0, // plaintext.bytes length
+            1, 2, 3, 4, 5, // plaintext.bytes content
+            8, 0, 0, 0, // plaintext.fhe_type
+        ];
+
+        assert_eq!(
+            serialized, expected_bytes,
+            "BREAKING CHANGE: TypedPlaintext format changed!\n\
+             This will break user decryption for existing ciphertexts."
         );
     }
 }

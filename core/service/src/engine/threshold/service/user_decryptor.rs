@@ -10,8 +10,8 @@ use anyhow::anyhow;
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{
-        self, Empty, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
-        UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
+        self, Empty, TypedCiphertext, TypedSigncryptedCiphertext, UserDecryptionRequest,
+        UserDecryptionResponse, UserDecryptionResponsePayload,
     },
     utils::tonic_result::BoxedStatus,
     IdentifierError, RequestId,
@@ -55,8 +55,8 @@ use crate::{
     anyhow_error_and_log,
     consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
-        internal_crypto_types::{PrivateSigKey, UnifiedPublicEncKey},
-        signcryption::{signcrypt, SigncryptionPayload},
+        error::CryptographyError,
+        internal_crypto_types::{SigncryptFHEPlaintext, UnifiedSigncryptionKey},
     },
     engine::{
         base::{
@@ -177,11 +177,8 @@ impl<
         rng: impl CryptoRng + RngCore + Send + 'static,
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
-        client_enc_key: UnifiedPublicEncKey,
-        client_address: alloy_primitives::Address,
-        sig_key: Arc<PrivateSigKey>,
+        signcryption_key: Arc<UnifiedSigncryptionKey>,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
-        server_verf_key: Vec<u8>,
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
         metric_tags: Vec<(&'static str, String)>,
@@ -191,9 +188,6 @@ impl<
         let mut all_signcrypted_cts = vec![];
 
         let rng = Arc::new(Mutex::new(rng));
-        let client_enc_key = Arc::new(client_enc_key);
-        let client_address = Arc::new(client_address);
-
         // TODO: Each iteration of this loop should probably happen
         // inside its own tokio task
         for (ctr, typed_ciphertext) in typed_ciphertexts.into_iter().enumerate() {
@@ -320,38 +314,31 @@ impl<
 
             let (partial_signcryption, packing_factor) = match pdec {
                 Ok((pdec_serialized, packing_factor, time)) => {
-                    let signcryption_msg = SigncryptionPayload {
-                        plaintext: TypedPlaintext::from_bytes(pdec_serialized, fhe_type),
-                        link: link.clone(),
-                    };
-
                     let rng = rng.clone();
-                    let sig_key = sig_key.clone();
-                    let client_enc_key = client_enc_key.clone();
-                    let client_address = client_address.clone();
+                    let signcryption_key_clone = signcryption_key.clone();
+                    let link_clone = link.clone();
 
                     let enc_res = spawn_compute_bound(move || {
-                        let mut rng = rng
-                            .lock()
-                            .map_err(|_| anyhow_error_and_log("Poisoned mutex guard"))?;
-                        signcrypt(
+                        let mut rng = rng.lock().map_err(|_| {
+                            CryptographyError::Other("Poisoned mutex guard".to_string())
+                        })?;
+                        signcryption_key_clone.signcrypt_plaintext(
                             rng.deref_mut(),
                             &DSEP_USER_DECRYPTION,
-                            &bc2wrap::serialize(&signcryption_msg)?,
-                            &client_enc_key,
-                            &client_address,
-                            &sig_key,
+                            &pdec_serialized,
+                            fhe_type,
+                            &link_clone,
                         )
                     })
                     .await??;
-                    let res = bc2wrap::serialize(&enc_res)?;
 
                     tracing::info!(
                         "User decryption completed for type {:?}. Inner thread took {:?} ms",
                         fhe_type,
                         time.as_millis()
                     );
-                    (res, packing_factor)
+                    // LEGACY: for legacy reasons we return the inner payload only
+                    (enc_res.payload, packing_factor)
                 }
                 Err(e) => return Err(anyhow!("Failed user decryption: {e}")),
             };
@@ -368,7 +355,10 @@ impl<
         let payload = UserDecryptionResponsePayload {
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
-            verification_key: server_verf_key,
+            verification_key: signcryption_key
+                .signing_key
+                .verf_key()
+                .get_serialized_verf_key()?,
             party_id: session_prep.my_role()?.one_based() as u32,
             degree: session_prep.threshold()? as u32,
         };
@@ -376,10 +366,10 @@ impl<
         // NOTE: extra_data is not used in the current implementation
         let extra_data = vec![];
         let external_signature = compute_external_user_decrypt_signature(
-            &sig_key,
+            &signcryption_key.signing_key,
             &payload,
             domain,
-            &client_enc_key,
+            &signcryption_key.receiver_enc_key,
             extra_data.clone(),
         )?;
         Ok((payload, external_signature, extra_data))
@@ -558,8 +548,6 @@ impl<
             ),
         ];
 
-        let server_verf_key = self.base_kms.get_serialized_verf_key();
-
         // the result of the computation is tracked the tracker
         self.tracker.spawn(
             async move {
@@ -567,6 +555,12 @@ impl<
                 let _timer = timer;
                 // explicitly move the rate limiter context
                 let _permit = permit;
+                let signcryption_key = Arc::new(UnifiedSigncryptionKey::new(
+                    (*sig_key).clone(),
+                    client_enc_key.clone(),
+                    client_address.to_vec(),
+                ));
+
                 // Note that we'll hold a read lock for some time
                 // but this should be ok since write locks
                 // happen rarely as keygen is a rare event.
@@ -582,11 +576,8 @@ impl<
                             rng,
                             typed_ciphertexts,
                             link.clone(),
-                            client_enc_key,
-                            client_address,
-                            sig_key,
+                            signcryption_key,
                             k,
-                            server_verf_key,
                             dec_mode,
                             &domain,
                             metric_tags,
@@ -673,12 +664,14 @@ mod tests {
 
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
-        cryptography::{
-            internal_crypto_types::gen_sig_keys, signcryption::ephemeral_encryption_key_generation,
+        cryptography::internal_crypto_types::{
+            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
         },
         dummy_domain,
-        engine::base::{compute_info_standard_keygen, DSEP_PUBDATA_KEY},
-        engine::threshold::service::session::SessionPreparerManager,
+        engine::{
+            base::{compute_info_standard_keygen, DSEP_PUBDATA_KEY},
+            threshold::service::session::SessionPreparerManager,
+        },
         vault::storage::ram,
     };
 
@@ -726,15 +719,12 @@ mod tests {
     }
 
     fn make_dummy_enc_pk(rng: &mut AesRng) -> Vec<u8> {
-        let (enc_pk, _enc_sk) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(rng);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, rng);
+        let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
         let mut enc_key_buf = Vec::new();
         // The key is freshly generated, so we can safely unwrap the serialization
-        tfhe::safe_serialization::safe_serialize(
-            &UnifiedPublicEncKey::MlKem512(enc_pk.clone()),
-            &mut enc_key_buf,
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .expect("Failed to serialize ephemeral encryption key");
+        tfhe::safe_serialization::safe_serialize(&enc_pk, &mut enc_key_buf, SAFE_SER_SIZE_LIMIT)
+            .expect("Failed to serialize ephemeral encryption key");
         enc_key_buf
     }
 

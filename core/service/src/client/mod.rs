@@ -18,6 +18,7 @@ pub mod test_tools;
 pub mod user_decryption_non_wasm;
 pub mod user_decryption_wasm;
 
+#[allow(deprecated)]
 #[cfg(test)]
 pub(crate) mod tests {
     mod centralized;
