@@ -316,7 +316,7 @@ impl Custodian {
             &custodian_id,
         );
         let backup_material: BackupMaterial = designcrypt_key
-            .designcrypt(&DSEP_BACKUP_RECOVERY, &backup.signcryption)
+            .designcrypt(&DSEP_BACKUP_CUSTODIAN, &backup.signcryption)
             .map_err(|e| {
                 tracing::warn!(
                     "Designcryption failed for backup {backup_id} for operator {operator_role}: {e}"
@@ -346,8 +346,7 @@ impl Custodian {
             operator_ephem_enc_key,
             &operator_verf_id,
         );
-        let signcryption =
-            signcrypt_key.signcrypt(rng, &DSEP_BACKUP_CUSTODIAN, &backup_material)?;
+        let signcryption = signcrypt_key.signcrypt(rng, &DSEP_BACKUP_RECOVERY, &backup_material)?;
         tracing::debug!("Signed re-encrypted share for operator: {}", operator_role);
         Ok(InternalCustodianRecoveryOutput {
             signcryption,

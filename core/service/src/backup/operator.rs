@@ -401,7 +401,7 @@ fn checked_decryption_deserialize(
     operator_role: Role,
 ) -> Result<Vec<Share<ResiduePolyF4Z64>>, BackupError> {
     let backup_material: BackupMaterial = design_key
-        .designcrypt(&DSEP_BACKUP_CUSTODIAN, signcryption)
+        .designcrypt(&DSEP_BACKUP_RECOVERY, signcryption)
         .map_err(|e| {
             BackupError::OperatorError(format!(
                 "Failed to designcrypt backup share for custodian role {custodian_role}: {e}",
@@ -692,7 +692,7 @@ impl Operator {
             let signcryption_key =
                 UnifiedSigncryptionKey::new(&self.signing_key, cus_enc_key, &custodian_verf_id);
             let signcryption = signcryption_key
-                .signcrypt(rng, &DSEP_BACKUP_RECOVERY, &backup_material)
+                .signcrypt(rng, &DSEP_BACKUP_CUSTODIAN, &backup_material)
                 .map_err(BackupError::InternalCryptographyError)?;
             // Commitment by the operator, which is a hash of [BackupMaterial].
             //

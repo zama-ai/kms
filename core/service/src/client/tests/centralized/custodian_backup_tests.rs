@@ -272,10 +272,10 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 async fn test_decrypt_after_recovery_centralized_negative() {
     decrypt_after_recovery_negative(5, 2).await;
     assert!(logs_contain(
-        "Could not verify recovery validation material signature for custodian role 1"
+        "Could not validate signcryption for custodian role 1"
     ));
     assert!(logs_contain(
-        "Could not verify recovery validation material signature for custodian role 3"
+        "Could not validate signcryption for custodian role 3"
     ));
 }
 
