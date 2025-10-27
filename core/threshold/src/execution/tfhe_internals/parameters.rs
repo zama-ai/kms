@@ -524,9 +524,6 @@ impl DKGParamsBasics for DKGParamsRegular {
                 //For decompression keys
                 num_bits_needed += self.num_needed_noise_decompression_key().num_bits_needed();
             }
-            KeySetConfig::AddSnsCompressionKey => {
-                // nothing to do here because this is for regular parameters
-            }
         }
 
         num_bits_needed
@@ -555,7 +552,6 @@ impl DKGParamsBasics for DKGParamsRegular {
                             * comp_params.packing_ks_polynomial_size.0)
                 }
             }
-            KeySetConfig::AddSnsCompressionKey => {}
         }
 
         self.total_bits_required(keyset_config) + num_triples_needed
@@ -919,7 +915,6 @@ impl DKGParamsBasics for DKGParamsRegular {
                     }
             }
             KeySetConfig::DecompressionOnly => 0,
-            KeySetConfig::AddSnsCompressionKey => 0,
         }
     }
 
@@ -949,10 +944,6 @@ impl DKGParamsBasics for DKGParamsRegular {
                 amount: 0,
                 bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
             },
-            KeySetConfig::AddSnsCompressionKey => NoiseInfo {
-                amount: 0,
-                bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
-            },
         }
     }
 
@@ -965,10 +956,6 @@ impl DKGParamsBasics for DKGParamsRegular {
                 out
             }
             KeySetConfig::DecompressionOnly => NoiseInfo {
-                amount: 0,
-                bound: NoiseBounds::LweHatNoise(self.lwe_hat_tuniform_bound()),
-            },
-            KeySetConfig::AddSnsCompressionKey => NoiseInfo {
                 amount: 0,
                 bound: NoiseBounds::LweHatNoise(self.lwe_hat_tuniform_bound()),
             },
@@ -1001,10 +988,6 @@ impl DKGParamsBasics for DKGParamsRegular {
                 let noises = &[self.num_needed_noise_decompression_key()];
                 combine_noise_info(target_bound, noises)
             }
-            KeySetConfig::AddSnsCompressionKey => NoiseInfo {
-                amount: 0,
-                bound: target_bound,
-            },
         }
     }
 
@@ -1021,10 +1004,6 @@ impl DKGParamsBasics for DKGParamsRegular {
                 out
             }
             KeySetConfig::DecompressionOnly => NoiseInfo {
-                amount: 0,
-                bound: NoiseBounds::CompressionKSKNoise(TUniformBound::default()),
-            },
-            KeySetConfig::AddSnsCompressionKey => NoiseInfo {
                 amount: 0,
                 bound: NoiseBounds::CompressionKSKNoise(TUniformBound::default()),
             },
@@ -1162,13 +1141,6 @@ impl DKGParamsBasics for DKGParamsSnS {
             KeySetConfig::DecompressionOnly => {
                 // do nothing since decompression is handled by regular params
             }
-            KeySetConfig::AddSnsCompressionKey => {
-                num_bits_needed +=
-                // Number of bits needed for sns compression key
-                // we don't need more than this because the other keys are not generated.
-                self.num_needed_noise_sns_compression_key().num_bits_needed() +
-                self.sns_compression_sk_num_bits();
-            }
         }
 
         num_bits_needed
@@ -1200,7 +1172,6 @@ impl DKGParamsBasics for DKGParamsSnS {
                             * comp_params.packing_ks_polynomial_size.0)
                 }
             }
-            KeySetConfig::AddSnsCompressionKey => {}
         }
 
         self.total_bits_required(keyset_config) + num_triples_needed
@@ -1380,7 +1351,6 @@ impl DKGParamsBasics for DKGParamsSnS {
                     self.glwe_sk_num_bits_sns() + self.sns_compression_sk_num_bits()
                 }
                 KeySetConfig::DecompressionOnly => 0,
-                KeySetConfig::AddSnsCompressionKey => self.sns_compression_sk_num_bits(),
             }
     }
 
@@ -1393,10 +1363,6 @@ impl DKGParamsBasics for DKGParamsSnS {
                 combine_noise_info(target_bound, &[regular_lwe, sns_lwe])
             }
             KeySetConfig::DecompressionOnly => self.regular_params.all_lwe_noise(keyset_config),
-            KeySetConfig::AddSnsCompressionKey => NoiseInfo {
-                amount: 0,
-                bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
-            },
         }
     }
 
@@ -2040,33 +2006,6 @@ mod tests {
                 sk_total + noise_total,
                 h.all_glwe_noise(keyset_config).num_bits_needed()
             );
-        }
-    }
-
-    #[test]
-    fn test_required_preproc_sns_compression() {
-        let keyset_config = KeySetConfig::AddSnsCompressionKey;
-        {
-            let param = BC_PARAMS_SNS;
-            let h = param.get_params_basics_handle();
-            let sns_param = match param {
-                crate::execution::tfhe_internals::parameters::DKGParams::WithSnS(p) => p,
-                _ => panic!("Expected WithSnS parameters"),
-            };
-            let sk_total = sns_param.sns_compression_sk_num_bits();
-            assert_eq!(sk_total, h.num_raw_bits(keyset_config));
-
-            let noise_total = sns_param
-                .num_needed_noise_sns_compression_key()
-                .num_bits_needed();
-            assert_eq!(sk_total + noise_total, h.total_bits_required(keyset_config));
-        }
-
-        {
-            let param = BC_PARAMS_NO_SNS;
-            let h = param.get_params_basics_handle();
-            assert_eq!(0, h.num_raw_bits(keyset_config));
-            assert_eq!(0, h.total_bits_required(keyset_config));
         }
     }
 }

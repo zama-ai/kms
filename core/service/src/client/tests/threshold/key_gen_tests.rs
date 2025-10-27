@@ -33,8 +33,6 @@ use crate::client::tests::common::TIME_TO_SLEEP_MS;
 #[cfg(feature = "insecure")]
 use crate::consts::TEST_PARAM;
 #[cfg(feature = "slow_tests")]
-use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
-#[cfg(feature = "slow_tests")]
 use crate::util::rate_limiter::RateLimiterConfig;
 use alloy_dyn_abi::Eip712Domain;
 use kms_grpc::kms::v1::KeyGenResult;
@@ -93,7 +91,6 @@ async fn test_insecure_dkg(#[case] amount_parties: usize) {
         &INSECURE_PREPROCESSING_ID,
         &key_id,
         None,
-        None,
         true,
         None,
         0,
@@ -133,7 +130,6 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
         &INSECURE_PREPROCESSING_ID,
         &key_id,
         None,
-        None,
         true,
         None,
         0,
@@ -155,25 +151,6 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
 async fn test_insecure_threshold_decompression_keygen() {
     // Note that the first 2 key gens are insecure, but the last is secure as needed to generate decompression keys
     run_threshold_decompression_keygen(4, FheParameter::Test, true).await;
-}
-
-// Test threshold sns compression keygen using the testing parameters
-// this test will use an existing base key stored under the key ID `TEST_THRESHOLD_KEY_ID_4P`
-#[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_threshold_sns_compression_keygen() {
-    run_threshold_sns_compression_keygen(4, FheParameter::Test, &TEST_THRESHOLD_KEY_ID_4P, false)
-        .await;
-}
-
-// TODO(2674)
-#[cfg(all(feature = "slow_tests", feature = "insecure"))]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_insecure_threshold_sns_compression_keygen() {
-    run_threshold_sns_compression_keygen(4, FheParameter::Test, &TEST_THRESHOLD_KEY_ID_4P, true)
-        .await;
 }
 
 #[cfg(feature = "slow_tests")]
@@ -206,43 +183,23 @@ pub(crate) async fn run_threshold_keygen(
     preproc_req_id: &RequestId,
     keygen_req_id: &RequestId,
     decompression_keygen: Option<(RequestId, RequestId)>,
-    sns_compression_keygen: Option<RequestId>,
     insecure: bool,
     data_root_path: Option<&Path>,
     expected_num_parties_crashed: usize,
 ) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
-    let keyset_config = match (decompression_keygen, sns_compression_keygen) {
-        (None, None) => None,
-        (None, Some(_overwrite_keyset_id)) => Some(KeySetConfig {
-            keyset_type: KeySetType::AddSnsCompressionKey.into(),
-            standard_keyset_config: None,
-        }),
-        (Some((_from, _to)), None) => Some(KeySetConfig {
+    let keyset_config = if let Some((_from, _to)) = decompression_keygen {
+        Some(KeySetConfig {
             keyset_type: KeySetType::DecompressionOnly.into(),
             standard_keyset_config: None,
-        }),
-        (Some(_), Some(_)) => {
-            panic!("cannot have both decompression and sns compression keygen")
-        }
+        })
+    } else {
+        None
     };
-    let keyset_added_info = match (decompression_keygen, sns_compression_keygen) {
-        (None, None) => None,
-        (None, Some(overwrite_keyset_id)) => Some(KeySetAddedInfo {
-            compression_keyset_id: None,
-            from_keyset_id_decompression_only: None,
-            to_keyset_id_decompression_only: None,
-            base_keyset_id_for_sns_compression_key: Some(overwrite_keyset_id.into()),
-        }),
-        (Some((from, to)), None) => Some(KeySetAddedInfo {
-            compression_keyset_id: None,
-            from_keyset_id_decompression_only: Some(from.into()),
-            to_keyset_id_decompression_only: Some(to.into()),
-            base_keyset_id_for_sns_compression_key: None,
-        }),
-        (Some(_), Some(_)) => {
-            panic!("cannot have both decompression and sns compression keygen")
-        }
-    };
+    let keyset_added_info = decompression_keygen.map(|(from, to)| KeySetAddedInfo {
+        compression_keyset_id: None,
+        from_keyset_id_decompression_only: Some(from.into()),
+        to_keyset_id_decompression_only: Some(to.into()),
+    });
 
     let domain = dummy_domain();
     let req_keygen = internal_client
@@ -500,7 +457,6 @@ pub(crate) async fn run_threshold_decompression_keygen(
             &internal_client,
             &preproc_id_1,
             None,
-            None,
             0,
         )
         .await;
@@ -512,7 +468,6 @@ pub(crate) async fn run_threshold_decompression_keygen(
         &internal_client,
         &preproc_id_1,
         &key_id_1,
-        None,
         None,
         insecure,
         None,
@@ -530,7 +485,6 @@ pub(crate) async fn run_threshold_decompression_keygen(
             &internal_client,
             &preproc_id_2,
             None,
-            None,
             0,
         )
         .await;
@@ -542,7 +496,6 @@ pub(crate) async fn run_threshold_decompression_keygen(
         &internal_client,
         &preproc_id_2,
         &key_id_2,
-        None,
         None,
         insecure,
         None,
@@ -560,7 +513,6 @@ pub(crate) async fn run_threshold_decompression_keygen(
         &internal_client,
         &preproc_id_3,
         None,
-        None,
         0,
     )
     .await;
@@ -573,7 +525,6 @@ pub(crate) async fn run_threshold_decompression_keygen(
         &preproc_id_3,
         &key_id_3,
         Some((key_id_1, key_id_2)),
-        None,
         insecure,
         None,
         0,
@@ -592,85 +543,6 @@ pub(crate) async fn run_threshold_decompression_keygen(
         Some(&server_key_1),
         decompression_key.into_raw_parts(),
     );
-}
-
-// Run the threshold sns compression keygen protocol
-// which should only generate the sns compression key (and its private shares)
-// from an existing `base_key_id`. The resulting key should be one that is
-// identical to the key under `base_key_id` except for the sns compression key.
-#[cfg(feature = "slow_tests")]
-async fn run_threshold_sns_compression_keygen(
-    amount_parties: usize,
-    parameter: FheParameter,
-    base_key_id: &RequestId,
-    insecure: bool,
-) {
-    use threshold_fhe::execution::tfhe_internals::test_feature::run_sns_compression_test;
-    // for generating the sns compression key
-    let preproc_id = if insecure {
-        *INSECURE_PREPROCESSING_ID
-    } else {
-        derive_request_id(&format!(
-            "sns_com_dkg_preproc_{amount_parties}_{parameter:?}"
-        ))
-        .unwrap()
-    };
-    let sns_compression_req_id: RequestId =
-        derive_request_id(&format!("sns_com_dkg_key_{amount_parties}_{parameter:?}")).unwrap();
-    purge(None, None, None, &sns_compression_req_id, amount_parties).await;
-
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let dkg_param: WrappedDKGParams = parameter.into();
-    let (kms_servers, kms_clients, internal_client) =
-        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
-
-    // generate the sns compression key by overwriting the first key
-    if !insecure {
-        run_preproc(
-            amount_parties,
-            parameter,
-            &kms_clients,
-            &internal_client,
-            &preproc_id,
-            None,
-            Some(*base_key_id),
-            0,
-        )
-        .await;
-    }
-
-    let keys2 = run_threshold_keygen(
-        parameter,
-        &kms_clients,
-        &internal_client,
-        &preproc_id,
-        &sns_compression_req_id,
-        None,
-        Some(*base_key_id),
-        insecure,
-        None,
-        0,
-    )
-    .await
-    .0;
-    let (client_key_2, _public_key_2, server_key_2) = keys2.get_standard();
-
-    for handle in kms_servers.into_values() {
-        handle.assert_shutdown().await;
-    }
-
-    let pub_storage =
-        FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(1))).unwrap();
-    let server_key_base: tfhe::ServerKey = internal_client
-        .get_key(base_key_id, PubDataType::ServerKey, &pub_storage)
-        .await
-        .unwrap();
-    crate::client::key_gen::tests::identical_keys_except_sns_compression(
-        server_key_base,
-        server_key_2.clone(),
-    )
-    .await;
-    run_sns_compression_test(client_key_2, server_key_2);
 }
 
 #[cfg(feature = "slow_tests")]
@@ -753,7 +625,6 @@ pub(crate) async fn preproc_and_keygen(
                         &internalclient_clone,
                         &cur_id,
                         None,
-                        None,
                         expected_num_parties_crashed,
                     )
                     .await
@@ -801,7 +672,6 @@ pub(crate) async fn preproc_and_keygen(
                         &preproc_ids_clone,
                         &key_id,
                         None,
-                        None,
                         insecure,
                         None,
                         expected_num_parties_crashed,
@@ -831,7 +701,6 @@ pub(crate) async fn preproc_and_keygen(
                 &kms_clients,
                 &internal_client,
                 &cur_id,
-                None,
                 None,
                 expected_num_parties_crashed,
             )
@@ -869,7 +738,6 @@ pub(crate) async fn preproc_and_keygen(
                 &internal_client,
                 preproc_ids.get(&i).unwrap(),
                 &key_id,
-                None,
                 None,
                 insecure,
                 None,
@@ -919,23 +787,12 @@ pub(crate) async fn run_preproc(
     internal_client: &Client,
     preproc_req_id: &RequestId,
     decompression_keygen: Option<(RequestId, RequestId)>,
-    sns_compression_keygen: Option<RequestId>,
     expected_num_parties_crashed: usize,
 ) {
-    let keyset_config = match (decompression_keygen, sns_compression_keygen) {
-        (None, None) => None,
-        (None, Some(_overwrite_keyset_id)) => Some(KeySetConfig {
-            keyset_type: KeySetType::AddSnsCompressionKey.into(),
-            standard_keyset_config: None,
-        }),
-        (Some((_from, _to)), None) => Some(KeySetConfig {
-            keyset_type: KeySetType::DecompressionOnly.into(),
-            standard_keyset_config: None,
-        }),
-        (Some(_), Some(_)) => {
-            panic!("cannot have both decompression and sns compression keygen")
-        }
-    };
+    let keyset_config = decompression_keygen.map(|(_from, _to)| KeySetConfig {
+        keyset_type: KeySetType::DecompressionOnly.into(),
+        standard_keyset_config: None,
+    });
 
     let domain = dummy_domain();
 

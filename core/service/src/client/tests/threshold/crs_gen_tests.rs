@@ -25,14 +25,13 @@ cfg_if::cfg_if! {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_insecure_crs_gen_threshold() {
-    // Test parameters use V1 CRS
     crs_gen(
         4,
         FheParameter::Test,
         Some(16),
         true, // insecure
         1,
-        false,
+        false, // not concurrent
     )
     .await;
 }

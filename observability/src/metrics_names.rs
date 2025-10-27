@@ -8,10 +8,8 @@ pub const OP_INSECURE_KEYGEN_REQUEST: &str = "insecure_keygen_request";
 pub const OP_INSECURE_KEYGEN_RESULT: &str = "insecure_keygen_result";
 pub const OP_INSECURE_KEYGEN: &str = "insecure_keygen";
 pub const OP_INSECURE_DECOMPRESSION_KEYGEN: &str = "insecure_decompression_keygen";
-pub const OP_INSECURE_SNS_COMPRESSION_KEYGEN: &str = "insecure_sns_compression_keygen";
 pub const OP_KEYGEN: &str = "keygen";
 pub const OP_DECOMPRESSION_KEYGEN: &str = "decompression_keygen";
-pub const OP_SNS_COMPRESSION_KEYGEN: &str = "sns_compression_keygen";
 pub const OP_KEYGEN_PREPROC_REQUEST: &str = "keygen_preproc_request";
 pub const OP_KEYGEN_PREPROC_RESULT: &str = "keygen_preproc_result";
 

@@ -413,7 +413,7 @@ jobs:
         run: |
           MATRIX="matrix={\"include\":["
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
-            MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly_tests\"}"
+            MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly\"}"
           else
             MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly\"}"
           fi

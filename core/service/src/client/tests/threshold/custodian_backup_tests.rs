@@ -278,7 +278,6 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         &INSECURE_PREPROCESSING_ID,
         &req_key,
         None,
-        None,
         true,
         test_path,
         0,

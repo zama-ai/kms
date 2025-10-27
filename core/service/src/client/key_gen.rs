@@ -361,11 +361,6 @@ impl Client {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::vault::storage::StorageReader;
-
-    use crate::client::client_wasm::Client;
-    use kms_grpc::rpc_types::PubDataType;
-    use kms_grpc::RequestId;
     use tfhe::core_crypto::prelude::{
         decrypt_lwe_ciphertext, divide_round, ContiguousEntityContainer, LweCiphertextOwned,
     };
@@ -449,49 +444,5 @@ pub(crate) mod tests {
                 panic!("Unsuported AtomicPatternServerKey::Dynamic")
             }
         }
-    }
-
-    // check that the server keys stored under the IDs `key_id_base` and `key_id_with_sns_compression`
-    // are identical except for the sns compression key
-    pub(crate) async fn identical_keys_except_sns_compression_from_storage<R: StorageReader>(
-        internal_client: &Client,
-        storage: &R,
-        key_id_base: &RequestId,
-        key_id_with_sns_compression: &RequestId,
-    ) {
-        let server_key_base: tfhe::ServerKey = internal_client
-            .get_key(key_id_base, PubDataType::ServerKey, storage)
-            .await
-            .unwrap();
-
-        let server_key_sns: tfhe::ServerKey = internal_client
-            .get_key(key_id_with_sns_compression, PubDataType::ServerKey, storage)
-            .await
-            .unwrap();
-
-        identical_keys_except_sns_compression(server_key_base, server_key_sns).await
-    }
-
-    // check that the two keys are identical except for the sns compression key
-    pub(crate) async fn identical_keys_except_sns_compression(
-        server_key_base: tfhe::ServerKey,
-        server_key_sns: tfhe::ServerKey,
-    ) {
-        let server_key_base_parts = server_key_base.into_raw_parts();
-        let server_key_sns_parts = server_key_sns.into_raw_parts();
-
-        // 5 should be sns compression
-        assert!(server_key_sns_parts.5.is_some());
-
-        // we can't compare keys directly, so we serialize them
-        assert_eq!(
-            bc2wrap::serialize(&server_key_base_parts.0).unwrap(),
-            bc2wrap::serialize(&server_key_sns_parts.0).unwrap()
-        );
-
-        assert_ne!(
-            bc2wrap::serialize(&server_key_base_parts.5).unwrap(),
-            bc2wrap::serialize(&server_key_sns_parts.5).unwrap(),
-        )
     }
 }

@@ -21,7 +21,7 @@ use tokio::task::JoinSet;
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn test_insecure_threshold_dkg_backup() {
+async fn nightly_test_insecure_threshold_dkg_backup() {
     // NOTE: amount_parties must not be too high when changing the param to FheParameter::Default
     // because every party will load all the keys and each ServerKey is 1.5 GB
     // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
@@ -54,7 +54,6 @@ async fn test_insecure_threshold_dkg_backup() {
         &INSECURE_PREPROCESSING_ID,
         &key_id_1,
         None,
-        None,
         true,
         test_path,
         0,
@@ -67,7 +66,6 @@ async fn test_insecure_threshold_dkg_backup() {
         &internal_client,
         &INSECURE_PREPROCESSING_ID,
         &key_id_2,
-        None,
         None,
         true,
         test_path,
@@ -141,7 +139,7 @@ async fn test_insecure_threshold_dkg_backup() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn test_insecure_threshold_autobackup_after_deletion() {
+async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
     // NOTE: amount_parties must not be too high when changing the param to FheParameter::Default
     // because every party will load all the keys and each ServerKey is 1.5 GB
     // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
@@ -170,7 +168,6 @@ async fn test_insecure_threshold_autobackup_after_deletion() {
         &internal_client,
         &INSECURE_PREPROCESSING_ID,
         &key_id,
-        None,
         None,
         true,
         test_path,
