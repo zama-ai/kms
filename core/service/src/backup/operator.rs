@@ -138,7 +138,7 @@ impl InternalRecoveryRequest {
         };
         // We ignore the result, but just ensure that designcryption works
         if designcrypt_key
-            .validate_signcryption(&DSEP_BACKUP_RECOVERY, &output.signcryption)
+            .validate_signcryption(&DSEP_BACKUP_CUSTODIAN, &output.signcryption)
             .is_err()
         {
             tracing::warn!("InternalRecoveryRequest contains an invalid signcryption");
