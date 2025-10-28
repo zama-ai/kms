@@ -10,20 +10,16 @@
 //!
 //! For encryption a hybrid encryption scheme is used based on ML-KEM and AES GCM.
 
-use super::internal_crypto_types::{PublicSigKey, Signature};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::consts::SIG_SIZE;
+use crate::cryptography::encryption::{
+    EncryptionSchemeType, HasEncryptionScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+};
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
-#[cfg(test)]
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::cryptography::internal_crypto_types::{
-    Designcrypt, DesigncryptFHEPlaintext, HasEncryptionScheme, HasSigningScheme, Signcrypt,
-    SigncryptFHEPlaintext, UnifiedDesigncryptionKey, UnifiedDesigncryptionKeyOwned,
-    UnifiedPrivateEncKey, UnifiedPublicEncKey, UnifiedSigncryption, UnifiedSigncryptionKey,
-    UnifiedSigncryptionKeyOwned,
+use crate::cryptography::signatures::{
+    check_normalized, internal_sign, HasSigningScheme, PrivateSigKey, PublicSigKey, Signature,
+    SigningSchemeType, SIG_SIZE,
 };
-use crate::cryptography::signatures::{check_normalized, internal_sign};
 use ::signature::Verifier;
 use kms_grpc::kms::v1::TypedPlaintext;
 use rand::{CryptoRng, RngCore};
@@ -33,10 +29,265 @@ use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::FheTypes;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_fhe::hashing::{serialize_hash_element, DomainSep, DIGEST_BYTES};
-#[cfg(test)]
 use zeroize::Zeroize;
 
 const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";
+
+pub trait Signcrypt {
+    /// Signcrypt a message of type T with a specified domain separator.
+    fn signcrypt<T: Serialize + tfhe::Versionize + tfhe::named::Named>(
+        &self,
+        rng: &mut (impl CryptoRng + RngCore),
+        dsep: &DomainSep,
+        msg: &T,
+    ) -> Result<UnifiedSigncryption, CryptographyError>;
+}
+
+pub trait Designcrypt {
+    /// Decrypt a signcrypted message and verify the signature before returning the result.
+    /// If the signature verification fails, an error is returned.
+    ///
+    /// This fn also checks that the provided link parameter corresponds to the link in the signcryption
+    /// payload.
+    fn designcrypt<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
+        &self,
+        dsep: &DomainSep,
+        cipher: &UnifiedSigncryption,
+    ) -> Result<T, CryptographyError>;
+
+    /// Validate the signature of a signcrypted message without decrypting the payload.
+    /// This can be used to check authenticity if decryption is not needed.
+    fn validate_signcryption(
+        &self,
+        dsep: &DomainSep,
+        signcryption: &UnifiedSigncryption,
+    ) -> Result<(), CryptographyError>;
+}
+
+pub trait SigncryptFHEPlaintext: Signcrypt {
+    /// Signcrypt a plaintext message with a specified domain separator and FHE type.
+    /// The link parameter is used to bind the signcryption to a specific context or session.
+    /// The link should be unique for each signcryption operation to prevent replay attacks.
+    /// The method is exclusively used to encrypt partially decrypted FHE ciphertexts for user decryption.
+    fn signcrypt_plaintext(
+        &self,
+        rng: &mut (impl CryptoRng + RngCore),
+        dsep: &DomainSep,
+        plaintext: &[u8],
+        fhe_type: FheTypes,
+        link: &[u8],
+    ) -> Result<UnifiedSigncryption, CryptographyError>;
+}
+
+pub trait DesigncryptFHEPlaintext: Designcrypt {
+    /// Decrypt a signcrypted plaintext message and verify the signature before returning the result.
+    /// If the signature verification fails, an error is returned.
+    /// The link parameter is used to verify that the signcryption corresponds to the expected context or session.
+    /// The method is exclusively used to decrypt partially decrypted FHE ciphertexts for user decryption.
+    fn designcrypt_plaintext(
+        &self,
+        dsep: &DomainSep,
+        signcryption: &[u8],
+        link: &[u8],
+    ) -> Result<SigncryptionPayload, CryptographyError>;
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+pub enum UnifiedSigncryptionKeyOwnedVersioned {
+    V0(UnifiedSigncryptionKeyOwned),
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, Versionize)]
+#[versionize(UnifiedSigncryptionKeyOwnedVersioned)]
+pub struct UnifiedSigncryptionKeyOwned {
+    pub signing_key: PrivateSigKey,
+    pub receiver_enc_key: UnifiedPublicEncKey,
+    pub receiver_id: Vec<u8>, // Identifier for the receiver's encryption key, e.g. blockchain address
+}
+impl UnifiedSigncryptionKeyOwned {
+    pub fn new(
+        signing_key: PrivateSigKey,
+        receiver_enc_key: UnifiedPublicEncKey,
+        receiver_id: Vec<u8>,
+    ) -> Self {
+        Self {
+            signing_key,
+            receiver_enc_key,
+            receiver_id,
+        }
+    }
+
+    pub fn reference<'a>(&'a self) -> UnifiedSigncryptionKey<'a> {
+        UnifiedSigncryptionKey {
+            signing_key: &self.signing_key,
+            receiver_enc_key: &self.receiver_enc_key,
+            receiver_id: &self.receiver_id,
+        }
+    }
+}
+
+impl HasEncryptionScheme for UnifiedSigncryptionKeyOwned {
+    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+        self.receiver_enc_key.encryption_scheme_type()
+    }
+}
+impl HasSigningScheme for UnifiedSigncryptionKeyOwned {
+    fn signing_scheme_type(&self) -> SigningSchemeType {
+        self.signing_key.signing_scheme_type()
+    }
+}
+
+/// Internal type for signcryption keys, storing only references to the real internal keys.
+/// Thus this type should not be serialized instead `UnifiedSigncryptionKeyOwned` should be used.
+#[derive(Clone, Debug)]
+pub struct UnifiedSigncryptionKey<'a> {
+    pub signing_key: &'a PrivateSigKey,
+    pub receiver_enc_key: &'a UnifiedPublicEncKey,
+    pub receiver_id: &'a [u8], // Identifier for the receiver's encryption key, e.g. blockchain address
+}
+
+impl<'a> UnifiedSigncryptionKey<'a> {
+    pub fn new(
+        signing_key: &'a PrivateSigKey,
+        receiver_enc_key: &'a UnifiedPublicEncKey,
+        receiver_id: &'a [u8],
+    ) -> Self {
+        Self {
+            signing_key,
+            receiver_enc_key,
+            receiver_id,
+        }
+    }
+}
+
+impl HasEncryptionScheme for UnifiedSigncryptionKey<'_> {
+    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+        self.receiver_enc_key.encryption_scheme_type()
+    }
+}
+impl HasSigningScheme for UnifiedSigncryptionKey<'_> {
+    fn signing_scheme_type(&self) -> SigningSchemeType {
+        self.signing_key.signing_scheme_type()
+    }
+}
+
+/// Internal reference type for designcryption keys, storing only references to the real internal keys.
+#[derive(Clone, Debug)]
+pub struct UnifiedDesigncryptionKey<'a> {
+    pub decryption_key: &'a UnifiedPrivateEncKey,
+    pub encryption_key: &'a UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
+    pub sender_verf_key: &'a PublicSigKey,
+    /// The ID of the receiver of the signcryption, e.g. blockchain address
+    pub receiver_id: &'a [u8],
+}
+
+impl<'a> UnifiedDesigncryptionKey<'a> {
+    pub fn new(
+        decryption_key: &'a UnifiedPrivateEncKey,
+        encryption_key: &'a UnifiedPublicEncKey,
+        sender_verf_key: &'a PublicSigKey,
+        receiver_id: &'a [u8],
+    ) -> Self {
+        Self {
+            sender_verf_key,
+            decryption_key,
+            encryption_key,
+            receiver_id,
+        }
+    }
+
+    //  TODO this file should be split up and this moved to signcryption
+}
+
+impl HasEncryptionScheme for UnifiedDesigncryptionKey<'_> {
+    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+        self.encryption_key.encryption_scheme_type()
+    }
+}
+
+impl HasSigningScheme for UnifiedDesigncryptionKey<'_> {
+    fn signing_scheme_type(&self) -> SigningSchemeType {
+        self.sender_verf_key.signing_scheme_type()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+pub enum UnifiedDesigncryptionKeyOwnedVersioned {
+    V0(UnifiedDesigncryptionKeyOwned),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
+#[versionize(UnifiedDesigncryptionKeyOwnedVersioned)]
+pub struct UnifiedDesigncryptionKeyOwned {
+    pub decryption_key: UnifiedPrivateEncKey,
+    pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
+    pub sender_verf_key: PublicSigKey,
+    /// The ID of the receiver of the signcryption, e.g. blockchain address
+    pub receiver_id: Vec<u8>,
+}
+
+impl UnifiedDesigncryptionKeyOwned {
+    pub fn new(
+        decryption_key: UnifiedPrivateEncKey,
+        encryption_key: UnifiedPublicEncKey,
+        sender_verf_key: PublicSigKey,
+        receiver_id: Vec<u8>,
+    ) -> Self {
+        Self {
+            sender_verf_key,
+            decryption_key,
+            encryption_key,
+            receiver_id,
+        }
+    }
+
+    pub fn reference<'a>(&'a self) -> UnifiedDesigncryptionKey<'a> {
+        UnifiedDesigncryptionKey {
+            decryption_key: &self.decryption_key,
+            encryption_key: &self.encryption_key,
+            sender_verf_key: &self.sender_verf_key,
+            receiver_id: &self.receiver_id,
+        }
+    }
+}
+
+impl HasEncryptionScheme for UnifiedDesigncryptionKeyOwned {
+    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+        self.encryption_key.encryption_scheme_type()
+    }
+}
+
+impl HasSigningScheme for UnifiedDesigncryptionKeyOwned {
+    fn signing_scheme_type(&self) -> SigningSchemeType {
+        self.sender_verf_key.signing_scheme_type()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
+pub enum UnifiedSigncryptionVersioned {
+    V0(UnifiedSigncryption),
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Debug, Versionize)]
+#[versionize(UnifiedSigncryptionVersioned)]
+pub struct UnifiedSigncryption {
+    pub payload: Vec<u8>,
+    pub encryption_type: EncryptionSchemeType,
+    pub signing_type: SigningSchemeType,
+}
+impl UnifiedSigncryption {
+    pub fn new(
+        payload: Vec<u8>,
+        encryption_type: EncryptionSchemeType,
+        signing_type: SigningSchemeType,
+    ) -> Self {
+        Self {
+            payload,
+            encryption_type,
+            signing_type,
+        }
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug, VersionsDispatch)]
 pub enum SigncryptionPayloadVersioned {
@@ -463,9 +714,11 @@ pub(crate) fn ephemeral_signcryption_key_generation(
     client_verf_key_id: &[u8],
     server_sig_key: Option<&PrivateSigKey>,
 ) -> UnifiedSigncryptionKeyPairOwned {
-    use crate::cryptography::internal_crypto_types::{
-        gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
+    use crate::cryptography::{
+        encryption::{Encryption, EncryptionScheme},
+        signatures::gen_sig_keys,
     };
+
     let (server_verf_key, server_sig_key) = match server_sig_key {
         Some(sk) => (PublicSigKey::from_sk(sk), sk.clone()),
         None => gen_sig_keys(rng),
@@ -498,14 +751,11 @@ pub struct UnifiedSigncryptionKeyPairOwned {
 
 #[cfg(test)]
 mod tests {
-    use super::{ephemeral_signcryption_key_generation, PublicSigKey};
-    use crate::cryptography::internal_crypto_types::{
-        gen_sig_keys, Designcrypt, DesigncryptFHEPlaintext, EncryptionSchemeType, Signcrypt,
-        SigncryptFHEPlaintext, UnifiedDesigncryptionKey, UnifiedSigncryption,
-    };
-    use crate::cryptography::signcryption::{
-        parse_msg, SigncryptionPayload, UnifiedSigncryptionKeyPairOwned, DIGEST_BYTES, SIG_SIZE,
-    };
+    use super::*;
+    use crate::cryptography::{encryption::EncryptionSchemeType, signatures::gen_sig_keys};
+    // use crate::cryptography::signcryption::{
+    //     parse_msg, SigncryptionPayload, UnifiedSigncryptionKeyPairOwned, DIGEST_BYTES, SIG_SIZE,
+    // };
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
     use kms_grpc::kms::v1::TypedPlaintext;

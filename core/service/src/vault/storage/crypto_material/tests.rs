@@ -1,5 +1,5 @@
 use crate::{
-    cryptography::internal_crypto_types::gen_sig_keys,
+    cryptography::signatures::gen_sig_keys,
     dummy_domain,
     engine::base::{derive_request_id, KeyGenMetadata},
 };

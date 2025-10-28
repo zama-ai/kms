@@ -1,8 +1,9 @@
 use crate::{
     backup::custodian::Custodian,
     consts::RND_SIZE,
-    cryptography::internal_crypto_types::{
-        gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
+    cryptography::{
+        encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+        signatures::gen_sig_keys,
     },
 };
 use aes_prng::AesRng;

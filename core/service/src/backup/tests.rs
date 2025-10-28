@@ -8,9 +8,12 @@ use crate::{
         operator::{InnerOperatorBackupOutput, RecoveryValidationMaterial},
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
-    cryptography::internal_crypto_types::{
-        gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, PublicSigKey,
-        UnifiedPrivateEncKey, UnifiedPublicEncKey,
+    cryptography::{
+        encryption::{
+            Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
+            UnifiedPublicEncKey,
+        },
+        signatures::{gen_sig_keys, PublicSigKey},
     },
     engine::base::derive_request_id,
 };

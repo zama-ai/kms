@@ -1,4 +1,4 @@
-use super::internal_crypto_types::PrivateSigKey;
+use super::signatures::PrivateSigKey;
 use anyhow::{bail, ensure};
 use enum_dispatch::enum_dispatch;
 use k256::pkcs8::EncodePrivateKey;

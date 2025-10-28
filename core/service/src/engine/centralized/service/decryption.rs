@@ -502,7 +502,7 @@ pub(crate) mod tests {
     };
 
     use crate::{
-        cryptography::internal_crypto_types::PublicSigKey,
+        cryptography::signatures::PublicSigKey,
         engine::centralized::{
             central_kms::RealCentralizedKms,
             service::key_gen::tests::{setup_test_kms_with_preproc, test_standard_keygen},
@@ -818,10 +818,10 @@ mod test_user_decryption {
     use crate::{
         consts::SAFE_SER_SIZE_LIMIT,
         cryptography::{
-            hybrid_ml_kem::{self, HybridKemCt},
-            internal_crypto_types::{
+            encryption::{
                 Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
             },
+            hybrid_ml_kem::{self, HybridKemCt},
         },
         dummy_domain,
         engine::{

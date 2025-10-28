@@ -12,7 +12,7 @@ use kms_lib::{
     consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID},
     cryptography::{
         attestation::{make_security_module, SecurityModule, SecurityModuleProxy},
-        internal_crypto_types::PrivateSigKey,
+        signatures::PrivateSigKey,
     },
     engine::{
         centralized::central_kms::RealCentralizedKms, run_server,

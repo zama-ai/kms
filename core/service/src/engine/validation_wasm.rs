@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use alloy_dyn_abi::Eip712Domain;
 use alloy_primitives::Address;
 use itertools::Itertools;
@@ -7,16 +5,16 @@ use kms_grpc::{
     kms::v1::{TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload},
     rpc_types::FheTypeResponse,
 };
+use std::collections::{HashMap, HashSet};
 use threshold_fhe::hashing::DomainSep;
 
 use crate::{
     anyhow_error_and_log,
     client::user_decryption_wasm::{compute_link, ParsedUserDecryptionRequest},
     cryptography::{
-        internal_crypto_types::{
-            LegacySerialization, PublicSigKey, Signature, UnifiedPublicEncKey,
-        },
-        signatures::internal_verify_sig,
+        encryption::UnifiedPublicEncKey,
+        internal_crypto_types::LegacySerialization,
+        signatures::{internal_verify_sig, PublicSigKey, Signature},
     },
     some_or_err,
 };
@@ -448,10 +446,8 @@ mod tests {
             compute_link, CiphertextHandle, ParsedUserDecryptionRequest,
         },
         cryptography::{
-            internal_crypto_types::{
-                gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, PublicSigKey,
-            },
-            signatures::internal_sign,
+            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+            signatures::{gen_sig_keys, internal_sign, PublicSigKey},
         },
         dummy_domain,
         engine::{

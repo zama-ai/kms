@@ -1,11 +1,14 @@
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
-use crate::cryptography::internal_crypto_types::UnifiedSigncryption;
-use crate::cryptography::internal_crypto_types::{
-    Designcrypt, PrivateSigKey, Signcrypt, UnifiedDesigncryptionKey, UnifiedPrivateEncKey,
-    UnifiedPublicEncKey, UnifiedSigncryptionKey,
+use crate::cryptography::{
+    encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
+    signatures::PrivateSigKey,
+    signcryption::{
+        Designcrypt, Signcrypt, UnifiedDesigncryptionKey, UnifiedSigncryption,
+        UnifiedSigncryptionKey,
+    },
 };
 use crate::engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr};
-use crate::{consts::SAFE_SER_SIZE_LIMIT, cryptography::internal_crypto_types::PublicSigKey};
+use crate::{consts::SAFE_SER_SIZE_LIMIT, cryptography::signatures::PublicSigKey};
 use kms_grpc::kms::v1::{
     CustodianContext, CustodianRecoveryOutput, CustodianSetupMessage, OperatorBackupOutput,
 };
@@ -398,9 +401,7 @@ impl Custodian {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cryptography::internal_crypto_types::{
-        Encryption, EncryptionScheme, EncryptionSchemeType,
-    };
+    use crate::cryptography::encryption::{Encryption, EncryptionScheme, EncryptionSchemeType};
     use aes_prng::AesRng;
     use rand::SeedableRng;
 

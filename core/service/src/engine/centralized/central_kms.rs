@@ -7,11 +7,11 @@ use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::decompression;
 #[cfg(feature = "non-wasm")]
-use crate::cryptography::internal_crypto_types::SigncryptFHEPlaintext;
+use crate::cryptography::encryption::UnifiedPublicEncKey;
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 #[cfg(feature = "non-wasm")]
-use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
-use crate::cryptography::internal_crypto_types::UnifiedSigncryptionKey;
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signcryption::SigncryptFHEPlaintext;
+use crate::cryptography::signcryption::UnifiedSigncryptionKey;
 #[cfg(feature = "non-wasm")]
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
@@ -29,6 +29,7 @@ use crate::grpc::metastore_status_service::CustodianMetaStore;
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::FhePublicKey;
 use crate::util::meta_store::MetaStore;
+
 use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
 use crate::vault::storage::{
     crypto_material::CentralizedCryptoMaterialStorage, read_all_data_versioned,
@@ -528,7 +529,7 @@ impl<
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         dsep: &DomainSep,
         payload: &T,
-        signature: &crate::cryptography::internal_crypto_types::Signature,
+        signature: &Signature,
         verification_key: &PublicSigKey,
     ) -> anyhow::Result<()> {
         BaseKmsStruct::verify_sig(dsep, payload, signature, verification_key)
@@ -538,7 +539,7 @@ impl<
         &self,
         dsep: &DomainSep,
         msg: &T,
-    ) -> anyhow::Result<crate::cryptography::internal_crypto_types::Signature> {
+    ) -> anyhow::Result<Signature> {
         self.base_kms.sign(dsep, msg)
     }
 
@@ -1007,8 +1008,10 @@ pub(crate) mod tests {
     use crate::consts::{DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
     use crate::cryptography::error::CryptographyError;
-    use crate::cryptography::internal_crypto_types::{gen_sig_keys, DesigncryptFHEPlaintext};
-    use crate::cryptography::signcryption::ephemeral_signcryption_key_generation;
+    use crate::cryptography::signatures::gen_sig_keys;
+    use crate::cryptography::signcryption::{
+        ephemeral_signcryption_key_generation, DesigncryptFHEPlaintext,
+    };
     use crate::dummy_domain;
     use crate::engine::base::{compute_handle, derive_request_id};
     use crate::engine::centralized::central_kms::RealCentralizedKms;

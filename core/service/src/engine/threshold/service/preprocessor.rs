@@ -36,7 +36,7 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     consts::DEFAULT_MPC_CONTEXT,
-    cryptography::internal_crypto_types::PrivateSigKey,
+    cryptography::signatures::PrivateSigKey,
     engine::{
         base::{compute_external_signature_preprocessing, retrieve_parameters},
         keyset_configuration::preproc_proto_to_keyset_config,
@@ -335,7 +335,7 @@ mod tests {
         },
     };
 
-    use crate::{cryptography::internal_crypto_types::gen_sig_keys, dummy_domain};
+    use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
 
     use super::*;
     use crate::engine::{

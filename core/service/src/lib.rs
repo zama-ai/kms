@@ -1,4 +1,6 @@
-use crate::cryptography::internal_crypto_types::{LegacySerialization, UnifiedPublicEncKey};
+use crate::cryptography::{
+    encryption::UnifiedPublicEncKey, internal_crypto_types::LegacySerialization,
+};
 use alloy_dyn_abi::Eip712Domain;
 use alloy_primitives::B256;
 use anyhow::anyhow;
@@ -26,10 +28,11 @@ pub mod cryptography {
     pub mod decompression;
     pub mod error;
     pub mod hybrid_ml_kem;
-    // Allow our deprecated modules for now as we need to be backwards compatible
-    #[allow(deprecated)]
     pub mod internal_crypto_types;
     pub mod signatures;
+    // Allow our deprecated modules for now as we need to be backwards compatible
+    #[allow(deprecated)]
+    pub mod encryption;
     #[allow(deprecated)]
     pub mod signcryption;
 }
@@ -84,6 +87,7 @@ pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) ->
     anyhow!("Warning in {}: {}", Location::caller(), msg)
 }
 
+// TODO move
 pub fn compute_user_decrypt_message_hash(
     payload: &UserDecryptionResponsePayload,
     eip712_domain: &Eip712Domain,

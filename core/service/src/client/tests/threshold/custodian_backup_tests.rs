@@ -6,7 +6,7 @@ cfg_if::cfg_if! {
         use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
         use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
         use crate::consts::SAFE_SER_SIZE_LIMIT;
-        use crate::cryptography::internal_crypto_types::PrivateSigKey;
+        use crate::cryptography::signatures::PrivateSigKey;
         use crate::engine::base::INSECURE_PREPROCESSING_ID;
         use crate::util::key_setup::test_tools::purge_priv;
         use crate::util::key_setup::test_tools::EncryptionConfig;
@@ -28,9 +28,10 @@ cfg_if::cfg_if! {
 
     }
 }
+use crate::backup::BackupCiphertext;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 use crate::consts::SIGNING_KEY_ID;
-use crate::cryptography::internal_crypto_types::{BackupCiphertext, WrappedDKGParams};
+use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::util::key_setup::test_tools::{purge_backup, read_backup_files};
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,

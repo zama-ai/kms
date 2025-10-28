@@ -27,10 +27,8 @@ use kms_lib::{
         operator::{InnerOperatorBackupOutput, Operator},
     },
     cryptography::{
-        internal_crypto_types::{
-            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, PrivateSigKey,
-            PublicSigKey,
-        },
+        encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+        signatures::{gen_sig_keys, PrivateSigKey, PublicSigKey},
         signcryption::SigncryptionPayload,
     },
     engine::{

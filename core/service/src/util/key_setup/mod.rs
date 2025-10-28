@@ -27,7 +27,7 @@ cfg_if::cfg_if! {
 }
 
 use crate::client::client_non_wasm::ClientDataType;
-use crate::cryptography::internal_crypto_types::gen_sig_keys;
+use crate::cryptography::signatures::{gen_sig_keys, PrivateSigKey};
 use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{get_rng, log_data_exists, log_storage_success};
 use crate::vault::storage::{
@@ -79,7 +79,7 @@ pub async fn ensure_client_keys_exist(
     };
 
     // Check if keys already exist with error handling
-    let temp: HashMap<RequestId, crate::cryptography::internal_crypto_types::PrivateSigKey> =
+    let temp: HashMap<RequestId, PrivateSigKey> =
         match read_all_data_versioned(&client_storage, &ClientDataType::SigningKey.to_string())
             .await
         {
@@ -166,7 +166,7 @@ where
     PrivS: StorageForBytes,
 {
     // Check if keys already exist with error handling
-    let temp: HashMap<RequestId, crate::cryptography::internal_crypto_types::PrivateSigKey> =
+    let temp: HashMap<RequestId, PrivateSigKey> =
         match read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string()).await {
             Ok(keys) => keys,
             Err(e) => {
@@ -630,23 +630,22 @@ where
         let mut rng = get_rng(deterministic, Some(i as u64));
 
         // Check if keys already exist with error handling
-        let temp: HashMap<RequestId, crate::cryptography::internal_crypto_types::PrivateSigKey> =
-            match read_all_data_versioned(
-                &priv_storages[i - 1],
-                &PrivDataType::SigningKey.to_string(),
-            )
-            .await
-            {
-                Ok(keys) => keys,
-                Err(e) => {
-                    tracing::error!(
-                        "Failed to read existing server signing keys for party {}: {}",
-                        { i },
-                        e
-                    );
-                    continue; // Skip this party but try others
-                }
-            };
+        let temp: HashMap<RequestId, PrivateSigKey> = match read_all_data_versioned(
+            &priv_storages[i - 1],
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        {
+            Ok(keys) => keys,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to read existing server signing keys for party {}: {}",
+                    { i },
+                    e
+                );
+                continue; // Skip this party but try others
+            }
+        };
 
         if !temp.is_empty() {
             // If signing keys already exist, then do nothing
@@ -1153,7 +1152,7 @@ mod tests {
     use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
 
     use crate::{
-        consts::DEFAULT_PARAM, cryptography::internal_crypto_types::gen_sig_keys, dummy_domain,
+        consts::DEFAULT_PARAM, cryptography::signatures::gen_sig_keys, dummy_domain,
         engine::centralized::central_kms::gen_centralized_crs,
     };
 

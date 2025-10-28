@@ -2,10 +2,10 @@ use crate::anyhow_error_and_log;
 use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{Operator, RecoveryRequestPayload, RecoveryValidationMaterial};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::internal_crypto_types::{
-    Encryption, EncryptionScheme, EncryptionSchemeType, PrivateSigKey, UnifiedPrivateEncKey,
-    UnifiedPublicEncKey,
+use crate::cryptography::encryption::{
+    Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
+use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::ThresholdFheKeys;
@@ -356,9 +356,10 @@ mod tests {
             operator::InternalRecoveryRequest,
             seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
         },
-        cryptography::internal_crypto_types::{
-            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, PublicSigKey,
-            UnifiedDesigncryptionKey,
+        cryptography::{
+            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+            signatures::{gen_sig_keys, PublicSigKey},
+            signcryption::UnifiedDesigncryptionKey,
         },
         engine::context::{NodeInfo, SoftwareVersion},
         util::meta_store::MetaStore,

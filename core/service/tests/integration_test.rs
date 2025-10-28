@@ -575,9 +575,12 @@ mod kms_custodian_binary_tests {
             seed_phrase::custodian_from_seed_phrase,
             KMS_CUSTODIAN, SEED_PHRASE_DESC,
         },
-        cryptography::internal_crypto_types::{
-            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
-            UnifiedPublicEncKey,
+        cryptography::{
+            encryption::{
+                Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
+                UnifiedPublicEncKey,
+            },
+            signatures::gen_sig_keys,
         },
         engine::base::derive_request_id,
         util::file_handling::{safe_read_element_versioned, safe_write_element_versioned},

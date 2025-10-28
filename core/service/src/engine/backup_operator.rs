@@ -1,9 +1,5 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
-use crate::cryptography::internal_crypto_types::{
-    Designcrypt, Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedDesigncryptionKey,
-    UnifiedPrivateEncKey, UnifiedPublicEncKey,
-};
 use crate::engine::utils::query_key_material_availability;
 use crate::{
     anyhow_error_and_log,
@@ -11,7 +7,12 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         attestation::{SecurityModule, SecurityModuleProxy},
-        internal_crypto_types::{PrivateSigKey, PublicSigKey},
+        encryption::{
+            Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
+            UnifiedPublicEncKey,
+        },
+        signatures::{PrivateSigKey, PublicSigKey},
+        signcryption::{Designcrypt, UnifiedDesigncryptionKey},
     },
     engine::{
         base::{BaseKmsStruct, CrsGenMetadata, KmsFheKeyHandles},
@@ -758,7 +759,7 @@ mod tests {
     use super::*;
     use crate::{
         backup::custodian::{CustodianSetupMessagePayload, InternalCustodianContext, HEADER},
-        cryptography::internal_crypto_types::gen_sig_keys,
+        cryptography::signatures::gen_sig_keys,
         engine::base::derive_request_id,
     };
     use aes_prng::AesRng;

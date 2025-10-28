@@ -3,10 +3,10 @@ use crate::compute_user_decrypt_message_hash;
 use crate::consts::ID_LENGTH;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::decompression;
-use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signatures::{internal_sign, internal_verify_sig};
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
@@ -636,7 +636,7 @@ impl BaseKms for BaseKmsStruct {
     fn verify_sig<T>(
         dsep: &DomainSep,
         payload: &T,
-        signature: &crate::cryptography::internal_crypto_types::Signature,
+        signature: &Signature,
         key: &PublicSigKey,
     ) -> anyhow::Result<()>
     where
@@ -646,11 +646,7 @@ impl BaseKms for BaseKmsStruct {
     }
 
     /// sign `msg` using the KMS' private signing key
-    fn sign<T>(
-        &self,
-        dsep: &DomainSep,
-        msg: &T,
-    ) -> anyhow::Result<crate::cryptography::internal_crypto_types::Signature>
+    fn sign<T>(&self, dsep: &DomainSep, msg: &T) -> anyhow::Result<Signature>
     where
         T: Serialize + AsRef<[u8]>,
     {
@@ -969,7 +965,7 @@ pub(crate) mod tests {
     use super::{deserialize_to_low_level, TypedPlaintext};
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
-        cryptography::internal_crypto_types::gen_sig_keys,
+        cryptography::signatures::gen_sig_keys,
         dummy_domain,
         engine::{
             base::{

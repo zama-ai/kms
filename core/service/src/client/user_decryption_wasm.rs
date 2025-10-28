@@ -1,10 +1,12 @@
 use crate::client::client_wasm::Client;
-use crate::cryptography::internal_crypto_types::{
-    DesigncryptFHEPlaintext, PublicSigKey, UnifiedDesigncryptionKey, UnifiedPrivateEncKey,
-};
-use crate::cryptography::internal_crypto_types::{Signature, UnifiedPublicEncKey};
-use crate::cryptography::signatures::internal_verify_sig;
+#[cfg(feature = "wasm_tests")]
+use crate::cryptography::signatures::PrivateSigKey;
 use crate::cryptography::signcryption::insecure_decrypt_ignoring_signature;
+use crate::cryptography::{
+    encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
+    signatures::{internal_verify_sig, PublicSigKey, Signature},
+    signcryption::{DesigncryptFHEPlaintext, UnifiedDesigncryptionKey},
+};
 use crate::engine::validation::{
     check_ext_user_decryption_signature, validate_user_decrypt_responses_against_request,
     DSEP_USER_DECRYPTION,
@@ -717,7 +719,7 @@ pub struct TestingUserDecryptionTranscript {
     // client
     pub(crate) server_addrs: std::collections::HashMap<u32, alloy_primitives::Address>,
     pub(crate) client_address: alloy_primitives::Address,
-    pub(crate) client_sk: Option<crate::cryptography::internal_crypto_types::PrivateSigKey>,
+    pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) degree: u32,
     pub(crate) params: threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
     // example pt and ct
@@ -727,8 +729,8 @@ pub struct TestingUserDecryptionTranscript {
     // request
     pub(crate) request: Option<UserDecryptionRequest>,
     // We keep the unified keys here because for legacy tests we need to produce legacy transcripts
-    pub(crate) eph_sk: crate::cryptography::internal_crypto_types::UnifiedPrivateEncKey,
-    pub(crate) eph_pk: crate::cryptography::internal_crypto_types::UnifiedPublicEncKey,
+    pub(crate) eph_sk: UnifiedPrivateEncKey,
+    pub(crate) eph_pk: UnifiedPublicEncKey,
     // response
     pub(crate) agg_resp: Vec<kms_grpc::kms::v1::UserDecryptionResponse>,
 }

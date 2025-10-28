@@ -56,7 +56,7 @@ use crate::{
     consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
         error::CryptographyError,
-        internal_crypto_types::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
+        signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
     },
     engine::{
         base::{
@@ -663,8 +663,9 @@ mod tests {
 
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
-        cryptography::internal_crypto_types::{
-            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
+        cryptography::{
+            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+            signatures::gen_sig_keys,
         },
         dummy_domain,
         engine::{

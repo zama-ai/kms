@@ -3,12 +3,15 @@ use super::{
     error::BackupError,
     secretsharing,
 };
+use crate::backup::custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput};
 use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::internal_crypto_types::{
-        Designcrypt, PrivateSigKey, PublicSigKey, Signature, Signcrypt, UnifiedDesigncryptionKey,
-        UnifiedPrivateEncKey, UnifiedSigncryption, UnifiedSigncryptionKey,
+    cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
+    cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature},
+    cryptography::signcryption::{
+        Designcrypt, Signcrypt, UnifiedDesigncryptionKey, UnifiedSigncryption,
+        UnifiedSigncryptionKey,
     },
     engine::{
         base::safe_serialize_hash_element_versioned,
@@ -18,10 +21,6 @@ use crate::{
 use crate::{
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
     cryptography::signatures::{internal_sign, internal_verify_sig},
-};
-use crate::{
-    backup::custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
-    cryptography::internal_crypto_types::UnifiedPublicEncKey,
 };
 use kms_grpc::{
     kms::v1::{OperatorBackupOutput, RecoveryRequest},
@@ -795,8 +794,9 @@ mod tests {
     use super::*;
     use crate::{
         backup::custodian::CustodianSetupMessagePayload,
-        cryptography::internal_crypto_types::{
-            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
+        cryptography::{
+            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+            signatures::gen_sig_keys,
         },
         engine::base::derive_request_id,
     };

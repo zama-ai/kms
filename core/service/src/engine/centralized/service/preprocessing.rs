@@ -151,7 +151,7 @@ pub async fn get_preprocessing_res_impl<
 mod tests {
     use super::*;
     use crate::{
-        cryptography::internal_crypto_types::PublicSigKey,
+        cryptography::signatures::PublicSigKey,
         dummy_domain,
         engine::{
             base::{derive_request_id, tests::recover_address},

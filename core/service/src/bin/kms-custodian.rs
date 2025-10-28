@@ -8,7 +8,7 @@ use kms_lib::{
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
     consts::RND_SIZE,
-    cryptography::internal_crypto_types::PublicSigKey,
+    cryptography::signatures::PublicSigKey,
     util::file_handling::{safe_read_element_versioned, safe_write_element_versioned},
 };
 use observability::{conf::TelemetryConfig, telemetry::init_tracing};

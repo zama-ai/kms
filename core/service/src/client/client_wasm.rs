@@ -1,4 +1,4 @@
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 #[cfg(feature = "non-wasm")]
 use aes_prng::AesRng;
 #[cfg(feature = "non-wasm")]

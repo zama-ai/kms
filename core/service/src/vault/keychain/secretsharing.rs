@@ -2,10 +2,9 @@ use super::{EnvelopeLoad, EnvelopeStore, Keychain};
 use crate::{
     anyhow_error_and_log,
     backup::operator::RecoveryRequestPayload,
+    backup::BackupCiphertext,
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::internal_crypto_types::{
-        BackupCiphertext, Decrypt, Encrypt, UnifiedPrivateEncKey, UnifiedPublicEncKey,
-    },
+    cryptography::encryption::{Decrypt, Encrypt, UnifiedPrivateEncKey, UnifiedPublicEncKey},
     vault::storage::{read_versioned_at_request_id, StorageReader},
 };
 use itertools::Itertools;
@@ -197,10 +196,10 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cryptography::internal_crypto_types::EncryptionScheme;
     use crate::{
-        cryptography::internal_crypto_types::{
-            gen_sig_keys, Encryption, EncryptionSchemeType, PrivateSigKey,
+        cryptography::{
+            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+            signatures::{gen_sig_keys, PrivateSigKey},
         },
         engine::base::derive_request_id,
         vault::storage::ram::RamStorage,

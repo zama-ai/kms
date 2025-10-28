@@ -12,7 +12,7 @@ use tfhe_versionable::VersionsDispatch;
 
 use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::internal_crypto_types::{PublicSigKey, UnifiedPublicEncKey},
+    cryptography::{encryption::UnifiedPublicEncKey, signatures::PublicSigKey},
     engine::validation::{
         parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
     },
@@ -382,8 +382,9 @@ mod tests {
     use rand::SeedableRng;
 
     use crate::{
-        cryptography::internal_crypto_types::{
-            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
+        cryptography::{
+            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+            signatures::gen_sig_keys,
         },
         vault::storage::{ram::RamStorage, store_versioned_at_request_id},
     };

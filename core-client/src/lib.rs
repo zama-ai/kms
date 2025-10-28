@@ -23,7 +23,7 @@ use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustod
 use kms_lib::backup::operator::InternalRecoveryRequest;
 use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
-use kms_lib::cryptography::internal_crypto_types::EncryptionSchemeType;
+use kms_lib::cryptography::encryption::EncryptionSchemeType;
 use kms_lib::engine::base::compute_pt_message_hash;
 use kms_lib::engine::base::{
     hash_sol_struct, safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
@@ -3186,7 +3186,7 @@ mod tests {
     use kms_grpc::rpc_types::PrivDataType;
     use kms_lib::{
         consts::{TEST_CENTRAL_CRS_ID, TEST_PARAM},
-        cryptography::internal_crypto_types::PrivateSigKey,
+        cryptography::signatures::PrivateSigKey,
         engine::base::compute_external_pubdata_signature,
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},

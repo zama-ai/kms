@@ -46,7 +46,7 @@ use tracing::Instrument;
 // === Internal Crate Imports ===
 use crate::{
     consts::DEFAULT_MPC_CONTEXT,
-    cryptography::internal_crypto_types::PrivateSigKey,
+    cryptography::signatures::PrivateSigKey,
     engine::{
         base::{
             compute_info_decompression_keygen, compute_info_standard_keygen, retrieve_parameters,
@@ -1195,7 +1195,7 @@ mod tests {
         [RequestId; 4],
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
-        use crate::cryptography::internal_crypto_types::gen_sig_keys;
+        use crate::cryptography::signatures::gen_sig_keys;
         let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let session_preparer_manager = SessionPreparerManager::new_test_session();

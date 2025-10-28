@@ -751,7 +751,7 @@ mod tests {
 
     use crate::{
         consts::TEST_PARAM,
-        cryptography::internal_crypto_types::gen_sig_keys,
+        cryptography::signatures::gen_sig_keys,
         dummy_domain,
         engine::base::{compute_info_standard_keygen, DSEP_PUBDATA_KEY},
         engine::threshold::service::session::SessionPreparerManager,
