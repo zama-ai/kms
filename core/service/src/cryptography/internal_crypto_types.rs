@@ -341,7 +341,6 @@ impl From<&UnifiedPrivateEncKey> for EncryptionSchemeType {
 
 impl UnifiedPrivateEncKey {
     /// Expect the inner type to be the default MlKem512 and return it, otherwise panic
-    /// // TODO still needed?
     pub fn unwrap_ml_kem_512(self) -> PrivateEncKey<ml_kem::MlKem512> {
         match self {
             UnifiedPrivateEncKey::MlKem512(pk) => pk,

@@ -128,7 +128,6 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 {
-    // TODO is this method still needed
     async fn get_operator_public_key(
         &self,
         _request: Request<Empty>,
@@ -826,9 +825,9 @@ mod tests {
         (rec_material, verf_key, dec_key, enc_key)
     }
 
-    fn dummy_output_for_role(role: u64, operator_role: u64) -> CustodianRecoveryOutput {
+    fn dummy_output_for_role(custodian_role: u64, operator_role: u64) -> CustodianRecoveryOutput {
         CustodianRecoveryOutput {
-            custodian_role: role,
+            custodian_role,
             operator_role,
             backup_output: Some(OperatorBackupOutput {
                 signcryption: vec![1, 2, 3],
@@ -838,7 +837,33 @@ mod tests {
         }
     }
 
-    // TODO add tests with bad keys returned
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_filter_custodian_missing_cus_output() {
+        let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
+        let my_role = Role::indexed_from_one(1);
+        let mut outputs = vec![dummy_output_for_role(1, 1)];
+        let cus_2 = CustodianRecoveryOutput {
+            custodian_role: 2,
+            operator_role: 1,
+            backup_output: None, // Missing backup output for custodian role 2
+        };
+        outputs.push(cus_2);
+        let result = filter_custodian_data(
+            outputs,
+            &recovery_material,
+            my_role,
+            &verf_key,
+            &dec_key,
+            &enc_key,
+        )
+        .await;
+        assert!(logs_contain(
+            "Could not find signcryption for custodian role"
+        ));
+        assert!(result.is_err());
+    }
+
     #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_operator_role() {

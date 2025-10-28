@@ -901,7 +901,7 @@ impl TryFrom<&UserDecryptionRequest> for ParsedUserDecryptionRequest {
 }
 
 /// Compute the link as (eip712_signing_hash(pk, domain) || hash(ciphertext handles)).
-/// TODO
+/// TODO(#2781) move to signatures module
 pub fn compute_link(
     req: &ParsedUserDecryptionRequest,
     domain: &Eip712Domain,
@@ -927,7 +927,7 @@ pub fn compute_link(
         handles,
         userAddress: req.client_address,
     };
-
+    // TODO(#2781) ensure s is normalized!!!
     let link = linker.eip712_signing_hash(domain).to_vec();
 
     Ok(link)

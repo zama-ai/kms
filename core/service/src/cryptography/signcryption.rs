@@ -114,22 +114,6 @@ where
     Ok(Signature { sig })
 }
 
-/// Compute the signature on message based on the server's signing key for a given EIP712 domain.
-///
-/// Returns the [Signature]. Concretely r || s.
-/// TODO(#2781) method is dead code, consolidate with the other code that implements eip712 signing
-pub fn sign_eip712<T: alloy_sol_types::SolStruct>(
-    msg: &T,
-    domain: &alloy_sol_types::Eip712Domain,
-    server_sig_key: &PrivateSigKey,
-) -> anyhow::Result<Signature> {
-    let signing_hash = msg.eip712_signing_hash(domain);
-    let sig: k256::ecdsa::Signature = server_sig_key.sk().try_sign(&signing_hash[..])?;
-    // Normalize s value to ensure a consistent signature and protect against malleability
-    let sig = sig.normalize_s().unwrap_or(sig);
-    Ok(Signature { sig })
-}
-
 /// Verify a plain signature.
 ///
 /// Returns Ok if the signature is ok.
