@@ -2,7 +2,7 @@
 
 ################################################################
 ## Second stage builds the kms-core binaries
-FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:v0.12.1 AS kms-core
+FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:v0.12.1-prod AS kms-core
 
 # By default, cargo build --release.
 # But you can provide --build-arg LTO_RELEASE="--profile release-lto-off" locally to build locally
