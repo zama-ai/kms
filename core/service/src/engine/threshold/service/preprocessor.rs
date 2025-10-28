@@ -276,7 +276,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         // Check for resource exhaustion once all the other checks are ok
         // because resource exhaustion can be recovered by sending the exact same request
         // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_crsgen().await?;
+        let permit = self.rate_limiter.start_preproc().await?;
 
         tracing::info!("Starting preproc generation for Request ID {}", request_id);
         ok_or_tonic_abort(self.launch_dkg_preproc(dkg_params, keyset_config, request_id,  ctx, &domain, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
