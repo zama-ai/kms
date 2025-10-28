@@ -2,7 +2,7 @@
 
 ################################################################
 ## Second stage builds the kms-core binaries
-FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS kms-core
+FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:v0.12.1-dev AS kms-core
 
 # By default, cargo build --release.
 # But you can provide --build-arg LTO_RELEASE="--profile release-lto-off" locally to build locally
@@ -38,7 +38,7 @@ RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_V
 ################################################################
 ## Third stage: Copy the binaries from preceding stages
 # This stage will be the final image
-FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
+FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev@sha256:911027da13121ac5f6a4480bcb3540b9f43330dddf60ceb1658bb02c504be38f AS prod
 
 USER root
 # Install required runtime dependencies

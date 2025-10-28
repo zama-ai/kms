@@ -3,7 +3,7 @@
 ################################################################
 ### Multistage build to reduce image size
 ## First stage sets up basic Rust build environment
-FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS builder
+FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:v0.12.1-dev AS builder
 
 ARG APP_CACHE_DIR=kms-core-client
 
@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
 
 ################################################################
 # Runtime Stage
-FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
+FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev@sha256:911027da13121ac5f6a4480bcb3540b9f43330dddf60ceb1658bb02c504be38f AS prod
 
 # Install only required runtime dependencies
 USER root
