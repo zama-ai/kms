@@ -3,7 +3,7 @@
 ################################################################
 ### Multistage build to reduce image size
 ## First stage sets up basic Rust build environment
-FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS builder
+FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:v0.12.1-dev AS builder
 
 ARG APP_CACHE_DIR=kms-core-client
 
