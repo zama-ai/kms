@@ -21,7 +21,7 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/app/target,sharing=locked \
-    cargo install --path . --bin kms-server
+    cargo install --locked --path . --bin kms-server
 
 # Runtime stage
 FROM debian:bookworm-slim
