@@ -29,6 +29,7 @@ pub mod cryptography {
     // Allow our deprecated modules for now as we need to be backwards compatible
     #[allow(deprecated)]
     pub mod internal_crypto_types;
+    pub mod signatures;
     #[allow(deprecated)]
     pub mod signcryption;
 }

@@ -10,18 +10,21 @@
 //!
 //! For encryption a hybrid encryption scheme is used based on ML-KEM and AES GCM.
 
-use super::internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature};
+use super::internal_crypto_types::{PublicSigKey, Signature};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
+use crate::consts::SIG_SIZE;
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
+#[cfg(test)]
+use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::cryptography::internal_crypto_types::{
     Designcrypt, DesigncryptFHEPlaintext, HasEncryptionScheme, HasSigningScheme, Signcrypt,
     SigncryptFHEPlaintext, UnifiedDesigncryptionKey, UnifiedDesigncryptionKeyOwned,
     UnifiedPrivateEncKey, UnifiedPublicEncKey, UnifiedSigncryption, UnifiedSigncryptionKey,
     UnifiedSigncryptionKeyOwned,
 };
-use crate::{anyhow_tracked, consts::SIG_SIZE};
-use ::signature::{Signer, Verifier};
+use crate::cryptography::signatures::{check_normalized, internal_sign};
+use ::signature::Verifier;
 use kms_grpc::kms::v1::TypedPlaintext;
 use rand::{CryptoRng, RngCore};
 use serde::de::DeserializeOwned;
@@ -93,47 +96,6 @@ pub enum SigncryptionPayloadVersioned {
 pub struct SigncryptionPayload {
     pub plaintext: TypedPlaintext,
     pub link: Vec<u8>,
-}
-
-/// Compute the signature on message based on the server's signing key.
-///
-/// Returns the [Signature]. Concretely r || s.
-pub(crate) fn internal_sign<T>(
-    dsep: &DomainSep,
-    msg: &T,
-    server_sig_key: &PrivateSigKey,
-) -> anyhow::Result<Signature>
-where
-    T: AsRef<[u8]> + ?Sized,
-{
-    let sig: k256::ecdsa::Signature = server_sig_key
-        .sk()
-        .try_sign(&[dsep, msg.as_ref()].concat())?;
-    // Normalize s value to ensure a consistent signature and protect against malleability
-    let sig = sig.normalize_s().unwrap_or(sig);
-    Ok(Signature { sig })
-}
-
-/// Verify a plain signature.
-///
-/// Returns Ok if the signature is ok.
-pub(crate) fn internal_verify_sig<T>(
-    dsep: &DomainSep,
-    payload: &T,
-    sig: &Signature,
-    server_verf_key: &PublicSigKey,
-) -> anyhow::Result<()>
-where
-    T: AsRef<[u8]> + ?Sized,
-{
-    // Check that the signature is normalized
-    check_normalized(sig)?;
-
-    // Verify signature
-    server_verf_key
-        .pk()
-        .verify(&[dsep, payload.as_ref()].concat(), &sig.sig)
-        .map_err(|e| anyhow_tracked(e.to_string()))
 }
 
 /// Compute the signcryption of a message encrypted under the public keys received from a client and
@@ -462,20 +424,6 @@ fn check_format_and_signature(
         .map_err(|e| CryptographyError::VerificationError(e.to_string()))
 }
 
-/// Check if a signature is normalized in "low S" form as described in
-/// [BIP 0062: Dealing with Malleability][1].
-///
-/// [1]: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
-pub(crate) fn check_normalized(sig: &Signature) -> Result<(), CryptographyError> {
-    if sig.sig.normalize_s().is_some() {
-        return Err(CryptographyError::VerificationError(format!(
-            "Signature {:X?} is not normalized",
-            sig.sig
-        )));
-    };
-    Ok(())
-}
-
 /// Decrypt a signcrypted message and ignore the signature
 ///
 /// This function does *not* do any verification and is thus insecure and should be used only for
@@ -552,20 +500,17 @@ pub struct UnifiedSigncryptionKeyPairOwned {
 mod tests {
     use super::{ephemeral_signcryption_key_generation, PublicSigKey};
     use crate::cryptography::internal_crypto_types::{
-        gen_sig_keys, Designcrypt, DesigncryptFHEPlaintext, EncryptionSchemeType, Signature,
-        Signcrypt, SigncryptFHEPlaintext, UnifiedDesigncryptionKey, UnifiedSigncryption,
+        gen_sig_keys, Designcrypt, DesigncryptFHEPlaintext, EncryptionSchemeType, Signcrypt,
+        SigncryptFHEPlaintext, UnifiedDesigncryptionKey, UnifiedSigncryption,
     };
     use crate::cryptography::signcryption::{
-        check_format_and_signature, internal_sign, internal_verify_sig, parse_msg,
-        SigncryptionPayload, UnifiedSigncryptionKeyPairOwned, DIGEST_BYTES, DSEP_SIGNCRYPTION,
-        SIG_SIZE,
+        parse_msg, SigncryptionPayload, UnifiedSigncryptionKeyPairOwned, DIGEST_BYTES, SIG_SIZE,
     };
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
     use kms_grpc::kms::v1::TypedPlaintext;
     use rand::SeedableRng;
     use tfhe::FheTypes;
-    use threshold_fhe::hashing::serialize_hash_element;
 
     /// Helper method that creates an rng, a valid client request (on a dummy fhe cipher) and client
     /// signcryption keys SigncryptionPair Returns the rng, client request, client signcryption
@@ -622,15 +567,6 @@ mod tests {
             .designcrypt(b"TESTTEST", &deserialized_cipher)
             .unwrap();
         assert_eq!(msg, decrypted_msg);
-    }
-
-    #[test]
-    fn plain_signing() {
-        let mut rng = AesRng::seed_from_u64(1);
-        let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
-        let msg = "A relatively long message that we wish to be able to later validate".as_bytes();
-        let sig = internal_sign(b"TESTTEST", &msg, &server_sig_key).unwrap();
-        assert!(internal_verify_sig(b"TESTTEST", &msg.to_vec(), &sig, &server_verf_key).is_ok());
     }
 
     #[test]
@@ -720,84 +656,6 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("unexpected verification key digest"));
-    }
-
-    #[test]
-    fn bad_signature() {
-        let mut rng = AesRng::seed_from_u64(42);
-        let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
-        let msg = "Some message".as_bytes();
-        let sig = internal_sign(b"TESTTEST", &msg, &server_sig_key).unwrap();
-        let wrong_msg = "Some message...longer".as_bytes();
-        let res = internal_verify_sig(b"TESTTEST", &wrong_msg, &sig, &server_verf_key);
-        // unwrapping fails
-        assert!(res.is_err());
-    }
-
-    #[test]
-    fn bad_dsep() {
-        let mut rng = AesRng::seed_from_u64(42);
-        let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
-        let msg = "Some message".as_bytes();
-        let sig = internal_sign(b"TESTTEST", &msg, &server_sig_key).unwrap();
-        let res = internal_verify_sig(
-            b"TESTTES_", // wrong domain separator
-            &msg,
-            &sig,
-            &server_verf_key,
-        );
-        // unwrapping fails
-        assert!(res.is_err());
-    }
-
-    #[test]
-    fn unnormalized_signature() {
-        let (_rng, client_signcryption_keys) = test_setup();
-        let msg = "Some message".as_bytes();
-
-        let to_sign = [
-            msg,
-            &client_signcryption_keys.signcrypt_key.receiver_id,
-            &serialize_hash_element(
-                &DSEP_SIGNCRYPTION,
-                &client_signcryption_keys
-                    .signcrypt_key
-                    .receiver_enc_key
-                    .unwrap_ml_kem_512(),
-            )
-            .unwrap(),
-        ]
-        .concat();
-        let sig = internal_sign(
-            b"TESTTEST",
-            &to_sign,
-            &client_signcryption_keys.signcrypt_key.signing_key,
-        )
-        .unwrap();
-        let design_key = client_signcryption_keys.designcryption_key.reference();
-        // Ensure the signature is normalized
-        let internal_sig = sig.sig.normalize_s().unwrap_or(sig.sig);
-        // Ensure the signature is ok
-        assert!(check_format_and_signature(
-            b"TESTTEST",
-            msg.to_vec(),
-            &Signature { sig: internal_sig },
-            &design_key,
-        )
-        .is_ok());
-        // Undo normalization
-        let bad_sig =
-            k256::ecdsa::Signature::from_scalars(internal_sig.r(), internal_sig.s().negate())
-                .unwrap();
-        let res = check_format_and_signature(
-            b"TESTTEST",
-            msg.to_vec(),
-            &Signature { sig: bad_sig },
-            &design_key,
-        );
-        // unwrapping fails
-        assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("is not normalized"));
     }
 
     #[test]

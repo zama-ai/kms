@@ -3,7 +3,8 @@ use crate::cryptography::internal_crypto_types::{
     DesigncryptFHEPlaintext, PublicSigKey, UnifiedDesigncryptionKey, UnifiedPrivateEncKey,
 };
 use crate::cryptography::internal_crypto_types::{Signature, UnifiedPublicEncKey};
-use crate::cryptography::signcryption::{insecure_decrypt_ignoring_signature, internal_verify_sig};
+use crate::cryptography::signatures::internal_verify_sig;
+use crate::cryptography::signcryption::insecure_decrypt_ignoring_signature;
 use crate::engine::validation::{
     check_ext_user_decryption_signature, validate_user_decrypt_responses_against_request,
     DSEP_USER_DECRYPTION,

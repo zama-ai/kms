@@ -3,22 +3,21 @@ use super::{
     error::BackupError,
     secretsharing,
 };
-use crate::backup::custodian::DSEP_BACKUP_CUSTODIAN;
 use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::{
-        internal_crypto_types::{
-            Designcrypt, PrivateSigKey, PublicSigKey, Signature, Signcrypt,
-            UnifiedDesigncryptionKey, UnifiedPrivateEncKey, UnifiedSigncryption,
-            UnifiedSigncryptionKey,
-        },
-        signcryption::internal_verify_sig,
+    cryptography::internal_crypto_types::{
+        Designcrypt, PrivateSigKey, PublicSigKey, Signature, Signcrypt, UnifiedDesigncryptionKey,
+        UnifiedPrivateEncKey, UnifiedSigncryption, UnifiedSigncryptionKey,
     },
     engine::{
         base::safe_serialize_hash_element_versioned,
         validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
+};
+use crate::{
+    backup::custodian::DSEP_BACKUP_CUSTODIAN,
+    cryptography::signatures::{internal_sign, internal_verify_sig},
 };
 use crate::{
     backup::custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
@@ -308,11 +307,7 @@ impl RecoveryValidationMaterial {
         let serialized_payload = bc2wrap::serialize(&payload).map_err(|e| {
             anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
         })?;
-        let signature = &crate::cryptography::signcryption::internal_sign(
-            &DSEP_BACKUP_RECOVERY,
-            &serialized_payload,
-            sk,
-        )?;
+        let signature = &internal_sign(&DSEP_BACKUP_RECOVERY, &serialized_payload, sk)?;
         let signature_buf = signature.sig.to_vec();
         let res = Self {
             payload,

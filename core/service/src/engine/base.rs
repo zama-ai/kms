@@ -6,7 +6,7 @@ use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
-use crate::cryptography::signcryption::internal_verify_sig;
+use crate::cryptography::signatures::{internal_sign, internal_verify_sig};
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
@@ -654,7 +654,7 @@ impl BaseKms for BaseKmsStruct {
     where
         T: Serialize + AsRef<[u8]>,
     {
-        crate::cryptography::signcryption::internal_sign(dsep, msg, &self.sig_key)
+        internal_sign(dsep, msg, &self.sig_key)
     }
 
     fn digest<T>(domain_separator: &DomainSep, msg: &T) -> anyhow::Result<Vec<u8>>

@@ -16,7 +16,7 @@ use crate::{
         internal_crypto_types::{
             LegacySerialization, PublicSigKey, Signature, UnifiedPublicEncKey,
         },
-        signcryption::internal_verify_sig,
+        signatures::internal_verify_sig,
     },
     some_or_err,
 };
@@ -447,8 +447,11 @@ mod tests {
         client::user_decryption_wasm::{
             compute_link, CiphertextHandle, ParsedUserDecryptionRequest,
         },
-        cryptography::internal_crypto_types::{
-            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, PublicSigKey,
+        cryptography::{
+            internal_crypto_types::{
+                gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, PublicSigKey,
+            },
+            signatures::internal_sign,
         },
         dummy_domain,
         engine::{
@@ -826,12 +829,7 @@ mod tests {
         // happy path for empty external_signature, so we check ECDSA
         {
             let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
-            let signature = &crate::cryptography::signcryption::internal_sign(
-                &DSEP_USER_DECRYPTION,
-                &pivot_buf,
-                &sk0,
-            )
-            .unwrap();
+            let signature = &internal_sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
             validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
