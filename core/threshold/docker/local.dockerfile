@@ -12,7 +12,7 @@ COPY . .
 ARG FEATURES
 
 RUN mkdir -p /app/ddec/bin
-RUN cargo install --path core/threshold --root . --bins --no-default-features --features=${FEATURES}
+RUN cargo install --locked --path core/threshold --root . --bins --no-default-features --features=${FEATURES}
     # cargo install --path . --root . --bins --no-default-features --features=${FEATURES}
     # NOTE: if we're in a workspace then we need to set a different path
 
