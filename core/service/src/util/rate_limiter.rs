@@ -80,7 +80,7 @@ macro_rules! impl_rate_limiter_for {
         /// The resource is returned when the permit is dropped.
         ///
         /// If there's an error, we return `ResourceExhausted`.
-        pub async fn $fn_name(
+        pub(crate) async fn $fn_name(
             &self,
         ) -> Result<OwnedSemaphorePermit, kms_grpc::utils::tonic_result::BoxedStatus> {
             let num_tokens = self.config.$token_name;
