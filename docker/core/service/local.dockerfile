@@ -9,7 +9,7 @@ COPY . .
 
 # Install the binary leaving it in the WORKDIR/bin folder
 RUN mkdir -p /app/kms/bin
-RUN cargo install --path core/service --root . --bin kms-server -F insecure
+RUN cargo install --locked --path core/service --root . --bin kms-server -F insecure
 
 
 ################################################################
