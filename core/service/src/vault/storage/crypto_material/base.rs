@@ -924,7 +924,7 @@ where
                 let pk = T::read_from_storage(&(*pub_storage), req_id)
                     .await
                     .inspect_err(|e| {
-                        tracing::error!("Failed to read CRS with the handle {} ({e})", req_id);
+                        tracing::error!("Failed to read public material with the handle {} ({e})", req_id);
                     })?;
 
                 let mut write_cache_guard = cache.write().await;
