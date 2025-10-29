@@ -60,6 +60,7 @@ impl Default for RequestId {
         RequestId(res)
     }
 }
+
 /// Compared the request ID as if it is an integer
 impl PartialOrd for RequestId {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -410,6 +411,22 @@ macro_rules! impl_identifiers {
                             Some(proto) => $type::try_from(proto),
                             None => Err(IdentifierError::MissingIdentifier),
                         }
+                    }
+                }
+
+                impl From<$type> for tfhe::Tag {
+                    fn from(value: $type) -> Self {
+                        let mut tag = tfhe::Tag::default();
+                        tag.set_data(value.as_bytes());
+                        tag
+                    }
+                }
+
+                impl From<&$type> for tfhe::Tag {
+                    fn from(value: &$type) -> Self {
+                        let mut tag = tfhe::Tag::default();
+                        tag.set_data(value.as_bytes());
+                        tag
                     }
                 }
             };
