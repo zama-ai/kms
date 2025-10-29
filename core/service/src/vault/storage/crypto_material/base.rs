@@ -924,7 +924,10 @@ where
                 let pk = T::read_from_storage(&(*pub_storage), req_id)
                     .await
                     .inspect_err(|e| {
-                        tracing::error!("Failed to read public material with the handle {} ({e})", req_id);
+                        tracing::error!(
+                            "Failed to read public material with the handle {} ({e})",
+                            req_id
+                        );
                     })?;
 
                 let mut write_cache_guard = cache.write().await;
@@ -988,7 +991,7 @@ where
                 }
                 Err(e) => {
                     return Err(anyhow_error_and_warn_log(format!(
-                        "Failed to read crypto material from storage for request ID {req_id}: {e}"
+                        "Failed to refresh crypto material from storage for request ID {req_id}: {e}"
                     )));
                 }
             }
