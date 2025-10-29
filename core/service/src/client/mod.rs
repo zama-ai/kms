@@ -2,6 +2,8 @@
 pub mod client_non_wasm;
 pub mod client_wasm;
 #[cfg(feature = "non-wasm")]
+pub mod context;
+#[cfg(feature = "non-wasm")]
 pub mod crs_gen;
 #[cfg(feature = "non-wasm")]
 pub mod custodian_context;

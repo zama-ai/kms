@@ -3,17 +3,12 @@
 
 use kms_grpc::identifiers::ContextId;
 use serde::{Deserialize, Serialize};
-use tfhe::{
-    named::Named,
-    safe_serialization::{safe_deserialize, safe_serialize},
-    Versionize,
-};
+use tfhe::{named::Named, Versionize};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::execution::runtime::party::Role;
 
 use crate::{
-    consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::internal_crypto_types::{PublicSigKey, UnifiedPublicEncKey},
+    cryptography::internal_crypto_types::PublicSigKey,
     engine::validation::{
         parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
     },
@@ -45,6 +40,13 @@ pub struct SoftwareVersion {
     pub minor: u8,
     pub patch: u8,
     pub tag: Option<String>,
+}
+
+impl SoftwareVersion {
+    pub fn current() -> Self {
+        let version = env!("CARGO_PKG_VERSION");
+        Self::from(version)
+    }
 }
 
 impl PartialOrd for SoftwareVersion {
@@ -111,11 +113,13 @@ pub enum NodeInfoVersioned {
 #[derive(Clone, Debug, Versionize, Serialize, Deserialize)]
 #[versionize(NodeInfoVersioned)]
 pub struct NodeInfo {
-    pub name: String,
+    pub mpc_identity: String,
     pub party_id: u32,
-    pub verification_key: PublicSigKey,
-    pub backup_encryption_public_key: UnifiedPublicEncKey,
+    /// This is optional for legacy reasons because typically MPC parties
+    /// do not know the public verification keys of other parties when it first starts.
+    pub verification_key: Option<PublicSigKey>,
 
+    /// Must be a valid URL.
     pub external_url: String,
 
     // Unfortunately, the TLS certificate is a Vec<u8> here,
@@ -130,21 +134,13 @@ impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
     type Error = anyhow::Error;
 
     fn try_from(value: kms_grpc::kms::v1::KmsNode) -> anyhow::Result<Self> {
-        // Observe that legacy formats have never been used here, so it is safe to use safe_deserialize
-        let backup_encryption_public_key = {
-            safe_deserialize(
-                std::io::Cursor::new(&value.backup_encryption_public_key),
-                SAFE_SER_SIZE_LIMIT,
-            )
-            .map_err(|e| {
-                anyhow::anyhow!("Failed to deserialize backup encryption public key: {}", e)
-            })?
-        };
         Ok(NodeInfo {
-            name: value.name,
+            mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
-            verification_key: bc2wrap::deserialize(&value.verification_key)?, // LEGACY
-            backup_encryption_public_key,
+            verification_key: match value.verification_key {
+                None => None,
+                Some(vk_bytes) => Some(bc2wrap::deserialize(&vk_bytes)?),
+            },
             external_url: value.external_url,
             tls_cert: value.tls_cert,
             public_storage_url: value.public_storage_url,
@@ -161,18 +157,13 @@ impl TryFrom<NodeInfo> for kms_grpc::kms::v1::KmsNode {
     type Error = anyhow::Error;
     fn try_from(value: NodeInfo) -> anyhow::Result<Self> {
         // Observe that legacy formats have never been used here, so it is safe to use safe_serialize
-        let mut backup_encryption_public_key = Vec::new();
-        safe_serialize(
-            &value.backup_encryption_public_key,
-            &mut backup_encryption_public_key,
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .map_err(|e| anyhow::anyhow!("Failed to serialize backup encryption public key: {}", e))?;
         Ok(kms_grpc::kms::v1::KmsNode {
-            name: value.name,
+            mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
-            verification_key: bc2wrap::serialize(&value.verification_key)?,
-            backup_encryption_public_key,
+            verification_key: match value.verification_key {
+                Some(inner) => Some(bc2wrap::serialize(&inner)?),
+                None => None,
+            },
             external_url: value.external_url,
             tls_cert: value.tls_cert,
             public_storage_url: value.public_storage_url,
@@ -223,7 +214,12 @@ impl ContextInfo {
         let my_node = self
             .kms_nodes
             .iter()
-            .find(|node| node.verification_key.pk() == verification_key)
+            .find(|node| {
+                node.verification_key
+                    .as_ref()
+                    .map(|inner| inner.pk() == verification_key)
+                    .unwrap_or(false)
+            })
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "Node with verification key {:?} not found in context {}",
@@ -283,7 +279,7 @@ impl ContextInfo {
         let names: std::collections::HashSet<_> = self
             .kms_nodes
             .iter()
-            .map(|node| node.name.clone())
+            .map(|node| node.mpc_identity.clone())
             .collect();
         if names.len() != self.kms_nodes.len() {
             return Err(anyhow::anyhow!(
@@ -335,6 +331,18 @@ impl ContextInfo {
                     self.context_id(),
                 ));
             }
+        }
+
+        // check that the urls are valid
+        for node in &self.kms_nodes {
+            let mpc_url = url::Url::parse(&node.external_url)
+                .map_err(|e| anyhow::anyhow!("url parsing failed {:?}", e))?;
+            let _hostname = mpc_url
+                .host_str()
+                .ok_or_else(|| anyhow::anyhow!("missing host"))?;
+            let _port = mpc_url
+                .port()
+                .ok_or_else(|| anyhow::anyhow!("missing port"))?;
         }
 
         Ok(Role::indexed_from_one(my_node.party_id as usize))
@@ -399,14 +407,10 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::KmsContext {
 
 #[cfg(test)]
 mod tests {
-    use aes_prng::AesRng;
     use kms_grpc::rpc_types::PrivDataType;
-    use rand::SeedableRng;
 
     use crate::{
-        cryptography::internal_crypto_types::{
-            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
-        },
+        cryptography::internal_crypto_types::gen_sig_keys,
         vault::storage::{ram::RamStorage, store_versioned_at_request_id},
     };
 
@@ -528,28 +532,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_context_info_duplicate_party_ids() {
-        let mut rng = AesRng::seed_from_u64(42);
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
-        let (_, backup_encryption_public_key) = encryption.keygen().unwrap();
         let (verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
 
         let context = ContextInfo {
             kms_nodes: vec![
                 NodeInfo {
-                    name: "Node1".to_string(),
+                    mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    verification_key: verification_key.clone(),
-                    backup_encryption_public_key: backup_encryption_public_key.clone(),
+                    verification_key: Some(verification_key.clone()),
                     external_url: "localhost:12345".to_string(),
                     tls_cert: vec![],
                     public_storage_url: "http://storage".to_string(),
                     extra_verification_keys: vec![],
                 },
                 NodeInfo {
-                    name: "Node2".to_string(),
+                    mpc_identity: "Node2".to_string(),
                     party_id: 1, // Duplicate party_id
-                    verification_key,
-                    backup_encryption_public_key,
+                    verification_key: Some(verification_key),
                     external_url: "localhost:12345".to_string(),
                     tls_cert: vec![],
                     public_storage_url: "http://storage".to_string(),

@@ -7,6 +7,7 @@ use crate::engine::validation::validate_public_decrypt_responses_against_request
 use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
+use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext};
 use kms_grpc::rpc_types::alloy_to_protobuf_domain;
@@ -22,6 +23,7 @@ impl Client {
         ciphertexts: Vec<TypedCiphertext>,
         domain: &Eip712Domain,
         request_id: &RequestId,
+        context_id: Option<&ContextId>,
         key_id: &RequestId,
     ) -> anyhow::Result<PublicDecryptionRequest> {
         if !request_id.is_valid() {
@@ -38,7 +40,7 @@ impl Client {
             domain: Some(domain_msg),
             request_id: Some((*request_id).into()),
             extra_data: vec![],
-            context_id: None,
+            context_id: context_id.map(|c| (*c).into()),
             epoch_id: None,
         };
         Ok(req)

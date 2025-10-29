@@ -461,32 +461,30 @@ message TypedSigncryptedCiphertext {
 message KmsNode {
   // The human-readable name of the KMS node operator,
   // every party in an MPC protocol must have a unique name.
-  string name = 1;
+  string mpc_identity = 1;
   // The ID of the party in the MPC protocol,
   // every party in an MPC protocol must have a unique ID.
   int32 party_id = 2;
   // The verification key of the KMS node operator,
   // this is the public key used to verify the signatures produced by the KMS node.
-  bytes verification_key = 3;
-  // The public key used for encrypting backup shares.
-  bytes backup_encryption_public_key = 4;
+  optional bytes verification_key = 3;
 
   // The external port and host of the KMS node,
   // this is used for connecting to the KMS node from other KMS parties.
-  string external_url = 5;
+  string external_url = 4;
 
   // The TLS certificate of the KMS node.
-  bytes tls_cert = 6;
+  bytes tls_cert = 5;
 
   // The public storage URL of the KMS node,
   // this is used for storing and retrieving public FHE keys,
   // evaluation keys and other public data.
-  string public_storage_url = 7;
+  string public_storage_url = 6;
 
   // A list of public keys that are permitted to make transactions to the public chain on behalf this node.
   // I.e. the signing keys of this entity which they will use to make transactions to the Gateway.
   // It may be empty if the node does not have any such keys, in this case the verification_key will be used.
-  repeated bytes extra_verification_keys = 8;
+  repeated bytes extra_verification_keys = 7;
 }
 
 // The context of the KMS, containing the list of KMS nodes and other metadata.
@@ -548,7 +546,7 @@ message CustodianContext {
 // If the active_context may be empty, then the new_context must be the first context
 // in the chain of contexts.
 message NewKmsContextRequest {
-  KmsContext active_context = 1;
+  RequestId active_context = 1;
   KmsContext new_context = 2;
 }
 

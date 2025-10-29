@@ -38,6 +38,8 @@ use tonic::transport::{server::TcpIncoming, Server};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_tls::rustls::TlsIncoming;
 
+#[cfg(test)]
+use crate::vault::storage::delete_context_at_id;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
@@ -51,6 +53,7 @@ use crate::{
     engine::{
         backup_operator::RealBackupOperator,
         base::{BaseKmsStruct, CrsGenMetadata, KeyGenMetadata},
+        context::{ContextInfo, NodeInfo, SoftwareVersion},
         context_manager::ThresholdContextManager,
         prepare_shutdown_signals,
         threshold::{
@@ -69,7 +72,7 @@ use crate::{
     vault::{
         storage::{
             crypto_material::ThresholdCryptoMaterialStorage, read_all_data_versioned,
-            read_pk_at_request_id, Storage,
+            read_pk_at_request_id, store_context_at_id, Storage,
         },
         Vault,
     },
@@ -215,7 +218,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
 pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: ThresholdPartyConf,
     public_storage: PubS,
-    private_storage: PrivS,
+    mut private_storage: PrivS,
     backup_storage: Option<Vault>,
     security_module: Option<Arc<SecurityModuleProxy>>,
     mpc_listener: TcpListener,
@@ -372,13 +375,6 @@ where
         config.min_dec_cache,
     )));
     let custodian_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(custodian_context)));
-    let crypto_storage = ThresholdCryptoMaterialStorage::new(
-        public_storage,
-        private_storage,
-        backup_storage,
-        pk_map,
-        key_info_versioned,
-    );
 
     // TODO currently we need to insert a default context
     // this can be removed when we have dynamic session preparers
@@ -396,10 +392,59 @@ where
             session_maker
                 .add_context(context_id, my_role, role_assignment, config.threshold)
                 .await;
+            // we also need to store it in the storage
+
+            let kms_nodes = peers
+                .iter()
+                .map(|peer| {
+                    let (role, identity) = peer.into_role_identity();
+                    // URL format is only valid with a scheme, so we add it here
+                    let scheme = match peer.tls_cert {
+                        Some(_) => "https",
+                        None => "http",
+                    };
+                    NodeInfo {
+                        mpc_identity: identity.mpc_identity().to_string(),
+                        party_id: role.one_based() as u32,
+                        verification_key: None, // we do not know the verification key of the other parties at startup
+                        external_url: format!(
+                            "{}://{}:{}",
+                            scheme,
+                            identity.hostname(),
+                            identity.port()
+                        ),
+                        tls_cert: vec![], // TODO
+                        public_storage_url: "".to_string(),
+                        extra_verification_keys: vec![],
+                    }
+                })
+                .collect::<Vec<_>>();
+            let context_info = ContextInfo {
+                kms_nodes,
+                context_id,
+                previous_context_id: None,
+                software_version: SoftwareVersion::current(),
+                threshold: config.threshold as u32,
+            };
+
+            // Note that we have to delete the old context under DEFAULT_MPC_CONTEXT
+            // because in tests we restart KMS with different ports.
+            #[cfg(test)]
+            delete_context_at_id(&mut private_storage, &context_id).await?;
+
+            store_context_at_id(&mut private_storage, &context_id, &context_info).await?;
             Some(())
         }
         None => None,
     };
+
+    let crypto_storage = ThresholdCryptoMaterialStorage::new(
+        public_storage,
+        private_storage,
+        backup_storage,
+        pk_map,
+        key_info_versioned,
+    );
 
     let metastore_status_service = MetaStoreStatusServiceImpl::new(
         Some(dkg_pubinfo_meta_store.clone()),  // key_gen_store
@@ -521,13 +566,13 @@ where
     #[cfg(feature = "insecure")]
     let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
 
-    let context_manager = ThresholdContextManager {
-        base_kms: base_kms.new_instance().await,
-        crypto_storage: crypto_storage.inner.clone(),
+    let context_manager = ThresholdContextManager::new(
+        base_kms.new_instance().await,
+        crypto_storage.inner.clone(),
         custodian_meta_store,
-        my_role: Role::indexed_from_one(config.my_id),
+        Role::indexed_from_one(config.my_id),
         session_maker,
-    };
+    );
 
     let backup_operator = RealBackupOperator::new(
         Role::indexed_from_one(config.my_id),

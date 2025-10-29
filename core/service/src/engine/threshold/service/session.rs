@@ -181,7 +181,7 @@ impl SessionMaker {
                 .ok_or_else(|| anyhow::anyhow!("missing port"))?;
             role_assignment_map.insert(
                 Role::indexed_from_one(node.party_id as usize),
-                Identity::new(hostname.to_string(), port, Some(node.name.clone())),
+                Identity::new(hostname.to_string(), port, Some(node.mpc_identity.clone())),
             );
         }
 
@@ -197,6 +197,11 @@ impl SessionMaker {
         )
         .await;
         Ok(())
+    }
+
+    pub(crate) async fn remove_context(&self, context_id: &ContextId) {
+        let mut context_map = self.context_map.write().await;
+        context_map.remove(context_id);
     }
 
     pub(crate) async fn add_epoch(
@@ -236,6 +241,12 @@ impl SessionMaker {
         context_id: ContextId,
         network_mode: NetworkMode,
     ) -> anyhow::Result<BaseSession> {
+        tracing::info!(
+            "Making base session: session_id={}, context_id={:?}, network_mode={:?}",
+            session_id,
+            context_id,
+            network_mode
+        );
         let networking = self
             .get_networking(session_id, context_id, network_mode)
             .await;
@@ -380,6 +391,12 @@ impl SessionMaker {
                 network_mode,
             )
             .await?;
+        tracing::debug!(
+            "Created networking for session_id={}, context_id={:?}, network_mode={:?}",
+            session_id,
+            context_id,
+            network_mode
+        );
         Ok(networking)
     }
 

@@ -880,12 +880,13 @@ impl<
         );
         let base_kms = BaseKmsStruct::new(KMSType::Centralized, sk)?;
 
-        let context_manager: CentralizedContextManager<PubS, PrivS> = CentralizedContextManager {
-            base_kms: base_kms.new_instance().await,
-            crypto_storage: crypto_storage.inner.clone(),
-            custodian_meta_store: Arc::clone(&custodian_meta_store),
-            my_role: Role::indexed_from_one(1), // Centralized KMS is always party 1
-        };
+        let context_manager: CentralizedContextManager<PubS, PrivS> =
+            CentralizedContextManager::new(
+                base_kms.new_instance().await,
+                crypto_storage.inner.clone(),
+                Arc::clone(&custodian_meta_store),
+                Role::indexed_from_one(1), // Centralized KMS is always party 1
+            );
         let backup_operator = RealBackupOperator::new(
             Role::indexed_from_one(1), // Centralized KMS is always party 1
             base_kms.new_instance().await,

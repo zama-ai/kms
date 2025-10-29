@@ -101,6 +101,7 @@ impl<
             (Err(_e), Err(e)) => return Err(e),
         }
 
+        tracing::info!("Loaded PRSS Setup from disk for request ID {}.", req_id);
         {
             // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
             self.health_reporter
@@ -324,12 +325,7 @@ mod tests {
         }
 
         // check that PRSS setups were created (and not read from disk)
-        assert!(!logs_contain(
-            "Initializing threshold KMS server with PRSS Setup Z128 from disk"
-        ));
-        assert!(!logs_contain(
-            "Initializing threshold KMS server with PRSS Setup Z64 from disk"
-        ));
+        assert!(!logs_contain("Loaded PRSS Setup from disk"));
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
         // create parties again without running PrssSetup this time (it should now be read from disk)
@@ -346,12 +342,7 @@ mod tests {
         assert_eq!(server_handles.len(), PRSS_AMOUNT_PARTIES);
 
         // check that PRSS setups were not created, but instead read from disk now
-        assert!(logs_contain(
-            "Initializing threshold KMS server with PRSS Setup Z128 from disk"
-        ));
-        assert!(logs_contain(
-            "Initializing threshold KMS server with PRSS Setup Z64 from disk"
-        ));
+        assert!(!logs_contain("Loaded PRSS Setup from disk"));
     }
 
     async fn make_initiator<

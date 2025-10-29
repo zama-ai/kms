@@ -257,6 +257,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         &kms_client,
         &mut internal_client,
         &key_id,
+        None,
         vec![TestingPlaintext::U8(u8::MAX)],
         EncryptionConfig {
             compression: false,
