@@ -109,7 +109,7 @@ impl GrpcSendingService {
         };
         tracing::debug!("Creating {} channel to '{}'", proto, receiver);
         // When running within the AWS Nitro enclave, we have to go through
-        // through vsock proxies to make TCP connections to peers.
+        // vsock proxies to make TCP connections to peers.
         let endpoint: Uri = if self.peer_tcp_proxy {
             format!("{proto}://localhost:{}", receiver.port())
                 .parse::<Uri>()
