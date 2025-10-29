@@ -1,16 +1,16 @@
-# Below is the configuration for the tkms service, usually this is the
+# This section is the configuration for the KMS service. Usually this is the
 # interface that the connector interacts with to submit requests and query for
 # responses.
 [service]
 
-# IP address that the tcp listener binds on. This endpoint should not be
+# IP address that the TCP listener binds on. This endpoint should not be
 # exposed externally.
 listen_address = "0.0.0.0"
 
-# Port number that the tcp listener binds on.
+# Port number that the TCP listener binds on.
 listen_port = 50100
 
-# The timeout in seconds for all GRPC request handlers.
+# The timeout in seconds for all gRPC request handlers.
 timeout_secs = 360
 
 # Maximum GRPC message size in bytes
@@ -65,7 +65,7 @@ path = "./keys"
 path = "./backup_vault"
 
 # The section below contains the relevant configuration for communicating with
-# other TKMS nodes. This section is not needed when running TKMS in the
+# other KMS nodes. This section is not needed when running KMS in the
 # centralized mode.
 [threshold]
 
@@ -75,7 +75,8 @@ path = "./backup_vault"
 listen_address = "0.0.0.0"
 listen_port = 50001
 
-# The identity of myself, this number must be unique.
+# The MPC identity of myself, this number must be unique across all cores.
+# It must be a monotonically increasing positive integer starting at 1.
 my_id = 1
 
 # Threshold is the number of corruptions that the protocol handles. Currently
@@ -100,9 +101,12 @@ min_dec_cache = 6000
 # doing preprocessing for key generation. Observe that 2 sessions is the
 # minimum since one will take care of triple and randomness generation and one
 # will take care of bit preprocessing.
+# In production it's recommended to set
+# num_sessions_preproc = 1.5 * #CPUs (number of cores).
 num_sessions_preproc = 2
 
-# The type of decryption protocol to run. Available types: NoiseFloodSmall or BitDecSmall
+# The type of decryption protocol to run.
+# Available types: NoiseFloodSmall or BitDecSmall
 decryption_mode = "NoiseFloodSmall"
 
 # Paths to optional TLS certificate and private key in the PEM
@@ -112,7 +116,7 @@ decryption_mode = "NoiseFloodSmall"
 cert.path = "certs/cert_p1.pem"
 key.path = "certs/key_p1.pem"
 
-# Every core/service needs to be aware of all other core/services. In the
+# Every core needs to be aware of all other cores. In the
 # future there should be an option to load this configuration from a blockchain
 # smart contract. At the moment they need to be loaded from the same
 # configuration file.
@@ -158,8 +162,8 @@ mpc_identity = "p4"
 port = 50004
 tls_cert.path = "certs/cert_p4.pem"
 
-# Specify the network configuration of the core-to-core communication
-# Values below are the same as the one in the constant file for the core network
+# The network configuration of the core-to-core communication
+# Values below are the same as the one in the constant file for the core-to-core network
 # This is optional, and falls back to constant file if not provided.
 [threshold.core_to_core_net]
 message_limit = 70
@@ -181,7 +185,6 @@ max_opened_inactive_sessions_per_party = 100
 # for use in key generation. (Unset by default)
 # [threshold.preproc_redis]
 # host = "redis://127.0.0.1"
-#
 
 [telemetry]
 tracing_service_name = "kms-threshold-1"
@@ -211,3 +214,20 @@ crsgen = 100
 preproc = 25000
 keygen = 1000
 reshare = 1
+
+# Internal threading config, specifying the size of the thread pools
+# for tokio and rayon.
+# If not set, the core will determine default values based on the number
+# of available CPUs (std::thread::available_parallelism).
+# Default values are:
+# num_tokio_threads = ceil(#CPUs / 8)
+# num_rayon threads = #CPUs - num_tokio_threads
+# It's also recommended to set threshold.num_sessions_preproc as follows:
+# num_sessions_preproc = 1.5 * #CPUs
+# Below, a sensible example for 16 cores is given:
+# Pool sizes can be tweaked according to performance requirements and
+# available hardware.
+# These values should be identical on all cores.
+# [internal_config]
+# num_tokio_threads = 2
+# num_rayon_threads = 14
