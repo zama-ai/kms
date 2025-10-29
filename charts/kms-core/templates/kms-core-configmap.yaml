@@ -154,15 +154,10 @@ data:
     [[threshold.peers]]
     party_id = {{ int .id }}
     mpc_identity = {{ .host | quote }}
-          {{- if $.Values.kmsCore.nitroEnclave.enabled }}
-            {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
     address = {{ .host | quote }}
-            {{- else }}
-    address = "localhost"
-            {{- end }}
+          {{- if $.Values.kmsCore.nitroEnclave.enabled }}
     port = {{ add $.Values.kmsCore.nitroEnclave.ports.peer .id }}
           {{- else }}
-    address = {{ .host | quote }}
     port = {{ int .port }}
           {{- end }}
           {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
@@ -178,15 +173,10 @@ data:
     [[threshold.peers]]
     party_id = {{ int $i }}
     mpc_identity = {{ .host | quote }}
-          {{- if $.Values.kmsCore.nitroEnclave.enabled }}
-            {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
     address = {{ (printf "%s-%d" $kmsCoreName $i) | quote }}
-            {{- else }}
-    address = "localhost"
-            {{- end }}
+          {{- if $.Values.kmsCore.nitroEnclave.enabled }}
     port = {{ add $.Values.kmsCore.nitroEnclave.ports.peer $i }}
             {{- else }}
-    address = {{ (printf "%s-%d" $kmsCoreName $i) | quote }}
     port = {{ int $.Values.kmsCore.ports.peer }}
           {{- end }}
         {{- end }}

@@ -857,7 +857,7 @@ where
     }
 
     // Generate key set and shares
-    let keyset = gen_key_set(dkg_params, &mut rng);
+    let keyset = gen_key_set(dkg_params, key_id.into(), &mut rng);
 
     // Generate key shares with error handling
     let key_shares = match keygen_all_party_shares_from_keyset(

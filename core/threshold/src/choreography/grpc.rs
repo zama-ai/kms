@@ -912,6 +912,9 @@ where
 
         let request = request.into_inner();
 
+        // should match what is in [self.threshold_key_gen_result]
+        let tag = tfhe::Tag::default();
+
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
@@ -979,6 +982,7 @@ where
                         &mut base_session,
                         preproc.as_mut(),
                         dkg_params,
+                        tag,
                         None,
                     )
                     .await
@@ -1002,6 +1006,7 @@ where
                         &mut base_session,
                         &mut preproc,
                         dkg_params,
+                        tag,
                         None,
                     )
                     .await
@@ -1034,6 +1039,7 @@ where
                         &mut base_session,
                         preproc.as_mut(),
                         dkg_params,
+                        tag,
                         None,
                     )
                     .await
@@ -1057,6 +1063,7 @@ where
                         &mut base_session,
                         &mut preproc,
                         dkg_params,
+                        tag,
                         None,
                     )
                     .await
@@ -1087,6 +1094,8 @@ where
         request: tonic::Request<ThresholdKeyGenResultRequest>,
     ) -> Result<tonic::Response<ThresholdKeyGenResultResponse>, tonic::Status> {
         let request = request.into_inner();
+        // should match what is in [self.threshold_key_gen]
+        let tag = tfhe::Tag::default();
 
         let kg_result_params: ThresholdKeyGenResultParams = bc2wrap::deserialize(&request.params)
             .map_err(|e| {
@@ -1126,7 +1135,7 @@ where
                     )
                 })?;
 
-            let keys = local_initialize_key_material(&mut base_session, dkg_params)
+            let keys = local_initialize_key_material(&mut base_session, dkg_params, tag)
                 .await
                 .map_err(|e| {
                     tonic::Status::new(
@@ -2704,6 +2713,7 @@ pub(crate) async fn fill_network_memory_info_single_session<B: BaseSessionHandle
 async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
     session: &mut BaseSession,
     params: DKGParams,
+    tag: tfhe::Tag,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: crate::algebra::structure_traits::Ring,
@@ -2711,13 +2721,15 @@ where
 {
     let _tracing_subscribe =
         tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::new());
-    crate::execution::tfhe_internals::test_feature::initialize_key_material(session, params).await
+    crate::execution::tfhe_internals::test_feature::initialize_key_material(session, params, tag)
+        .await
 }
 
 #[cfg(not(feature = "testing"))]
 async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
     _session: &mut BaseSession,
     _params: DKGParams,
+    _tag: tfhe::Tag,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)> {
     panic!("Require the testing feature on the moby cluster to perform a local intialization of the keys")
 }

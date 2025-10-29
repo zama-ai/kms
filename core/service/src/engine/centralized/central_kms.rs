@@ -222,14 +222,15 @@ pub fn generate_fhe_keys(
     eip712_domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
+        let tag = key_id.into();
         let client_key = match keyset_config.compression_config {
-            KeySetCompressionConfig::Generate => generate_client_fhe_key(params, seed),
+            KeySetCompressionConfig::Generate => generate_client_fhe_key(params, tag, seed),
             KeySetCompressionConfig::UseExisting => {
                 match existing_key_handle {
                     Some(key_handle) => {
                         // we generate the client key as usual,
                         // but we replace the compression private key using an existing compression private key
-                        let client_key = generate_client_fhe_key(params, seed);
+                        let client_key = generate_client_fhe_key(params, tag, seed);
                         let (client_key, dedicated_compact_private_key, _, _, _, _, tag) = client_key.into_raw_parts();
                         let (_, _, existing_compression_private_key, noise_squashing_key, noise_squashing_compression_key, rerand_key_params, _) = key_handle.client_key.into_raw_parts();
                         ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, noise_squashing_key,noise_squashing_compression_key,rerand_key_params, tag)
@@ -277,12 +278,16 @@ pub fn generate_fhe_keys(
 }
 
 #[cfg(feature = "non-wasm")]
-pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientKey {
+pub fn generate_client_fhe_key(params: DKGParams, tag: tfhe::Tag, seed: Option<Seed>) -> ClientKey {
+    use tfhe::prelude::Tagged;
+
     let config = params.to_tfhe_config();
-    match seed {
+    let mut client_key = match seed {
         Some(seed) => ClientKey::generate_with_seed(config, seed),
         None => ClientKey::generate(config),
-    }
+    };
+    *client_key.tag_mut() = tag;
+    client_key
 }
 
 /// compute the CRS in the centralized KMS.
@@ -1568,7 +1573,11 @@ pub(crate) mod tests {
     fn sanity_check_sns_compression_test_params() {
         use tfhe::prelude::{FheDecrypt, FheEncrypt, SquashNoise};
         let params = TEST_PARAM;
-        let cks = crate::engine::centralized::central_kms::generate_client_fhe_key(params, None);
+        let cks = crate::engine::centralized::central_kms::generate_client_fhe_key(
+            params,
+            tfhe::Tag::default(),
+            None,
+        );
         let sks = cks.generate_server_key();
 
         tfhe::set_server_key(sks);

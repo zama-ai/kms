@@ -1362,7 +1362,7 @@ pub(crate) mod tests {
         let prep_id = RequestId::new_random(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
         let params = TEST_PARAM;
-        let client_key = generate_client_fhe_key(params, Some(Seed(1)));
+        let client_key = generate_client_fhe_key(params, key_id.into(), Some(Seed(1)));
         let server_key = client_key.generate_server_key();
         let public_key = FhePublicKey::new(&client_key);
 
