@@ -129,7 +129,10 @@ jobs:
       contents: read # Required to checkout repository code
       id-token: write # Required for OIDC token generation
     needs: check-changes
-    if: needs.check-changes.outputs.changes-helm-chart == 'true'
+    if: >-
+      needs.check-changes.outputs.changes-helm-chart == 'true' &&
+      github.event_name != 'schedule' &&
+      (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
     uses: ./.github/workflows/helm-test.yml
 
   lint-helm-chart:
@@ -141,7 +144,10 @@ jobs:
       contents: read # Required to checkout repository code
       id-token: write # Required for OIDC token generation
     needs: check-changes
-    if: needs.check-changes.outputs.changes-helm-chart == 'true'
+    if: >-
+      needs.check-changes.outputs.changes-helm-chart == 'true' &&
+      github.event_name != 'schedule' &&
+      (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
     uses: ./.github/workflows/helm-lint.yml
 
   release-helm-chart:
@@ -152,7 +158,10 @@ jobs:
       id-token: write # Required for OIDC token generation
       packages: write # Required to publish packages
     needs: check-changes
-    if: github.ref == 'refs/heads/main' && needs.check-changes.outputs.changes-helm-chart == 'true' && github.event_name != 'schedule'
+    if: >-
+      needs.check-changes.outputs.changes-helm-chart == 'true' &&
+      github.event_name != 'schedule' &&
+      (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
     uses: ./.github/workflows/helm-release.yml
 
   ############################################################################
