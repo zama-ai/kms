@@ -197,11 +197,31 @@ validate_config() {
 check_local_resources() {
     # Check resource requirements for local development
     if [[ "${LOCAL}" == "true" ]]; then
+
         # Extract resource values from values files
-        local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
-        local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
+        local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
+        local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
         if [[ "${GEN_KEYS}" == "true" ]]; then
-            local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml"
+            local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
+        fi
+
+        if [[ ! -s "${KMS_CORE_VALUES}" || ! -s "${KMS_CORE_CLIENT_INIT_VALUES}" || ! -s "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}" ]]; then
+            log_error "One or more local values files are missing or empty:"
+            log_error "KMS Core values: ${KMS_CORE_VALUES}"
+            log_error "KMS Core Client init values: ${KMS_CORE_CLIENT_INIT_VALUES}"
+            log_error "KMS Core Client gen keys values: ${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
+            # Extract resource values from values files
+            local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
+            local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
+            if [[ "${GEN_KEYS}" == "true" ]]; then
+                local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml"
+            fi
+        else
+            log_info "Values files found:"
+            log_info "KMS Core values: ${KMS_CORE_VALUES}"
+            log_info "KMS Core Client init values: ${KMS_CORE_CLIENT_INIT_VALUES}"
+            log_info "KMS Core Client gen keys values: ${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
+            log_info "You're are going to use the existing local values files for resource adjustment"
         fi
 
         # Parse memory and CPU from kms-core values (values-kms-test.yaml)
@@ -287,6 +307,7 @@ check_local_resources() {
                     cp "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}" "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml
                     KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
                 fi
+
 
                 # Adjust KMS Core resources
                 echo ""
@@ -852,20 +873,6 @@ cleanup() {
         # Delete cluster and kubeconfig
         kind delete cluster --name ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
         rm -f "${KUBE_CONFIG}"
-
-        # Remove local values
-        if [[ "${LOCAL}" == "true" ]]; then
-            # Extract resource values from values files
-            local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
-            local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
-            rm "${KMS_CORE_VALUES}"
-            rm "${KMS_CORE_CLIENT_INIT_VALUES}"
-            if [[ "${GEN_KEYS}" == "true" ]]; then
-                local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
-                rm "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
-            fi
-        log_info "Local values removed"
-        fi
     else
         # Lightweight cleanup for CI
         # The CI workflow will handle full cluster cleanup
