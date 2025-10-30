@@ -16,6 +16,16 @@
 - [Calling KMS main entry points](guides/entry_points.md)
 - [Common errors](guides/common_errors.md)
 
+## Operations
+
+- [Operations Overview](operations/README.md)
+- [Quickstart Guide](operations/quickstart.md)
+- [Production Deployment](operations/production-deployment.md)
+- [Quick Reference](operations/quick-reference.md)
+- [Monitoring Basics](operations/monitoring-basics.md)
+- [Configuration Management](operations/configuration.md)
+- [Advanced Topics](operations/advanced/README.md)
+
 ## Tutorials
 
 - [See all tutorials](tutorials/showcase.md)
