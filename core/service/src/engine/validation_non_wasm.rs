@@ -461,10 +461,6 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
     match request {
         Some(req) => {
             let pivot_payload = resp_parsed_payloads[0].clone();
-            // if req.fhe_type() != pivot_payload.fhe_type()? {
-            //     tracing::warn!("Fhe type in the decryption response is incorrect");
-            //     return Ok(false);
-            // } //TODO check fhe type?
 
             if req.ciphertexts.len() != pivot_payload.plaintexts.len() {
                 return Err(anyhow_error_and_log(
