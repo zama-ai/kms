@@ -18,9 +18,9 @@ RUN cargo install --locked --path core/threshold --root . --bins --no-default-fe
 
 
 # Go tooling stage - only for grpc-health-probe
-FROM cgr.dev/zama.ai/golang:1.25.0 AS go-builder
+FROM cgr.dev/zama.ai/golang:1.25.3 AS go-builder
 
-ARG GRPC_HEALTH_PROBE_VERSION=v0.4.37
+ARG GRPC_HEALTH_PROBE_VERSION=v0.4.41
 
 RUN git clone https://github.com/grpc-ecosystem/grpc-health-probe && \
     cd grpc-health-probe && \
