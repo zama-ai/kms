@@ -675,6 +675,7 @@ impl<
 
     #[cfg(feature = "insecure")]
     async fn reconstruct_glwe_and_compression_key_shares(
+        req_id: &RequestId,
         base_session: &BaseSession,
         params: DKGParams,
         glwe_shares: GlweSecretKeyShare<Z128, 4>,
@@ -757,6 +758,7 @@ impl<
 
                 let (client_key, _, _, _, _, _, _) = to_hl_client_key(
                     &params,
+                    req_id.into(),
                     dummy_lwe_secret_key,
                     bit_glwe_secret_key,
                     None,
@@ -822,6 +824,7 @@ impl<
                         {
                             Ok((glwe_shares, compression_shares)) => {
                                 Self::reconstruct_glwe_and_compression_key_shares(
+                                    req_id,
                                     &base_session,
                                     params,
                                     glwe_shares,
@@ -895,6 +898,7 @@ impl<
     }
 
     async fn key_gen_from_existing_compression_sk<P>(
+        req_id: &RequestId,
         base_session: &mut BaseSession,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
@@ -924,6 +928,7 @@ impl<
             base_session,
             preprocessing,
             params,
+            req_id.into(),
             Some(existing_compression_sk).as_ref(),
         )
         .await
@@ -965,7 +970,10 @@ impl<
                             (
                                 ddec_keyset_config::KeySetCompressionConfig::Generate,
                                 ddec_keyset_config::ComputeKeyType::Cpu,
-                            ) => initialize_key_material(&mut base_session, params).await,
+                            ) => {
+                                initialize_key_material(&mut base_session, params, req_id.into())
+                                    .await
+                            }
                             _ => {
                                 // TODO insecure keygen from existing compression key is not supported
                                 let mut guarded_meta_storage = meta_store.write().await;
@@ -992,13 +1000,14 @@ impl<
                         ddec_keyset_config::KeySetCompressionConfig::Generate,
                         ddec_keyset_config::ComputeKeyType::Cpu,
                     ) => {
-                        KG::keygen(&mut base_session, preproc_handle.as_mut(), params, None).await
+                        KG::keygen(&mut base_session, preproc_handle.as_mut(), params, req_id.into(), None).await
                     }
                     (
                         ddec_keyset_config::KeySetCompressionConfig::UseExisting,
                         ddec_keyset_config::ComputeKeyType::Cpu,
                     ) => {
                         Self::key_gen_from_existing_compression_sk(
+                            req_id,
                             &mut base_session,
                             crypto_storage.clone(),
                             params,

@@ -364,7 +364,7 @@ pub(crate) mod tests {
     use tfhe::core_crypto::prelude::{
         decrypt_lwe_ciphertext, divide_round, ContiguousEntityContainer, LweCiphertextOwned,
     };
-    use tfhe::prelude::ParameterSetConformant;
+    use tfhe::prelude::{ParameterSetConformant, Tagged};
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
     use tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey;
     use tfhe::shortint::server_key::ModulusSwitchConfiguration;
@@ -375,6 +375,7 @@ pub(crate) mod tests {
         let shortint_server_key: &tfhe::shortint::ServerKey = int_server_key.as_ref();
         let max_degree = shortint_server_key.max_degree; // we don't really check the max degree
         assert!(shortint_server_key.is_conformant(&(pbs_params, max_degree)));
+        assert_eq!(server_key.tag(), client_key.tag());
 
         match &shortint_server_key.atomic_pattern {
             AtomicPatternServerKey::Standard(atomic_pattern) => {
