@@ -1,12 +1,6 @@
 kmsPeers:
   # Number of replicas managed by each statefulset
   count: 1
-kmsConnector:
-  enabled: false
-kmsCoreClient:
-  enabled: false
-  image:
-    tag:
 
 kmsCore:
   image:
@@ -27,33 +21,35 @@ kmsCore:
         backupVaultKeychainAWSKMSRootKeySpec: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
         backupVaultKeychainAWSKMSRootKeyID: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
   thresholdMode:
-      initializationScript:
-        enabled: true
+    initializationScript:
       enabled: true
-      multiplier: 2.0
-      maxInterval: 60
-      initialIntervalMs: 100
-      cleanupIntervalSecs: 2
-      thresholdValue: 1
-      #=============================================================
-      #==========RESOURCERS TO ADJUST BASED ON ENVIRONMENT==========
-      # If you launch the deployment locally, adjust these resources
-      # according to your system and available resources
-      numSessionsPreproc: 12
-      #=============================================================
-      peersList:
-        - id: 1
-          host: kms-service-threshold-1-kms-test-threshold-core-1
-          port: 50001
-        - id: 2
-          host: kms-service-threshold-2-kms-test-threshold-core-2
-          port: 50001
-        - id: 3
-          host: kms-service-threshold-3-kms-test-threshold-core-3
-          port: 50001
-        - id: 4
-          host: kms-service-threshold-4-kms-test-threshold-core-4
-          port: 50001
+    enabled: true
+    multiplier: 2.0
+    maxInterval: 60
+    initialIntervalMs: 100
+    cleanupIntervalSecs: 2
+    thresholdValue: 1
+    tokioWorkerThreads: 6
+    rayonNumThreads: 43
+    #=============================================================
+    #==========RESOURCERS TO ADJUST BASED ON ENVIRONMENT==========
+    # If you launch the deployment locally, adjust these resources
+    # according to your system and available resources
+    numSessionsPreproc: 2
+    #=============================================================
+    peersList:
+      - id: 1
+        host: kms-service-threshold-1-<namespace>-core-1
+        port: 50001
+      - id: 2
+        host: kms-service-threshold-2-<namespace>-core-2
+        port: 50001
+      - id: 3
+        host: kms-service-threshold-3-<namespace>-core-3
+        port: 50001
+      - id: 4
+        host: kms-service-threshold-4-<namespace>-core-4
+        port: 50001
   publicVault:
     s3:
       enabled: true
@@ -77,25 +73,17 @@ kmsCore:
   # according to your system and available resources
   resources:
     requests:
-      memory: 24Gi
       cpu: 12
+      memory: 24Gi
     limits:
-      memory: 24Gi
       cpu: 12
+      memory: 24Gi
   #=============================================================
       ephemeralStorage: 1Gi
       grpcTimeout: 360
       grpcMaxMessageSize: 104857600
 
-mtls:
-  enabled: false
 environment: dev
-redis:
-  enabled: false
-  host: "redis://redis-master.common.svc.cluster.local"
-tracing:
-  enabled: false
-  endpoint: "http://observability-zws-dev-observability-alloy.observability.svc.cluster.local:4317"
 
 kubeUtils:
   image:
@@ -108,10 +96,7 @@ socat:
     name: alpine/socat
     tag: latest
 rustLog: info
-kyverno:
-  enabled: false
-kmsInit:
-  enabled: false
+
 podSecurityContext:
   # To set when the image will support non root user
   runAsUser: 10003
@@ -121,6 +106,25 @@ podSecurityContext:
 
 minio:
   enabled: true
-  endpoint: "http://minio:9000"
+  endpoint: "http://localstack:4566"
   username: kms-access-key-id
   password: kms-secret-access-key
+
+mtls:
+  enabled: false
+redis:
+  enabled: false
+  host: "redis://redis-master.common.svc.cluster.local"
+tracing:
+  enabled: false
+  endpoint: "http://observability-zws-dev-observability-alloy.observability.svc.cluster.local:4317"
+kyverno:
+  enabled: false
+kmsInit:
+  enabled: false
+kmsConnector:
+  enabled: false
+kmsCoreClient:
+  enabled: false
+  image:
+    tag:

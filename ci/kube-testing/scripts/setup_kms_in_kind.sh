@@ -70,6 +70,19 @@ detect_platform() {
 }
 
 #=============================================================================
+# Platform-aware sed in-place function
+#=============================================================================
+sed_inplace() {
+    local pattern="$1"
+    local file="$2"
+    if [[ "${OS}" == "macos" ]]; then
+        sed -i '' "${pattern}" "${file}"
+    else
+        sed -i "${pattern}" "${file}"
+    fi
+}
+
+#=============================================================================
 # Color Codes for Output
 #=============================================================================
 
@@ -184,11 +197,31 @@ validate_config() {
 check_local_resources() {
     # Check resource requirements for local development
     if [[ "${LOCAL}" == "true" ]]; then
+
         # Extract resource values from values files
-        local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
-        local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
+        local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
+        local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
         if [[ "${GEN_KEYS}" == "true" ]]; then
-            local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml"
+            local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
+        fi
+
+        if [[ ! -s "${KMS_CORE_VALUES}" || ! -s "${KMS_CORE_CLIENT_INIT_VALUES}" || ! -s "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}" ]]; then
+            log_error "One or more local values files are missing or empty:"
+            log_error "KMS Core values: ${KMS_CORE_VALUES}"
+            log_error "KMS Core Client init values: ${KMS_CORE_CLIENT_INIT_VALUES}"
+            log_error "KMS Core Client gen keys values: ${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
+            # Extract resource values from values files
+            local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
+            local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
+            if [[ "${GEN_KEYS}" == "true" ]]; then
+                local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml"
+            fi
+        else
+            log_info "Values files found:"
+            log_info "KMS Core values: ${KMS_CORE_VALUES}"
+            log_info "KMS Core Client init values: ${KMS_CORE_CLIENT_INIT_VALUES}"
+            log_info "KMS Core Client gen keys values: ${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
+            log_info "You're are going to use the existing local values files for resource adjustment"
         fi
 
         # Parse memory and CPU from kms-core values (values-kms-test.yaml)
@@ -275,6 +308,7 @@ check_local_resources() {
                     KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
                 fi
 
+
                 # Adjust KMS Core resources
                 echo ""
                 echo "Adjusting KMS Core resources..."
@@ -299,27 +333,17 @@ check_local_resources() {
                 # Update the values files with sed (platform-aware)
                 log_info "Updating values files..."
 
+                # Update KMS Core values
+                sed_inplace "s/memory: ${KMS_CORE_MEMORY}Gi/memory: ${NEW_CORE_MEM}Gi/g" "${KMS_CORE_VALUES}"
+                sed_inplace "s/cpu: ${KMS_CORE_CPU}/cpu: ${NEW_CORE_CPU}/g" "${KMS_CORE_VALUES}"
+                sed_inplace "s/numSessionsPreproc: ${NUM_SESSIN_PREPROC}/numSessionsPreproc: ${NEW_NUM_SESSIN_PREPROC}/g" "${KMS_CORE_VALUES}"
+
                 # Update KMS Core Client values
-                if [[ "${OS}" == "macos" ]]; then
-                    sed -i '' "s/memory: ${KMS_CORE_MEMORY}Gi/memory: ${NEW_CORE_MEM}Gi/g" "${KMS_CORE_VALUES}"
-                    sed -i '' "s/cpu: ${KMS_CORE_CPU}/cpu: ${NEW_CORE_CPU}/g" "${KMS_CORE_VALUES}"
-                    sed -i '' "s/numSessionsPreproc: ${NUM_SESSIN_PREPROC}/numSessionsPreproc: ${NEW_NUM_SESSIN_PREPROC}/g" "${KMS_CORE_VALUES}"
-                    sed -i '' "s/memory: ${KMS_CORE_CLIENT_MEMORY}Gi/memory: ${NEW_CLIENT_MEM}Gi/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
-                    sed -i '' "s/cpu: ${KMS_CORE_CLIENT_CPU}/cpu: ${NEW_CLIENT_CPU}/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
-                    sed -i '' "s/fhe_parameter: ${FHE_PARAMS}/fhe_parameter: ${NEW_FHE_PARAMS}/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
-                    if [[ "${GEN_KEYS}" == "true" ]]; then
-                        sed -i '' "s/fhe_parameter: ${FHE_PARAMS}/fhe_parameter: ${NEW_FHE_PARAMS}/g" "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
-                    fi
-                else
-                    sed -i "s/memory: ${KMS_CORE_MEMORY}Gi/memory: ${NEW_CORE_MEM}Gi/g" "${KMS_CORE_VALUES}"
-                    sed -i "s/cpu: ${KMS_CORE_CPU}/cpu: ${NEW_CORE_CPU}/g" "${KMS_CORE_VALUES}"
-                    sed -i "s/numSessionsPreproc: ${NUM_SESSIN_PREPROC}/numSessionsPreproc: ${NEW_NUM_SESSIN_PREPROC}/g" "${KMS_CORE_VALUES}"
-                    sed -i "s/memory: ${KMS_CORE_CLIENT_MEMORY}Gi/memory: ${NEW_CLIENT_MEM}Gi/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
-                    sed -i "s/cpu: ${KMS_CORE_CLIENT_CPU}/cpu: ${NEW_CLIENT_CPU}/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
-                    sed -i "s/fhe_parameter: ${FHE_PARAMS}/fhe_parameter: ${NEW_FHE_PARAMS}/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
-                    if [[ "${GEN_KEYS}" == "true" ]]; then
-                        sed -i "s/fhe_parameter: ${FHE_PARAMS}/fhe_parameter: ${NEW_FHE_PARAMS}/g" "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
-                    fi
+                sed_inplace "s/memory: ${KMS_CORE_CLIENT_MEMORY}Gi/memory: ${NEW_CLIENT_MEM}Gi/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
+                sed_inplace "s/cpu: ${KMS_CORE_CLIENT_CPU}/cpu: ${NEW_CLIENT_CPU}/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
+                sed_inplace "s/fhe_parameter: ${FHE_PARAMS}/fhe_parameter: ${NEW_FHE_PARAMS}/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
+                if [[ "${GEN_KEYS}" == "true" ]]; then
+                    sed_inplace "s/fhe_parameter: ${FHE_PARAMS}/fhe_parameter: ${NEW_FHE_PARAMS}/g" "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
                 fi
 
                 log_info "New local values files created successfully:"
@@ -506,7 +530,7 @@ EOF
 setup_helm_repos() {
     log_info "Setting up Helm repositories..."
 
-    helm repo add minio https://charts.min.io/ || true
+    helm repo add localstack-charts https://localstack.github.io/helm-charts || true
     helm repo update
 
     log_info "Helm repositories configured"
@@ -546,22 +570,21 @@ build_container() {
 }
 
 #=============================================================================
-# MinIO Deployment
+# Localstack Deployment
 #=============================================================================
 
-# Deploy MinIO object storage
-deploy_minio() {
-    log_info "Deploying MinIO..."
+# Deploy Localstack object storage
+deploy_localstack() {
+    log_info "Deploying Localstack..."
 
-    helm upgrade --install minio minio/minio \
+    helm upgrade --install localstack localstack-charts/localstack \
         --namespace "${NAMESPACE}" \
         --kubeconfig "${KUBE_CONFIG}" \
         --create-namespace \
-        --wait \
-        --timeout 5m \
-        -f "${REPO_ROOT}/ci/kube-testing/infra/minio-values.yaml"
+        -f "${REPO_ROOT}/ci/kube-testing/infra/localstack-s3-values.yaml"
 
-    log_info "MinIO deployed successfully"
+    sleep 30
+    log_info "Localstack deployed successfully"
 }
 
 #=============================================================================
@@ -602,6 +625,13 @@ deploy_threshold_mode() {
         if [[ "${GEN_KEYS}" == "true" ]]; then
             local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml"
         fi
+    fi
+
+    # Replace namespace placeholder with actual namespace
+    sed_inplace "s/<namespace>/${NAMESPACE}/g" "${KMS_CORE_VALUES}"
+    sed_inplace "s/<namespace>/${NAMESPACE}/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
+    if [[ "${GEN_KEYS}" == "true" ]]; then
+        sed_inplace "s/<namespace>/${NAMESPACE}/g" "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
     fi
 
     for i in $(seq 1 "${NUM_PARTIES}"); do
@@ -721,12 +751,12 @@ deploy_centralized_mode() {
 setup_port_forwarding() {
     log_info "Setting up port forwarding..."
 
-    # Port forward MinIO
-    log_info "Port forwarding MinIO (9000:9000)..."
+    # Port forward Localstack s3
+    log_info "Port forwarding Localstack s3 (9000:4566)..."
     kubectl port-forward \
         -n "${NAMESPACE}" \
-        svc/minio \
-        9000:9000 \
+        svc/localstack \
+        9000:4566 \
         --kubeconfig "${KUBE_CONFIG}" \
         > /dev/null 2>&1 \
         &
@@ -899,7 +929,7 @@ main() {
     setup_namespace
     setup_registry_credentials
     setup_helm_repos
-    deploy_minio
+    deploy_localstack
 
     # Optionally build and load images
     if [[ "$BUILD" == "true" ]]; then
@@ -916,7 +946,7 @@ main() {
     log_info "========================================="
     log_info ""
     log_info "Service Access URLs:"
-    log_info "  MinIO UI: http://localhost:9000"
+    log_info "  Localstack S3: http://localhost:9000"
     case "${DEPLOYMENT_TYPE}" in
         threshold)
             for i in $(seq 1 "${NUM_PARTIES}"); do
