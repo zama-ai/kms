@@ -2,7 +2,7 @@
 
 **Reference guide for alternative KMS deployment approaches.**
 
-> **Production Deployments**: Use [Production Deployment Guide](../production-deployment.md) with official [Terraform MPC modules](https://github.com/zama-ai/terraform-mpc-modules) and [KMS Helm charts](../../charts/kms-core/).
+> **Production Deployments**: Use [Production Deployment Guide](../production-deployment.md) with official [Terraform MPC modules](https://github.com/zama-ai/terraform-mpc-modules) and KMS Helm charts (`charts/kms-core/`).
 
 This guide provides **references and concepts** for alternative deployment scenarios.
 
@@ -11,16 +11,16 @@ This guide provides **references and concepts** for alternative deployment scena
 ### Production (Recommended)
 - **Guide**: [Production Deployment](../production-deployment.md)
 - **Infrastructure**: [Terraform MPC Modules](https://github.com/zama-ai/terraform-mpc-modules)
-- **Application**: [KMS Helm Charts](../../charts/kms-core/)
+- **Application**: KMS Helm Charts (`charts/kms-core/`)
 - **Context**: 13-party threshold network, single-party management
 
 ### Development & Testing
-- **Local Kubernetes**: Use [charts/kms-core/values-example-local.yaml](../../charts/kms-core/values-example-local.yaml)
+- **Local Kubernetes**: Use `charts/kms-core/values-example-local.yaml`
 - **Configuration**: See [Configuration Guide](../configuration.md) for TOML examples
 - **Docker Development**: See Docker setup examples below
 
 ### Custom Infrastructure
-- **Manual Kubernetes**: Adapt [charts/kms-core/templates/](../../charts/kms-core/templates/) for custom deployments
+- **Manual Kubernetes**: Adapt `charts/kms-core/templates/` for custom deployments
 - **Cloud Providers**: Use Terraform modules as reference for other clouds
 - **Bare Metal**: Extract configuration patterns from Helm values
 
@@ -69,7 +69,7 @@ docker run -d \
 **For Production**: Use the [Production Deployment Guide](../production-deployment.md) with Helm charts
 
 ### Manual Kubernetes
-> **Templates**: See [charts/kms-core/templates/](../../charts/kms-core/templates/) for Kubernetes manifests.
+> **Templates**: See `charts/kms-core/templates/` for Kubernetes manifests.
 
 - **StatefulSet**: Persistent KMS node deployment patterns
 - **Services**: Internal and external service configuration  
@@ -104,7 +104,7 @@ docker run -d \
 - [ ] Configuration validated using [Configuration Guide](../configuration.md)
 
 ### Deployment
-- [ ] Deploy using [KMS Helm charts](../../charts/kms-core/)
+- [ ] Deploy using KMS Helm charts (`charts/kms-core/`)
 - [ ] Verify health using [Monitoring Guide](../monitoring-basics.md)
 - [ ] Test connectivity to other parties
 - [ ] Complete PRSS initialization (coordinated with network)

@@ -7,7 +7,7 @@
 This guide covers production deployment of **your party's KMS node** in a **13-party threshold network**:
 
 - **Infrastructure**: [Terraform MPC modules](https://github.com/zama-ai/terraform-mpc-modules) for your AWS EKS, S3, IAM, Nitro Enclaves
-- **Application**: Official [KMS Helm charts](../charts/kms-core/) for your StatefulSet deployment  
+- **Application**: Official KMS Helm charts (`charts/kms-core/`) for your StatefulSet deployment  
 - **Security**: AWS Nitro Enclaves, IRSA, PrivateLink networking to other parties
 - **Architecture**: Your independent node in a decentralized 13-party threshold network
 
@@ -600,4 +600,4 @@ kubectl exec -n kms-threshold kms-core-1 -- \
 **Need Help?** 
 - [Quick Reference](quick-reference.md) for emergency procedures
 - [Terraform MPC Modules](https://github.com/zama-ai/terraform-mpc-modules) for infrastructure
-- [KMS Helm Charts](../charts/kms-core/) for application deployment
+- KMS Helm Charts (`charts/kms-core/`) for application deployment

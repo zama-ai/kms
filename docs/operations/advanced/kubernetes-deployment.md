@@ -615,6 +615,6 @@ kubectl describe sa mpc-party-1 -n kms-threshold
 **Success Criteria**: A fully operational, production-ready KMS threshold cluster deployed across 4 AWS accounts with secure inter-party communication, comprehensive monitoring, and validated key generation capabilities.
 
 **Need Help?** 
-- [Quick Reference](quick-reference.md) for emergency procedures
+- [Quick Reference](../quick-reference.md) for emergency procedures
 - [Terraform MPC Modules](https://github.com/zama-ai/terraform-mpc-modules) for infrastructure details
-- [Advanced Troubleshooting](advanced/troubleshooting.md) for complex issues
+- [Advanced Troubleshooting](troubleshooting.md) for complex issues
