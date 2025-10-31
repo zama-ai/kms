@@ -29,6 +29,10 @@ pub enum UnifiedPublicEncKey {
     // LEGACY: Note that this should ONLY be used for legacy reasons, new code should use MlKem512.
     // If used in current code, then take care to NOT use to_legacy_bytes or from_legacy_bytes on this variant
     // as this will do bincode serialization instead of safe serialization
+    #[deprecated(
+        since = "0.12.0",
+        note = "Use MlKem512 instead. MlKem1024 is only for legacy compatibility with relayer-sdk v0.2.0-0 and older."
+    )]
     MlKem1024(PublicEncKey<ml_kem::MlKem1024>),
 }
 
@@ -171,8 +175,6 @@ impl<C: KemCore> tfhe_versionable::Unversionize for PublicEncKey<C> {
         Ok(versioned)
     }
 }
-
-impl<C: KemCore> tfhe_versionable::NotVersioned for PublicEncKey<C> {}
 
 impl<'de, C: KemCore> Deserialize<'de> for PublicEncKey<C> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
