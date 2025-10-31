@@ -219,7 +219,7 @@ pub fn calculate_max_num_bits(dkg_params: &DKGParams) -> usize {
 ///
 /// # Arguments
 /// * `storage` - The storage backend containing the per-entity data, such as signing keys, representable as `T`
-/// * `storage_type` - The type tag for the per-entity data used in storage URLs (one of `ClientDataType`, `PrivDataType`, `PubDataType`)
+/// * `data_type` - The type tag for the per-entity data used in storage URLs (one of `ClientDataType`, `PrivDataType`, `PubDataType`)
 ///
 /// # Returns
 /// The `T` value if found and valid, or an error if:
@@ -234,30 +234,29 @@ async fn get_unique<
     U: Display,
 >(
     storage: &S,
-    storage_type: U,
+    data_type: U,
 ) -> anyhow::Result<T> {
-    let mut sk_map: HashMap<RequestId, T> =
-        read_all_data_versioned(storage, &storage_type.to_string())
-            .await
-            .map_err(|e| {
-                anyhow_error_and_warn_log(format!("Failed to read signing key data: {e}"))
-            })?;
+    let data_map: HashMap<RequestId, T> = read_all_data_versioned(storage, &data_type.to_string())
+        .await
+        .map_err(|e| {
+            anyhow_error_and_warn_log(format!(
+                "Failed to read {} from \"{}\": {e}",
+                &data_type.to_string(),
+                storage.info()
+            ))
+        })?;
 
-    if sk_map.values().len() != 1 {
+    if data_map.values().len() != 1 {
         return Err(anyhow_error_and_warn_log(format!(
-            "{} key map should contain exactly one entry, but contains {} entries for storage \"{}\"",
-            storage_type, sk_map.values().len(), storage.info()
+            "{} storage should contain exactly one entry, but contains {} entries for storage \"{}\"",
+            data_type,
+            data_map.values().len(),
+            storage.info()
         )));
     }
 
-    let req_id = *sk_map
-        .keys()
-        .last()
-        .ok_or_else(|| anyhow_error_and_warn_log("No keys found in signing key map".to_string()))?;
-
-    sk_map
-        .remove(&req_id)
-        .ok_or_else(|| anyhow_error_and_warn_log("Failed to remove key from map".to_string()))
+    let value = data_map.into_values().next().unwrap(); // Safe unwrap since we checked length above
+    Ok(value)
 }
 
 pub async fn get_core_signing_key<S: StorageReader>(storage: &S) -> anyhow::Result<PrivateSigKey> {

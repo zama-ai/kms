@@ -337,7 +337,7 @@ pub async fn read_all_data_versioned<
         let data: T = storage
             .read_data(data_id, data_type)
             .await
-            .map_err(|e| anyhow!("reading failed on data id {data_id}: {e}"))?;
+            .map_err(|e| anyhow!("reading failed for {data_type} with id {data_id}: {e}"))?;
         res.insert(*data_id, data);
     }
     Ok(res)

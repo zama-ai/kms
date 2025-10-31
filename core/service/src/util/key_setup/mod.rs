@@ -85,7 +85,7 @@ pub async fn ensure_client_keys_exist(
         {
             Ok(keys) => keys,
             Err(e) => {
-                tracing::error!("Failed to read existing client keys: {}", e);
+                tracing::error!("Failed to read existing client signing keys: {}", e);
                 return false;
             }
         };
