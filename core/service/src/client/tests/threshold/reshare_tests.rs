@@ -92,6 +92,7 @@ pub(crate) async fn reshare(
         &req_preproc,
         None,
         expected_num_parties_crashed,
+        None,
     )
     .await;
 

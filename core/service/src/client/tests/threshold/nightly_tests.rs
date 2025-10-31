@@ -300,6 +300,28 @@ async fn secure_threshold_sequential_keygen_test(#[case] amount_parties: usize) 
         false,
         None,
         None,
+        None,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(4)]
+#[serial]
+async fn secure_threshold_keygen_with_partial_preproc(#[case] amount_parties: usize) {
+    preproc_and_keygen(
+        amount_parties,
+        FheParameter::Test,
+        false,
+        1,
+        false,
+        None,
+        None,
+        Some(kms_grpc::kms::v1::PartialKeyGenPreprocParams {
+            percentage_offline: 10,
+            store_dummy_preprocessing: true,
+        }),
     )
     .await;
 }
@@ -317,6 +339,7 @@ async fn secure_threshold_concurrent_keygen_test(#[case] amount_parties: usize) 
         false,
         2,
         true,
+        None,
         None,
         None,
     )
