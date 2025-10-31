@@ -29,7 +29,7 @@ use threshold_fhe::{
     networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
 };
 use tokio::{
-    net::{tcp, TcpListener},
+    net::TcpListener,
     sync::{Mutex, RwLock},
 };
 use tokio_rustls::rustls::{client::ClientConfig, server::ServerConfig};
