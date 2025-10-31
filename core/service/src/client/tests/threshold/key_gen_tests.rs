@@ -769,6 +769,7 @@ pub(crate) async fn preproc_and_keygen(
                 &mut kms_clients,
                 &mut internal_client,
                 &key_id,
+                None,
                 vec![TestingPlaintext::U8(u8::MAX)],
                 EncryptionConfig {
                     compression: true,

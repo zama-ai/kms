@@ -86,6 +86,7 @@ async fn test_central_close_after_drop() {
     let (tasks, req_id) = crate::client::tests::common::send_dec_reqs(
         3,
         &TEST_CENTRAL_KEY_ID,
+        None,
         &client_map,
         &mut internal_client,
     )

@@ -434,7 +434,7 @@ impl_endpoint! {
             // Add preprocessing IDs from the preprocessor
             own_material.preprocessing_ids = self.keygen_preprocessor.get_all_preprocessing_ids().await?;
 
-            let health_check_sessions = self.session_preparer.get_healthcheck_session_all_contexts().await
+            let health_check_sessions = self.session_maker.get_healthcheck_session_all_contexts().await
             .map_err(|e| {tonic::Status::internal(format!("Failed to get health check sessions: {}", e))})?;
 
             let mut peers_from_all_contexts = Vec::new();

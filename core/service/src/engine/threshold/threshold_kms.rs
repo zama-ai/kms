@@ -1,4 +1,4 @@
-use crate::engine::threshold::service::session::SessionPreparerGetter;
+use crate::engine::threshold::service::session::ImmutableSessionMaker;
 use crate::engine::Shutdown;
 use crate::retry_loop;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -33,7 +33,7 @@ pub struct ThresholdKms<
     pub(crate) context_manager: CM,
     pub(crate) backup_operator: BO,
     pub(crate) resharer: RE,
-    pub(crate) session_preparer: SessionPreparerGetter,
+    pub(crate) session_maker: ImmutableSessionMaker,
     tracker: Arc<TaskTracker>,
     health_reporter: HealthReporter,
     mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
@@ -55,7 +55,7 @@ impl<
     > ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO, RE>
 {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         initiator: IN,
         user_decryptor: UD,
         decryptor: PD,
@@ -67,8 +67,8 @@ impl<
         context_manager: CM,
         backup_operator: BO,
         resharer: RE,
-        session_preparer: SessionPreparerGetter,
         tracker: Arc<TaskTracker>,
+        session_maker: ImmutableSessionMaker,
         health_reporter: HealthReporter,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
     ) -> Self {
@@ -84,8 +84,8 @@ impl<
             context_manager,
             backup_operator,
             resharer,
-            session_preparer,
             tracker,
+            session_maker,
             health_reporter,
             mpc_abort_handle,
         }
@@ -172,7 +172,7 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
     ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO, RE>
 {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         initiator: IN,
         user_decryptor: UD,
         decryptor: PD,
@@ -182,8 +182,8 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
         context_manager: CM,
         backup_operator: BO,
         resharer: RE,
-        session_preparer: SessionPreparerGetter,
         tracker: Arc<TaskTracker>,
+        session_maker: ImmutableSessionMaker,
         health_reporter: HealthReporter,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
     ) -> Self {
@@ -197,8 +197,8 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
             context_manager,
             backup_operator,
             resharer,
-            session_preparer,
             tracker,
+            session_maker,
             health_reporter,
             mpc_abort_handle,
         }
