@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use alloy_dyn_abi::Eip712Domain;
 use alloy_primitives::Address;
 use itertools::Itertools;
@@ -7,16 +5,16 @@ use kms_grpc::{
     kms::v1::{TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload},
     rpc_types::FheTypeResponse,
 };
+use std::collections::{HashMap, HashSet};
 use threshold_fhe::hashing::DomainSep;
 
 use crate::{
     anyhow_error_and_log,
     client::user_decryption_wasm::{compute_link, ParsedUserDecryptionRequest},
     cryptography::{
-        internal_crypto_types::{
-            LegacySerialization, PublicSigKey, Signature, UnifiedPublicEncKey,
-        },
-        signcryption::internal_verify_sig,
+        encryption::UnifiedPublicEncKey,
+        internal_crypto_types::LegacySerialization,
+        signatures::{internal_verify_sig, PublicSigKey, Signature},
     },
     some_or_err,
 };
@@ -447,8 +445,9 @@ mod tests {
         client::user_decryption_wasm::{
             compute_link, CiphertextHandle, ParsedUserDecryptionRequest,
         },
-        cryptography::internal_crypto_types::{
-            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, PublicSigKey,
+        cryptography::{
+            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+            signatures::{gen_sig_keys, internal_sign, PublicSigKey},
         },
         dummy_domain,
         engine::{
@@ -826,12 +825,7 @@ mod tests {
         // happy path for empty external_signature, so we check ECDSA
         {
             let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
-            let signature = &crate::cryptography::signcryption::internal_sign(
-                &DSEP_USER_DECRYPTION,
-                &pivot_buf,
-                &sk0,
-            )
-            .unwrap();
+            let signature = &internal_sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
             validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,

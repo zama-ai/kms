@@ -6,7 +6,7 @@ use super::{check_data_exists, log_storage_success, CryptoMaterialReader};
 use crate::{
     anyhow_error_and_warn_log,
     backup::operator::{RecoveryRequestPayload, RecoveryValidationMaterial},
-    cryptography::internal_crypto_types::PrivateSigKey,
+    cryptography::signatures::PrivateSigKey,
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
         context::ContextInfo,

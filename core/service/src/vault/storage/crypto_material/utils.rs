@@ -4,7 +4,7 @@
 //! storage management, and common operations needed by the cryptographic material
 //! storage system.
 
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::vault::storage::StorageReader;
 use crate::{
     anyhow_error_and_warn_log,

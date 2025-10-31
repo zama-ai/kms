@@ -46,7 +46,7 @@ use crate::{
     consts::{DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
     cryptography::{
         attestation::SecurityModuleProxy,
-        internal_crypto_types::{PrivateSigKey, PublicSigKey},
+        signatures::{PrivateSigKey, PublicSigKey},
     },
     engine::{
         backup_operator::RealBackupOperator,

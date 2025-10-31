@@ -1,36 +1,36 @@
-//! Data generation for kms-core v0.11.0
+//! Data generation for kms-core v0.12.2
 //! This file provides the code that is used to generate all the data to serialize and versionize
-//! for kms-core v0.11.0
+//! for kms-core v0.12.2
 
 use aes_prng::AesRng;
-use kms_0_11_0::cryptography::internal_crypto_types::gen_sig_keys;
-use kms_0_11_0::engine::base::KmsFheKeyHandles;
-use kms_0_11_0::engine::centralized::central_kms::generate_client_fhe_key;
-use kms_0_11_0::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
-use kms_0_11_0::util::key_setup::FhePublicKey;
-use std::{borrow::Cow, fs::create_dir_all, path::PathBuf};
-use tfhe_1_3::shortint::parameters::{LweCiphertextCount, NoiseSquashingCompressionParameters};
-use threshold_fhe_0_11_0::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
-use threshold_fhe_0_11_0::execution::endpoints::keygen::FhePubKeySet;
-use threshold_fhe_0_11_0::execution::small_execution::prf::PrfKey;
-use threshold_fhe_0_11_0::{
-    execution::{
-        runtime::party::Role,
-        tfhe_internals::{
-            parameters::{DKGParams, DKGParamsRegular, DKGParamsSnS},
-            test_feature::initialize_key_material,
-        },
-    },
-    tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
+use kms_0_12_2::backup::custodian::{
+    Custodian, CustodianSetupMessagePayload, InternalCustodianContext,
 };
-
-use kms_0_11_0::vault::keychain::AppKeyBlob;
-use kms_grpc_0_11_0::{
-    kms::v1::TypedPlaintext,
-    rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal},
+use kms_0_12_2::backup::{operator::Operator, BackupCiphertext};
+use kms_0_12_2::consts::SAFE_SER_SIZE_LIMIT;
+use kms_0_12_2::cryptography::{
+    encryption::{Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedCipher},
+    hybrid_ml_kem::HybridKemCt,
+    signatures::gen_sig_keys,
+    signcryption::{UnifiedDesigncryptionKeyOwned, UnifiedSigncryptionKeyOwned},
+};
+use kms_0_12_2::engine::base::{derive_request_id, KmsFheKeyHandles};
+use kms_0_12_2::engine::centralized::central_kms::generate_client_fhe_key;
+use kms_0_12_2::engine::threshold::service::ThresholdFheKeys;
+use kms_0_12_2::util::key_setup::FhePublicKey;
+use kms_0_12_2::vault::keychain::AppKeyBlob;
+use kms_grpc_0_12_2::{
+    kms::v1::{CustodianContext, CustodianSetupMessage, TypedPlaintext},
+    rpc_types::{PrivDataType, PubDataType, PublicKeyType, SignedPubDataHandleInternal},
+    RequestId,
 };
 use rand::{RngCore, SeedableRng};
-use tfhe_1_3::{
+use std::{borrow::Cow, collections::HashMap, fs::create_dir_all, path::PathBuf};
+use tfhe_1_4::safe_serialization::safe_serialize;
+use tfhe_1_4::shortint::parameters::{
+    LweCiphertextCount, NoiseSquashingClassicParameters, NoiseSquashingCompressionParameters,
+};
+use tfhe_1_4::{
     core_crypto::commons::{
         ciphertext_modulus::CiphertextModulus,
         generators::DeterministicSeeder,
@@ -45,26 +45,43 @@ use tfhe_1_3::{
         },
         CarryModulus, ClassicPBSParameters, EncryptionKeyChoice, MaxNoiseLevel, MessageModulus,
     },
-    ServerKey,
+    ServerKey, Tag,
+};
+use threshold_fhe_0_12_2::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use threshold_fhe_0_12_2::execution::small_execution::prf::PrfKey;
+use threshold_fhe_0_12_2::execution::tfhe_internals::public_keysets::FhePubKeySet;
+use threshold_fhe_0_12_2::{
+    execution::{
+        runtime::party::Role,
+        tfhe_internals::{
+            parameters::{DKGParams, DKGParamsRegular, DKGParamsSnS, DkgMode},
+            test_feature::initialize_key_material,
+        },
+    },
+    tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
 use tokio::runtime::Runtime;
 
-use crate::generate::{
-    store_versioned_auxiliary_05, store_versioned_test_05, KMSCoreVersion, TEST_DKG_PARAMS_SNS,
-};
 use backward_compatibility::parameters::{
     ClassicPBSParametersTest, DKGParamsRegularTest, DKGParamsSnSTest,
     SwitchAndSquashCompressionParametersTest, SwitchAndSquashParametersTest,
 };
 use backward_compatibility::{
-    AppKeyBlobTest, KmsFheKeyHandlesTest, PRSSSetupTest, PrfKeyTest, PrivateSigKeyTest,
-    PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, SigncryptionPayloadTest,
+    AppKeyBlobTest, BackupCiphertextTest, CustodianSetupMessageTest, HybridKemCtTest,
+    InternalCustodianContextTest, InternalCustodianSetupMessageTest, KmsFheKeyHandlesTest,
+    OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest, PrivateSigKeyTest, PubDataTypeTest,
+    PublicKeyTypeTest, PublicSigKeyTest, RecoveryValidationMaterialTest, SigncryptionPayloadTest,
     SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
-    ThresholdFheKeysTest, TypedPlaintextTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
-    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedDesigncryptionKeyTest,
+    UnifiedSigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
+    KMS_MODULE_NAME,
 };
 
-use kms_0_11_0::cryptography::signcryption::SigncryptionPayload;
+use kms_0_12_2::cryptography::signcryption::SigncryptionPayload;
+
+use crate::generate::{
+    store_versioned_auxiliary_05, store_versioned_test_05, KMSCoreVersion, TEST_DKG_PARAMS_SNS,
+};
 
 // Macro to store a versioned test
 macro_rules! store_versioned_test {
@@ -95,11 +112,12 @@ fn convert_dkg_params_sns(value: DKGParamsSnSTest) -> DKGParamsSnS {
 // is already tested.
 fn convert_dkg_params_regular(value: DKGParamsRegularTest) -> DKGParamsRegular {
     DKGParamsRegular {
+        dkg_mode: DkgMode::Z128,
         sec: value.sec,
         ciphertext_parameters: convert_classic_pbs_parameters(value.ciphertext_parameters),
         dedicated_compact_public_key_parameters: None,
-        flag: value.flag,
         compression_decompression_parameters: None,
+        cpk_re_randomization_ksk_params: None,
     }
 }
 
@@ -130,12 +148,12 @@ fn convert_classic_pbs_parameters(value: ClassicPBSParametersTest) -> ClassicPBS
         },
         // no need to test this as it's from tfhe-rs
         modulus_switch_noise_reduction_params:
-            tfhe_1_3::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_4::shortint::prelude::ModulusSwitchType::Standard,
     }
 }
 
 fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashingParameters {
-    NoiseSquashingParameters {
+    NoiseSquashingParameters::Classic(NoiseSquashingClassicParameters {
         glwe_dimension: GlweDimension(value.glwe_dimension),
         glwe_noise_distribution: DynamicDistribution::new_t_uniform(value.glwe_noise_distribution),
         polynomial_size: PolynomialSize(value.polynomial_size),
@@ -143,10 +161,10 @@ fn convert_sns_parameters(value: SwitchAndSquashParametersTest) -> NoiseSquashin
         decomp_level_count: DecompositionLevelCount(value.pbs_level),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
         modulus_switch_noise_reduction_params:
-            tfhe_1_3::shortint::prelude::ModulusSwitchType::Standard,
+            tfhe_1_4::shortint::prelude::ModulusSwitchType::Standard,
         message_modulus: MessageModulus(value.message_modulus),
         carry_modulus: CarryModulus(value.carry_modulus),
-    }
+    })
 }
 
 fn convert_sns_compression_parameters(
@@ -281,12 +299,64 @@ fn signcryption_payload_test() -> SigncryptionPayloadTest {
 }
 
 // KMS test
-// NOTE: this is not used in v0.11 yet, so we avoid doing these extra tests
-/*
-const CUSTODIAN_SETUP_MESSAGE_TEST: CustodianSetupMessageTest = CustodianSetupMessageTest {
-    test_filename: Cow::Borrowed("custodian_setup_message"),
-    seed: 42,
+const SIGNCRYPTION_KEY_TEST: UnifiedSigncryptionKeyTest = UnifiedSigncryptionKeyTest {
+    test_filename: Cow::Borrowed("signcryption_key"),
+    state: 100,
 };
+
+// KMS test
+const DESIGNCRYPTION_KEY_TEST: UnifiedDesigncryptionKeyTest = UnifiedDesigncryptionKeyTest {
+    test_filename: Cow::Borrowed("designcryption_key"),
+    state: 200,
+};
+
+// KMS test
+const BACKUP_CIPHERTEXT_TEST: BackupCiphertextTest = BackupCiphertextTest {
+    test_filename: Cow::Borrowed("backup_ciphertext"),
+    state: 200,
+};
+
+// KMS test
+fn unified_cipher_test() -> UnifiedCipherTest {
+    UnifiedCipherTest {
+        test_filename: Cow::Borrowed("unified_ciphertext"),
+        cipher: vec![1, 2, 3, 4, 5],
+    }
+}
+
+// KMS test
+fn hybrid_kem_ct_test() -> HybridKemCtTest {
+    HybridKemCtTest {
+        test_filename: Cow::Borrowed("hybrid_kem_ct"),
+        nonce: [2u8; 12],
+        kem_ct: vec![1, 2, 3, 4, 5],
+        payload_ct: vec![6, 7, 8, 9, 10],
+    }
+}
+
+// KMS test
+const RECOVERY_MATERIAL_TEST: RecoveryValidationMaterialTest = RecoveryValidationMaterialTest {
+    test_filename: Cow::Borrowed("recovery_material"),
+    internal_cus_context_filename: Cow::Borrowed("internal_cus_context_handle"),
+    state: 300,
+    custodian_count: 5,
+};
+
+// KMS test
+const INTERNAL_CUS_CONTEXT_TEST: InternalCustodianContextTest = InternalCustodianContextTest {
+    test_filename: Cow::Borrowed("recovery_material"),
+    internal_cus_setup_filename: Cow::Borrowed("internal_cus_setup_handle"),
+    unified_enc_key_filename: Cow::Borrowed("unified_enc_key_handle"),
+    state: 300,
+    custodian_count: 5,
+};
+
+// KMS test
+const INTERNAL_CUS_SETUP_MSG_TEST: InternalCustodianSetupMessageTest =
+    InternalCustodianSetupMessageTest {
+        test_filename: Cow::Borrowed("internal_custodian_setup_message"),
+        seed: 42,
+    };
 
 // KMS test
 const OPERATOR_BACKUP_OUTPUT_TEST: OperatorBackupOutputTest = OperatorBackupOutputTest {
@@ -297,22 +367,21 @@ const OPERATOR_BACKUP_OUTPUT_TEST: OperatorBackupOutputTest = OperatorBackupOutp
     backup_id: [1u8; 32],
     seed: 42,
 };
-*/
 
-fn dummy_domain() -> alloy_sol_types_1_1_2::Eip712Domain {
-    alloy_sol_types_1_1_2::eip712_domain!(
+fn dummy_domain() -> alloy_sol_types_1_4_1::Eip712Domain {
+    alloy_sol_types_1_4_1::eip712_domain!(
         name: "Authorization token",
         version: "1",
         chain_id: 8006,
-        verifying_contract: alloy_primitives_1_1_2::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        verifying_contract: alloy_primitives_1_4_1::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
     )
 }
 
-pub struct V0_11;
+pub struct V0_12;
 
-struct KmsV0_11;
+struct KmsV0_12;
 
-impl KmsV0_11 {
+impl KmsV0_12 {
     fn gen_private_sig_key(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(PRIVATE_SIG_KEY_TEST.state);
         let (_, private_sig_key) = gen_sig_keys(&mut rng);
@@ -373,13 +442,149 @@ impl KmsV0_11 {
             link: test.link.clone(),
         };
 
-        // SigncryptionPayload doesn't use tfhe-versionable, serialize with bc2wrap from v0.11.0
-        // This uses the exact bc2wrap implementation and bincode version from v0.11.0
+        // SigncryptionPayload doesn't use tfhe-versionable, serialize with bc2wrap from v0.11.1
+        // This uses the exact bc2wrap implementation and bincode version from v0.11.1
         let serialized = bc2wrap::serialize(&payload).unwrap();
         let filename = format!("{}.bincode", test.test_filename);
         std::fs::write(dir.join(&filename), serialized).unwrap();
 
         TestMetadataKMS::SigncryptionPayload(test)
+    }
+
+    fn gen_signcryption_key(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(SIGNCRYPTION_KEY_TEST.state);
+        let (_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
+        let (client_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (_dec_key, enc_key) = encryption.keygen().unwrap();
+        let signcrypt_key = UnifiedSigncryptionKeyOwned::new(
+            server_sig_key,
+            enc_key,
+            client_verf_key.verf_key_id(),
+        );
+        store_versioned_test!(&signcrypt_key, dir, &SIGNCRYPTION_KEY_TEST.test_filename);
+        TestMetadataKMS::UnifiedSigncryptionKeyOwned(SIGNCRYPTION_KEY_TEST)
+    }
+
+    fn gen_designcryption_key(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(SIGNCRYPTION_KEY_TEST.state);
+        let (sender_verf_key, _sender_sig_key) = gen_sig_keys(&mut rng);
+        let (receiver_verf_key, _receiver_sig_key) = gen_sig_keys(&mut rng);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (dec_key, enc_key) = encryption.keygen().unwrap();
+        let signcrypt_key = UnifiedDesigncryptionKeyOwned::new(
+            dec_key,
+            enc_key,
+            sender_verf_key,
+            receiver_verf_key.verf_key_id().to_vec(),
+        );
+        store_versioned_test!(&signcrypt_key, dir, &DESIGNCRYPTION_KEY_TEST.test_filename);
+        TestMetadataKMS::UnifiedDesigncryptionKeyOwned(DESIGNCRYPTION_KEY_TEST)
+    }
+
+    fn gen_backup_ciphertext(dir: &PathBuf) -> TestMetadataKMS {
+        let backup_id = derive_request_id("gen_backup_ciphertext").unwrap();
+        let ciphertext = UnifiedCipher {
+            cipher: vec![1, 2, 3, 4, 5], // todo
+            encryption_type: EncryptionSchemeType::MlKem512,
+        };
+        let backup_ct = BackupCiphertext {
+            ciphertext,
+            priv_data_type: PrivDataType::SigningKey,
+            backup_id,
+        };
+
+        store_versioned_test!(&backup_ct, dir, &BACKUP_CIPHERTEXT_TEST.test_filename);
+        TestMetadataKMS::BackupCiphertext(BACKUP_CIPHERTEXT_TEST)
+    }
+
+    fn gen_unified_cipher(dir: &PathBuf) -> TestMetadataKMS {
+        let test = unified_cipher_test();
+        let cipher = UnifiedCipher {
+            cipher: test.cipher.clone(),
+            encryption_type: EncryptionSchemeType::MlKem512,
+        };
+
+        store_versioned_test!(&cipher, dir, &test.test_filename);
+
+        TestMetadataKMS::UnifiedCipher(test)
+    }
+
+    fn gen_hybrid_kem_ct(dir: &PathBuf) -> TestMetadataKMS {
+        let test = hybrid_kem_ct_test();
+        let cipher = HybridKemCt {
+            nonce: test.nonce,
+            kem_ct: test.kem_ct.clone(),
+            payload_ct: test.payload_ct.clone(),
+        };
+
+        store_versioned_test!(&cipher, dir, &test.test_filename);
+
+        TestMetadataKMS::HybridKemCt(test)
+    }
+
+    fn gen_recovery_material_handles(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(RECOVERY_MATERIAL_TEST.state);
+        let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (_dec_key, enc_key) = encryption.keygen().unwrap();
+        let backup_id = derive_request_id("gen_recovery_material_handles").unwrap();
+        // Dummy payload; but needs to be a properly serialized payload
+        let payload = CustodianSetupMessagePayload {
+            header: "header".to_string(),
+            random_value: [4_u8; 32],
+            timestamp: 0,
+            public_enc_key: enc_key.clone(),
+            verification_key: verf_key.clone(),
+        };
+        let mut payload_serial = Vec::new();
+        safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
+        let setup_msg1 = CustodianSetupMessage {
+            custodian_role: 1,
+            name: "Custodian-1".to_string(),
+            payload: payload_serial.clone(),
+        };
+        let setup_msg2 = CustodianSetupMessage {
+            custodian_role: 2,
+            name: "Custodian-2".to_string(),
+            payload: payload_serial.clone(),
+        };
+        let setup_msg3 = CustodianSetupMessage {
+            custodian_role: 3,
+            name: "Custodian-3".to_string(),
+            payload: payload_serial.clone(),
+        };
+        let custodian_context = CustodianContext {
+            custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
+            context_id: Some(backup_id.into()),
+            previous_context_id: None,
+            threshold: 1,
+        };
+        let internal_custodian_context =
+            InternalCustodianContext::new(custodian_context, enc_key).unwrap();
+
+        store_versioned_auxiliary!(
+            &internal_custodian_context,
+            dir,
+            &RECOVERY_MATERIAL_TEST.test_filename,
+            &RECOVERY_MATERIAL_TEST.internal_cus_context_filename,
+        );
+        TestMetadataKMS::RecoveryValidationMaterial(RECOVERY_MATERIAL_TEST)
+    }
+
+    fn generate_internal_cus_context_handles(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_CONTEXT_TEST.state);
+
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (_, cus_enc_key) = encryption.keygen().unwrap();
+        store_versioned_auxiliary!(
+            &cus_enc_key,
+            dir,
+            &INTERNAL_CUS_CONTEXT_TEST.test_filename,
+            &INTERNAL_CUS_CONTEXT_TEST.unified_enc_key_filename,
+        );
+
+        TestMetadataKMS::InternalCustodianContext(INTERNAL_CUS_CONTEXT_TEST)
     }
 
     fn gen_kms_fhe_key_handles(dir: &PathBuf) -> TestMetadataKMS {
@@ -397,7 +602,7 @@ impl KmsV0_11 {
         ));
         let seed = Some(Seed(KMS_FHE_KEY_HANDLES_TEST.seed));
 
-        let client_key = generate_client_fhe_key(dkg_params, seed);
+        let client_key = generate_client_fhe_key(dkg_params, Tag::default(), seed);
         store_versioned_auxiliary!(
             &client_key,
             dir,
@@ -427,6 +632,7 @@ impl KmsV0_11 {
             server_key.4,
             server_key.5,
             server_key.6,
+            Tag::default(),
         );
 
         store_versioned_auxiliary!(
@@ -451,12 +657,16 @@ impl KmsV0_11 {
 
         // NOTE: kms_fhe_key_handles.public_key_info is a HashMap
         // so generation is not deterministic
+        let key_id = kms_grpc_0_12_2::RequestId::zeros();
+        let preproc_id = kms_grpc_0_12_2::RequestId::zeros();
         let kms_fhe_key_handles = KmsFheKeyHandles::new(
             &private_sig_key,
             client_key,
+            &key_id,
+            &preproc_id,
             &public_key_set,
             decompression_key,
-            Some(&dummy_domain()),
+            &dummy_domain(),
         )
         .unwrap();
 
@@ -482,7 +692,7 @@ impl KmsV0_11 {
 
         let rt = Runtime::new().unwrap();
         let (fhe_pub_key_set, private_key_set) = rt.block_on(async {
-            initialize_key_material(&mut base_session, dkg_params)
+            initialize_key_material(&mut base_session, dkg_params, Tag::default())
                 .await
                 .unwrap()
         });
@@ -493,7 +703,7 @@ impl KmsV0_11 {
             &THRESHOLD_FHE_KEYS_TEST.private_key_set_filename,
         );
 
-        let (integer_server_key, _, _, _, sns_key, _, _) =
+        let (integer_server_key, _, _, _, sns_key, _, _, _) =
             fhe_pub_key_set.server_key.clone().into_raw_parts();
         store_versioned_auxiliary!(
             &sns_key,
@@ -508,12 +718,9 @@ impl KmsV0_11 {
             &THRESHOLD_FHE_KEYS_TEST.integer_server_key_filename,
         );
 
-        let mut rng = AesRng::seed_from_u64(THRESHOLD_FHE_KEYS_TEST.state);
-        let (_, private_sig_key) = gen_sig_keys(&mut rng);
-
         // NOTE: this is not deterministic since the result is a HashMap
-        let info =
-            compute_all_info(&private_sig_key, &fhe_pub_key_set, Some(&dummy_domain())).unwrap();
+        // compute_all_info doesn't exist in v0.11.1, so we create the metadata manually
+        let info: HashMap<PubDataType, SignedPubDataHandleInternal> = HashMap::new();
         store_versioned_auxiliary!(
             &info,
             dir,
@@ -530,11 +737,11 @@ impl KmsV0_11 {
         );
 
         let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: private_key_set,
-            integer_server_key,
-            sns_key,
-            pk_meta_data: info,
-            decompression_key,
+            private_keys: std::sync::Arc::new(private_key_set),
+            integer_server_key: std::sync::Arc::new(integer_server_key),
+            sns_key: sns_key.map(std::sync::Arc::new),
+            meta_data: kms_0_12_2::engine::base::KeyGenMetadata::LegacyV0(info),
+            decompression_key: decompression_key.map(std::sync::Arc::new),
         };
 
         store_versioned_test!(
@@ -546,73 +753,74 @@ impl KmsV0_11 {
         TestMetadataKMS::ThresholdFheKeys(THRESHOLD_FHE_KEYS_TEST)
     }
 
-    // NOTE: below is commented out because backup is not used in v0.11 yet
-    // so we avoid doing these extra tests since the structs might change
-    /*
-    fn gen_custodian_setup_message(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(CUSTODIAN_SETUP_MESSAGE_TEST.seed);
-        let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+    /// Generates the _internal_ custodian setup message
+    fn gen_internal_cus_setup_msg(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_SETUP_MSG_TEST.seed);
+        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (private_key, public_key) = encryption.keygen().unwrap();
         let custodian = Custodian::new(
-            0,
+            Role::indexed_from_one(1),
             signing_key,
-            verification_key,
-            private_key,
             public_key,
+            private_key,
         )
         .unwrap();
-        let custodian_setup_message = custodian.generate_setup_message(&mut rng).unwrap();
+        let custodian_setup_message = custodian
+            .generate_setup_message(&mut rng, "custodian-1".to_string())
+            .unwrap();
         store_versioned_test!(
             &custodian_setup_message,
             dir,
-            &CUSTODIAN_SETUP_MESSAGE_TEST.test_filename
+            &INTERNAL_CUS_SETUP_MSG_TEST.test_filename
         );
-        TestMetadataKMS::CustodianSetupMessage(CUSTODIAN_SETUP_MESSAGE_TEST)
+        TestMetadataKMS::InternalCustodianSetupMessage(INTERNAL_CUS_SETUP_MSG_TEST)
     }
 
     fn gen_operator_backup_output(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(OPERATOR_BACKUP_OUTPUT_TEST.seed);
 
-        let custodians: Vec<_> = (0..OPERATOR_BACKUP_OUTPUT_TEST.custodian_count)
+        let custodians: Vec<_> = (1..=OPERATOR_BACKUP_OUTPUT_TEST.custodian_count)
             .map(|i| {
-                let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-                let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+                let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+                let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+                let (private_key, public_key) = encryption.keygen().unwrap();
                 Custodian::new(
-                    i,
+                    Role::indexed_from_one(i),
                     signing_key,
-                    verification_key,
-                    private_key,
                     public_key,
+                    private_key,
                 )
                 .unwrap()
             })
             .collect();
         let custodian_messages: Vec<_> = custodians
             .iter()
-            .map(|c| c.generate_setup_message(&mut rng).unwrap())
+            .map(|c| {
+                c.generate_setup_message(&mut rng, "Custodian-1".to_string())
+                    .unwrap()
+            })
             .collect();
 
         let operator = {
-            let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
             Operator::new(
-                0,
+                Role::indexed_from_one(1),
                 custodian_messages,
                 signing_key,
-                verification_key,
-                private_key,
-                public_key,
                 OPERATOR_BACKUP_OUTPUT_TEST.custodian_threshold,
+                OPERATOR_BACKUP_OUTPUT_TEST.custodian_count,
             )
             .unwrap()
         };
         let operator_backup_output = &operator
-            .secret_share_and_encrypt(
+            .secret_share_and_signcrypt(
                 &mut rng,
                 &OPERATOR_BACKUP_OUTPUT_TEST.plaintext,
                 RequestId::from_bytes(OPERATOR_BACKUP_OUTPUT_TEST.backup_id),
             )
-            .unwrap()[&0];
+            .unwrap()
+            .0;
 
         store_versioned_test!(
             operator_backup_output,
@@ -621,12 +829,11 @@ impl KmsV0_11 {
         );
         TestMetadataKMS::OperatorBackupOutput(OPERATOR_BACKUP_OUTPUT_TEST)
     }
-    */
 }
 
-struct DistributedDecryptionV0_11;
+struct DistributedDecryptionV0_12;
 
-impl DistributedDecryptionV0_11 {
+impl DistributedDecryptionV0_12 {
     fn gen_prss_setup_rpoly_64(dir: &PathBuf) -> TestMetadataDD {
         let role = Role::indexed_from_one(PRSS_SETUP_RPOLY_64_TEST.role_i);
         let base_session = get_networkless_base_session_for_parties(
@@ -668,9 +875,9 @@ impl DistributedDecryptionV0_11 {
     }
 }
 
-struct KmsGrpcV0_11;
+struct KmsGrpcV0_12;
 
-impl KmsGrpcV0_11 {
+impl KmsGrpcV0_12 {
     fn gen_signed_pub_data_handle_internal(dir: &PathBuf) -> TestMetadataKmsGrpc {
         let signed_pub_data_handle_internal = SignedPubDataHandleInternal::new(
             SIGNED_PUB_DATA_HANDLE_INTERNAL_TEST.key_handle.to_string(),
@@ -704,8 +911,8 @@ impl KmsGrpcV0_11 {
     }
 }
 
-impl KMSCoreVersion for V0_11 {
-    const VERSION_NUMBER: &'static str = "0.11.0";
+impl KMSCoreVersion for V0_12 {
+    const VERSION_NUMBER: &'static str = "0.12.2";
 
     // Without this, some keys will be generated differently every time we run the script
     fn seed_prng(seed: u128) {
@@ -721,15 +928,23 @@ impl KMSCoreVersion for V0_11 {
         create_dir_all(&dir).unwrap();
 
         vec![
-            KmsV0_11::gen_private_sig_key(&dir),
-            KmsV0_11::gen_public_sig_key(&dir),
-            KmsV0_11::gen_app_key_blob(&dir),
-            KmsV0_11::gen_typed_plaintext(&dir),
-            KmsV0_11::gen_signcryption_payload(&dir),
-            KmsV0_11::gen_kms_fhe_key_handles(&dir),
-            KmsV0_11::gen_threshold_fhe_keys(&dir),
-            // KmsV0_11::gen_custodian_setup_message(&dir),
-            // KmsV0_11::gen_operator_backup_output(&dir),
+            KmsV0_12::gen_private_sig_key(&dir),
+            KmsV0_12::gen_public_sig_key(&dir),
+            KmsV0_12::gen_app_key_blob(&dir),
+            KmsV0_12::gen_typed_plaintext(&dir),
+            KmsV0_12::gen_signcryption_payload(&dir),
+            KmsV0_12::gen_signcryption_key(&dir),
+            KmsV0_12::gen_designcryption_key(&dir),
+            KmsV0_12::gen_backup_ciphertext(&dir),
+            KmsV0_12::gen_unified_cipher(&dir),
+            KmsV0_12::gen_hybrid_kem_ct(&dir),
+            KmsV0_12::gen_recovery_material_handles(&dir),
+            KmsV0_12::generate_internal_cus_context_handles(&dir),
+            KmsV0_12::gen_kms_fhe_key_handles(&dir),
+            KmsV0_12::gen_threshold_fhe_keys(&dir),
+            KmsV0_12::gen_internal_cus_setup_msg(&dir),
+            KmsV0_12::gen_internal_cus_setup_msg(&dir),
+            KmsV0_12::gen_operator_backup_output(&dir),
         ]
     }
 
@@ -738,9 +953,9 @@ impl KMSCoreVersion for V0_11 {
         create_dir_all(&dir).unwrap();
 
         vec![
-            DistributedDecryptionV0_11::gen_prss_setup_rpoly_64(&dir),
-            DistributedDecryptionV0_11::gen_prss_setup_rpoly_128(&dir),
-            DistributedDecryptionV0_11::gen_prf_key(&dir),
+            DistributedDecryptionV0_12::gen_prss_setup_rpoly_64(&dir),
+            DistributedDecryptionV0_12::gen_prss_setup_rpoly_128(&dir),
+            DistributedDecryptionV0_12::gen_prf_key(&dir),
         ]
     }
 
@@ -749,9 +964,9 @@ impl KMSCoreVersion for V0_11 {
         create_dir_all(&dir).unwrap();
 
         vec![
-            KmsGrpcV0_11::gen_signed_pub_data_handle_internal(&dir),
-            KmsGrpcV0_11::gen_public_key_type(&dir),
-            KmsGrpcV0_11::gen_pub_data_type(&dir),
+            KmsGrpcV0_12::gen_signed_pub_data_handle_internal(&dir),
+            KmsGrpcV0_12::gen_public_key_type(&dir),
+            KmsGrpcV0_12::gen_pub_data_type(&dir),
         ]
     }
 }

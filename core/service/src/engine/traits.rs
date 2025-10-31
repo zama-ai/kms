@@ -19,10 +19,8 @@ use tonic::Request;
 use tonic::Response;
 use tonic::Status;
 
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::cryptography::internal_crypto_types::PublicSigKey;
-use crate::cryptography::internal_crypto_types::Signature;
-use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::cryptography::encryption::UnifiedPublicEncKey;
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 
 use super::base::KmsFheKeyHandles;
 

@@ -12,7 +12,7 @@ use kms_lib::{
     consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID},
     cryptography::{
         attestation::{make_security_module, SecurityModule, SecurityModuleProxy},
-        internal_crypto_types::PrivateSigKey,
+        signatures::PrivateSigKey,
     },
     engine::{
         centralized::central_kms::RealCentralizedKms, run_server,
@@ -96,7 +96,6 @@ async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener
     let mpc_listener = TcpListener::bind(mpc_socket_addr)
         .await
         .unwrap_or_else(|e| panic!("Could not bind to {mpc_socket_addr} \n {e:?}"));
-
     tracing::info!(
                 "Starting threshold KMS server v{} for party {}, listening for MPC communication on {:?}...",
                 env!("CARGO_PKG_VERSION"),

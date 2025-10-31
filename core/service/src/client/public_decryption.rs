@@ -1,6 +1,5 @@
 use crate::client::client_wasm::Client;
-use crate::cryptography::internal_crypto_types::PublicSigKey;
-use crate::cryptography::internal_crypto_types::Signature;
+use crate::cryptography::signatures::{PublicSigKey, Signature};
 use crate::engine::base::BaseKmsStruct;
 use crate::engine::traits::BaseKms;
 use crate::engine::validation::validate_public_decrypt_responses_against_request;
