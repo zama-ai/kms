@@ -343,7 +343,7 @@ mod tests {
         assert_eq!(server_handles.len(), PRSS_AMOUNT_PARTIES);
 
         // check that PRSS setups were not created, but instead read from disk now
-        assert!(!logs_contain("Loaded PRSS Setup from disk"));
+        assert!(logs_contain("Loaded PRSS Setup from disk"));
     }
 
     async fn make_initiator<

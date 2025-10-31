@@ -613,7 +613,7 @@ mod tests {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
                 verification_key: Some(verification_key.clone()),
-                external_url: "localhost:12345".to_string(),
+                external_url: "http://localhost:12345".to_string(),
                 tls_cert: vec![],
                 public_storage_url: "http://storage".to_string(),
                 extra_verification_keys: vec![],
