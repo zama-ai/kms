@@ -3,6 +3,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // === External Crates ===
 use kms_grpc::{
+    identifiers::EpochId,
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::{KMSType, PrivDataType, PubDataType, SignedPubDataHandleInternal},
     RequestId,
@@ -376,7 +377,8 @@ where
     )));
     let custodian_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(custodian_context)));
 
-    // TODO currently we need to insert a default context
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // currently we need to insert a default context
     // this can be removed when we have dynamic session preparers
     let session_maker = SessionMaker::new(networking_manager, base_kms.rng.clone());
     let _ = match config.peers {
@@ -477,19 +479,19 @@ where
 
     // TODO eventually this PRSS ID should come from the context request
     // the PRSS should never be run in this function.
-    let req_id_prss = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?; // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
+    let epoch_id_prss: EpochId = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?.into(); // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
     if run_prss {
         tracing::info!(
             "Initializing threshold KMS server and generating a new PRSS Setup for {}",
             config.my_id
         );
-        initiator.init_prss(&req_id_prss).await?;
+        initiator.init_prss(&epoch_id_prss).await?;
     } else {
         tracing::info!(
             "Trying to initializing threshold KMS server and reading PRSS from storage for {}",
             config.my_id
         );
-        if let Err(e) = initiator.init_prss_from_disk(&req_id_prss).await {
+        if let Err(e) = initiator.init_prss_from_disk(&epoch_id_prss).await {
             tracing::warn!(
                 "Could not read PRSS Setup from storage for {}: {}. You will need to call the init end-point later before you can use the KMS server",
                 config.my_id,

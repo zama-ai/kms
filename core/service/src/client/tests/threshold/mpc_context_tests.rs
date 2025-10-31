@@ -27,7 +27,6 @@ use crate::{
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial]
-#[tracing_test::traced_test]
 async fn test_context_switch_4p() {
     do_context_switch(TEST_PARAM, 4, None).await;
 }
@@ -42,6 +41,7 @@ async fn do_context_switch(
     // 3. verify that the context switch was successful by doing a decryption
     // 4. delete the context
     // 5. verify that the context is deleted and decryption should fail
+    // 6. decrypt with the old context to verify it's still there
 
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100,

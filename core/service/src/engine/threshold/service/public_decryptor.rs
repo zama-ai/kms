@@ -5,7 +5,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
 use anyhow::anyhow;
 use itertools::Itertools;
 use kms_grpc::{
-    identifiers::ContextId,
+    identifiers::{ContextId, EpochId},
     kms::v1::{
         self, CiphertextFormat, Empty, PublicDecryptionRequest, PublicDecryptionResponse,
         PublicDecryptionResponsePayload, TypedPlaintext,
@@ -156,7 +156,7 @@ impl<
     async fn inner_decrypt<T>(
         session_id: SessionId,
         context_id: ContextId,
-        epoch_id: RequestId,
+        epoch_id: EpochId,
         session_maker: ImmutableSessionMaker,
         ct: Vec<u8>,
         fhe_type: FheTypes,
@@ -287,11 +287,11 @@ impl<
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
             None => *DEFAULT_MPC_CONTEXT,
         };
-        let epoch_id: RequestId = match &inner.epoch_id {
+        let epoch_id: EpochId = match &inner.epoch_id {
             Some(c) => c
                 .try_into()
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
-            None => RequestId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
+            None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
         };
 
         // Start timing and counting before any operations

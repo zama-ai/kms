@@ -221,6 +221,7 @@ impl<
         let context_id = context_id.unwrap_or(*DEFAULT_MPC_CONTEXT);
 
         // TODO we don't need epoch ID for the actual keygen
+        // but it will be needed when we store the key material
         let _epoch_id = epoch_id.unwrap_or(RequestId::try_from(PRSS_INIT_REQ_ID).unwrap());
 
         //Retrieve the right metric tag

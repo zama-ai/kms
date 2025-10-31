@@ -3,7 +3,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // === External Crates ===
 use kms_grpc::{
-    identifiers::ContextId,
+    identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
     rpc_types::optional_protobuf_to_alloy_domain,
     RequestId,
@@ -78,14 +78,14 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         keyset_config: ddec_keyset_config::KeySetConfig,
         request_id: RequestId,
         context_id: Option<ContextId>,
-        epoch_id: Option<RequestId>,
+        epoch_id: Option<EpochId>,
         domain: &alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
         // TODO(zama-ai/kms-internal/issues/2758)
         // remove the default context when all of context is ready
         let context_id = context_id.unwrap_or(*DEFAULT_MPC_CONTEXT);
-        let epoch_id = epoch_id.unwrap_or(RequestId::try_from(PRSS_INIT_REQ_ID).unwrap());
+        let epoch_id = epoch_id.unwrap_or(EpochId::try_from(PRSS_INIT_REQ_ID).unwrap());
         let my_role = self.session_maker.my_role(&context_id).await?;
         let my_identity = self.session_maker.my_identity(&context_id).await?;
 

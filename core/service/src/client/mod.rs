@@ -2,8 +2,6 @@
 pub mod client_non_wasm;
 pub mod client_wasm;
 #[cfg(feature = "non-wasm")]
-pub mod context;
-#[cfg(feature = "non-wasm")]
 pub mod crs_gen;
 #[cfg(feature = "non-wasm")]
 pub mod custodian_context;
@@ -11,6 +9,8 @@ pub mod custodian_context;
 pub mod js_api;
 #[cfg(feature = "non-wasm")]
 pub mod key_gen;
+#[cfg(feature = "non-wasm")]
+pub mod mpc_context;
 #[cfg(feature = "non-wasm")]
 pub mod public_decryption;
 #[cfg(any(test, feature = "testing"))]

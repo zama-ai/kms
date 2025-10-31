@@ -8,7 +8,7 @@ use std::{
 // === External Crates ===
 use anyhow::anyhow;
 use kms_grpc::{
-    identifiers::ContextId,
+    identifiers::{ContextId, EpochId},
     kms::v1::{
         self, Empty, TypedCiphertext, TypedSigncryptedCiphertext, UserDecryptionRequest,
         UserDecryptionResponse, UserDecryptionResponsePayload,
@@ -174,7 +174,7 @@ impl<
         req_id: &RequestId,
         session_maker: ImmutableSessionMaker,
         context_id: ContextId,
-        epoch_id: RequestId,
+        epoch_id: EpochId,
         rng: impl CryptoRng + RngCore + Send + 'static,
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
@@ -462,11 +462,11 @@ impl<
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
             None => *DEFAULT_MPC_CONTEXT,
         };
-        let epoch_id: RequestId = match &inner.epoch_id {
+        let epoch_id: EpochId = match &inner.epoch_id {
             Some(c) => c
                 .try_into()
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
-            None => RequestId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap since `PRSS_INIT_REQ_ID` is valid
+            None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap since `PRSS_INIT_REQ_ID` is valid
         };
         let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
             tonic::Status::not_found(format!(

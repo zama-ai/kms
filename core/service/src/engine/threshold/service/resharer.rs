@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use itertools::Itertools;
 use kms_grpc::{
-    identifiers::{ContextId, RequestId},
+    identifiers::{ContextId, EpochId},
     kms::v1::{
         InitiateResharingRequest, InitiateResharingResponse, KeyDigest, ResharingResultResponse,
     },
@@ -81,11 +81,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             None => *DEFAULT_MPC_CONTEXT,
         };
 
-        let new_epoch_id: RequestId = match &inner.epoch_id {
+        let new_epoch_id: EpochId = match &inner.epoch_id {
             Some(c) => c
                 .try_into()
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
-            None => RequestId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe to unwrap here because PRSS ID is hardcoded
+            None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe to unwrap here because PRSS ID is hardcoded
         };
 
         let key_id_to_reshare =

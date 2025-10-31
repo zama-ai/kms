@@ -3,10 +3,10 @@ use std::{marker::PhantomData, sync::Arc};
 
 // === External Crates ===
 use kms_grpc::{
+    identifiers::EpochId,
     kms::v1::{self, Empty},
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::PrivDataType,
-    RequestId,
 };
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
@@ -54,7 +54,7 @@ impl<
     > RealInitiator<PrivS, Init>
 {
     // Note that `req_id` is not the context ID. It is the request ID for the PRSS setup.
-    pub async fn init_prss_from_disk(&self, req_id: &RequestId) -> anyhow::Result<()> {
+    pub async fn init_prss_from_disk(&self, epoch_id: &EpochId) -> anyhow::Result<()> {
         // TODO(zama-ai/kms-internal#2530) set the correct context ID here.
         let context_id = *DEFAULT_MPC_CONTEXT;
         let threshold = self.session_maker.threshold(&context_id).await?;
@@ -66,7 +66,7 @@ impl<
                 &(*guarded_private_storage),
                 &derive_request_id(&format!(
                     "PRSSSetup_Z128_ID_{}_{}_{}",
-                    req_id, num_parties, threshold,
+                    epoch_id, num_parties, threshold,
                 ))?,
                 &PrivDataType::PrssSetup.to_string(),
             )
@@ -78,7 +78,7 @@ impl<
                 &(*guarded_private_storage),
                 &derive_request_id(&format!(
                     "PRSSSetup_Z64_ID_{}_{}_{}",
-                    req_id, num_parties, threshold,
+                    epoch_id, num_parties, threshold,
                 ))?,
                 &PrivDataType::PrssSetup.to_string(),
             )
@@ -93,7 +93,7 @@ impl<
         match prss_from_file {
             (Ok(prss_128), Ok(prss_64)) => {
                 self.session_maker
-                    .add_epoch(*req_id, prss_128, prss_64)
+                    .add_epoch(*epoch_id, prss_128, prss_64)
                     .await;
             }
             (Err(e), Ok(_)) => return Err(e),
@@ -101,7 +101,7 @@ impl<
             (Err(_e), Err(e)) => return Err(e),
         }
 
-        tracing::info!("Loaded PRSS Setup from disk for request ID {}.", req_id);
+        tracing::info!("Loaded PRSS Setup from disk for request ID {}.", epoch_id);
         {
             // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
             self.health_reporter
@@ -112,7 +112,7 @@ impl<
     }
 
     // NOTE: this function will overwrite the existing PRSS state
-    pub async fn init_prss(&self, req_id: &RequestId) -> anyhow::Result<()> {
+    pub async fn init_prss(&self, epoch_id: &EpochId) -> anyhow::Result<()> {
         // TODO(zama-ai/kms-internal#2530) set the correct context ID here.
         let context_id = *DEFAULT_MPC_CONTEXT;
 
@@ -120,7 +120,7 @@ impl<
         // we never try to store the PRSS in meta_store, so the ID is not guaranteed to be unique
 
         let own_identity = self.session_maker.my_identity(&context_id).await?;
-        let session_id = req_id.derive_session_id()?;
+        let session_id = epoch_id.derive_session_id()?;
 
         // PRSS robust init requires broadcast, which is implemented with Sync network assumption
         let mut base_session = self
@@ -151,7 +151,7 @@ impl<
             &mut (*priv_storage),
             &derive_request_id(&format!(
                 "PRSSSetup_Z128_ID_{}_{}_{}",
-                req_id,
+                epoch_id,
                 base_session.parameters.num_parties(),
                 base_session.parameters.threshold(),
             ))?,
@@ -164,7 +164,7 @@ impl<
             &mut (*priv_storage),
             &derive_request_id(&format!(
                 "PRSSSetup_Z64_ID_{}_{}_{}",
-                req_id,
+                epoch_id,
                 base_session.parameters.num_parties(),
                 base_session.parameters.threshold(),
             ))?,
@@ -174,7 +174,7 @@ impl<
         .await?;
 
         self.session_maker
-            .add_epoch(*req_id, prss_setup_obj_z128, prss_setup_obj_z64)
+            .add_epoch(*epoch_id, prss_setup_obj_z128, prss_setup_obj_z64)
             .await;
 
         {
@@ -210,17 +210,18 @@ impl<
         // See zama-ai/kms-internal/#2741
 
         let inner = request.into_inner();
-        let request_id =
-            parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::Init)?;
+        // the request ID of the init request is the epoch ID for PRSS and shares
+        let epoch_id: EpochId =
+            parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::Init)?.into();
 
-        if self.session_maker.epoch_exists(&request_id).await {
+        if self.session_maker.epoch_exists(&epoch_id).await {
             return Err(tonic::Status::new(
                 tonic::Code::AlreadyExists,
                 "PRSS state already exists".to_string(),
             ));
         }
 
-        self.init_prss(&request_id).await.map_err(|e| {
+        self.init_prss(&epoch_id).await.map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
                 format!("PRSS initialization failed with error: {e}"),
@@ -362,10 +363,10 @@ mod tests {
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(42);
         let initiator = make_initiator::<EmptyPrss>(&mut rng).await;
-        let req_id = RequestId::new_random(&mut rng);
+        let epoch_id = EpochId::new_random(&mut rng);
         initiator
             .init(tonic::Request::new(InitRequest {
-                request_id: Some(req_id.into()),
+                request_id: Some(epoch_id.into()),
             }))
             .await
             .unwrap();
@@ -410,10 +411,10 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let initiator = make_initiator::<EmptyPrss>(&mut rng).await;
 
-        let req_id = RequestId::new_random(&mut rng);
+        let epoch_id = EpochId::new_random(&mut rng);
         initiator
             .init(tonic::Request::new(InitRequest {
-                request_id: Some(req_id.into()),
+                request_id: Some(epoch_id.into()),
             }))
             .await
             .unwrap();
@@ -422,7 +423,7 @@ mod tests {
         assert_eq!(
             initiator
                 .init(tonic::Request::new(InitRequest {
-                    request_id: Some(req_id.into()),
+                    request_id: Some(epoch_id.into()),
                 }))
                 .await
                 .unwrap_err()
@@ -436,11 +437,11 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let initiator = make_initiator::<FailingPrss>(&mut rng).await;
 
-        let req_id = RequestId::new_random(&mut rng);
+        let epoch_id = EpochId::new_random(&mut rng);
         assert_eq!(
             initiator
                 .init(tonic::Request::new(InitRequest {
-                    request_id: Some(req_id.into())
+                    request_id: Some(epoch_id.into())
                 }))
                 .await
                 .unwrap_err()

@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use aes_prng::AesRng;
 // === External Crates ===
-use kms_grpc::{identifiers::ContextId, RequestId};
+use kms_grpc::identifiers::{ContextId, EpochId};
 use rand::{RngCore, SeedableRng};
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
@@ -38,7 +38,7 @@ type ContextMap = HashMap<ContextId, Context>;
 pub(crate) struct SessionMaker {
     networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
     context_map: Arc<RwLock<ContextMap>>,
-    epoch_map: Arc<RwLock<HashMap<RequestId, PRSSSetupExtended>>>,
+    epoch_map: Arc<RwLock<HashMap<EpochId, PRSSSetupExtended>>>,
     rng: Arc<Mutex<AesRng>>,
 }
 
@@ -82,7 +82,7 @@ impl SessionMaker {
             role_assignment,
         };
 
-        let default_epoch_id = RequestId::try_from(PRSS_INIT_REQ_ID).unwrap();
+        let default_epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID).unwrap();
         let default_prss = match (prss_setup_z128, prss_setup_z64) {
             (Some(z128), Some(z64)) => Some(PRSSSetupExtended {
                 prss_setup_z128: z128,
@@ -206,7 +206,7 @@ impl SessionMaker {
 
     pub(crate) async fn add_epoch(
         &self,
-        epoch_id: RequestId,
+        epoch_id: EpochId,
         prss_setup_z128: PRSSSetup<ResiduePolyF4Z128>,
         prss_setup_z64: PRSSSetup<ResiduePolyF4Z64>,
     ) {
@@ -220,7 +220,7 @@ impl SessionMaker {
         );
     }
 
-    pub(crate) async fn epoch_exists(&self, epoch_id: &RequestId) -> bool {
+    pub(crate) async fn epoch_exists(&self, epoch_id: &EpochId) -> bool {
         let epoch_map = self.epoch_map.read().await;
         epoch_map.contains_key(epoch_id)
     }
@@ -271,7 +271,7 @@ impl SessionMaker {
         &self,
         session_id: SessionId,
         context_id: ContextId,
-        epoch_id: RequestId,
+        epoch_id: EpochId,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
         self.make_small_session_z128(session_id, context_id, epoch_id, NetworkMode::Async)
             .await
@@ -281,7 +281,7 @@ impl SessionMaker {
         &self,
         session_id: SessionId,
         context_id: ContextId,
-        epoch_id: RequestId,
+        epoch_id: EpochId,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
         self.make_small_session_z128(session_id, context_id, epoch_id, NetworkMode::Sync)
             .await
@@ -291,7 +291,7 @@ impl SessionMaker {
         &self,
         session_id: SessionId,
         context_id: ContextId,
-        epoch_id: RequestId,
+        epoch_id: EpochId,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z64>> {
         self.make_small_session_z64(session_id, context_id, epoch_id, NetworkMode::Async)
             .await
@@ -301,7 +301,7 @@ impl SessionMaker {
         &self,
         session_id: SessionId,
         context_id: ContextId,
-        epoch_id: RequestId,
+        epoch_id: EpochId,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z64>> {
         self.make_small_session_z64(session_id, context_id, epoch_id, NetworkMode::Sync)
             .await
@@ -311,7 +311,7 @@ impl SessionMaker {
         &self,
         session_id: SessionId,
         context_id: ContextId,
-        epoch_id: RequestId,
+        epoch_id: EpochId,
         network_mode: NetworkMode,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
         let base_session = self
@@ -338,7 +338,7 @@ impl SessionMaker {
         &self,
         session_id: SessionId,
         context_id: ContextId,
-        epoch_id: RequestId,
+        epoch_id: EpochId,
         network_mode: NetworkMode,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z64>> {
         let base_session = self
@@ -462,7 +462,7 @@ impl ImmutableSessionMaker {
         &self,
         session_id: SessionId,
         context_id: ContextId,
-        epoch_id: RequestId,
+        epoch_id: EpochId,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
         self.inner
             .make_small_async_session_z128(session_id, context_id, epoch_id)
@@ -473,7 +473,7 @@ impl ImmutableSessionMaker {
         &self,
         session_id: SessionId,
         context_id: ContextId,
-        epoch_id: RequestId,
+        epoch_id: EpochId,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z64>> {
         self.inner
             .make_small_async_session_z64(session_id, context_id, epoch_id)
@@ -484,7 +484,7 @@ impl ImmutableSessionMaker {
         &self,
         session_id: SessionId,
         context_id: ContextId,
-        epoch_id: RequestId,
+        epoch_id: EpochId,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
         self.inner
             .make_small_sync_session_z128(session_id, context_id, epoch_id)
@@ -495,7 +495,7 @@ impl ImmutableSessionMaker {
         &self,
         session_id: SessionId,
         context_id: ContextId,
-        epoch_id: RequestId,
+        epoch_id: EpochId,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z64>> {
         self.inner
             .make_small_sync_session_z64(session_id, context_id, epoch_id)
