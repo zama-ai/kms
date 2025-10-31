@@ -359,7 +359,7 @@ mod tests {
         cryptography::{
             encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
             signatures::{gen_sig_keys, PublicSigKey},
-            signcryption::UnifiedDesigncryptionKey,
+            signcryption::UnifiedUnsigncryptionKey,
         },
         engine::context::{NodeInfo, SoftwareVersion},
         util::meta_store::MetaStore,
@@ -547,14 +547,14 @@ mod tests {
         )
         .unwrap();
         let custodian_id = custodian1.verification_key().verf_key_id();
-        let design_key = UnifiedDesigncryptionKey::new(
+        let unsign_key = UnifiedUnsigncryptionKey::new(
             custodian1.public_dec_key(),
             custodian1.public_enc_key(),
             &server_verf_key,
             &custodian_id,
         );
         assert!(internal_rec_req
-            .is_valid(Role::indexed_from_one(1), &design_key)
+            .is_valid(Role::indexed_from_one(1), &unsign_key)
             .unwrap());
     }
 }

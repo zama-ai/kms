@@ -3,8 +3,8 @@ use crate::cryptography::{
     encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
     signatures::PrivateSigKey,
     signcryption::{
-        Designcrypt, Signcrypt, UnifiedDesigncryptionKey, UnifiedSigncryption,
-        UnifiedSigncryptionKey,
+        Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
+        Unsigncrypt,
     },
 };
 use crate::engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr};
@@ -296,7 +296,7 @@ impl Custodian {
     #[allow(unknown_lints)]
     #[allow(non_local_effect_before_error_return)]
     /// Obtain the operator ephemeral public key for reencryption,
-    /// designcrypt the signcryption encrypted under the custodian's public key
+    /// unsigncrypt the signcryption encrypted under the custodian's public key
     /// and then signcrypt it it under the operator's public key
     pub fn verify_reencrypt<R: Rng + CryptoRng>(
         &self,
@@ -312,17 +312,17 @@ impl Custodian {
             operator_role
         );
         let custodian_id = self.verification_key().verf_key_id();
-        let designcrypt_key = UnifiedDesigncryptionKey::new(
+        let unsigncrypt_key = UnifiedUnsigncryptionKey::new(
             &self.dec_key,
             &self.enc_key,
             operator_verification_key,
             &custodian_id,
         );
-        let backup_material: BackupMaterial = designcrypt_key
-            .designcrypt(&DSEP_BACKUP_CUSTODIAN, &backup.signcryption)
+        let backup_material: BackupMaterial = unsigncrypt_key
+            .unsigncrypt(&DSEP_BACKUP_CUSTODIAN, &backup.signcryption)
             .map_err(|e| {
                 tracing::warn!(
-                    "Designcryption failed for backup {backup_id} for operator {operator_role}: {e}"
+                    "Unsigncryption failed for backup {backup_id} for operator {operator_role}: {e}"
                 );
                 BackupError::CustodianRecoveryError
             })?;

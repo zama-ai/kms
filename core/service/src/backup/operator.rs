@@ -10,8 +10,8 @@ use crate::{
     cryptography::encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
     cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature},
     cryptography::signcryption::{
-        Designcrypt, Signcrypt, UnifiedDesigncryptionKey, UnifiedSigncryption,
-        UnifiedSigncryptionKey,
+        Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
+        Unsigncrypt,
     },
     engine::{
         base::safe_serialize_hash_element_versioned,
@@ -93,7 +93,7 @@ pub struct InternalRecoveryRequest {
 }
 
 impl InternalRecoveryRequest {
-    /// Optimistically create a new internal recovery request, WITHOUT validating it against the custodians' designcryption keys.
+    /// Optimistically create a new internal recovery request, WITHOUT validating it against the custodians' unsigncryption keys.
     pub fn new(
         backup_enc_key: UnifiedPublicEncKey,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
@@ -118,7 +118,7 @@ impl InternalRecoveryRequest {
     pub fn is_valid(
         &self,
         custodian_role: Role,
-        designcrypt_key: &UnifiedDesigncryptionKey,
+        unsigncrypt_key: &UnifiedUnsigncryptionKey,
     ) -> anyhow::Result<bool> {
         if !self.backup_id.is_valid() {
             tracing::warn!("InternalRecoveryRequest has an invalid backup ID");
@@ -134,8 +134,8 @@ impl InternalRecoveryRequest {
                 return Ok(false);
             }
         };
-        // We ignore the result, but just ensure that designcryption works
-        if designcrypt_key
+        // We ignore the result, but just ensure that unsigncryption works
+        if unsigncrypt_key
             .validate_signcryption(&DSEP_BACKUP_CUSTODIAN, &output.signcryption)
             .is_err()
         {
@@ -387,26 +387,26 @@ impl Named for RecoveryValidationMaterialPayload {
 
 #[allow(clippy::too_many_arguments)]
 fn checked_decryption_deserialize(
-    design_key: &UnifiedDesigncryptionKey,
+    unsign_key: &UnifiedUnsigncryptionKey,
     signcryption: &UnifiedSigncryption,
     commitment: &[u8],
     backup_id: RequestId,
     custodian_role: Role,
     operator_role: Role,
 ) -> Result<Vec<Share<ResiduePolyF4Z64>>, BackupError> {
-    let backup_material: BackupMaterial = design_key
-        .designcrypt(&DSEP_BACKUP_RECOVERY, signcryption)
+    let backup_material: BackupMaterial = unsign_key
+        .unsigncrypt(&DSEP_BACKUP_RECOVERY, signcryption)
         .map_err(|e| {
             BackupError::OperatorError(format!(
-                "Failed to designcrypt backup share for custodian role {custodian_role}: {e}",
+                "Failed to unsigncrypt backup share for custodian role {custodian_role}: {e}",
             ))
         })?;
     // check metadata
     if !backup_material.matches_expected_metadata(
         backup_id,
-        design_key.sender_verf_key,
+        unsign_key.sender_verf_key,
         custodian_role,
-        design_key.receiver_id,
+        unsign_key.receiver_id,
         operator_role,
     ) {
         return Err(BackupError::OperatorError(
@@ -750,14 +750,14 @@ impl Operator {
                     .get(&custodian_output.custodian_role)
                     .map_err(|_| BackupError::OperatorError("missing commitment".to_string()))?;
                 let operator_id = &self.verification_key.verf_key_id();
-                let design_key = UnifiedDesigncryptionKey::new(
+                let unsign_key = UnifiedUnsigncryptionKey::new(
                     ephm_dec_key,
                     ephm_enc_key,
                     custodian_verf_key,
                     operator_id,
                 );
                 checked_decryption_deserialize(
-                    &design_key,
+                    &unsign_key,
                     &custodian_output.signcryption,
                     commitment,
                     backup_id,

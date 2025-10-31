@@ -12,7 +12,7 @@ use crate::{
             UnifiedPublicEncKey,
         },
         signatures::{PrivateSigKey, PublicSigKey},
-        signcryption::{Designcrypt, UnifiedDesigncryptionKey},
+        signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
     },
     engine::{
         base::{BaseKmsStruct, CrsGenMetadata, KmsFheKeyHandles},
@@ -470,7 +470,7 @@ async fn filter_custodian_data(
         };
 
         let verf_key_id = my_verf_key.verf_key_id();
-        let design_key = UnifiedDesigncryptionKey::new(
+        let unsign_key = UnifiedUnsigncryptionKey::new(
             ephemeral_dec_key,
             ephemeral_enc_key,
             cur_verf,
@@ -486,7 +486,7 @@ async fn filter_custodian_data(
                 continue;
             }
         };
-        if design_key
+        if unsign_key
             .validate_signcryption(&DSEP_BACKUP_RECOVERY, &cur_signcryption)
             .is_err()
         {
