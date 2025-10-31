@@ -73,7 +73,7 @@ args:
       (dict "name" .name
             "image" .image
             "vsockPort" .vsockPort
-	        "to" (printf "TCP:%s:%d" .address (int .port))) }}
+	        "to" (printf "TCP:%s:%d,nodelay" .address (int .port))) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
@@ -97,7 +97,7 @@ args:
 {{- include "proxyToEnclave"
       (dict "name" .name
             "image" .image
-            "from" (printf "TCP-LISTEN:%d,fork,reuseaddr" (int .port))
+            "from" (printf "TCP-LISTEN:%d,fork,nodelay,reuseaddr" (int .port))
             "cid" .cid
 	        "port" .port) }}
 {{- end -}}

@@ -321,6 +321,10 @@ where
         // separate crate from tonic (whose maintainers don't want to make its
         // API dependent on rustls)
         let tcp_incoming = TcpIncoming::from(mpc_listener);
+        // Use the TLS_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
+        // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
+        // then this should be changed
+        let tcp_incoming = tcp_incoming.with_nodelay(Some(true));
         match tls_config {
             Some((server_config, _)) => {
                 router

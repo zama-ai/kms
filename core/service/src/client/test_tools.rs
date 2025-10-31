@@ -215,7 +215,10 @@ pub async fn setup_threshold_no_client<
 /// try to connect to a URI and retry every 200ms for 50 times before giving up after 5 seconds.
 pub async fn connect_with_retry(uri: Uri) -> Channel {
     tracing::info!("Client connecting to {}", uri);
-    let mut channel = Channel::builder(uri.clone()).connect().await;
+    let mut channel = Channel::builder(uri.clone())
+        .tcp_nodelay(true)
+        .connect()
+        .await;
     let mut tries = 0usize;
     loop {
         match channel {
@@ -225,7 +228,10 @@ pub async fn connect_with_retry(uri: Uri) -> Channel {
             Err(_) => {
                 tracing::info!("Retrying: Client connection to {}", uri);
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                channel = Channel::builder(uri.clone()).connect().await;
+                channel = Channel::builder(uri.clone())
+                    .tcp_nodelay(true)
+                    .connect()
+                    .await;
                 tries += 1;
                 if tries > MAX_TRIES {
                     break;
