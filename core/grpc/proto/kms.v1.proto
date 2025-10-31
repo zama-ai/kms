@@ -90,6 +90,23 @@ message KeyGenPreprocRequest {
   RequestId epoch_id = 6;
 }
 
+message PartialKeyGenPreprocParams {
+  // The percentage of preprocessing we actually generate.
+  // If not set we generate the full preprocessing.
+  uint32 percentage_offline = 1;
+
+  // If set we store a dummy preprocessing that can be used
+  // for lauching the DKG online phase.
+  // If not, the partially generated preprocessing is stored
+  // (but this would fail if used to launch DKG and percentage isn't 100).
+  bool store_dummy_preprocessing = 2;
+}
+message PartialKeyGenPreprocRequest {
+  // The base key generation preprocessing request.
+  KeyGenPreprocRequest base_request = 1;
+  PartialKeyGenPreprocParams partial_params = 2;
+}
+
 enum KeySetCompressionConfig {
   // The default must be represented by 0.
   Generate = 0;

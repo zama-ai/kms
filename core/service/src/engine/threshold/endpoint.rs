@@ -90,6 +90,20 @@ impl_endpoint! {
             })
         }
 
+        #[cfg(feature = "insecure")]
+        #[tracing::instrument(skip(self, request))]
+        async fn partial_key_gen_preproc(
+            &self,
+            request: Request<kms_grpc::kms::v1::PartialKeyGenPreprocRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
+            self.keygen_preprocessor.partial_key_gen_preproc(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, tag);
+            })
+        }
+
         #[tracing::instrument(skip(self, request))]
         async fn get_key_gen_preproc_result(
             &self,

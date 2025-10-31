@@ -87,6 +87,23 @@ impl Client {
         })
     }
 
+    #[cfg(feature = "insecure")]
+    pub fn partial_preproc_request(
+        &self,
+        request_id: &RequestId,
+        param: Option<FheParameter>,
+        keyset_config: Option<KeySetConfig>,
+        domain: &Eip712Domain,
+        partial_params: Option<kms_grpc::kms::v1::PartialKeyGenPreprocParams>,
+    ) -> anyhow::Result<kms_grpc::kms::v1::PartialKeyGenPreprocRequest> {
+        let base_request = self.preproc_request(request_id, param, keyset_config, domain)?;
+
+        Ok(kms_grpc::kms::v1::PartialKeyGenPreprocRequest {
+            base_request: Some(base_request),
+            partial_params,
+        })
+    }
+
     pub fn reshare_request(
         &self,
         request_id: &RequestId,
