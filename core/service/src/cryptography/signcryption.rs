@@ -92,12 +92,12 @@ pub trait DesigncryptFHEPlaintext: Designcrypt {
     ) -> Result<SigncryptionPayload, CryptographyError>;
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, VersionsDispatch)]
 pub enum UnifiedSigncryptionKeyOwnedVersioned {
     V0(UnifiedSigncryptionKeyOwned),
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, Versionize)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Debug, Zeroize, Versionize)]
 #[versionize(UnifiedSigncryptionKeyOwnedVersioned)]
 pub struct UnifiedSigncryptionKeyOwned {
     pub signing_key: PrivateSigKey,
@@ -211,12 +211,12 @@ impl HasSigningScheme for UnifiedDesigncryptionKey<'_> {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, VersionsDispatch)]
 pub enum UnifiedDesigncryptionKeyOwnedVersioned {
     V0(UnifiedDesigncryptionKeyOwned),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, Versionize)]
 #[versionize(UnifiedDesigncryptionKeyOwnedVersioned)]
 pub struct UnifiedDesigncryptionKeyOwned {
     pub decryption_key: UnifiedPrivateEncKey,
@@ -709,7 +709,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
 /// Helper method for what the client is supposed to do when generating ephemeral keys linked to the
 /// client's blockchain signing key
 #[cfg(test)]
-pub(crate) fn ephemeral_signcryption_key_generation(
+pub fn ephemeral_signcryption_key_generation(
     rng: &mut (impl CryptoRng + RngCore + Send + Sync + 'static),
     client_verf_key_id: &[u8],
     server_sig_key: Option<&PrivateSigKey>,

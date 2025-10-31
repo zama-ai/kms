@@ -31,7 +31,7 @@ struct InnerHybridKemCt<C: KemCore> {
     pub payload_ct: Vec<u8>,
 }
 
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, VersionsDispatch)]
 pub enum HybridKemCtVersioned {
     V0(HybridKemCt),
 }
@@ -40,7 +40,7 @@ pub enum HybridKemCtVersioned {
 // but serde cannot derive Serialize/Deserialize for arrays
 // larger than 32. So we have this [HybridKemCt] type where
 // [kem_ct] is a Vec.
-#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(HybridKemCtVersioned)]
 // WARNING: This type is currently using a legacy approach to serialization using bincode. When updating please also update the serialization to safe serialization
 // In connection with this the trait `LegacySerialization` must also be implemented and used!

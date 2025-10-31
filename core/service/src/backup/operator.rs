@@ -435,14 +435,14 @@ pub enum BackupMaterialVersioned {
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(BackupMaterialVersioned)]
 pub struct BackupMaterial {
-    pub(crate) backup_id: RequestId,
+    pub backup_id: RequestId,
     // receiver
-    pub(crate) custodian_pk: PublicSigKey,
-    pub(crate) custodian_role: Role,
+    pub custodian_pk: PublicSigKey,
+    pub custodian_role: Role,
     // sender
-    pub(crate) operator_pk: PublicSigKey,
-    pub(crate) operator_role: Role,
-    pub(crate) shares: Vec<Share<ResiduePolyF4Z64>>,
+    pub operator_pk: PublicSigKey,
+    pub operator_role: Role,
+    pub shares: Vec<Share<ResiduePolyF4Z64>>,
 }
 
 impl BackupMaterial {

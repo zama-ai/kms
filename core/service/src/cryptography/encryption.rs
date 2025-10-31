@@ -12,11 +12,15 @@ use nom::AsBytes;
 use rand::{CryptoRng, RngCore};
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
 use strum_macros::Display;
-use tfhe::{named::Named, safe_serialization::safe_deserialize, Versionize};
+use tfhe::{
+    named::Named,
+    safe_serialization::{safe_deserialize, safe_serialize},
+    Versionize,
+};
 use tfhe_versionable::VersionsDispatch;
 use zeroize::Zeroize;
 
-#[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum UnifiedPublicEncKeyVersioned {
     V0(UnifiedPublicEncKey),
 }
@@ -249,7 +253,7 @@ impl Encrypt for UnifiedPublicEncKey {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, VersionsDispatch)]
 pub enum UnifiedPrivateEncKeyVersioned {
     V0(UnifiedPrivateEncKey),
 }
@@ -271,6 +275,21 @@ pub enum UnifiedPrivateEncKey {
 impl tfhe::named::Named for UnifiedPrivateEncKey {
     const NAME: &'static str = "UnifiedPrivateDecKey";
 }
+
+impl PartialEq for UnifiedPrivateEncKey {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare the serialized forms for equality
+        let mut ser = Vec::new();
+        safe_serialize(self, &mut ser, SAFE_SER_SIZE_LIMIT)
+            .expect("Serialization of UnifiedPrivateEncKey failed for equality check");
+        let mut other_ser = Vec::new();
+        safe_serialize(other, &mut other_ser, SAFE_SER_SIZE_LIMIT)
+            .expect("Serialization of UnifiedPrivateEncKey failed for equality check");
+        ser == other_ser
+    }
+}
+
+impl Eq for UnifiedPrivateEncKey {}
 
 impl From<UnifiedPrivateEncKey> for EncryptionSchemeType {
     fn from(value: UnifiedPrivateEncKey) -> Self {
@@ -460,7 +479,6 @@ pub enum EncryptionSchemeTypeVersioned {
     V0(EncryptionSchemeType),
 }
 
-// TODO(#2782) separate into signature and encryption files
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, Versionize)]
 #[versionize(EncryptionSchemeTypeVersioned)]
 pub enum EncryptionSchemeType {
@@ -544,7 +562,7 @@ impl<'a, R: CryptoRng + RngCore + Send + Sync> EncryptionScheme for Encryption<'
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, VersionsDispatch)]
 pub enum UnifiedCipherVersioned {
     V0(UnifiedCipher),
 }
