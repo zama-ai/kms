@@ -46,7 +46,7 @@ start_tcp_proxy_out() {
     local PORT="$2"
     log "starting enclave-side $NAME proxy"
     socat \
-	TCP-LISTEN:"$PORT",fork,reuseaddr \
+	TCP-LISTEN:"$PORT",fork,nodelay,reuseaddr \
 	VSOCK-CONNECT:$PARENT_CID:"$PORT" \
 	|& logger &
 }
