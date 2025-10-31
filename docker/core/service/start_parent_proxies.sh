@@ -51,7 +51,7 @@ start_tcp_proxy_in() {
 
 # start the log stream for the enclave
 echo "start_proxies: starting enclave log stream"
-socat -u VSOCK-LISTEN:"$ENCLAVE_LOG_PORT",fork,nodelay STDOUT &
+socat -u VSOCK-LISTEN:"$ENCLAVE_LOG_PORT",fork STDOUT &
 
 # start the config stream for the enclave
 echo "start_proxies: starting enclave config stream"
