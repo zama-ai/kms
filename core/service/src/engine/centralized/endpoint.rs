@@ -64,6 +64,20 @@ impl<
         })
     }
 
+    // In the centralized case it makes no diffrence whether it's partial or not
+    // as it's dummy anyway
+    #[cfg(feature = "insecure")]
+    #[tracing::instrument(skip(self, request))]
+    async fn partial_key_gen_preproc(
+        &self,
+        request: Request<kms_grpc::kms::v1::PartialKeyGenPreprocRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        self.key_gen_preproc(Request::new(request.into_inner().base_request.ok_or_else(
+            || tonic::Status::new(tonic::Code::Aborted, "Missing preproc base_request"),
+        )?))
+        .await
+    }
+
     #[tracing::instrument(skip(self, request))]
     async fn get_key_gen_preproc_result(
         &self,
