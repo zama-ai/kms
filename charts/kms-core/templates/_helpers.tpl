@@ -59,7 +59,7 @@ args:
 {{- include "socatContainer"
       (dict "name" .name
             "image" .image
-            "from" (printf "VSOCK-LISTEN:%d,fork,nodelay,reuseaddr" (int .vsockPort))
+            "from" (printf "VSOCK-LISTEN:%d,fork,reuseaddr" (int .vsockPort))
 	        "to" .to) }}
 {{- end -}}
 
@@ -73,7 +73,7 @@ args:
       (dict "name" .name
             "image" .image
             "vsockPort" .vsockPort
-	        "to" (printf "TCP:%s:%d" .address (int .port))) }}
+	        "to" (printf "TCP:%s:%d,nodelay" .address (int .port))) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
