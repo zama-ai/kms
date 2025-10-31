@@ -29,7 +29,7 @@ use threshold_fhe::{
     networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
 };
 use tokio::{
-    net::TcpListener,
+    net::{tcp, TcpListener},
     sync::{Mutex, RwLock},
 };
 use tokio_rustls::rustls::{client::ClientConfig, server::ServerConfig};
@@ -321,6 +321,10 @@ where
         // separate crate from tonic (whose maintainers don't want to make its
         // API dependent on rustls)
         let tcp_incoming = TcpIncoming::from(mpc_listener);
+        // Use the TLS_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
+        // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
+        // then this should be changed
+        let tcp_incoming = tcp_incoming.with_nodelay(Some(true));
         match tls_config {
             Some((server_config, _)) => {
                 router
@@ -331,14 +335,8 @@ where
                     .await
             }
             None => {
-                // If we are not using TLS, use the TLS_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
-                // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
-                // then this should be changed
                 router
-                    .serve_with_incoming_shutdown(
-                        tcp_incoming.with_nodelay(Some(true)),
-                        graceful_shutdown_signal,
-                    )
+                    .serve_with_incoming_shutdown(tcp_incoming, graceful_shutdown_signal)
                     .await
             }
         }
