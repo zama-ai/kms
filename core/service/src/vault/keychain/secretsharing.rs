@@ -198,7 +198,7 @@ mod tests {
     use super::*;
     use crate::{
         cryptography::{
-            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+            encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{gen_sig_keys, PrivateSigKey},
         },
         engine::base::derive_request_id,
@@ -220,7 +220,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_and_get_backup_enc_key() {
         let mut rng = AesRng::seed_from_u64(42);
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = enc.keygen().unwrap();
         let mut keychain = SecretShareKeychain::<AesRng>::new::<RamStorage>(rng, None)
             .await
@@ -245,7 +245,7 @@ mod tests {
     async fn test_encrypt_and_decrypt_roundtrip() {
         let mut rng = AesRng::seed_from_u64(42);
         let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (dec_key, enc_key) = enc.keygen().unwrap();
         let mut keychain = SecretShareKeychain {
             rng,

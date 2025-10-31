@@ -446,7 +446,7 @@ mod tests {
             compute_link, CiphertextHandle, ParsedUserDecryptionRequest,
         },
         cryptography::{
-            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+            encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{gen_sig_keys, internal_sign, PublicSigKey},
         },
         dummy_domain,
@@ -487,7 +487,7 @@ mod tests {
             .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
 
@@ -630,7 +630,7 @@ mod tests {
             .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
 
         let mut enc_key_buf = Vec::new();
@@ -858,7 +858,7 @@ mod tests {
             .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
 
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
@@ -1231,7 +1231,7 @@ mod tests {
             .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
 

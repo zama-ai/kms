@@ -8,8 +8,7 @@ use crate::{
     cryptography::{
         attestation::{SecurityModule, SecurityModuleProxy},
         encryption::{
-            Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
-            UnifiedPublicEncKey,
+            Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
         },
         signatures::{PrivateSigKey, PublicSigKey},
         signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
@@ -89,7 +88,7 @@ where
     ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey, UnifiedPublicEncKey)> {
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (backup_priv_key, backup_pub_key) = enc
             .keygen()
             .map_err(|e| anyhow::anyhow!("Failure in ephemeral key generation for backup: {e}"))?;
@@ -780,7 +779,7 @@ mod tests {
     ) {
         let mut rng = AesRng::seed_from_u64(0);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (dec_key, enc_key) = enc.keygen().unwrap();
         let backup_id = derive_request_id("test").unwrap();
         let commitments = BTreeMap::new();
@@ -832,7 +831,7 @@ mod tests {
             operator_role,
             backup_output: Some(OperatorBackupOutput {
                 signcryption: vec![1, 2, 3],
-                encryption_type: 0,
+                pke_type: 0,
                 signing_type: 0,
             }),
         }

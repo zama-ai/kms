@@ -42,11 +42,11 @@ impl tfhe::named::Named for UnifiedPublicEncKey {
     const NAME: &'static str = "UnifiedPublicEncKey";
 }
 
-impl HasEncryptionScheme for UnifiedPublicEncKey {
-    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+impl HasPkeScheme for UnifiedPublicEncKey {
+    fn encryption_scheme_type(&self) -> PkeSchemeType {
         match self {
-            UnifiedPublicEncKey::MlKem512(_) => EncryptionSchemeType::MlKem512,
-            UnifiedPublicEncKey::MlKem1024(_) => EncryptionSchemeType::MlKem1024,
+            UnifiedPublicEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
+            UnifiedPublicEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
         }
     }
 }
@@ -235,11 +235,11 @@ impl Encrypt for UnifiedPublicEncKey {
         let (inner_ct, scheme) = match self {
             UnifiedPublicEncKey::MlKem512(public_enc_key) => (
                 hybrid_ml_kem::enc::<MlKem512, _>(rng, &serialized_msg, &public_enc_key.0)?,
-                EncryptionSchemeType::MlKem512,
+                PkeSchemeType::MlKem512,
             ),
             UnifiedPublicEncKey::MlKem1024(public_enc_key) => (
                 hybrid_ml_kem::enc::<MlKem1024, _>(rng, &serialized_msg, &public_enc_key.0)?,
-                EncryptionSchemeType::MlKem1024,
+                PkeSchemeType::MlKem1024,
             ),
         };
         let mut ct_buf = Vec::new();
@@ -272,19 +272,19 @@ impl tfhe::named::Named for UnifiedPrivateEncKey {
     const NAME: &'static str = "UnifiedPrivateDecKey";
 }
 
-impl From<UnifiedPrivateEncKey> for EncryptionSchemeType {
+impl From<UnifiedPrivateEncKey> for PkeSchemeType {
     fn from(value: UnifiedPrivateEncKey) -> Self {
         match value {
-            UnifiedPrivateEncKey::MlKem512(_) => EncryptionSchemeType::MlKem512,
-            UnifiedPrivateEncKey::MlKem1024(_) => EncryptionSchemeType::MlKem1024,
+            UnifiedPrivateEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
+            UnifiedPrivateEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
         }
     }
 }
-impl From<&UnifiedPrivateEncKey> for EncryptionSchemeType {
+impl From<&UnifiedPrivateEncKey> for PkeSchemeType {
     fn from(value: &UnifiedPrivateEncKey) -> Self {
         match value {
-            UnifiedPrivateEncKey::MlKem512(_) => EncryptionSchemeType::MlKem512,
-            UnifiedPrivateEncKey::MlKem1024(_) => EncryptionSchemeType::MlKem1024,
+            UnifiedPrivateEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
+            UnifiedPrivateEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
         }
     }
 }
@@ -299,11 +299,11 @@ impl UnifiedPrivateEncKey {
     }
 }
 
-impl HasEncryptionScheme for UnifiedPrivateEncKey {
-    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+impl HasPkeScheme for UnifiedPrivateEncKey {
+    fn encryption_scheme_type(&self) -> PkeSchemeType {
         match self {
-            UnifiedPrivateEncKey::MlKem512(_) => EncryptionSchemeType::MlKem512,
-            UnifiedPrivateEncKey::MlKem1024(_) => EncryptionSchemeType::MlKem1024,
+            UnifiedPrivateEncKey::MlKem512(_) => PkeSchemeType::MlKem512,
+            UnifiedPrivateEncKey::MlKem1024(_) => PkeSchemeType::MlKem1024,
         }
     }
 }
@@ -451,19 +451,19 @@ impl Decrypt for UnifiedPrivateEncKey {
     }
 }
 
-pub trait HasEncryptionScheme {
-    fn encryption_scheme_type(&self) -> EncryptionSchemeType;
+pub trait HasPkeScheme {
+    fn encryption_scheme_type(&self) -> PkeSchemeType;
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
-pub enum EncryptionSchemeTypeVersioned {
-    V0(EncryptionSchemeType),
+pub enum PkeSchemeTypeVersioned {
+    V0(PkeSchemeType),
 }
 
 // TODO(#2782) separate into signature and encryption files
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display, Versionize)]
-#[versionize(EncryptionSchemeTypeVersioned)]
-pub enum EncryptionSchemeType {
+#[versionize(PkeSchemeTypeVersioned)]
+pub enum PkeSchemeType {
     MlKem512,
     #[deprecated(
         since = "0.12.0",
@@ -473,57 +473,54 @@ pub enum EncryptionSchemeType {
 }
 
 // Observe that since we serialize this enum, we need to implement a separate variant to keep it versioned properly
-impl From<kms_grpc::kms::v1::EncryptionSchemeType> for EncryptionSchemeType {
-    fn from(value: kms_grpc::kms::v1::EncryptionSchemeType) -> Self {
+impl From<kms_grpc::kms::v1::PkeSchemeType> for PkeSchemeType {
+    fn from(value: kms_grpc::kms::v1::PkeSchemeType) -> Self {
         // Map the gRPC enum to your local enum
         match value {
-            kms_grpc::kms::v1::EncryptionSchemeType::Mlkem512 => EncryptionSchemeType::MlKem512,
-            kms_grpc::kms::v1::EncryptionSchemeType::Mlkem1024 => EncryptionSchemeType::MlKem1024,
+            kms_grpc::kms::v1::PkeSchemeType::Mlkem512 => PkeSchemeType::MlKem512,
+            kms_grpc::kms::v1::PkeSchemeType::Mlkem1024 => PkeSchemeType::MlKem1024,
         }
     }
 }
 
-impl TryFrom<i32> for EncryptionSchemeType {
+impl TryFrom<i32> for PkeSchemeType {
     type Error = anyhow::Error;
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(EncryptionSchemeType::MlKem512),
-            1 => Ok(EncryptionSchemeType::MlKem1024),
+            0 => Ok(PkeSchemeType::MlKem512),
+            1 => Ok(PkeSchemeType::MlKem1024),
             // Future encryption schemes can be added here
-            _ => Err(anyhow::anyhow!(
-                "Unsupported EncryptionSchemeType: {:?}",
-                value
-            )),
+            _ => Err(anyhow::anyhow!("Unsupported PkeSchemeType: {:?}", value)),
         }
     }
 }
-pub trait EncryptionScheme: Send + Sync {
+pub trait PkeScheme: Send + Sync {
     /// Return the type of encryption scheme used by this instance
-    fn scheme_type(&self) -> EncryptionSchemeType;
+    fn scheme_type(&self) -> PkeSchemeType;
     /// Generate a new keypair for this encryption scheme
     fn keygen(&mut self) -> Result<(UnifiedPrivateEncKey, UnifiedPublicEncKey), CryptographyError>;
 }
 
 pub struct Encryption<'a, R: CryptoRng + RngCore + Send + Sync> {
-    scheme_type: EncryptionSchemeType,
+    scheme_type: PkeSchemeType,
     rng: &'a mut R,
 }
 
 impl<'a, R: CryptoRng + RngCore + Send + Sync> Encryption<'a, R> {
-    pub fn new(scheme_type: EncryptionSchemeType, rng: &'a mut R) -> Self {
+    pub fn new(scheme_type: PkeSchemeType, rng: &'a mut R) -> Self {
         Self { scheme_type, rng }
     }
 }
 
-impl<'a, R: CryptoRng + RngCore + Send + Sync> EncryptionScheme for Encryption<'a, R> {
-    fn scheme_type(&self) -> EncryptionSchemeType {
+impl<'a, R: CryptoRng + RngCore + Send + Sync> PkeScheme for Encryption<'a, R> {
+    fn scheme_type(&self) -> PkeSchemeType {
         self.scheme_type
     }
 
     fn keygen(&mut self) -> Result<(UnifiedPrivateEncKey, UnifiedPublicEncKey), CryptographyError> {
         let (sk, pk) = match self.scheme_type {
-            EncryptionSchemeType::MlKem512 => {
+            PkeSchemeType::MlKem512 => {
                 let (decapsulation_key, encapsulation_key) =
                     hybrid_ml_kem::keygen::<ml_kem::MlKem512, _>(&mut self.rng);
                 (
@@ -531,7 +528,7 @@ impl<'a, R: CryptoRng + RngCore + Send + Sync> EncryptionScheme for Encryption<'
                     UnifiedPublicEncKey::MlKem512(PublicEncKey(encapsulation_key)),
                 )
             }
-            EncryptionSchemeType::MlKem1024 => {
+            PkeSchemeType::MlKem1024 => {
                 let (decapsulation_key, encapsulation_key) =
                     hybrid_ml_kem::keygen::<ml_kem::MlKem1024, _>(&mut self.rng);
                 (
@@ -552,9 +549,9 @@ pub enum UnifiedCipherVersioned {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedCipherVersioned)]
 pub struct UnifiedCipher {
-    // The safe_serialization of the ciphertext specified by the encryption_type
+    // The safe_serialization of the ciphertext specified by the pke_type
     pub cipher: Vec<u8>,
-    pub encryption_type: EncryptionSchemeType,
+    pub pke_type: PkeSchemeType,
 }
 
 impl Named for UnifiedCipher {
@@ -562,11 +559,8 @@ impl Named for UnifiedCipher {
 }
 
 impl UnifiedCipher {
-    pub fn new(cipher: Vec<u8>, encryption_type: EncryptionSchemeType) -> Self {
-        Self {
-            cipher,
-            encryption_type,
-        }
+    pub fn new(cipher: Vec<u8>, pke_type: PkeSchemeType) -> Self {
+        Self { cipher, pke_type }
     }
 }
 
@@ -576,7 +570,7 @@ mod tests {
     use aes_prng::AesRng;
     use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
     use kms_lib::cryptography::encryption::{
-        Decrypt, Encrypt, Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
+        Decrypt, Encrypt, Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey,
         UnifiedPublicEncKey,
     };
     use kms_lib::cryptography::error::CryptographyError;
@@ -586,7 +580,7 @@ mod tests {
     fn nested_pke_sunshine() {
         let msg = TestType { i: 42 };
         let mut rng = AesRng::seed_from_u64(0);
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (sk, pk) = enc.keygen().unwrap();
 
         let ct = pk.encrypt(&mut rng, &msg).unwrap();
@@ -617,7 +611,7 @@ mod tests {
     fn pke_wrong_kem_key() {
         let msg = TestType { i: 42 };
         let mut rng = AesRng::seed_from_u64(0);
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_sk_orig, pk) = enc.keygen().unwrap();
         let (sk, _pk) = enc.keygen().unwrap();
 
@@ -631,7 +625,7 @@ mod tests {
     fn pke_wrong_ct() {
         let msg = TestType { i: 42 };
         let mut rng = AesRng::seed_from_u64(0);
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (sk, pk) = enc.keygen().unwrap();
         let mut ct = pk.encrypt(&mut rng, &msg).unwrap();
         ct.cipher[0] ^= 1;

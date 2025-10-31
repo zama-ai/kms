@@ -1,6 +1,6 @@
 use crate::client::client_wasm::Client;
 use crate::cryptography::encryption::{
-    Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+    Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::{anyhow_error_and_log, some_or_err};
@@ -27,7 +27,7 @@ impl Client {
         typed_ciphertexts: Vec<TypedCiphertext>,
         request_id: &RequestId,
         key_id: &RequestId,
-        encryption_scheme: EncryptionSchemeType,
+        encryption_scheme: PkeSchemeType,
     ) -> anyhow::Result<(
         UserDecryptionRequest,
         UnifiedPublicEncKey,

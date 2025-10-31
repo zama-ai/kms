@@ -819,7 +819,7 @@ mod test_user_decryption {
         consts::SAFE_SER_SIZE_LIMIT,
         cryptography::{
             encryption::{
-                Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
+                Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey,
             },
             hybrid_ml_kem::{self, HybridKemCt},
         },
@@ -834,7 +834,7 @@ mod test_user_decryption {
     use super::*;
 
     fn make_test_pk(rng: &mut AesRng) -> (Vec<u8>, UnifiedPrivateEncKey) {
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, rng);
         let (enc_sk, enc_pk) = encryption.keygen().unwrap();
         let mut enc_key_buf = Vec::new();
         // The key is freshly generated, so we can safely unwrap the serialization

@@ -244,7 +244,7 @@ impl TryFrom<OperatorBackupOutput> for InnerOperatorBackupOutput {
         Ok(Self {
             signcryption: UnifiedSigncryption {
                 payload: value.signcryption,
-                encryption_type: value.encryption_type.try_into()?,
+                pke_type: value.pke_type.try_into()?,
                 signing_type: value.signing_type.try_into()?,
             },
         })
@@ -256,7 +256,7 @@ impl TryFrom<InnerOperatorBackupOutput> for OperatorBackupOutput {
     fn try_from(value: InnerOperatorBackupOutput) -> Result<Self, Self::Error> {
         Ok(Self {
             signcryption: value.signcryption.payload,
-            encryption_type: value.signcryption.encryption_type as i32,
+            pke_type: value.signcryption.pke_type as i32,
             signing_type: value.signcryption.signing_type as i32,
         })
     }
@@ -795,7 +795,7 @@ mod tests {
     use crate::{
         backup::custodian::CustodianSetupMessagePayload,
         cryptography::{
-            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+            encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::gen_sig_keys,
         },
         engine::base::derive_request_id,
@@ -809,7 +809,7 @@ mod tests {
     fn validate_recovery_validation_material() {
         let mut rng = AesRng::seed_from_u64(0);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let backup_id = derive_request_id("test").unwrap();
         // Dummy payload; but needs to be a properly serialized payload
@@ -906,7 +906,7 @@ mod tests {
     #[test]
     fn operator_new_fails_with_insufficient_messages() {
         let mut rng = AesRng::seed_from_u64(4);
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let msg = valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
@@ -924,7 +924,7 @@ mod tests {
     #[test]
     fn operator_new_fails_with_invalid_header() {
         let mut rng = AesRng::seed_from_u64(5);
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let mut msg1 =
@@ -951,7 +951,7 @@ mod tests {
     #[test]
     fn operator_new_fails_with_invalid_timestamp_past() {
         let mut rng = AesRng::seed_from_u64(6);
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let mut msg1 =
@@ -978,7 +978,7 @@ mod tests {
     #[test]
     fn operator_new_fails_with_invalid_timestamp_future() {
         let mut rng = AesRng::seed_from_u64(6);
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let mut msg1 =
@@ -1009,7 +1009,7 @@ mod tests {
     #[test]
     fn operator_new_fails_with_invalid_role() {
         let mut rng = AesRng::seed_from_u64(7);
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let msg1 = valid_custodian_msg(
@@ -1050,7 +1050,7 @@ mod tests {
     #[test]
     fn operator_new_fails_with_duplicate_roles() {
         let mut rng = AesRng::seed_from_u64(8);
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let msg1 =
@@ -1078,7 +1078,7 @@ mod tests {
     #[test]
     fn operator_new_fails_with_not_enough() {
         let mut rng = AesRng::seed_from_u64(8);
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let msg1 =

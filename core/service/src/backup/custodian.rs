@@ -68,7 +68,7 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
         Ok(InternalCustodianRecoveryOutput {
             signcryption: UnifiedSigncryption::new(
                 backup_output.signcryption.clone(),
-                backup_output.encryption_type().into(),
+                backup_output.pke_type().into(),
                 backup_output.signing_type().into(),
             ),
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
@@ -84,7 +84,7 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
         Ok(CustodianRecoveryOutput {
             backup_output: Some(OperatorBackupOutput {
                 signcryption: value.signcryption.payload,
-                encryption_type: value.signcryption.encryption_type as i32,
+                pke_type: value.signcryption.pke_type as i32,
                 signing_type: value.signcryption.signing_type as i32,
             }),
             custodian_role: value.custodian_role.one_based() as u64,
@@ -401,14 +401,14 @@ impl Custodian {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cryptography::encryption::{Encryption, EncryptionScheme, EncryptionSchemeType};
+    use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
     use aes_prng::AesRng;
     use rand::SeedableRng;
 
     #[test]
     fn internal_custodian_context_zero_role_should_fail() {
         let mut rng = AesRng::seed_from_u64(40);
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_, backup_pk) = enc.keygen().unwrap();
         let setup_msg = CustodianSetupMessage {
             custodian_role: 0, // Invalid role
@@ -428,7 +428,7 @@ mod tests {
     #[test]
     fn invalid_threshold_should_fail() {
         let mut rng = AesRng::seed_from_u64(40);
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_, backup_pk) = enc.keygen().unwrap();
         let setup_msg1 = CustodianSetupMessage {
             custodian_role: 1,
@@ -458,7 +458,7 @@ mod tests {
     #[test]
     fn internal_custodian_context_duplicate_role_should_fail() {
         let mut rng = AesRng::seed_from_u64(40);
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_, backup_pk) = enc.keygen().unwrap();
         let payload = vec![];
         let setup_msg1 = CustodianSetupMessage {
@@ -484,7 +484,7 @@ mod tests {
     #[test]
     fn internal_custodian_context_role_greater_than_nodes_should_fail() {
         let mut rng = AesRng::seed_from_u64(40);
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_, backup_pk) = enc.keygen().unwrap();
         let setup_msg = CustodianSetupMessage {
             custodian_role: 5, // Greater than number of nodes

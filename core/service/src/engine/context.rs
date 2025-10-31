@@ -383,7 +383,7 @@ mod tests {
 
     use crate::{
         cryptography::{
-            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+            encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::gen_sig_keys,
         },
         vault::storage::{ram::RamStorage, store_versioned_at_request_id},
@@ -508,7 +508,7 @@ mod tests {
     #[tokio::test]
     async fn test_context_info_duplicate_party_ids() {
         let mut rng = AesRng::seed_from_u64(42);
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_, backup_encryption_public_key) = encryption.keygen().unwrap();
         let (verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
 

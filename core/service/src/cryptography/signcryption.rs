@@ -12,7 +12,7 @@
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::encryption::{
-    EncryptionSchemeType, HasEncryptionScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+    PkeSchemeType, HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
@@ -126,8 +126,8 @@ impl UnifiedSigncryptionKeyOwned {
     }
 }
 
-impl HasEncryptionScheme for UnifiedSigncryptionKeyOwned {
-    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+impl HasPkeScheme for UnifiedSigncryptionKeyOwned {
+    fn encryption_scheme_type(&self) -> PkeSchemeType {
         self.receiver_enc_key.encryption_scheme_type()
     }
 }
@@ -160,8 +160,8 @@ impl<'a> UnifiedSigncryptionKey<'a> {
     }
 }
 
-impl HasEncryptionScheme for UnifiedSigncryptionKey<'_> {
-    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+impl HasPkeScheme for UnifiedSigncryptionKey<'_> {
+    fn encryption_scheme_type(&self) -> PkeSchemeType {
         self.receiver_enc_key.encryption_scheme_type()
     }
 }
@@ -199,8 +199,8 @@ impl<'a> UnifiedUnsigncryptionKey<'a> {
     //  TODO this file should be split up and this moved to signcryption
 }
 
-impl HasEncryptionScheme for UnifiedUnsigncryptionKey<'_> {
-    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+impl HasPkeScheme for UnifiedUnsigncryptionKey<'_> {
+    fn encryption_scheme_type(&self) -> PkeSchemeType {
         self.encryption_key.encryption_scheme_type()
     }
 }
@@ -251,8 +251,8 @@ impl UnifiedUnsigncryptionKeyOwned {
     }
 }
 
-impl HasEncryptionScheme for UnifiedUnsigncryptionKeyOwned {
-    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+impl HasPkeScheme for UnifiedUnsigncryptionKeyOwned {
+    fn encryption_scheme_type(&self) -> PkeSchemeType {
         self.encryption_key.encryption_scheme_type()
     }
 }
@@ -272,18 +272,18 @@ pub enum UnifiedSigncryptionVersioned {
 #[versionize(UnifiedSigncryptionVersioned)]
 pub struct UnifiedSigncryption {
     pub payload: Vec<u8>,
-    pub encryption_type: EncryptionSchemeType,
+    pub pke_type: PkeSchemeType,
     pub signing_type: SigningSchemeType,
 }
 impl UnifiedSigncryption {
     pub fn new(
         payload: Vec<u8>,
-        encryption_type: EncryptionSchemeType,
+        pke_type: PkeSchemeType,
         signing_type: SigningSchemeType,
     ) -> Self {
         Self {
             payload,
-            encryption_type,
+            pke_type,
             signing_type,
         }
     }
@@ -486,7 +486,7 @@ fn inner_signcryption<T: Serialize + AsRef<[u8]>>(
     Ok(UnifiedSigncryption {
         payload: bc2wrap::serialize(&ciphertext)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?,
-        encryption_type: signcrypt_key.encryption_scheme_type(),
+        pke_type: signcrypt_key.encryption_scheme_type(),
         signing_type: signcrypt_key.signing_scheme_type(),
     })
 }
@@ -547,7 +547,7 @@ impl<'a> UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey<'a> {
     ) -> Result<SigncryptionPayload, CryptographyError> {
         let parsed_signcryption = UnifiedSigncryption {
             payload: signcryption.to_owned(),
-            encryption_type: self.encryption_key.encryption_scheme_type(),
+            pke_type: self.encryption_key.encryption_scheme_type(),
             signing_type: self.sender_verf_key.signing_scheme_type(),
         };
         let decrypted_signcryption = inner_unsigncrypt(self, dsep, &parsed_signcryption)?;
@@ -581,7 +581,7 @@ fn inner_unsigncrypt(
     dsep: &DomainSep,
     cipher: &UnifiedSigncryption,
 ) -> Result<Vec<u8>, CryptographyError> {
-    if cipher.encryption_type != unsign_key.encryption_key.encryption_scheme_type() {
+    if cipher.pke_type != unsign_key.encryption_key.encryption_scheme_type() {
         return Err(CryptographyError::VerificationError(
             "encryption type of cipher does not match the decryption key type".to_string(),
         ));
@@ -715,7 +715,7 @@ pub(crate) fn ephemeral_signcryption_key_generation(
     server_sig_key: Option<&PrivateSigKey>,
 ) -> UnifiedSigncryptionKeyPairOwned {
     use crate::cryptography::{
-        encryption::{Encryption, EncryptionScheme},
+        encryption::{Encryption, PkeScheme},
         signatures::gen_sig_keys,
     };
 
@@ -723,7 +723,7 @@ pub(crate) fn ephemeral_signcryption_key_generation(
         Some(sk) => (PublicSigKey::from_sk(sk), sk.clone()),
         None => gen_sig_keys(rng),
     };
-    let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, rng);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, rng);
     let (dec_key, enc_key) = encryption.keygen().unwrap();
     UnifiedSigncryptionKeyPairOwned {
         signcrypt_key: UnifiedSigncryptionKeyOwned::new(
@@ -752,7 +752,7 @@ pub struct UnifiedSigncryptionKeyPairOwned {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cryptography::{encryption::EncryptionSchemeType, signatures::gen_sig_keys};
+    use crate::cryptography::{encryption::PkeSchemeType, signatures::gen_sig_keys};
     // use crate::cryptography::signcryption::{
     //     parse_msg, SigncryptionPayload, UnifiedSigncryptionKeyPairOwned, DIGEST_BYTES, SIG_SIZE,
     // };
@@ -842,7 +842,7 @@ mod tests {
         // wrong scheme
         {
             let mut cipher = correct_cipher.clone();
-            cipher.encryption_type = EncryptionSchemeType::MlKem1024;
+            cipher.pke_type = PkeSchemeType::MlKem1024;
             assert!(client_signcryption_keys
                 .unsigncryption_key
                 .unsigncrypt::<TestType>(b"TESTTEST", &cipher)

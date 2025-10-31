@@ -27,7 +27,7 @@ use kms_lib::{
         operator::{InnerOperatorBackupOutput, Operator},
     },
     cryptography::{
-        encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+        encryption::{Encryption, PkeScheme, PkeSchemeType},
         signatures::{gen_sig_keys, PrivateSigKey, PublicSigKey},
         signcryption::SigncryptionPayload,
     },
@@ -350,7 +350,7 @@ fn test_custodian_setup_message(
     let mut rng = AesRng::seed_from_u64(test.seed);
     let name = "Testname".to_string();
     let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-    let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+    let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (dec_key, enc_key) = enc.keygen().unwrap();
     let custodian =
         Custodian::new(Role::indexed_from_zero(0), signing_key, enc_key, dec_key).unwrap();
@@ -386,7 +386,7 @@ fn test_operator_backup_output(
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
             let (dec_key, enc_key) = enc.keygen().unwrap();
             Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
         })

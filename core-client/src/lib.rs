@@ -23,7 +23,7 @@ use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustod
 use kms_lib::backup::operator::InternalRecoveryRequest;
 use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
-use kms_lib::cryptography::encryption::EncryptionSchemeType;
+use kms_lib::cryptography::encryption::PkeSchemeType;
 use kms_lib::engine::base::compute_pt_message_hash;
 use kms_lib::engine::base::{
     hash_sol_struct, safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
@@ -1528,7 +1528,7 @@ async fn do_custodian_backup_recovery(
                 cur_recoveries.push(CustodianRecoveryOutput {
                     backup_output: Some(OperatorBackupOutput {
                         signcryption: cur_recover.signcryption.payload.clone(),
-                        encryption_type: cur_recover.signcryption.encryption_type as i32,
+                        pke_type: cur_recover.signcryption.pke_type as i32,
                         signing_type: cur_recover.signcryption.signing_type as i32,
                     }),
                     custodian_role: cur_recover.custodian_role.one_based() as u64,
@@ -2552,7 +2552,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                 ct_batch,
                 &req_id,
                 &key_id.into(),
-                EncryptionSchemeType::MlKem512,
+                PkeSchemeType::MlKem512,
             )?;
 
             let (user_decrypt_req, enc_pk, enc_sk) = user_decrypt_req_tuple;

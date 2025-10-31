@@ -577,7 +577,7 @@ mod kms_custodian_binary_tests {
         },
         cryptography::{
             encryption::{
-                Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
+                Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey,
                 UnifiedPublicEncKey,
             },
             signatures::gen_sig_keys,
@@ -798,7 +798,7 @@ mod kms_custodian_binary_tests {
         let mut rng = AesRng::seed_from_u64(40);
         // Note that in the actual deployment, the operator keys are generated before the encryption keys
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (ephemeral_priv_key, ephemeral_pub_key) = enc.keygen().unwrap();
         let operator: Operator = Operator::new(
             operator_role,

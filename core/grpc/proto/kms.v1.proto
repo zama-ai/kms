@@ -602,11 +602,11 @@ message CustodianRecoveryRequest {
 // The data constructed by a given operator towards a given custodian after it has constructed a recovery request
 message OperatorBackupOutput {
   bytes signcryption = 1;
-  EncryptionSchemeType encryption_type = 2;
+  PkeSchemeType pke_type = 2;
   SigningSchemeType signing_type = 3;
 }
 
-enum EncryptionSchemeType {
+enum PkeSchemeType {
   MLKEM512 = 0;
   MLKEM1024 = 1;
 }

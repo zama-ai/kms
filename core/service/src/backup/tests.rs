@@ -10,8 +10,7 @@ use crate::{
     },
     cryptography::{
         encryption::{
-            Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
-            UnifiedPublicEncKey,
+            Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
         },
         signatures::{gen_sig_keys, PublicSigKey},
     },
@@ -39,7 +38,7 @@ fn operator_setup() {
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
             let (dec_key, enc_key) = enc.keygen().unwrap();
             custodian::Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
         })
@@ -106,7 +105,7 @@ fn custodian_reencrypt() {
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
             let (dec_key, enc_key) = enc.keygen().unwrap();
             custodian::Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
         })
@@ -155,7 +154,7 @@ fn custodian_reencrypt() {
         .collect::<Vec<_>>();
 
     let verification_key = operators[0].verification_key();
-    let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+    let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (_ephemeral_dec_key, ephemeral_enc_key) = enc.keygen().unwrap();
 
     // tweak the ciphertext, so that signature verification fails
@@ -401,7 +400,7 @@ fn full_flow_malicious_custodian_init() {
             custodian_count,
         )
         .unwrap();
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (backup_priv_key, _backup_enc_key) = enc.keygen().unwrap();
         let res = operator.secret_share_and_signcrypt(
             &mut rng,
@@ -632,7 +631,7 @@ fn operator_handle_init(
             custodian_count,
         )
         .unwrap();
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let (cur_op_output, cur_comm) = operator
             .secret_share_and_signcrypt(

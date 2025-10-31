@@ -2,7 +2,7 @@ use crate::{
     backup::custodian::Custodian,
     consts::RND_SIZE,
     cryptography::{
-        encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+        encryption::{Encryption, PkeScheme, PkeSchemeType},
         signatures::gen_sig_keys,
     },
 };
@@ -41,7 +41,7 @@ pub fn custodian_from_seed_phrase(seed_phrase: &str, role: Role) -> anyhow::Resu
     let mut entropy_arr = [0u8; RND_SIZE];
     entropy_arr.copy_from_slice(&entropy[..RND_SIZE]);
     let mut enc_rng = rng_from_dsep_entropy::<AesRng>(&DSEP_MNEMONIC_ENC, &entropy_arr)?;
-    let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut enc_rng);
+    let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut enc_rng);
     let (dec_key, enc_key) = enc.keygen().map_err(|e| {
         anyhow::anyhow!(
             "Failed to generate custodian keys from seed phrase: {}",
