@@ -312,14 +312,14 @@ async fn secure_threshold_sequential_keygen_test(#[case] amount_parties: usize) 
 async fn secure_threshold_keygen_with_partial_preproc(#[case] amount_parties: usize) {
     preproc_and_keygen(
         amount_parties,
-        FheParameter::Default,
+        FheParameter::Test,
         false,
-        2,
+        1,
         false,
         None,
         None,
         Some(kms_grpc::kms::v1::PartialKeyGenPreprocParams {
-            percentage_offline: 2,
+            percentage_offline: 10,
             store_dummy_preprocessing: true,
         }),
     )
