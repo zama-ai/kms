@@ -7,7 +7,7 @@ use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::consts::TEST_PARAM;
-use crate::cryptography::internal_crypto_types::EncryptionSchemeType;
+use crate::cryptography::encryption::EncryptionSchemeType;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::{

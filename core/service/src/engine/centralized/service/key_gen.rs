@@ -13,7 +13,7 @@ use tokio::sync::{OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{
     compute_info_decompression_keygen, retrieve_parameters, KeyGenMetadata, DSEP_PUBDATA_KEY,
 };
@@ -349,7 +349,7 @@ pub(crate) mod tests {
     use rand::SeedableRng;
 
     use crate::{
-        cryptography::internal_crypto_types::PublicSigKey,
+        cryptography::signatures::PublicSigKey,
         dummy_domain,
         engine::{
             base::derive_request_id,

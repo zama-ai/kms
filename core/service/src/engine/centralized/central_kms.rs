@@ -7,11 +7,11 @@ use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::decompression;
 #[cfg(feature = "non-wasm")]
-use crate::cryptography::internal_crypto_types::SigncryptFHEPlaintext;
+use crate::cryptography::encryption::UnifiedPublicEncKey;
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 #[cfg(feature = "non-wasm")]
-use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
-use crate::cryptography::internal_crypto_types::UnifiedSigncryptionKey;
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signcryption::SigncryptFHEPlaintext;
+use crate::cryptography::signcryption::UnifiedSigncryptionKey;
 #[cfg(feature = "non-wasm")]
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
@@ -29,6 +29,7 @@ use crate::grpc::metastore_status_service::CustodianMetaStore;
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::FhePublicKey;
 use crate::util::meta_store::MetaStore;
+
 use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
 use crate::vault::storage::{
     crypto_material::CentralizedCryptoMaterialStorage, read_all_data_versioned,
@@ -533,7 +534,7 @@ impl<
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         dsep: &DomainSep,
         payload: &T,
-        signature: &crate::cryptography::internal_crypto_types::Signature,
+        signature: &Signature,
         verification_key: &PublicSigKey,
     ) -> anyhow::Result<()> {
         BaseKmsStruct::verify_sig(dsep, payload, signature, verification_key)
@@ -543,7 +544,7 @@ impl<
         &self,
         dsep: &DomainSep,
         msg: &T,
-    ) -> anyhow::Result<crate::cryptography::internal_crypto_types::Signature> {
+    ) -> anyhow::Result<Signature> {
         self.base_kms.sign(dsep, msg)
     }
 
@@ -793,11 +794,7 @@ impl<
         client_enc_key: &UnifiedPublicEncKey,
         client_id: &[u8],
     ) -> anyhow::Result<Vec<u8>> {
-        let signcryption_key = UnifiedSigncryptionKey::new(
-            sig_key.clone(),
-            client_enc_key.clone(),
-            client_id.to_vec(),
-        );
+        let signcryption_key = UnifiedSigncryptionKey::new(sig_key, client_enc_key, client_id);
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<ResiduePolyF4Z128> element
         let plaintext = Self::public_decrypt(keys, ct, fhe_type, ct_format)?;
@@ -1016,8 +1013,10 @@ pub(crate) mod tests {
     use crate::consts::{DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
     use crate::cryptography::error::CryptographyError;
-    use crate::cryptography::internal_crypto_types::{gen_sig_keys, DesigncryptFHEPlaintext};
-    use crate::cryptography::signcryption::ephemeral_signcryption_key_generation;
+    use crate::cryptography::signatures::gen_sig_keys;
+    use crate::cryptography::signcryption::{
+        ephemeral_signcryption_key_generation, DesigncryptFHEPlaintext,
+    };
     use crate::dummy_domain;
     use crate::engine::base::{compute_handle, derive_request_id};
     use crate::engine::centralized::central_kms::RealCentralizedKms;
@@ -1508,12 +1507,12 @@ pub(crate) mod tests {
                     Some(kms.base_kms.sig_key.as_ref()),
                 );
                 // Change the decryption key
-                keys.designcrypt_key.decryption_key = bad_keys.designcrypt_key.decryption_key;
+                keys.designcryption_key.decryption_key = bad_keys.designcryption_key.decryption_key;
             }
             if sim_type == SimulationType::BadSigKey {
                 // Change the signing key
                 let (server_sig_pk, _server_sig_sk) = gen_sig_keys(&mut rng);
-                keys.designcrypt_key.sender_verf_key = server_sig_pk;
+                keys.designcryption_key.sender_verf_key = server_sig_pk;
             }
             keys
         };
@@ -1544,7 +1543,7 @@ pub(crate) mod tests {
         } else {
             raw_cipher.unwrap()
         };
-        let decrypted = client_key_pair.designcrypt_key.designcrypt_plaintext(
+        let decrypted = client_key_pair.designcryption_key.designcrypt_plaintext(
             &DSEP_USER_DECRYPTION,
             &raw_cipher,
             &link,

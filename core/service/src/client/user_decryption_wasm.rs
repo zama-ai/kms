@@ -1,10 +1,12 @@
 use crate::client::client_wasm::Client;
-use crate::cryptography::internal_crypto_types::{
-    DesigncryptFHEPlaintext, PublicSigKey, UnifiedDesigncryptionKey, UnifiedPrivateEncKey,
-    UnifiedSigncryptionKey, UnifiedSigncryptionKeyPair, UnifiedSigncryptionKeyPairOwned,
+#[cfg(feature = "wasm_tests")]
+use crate::cryptography::signatures::PrivateSigKey;
+use crate::cryptography::signcryption::insecure_decrypt_ignoring_signature;
+use crate::cryptography::{
+    encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
+    signatures::{internal_verify_sig, PublicSigKey, Signature},
+    signcryption::{DesigncryptFHEPlaintext, UnifiedDesigncryptionKey},
 };
-use crate::cryptography::internal_crypto_types::{Signature, UnifiedPublicEncKey};
-use crate::cryptography::signcryption::{insecure_decrypt_ignoring_signature, internal_verify_sig};
 use crate::engine::validation::{
     check_ext_user_decryption_signature, validate_user_decrypt_responses_against_request,
     DSEP_USER_DECRYPTION,
@@ -91,8 +93,8 @@ impl Client {
     pub fn insecure_process_user_decryption_resp(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        enc_pk: &UnifiedPublicEncKey,
-        enc_sk: &UnifiedPrivateEncKey,
+        enc_key: &UnifiedPublicEncKey,
+        dec_key: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let sig_sk = match &self.client_sk {
             Some(sk) => sk,
@@ -102,20 +104,13 @@ impl Client {
                 ));
             }
         };
-        let owned_client_keys = UnifiedSigncryptionKeyPairOwned {
-            signcrypt_key: UnifiedSigncryptionKey {
-                signing_key: sig_sk.clone(),
-                receiver_enc_key: enc_pk.clone(),
-                receiver_id: self.client_address.to_vec(),
-            },
-            designcrypt_key: UnifiedDesigncryptionKey {
-                sender_verf_key: PublicSigKey::from_sk(sig_sk),
-                decryption_key: enc_sk.clone(),
-                encryption_key: enc_pk.clone(),
-                receiver_id: self.client_address.to_vec(),
-            },
+        let receiver_id = self.client_address.to_vec();
+        let client_keys = UnifiedDesigncryptionKey {
+            sender_verf_key: &sig_sk.verf_key(),
+            decryption_key: dec_key,
+            encryption_key: enc_key,
+            receiver_id: &receiver_id,
         };
-        let client_keys = owned_client_keys.reference();
 
         // The same logic is used in `process_user_decryption_resp`.
         if agg_resp.len() <= 1 && self.server_identities.len() == 1 {
@@ -198,12 +193,9 @@ impl Client {
                 tracing::warn!("signature on received response is not valid ({})", e)
             })?;
         }
-        let design_key = UnifiedDesigncryptionKey::new(
-            dec_key.to_owned(),
-            enc_key.to_owned(),
-            cur_verf_key,
-            self.client_address.to_vec(),
-        );
+        let receiver_id = self.client_address.to_vec();
+        let design_key =
+            UnifiedDesigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
 
         payload
             .signcrypted_ciphertexts
@@ -223,7 +215,7 @@ impl Client {
     fn insecure_centralized_user_decryption_resp(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedSigncryptionKeyPair,
+        client_keys: &UnifiedDesigncryptionKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
@@ -417,7 +409,7 @@ impl Client {
     fn insecure_threshold_user_decryption_resp(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedSigncryptionKeyPair,
+        client_keys: &UnifiedDesigncryptionKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
@@ -435,7 +427,7 @@ impl Client {
     #[allow(clippy::type_complexity)]
     fn insecure_threshold_user_decryption_resp_to_blocks<Z: BaseRing>(
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedSigncryptionKeyPair,
+        client_keys: &UnifiedDesigncryptionKey,
     ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ResiduePolyF4<Z>>)>>
     where
         ResiduePolyF4<Z>: ErrorCorrect + MemoizedExceptionals,
@@ -551,7 +543,7 @@ impl Client {
     fn insecure_threshold_user_decryption_resp_z128(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedSigncryptionKeyPair,
+        client_keys: &UnifiedDesigncryptionKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let all_decrypted_blocks =
             Self::insecure_threshold_user_decryption_resp_to_blocks::<Z128>(agg_resp, client_keys)?;
@@ -593,7 +585,7 @@ impl Client {
     fn insecure_threshold_user_decryption_resp_z64(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedSigncryptionKeyPair,
+        client_keys: &UnifiedDesigncryptionKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let all_decrypted_blocks =
             Self::insecure_threshold_user_decryption_resp_to_blocks::<Z64>(agg_resp, client_keys)?;
@@ -680,12 +672,9 @@ impl Client {
                 // Also it's ok to use [cur_resp.digest] as the link since we already checked
                 // that it matches with the original request
                 let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&cur_resp.verification_key)?; // TODO(#2781)
-                let design_key = UnifiedDesigncryptionKey::new(
-                    dec_key.to_owned(),
-                    enc_key.to_owned(),
-                    cur_verf_key,
-                    self.client_address.to_vec(),
-                );
+                let client_id = self.client_address.to_vec();
+                let design_key =
+                    UnifiedDesigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &client_id);
                 match design_key.designcrypt_plaintext(
                     &DSEP_USER_DECRYPTION,
                     &cur_resp.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
@@ -730,7 +719,7 @@ pub struct TestingUserDecryptionTranscript {
     // client
     pub(crate) server_addrs: std::collections::HashMap<u32, alloy_primitives::Address>,
     pub(crate) client_address: alloy_primitives::Address,
-    pub(crate) client_sk: Option<crate::cryptography::internal_crypto_types::PrivateSigKey>,
+    pub(crate) client_sk: Option<PrivateSigKey>,
     pub(crate) degree: u32,
     pub(crate) params: threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
     // example pt and ct
@@ -740,8 +729,8 @@ pub struct TestingUserDecryptionTranscript {
     // request
     pub(crate) request: Option<UserDecryptionRequest>,
     // We keep the unified keys here because for legacy tests we need to produce legacy transcripts
-    pub(crate) eph_sk: crate::cryptography::internal_crypto_types::UnifiedPrivateEncKey,
-    pub(crate) eph_pk: crate::cryptography::internal_crypto_types::UnifiedPublicEncKey,
+    pub(crate) eph_sk: UnifiedPrivateEncKey,
+    pub(crate) eph_pk: UnifiedPublicEncKey,
     // response
     pub(crate) agg_resp: Vec<kms_grpc::kms::v1::UserDecryptionResponse>,
 }
@@ -915,7 +904,7 @@ impl TryFrom<&UserDecryptionRequest> for ParsedUserDecryptionRequest {
 }
 
 /// Compute the link as (eip712_signing_hash(pk, domain) || hash(ciphertext handles)).
-/// TODO
+/// TODO(#2781) move to signatures module
 pub fn compute_link(
     req: &ParsedUserDecryptionRequest,
     domain: &Eip712Domain,
@@ -941,7 +930,7 @@ pub fn compute_link(
         handles,
         userAddress: req.client_address,
     };
-
+    // TODO(#2781) ensure s is normalized!!!
     let link = linker.eip712_signing_hash(domain).to_vec();
 
     Ok(link)
