@@ -459,12 +459,17 @@ message TypedSigncryptedCiphertext {
 
 // The public information for a single KMS node.
 message KmsNode {
-  // The human-readable name of the KMS node operator,
-  // every party in an MPC protocol must have a unique name.
+  // The field `mpc_identity` is used to identify the core in the MPC protocol.
+  // It must match the subject common name (CN) in the TLS certificate.
+  // This is how cores authenticate each other in the MPC protocol,
+  // i.e., party-2 connecting to party-1 must prove that it is indeed party-2
+  // and not any other party that's in the list of TLS certificates.
   string mpc_identity = 1;
+
   // The ID of the party in the MPC protocol,
   // every party in an MPC protocol must have a unique ID.
   int32 party_id = 2;
+
   // The verification key of the KMS node operator,
   // this is the public key used to verify the signatures produced by the KMS node.
   optional bytes verification_key = 3;

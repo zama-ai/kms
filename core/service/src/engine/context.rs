@@ -115,6 +115,7 @@ pub enum NodeInfoVersioned {
 pub struct NodeInfo {
     pub mpc_identity: String,
     pub party_id: u32,
+
     /// This is optional for legacy reasons because typically MPC parties
     /// do not know the public verification keys of other parties when it first starts.
     pub verification_key: Option<PublicSigKey>,
