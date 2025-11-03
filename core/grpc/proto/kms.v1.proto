@@ -482,8 +482,8 @@ message KmsNode {
   // this is used for connecting to the KMS node from other KMS parties.
   string external_url = 4;
 
-  // The TLS certificate of the KMS node.
-  bytes tls_cert = 5;
+  // The CA certificate of the KMS node.
+  optional bytes ca_cert = 5;
 
   // The public storage URL of the KMS node,
   // this is used for storing and retrieving public FHE keys,
@@ -513,6 +513,14 @@ message KmsContext {
   // In the optimal case, n = 3 * threshold + 1, where n is the number of KMS nodes.
   // The threshold must be set to 0 if the kms_nodes list contains only one node.
   int32 threshold = 4;
+
+  repeated PcrValues pcr_values = 5;
+}
+
+message PcrValues {
+  bytes pcr0 = 1;
+  bytes pcr1 = 2;
+  bytes pcr2 = 3;
 }
 
 message CustodianSetupMessage {

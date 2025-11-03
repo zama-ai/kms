@@ -151,6 +151,12 @@ impl std::fmt::Display for MpcIdentity {
     }
 }
 
+impl AsRef<str> for MpcIdentity {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Runtime identity of party.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct Identity {

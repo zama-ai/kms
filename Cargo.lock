@@ -4298,6 +4298,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "attestation-doc-validation",
+ "bc2wrap",
  "bytes",
  "cc-tests-utils",
  "clap",
@@ -4322,6 +4323,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "validator",
+ "x509-parser 0.18.0",
 ]
 
 [[package]]

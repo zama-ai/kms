@@ -127,7 +127,7 @@ async fn build_tls_config(
     public_vault: &Vault,
     sk: &PrivateSigKey,
     #[cfg(feature = "insecure")] mock_enclave: bool,
-) -> anyhow::Result<(ServerConfig, ClientConfig)> {
+) -> anyhow::Result<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)> {
     let context_id = *DEFAULT_MPC_CONTEXT;
     aws_lc_rs_default_provider()
         .install_default()
@@ -256,9 +256,9 @@ async fn build_tls_config(
     let client_config = DangerousClientConfigBuilder {
         cfg: ClientConfig::builder_with_protocol_versions(&[&TLS13]),
     }
-    .with_custom_certificate_verifier(verifier)
+    .with_custom_certificate_verifier(verifier.clone())
     .with_client_auth_cert(cert_chain, key_der)?;
-    Ok((server_config, client_config))
+    Ok((server_config, client_config, verifier))
 }
 
 fn main() -> anyhow::Result<()> {
@@ -597,6 +597,10 @@ async fn main_exec() -> anyhow::Result<()> {
             )
             .await?;
             let meta_store_status_service = Arc::new(metastore_status_service);
+            tracing::info!(
+                "Starting threshold KMS server v{}...",
+                env!("CARGO_PKG_VERSION"),
+            );
             run_server(
                 core_config.service,
                 service_listener,

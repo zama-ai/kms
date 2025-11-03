@@ -7,6 +7,8 @@ use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
 };
+use tfhe::Versionize;
+use tfhe_versionable::VersionsDispatch;
 use tokio_rustls::rustls::{
     client::{
         danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
@@ -22,11 +24,17 @@ use tokio_rustls::rustls::{
 };
 use x509_parser::{certificate::X509Certificate, parse_x509_certificate, pem::Pem};
 
+#[derive(VersionsDispatch, Clone, Debug, Serialize, Deserialize)]
+pub enum ReleasePCRValuesVersioned {
+    V0(ReleasePCRValues),
+}
+
 /// These three values, PCR0,1,2, describe a software release. We also check
 /// PCR8 which is the hash of the certificate that signed a running enclave
 /// image but its reference value comes from hashing the certificate bundled
 /// within the mTLS certificate, not through configuration.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Versionize)]
+#[versionize(ReleasePCRValuesVersioned)]
 #[serde(deny_unknown_fields)]
 pub struct ReleasePCRValues {
     // EIF hash
@@ -50,6 +58,8 @@ pub struct AttestedTLSContext {
 }
 
 impl AttestedTLSContext {
+    /// - *`ca_certs`: map from subject name to CA certificate PEM
+    /// - *`release_pcrs`: allowed software release PCR values
     pub fn new(
         ca_certs: HashMap<String, Pem>,
         release_pcrs: Option<Arc<Vec<ReleasePCRValues>>>,

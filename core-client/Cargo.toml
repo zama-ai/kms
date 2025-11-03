@@ -26,6 +26,7 @@ alloy-signer.workspace = true
 alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 anyhow.workspace = true
 attestation-doc-validation.workspace = true
+bc2wrap.workspace = true
 bytes.workspace = true
 clap = { workspace = true, features = ["derive"] }
 hex.workspace = true
@@ -50,6 +51,7 @@ tracing = { workspace = true, features = ["log"] }
 tracing-appender.workspace = true
 tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 validator.workspace = true
+x509-parser = { workspace = true, optional = true }
 
 [dev-dependencies]
 # ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
@@ -65,3 +67,6 @@ tonic-build.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["kms", "strum"]
+
+[features]
+testing = [ "dep:x509-parser" ]

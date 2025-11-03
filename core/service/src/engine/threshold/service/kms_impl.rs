@@ -27,7 +27,10 @@ use threshold_fhe::{
         tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
         zk::ceremony::SecureCeremony,
     },
-    networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
+    networking::{
+        grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
+        tls::AttestedVerifier,
+    },
 };
 use tokio::{
     net::TcpListener,
@@ -224,7 +227,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     security_module: Option<Arc<SecurityModuleProxy>>,
     mpc_listener: TcpListener,
     sk: PrivateSigKey,
-    tls_config: Option<(ServerConfig, ClientConfig)>,
+    tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
     peer_tcp_proxy: bool,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
@@ -271,7 +274,7 @@ where
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         tls_config
             .as_ref()
-            .map(|(_, client_config)| client_config.clone()),
+            .map(|(_, client_config, _)| client_config.clone()),
         config.core_to_core_net,
         peer_tcp_proxy,
     )?));
@@ -296,6 +299,8 @@ where
         config.my_id,
         mpc_socket_addr
     );
+
+    let verifier = tls_config.as_ref().map(|(_, _, verifier)| verifier.clone());
 
     let manager_clone = Arc::clone(&networking_manager);
     let abort_handle = tokio::spawn(async move {
@@ -328,7 +333,7 @@ where
         // then this should be changed
         let tcp_incoming = tcp_incoming.with_nodelay(Some(true));
         match tls_config {
-            Some((server_config, _)) => {
+            Some((server_config, _, _)) => {
                 router
                     .serve_with_incoming_shutdown(
                         TlsIncoming::new(tcp_incoming, server_config.into()),
@@ -384,7 +389,7 @@ where
     // TODO(zama-ai/kms-internal/issues/2758)
     // currently we need to insert a default context
     // this can be removed when we have dynamic session preparers
-    let session_maker = SessionMaker::new(networking_manager, base_kms.rng.clone());
+    let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.rng.clone());
     let _ = match config.peers {
         Some(ref peers) => {
             let role_assignment = RoleAssignment {
@@ -409,27 +414,38 @@ where
                         Some(_) => "https",
                         None => "http",
                     };
-                    NodeInfo {
-                        mpc_identity: identity.mpc_identity().to_string(),
-                        party_id: role.one_based() as u32,
-                        verification_key: None, // we do not know the verification key of the other parties at startup
-                        external_url: format!(
-                            "{}://{}:{}",
-                            scheme,
-                            identity.hostname(),
-                            identity.port()
-                        ),
-                        tls_cert: vec![], // TODO(zama-ai/kms-internal/issues/2808)
-                        public_storage_url: "".to_string(),
-                        extra_verification_keys: vec![],
+                    match peer
+                        .tls_cert
+                        .as_ref()
+                        .map(|cert| cert.into_pem(peer.party_id, peers))
+                        .transpose()
+                    {
+                        Ok(pem) => {
+                            Ok(NodeInfo {
+                                mpc_identity: identity.mpc_identity().to_string(),
+                                party_id: role.one_based() as u32,
+                                verification_key: None, // we do not know the verification key of the other parties at startup
+                                external_url: format!(
+                                    "{}://{}:{}",
+                                    scheme,
+                                    identity.hostname(),
+                                    identity.port()
+                                ),
+                                ca_cert: pem.map(|pem| pem.contents),
+                                public_storage_url: "".to_string(),
+                                extra_verification_keys: vec![],
+                            })
+                        }
+                        Err(e) => Err(e),
                     }
                 })
-                .collect::<Vec<_>>();
+                .collect::<anyhow::Result<Vec<_>>>()?;
             let context_info = ContextInfo {
                 kms_nodes,
                 context_id,
                 software_version: SoftwareVersion::current(),
                 threshold: config.threshold as u32,
+                pcr_values: vec![], // TODO(zama-ai/kms-internal/issues/2808)
             };
 
             // Note that we have to delete the old context under DEFAULT_MPC_CONTEXT

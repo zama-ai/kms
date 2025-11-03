@@ -626,7 +626,7 @@ mod tests {
                 party_id: 1,
                 verification_key: Some(verification_key.clone()),
                 external_url: "http://localhost:12345".to_string(),
-                tls_cert: vec![],
+                ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 extra_verification_keys: vec![],
             }],
@@ -638,6 +638,7 @@ mod tests {
                 tag: None,
             },
             threshold: 0,
+            pcr_values: vec![],
         };
 
         let request = Request::new(NewKmsContextRequest {

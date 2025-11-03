@@ -133,6 +133,7 @@ pub async fn setup_threshold_no_client<
                 decryption_mode,
             };
             let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
+
             // TODO pass in cert_paths for testing TLS
             let server = new_real_threshold_kms(
                 threshold_party_config,
