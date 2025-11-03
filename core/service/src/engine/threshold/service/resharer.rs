@@ -185,7 +185,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // First thing, if I have a key, send the public material to everyone else.
 
             // Require 1 session in Z64 and 1 session in Z128
-            // TODO: when resharing is fully implemented, we need to use the new context *and* the old context
+            // TODO(zama-ai/kms-internal/issues/2810)
+            // when resharing is fully implemented, we need to use the new context *and* the old context
             let mut session_z64 = session_maker
                 .make_small_sync_session_z64(session_id_z64, old_context, new_epoch_id)
                 .await?;
