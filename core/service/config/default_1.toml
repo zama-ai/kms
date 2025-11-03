@@ -207,10 +207,11 @@ reshare = 1
 
 # Internal threading config (Tokio + Rayon pool sizes).
 # Must be the same across all parties to avoid diverging behavior.
-# If unset, defaults derive from available CPUs.
+# If unset, defaults derive from available #CPUs.
 # Defaults:
 #   num_tokio_threads = ceil(#CPUs / 8)
 #   num_rayon_threads = #CPUs - num_tokio_threads
+# Total number of threads should be approximately equal to #CPUs.
 # Recommended to also set threshold.num_sessions_preproc = 1.5 * #CPUs.
 # Example for a 16‑core machine:
 # [internal_config]
