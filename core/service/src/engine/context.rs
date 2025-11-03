@@ -9,21 +9,14 @@ use threshold_fhe::execution::runtime::party::Role;
 
 use crate::{
     cryptography::internal_crypto_types::PublicSigKey,
-    engine::validation::{
-        parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
-    },
-    vault::storage::{crypto_material::get_core_signing_key, read_context_at_id, StorageReader},
+    engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr},
+    vault::storage::{crypto_material::get_core_signing_key, StorageReader},
 };
 
 const ERR_DUPLICATE_PARTY_IDS: &str = "Duplicate party_ids found in context";
 const ERR_DUPLICATE_NAMES: &str = "Duplicate names found in context";
 const ERR_INVALID_THRESHOLD_SINGLE_NODE: &str = "Invalid threshold for centralized context";
 const ERR_INVALID_THRESHOLD_MULTI_NODE: &str = "Invalid threshold for threshold context";
-const ERR_MISSING_PREVIOUS_CONTEXT: &str = "Missing previous context";
-const ERR_WRONG_SOFTWARE_VERSION: &str = "Current version is lower than previous version";
-const ERR_DUPLICATE_CONTEXT_ID: &str = "Context ID is the same as the previous context";
-const ERR_PREVIOUS_CONTEXT_ID_MISMATCH: &str =
-    "Previous context ID does not match the given previous context";
 
 #[derive(Clone, Debug, VersionsDispatch)]
 pub enum SoftwareVersionVersioned {
@@ -191,7 +184,6 @@ pub enum ContextInfoVersioned {
 pub struct ContextInfo {
     pub kms_nodes: Vec<NodeInfo>,
     pub context_id: ContextId,
-    pub previous_context_id: Option<ContextId>,
     pub software_version: SoftwareVersion,
     pub threshold: u32,
 }
@@ -203,11 +195,7 @@ impl ContextInfo {
 
     /// Most of these checks are simply sanity checks because
     /// before the context passed to the KMS, it should have been validated on the gateway.
-    pub async fn verify<S: StorageReader>(
-        &self,
-        storage: &S,
-        previous_context: Option<&ContextInfo>,
-    ) -> anyhow::Result<Role> {
+    pub async fn verify<S: StorageReader>(&self, storage: &S) -> anyhow::Result<Role> {
         // Check the signing key is consistent with the private key in storage.
         let signing_key = get_core_signing_key(storage).await?;
         let verification_key = signing_key.sk().verifying_key();
@@ -290,50 +278,6 @@ impl ContextInfo {
             ));
         }
 
-        if let Some(prev_context) = previous_context {
-            // self.previous_context_id must match the previous context ID
-            if self.previous_context_id != Some(*prev_context.context_id()) {
-                return Err(anyhow::anyhow!(
-                    "{}: expected {:?}, got {:?}",
-                    ERR_PREVIOUS_CONTEXT_ID_MISMATCH,
-                    Some(*prev_context.context_id()),
-                    self.previous_context_id,
-                ));
-            }
-
-            // check that the previous context exists in storage
-            let _ = read_context_at_id(storage, prev_context.context_id())
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "{} (prev_context={}, error={})",
-                        ERR_MISSING_PREVIOUS_CONTEXT,
-                        prev_context.context_id(),
-                        e
-                    )
-                })?;
-
-            // check that the software version is equal or higher than the previous context
-            if self.software_version < prev_context.software_version {
-                return Err(anyhow::anyhow!(
-                    "{} (prev_version={}, current_version={}, context_id={})",
-                    ERR_WRONG_SOFTWARE_VERSION,
-                    prev_context.software_version,
-                    self.software_version,
-                    self.context_id()
-                ));
-            }
-
-            // check that the context ID is different from the previous context
-            if self.context_id == *prev_context.context_id() {
-                return Err(anyhow::anyhow!(
-                    "{} {}",
-                    ERR_DUPLICATE_CONTEXT_ID,
-                    self.context_id(),
-                ));
-            }
-        }
-
         // check that the urls are valid
         for node in &self.kms_nodes {
             let mpc_url = url::Url::parse(&node.external_url)
@@ -359,17 +303,6 @@ impl TryFrom<kms_grpc::kms::v1::KmsContext> for ContextInfo {
 
     fn try_from(value: kms_grpc::kms::v1::KmsContext) -> anyhow::Result<Self> {
         let software_version = bc2wrap::deserialize(&value.software_version)?;
-        let previous_context_id = match value.previous_context_id {
-            Some(id) => Some(
-                parse_proto_request_id(
-                    &id,
-                    RequestIdParsingErr::Other("invalid previous context ID".to_string()),
-                )?
-                .into(),
-            ),
-            None => None,
-        };
-
         Ok(ContextInfo {
             kms_nodes: value
                 .kms_nodes
@@ -381,7 +314,6 @@ impl TryFrom<kms_grpc::kms::v1::KmsContext> for ContextInfo {
                 RequestIdParsingErr::Context,
             )?
             .into(),
-            previous_context_id,
             software_version,
             threshold: value.threshold as u32,
         })
@@ -399,7 +331,6 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::KmsContext {
                 .map(kms_grpc::kms::v1::KmsNode::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
             context_id: Some(value.context_id.into()),
-            previous_context_id: value.previous_context_id.map(|id| id.into()),
             software_version: bc2wrap::serialize(&value.software_version)?,
             threshold: value.threshold.try_into()?,
         })
@@ -557,7 +488,6 @@ mod tests {
                 },
             ],
             context_id: ContextId::from_bytes([4u8; 32]),
-            previous_context_id: None,
             software_version: SoftwareVersion {
                 major: 1,
                 minor: 0,
@@ -577,7 +507,7 @@ mod tests {
         .await
         .unwrap();
 
-        let result = context.verify(&storage, None).await;
+        let result = context.verify(&storage).await;
         assert!(result
             .unwrap_err()
             .to_string()

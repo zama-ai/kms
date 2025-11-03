@@ -220,7 +220,8 @@ impl<
         // remove the default context when all of context is ready
         let context_id = context_id.unwrap_or(*DEFAULT_MPC_CONTEXT);
 
-        // TODO we don't need epoch ID for the actual keygen
+        // TODO(zama-ai/kms-internal/issues/2809)
+        // we don't need epoch ID for the actual keygen
         // but it will be needed when we store the key material
         let _epoch_id = epoch_id.unwrap_or(RequestId::try_from(PRSS_INIT_REQ_ID).unwrap());
 
@@ -1226,7 +1227,8 @@ mod tests {
         use crate::cryptography::internal_crypto_types::gen_sig_keys;
         let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
-        let session_maker = SessionMaker::dummy(None, None, base_kms.rng.clone());
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, base_kms.rng.clone());
         let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
             base_kms,
             session_maker.make_immutable(),

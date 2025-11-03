@@ -403,8 +403,11 @@ mod tests {
             None
         };
 
-        let session_maker =
-            SessionMaker::dummy(prss_setup_z128, prss_setup_z64, base_kms.rng.clone());
+        let session_maker = SessionMaker::four_party_dummy_session(
+            prss_setup_z128,
+            prss_setup_z64,
+            base_kms.rng.clone(),
+        );
         RealPreprocessor::<P>::init_test(Arc::new(sk), session_maker.make_immutable())
     }
 

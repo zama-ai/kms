@@ -13,7 +13,7 @@ use crate::engine::validation::{parse_proto_context_id, RequestIdParsingErr};
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::{
-    delete_at_request_id, delete_context_at_id, read_context_at_id, store_versioned_at_request_id,
+    delete_at_request_id, delete_context_at_id, store_versioned_at_request_id,
 };
 use crate::vault::Vault;
 use crate::{
@@ -25,7 +25,6 @@ use itertools::Itertools;
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::CustodianContext;
 use kms_grpc::rpc_types::PrivDataType;
-use kms_grpc::RequestId;
 use kms_grpc::{kms::v1::Empty, utils::tonic_result::ok_or_tonic_abort};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
@@ -55,10 +54,7 @@ where
         request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
     ) -> Result<(Role, ContextInfo), tonic::Status> {
         // first verify that the context is valid
-        let kms_grpc::kms::v1::NewKmsContextRequest {
-            active_context,
-            new_context,
-        } = request.into_inner();
+        let kms_grpc::kms::v1::NewKmsContextRequest { new_context } = request.into_inner();
 
         let new_context =
             new_context.ok_or_else(|| Status::invalid_argument("new_context is required"))?;
@@ -69,27 +65,8 @@ where
         let my_role = {
             let storage_ref = self.crypto_storage.private_storage.clone();
             let guarded_priv_storage = storage_ref.lock().await;
-            let prev_context = match active_context {
-                Some(ctx) => {
-                    let context_id: RequestId = ctx.try_into().map_err(|e| {
-                        Status::invalid_argument(format!(
-                            "Failed to parse previous context ID: {e}"
-                        ))
-                    })?;
-                    Some(
-                        read_context_at_id(&(*guarded_priv_storage), &context_id.into())
-                            .await
-                            .map_err(|e| {
-                                Status::invalid_argument(format!(
-                                    "Failed to read previous context for verification: {e}"
-                                ))
-                            })?,
-                    )
-                }
-                None => None,
-            };
             new_context
-                .verify(&(*guarded_priv_storage), prev_context.as_ref())
+                .verify(&(*guarded_priv_storage))
                 .await
                 .map_err(|e| {
                     Status::invalid_argument(format!("Failed to verify new context: {e}"))
@@ -384,6 +361,42 @@ where
     }
 }
 
+/// Atomically update both the storage and the session maker with the new context info.
+/// If any of the two operations fail, rollback to the original state.
+async fn atomic_update_context<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+>(
+    session_maker: &SessionMaker,
+    crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
+    my_role: Role,
+    new_context: &ContextInfo,
+) -> anyhow::Result<()> {
+    let context_id = new_context.context_id();
+    let res1 = crypto_storage
+        .write_context_info(new_context.context_id(), new_context, false)
+        .await;
+
+    let res2 = session_maker.add_context_info(my_role, new_context).await;
+
+    match (res1, res2) {
+        (Ok(_), Ok(_)) => (),
+        _ => {
+            // Rollback if any operation failed
+            // first delete the context from storage
+            let storage_ref = crypto_storage.private_storage.clone();
+            let mut guarded_priv_storage = storage_ref.lock().await;
+            _ = delete_context_at_id(&mut *guarded_priv_storage, context_id).await;
+
+            // next delete the context from session maker
+            session_maker.remove_context(context_id).await;
+            return Err(anyhow::anyhow!("Failed to atomically update context"));
+        }
+    }
+
+    Ok(())
+}
+
 #[tonic::async_trait]
 impl<PubS, PrivS> ContextManager for ThresholdContextManager<PubS, PrivS>
 where
@@ -399,23 +412,13 @@ where
             .verify_and_extract_new_mpc_context(request)
             .await?;
 
-        // store the new context
-        // TODO: make this atomic with the session maker update
-        let res = self
-            .inner
-            .crypto_storage
-            .write_context_info(new_context.context_id(), &new_context, false)
-            .await;
-
-        // update the session maker to include the new context
-        // it should not fail because we should have verified the context above
-        self.session_maker
-            .add_context_info(my_role, &new_context)
-            .await
-            .map_err(|e| {
-                Status::internal(format!("Failed to add context info to session maker: {e}"))
-            })?;
-
+        let res = atomic_update_context(
+            &self.session_maker,
+            &self.inner.crypto_storage,
+            my_role,
+            &new_context,
+        )
+        .await;
         ok_or_tonic_abort(
             res,
             format!(
@@ -439,8 +442,10 @@ where
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
 
-        // TODO: the following two operations need to be atomic
         self.session_maker.remove_context(&context_id).await;
+
+        // There is nothing we can do if deletion fails here.
+        // Note that it cannot fail if the context does not exist.
         delete_context_at_id(&mut *guarded_priv_storage, &context_id)
             .await
             .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
@@ -619,7 +624,6 @@ mod tests {
                 extra_verification_keys: vec![],
             }],
             context_id,
-            previous_context_id: None,
             software_version: SoftwareVersion {
                 major: 0,
                 minor: 1,
@@ -630,10 +634,10 @@ mod tests {
         };
 
         let request = Request::new(NewKmsContextRequest {
-            active_context: None,
             new_context: Some(new_context.try_into().unwrap()),
         });
-        let session_maker = SessionMaker::dummy(None, None, base_kms.rng.clone());
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, base_kms.rng.clone());
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage.clone(),

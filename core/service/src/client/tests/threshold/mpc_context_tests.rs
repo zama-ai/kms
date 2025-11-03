@@ -84,7 +84,6 @@ async fn do_context_switch(
         let mut rng = AesRng::seed_from_u64(78);
         let context_id = RequestId::new_random(&mut rng);
         new_context.context_id = context_id.into();
-        new_context.previous_context_id = Some(previous_context_id);
 
         // note that there's no verification key during initialization of the default context
         // so the new context must use the correct verification keys
@@ -106,7 +105,7 @@ async fn do_context_switch(
 
     {
         let req = internal_client
-            .new_kms_context_request(Some(&previous_context_id), new_context)
+            .new_kms_context_request(new_context)
             .unwrap();
 
         let mut req_tasks = JoinSet::new();

@@ -501,18 +501,14 @@ message KmsContext {
   // that is increased by 1 every time a new context of a specific type is generated.
   RequestId context_id = 2;
 
-  // The previous context ID which might be empty if this is the first context.
-  // Contexts are linked together in a chain, but they are not allowed to fork or cycle.
-  RequestId previous_context_id = 3;
-
   // A software version tag and information if minor (non-breaking) upgrades/downgrades are permitted.
   // If minor upgrades/downgrades are not permitted then a digest of the binaries to run should also be included.
-  bytes software_version = 4;
+  bytes software_version = 3;
 
   // The corruption threshold for this context.
   // In the optimal case, n = 3 * threshold + 1, where n is the number of KMS nodes.
   // The threshold must be set to 0 if the kms_nodes list contains only one node.
-  int32 threshold = 5;
+  int32 threshold = 4;
 }
 
 message CustodianSetupMessage {
@@ -551,7 +547,6 @@ message CustodianContext {
 // If the active_context may be empty, then the new_context must be the first context
 // in the chain of contexts.
 message NewKmsContextRequest {
-  RequestId active_context = 1;
   KmsContext new_context = 2;
 }
 

@@ -415,7 +415,7 @@ where
                             identity.hostname(),
                             identity.port()
                         ),
-                        tls_cert: vec![], // TODO
+                        tls_cert: vec![], // TODO(zama-ai/kms-internal/issues/2808)
                         public_storage_url: "".to_string(),
                         extra_verification_keys: vec![],
                     }
@@ -424,7 +424,6 @@ where
             let context_info = ContextInfo {
                 kms_nodes,
                 context_id,
-                previous_context_id: None,
                 software_version: SoftwareVersion::current(),
                 threshold: config.threshold as u32,
             };

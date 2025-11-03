@@ -866,8 +866,11 @@ mod tests {
 
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
-        let session_maker =
-            SessionMaker::dummy(prss_setup_z128, prss_setup_z64, base_kms.rng.clone());
+        let session_maker = SessionMaker::four_party_dummy_session(
+            prss_setup_z128,
+            prss_setup_z64,
+            base_kms.rng.clone(),
+        );
 
         let public_decryptor = RealPublicDecryptor::init_test_dummy_decryptor(
             base_kms,

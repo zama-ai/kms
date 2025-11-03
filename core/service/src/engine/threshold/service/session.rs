@@ -56,7 +56,7 @@ impl SessionMaker {
     }
 
     #[cfg(test)]
-    pub(crate) fn dummy(
+    pub(crate) fn four_party_dummy_session(
         prss_setup_z128: Option<PRSSSetup<ResiduePolyF4Z128>>,
         prss_setup_z64: Option<PRSSSetup<ResiduePolyF4Z64>>,
         rng: Arc<Mutex<AesRng>>,
@@ -121,14 +121,12 @@ impl SessionMaker {
         &self,
         context_id: &ContextId,
     ) -> anyhow::Result<HealthCheckSession> {
-        // TODO is this the right way to derive session ID?
-        let session_id = context_id.derive_session_id()?;
         let nm = self.networking_manager.read().await;
         let role_assignment = self.get_role_assignment(context_id).await?;
         let my_role = self.my_role(context_id).await?;
 
         let health_check_session = nm
-            .make_healthcheck_session(session_id, &role_assignment, my_role)
+            .make_healthcheck_session(&role_assignment, my_role)
             .await?;
         Ok(health_check_session)
     }

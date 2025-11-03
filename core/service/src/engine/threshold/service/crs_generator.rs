@@ -572,8 +572,11 @@ mod tests {
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
-        let session_maker =
-            SessionMaker::dummy(prss_setup_z128, prss_setup_z64, base_kms.rng.clone());
+        let session_maker = SessionMaker::four_party_dummy_session(
+            prss_setup_z128,
+            prss_setup_z64,
+            base_kms.rng.clone(),
+        );
 
         let pub_storage = ram::RamStorage::new();
         let priv_storage = ram::RamStorage::new();
