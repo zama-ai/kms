@@ -156,12 +156,7 @@ impl GrpcSendingService {
                     domain_name
                 );
 
-                // Use the TLS_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
-                // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
-                // then this should be changed
-                let endpoint = Channel::builder(endpoint)
-                    .http2_adaptive_window(true)
-                    .tcp_nodelay(true);
+                let endpoint = Channel::builder(endpoint).http2_adaptive_window(true);
                 // we have to pass a custom TLS connector to
                 // tonic::transport::Channel to be able to use a custom rustls
                 // ClientConfig that overrides the certificate verifier for AWS
@@ -176,7 +171,7 @@ impl GrpcSendingService {
             }
             None => {
                 tracing::warn!("Building channel to {:?} without TLS", endpoint);
-                // Use the TLS_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
+                // Use the TCP_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
                 // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
                 // then this should be changed
                 Channel::builder(endpoint)
