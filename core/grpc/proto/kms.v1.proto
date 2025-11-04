@@ -92,7 +92,6 @@ message KeyGenPreprocRequest {
 
 message PartialKeyGenPreprocParams {
   // The percentage of preprocessing we actually generate.
-  // If not set we generate the full preprocessing.
   uint32 percentage_offline = 1;
 
   // If true we store a dummy preprocessing that can be used
@@ -104,6 +103,7 @@ message PartialKeyGenPreprocParams {
 message PartialKeyGenPreprocRequest {
   // The base key generation preprocessing request.
   KeyGenPreprocRequest base_request = 1;
+  // If not set we generate the full preprocessing.
   PartialKeyGenPreprocParams partial_params = 2;
 }
 
