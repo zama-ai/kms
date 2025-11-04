@@ -29,6 +29,7 @@ The setup includes:
 ### Required Tools
 
 Ensure the following tools are installed:
+- `aws` - AWS CLI
 - `kubectl` - Kubernetes CLI
 - `helm` - Kubernetes package manager
 - `kind` - Kubernetes in Docker

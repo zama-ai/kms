@@ -814,7 +814,7 @@ pub async fn fetch_element(
         let key_path = Path::new(endpoint).join(folder).join(element_id);
         let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
             anyhow!(
-                "Failed to read byte file at {:?} with error: {e}",
+                "Failed to read bytes from file at {:?} with error: {e}",
                 &key_path
             )
         })?;

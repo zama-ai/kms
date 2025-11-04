@@ -74,8 +74,12 @@ impl ChoreoRuntime {
             .map(|(role, host)| {
                 let endpoint: &Uri = host;
                 println!("connecting to endpoint: {:?}", endpoint);
+                // Use the TLS_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
+                // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
+                // then this should be changed
                 let channel = Channel::builder(endpoint.clone())
                     .timeout(*NETWORK_TIMEOUT_LONG)
+                    .tcp_nodelay(true)
                     .connect_lazy();
                 Ok((*role, channel))
             })

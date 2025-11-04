@@ -255,8 +255,9 @@ impl ServerCertVerifier for AttestedVerifier {
         let do_validation = !&self.mock_enclave;
         #[cfg(not(feature = "testing"))]
         let do_validation = true;
-        if let Some(release_pcrs) = &context.release_pcrs {
-            if do_validation {
+
+        if do_validation {
+            if let Some(release_pcrs) = &context.release_pcrs {
                 validate_wrapped_cert(
                     &cert,
                     release_pcrs,
@@ -346,8 +347,9 @@ impl ClientCertVerifier for AttestedVerifier {
         let do_validation = !&self.mock_enclave;
         #[cfg(not(feature = "testing"))]
         let do_validation = true;
-        if let Some(release_pcrs) = &context.release_pcrs {
-            if do_validation {
+
+        if do_validation {
+            if let Some(release_pcrs) = &context.release_pcrs {
                 validate_wrapped_cert(
                     &cert,
                     release_pcrs,
