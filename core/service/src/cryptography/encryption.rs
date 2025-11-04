@@ -26,9 +26,9 @@ pub enum UnifiedPublicEncKeyVersioned {
 #[expect(clippy::large_enum_variant)]
 pub enum UnifiedPublicEncKey {
     MlKem512(PublicEncKey<ml_kem::MlKem512>),
-    // LEGACY: Note that this should ONLY be used for legacy reasons, new code should use MlKem512.
-    // If used in current code, then take care to NOT use to_legacy_bytes or from_legacy_bytes on this variant
-    // as this will do bincode serialization instead of safe serialization
+    /// LEGACY: Note that this should ONLY be used for legacy reasons, new code should use MlKem512.
+    /// If used in current code, then take care to NOT use to_legacy_bytes or from_legacy_bytes on this variant
+    /// as this will do bincode serialization instead of safe serialization.
     #[deprecated(
         since = "0.12.0",
         note = "Use MlKem512 instead. MlKem1024 is only for legacy compatibility with relayer-sdk v0.2.0-0 and older."
