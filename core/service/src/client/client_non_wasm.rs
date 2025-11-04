@@ -1,6 +1,6 @@
 use crate::anyhow_error_and_log;
 use crate::client::client_wasm::Client;
-use crate::engine::base::hash_sol_struct;
+use crate::cryptography::signatures::hash_sol_struct;
 use crate::vault::storage::{
     crypto_material::{
         get_client_signing_key, get_client_verification_key, get_core_verification_key,
@@ -71,13 +71,11 @@ impl Client {
         }
 
         let client_pk = get_client_verification_key(&client_storage).await?;
-        let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
-
         let client_sk = get_client_signing_key(&client_storage).await?;
 
         Ok(Client::new(
             pks,
-            client_address,
+            client_pk.address(),
             Some(client_sk),
             *params,
             decryption_mode,

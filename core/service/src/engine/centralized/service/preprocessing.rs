@@ -151,7 +151,6 @@ pub async fn get_preprocessing_res_impl<
 mod tests {
     use super::*;
     use crate::{
-        cryptography::signatures::PublicSigKey,
         dummy_domain,
         engine::{
             base::{derive_request_id, tests::recover_address},
@@ -159,7 +158,6 @@ mod tests {
         },
     };
     use aes_prng::AesRng;
-    use k256::ecdsa::SigningKey;
     use kms_grpc::{
         kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain,
         solidity_types::PrepKeygenVerification,
@@ -170,8 +168,7 @@ mod tests {
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
-        let verf_key =
-            PublicSigKey::new(SigningKey::verifying_key(kms.base_kms.sig_key.sk()).to_owned());
+        let verf_key = kms.base_kms.sig_key.verf_key();
         let preproc_req_id = derive_request_id("test_preprocessing_sunshine").unwrap();
         let domain = dummy_domain();
         let preproc_req = KeyGenPreprocRequest {
@@ -187,13 +184,12 @@ mod tests {
         let get_result =
             get_preprocessing_res_impl(&kms, Request::new(preproc_req_id.into())).await;
         assert!(get_result.is_ok());
-        let actual_address = alloy_signer::utils::public_key_to_address(verf_key.pk());
         let inner_res = get_result.unwrap().into_inner();
         let sol_struct =
             PrepKeygenVerification::new(&inner_res.preprocessing_id.unwrap().try_into().unwrap());
         assert_eq!(
             recover_address(sol_struct, &domain, &inner_res.external_signature),
-            actual_address
+            verf_key.address()
         );
     }
 

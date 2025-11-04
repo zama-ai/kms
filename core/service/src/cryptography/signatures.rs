@@ -1,6 +1,10 @@
 use crate::{anyhow_tracked, cryptography::error::CryptographyError, impl_generic_versionize};
 use ::signature::{Signer, Verifier};
 use aes_prng::AesRng;
+use alloy_primitives::B256;
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
+use alloy_sol_types::{Eip712Domain, SolStruct};
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use nom::AsBytes;
 use rand::SeedableRng;
@@ -86,13 +90,16 @@ impl PublicSigKey {
     /// Return a concise identifier for this verification key. For ECDSA keys, this is the Ethereum address.
     pub fn verf_key_id(&self) -> Vec<u8> {
         // Let the ID of both a normal ecdsa256k1 key and an eip712 key be the Ethereum address
-        let addr = alloy_primitives::Address::from_public_key(self.pk());
-        addr.to_vec()
+        self.address().to_vec()
     }
 
     /// DEPRECATED LEGACY code since this is not the right way to serialize as it is not versioned
+    #[deprecated(
+        note = "This is legacy code and should not be used for new development. Will be handled in #2781"
+    )]
     pub fn get_serialized_verf_key(&self) -> anyhow::Result<Vec<u8>> {
-        let serialized_verf_key = bc2wrap::serialize(&PublicSigKey::new(self.pk().to_owned()))?;
+        // TODO check if this is the same as hex::encode(pk.pk().to_encoded_point(false).to_bytes()) same with verf id
+        let serialized_verf_key = bc2wrap::serialize(&PublicSigKey::new(self.pk.0.to_owned()))?;
         Ok(serialized_verf_key)
     }
 
@@ -103,6 +110,13 @@ impl PublicSigKey {
         }
     }
 
+    pub fn address(&self) -> alloy_primitives::Address {
+        alloy_primitives::Address::from_public_key(&self.pk.0)
+    }
+
+    #[deprecated(
+        note = "This is legacy code and should not be used for new development. Will be handled in #2781"
+    )]
     pub fn pk(&self) -> &k256::ecdsa::VerifyingKey {
         &self.pk.0
     }
@@ -207,6 +221,9 @@ impl PrivateSigKey {
     }
 
     /// TODO(#2781) DEPRECATED: code should be refactored to not use this outside on this class
+    #[deprecated(
+        note = "This is legacy code and should not be used for new development. Will be handled in #2781"
+    )]
     pub fn sk(&self) -> &k256::ecdsa::SigningKey {
         &self.sk.0
     }
@@ -218,8 +235,12 @@ impl PrivateSigKey {
     /// Return a concise identifier for this signing key. For ECDSA keys, this is the Ethereum address.
     pub fn signing_key_id(&self) -> Vec<u8> {
         // Let the ID of both a normal ecdsa256k1 key and an eip712 key be the Ethereum address
-        let addr = alloy_primitives::Address::from_private_key(self.sk());
+        let addr = alloy_primitives::Address::from_private_key(&self.sk.0);
         addr.as_bytes().to_vec()
+    }
+
+    pub fn address(&self) -> alloy_primitives::Address {
+        alloy_primitives::Address::from_private_key(&self.sk.0)
     }
 }
 
@@ -356,7 +377,8 @@ where
     T: AsRef<[u8]> + ?Sized,
 {
     let sig: k256::ecdsa::Signature = server_sig_key
-        .sk()
+        .sk
+        .0
         .try_sign(&[dsep, msg.as_ref()].concat())?;
     // Normalize s value to ensure a consistent signature and protect against malleability
     let sig = sig.normalize_s().unwrap_or(sig);
@@ -380,7 +402,8 @@ where
 
     // Verify signature
     server_verf_key
-        .pk()
+        .pk
+        .0
         .verify(&[dsep, payload.as_ref()].concat(), &sig.sig)
         .map_err(|e| anyhow_tracked(e.to_string()))
 }
@@ -397,6 +420,44 @@ pub(crate) fn check_normalized(sig: &Signature) -> Result<(), CryptographyError>
         )));
     };
     Ok(())
+}
+
+pub fn hash_sol_struct<D: SolStruct>(
+    data: &D,
+    eip712_domain: &Eip712Domain,
+) -> anyhow::Result<B256> {
+    let message_hash = data.eip712_signing_hash(eip712_domain);
+    tracing::info!("Public Data EIP-712 Message hash: {:?}", message_hash);
+    Ok(message_hash)
+}
+
+/// take some public data (e.g. public key or CRS) and sign it using EIP-712 for external verification (e.g. in fhevm).
+pub fn compute_eip712_signature<D: SolStruct>(
+    sk: &PrivateSigKey,
+    data: &D,
+    eip712_domain: &Eip712Domain,
+) -> anyhow::Result<Vec<u8>> {
+    let message_hash = hash_sol_struct(data, eip712_domain)?;
+    compute_eip712_signature_from_msg_hash(sk, &message_hash)
+}
+
+pub fn compute_eip712_signature_from_msg_hash(
+    sk: &PrivateSigKey,
+    msg_hash: &B256,
+) -> anyhow::Result<Vec<u8>> {
+    let signer = PrivateKeySigner::from_signing_key(sk.sk.0.clone());
+    let signer_address = signer.address();
+    tracing::info!("Signer address: {:?}", signer_address);
+
+    // Sign the hash synchronously with the wallet.
+    let signature = signer.sign_hash_sync(&msg_hash)?.as_bytes().to_vec();
+
+    tracing::info!(
+        "Public Data EIP-712 Signature: {:?}",
+        hex::encode(signature.clone())
+    );
+
+    Ok(signature)
 }
 
 #[cfg(test)]
@@ -472,5 +533,14 @@ mod tests {
         sk.zeroize();
         // Validate a change happens from zeroize
         assert_ne!(sk, old_sk);
+    }
+
+    #[test]
+    fn regression_consistent_enc() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let verf_id = verf_key.verf_key_id();
+        let signing_id = sig_key.signing_key_id();
+        assert!(verf_id == signing_id);
     }
 }

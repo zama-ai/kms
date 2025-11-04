@@ -701,6 +701,7 @@ impl<
             )));
         }
 
+        #[allow(deprecated)]
         let server_verf_key = self
             .base_kms
             .sig_key

@@ -121,10 +121,9 @@ fn validate_user_decrypt_meta_data_and_signature(
     }
 
     let resp_verf_key: PublicSigKey = bc2wrap::deserialize(&other_resp.verification_key)?;
-    let resp_addr = alloy_signer::utils::public_key_to_address(resp_verf_key.pk());
 
     let expected_addr = if let Some(expected_addr) = server_addreses.get(&(other_resp.party_id)) {
-        if *expected_addr != resp_addr {
+        if *expected_addr != resp_verf_key.address() {
             anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS)
         }
         expected_addr
@@ -484,7 +483,7 @@ mod tests {
         );
         let kms_addrs = pks
             .iter()
-            .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
+            .map(|(i, pk)| (*i, pk.address()))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
@@ -504,7 +503,7 @@ mod tests {
         let domain = dummy_domain();
         let request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed
-            alloy_primitives::Address::from_public_key(client_vk.pk()),
+            client_vk.address(),
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             domain.verifying_contract.unwrap(),
@@ -627,7 +626,7 @@ mod tests {
         );
         let server_addresses = pks
             .iter()
-            .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
+            .map(|(i, pk)| (*i, pk.address()))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
@@ -648,7 +647,7 @@ mod tests {
 
         let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
-            alloy_primitives::Address::from_public_key(client_vk.pk()),
+            client_vk.address(),
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
@@ -855,7 +854,7 @@ mod tests {
         );
         let server_addresses = pks
             .iter()
-            .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
+            .map(|(i, pk)| (*i, pk.address()))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
@@ -875,7 +874,7 @@ mod tests {
         .unwrap();
         let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
-            alloy_primitives::Address::from_public_key(client_vk.pk()),
+            client_vk.address(),
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
@@ -1228,7 +1227,7 @@ mod tests {
         );
         let server_addresses = pks
             .iter()
-            .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
+            .map(|(i, pk)| (*i, pk.address()))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
@@ -1247,7 +1246,7 @@ mod tests {
         .unwrap();
         let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
-            alloy_primitives::Address::from_public_key(client_vk.pk()),
+            client_vk.address(),
             enc_key_buf.clone(),
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
@@ -1323,7 +1322,7 @@ mod tests {
             let (bad_client_vk, _bad_client_sk) = gen_sig_keys(&mut rng);
             let bad_client_request = ParsedUserDecryptionRequest::new(
                 None, // No signature is needed here because we're testing response validation
-                alloy_primitives::Address::from_public_key(bad_client_vk.pk()),
+                bad_client_vk.address(),
                 enc_key_buf,
                 vec![CiphertextHandle::new(ciphertext_handle.clone())],
                 dummy_domain.verifying_contract.unwrap(),

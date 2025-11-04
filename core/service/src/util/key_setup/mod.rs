@@ -205,7 +205,7 @@ where
         false,
     );
 
-    let ethereum_address = alloy_signer::utils::public_key_to_address(pk.pk());
+    let ethereum_address = pk.address();
 
     // Store ethereum address (derived from public key), needed for KMS signature verification
     if let Err(e) = store_text_at_request_id(
@@ -661,6 +661,7 @@ where
         let (pk, sk) = gen_sig_keys(&mut rng);
 
         // self-sign a CA certificate with the private signing key
+        #[allow(deprecated)]
         let (ca_cert_ki, ca_cert) = threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
             subject_str.as_str(),
             tls_wildcard,
@@ -691,7 +692,7 @@ where
             true,
         );
 
-        let ethereum_address = alloy_signer::utils::public_key_to_address(pk.pk());
+        let ethereum_address = pk.address();
 
         // Store ethereum address (derived from public key), needed for KMS signature verification
         if let Err(store_err) = store_text_at_request_id(

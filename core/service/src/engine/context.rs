@@ -202,7 +202,7 @@ impl ContextInfo {
                 )
             })?;
 
-        if my_node.verification_key.pk() != signing_key.sk().verifying_key() {
+        if my_node.verification_key != signing_key.verf_key() {
             return Err(anyhow::anyhow!(
                 "{} {}",
                 ERR_INCONSISTENT_SIGNING_KEY,

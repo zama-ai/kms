@@ -890,7 +890,7 @@ mod tests {
     fn test_verify_user_decrypt_eip712() {
         let mut rng = AesRng::from_random_seed();
         let (client_pk, _client_sk) = gen_sig_keys(&mut rng);
-        let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
+        let client_address = client_pk.address();
         let ciphertext = vec![1, 2, 3];
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_enc_sk, enc_pk) = encryption.keygen().unwrap();

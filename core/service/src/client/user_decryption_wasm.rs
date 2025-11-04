@@ -151,7 +151,7 @@ impl Client {
 
         // NOTE: ID starts at 1
         let expected_server_addr = if let Some(server_addr) = stored_server_addrs.get(&1) {
-            if *server_addr != alloy_signer::utils::public_key_to_address(cur_verf_key.pk()) {
+            if *server_addr != cur_verf_key.address() {
                 return Err(anyhow_error_and_log("server address is not consistent"));
             }
             server_addr

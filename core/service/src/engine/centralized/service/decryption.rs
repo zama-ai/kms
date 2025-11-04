@@ -107,6 +107,7 @@ pub async fn user_decrypt_impl<
         (TAG_PUBLIC_DECRYPTION_KIND, "centralized".to_string()),
     ];
 
+    #[allow(deprecated)]
     let server_verf_key = service
         .base_kms
         .sig_key
@@ -456,6 +457,7 @@ pub async fn get_public_decryption_result_impl<
         external_signature
     );
 
+    #[allow(deprecated)]
     let server_verf_key = service
         .base_kms
         .sig_key
@@ -818,9 +820,7 @@ mod test_user_decryption {
     use crate::{
         consts::SAFE_SER_SIZE_LIMIT,
         cryptography::{
-            encryption::{
-                Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey,
-            },
+            encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey},
             hybrid_ml_kem::{self, HybridKemCt},
         },
         dummy_domain,

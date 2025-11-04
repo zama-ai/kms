@@ -352,6 +352,7 @@ impl<
             drop(inner_timer);
         }
 
+        #[allow(deprecated)]
         let payload = UserDecryptionResponsePayload {
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
