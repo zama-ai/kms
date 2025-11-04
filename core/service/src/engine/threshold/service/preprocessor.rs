@@ -254,7 +254,11 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 Ok((sessions, _)) => {
                     let preproc = Box::new(DummyPreprocessing::<ResiduePolyF4Z128>::new(
                         0,
-                        sessions.first().unwrap(),
+                        sessions.first().ok_or_else(|| {
+                            tracing::error!(
+                                "Could not retrieve any session after partial preprocessing"
+                            )
+                        })?,
                     ));
                     let preproc: Box<dyn DKGPreprocessing<ResiduePolyF4Z128>> = preproc;
                     Ok((sessions, Arc::new(Mutex::new(preproc))))

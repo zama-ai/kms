@@ -1403,7 +1403,7 @@ async fn do_partial_preproc(
             percentage_offline: preproc_params.percentage_offline,
             store_dummy_preprocessing: preproc_params.store_dummy_preprocessing,
         }),
-    )?; //TODO keyset config
+    )?;
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
