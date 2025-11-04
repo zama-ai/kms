@@ -61,7 +61,10 @@ async fn do_context_switch(
     )
     .await;
 
-    // there is already a previous context by default
+    // There is already a previous context by default.
+    //
+    // NOTE: once we remove the default context (zama-ai/kms-internal/issues/2758),
+    // we need to change this test to create a new context first before switching contexts.
     let previous_context_id = *DEFAULT_MPC_CONTEXT;
 
     let all_private_storage = (1..=amount_parties)

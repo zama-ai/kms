@@ -472,6 +472,10 @@ message KmsNode {
 
   // The verification key of the KMS node operator,
   // this is the public key used to verify the signatures produced by the KMS node.
+  //
+  // This is optional to be compatible with configuration files that's used in
+  // older KMS versions, which are not aware of the verification key of the other parties.
+  // But any new context must set this field.
   optional bytes verification_key = 3;
 
   // The external port and host of the KMS node,

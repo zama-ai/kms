@@ -1,3 +1,12 @@
+//! This module defines strongly-typed identifiers used throughout the KMS system.
+//! When identifiers are passed into the KMS via gRPC, they are represented as RequestId types from
+//! the kms_grpc crate (this is not the RequestId defined in this module).
+//! Upon receiving such identifiers, they should be converted into the appropriate identifier types
+//! defined in this module for internal use.
+//!
+//! Ideally the types should be present in the gRPC proto files as well, but we wish to
+//! maintain compatibility with currently deployed connectors, we do not use strongly typed
+//! identifiers in the gRPC interface for now.
 use crate::kms::v1;
 use alloy_primitives::hex;
 use anyhow::{Error, Result};
