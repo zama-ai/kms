@@ -29,7 +29,7 @@ use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::FheTypes;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_fhe::hashing::{serialize_hash_element, DomainSep, DIGEST_BYTES};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";
 
@@ -92,7 +92,9 @@ pub trait DesigncryptFHEPlaintext: Designcrypt {
     ) -> Result<SigncryptionPayload, CryptographyError>;
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
+)]
 pub enum UnifiedSigncryptionKeyOwnedVersioned {
     V0(UnifiedSigncryptionKeyOwned),
 }
@@ -211,19 +213,28 @@ impl HasSigningScheme for UnifiedDesigncryptionKey<'_> {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
+)]
 pub enum UnifiedDesigncryptionKeyOwnedVersioned {
     V0(UnifiedDesigncryptionKeyOwned),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, Versionize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedDesigncryptionKeyOwnedVersioned)]
 pub struct UnifiedDesigncryptionKeyOwned {
     pub decryption_key: UnifiedPrivateEncKey,
     pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
     pub sender_verf_key: PublicSigKey,
-    /// The ID of the receiver of the signcryption, e.g. blockchain address
+    /// The ID of the receiver of the signcryption, e.g. blockchain address]
     pub receiver_id: Vec<u8>,
+}
+
+impl Zeroize for UnifiedDesigncryptionKeyOwned {
+    fn zeroize(&mut self) {
+        // We only need to zeroize the private key
+        self.decryption_key.zeroize();
+    }
 }
 
 impl UnifiedDesigncryptionKeyOwned {
@@ -743,7 +754,7 @@ pub fn ephemeral_signcryption_key_generation(
 /// Helper struct that contains both signcryption and designcryption keys for a client
 /// For now only used for testing
 #[cfg(test)]
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct UnifiedSigncryptionKeyPairOwned {
     pub signcrypt_key: UnifiedSigncryptionKeyOwned,
     pub designcryption_key: UnifiedDesigncryptionKeyOwned,
@@ -806,7 +817,10 @@ mod tests {
                 .unwrap();
         let deserialized_server_verf_key: PublicSigKey =
             bc2wrap::deserialize(&serialized_server_verf_key).unwrap();
-        let client_id = client_signcryption_keys.designcryption_key.receiver_id;
+        let client_id = client_signcryption_keys
+            .designcryption_key
+            .receiver_id
+            .clone();
         let new_keys = UnifiedDesigncryptionKey::new(
             &client_signcryption_keys.designcryption_key.decryption_key,
             &client_signcryption_keys.designcryption_key.encryption_key,

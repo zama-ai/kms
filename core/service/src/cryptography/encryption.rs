@@ -18,7 +18,7 @@ use tfhe::{
     Versionize,
 };
 use tfhe_versionable::VersionsDispatch;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum UnifiedPublicEncKeyVersioned {
@@ -253,7 +253,9 @@ impl Encrypt for UnifiedPublicEncKey {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
+)]
 pub enum UnifiedPrivateEncKeyVersioned {
     V0(UnifiedPrivateEncKey),
 }
