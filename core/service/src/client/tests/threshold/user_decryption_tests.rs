@@ -12,9 +12,7 @@ use crate::consts::TEST_PARAM;
 #[cfg(feature = "slow_tests")]
 use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
-use crate::cryptography::encryption::{
-    PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
-};
+use crate::cryptography::encryption::{PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey};
 use crate::cryptography::signatures::{internal_sign, PrivateSigKey};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;

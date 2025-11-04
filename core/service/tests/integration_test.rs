@@ -577,8 +577,7 @@ mod kms_custodian_binary_tests {
         },
         cryptography::{
             encryption::{
-                Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey,
-                UnifiedPublicEncKey,
+                Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
             },
             signatures::gen_sig_keys,
         },

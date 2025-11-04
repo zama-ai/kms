@@ -12,7 +12,7 @@
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::encryption::{
-    PkeSchemeType, HasPkeScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+    HasPkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
@@ -276,11 +276,7 @@ pub struct UnifiedSigncryption {
     pub signing_type: SigningSchemeType,
 }
 impl UnifiedSigncryption {
-    pub fn new(
-        payload: Vec<u8>,
-        pke_type: PkeSchemeType,
-        signing_type: SigningSchemeType,
-    ) -> Self {
+    pub fn new(payload: Vec<u8>, pke_type: PkeSchemeType, signing_type: SigningSchemeType) -> Self {
         Self {
             payload,
             pke_type,

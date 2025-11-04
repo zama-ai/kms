@@ -54,8 +54,10 @@ pub enum RecoveryRequestPayloadVersioned {
 }
 
 /// The backup data constructed whenever a new custodian context is created.
-/// It is meant to be stored in the public storage as it is self-trusted via the signatures
-/// It is different from what is returned to custodians during recovery since it is then augmented with
+///
+/// It is meant to be stored in the public storage as it is self-trusted via the signcryption in `InnerOperatorBackupOutput8`.
+/// Note that this data is different from what is returned to the custodians (`InternalRecoveryRequest`) during recovery
+/// since during recovery it gets augmented with an ephemeral encryption key and operator information.
 /// an ephemeral encryption key during that point in time.
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
 #[versionize(RecoveryRequestPayloadVersioned)]
