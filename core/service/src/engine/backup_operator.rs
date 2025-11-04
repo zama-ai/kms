@@ -89,7 +89,7 @@ where
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
-        let (backup_priv_key, backup_pub_key) = enc
+        let (ephem_operator_priv_key, ephem_operator_pub_key) = enc
             .keygen()
             .map_err(|e| anyhow::anyhow!("Failure in ephemeral key generation for backup: {e}"))?;
         let mut cts = HashMap::new();
@@ -98,18 +98,18 @@ where
         }
         let mut serialized_priv_key = Vec::new();
         safe_serialize(
-            &backup_priv_key,
+            &ephem_operator_priv_key,
             &mut serialized_priv_key,
             SAFE_SER_SIZE_LIMIT,
         )?;
         let mut serialized_pub_key = Vec::new();
         safe_serialize(
-            &backup_pub_key,
+            &ephem_operator_pub_key,
             &mut serialized_pub_key,
             SAFE_SER_SIZE_LIMIT,
         )?;
         let recovery_request = RecoveryRequest {
-            enc_key: serialized_pub_key,
+            ephem_op_enc_key: serialized_pub_key,
             cts,
             backup_id: Some(backup_id.into()),
             operator_role: self.my_role.one_based() as u64,
@@ -118,7 +118,11 @@ where
             "Generated outer recovery request for backup_id/context_id={}",
             backup_id
         );
-        Ok((recovery_request, backup_priv_key, backup_pub_key))
+        Ok((
+            recovery_request,
+            ephem_operator_priv_key,
+            ephem_operator_pub_key,
+        ))
     }
 }
 
@@ -206,7 +210,7 @@ where
                     )
                 })?
         };
-        let (recovery_request, backup_priv_key, backup_pub_key) = self
+        let (recovery_request, ephem_op_dec_key, ephem_op_enc_key) = self
             .gen_outer_recovery_request(backup_id, recovery_request_payload)
             .await
             .map_err(|e| {
@@ -216,7 +220,7 @@ where
                 )
             })?;
         // We already ensured that no key is previously set, so ignore the result
-        let _ = guarded_priv_key.replace((backup_priv_key, backup_pub_key));
+        let _ = guarded_priv_key.replace((ephem_op_dec_key, ephem_op_enc_key));
         Ok(Response::new(recovery_request))
     }
 

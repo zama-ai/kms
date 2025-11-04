@@ -55,10 +55,9 @@ pub enum RecoveryRequestPayloadVersioned {
 
 /// The backup data constructed whenever a new custodian context is created.
 ///
-/// It is meant to be stored in the public storage as it is self-trusted via the signcryption in `InnerOperatorBackupOutput8`.
+/// It is meant to be stored in the public storage as it is self-trusted via the signcryption in `InnerOperatorBackupOutput`.
 /// Note that this data is different from what is returned to the custodians (`InternalRecoveryRequest`) during recovery
-/// since during recovery it gets augmented with an ephemeral encryption key and operator information.
-/// an ephemeral encryption key during that point in time.
+/// since during recovery it gets augmented with an ephemeral encryption key and operator information and the actual backup key is not used at that point.
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
 #[versionize(RecoveryRequestPayloadVersioned)]
 pub struct RecoveryRequestPayload {
@@ -82,13 +81,13 @@ impl Named for InternalRecoveryRequest {
 
 /// The backup data returned to the custodians during recovery.
 /// WARNING: It is crucial that this is transported safely as it does not
-/// contain any authentication on the backup encryption key [`enc_key`].
+/// contain any authentication on the backup encryption key [`ephem_op_enc_key`].
 /// This is because we have to assume that the operator has no access to the private storage
 /// when creating this object.
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
 #[versionize(InternalRecoveryRequestVersioned)]
 pub struct InternalRecoveryRequest {
-    backup_enc_key: UnifiedPublicEncKey, // Backup encryption key
+    ephem_op_enc_key: UnifiedPublicEncKey,
     cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     backup_id: RequestId,
     operator_role: Role,
@@ -97,13 +96,13 @@ pub struct InternalRecoveryRequest {
 impl InternalRecoveryRequest {
     /// Optimistically create a new internal recovery request, WITHOUT validating it against the custodians' unsigncryption keys.
     pub fn new(
-        backup_enc_key: UnifiedPublicEncKey,
+        ephem_op_enc_key: UnifiedPublicEncKey,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
         backup_id: RequestId,
         operator_role: Role,
     ) -> anyhow::Result<Self> {
         let res = InternalRecoveryRequest {
-            backup_enc_key,
+            ephem_op_enc_key,
             cts,
             backup_id,
             operator_role,
@@ -148,7 +147,7 @@ impl InternalRecoveryRequest {
     }
 
     pub fn backup_enc_key(&self) -> &UnifiedPublicEncKey {
-        &self.backup_enc_key
+        &self.ephem_op_enc_key
     }
 
     pub fn signcryptions(&self) -> HashMap<Role, &InnerOperatorBackupOutput> {
@@ -178,10 +177,11 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
     type Error = anyhow::Error;
 
     fn try_from(value: RecoveryRequest) -> Result<InternalRecoveryRequest, Self::Error> {
-        let backup_enc_key: UnifiedPublicEncKey =
-            safe_deserialize(std::io::Cursor::new(&value.enc_key), SAFE_SER_SIZE_LIMIT).map_err(
-                |e| anyhow_error_and_log(format!("Could not deserialize enc_key: {e:?}")),
-            )?;
+        let ephem_op_enc_key: UnifiedPublicEncKey = safe_deserialize(
+            std::io::Cursor::new(&value.ephem_op_enc_key),
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(|e| anyhow_error_and_log(format!("Could not deserialize enc_key: {e:?}")))?;
         let mut cts = BTreeMap::new();
         for (cur_role_idx, cur_backup_out) in value.cts {
             let role = Role::indexed_from_one(cur_role_idx as usize);
@@ -191,7 +191,7 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
         let backup_id: RequestId =
             parse_optional_proto_request_id(&value.backup_id, RequestIdParsingErr::BackupRecovery)?;
         Ok(Self {
-            backup_enc_key,
+            ephem_op_enc_key,
             cts,
             backup_id,
             operator_role: Role::indexed_from_one(value.operator_role as usize),

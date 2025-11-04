@@ -618,7 +618,7 @@ enum SigningSchemeType {
 // The request constructed by a KMS to initiate custodian based backup recovery
 message RecoveryRequest {
   // The ephemeral encryption key of the operator used when signcrypting the recovered data during transit to the operator.
-  bytes enc_key = 1;
+  bytes ephem_op_enc_key = 1;
   /// The ciphertexts that are the backup. Indexed by the custodian role.
   map<uint64, OperatorBackupOutput> cts = 2;
   /// The request ID under which the backup was created.
