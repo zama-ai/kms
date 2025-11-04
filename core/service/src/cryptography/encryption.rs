@@ -176,6 +176,10 @@ impl<C: KemCore> tfhe_versionable::Unversionize for PublicEncKey<C> {
     }
 }
 
+// See this issue: https://github.com/zama-ai/kms-internal/issues/2781
+// We basically need to use standard serialization fo ecdsa keys to remain compatible with the KMS verifier contract
+impl<C: KemCore> tfhe_versionable::NotVersioned for PublicEncKey<C> {}
+
 impl<'de, C: KemCore> Deserialize<'de> for PublicEncKey<C> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -244,10 +248,7 @@ impl Encrypt for UnifiedPublicEncKey {
                 PkeSchemeType::MlKem1024,
             ),
         };
-        let mut ct_buf = Vec::new();
-        tfhe::safe_serialization::safe_serialize(&inner_ct, &mut ct_buf, SAFE_SER_SIZE_LIMIT)
-            .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
-        Ok(UnifiedCipher::new(ct_buf, scheme))
+        Ok(UnifiedCipher::new(inner_ct, scheme))
     }
 }
 
@@ -436,15 +437,12 @@ impl Decrypt for UnifiedPrivateEncKey {
         &self,
         cipher: &UnifiedCipher,
     ) -> Result<T, CryptographyError> {
-        let mut cipher_buf: std::io::Cursor<&Vec<u8>> = std::io::Cursor::new(&cipher.cipher);
-        let inner_ct: HybridKemCt = safe_deserialize(&mut cipher_buf, SAFE_SER_SIZE_LIMIT)
-            .map_err(CryptographyError::DeserializationError)?;
         let raw_plaintext = match self {
             UnifiedPrivateEncKey::MlKem512(private_enc_key) => {
-                hybrid_ml_kem::dec::<MlKem512>(inner_ct, &private_enc_key.0)?
+                hybrid_ml_kem::dec::<MlKem512>(cipher.cipher.to_owned(), &private_enc_key.0)?
             }
             UnifiedPrivateEncKey::MlKem1024(private_enc_key) => {
-                hybrid_ml_kem::dec::<MlKem1024>(inner_ct, &private_enc_key.0)?
+                hybrid_ml_kem::dec::<MlKem1024>(cipher.cipher.to_owned(), &private_enc_key.0)?
             }
         };
         let mut res_buf = std::io::Cursor::new(raw_plaintext);
@@ -551,8 +549,7 @@ pub enum UnifiedCipherVersioned {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedCipherVersioned)]
 pub struct UnifiedCipher {
-    // The safe_serialization of the ciphertext specified by the pke_type
-    pub cipher: Vec<u8>,
+    pub cipher: HybridKemCt,
     pub pke_type: PkeSchemeType,
 }
 
@@ -561,7 +558,7 @@ impl Named for UnifiedCipher {
 }
 
 impl UnifiedCipher {
-    pub fn new(cipher: Vec<u8>, pke_type: PkeSchemeType) -> Self {
+    pub fn new(cipher: HybridKemCt, pke_type: PkeSchemeType) -> Self {
         Self { cipher, pke_type }
     }
 }
@@ -630,7 +627,7 @@ mod tests {
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (sk, pk) = enc.keygen().unwrap();
         let mut ct = pk.encrypt(&mut rng, &msg).unwrap();
-        ct.cipher[0] ^= 1;
+        ct.cipher.kem_ct[0] ^= 1;
         let err = sk.decrypt::<TestType>(&ct).unwrap_err();
         assert!(matches!(err, CryptographyError::DeserializationError(..)));
     }
