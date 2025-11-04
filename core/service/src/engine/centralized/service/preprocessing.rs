@@ -151,11 +151,9 @@ pub async fn get_preprocessing_res_impl<
 mod tests {
     use super::*;
     use crate::{
+        cryptography::signatures::recover_address_from_ext_signature,
         dummy_domain,
-        engine::{
-            base::{derive_request_id, tests::recover_address},
-            centralized::service::tests::setup_central_test_kms,
-        },
+        engine::{base::derive_request_id, centralized::service::tests::setup_central_test_kms},
     };
     use aes_prng::AesRng;
     use kms_grpc::{
@@ -188,7 +186,8 @@ mod tests {
         let sol_struct =
             PrepKeygenVerification::new(&inner_res.preprocessing_id.unwrap().try_into().unwrap());
         assert_eq!(
-            recover_address(sol_struct, &domain, &inner_res.external_signature),
+            recover_address_from_ext_signature(&sol_struct, &domain, &inner_res.external_signature)
+                .unwrap(),
             verf_key.address()
         );
     }

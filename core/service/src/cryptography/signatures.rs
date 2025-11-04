@@ -422,22 +422,14 @@ pub(crate) fn check_normalized(sig: &Signature) -> Result<(), CryptographyError>
     Ok(())
 }
 
-pub fn hash_sol_struct<D: SolStruct>(
-    data: &D,
-    eip712_domain: &Eip712Domain,
-) -> anyhow::Result<B256> {
-    let message_hash = data.eip712_signing_hash(eip712_domain);
-    tracing::info!("Public Data EIP-712 Message hash: {:?}", message_hash);
-    Ok(message_hash)
-}
-
 /// take some public data (e.g. public key or CRS) and sign it using EIP-712 for external verification (e.g. in fhevm).
 pub fn compute_eip712_signature<D: SolStruct>(
     sk: &PrivateSigKey,
     data: &D,
     eip712_domain: &Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
-    let message_hash = hash_sol_struct(data, eip712_domain)?;
+    let message_hash = data.eip712_signing_hash(eip712_domain);
+    tracing::info!("Public Data EIP-712 Message hash: {:?}", message_hash);
     compute_eip712_signature_from_msg_hash(sk, &message_hash)
 }
 
@@ -450,7 +442,7 @@ pub fn compute_eip712_signature_from_msg_hash(
     tracing::info!("Signer address: {:?}", signer_address);
 
     // Sign the hash synchronously with the wallet.
-    let signature = signer.sign_hash_sync(&msg_hash)?.as_bytes().to_vec();
+    let signature = signer.sign_hash_sync(msg_hash)?.as_bytes().to_vec();
 
     tracing::info!(
         "Public Data EIP-712 Signature: {:?}",
@@ -458,6 +450,40 @@ pub fn compute_eip712_signature_from_msg_hash(
     );
 
     Ok(signature)
+}
+
+pub const ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH: &str =
+    "Expected external signature of length 65 Bytes";
+
+pub fn recover_address_from_ext_signature<S: SolStruct>(
+    data: &S,
+    domain: &Eip712Domain,
+    external_sig: &[u8],
+) -> anyhow::Result<alloy_primitives::Address> {
+    // convert received data into proper format for EIP-712 verification
+    if external_sig.len() != 65 {
+        return Err(anyhow::anyhow!(
+            "{ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH}, but got {:?}",
+            external_sig.len()
+        ));
+    }
+    // Deserialize the Signature. It reverses the call to `signature.as_bytes()` that we use for serialization.
+    let sig = alloy_primitives::Signature::from_bytes_and_parity(
+        external_sig,
+        external_sig[64] & 0x01 == 0,
+    );
+
+    tracing::debug!("ext. signature bytes: {:x?}", external_sig);
+    tracing::debug!("ext. signature: {:?}", sig);
+    tracing::debug!("EIP-712 domain: {:?}", domain);
+
+    let hash = data.eip712_signing_hash(domain);
+    tracing::info!("Public Data EIP-712 Message hash: {:?}", hash);
+
+    let addr = sig.recover_address_from_prehash(&hash)?;
+    tracing::info!("reconstructed address: {}", addr);
+
+    Ok(addr)
 }
 
 #[cfg(test)]

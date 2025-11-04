@@ -14,15 +14,16 @@ use crate::{
     cryptography::{
         encryption::UnifiedPublicEncKey,
         internal_crypto_types::LegacySerialization,
-        signatures::{internal_verify_sig, PublicSigKey, Signature},
+        signatures::{
+            internal_verify_sig, recover_address_from_ext_signature, PublicSigKey, Signature,
+        },
     },
+    engine::base::compute_user_decrypt_message,
     some_or_err,
 };
 
 pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 
-const ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH: &str =
-    "Expected external signature of length 65 Bytes";
 const ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE: &str =
     "External PT signature verification failed";
 
@@ -46,29 +47,15 @@ pub(crate) fn check_ext_user_decryption_signature(
     eip712_domain: &Eip712Domain,
     expected_addr: &alloy_primitives::Address,
 ) -> anyhow::Result<()> {
-    // convert received data into proper format for EIP-712 verification
-    if external_sig.len() != 65 {
-        return Err(anyhow::anyhow!(
-            "{}, but got {:?}",
-            ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH,
-            external_sig.len()
-        ));
-    }
-
-    // this reverses the call to `signature.as_bytes()` that we use for serialization
-    let sig =
-        alloy_signer::Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
-
     // NOTE: we need to support legacy user_pk, so try to deserialize MlKem1024 encoded with bincode first
     let unified_pk = UnifiedPublicEncKey::from_legacy_bytes(request.enc_key()).map_err(|e| {
         anyhow_error_and_log(format!("Error deserializing UnifiedPublicEncKey: {e}"))
     })?;
-    let hash =
-        crate::compute_user_decrypt_message_hash(payload, eip712_domain, &unified_pk, vec![])?;
-
-    let addr = sig.recover_address_from_prehash(&hash)?;
-    tracing::info!("recovered address: {}", addr);
-
+    let message = compute_user_decrypt_message(payload, &unified_pk, vec![])?;
+    tracing::debug!(
+        "Verifying external user decryption signature for UserDecryptResponseVerification"
+    );
+    let addr = recover_address_from_ext_signature(&message, eip712_domain, external_sig)?;
     if addr != *expected_addr {
         anyhow::bail!(ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE);
     }
@@ -446,7 +433,9 @@ mod tests {
         },
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
-            signatures::{gen_sig_keys, internal_sign, PublicSigKey},
+            signatures::{
+                gen_sig_keys, internal_sign, PublicSigKey, ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH,
+            },
         },
         dummy_domain,
         engine::{
@@ -463,7 +452,7 @@ mod tests {
         check_ext_user_decryption_signature, select_most_common_user_dec,
         validate_user_decrypt_meta_data_and_signature, validate_user_decrypt_responses,
         validate_user_decrypt_responses_against_request, DSEP_USER_DECRYPTION,
-        ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH, ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
+        ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
         ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
@@ -541,7 +530,7 @@ mod tests {
             )
             .unwrap_err()
             .to_string()
-            .contains(ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH));
+            .contains(ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH));
         }
 
         // bad signature due to bad signing key
