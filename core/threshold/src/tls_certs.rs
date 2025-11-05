@@ -126,10 +126,9 @@ fn create_ca_cert(
     ca_name: &str,
     is_ca: &IsCa,
     wildcard: bool,
-    context_id_as_session_id: Option<u128>,
 ) -> anyhow::Result<(KeyPair, Certificate, CertificateParams)> {
     let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
-    create_ca_cert_from_keypair(&keypair, ca_name, is_ca, wildcard, context_id_as_session_id)
+    create_ca_cert_from_keypair(&keypair, ca_name, is_ca, wildcard)
         .map(|(cert, params)| (keypair, cert, params))
 }
 
@@ -137,7 +136,6 @@ pub fn create_ca_cert_from_signing_key(
     ca_name: &str,
     wildcard: bool,
     sk: &SigningKey,
-    context_id_as_session_id: Option<u128>,
 ) -> anyhow::Result<(Vec<u8>, Certificate)> {
     let is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
     let sk_der = sk.to_pkcs8_der()?;
@@ -145,14 +143,8 @@ pub fn create_ca_cert_from_signing_key(
         &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
         &PKCS_ECDSA_P256K1_SHA256,
     )?;
-    create_ca_cert_from_keypair(
-        &ca_keypair,
-        ca_name,
-        &is_ca,
-        wildcard,
-        context_id_as_session_id,
-    )
-    .map(|(cert, params)| (params.key_identifier(&ca_keypair), cert))
+    create_ca_cert_from_keypair(&ca_keypair, ca_name, &is_ca, wildcard)
+        .map(|(cert, params)| (params.key_identifier(&ca_keypair), cert))
 }
 
 fn create_ca_cert_from_keypair(
@@ -160,7 +152,6 @@ fn create_ca_cert_from_keypair(
     ca_name: &str,
     is_ca: &IsCa,
     wildcard: bool,
-    context_id_as_session_id: Option<u128>,
 ) -> anyhow::Result<(Certificate, CertificateParams)> {
     validate_ca_name(ca_name)?;
     let sans_vec = [
@@ -190,28 +181,12 @@ fn create_ca_cert_from_keypair(
     // set CA cert CA flag
     cp.is_ca = *is_ca;
 
-    // set CA cert Key Usage Purposes
+    // set self-signed CA cert Key Usage Purposes
     cp.key_usages = vec![
         KeyUsagePurpose::DigitalSignature,
         KeyUsagePurpose::KeyCertSign,
         KeyUsagePurpose::CrlSign,
-        KeyUsagePurpose::KeyEncipherment,
-        KeyUsagePurpose::KeyAgreement,
     ];
-
-    // set CA cert Extended Key Usage Purposes
-    cp.extended_key_usages = vec![
-        ExtendedKeyUsagePurpose::ServerAuth,
-        ExtendedKeyUsagePurpose::ClientAuth,
-    ];
-
-    let context_id_as_session_id = match context_id_as_session_id {
-        Some(id) => id,
-        None => DEFAULT_SESSION_ID_FROM_CONTEXT,
-    };
-    cp.serial_number = Some(SerialNumber::from_slice(
-        &context_id_as_session_id.to_be_bytes(),
-    ));
 
     // self-sign cert with CA key
     tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
@@ -343,7 +318,7 @@ pub async fn entry_point() -> anyhow::Result<()> {
     let mut all_certs = vec![];
     for ca_name in ca_set {
         let (ca_keypair, ca_cert, ca_cert_params) =
-            create_ca_cert(&ca_name, &is_ca, args.wildcard, args.session_number)?;
+            create_ca_cert(&ca_name, &is_ca, args.wildcard)?;
 
         write_certs_and_keys(
             &args.output_dir,
@@ -441,8 +416,7 @@ mod tests {
     fn test_cert_chain() {
         let ca_name = "party.kms.zama.ai";
         let is_ca = IsCa::Ca(Constrained(1));
-        let (ca_keypair, ca_cert, ca_cert_params) =
-            create_ca_cert(ca_name, &is_ca, false, None).unwrap();
+        let (ca_keypair, ca_cert, ca_cert_params) = create_ca_cert(ca_name, &is_ca, false).unwrap();
 
         let core_certs =
             create_core_certs(ca_name, 2, &ca_keypair, &ca_cert_params, false, None).unwrap();
@@ -454,7 +428,7 @@ mod tests {
 
         // create another CA cert, that did not sign the core certs for negative testing
         let (_ca_keypair_wrong, ca_cert_wrong, _ca_cert_params_wrong) =
-            create_ca_cert(ca_name, &is_ca, false, None).unwrap();
+            create_ca_cert(ca_name, &is_ca, false).unwrap();
 
         // check all core certs
         for c in core_certs {
@@ -477,7 +451,7 @@ mod tests {
         let is_ca = IsCa::NoCa;
 
         let (_ca_keypair, ca_cert, _ca_cert_params) =
-            create_ca_cert(ca_name, &is_ca, false, None).unwrap();
+            create_ca_cert(ca_name, &is_ca, false).unwrap();
 
         // check that we can import the CA cert into the trust store
         let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
@@ -486,7 +460,7 @@ mod tests {
 
         // create another CA cert, that did not sign the core certs for negative testing
         let (_ca_keypair_wrong, ca_cert_wrong, _ca_cert_params_wrong) =
-            create_ca_cert(ca_name, &is_ca, false, None).unwrap();
+            create_ca_cert(ca_name, &is_ca, false).unwrap();
 
         let verif = signed_verify(&ca_cert, &ca_cert);
 
@@ -505,8 +479,7 @@ mod tests {
     fn test_ca_cert_from_signing_key_verify() {
         let ca_name = "p1.kms.zama.ai";
         let sk = SigningKey::random(&mut OsRng);
-        let (_ca_cert_ki, ca_cert) =
-            create_ca_cert_from_signing_key(ca_name, false, &sk, None).unwrap();
+        let (_ca_cert_ki, ca_cert) = create_ca_cert_from_signing_key(ca_name, false, &sk).unwrap();
 
         let sk_der = sk.to_pkcs8_der().unwrap();
         let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
@@ -550,19 +523,30 @@ mod tests {
             u128::from_be_bytes(u128_buf)
         };
 
+        let (ca_keypair, _ca_cert, ca_cert_params) =
+            create_ca_cert(ca_name, &is_ca, false).unwrap();
+
         {
-            let (_ca_keypair, ca_cert, _ca_cert_params) =
-                create_ca_cert(ca_name, &is_ca, false, None).unwrap();
-            let (_, cert) = x509_parser::parse_x509_certificate(ca_cert.der().as_ref()).unwrap();
+            let (_, core_cert) =
+                &create_core_certs(ca_name, 1, &ca_keypair, &ca_cert_params, true, None).unwrap()
+                    [&1];
+            let (_, cert) = x509_parser::parse_x509_certificate(core_cert.der().as_ref()).unwrap();
 
             let sid = extract_u128_serial(cert);
             assert_eq!(sid, super::DEFAULT_SESSION_ID_FROM_CONTEXT);
         }
         {
             let context_id = 42u128;
-            let (_ca_keypair, ca_cert, _ca_cert_params) =
-                create_ca_cert(ca_name, &is_ca, false, Some(context_id)).unwrap();
-            let (_, cert) = x509_parser::parse_x509_certificate(ca_cert.der().as_ref()).unwrap();
+            let (_, core_cert) = &create_core_certs(
+                ca_name,
+                1,
+                &ca_keypair,
+                &ca_cert_params,
+                true,
+                Some(context_id),
+            )
+            .unwrap()[&1];
+            let (_, cert) = x509_parser::parse_x509_certificate(core_cert.der().as_ref()).unwrap();
 
             let sid = extract_u128_serial(cert);
             assert_eq!(sid, context_id);

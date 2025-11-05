@@ -273,6 +273,10 @@ services:
     # For better interactive debugging
     stdin_open: true
     tty: true
+    volumes:
+      - keys:/app/kms/core/service/keys
+      - certs:/app/kms/core/service/certs
+      - minio_secrets:/minio_secrets
 
 volumes:
   keys:
