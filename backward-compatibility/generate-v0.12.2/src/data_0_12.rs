@@ -73,8 +73,8 @@ use backward_compatibility::parameters::{
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, HybridKemCtTest, InternalCustodianContextTest,
     InternalCustodianSetupMessageTest, KmsFheKeyHandlesTest, OperatorBackupOutputTest,
-    PRSSSetupTest, PrfKeyTest, PrivateSigKeyTest, PubDataTypeTest, PublicKeyTypeTest,
-    PublicSigKeyTest, RecoveryValidationMaterialTest, SigncryptionPayloadTest,
+    PRSSSetupTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest, PubDataTypeTest,
+    PublicKeyTypeTest, PublicSigKeyTest, RecoveryValidationMaterialTest, SigncryptionPayloadTest,
     SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
     ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
     UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
@@ -234,6 +234,10 @@ const PUBLIC_KEY_TYPE: PublicKeyTypeTest = PublicKeyTypeTest {
 
 const PUB_DATA_TYPE: PubDataTypeTest = PubDataTypeTest {
     test_filename: Cow::Borrowed("pub_data_type"),
+};
+
+const PRIV_DATA_TYPE: PrivDataTypeTest = PrivDataTypeTest {
+    test_filename: Cow::Borrowed("priv_data_type"),
 };
 
 // KMS test
@@ -1010,6 +1014,13 @@ impl KmsGrpcV0_12 {
 
         TestMetadataKmsGrpc::PubDataType(PUB_DATA_TYPE)
     }
+
+    fn gen_priv_data_type(dir: &PathBuf) -> TestMetadataKmsGrpc {
+        let priv_data_type = PrivDataType::ContextInfo;
+        store_versioned_test!(&priv_data_type, dir, &PRIV_DATA_TYPE.test_filename);
+
+        TestMetadataKmsGrpc::PrivDataType(PRIV_DATA_TYPE)
+    }
 }
 
 impl KMSCoreVersion for V0_12 {
@@ -1069,6 +1080,7 @@ impl KMSCoreVersion for V0_12 {
             KmsGrpcV0_12::gen_signed_pub_data_handle_internal(&dir),
             KmsGrpcV0_12::gen_public_key_type(&dir),
             KmsGrpcV0_12::gen_pub_data_type(&dir),
+            KmsGrpcV0_12::gen_priv_data_type(&dir),
         ]
     }
 }

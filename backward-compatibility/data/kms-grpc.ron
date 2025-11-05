@@ -50,6 +50,13 @@
         )),
     ),
     (
+        kms_core_version_min: "0.11.1",
+        kms_core_module: "kms-grpc",
+        metadata: PrivDataType((
+            test_filename: "priv_data_type",
+        )),
+    ),
+    (
         kms_core_version_min: "0.12.2",
         kms_core_module: "kms-grpc",
         metadata: SignedPubDataHandleInternal((
@@ -72,6 +79,13 @@
         kms_core_module: "kms-grpc",
         metadata: PubDataType((
             test_filename: "pub_data_type",
+        )),
+    ),
+    (
+        kms_core_version_min: "0.12.2",
+        kms_core_module: "kms-grpc",
+        metadata: PrivDataType((
+            test_filename: "priv_data_type",
         )),
     ),
 ]

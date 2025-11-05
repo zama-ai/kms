@@ -204,6 +204,25 @@ impl TestType for PubDataTypeTest {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PrivDataTypeTest {
+    pub test_filename: Cow<'static, str>,
+}
+
+impl TestType for PrivDataTypeTest {
+    fn module(&self) -> String {
+        KMS_GRPC_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "PrivDataType".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct KmsFheKeyHandlesTest {
@@ -588,6 +607,7 @@ pub enum TestMetadataKmsGrpc {
     SignedPubDataHandleInternal(SignedPubDataHandleInternalTest),
     PublicKeyType(PublicKeyTypeTest),
     PubDataType(PubDataTypeTest),
+    PrivDataType(PrivDataTypeTest),
 }
 
 /// Distributed Decryption metadata
