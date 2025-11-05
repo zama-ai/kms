@@ -447,6 +447,27 @@ impl TestType for UnifiedUnsigncryptionKeyTest {
 
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UnifiedSigncryptionTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for UnifiedSigncryptionTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "UnifiedSigncryption".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BackupCiphertextTest {
     pub test_filename: Cow<'static, str>,
     pub unified_cipher_filename: Cow<'static, str>,
@@ -613,6 +634,7 @@ pub enum TestMetadataKMS {
     SigncryptionPayload(SigncryptionPayloadTest),
     UnifiedSigncryptionKeyOwned(UnifiedSigncryptionKeyTest),
     UnifiedUnsigncryptionKeyOwned(UnifiedUnsigncryptionKeyTest),
+    UnifiedSigncryption(UnifiedSigncryptionTest),
     BackupCiphertext(BackupCiphertextTest),
     UnifiedCipher(UnifiedCipherTest),
     HybridKemCt(HybridKemCtTest),

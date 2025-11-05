@@ -16,7 +16,7 @@ use kms_0_12_2::cryptography::{
     hybrid_ml_kem::HybridKemCt,
     signatures::{gen_sig_keys, SigningSchemeType},
     signcryption::{
-        UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
+        Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
     },
 };
 use kms_0_12_2::engine::base::{safe_serialize_hash_element_versioned, KmsFheKeyHandles};
@@ -79,8 +79,8 @@ use backward_compatibility::{
     PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
     SigncryptionPayloadTest, SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS,
     TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedSigncryptionKeyTest, UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
-    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
+    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 
 use kms_0_12_2::cryptography::signcryption::SigncryptionPayload;
@@ -321,6 +321,12 @@ const UNSIGNCRYPTION_KEY_TEST: UnifiedUnsigncryptionKeyTest = UnifiedUnsigncrypt
 };
 
 // KMS test
+const UNIFIED_SIGNCRYPTION_TEST: UnifiedSigncryptionTest = UnifiedSigncryptionTest {
+    test_filename: Cow::Borrowed("unified_signcryption"),
+    state: 202,
+};
+
+// KMS test
 const BACKUP_CIPHERTEXT_TEST: BackupCiphertextTest = BackupCiphertextTest {
     test_filename: Cow::Borrowed("backup_ciphertext"),
     unified_cipher_filename: Cow::Borrowed("unified_ciphertext_handle"),
@@ -531,6 +537,25 @@ impl KmsV0_12 {
 
         store_versioned_test!(&backup_ct, dir, &BACKUP_CIPHERTEXT_TEST.test_filename);
         TestMetadataKMS::BackupCiphertext(BACKUP_CIPHERTEXT_TEST)
+    }
+
+    fn gen_unified_signcryption(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(UNIFIED_SIGNCRYPTION_TEST.state);
+        let (verf_key, server_sig_key) = gen_sig_keys(&mut rng);
+        let (client_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_dec_key, enc_key) = encryption.keygen().unwrap();
+        let signcrypt_key = UnifiedSigncryptionKeyOwned::new(
+            server_sig_key,
+            enc_key,
+            client_verf_key.verf_key_id(),
+        );
+        let signcryption = signcrypt_key
+            .signcrypt(&mut rng, b"TESTTEST", &verf_key)
+            .unwrap();
+
+        store_versioned_test!(&signcryption, dir, &UNIFIED_SIGNCRYPTION_TEST.test_filename);
+        TestMetadataKMS::UnifiedSigncryption(UNIFIED_SIGNCRYPTION_TEST)
     }
 
     fn gen_unified_cipher(dir: &PathBuf) -> TestMetadataKMS {
@@ -1074,6 +1099,7 @@ impl KMSCoreVersion for V0_12 {
             KmsV0_12::gen_signcryption_payload(&dir),
             KmsV0_12::gen_signcryption_key(&dir),
             KmsV0_12::gen_designcryption_key(&dir),
+            KmsV0_12::gen_unified_signcryption(&dir),
             KmsV0_12::gen_backup_ciphertext(&dir),
             KmsV0_12::gen_unified_cipher(&dir),
             KmsV0_12::gen_hybrid_kem_ct(&dir),

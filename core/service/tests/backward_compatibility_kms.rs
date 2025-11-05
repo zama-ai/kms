@@ -16,7 +16,7 @@ use backward_compatibility::{
     InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest, KmsFheKeyHandlesTest,
     OperatorBackupOutputTest, PrivateSigKeyTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
     SigncryptionPayloadTest, TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
-    TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
+    TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
     UnifiedUnsigncryptionKeyTest,
 };
 use kms_grpc::{
@@ -41,7 +41,7 @@ use kms_lib::{
         hybrid_ml_kem::HybridKemCt,
         signatures::{gen_sig_keys, PrivateSigKey, PublicSigKey, SigningSchemeType},
         signcryption::{
-            SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
+            Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
             UnifiedUnsigncryptionKeyOwned,
         },
     },
@@ -290,6 +290,35 @@ fn test_unsigncryption_keys(
         Err(test.failure(
             format!(
                 "Invalid UnifiedUnsigncryptionKeyOwned:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_unified_signcryption(
+    dir: &Path,
+    test: &UnifiedSigncryptionTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: UnifiedSigncryption = load_and_unversionize(dir, test, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (verf_key, server_sig_key) = gen_sig_keys(&mut rng);
+    let (client_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+    let (_dec_key, enc_key) = encryption.keygen().unwrap();
+    let signcrypt_key =
+        UnifiedSigncryptionKeyOwned::new(server_sig_key, enc_key, client_verf_key.verf_key_id());
+    let new_versionized = signcrypt_key
+        .signcrypt(&mut rng, b"TESTTEST", &verf_key)
+        .unwrap();
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid UnifiedSigncryption:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -777,6 +806,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::UnifiedUnsigncryptionKeyOwned(test) => {
                 test_unsigncryption_keys(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::UnifiedSigncryption(test) => {
+                test_unified_signcryption(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::BackupCiphertext(test) => {
                 test_backup_ciphertext(test_dir.as_ref(), test, format).into()

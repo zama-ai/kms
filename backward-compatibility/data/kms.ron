@@ -438,6 +438,14 @@
     (
         kms_core_version_min: "0.12.2",
         kms_core_module: "kms",
+        metadata: UnifiedSigncryption((
+            test_filename: "unified_signcryption",
+            state: 202,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.12.2",
+        kms_core_module: "kms",
         metadata: BackupCiphertext((
             test_filename: "backup_ciphertext",
             unified_cipher_filename: "unified_ciphertext_handle",
