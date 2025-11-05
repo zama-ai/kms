@@ -352,6 +352,7 @@ impl<
             drop(inner_timer);
         }
 
+        #[allow(deprecated)]
         let payload = UserDecryptionResponsePayload {
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
@@ -664,7 +665,7 @@ mod tests {
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::{
-            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+            encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::gen_sig_keys,
         },
         dummy_domain,
@@ -719,7 +720,7 @@ mod tests {
     }
 
     fn make_dummy_enc_pk(rng: &mut AesRng) -> Vec<u8> {
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, rng);
         let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
         let mut enc_key_buf = Vec::new();
         // The key is freshly generated, so we can safely unwrap the serialization

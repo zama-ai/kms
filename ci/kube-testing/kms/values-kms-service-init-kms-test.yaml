@@ -3,7 +3,7 @@ kmsInit:
 
 minio:
   enabled: true
-  endpoint: "http://minio:9000"
+  endpoint: "http://localstack:4566"
   username: kms-access-key-id
   password: kms-secret-access-key
 
@@ -16,7 +16,7 @@ kmsCoreClient:
   num_majority: 2 # 2 when 4 parties and 5 when 13 parties
   num_reconstruct: 3 # 3 when 4 parties and 9 when 13 parties
   decryption_mode: NoiseFloodSmall
-  fhe_parameter: Default
+  fhe_parameter: Test
   #=============================================================
   #==========RESOURCERS TO ADJUST BASED ON ENVIRONMENT==========
   # If you launch the deployment locally, adjust these resources
@@ -29,6 +29,11 @@ kmsCoreClient:
       memory: 24Gi
       cpu: 12
   #=============================================================
+kubeUtils:
+  image:
+    name: ghcr.io/zama-ai/security-hub/infra/kube-utils
+    tag: v0.4.3
+    pullPolicy: Always
 
 kmsCore:
   enabled: false
@@ -38,23 +43,17 @@ kmsCore:
       enabled: true
     peersList:
       - id: 1
-        host: kms-service-threshold-1-kms-test-threshold-core-1
+        host: kms-service-threshold-1-<namespace>-core-1
         port: 50001
       - id: 2
-        host: kms-service-threshold-2-kms-test-threshold-core-2
+        host: kms-service-threshold-2-<namespace>-core-2
         port: 50001
       - id: 3
-        host: kms-service-threshold-3-kms-test-threshold-core-3
+        host: kms-service-threshold-3-<namespace>-core-3
         port: 50001
       - id: 4
-        host: kms-service-threshold-4-kms-test-threshold-core-4
+        host: kms-service-threshold-4-<namespace>-core-4
         port: 50001
-
-kubeUtils:
-  image:
-    name: ghcr.io/zama-ai/security-hub/infra/kube-utils
-    tag: v0.4.3
-    pullPolicy: Always
 
 kmsGenKeys:
   enabled: false

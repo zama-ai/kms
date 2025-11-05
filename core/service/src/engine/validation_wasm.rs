@@ -14,15 +14,16 @@ use crate::{
     cryptography::{
         encryption::UnifiedPublicEncKey,
         internal_crypto_types::LegacySerialization,
-        signatures::{internal_verify_sig, PublicSigKey, Signature},
+        signatures::{
+            internal_verify_sig, recover_address_from_ext_signature, PublicSigKey, Signature,
+        },
     },
+    engine::base::compute_user_decrypt_message,
     some_or_err,
 };
 
 pub(crate) const DSEP_USER_DECRYPTION: DomainSep = *b"USER_DEC";
 
-const ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH: &str =
-    "Expected external signature of length 65 Bytes";
 const ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE: &str =
     "External PT signature verification failed";
 
@@ -46,29 +47,15 @@ pub(crate) fn check_ext_user_decryption_signature(
     eip712_domain: &Eip712Domain,
     expected_addr: &alloy_primitives::Address,
 ) -> anyhow::Result<()> {
-    // convert received data into proper format for EIP-712 verification
-    if external_sig.len() != 65 {
-        return Err(anyhow::anyhow!(
-            "{}, but got {:?}",
-            ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH,
-            external_sig.len()
-        ));
-    }
-
-    // this reverses the call to `signature.as_bytes()` that we use for serialization
-    let sig =
-        alloy_signer::Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
-
     // NOTE: we need to support legacy user_pk, so try to deserialize MlKem1024 encoded with bincode first
     let unified_pk = UnifiedPublicEncKey::from_legacy_bytes(request.enc_key()).map_err(|e| {
         anyhow_error_and_log(format!("Error deserializing UnifiedPublicEncKey: {e}"))
     })?;
-    let hash =
-        crate::compute_user_decrypt_message_hash(payload, eip712_domain, &unified_pk, vec![])?;
-
-    let addr = sig.recover_address_from_prehash(&hash)?;
-    tracing::info!("recovered address: {}", addr);
-
+    let message = compute_user_decrypt_message(payload, &unified_pk, vec![])?;
+    tracing::debug!(
+        "Verifying external user decryption signature for UserDecryptResponseVerification"
+    );
+    let addr = recover_address_from_ext_signature(&message, eip712_domain, external_sig)?;
     if addr != *expected_addr {
         anyhow::bail!(ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE);
     }
@@ -121,10 +108,9 @@ fn validate_user_decrypt_meta_data_and_signature(
     }
 
     let resp_verf_key: PublicSigKey = bc2wrap::deserialize(&other_resp.verification_key)?;
-    let resp_addr = alloy_signer::utils::public_key_to_address(resp_verf_key.pk());
 
     let expected_addr = if let Some(expected_addr) = server_addreses.get(&(other_resp.party_id)) {
-        if *expected_addr != resp_addr {
+        if *expected_addr != resp_verf_key.address() {
             anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS)
         }
         expected_addr
@@ -446,8 +432,10 @@ mod tests {
             compute_link, CiphertextHandle, ParsedUserDecryptionRequest,
         },
         cryptography::{
-            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
-            signatures::{gen_sig_keys, internal_sign, PublicSigKey},
+            encryption::{Encryption, PkeScheme, PkeSchemeType},
+            signatures::{
+                gen_sig_keys, internal_sign, PublicSigKey, ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH,
+            },
         },
         dummy_domain,
         engine::{
@@ -464,7 +452,7 @@ mod tests {
         check_ext_user_decryption_signature, select_most_common_user_dec,
         validate_user_decrypt_meta_data_and_signature, validate_user_decrypt_responses,
         validate_user_decrypt_responses_against_request, DSEP_USER_DECRYPTION,
-        ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH, ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
+        ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
         ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
@@ -484,10 +472,10 @@ mod tests {
         );
         let kms_addrs = pks
             .iter()
-            .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
+            .map(|(i, pk)| (*i, pk.address()))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
 
@@ -504,7 +492,7 @@ mod tests {
         let domain = dummy_domain();
         let request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed
-            alloy_primitives::Address::from_public_key(client_vk.pk()),
+            client_vk.address(),
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             domain.verifying_contract.unwrap(),
@@ -542,7 +530,7 @@ mod tests {
             )
             .unwrap_err()
             .to_string()
-            .contains(ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGH));
+            .contains(ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH));
         }
 
         // bad signature due to bad signing key
@@ -627,10 +615,10 @@ mod tests {
         );
         let server_addresses = pks
             .iter()
-            .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
+            .map(|(i, pk)| (*i, pk.address()))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
 
         let mut enc_key_buf = Vec::new();
@@ -648,7 +636,7 @@ mod tests {
 
         let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
-            alloy_primitives::Address::from_public_key(client_vk.pk()),
+            client_vk.address(),
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
@@ -855,10 +843,10 @@ mod tests {
         );
         let server_addresses = pks
             .iter()
-            .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
+            .map(|(i, pk)| (*i, pk.address()))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
 
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
@@ -875,7 +863,7 @@ mod tests {
         .unwrap();
         let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
-            alloy_primitives::Address::from_public_key(client_vk.pk()),
+            client_vk.address(),
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
@@ -1228,10 +1216,10 @@ mod tests {
         );
         let server_addresses = pks
             .iter()
-            .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
+            .map(|(i, pk)| (*i, pk.address()))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
 
@@ -1247,7 +1235,7 @@ mod tests {
         .unwrap();
         let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
-            alloy_primitives::Address::from_public_key(client_vk.pk()),
+            client_vk.address(),
             enc_key_buf.clone(),
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
@@ -1323,7 +1311,7 @@ mod tests {
             let (bad_client_vk, _bad_client_sk) = gen_sig_keys(&mut rng);
             let bad_client_request = ParsedUserDecryptionRequest::new(
                 None, // No signature is needed here because we're testing response validation
-                alloy_primitives::Address::from_public_key(bad_client_vk.pk()),
+                bad_client_vk.address(),
                 enc_key_buf,
                 vec![CiphertextHandle::new(ciphertext_handle.clone())],
                 dummy_domain.verifying_contract.unwrap(),

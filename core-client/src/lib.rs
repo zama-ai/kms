@@ -3,8 +3,7 @@
 /// This library implements most functionalities to interact with deployed KMS cores.
 /// This library also includes an associated CLI.
 use aes_prng::AesRng;
-use alloy_primitives::Signature;
-use alloy_sol_types::{Eip712Domain, SolStruct};
+use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -23,10 +22,11 @@ use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustod
 use kms_lib::backup::operator::InternalRecoveryRequest;
 use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
-use kms_lib::cryptography::encryption::EncryptionSchemeType;
-use kms_lib::engine::base::compute_pt_message_hash;
+use kms_lib::cryptography::encryption::PkeSchemeType;
+use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
 use kms_lib::engine::base::{
-    hash_sol_struct, safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
+    compute_public_decryption_message, safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS,
+    DSEP_PUBDATA_KEY,
 };
 use kms_lib::util::file_handling::{
     read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
@@ -814,7 +814,7 @@ pub async fn fetch_element(
         let key_path = Path::new(endpoint).join(folder).join(element_id);
         let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
             anyhow!(
-                "Failed to read byte file at {:?} with error: {e}",
+                "Failed to read bytes from file at {:?} with error: {e}",
                 &key_path
             )
         })?;
@@ -973,33 +973,6 @@ async fn fetch_kms_addresses_remote(
     Ok(kms_addrs)
 }
 
-fn recover_address_from_ext_signature<S: SolStruct>(
-    data: &S,
-    domain: &Eip712Domain,
-    external_sig: &[u8],
-) -> anyhow::Result<alloy_primitives::Address> {
-    // convert received data into proper format for EIP-712 verification
-    if external_sig.len() != 65 {
-        return Err(anyhow!(
-            "Expected external signature of length 65 Bytes, but got {:?}",
-            external_sig.len()
-        ));
-    }
-    // Deserialize the Signature. It reverses the call to `signature.as_bytes()` that we use for serialization.
-    let sig = Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
-
-    tracing::debug!("ext. signature bytes: {:x?}", external_sig);
-    tracing::debug!("ext. signature: {:?}", sig);
-    tracing::debug!("EIP-712 domain: {:?}", domain);
-
-    let hash = hash_sol_struct(data, domain)?;
-
-    let addr = sig.recover_address_from_prehash(&hash)?;
-    tracing::info!("reconstructed address: {}", addr);
-
-    Ok(addr)
-}
-
 /// check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
 fn check_standard_keyset_ext_signature(
     public_key: &CompactPublicKey,
@@ -1059,25 +1032,10 @@ fn check_ext_pt_signature(
     kms_addrs: &[alloy_primitives::Address],
     extra_data: Vec<u8>,
 ) -> anyhow::Result<()> {
-    // convert received data into proper format for EIP-712 verification
-    if external_sig.len() != 65 {
-        return Err(anyhow!(
-            "Expected external signature of length 65 Bytes, but got {:?}",
-            external_sig.len()
-        ));
-    }
-    // this reverses the call to `signature.as_bytes()` that we use for serialization
-    let sig = Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
-
-    tracing::debug!("ext. signature bytes: {:x?}", external_sig);
-    tracing::debug!("ext. signature: {:?}", sig);
-    tracing::debug!("EIP-712 domain: {:?}", domain);
     tracing::debug!("PTs: {:?}", plaintexts);
     tracing::debug!("ext. handles: {:?}", external_handles);
-
-    let hash = compute_pt_message_hash(external_handles, plaintexts, domain, extra_data)?;
-
-    let addr = sig.recover_address_from_prehash(&hash)?;
+    let message = compute_public_decryption_message(external_handles, plaintexts, extra_data)?;
+    let addr = recover_address_from_ext_signature(&message, &domain, external_sig)?;
     tracing::info!("recovered address: {}", addr);
 
     // check that the address is in the list of known KMS addresses
@@ -1528,7 +1486,7 @@ async fn do_custodian_backup_recovery(
                 cur_recoveries.push(CustodianRecoveryOutput {
                     backup_output: Some(OperatorBackupOutput {
                         signcryption: cur_recover.signcryption.payload.clone(),
-                        encryption_type: cur_recover.signcryption.encryption_type as i32,
+                        pke_type: cur_recover.signcryption.pke_type as i32,
                         signing_type: cur_recover.signcryption.signing_type as i32,
                     }),
                     custodian_role: cur_recover.custodian_role.one_based() as u64,
@@ -2552,7 +2510,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                 ct_batch,
                 &req_id,
                 &key_id.into(),
-                EncryptionSchemeType::MlKem512,
+                PkeSchemeType::MlKem512,
             )?;
 
             let (user_decrypt_req, enc_pk, enc_sk) = user_decrypt_req_tuple;
@@ -3182,12 +3140,10 @@ async fn fetch_and_check_crsgen(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_signer::k256::ecdsa::SigningKey;
     use kms_grpc::rpc_types::PrivDataType;
     use kms_lib::{
         consts::{TEST_CENTRAL_CRS_ID, TEST_PARAM},
-        cryptography::signatures::PrivateSigKey,
-        engine::base::compute_external_pubdata_signature,
+        cryptography::signatures::{compute_eip712_signature, PrivateSigKey},
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
     };
@@ -3285,8 +3241,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let pk = SigningKey::verifying_key(sk.sk());
-        let addr = alloy_signer::utils::public_key_to_address(pk);
+        let addr = sk.address();
 
         // set up a dummy EIP 712 domain
         let domain = alloy_sol_types::eip712_domain!(
@@ -3302,8 +3257,7 @@ mod tests {
         let crs_sol_struct = CrsgenVerification::new(crs_id, max_num_bits, crs_digest);
 
         // sign with EIP712
-        let external_sig =
-            compute_external_pubdata_signature(&sk, &crs_sol_struct, &domain).unwrap();
+        let external_sig = compute_eip712_signature(&sk, &crs_sol_struct, &domain).unwrap();
 
         // check that the signature verifies and unwraps without error
         check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, &[addr]).unwrap();

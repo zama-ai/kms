@@ -1015,7 +1015,7 @@ pub(crate) mod tests {
     use crate::cryptography::error::CryptographyError;
     use crate::cryptography::signatures::gen_sig_keys;
     use crate::cryptography::signcryption::{
-        ephemeral_signcryption_key_generation, DesigncryptFHEPlaintext,
+        ephemeral_signcryption_key_generation, UnsigncryptFHEPlaintext,
     };
     use crate::dummy_domain;
     use crate::engine::base::{compute_handle, derive_request_id};
@@ -1507,13 +1507,13 @@ pub(crate) mod tests {
                     Some(kms.base_kms.sig_key.as_ref()),
                 );
                 // Change the decryption key
-                keys.designcryption_key.decryption_key =
-                    bad_keys.designcryption_key.decryption_key.to_owned();
+                keys.unsigncryption_key.decryption_key =
+                    bad_keys.unsigncryption_key.decryption_key.to_owned();
             }
             if sim_type == SimulationType::BadSigKey {
                 // Change the signing key
                 let (server_sig_pk, _server_sig_sk) = gen_sig_keys(&mut rng);
-                keys.designcryption_key.sender_verf_key = server_sig_pk;
+                keys.unsigncryption_key.sender_verf_key = server_sig_pk;
             }
             keys
         };
@@ -1544,7 +1544,7 @@ pub(crate) mod tests {
         } else {
             raw_cipher.unwrap()
         };
-        let decrypted = client_key_pair.designcryption_key.designcrypt_plaintext(
+        let decrypted = client_key_pair.unsigncryption_key.unsigncrypt_plaintext(
             &DSEP_USER_DECRYPTION,
             &raw_cipher,
             &link,

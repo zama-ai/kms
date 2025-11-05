@@ -460,10 +460,6 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
     match request {
         Some(req) => {
             let pivot_payload = resp_parsed_payloads[0].clone();
-            // if req.fhe_type() != pivot_payload.fhe_type()? {
-            //     tracing::warn!("Fhe type in the decryption response is incorrect");
-            //     return Ok(false);
-            // } //TODO check fhe type?
 
             if req.ciphertexts.len() != pivot_payload.plaintexts.len() {
                 return Err(anyhow_error_and_log(
@@ -563,7 +559,7 @@ mod tests {
 
     use crate::{
         cryptography::{
-            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPublicEncKey},
+            encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
             signatures::{gen_sig_keys, internal_sign},
         },
         engine::{
@@ -706,7 +702,7 @@ mod tests {
         let key_id = derive_request_id("key_id").unwrap();
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let mut rng = AesRng::from_random_seed();
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
 
         let mut enc_pk_buf = Vec::new();
@@ -890,9 +886,9 @@ mod tests {
     fn test_verify_user_decrypt_eip712() {
         let mut rng = AesRng::from_random_seed();
         let (client_pk, _client_sk) = gen_sig_keys(&mut rng);
-        let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
+        let client_address = client_pk.address();
         let ciphertext = vec![1, 2, 3];
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
         let key_id = derive_request_id("key_id").unwrap();
 

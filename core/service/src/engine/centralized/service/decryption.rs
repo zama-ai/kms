@@ -107,6 +107,7 @@ pub async fn user_decrypt_impl<
         (TAG_PUBLIC_DECRYPTION_KIND, "centralized".to_string()),
     ];
 
+    #[allow(deprecated)]
     let server_verf_key = service
         .base_kms
         .sig_key
@@ -456,6 +457,7 @@ pub async fn get_public_decryption_result_impl<
         external_signature
     );
 
+    #[allow(deprecated)]
     let server_verf_key = service
         .base_kms
         .sig_key
@@ -818,9 +820,7 @@ mod test_user_decryption {
     use crate::{
         consts::SAFE_SER_SIZE_LIMIT,
         cryptography::{
-            encryption::{
-                Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
-            },
+            encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey},
             hybrid_ml_kem::{self, HybridKemCt},
         },
         dummy_domain,
@@ -834,7 +834,7 @@ mod test_user_decryption {
     use super::*;
 
     fn make_test_pk(rng: &mut AesRng) -> (Vec<u8>, UnifiedPrivateEncKey) {
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, rng);
         let (enc_sk, enc_pk) = encryption.keygen().unwrap();
         let mut enc_key_buf = Vec::new();
         // The key is freshly generated, so we can safely unwrap the serialization

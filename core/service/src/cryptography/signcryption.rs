@@ -12,7 +12,7 @@
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::encryption::{
-    EncryptionSchemeType, HasEncryptionScheme, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+    HasPkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::{self, HybridKemCt};
@@ -43,13 +43,13 @@ pub trait Signcrypt {
     ) -> Result<UnifiedSigncryption, CryptographyError>;
 }
 
-pub trait Designcrypt {
+pub trait Unsigncrypt {
     /// Decrypt a signcrypted message and verify the signature before returning the result.
     /// If the signature verification fails, an error is returned.
     ///
     /// This fn also checks that the provided link parameter corresponds to the link in the signcryption
     /// payload.
-    fn designcrypt<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
+    fn unsigncrypt<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
         &self,
         dsep: &DomainSep,
         cipher: &UnifiedSigncryption,
@@ -79,12 +79,12 @@ pub trait SigncryptFHEPlaintext: Signcrypt {
     ) -> Result<UnifiedSigncryption, CryptographyError>;
 }
 
-pub trait DesigncryptFHEPlaintext: Designcrypt {
+pub trait UnsigncryptFHEPlaintext: Unsigncrypt {
     /// Decrypt a signcrypted plaintext message and verify the signature before returning the result.
     /// If the signature verification fails, an error is returned.
     /// The link parameter is used to verify that the signcryption corresponds to the expected context or session.
     /// The method is exclusively used to decrypt partially decrypted FHE ciphertexts for user decryption.
-    fn designcrypt_plaintext(
+    fn unsigncrypt_plaintext(
         &self,
         dsep: &DomainSep,
         signcryption: &[u8],
@@ -128,8 +128,8 @@ impl UnifiedSigncryptionKeyOwned {
     }
 }
 
-impl HasEncryptionScheme for UnifiedSigncryptionKeyOwned {
-    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+impl HasPkeScheme for UnifiedSigncryptionKeyOwned {
+    fn encryption_scheme_type(&self) -> PkeSchemeType {
         self.receiver_enc_key.encryption_scheme_type()
     }
 }
@@ -162,8 +162,8 @@ impl<'a> UnifiedSigncryptionKey<'a> {
     }
 }
 
-impl HasEncryptionScheme for UnifiedSigncryptionKey<'_> {
-    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+impl HasPkeScheme for UnifiedSigncryptionKey<'_> {
+    fn encryption_scheme_type(&self) -> PkeSchemeType {
         self.receiver_enc_key.encryption_scheme_type()
     }
 }
@@ -173,9 +173,9 @@ impl HasSigningScheme for UnifiedSigncryptionKey<'_> {
     }
 }
 
-/// Internal reference type for designcryption keys, storing only references to the real internal keys.
+/// Internal reference type for unsigncryption keys, storing only references to the real internal keys.
 #[derive(Clone, Debug)]
-pub struct UnifiedDesigncryptionKey<'a> {
+pub struct UnifiedUnsigncryptionKey<'a> {
     pub decryption_key: &'a UnifiedPrivateEncKey,
     pub encryption_key: &'a UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
     pub sender_verf_key: &'a PublicSigKey,
@@ -183,7 +183,7 @@ pub struct UnifiedDesigncryptionKey<'a> {
     pub receiver_id: &'a [u8],
 }
 
-impl<'a> UnifiedDesigncryptionKey<'a> {
+impl<'a> UnifiedUnsigncryptionKey<'a> {
     pub fn new(
         decryption_key: &'a UnifiedPrivateEncKey,
         encryption_key: &'a UnifiedPublicEncKey,
@@ -201,28 +201,26 @@ impl<'a> UnifiedDesigncryptionKey<'a> {
     //  TODO this file should be split up and this moved to signcryption
 }
 
-impl HasEncryptionScheme for UnifiedDesigncryptionKey<'_> {
-    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+impl HasPkeScheme for UnifiedUnsigncryptionKey<'_> {
+    fn encryption_scheme_type(&self) -> PkeSchemeType {
         self.encryption_key.encryption_scheme_type()
     }
 }
 
-impl HasSigningScheme for UnifiedDesigncryptionKey<'_> {
+impl HasSigningScheme for UnifiedUnsigncryptionKey<'_> {
     fn signing_scheme_type(&self) -> SigningSchemeType {
         self.sender_verf_key.signing_scheme_type()
     }
 }
 
-#[derive(
-    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
-)]
-pub enum UnifiedDesigncryptionKeyOwnedVersioned {
-    V0(UnifiedDesigncryptionKeyOwned),
+#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch)]
+pub enum UnifiedUnsigncryptionKeyOwnedVersioned {
+    V0(UnifiedUnsigncryptionKeyOwned),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
-#[versionize(UnifiedDesigncryptionKeyOwnedVersioned)]
-pub struct UnifiedDesigncryptionKeyOwned {
+#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[versionize(UnifiedUnsigncryptionKeyOwnedVersioned)]
+pub struct UnifiedUnsigncryptionKeyOwned {
     pub decryption_key: UnifiedPrivateEncKey,
     pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
     pub sender_verf_key: PublicSigKey,
@@ -230,14 +228,14 @@ pub struct UnifiedDesigncryptionKeyOwned {
     pub receiver_id: Vec<u8>,
 }
 
-impl Zeroize for UnifiedDesigncryptionKeyOwned {
+impl Zeroize for UnifiedUnsigncryptionKeyOwned {
     fn zeroize(&mut self) {
         // We only need to zeroize the private key
         self.decryption_key.zeroize();
     }
 }
 
-impl UnifiedDesigncryptionKeyOwned {
+impl UnifiedUnsigncryptionKeyOwned {
     pub fn new(
         decryption_key: UnifiedPrivateEncKey,
         encryption_key: UnifiedPublicEncKey,
@@ -252,8 +250,8 @@ impl UnifiedDesigncryptionKeyOwned {
         }
     }
 
-    pub fn reference<'a>(&'a self) -> UnifiedDesigncryptionKey<'a> {
-        UnifiedDesigncryptionKey {
+    pub fn reference<'a>(&'a self) -> UnifiedUnsigncryptionKey<'a> {
+        UnifiedUnsigncryptionKey {
             decryption_key: &self.decryption_key,
             encryption_key: &self.encryption_key,
             sender_verf_key: &self.sender_verf_key,
@@ -262,13 +260,13 @@ impl UnifiedDesigncryptionKeyOwned {
     }
 }
 
-impl HasEncryptionScheme for UnifiedDesigncryptionKeyOwned {
-    fn encryption_scheme_type(&self) -> EncryptionSchemeType {
+impl HasPkeScheme for UnifiedUnsigncryptionKeyOwned {
+    fn encryption_scheme_type(&self) -> PkeSchemeType {
         self.encryption_key.encryption_scheme_type()
     }
 }
 
-impl HasSigningScheme for UnifiedDesigncryptionKeyOwned {
+impl HasSigningScheme for UnifiedUnsigncryptionKeyOwned {
     fn signing_scheme_type(&self) -> SigningSchemeType {
         self.sender_verf_key.signing_scheme_type()
     }
@@ -283,18 +281,14 @@ pub enum UnifiedSigncryptionVersioned {
 #[versionize(UnifiedSigncryptionVersioned)]
 pub struct UnifiedSigncryption {
     pub payload: Vec<u8>,
-    pub encryption_type: EncryptionSchemeType,
+    pub pke_type: PkeSchemeType,
     pub signing_type: SigningSchemeType,
 }
 impl UnifiedSigncryption {
-    pub fn new(
-        payload: Vec<u8>,
-        encryption_type: EncryptionSchemeType,
-        signing_type: SigningSchemeType,
-    ) -> Self {
+    pub fn new(payload: Vec<u8>, pke_type: PkeSchemeType, signing_type: SigningSchemeType) -> Self {
         Self {
             payload,
-            encryption_type,
+            pke_type,
             signing_type,
         }
     }
@@ -497,18 +491,18 @@ fn inner_signcryption<T: Serialize + AsRef<[u8]>>(
     Ok(UnifiedSigncryption {
         payload: bc2wrap::serialize(&ciphertext)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?,
-        encryption_type: signcrypt_key.encryption_scheme_type(),
+        pke_type: signcrypt_key.encryption_scheme_type(),
         signing_type: signcrypt_key.signing_scheme_type(),
     })
 }
 
-impl<'a> Designcrypt for UnifiedDesigncryptionKey<'a> {
-    fn designcrypt<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
+impl<'a> Unsigncrypt for UnifiedUnsigncryptionKey<'a> {
+    fn unsigncrypt<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
         &self,
         dsep: &DomainSep,
         cipher: &UnifiedSigncryption,
     ) -> Result<T, CryptographyError> {
-        let msg_vec = inner_designcrypt(self, dsep, cipher)?;
+        let msg_vec = inner_unsigncrypt(self, dsep, cipher)?;
         safe_deserialize(std::io::Cursor::new(&msg_vec), SAFE_SER_SIZE_LIMIT)
             .map_err(CryptographyError::SerializationError)
     }
@@ -519,7 +513,7 @@ impl<'a> Designcrypt for UnifiedDesigncryptionKey<'a> {
         signcryption: &UnifiedSigncryption,
     ) -> Result<(), CryptographyError> {
         // Since we use sign-then-encrypt, we need to decrypt first to get the message for signature verification
-        let _ = inner_designcrypt(self, dsep, signcryption).map_err(|e| {
+        let _ = inner_unsigncrypt(self, dsep, signcryption).map_err(|e| {
             CryptographyError::VerificationError(format!(
                 "failed to decrypt signcryption for validation: {}",
                 e
@@ -529,14 +523,14 @@ impl<'a> Designcrypt for UnifiedDesigncryptionKey<'a> {
     }
 }
 
-impl Designcrypt for UnifiedDesigncryptionKeyOwned {
-    fn designcrypt<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
+impl Unsigncrypt for UnifiedUnsigncryptionKeyOwned {
+    fn unsigncrypt<T: DeserializeOwned + tfhe::Unversionize + tfhe::named::Named>(
         &self,
         dsep: &DomainSep,
         cipher: &UnifiedSigncryption,
     ) -> Result<T, CryptographyError> {
         let ref_type = self.reference();
-        ref_type.designcrypt(dsep, cipher)
+        ref_type.unsigncrypt(dsep, cipher)
     }
 
     fn validate_signcryption(
@@ -549,8 +543,8 @@ impl Designcrypt for UnifiedDesigncryptionKeyOwned {
     }
 }
 
-impl<'a> DesigncryptFHEPlaintext for UnifiedDesigncryptionKey<'a> {
-    fn designcrypt_plaintext(
+impl<'a> UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey<'a> {
+    fn unsigncrypt_plaintext(
         &self,
         dsep: &DomainSep,
         signcryption: &[u8],
@@ -558,10 +552,10 @@ impl<'a> DesigncryptFHEPlaintext for UnifiedDesigncryptionKey<'a> {
     ) -> Result<SigncryptionPayload, CryptographyError> {
         let parsed_signcryption = UnifiedSigncryption {
             payload: signcryption.to_owned(),
-            encryption_type: self.encryption_key.encryption_scheme_type(),
+            pke_type: self.encryption_key.encryption_scheme_type(),
             signing_type: self.sender_verf_key.signing_scheme_type(),
         };
-        let decrypted_signcryption = inner_designcrypt(self, dsep, &parsed_signcryption)?;
+        let decrypted_signcryption = inner_unsigncrypt(self, dsep, &parsed_signcryption)?;
         // LEGACY should be using safe_deserialization
         let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize(&decrypted_signcryption)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
@@ -574,25 +568,25 @@ impl<'a> DesigncryptFHEPlaintext for UnifiedDesigncryptionKey<'a> {
     }
 }
 
-impl DesigncryptFHEPlaintext for UnifiedDesigncryptionKeyOwned {
-    fn designcrypt_plaintext(
+impl UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKeyOwned {
+    fn unsigncrypt_plaintext(
         &self,
         dsep: &DomainSep,
         signcryption: &[u8],
         link: &[u8],
     ) -> Result<SigncryptionPayload, CryptographyError> {
         let ref_type = self.reference();
-        ref_type.designcrypt_plaintext(dsep, signcryption, link)
+        ref_type.unsigncrypt_plaintext(dsep, signcryption, link)
     }
 }
 
-/// Implements the actual designcryption process, but without any deserialization
-fn inner_designcrypt(
-    design_key: &UnifiedDesigncryptionKey,
+/// Implements the actual unsigncryption process, but without any deserialization
+fn inner_unsigncrypt(
+    unsign_key: &UnifiedUnsigncryptionKey,
     dsep: &DomainSep,
     cipher: &UnifiedSigncryption,
 ) -> Result<Vec<u8>, CryptographyError> {
-    if cipher.encryption_type != design_key.encryption_key.encryption_scheme_type() {
+    if cipher.pke_type != unsign_key.encryption_key.encryption_scheme_type() {
         return Err(CryptographyError::VerificationError(
             "encryption type of cipher does not match the decryption key type".to_string(),
         ));
@@ -600,7 +594,7 @@ fn inner_designcrypt(
     // LEGACY Code: should be using safe_deserialization
     let deserialized_payload: HybridKemCt = bc2wrap::deserialize(&cipher.payload)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
-    let decrypted_plaintext = match &design_key.decryption_key {
+    let decrypted_plaintext = match &unsign_key.decryption_key {
         UnifiedPrivateEncKey::MlKem512(dec_key) => {
             hybrid_ml_kem::dec::<ml_kem::MlKem512>(deserialized_payload, &dec_key.0)
         }
@@ -608,8 +602,8 @@ fn inner_designcrypt(
             hybrid_ml_kem::dec::<ml_kem::MlKem1024>(deserialized_payload, &dec_key.0)
         }
     }?;
-    let (msg, sig) = parse_msg(decrypted_plaintext, design_key.sender_verf_key)?;
-    check_format_and_signature(dsep, msg.clone(), &sig, design_key)?;
+    let (msg, sig) = parse_msg(decrypted_plaintext, unsign_key.sender_verf_key)?;
+    check_format_and_signature(dsep, msg.clone(), &sig, unsign_key)?;
     Ok(msg)
 }
 
@@ -656,10 +650,10 @@ fn check_format_and_signature(
     dsep: &DomainSep,
     msg: Vec<u8>,
     sig: &Signature,
-    designcryption_key: &UnifiedDesigncryptionKey,
+    unsigncryption_key: &UnifiedUnsigncryptionKey,
 ) -> Result<(), CryptographyError> {
     // What should be signed is dsep || msg || H(client_verification_key) || H(client_enc_key)
-    let serialized_enc_key = match &designcryption_key.encryption_key {
+    let serialized_enc_key = match &unsigncryption_key.encryption_key {
         UnifiedPublicEncKey::MlKem512(public_enc_key) => {
             serialize_hash_element(&DSEP_SIGNCRYPTION, public_enc_key)
                 .map_err(|e| CryptographyError::DeserializationError(e.to_string()))?
@@ -672,14 +666,14 @@ fn check_format_and_signature(
     let msg_signed = [
         dsep.to_vec(),
         msg,
-        designcryption_key.receiver_id.to_vec(),
+        unsigncryption_key.receiver_id.to_vec(),
         serialized_enc_key,
     ]
     .concat();
     // Check that the signature is normalized
     check_normalized(sig)?;
     // Verify signature
-    designcryption_key
+    unsigncryption_key
         .sender_verf_key
         .pk()
         .verify(&msg_signed[..], &sig.sig)
@@ -693,7 +687,7 @@ fn check_format_and_signature(
 /// TODO hide behind flag for insecure function?
 pub(crate) fn insecure_decrypt_ignoring_signature(
     cipher: &[u8],
-    client_keys: &UnifiedDesigncryptionKey,
+    client_keys: &UnifiedUnsigncryptionKey,
 ) -> Result<TypedPlaintext, CryptographyError> {
     // LEGACY should be using safe_deserialization
     let cipher: HybridKemCt =
@@ -726,7 +720,7 @@ pub fn ephemeral_signcryption_key_generation(
     server_sig_key: Option<&PrivateSigKey>,
 ) -> UnifiedSigncryptionKeyPairOwned {
     use crate::cryptography::{
-        encryption::{Encryption, EncryptionScheme},
+        encryption::{Encryption, PkeScheme},
         signatures::gen_sig_keys,
     };
 
@@ -734,7 +728,7 @@ pub fn ephemeral_signcryption_key_generation(
         Some(sk) => (PublicSigKey::from_sk(sk), sk.clone()),
         None => gen_sig_keys(rng),
     };
-    let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, rng);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, rng);
     let (dec_key, enc_key) = encryption.keygen().unwrap();
     UnifiedSigncryptionKeyPairOwned {
         signcrypt_key: UnifiedSigncryptionKeyOwned::new(
@@ -742,7 +736,7 @@ pub fn ephemeral_signcryption_key_generation(
             enc_key.clone(),
             client_verf_key_id.to_vec(),
         ),
-        designcryption_key: UnifiedDesigncryptionKeyOwned::new(
+        unsigncryption_key: UnifiedUnsigncryptionKeyOwned::new(
             dec_key,
             enc_key,
             server_verf_key.clone(),
@@ -751,22 +745,19 @@ pub fn ephemeral_signcryption_key_generation(
     }
 }
 
-/// Helper struct that contains both signcryption and designcryption keys for a client
+/// Helper struct that contains both signcryption and unsigncryption keys for a client
 /// For now only used for testing
 #[cfg(test)]
 #[derive(Clone, Debug, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct UnifiedSigncryptionKeyPairOwned {
     pub signcrypt_key: UnifiedSigncryptionKeyOwned,
-    pub designcryption_key: UnifiedDesigncryptionKeyOwned,
+    pub unsigncryption_key: UnifiedUnsigncryptionKeyOwned,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cryptography::{encryption::EncryptionSchemeType, signatures::gen_sig_keys};
-    // use crate::cryptography::signcryption::{
-    //     parse_msg, SigncryptionPayload, UnifiedSigncryptionKeyPairOwned, DIGEST_BYTES, SIG_SIZE,
-    // };
+    use crate::cryptography::{encryption::PkeSchemeType, signatures::gen_sig_keys};
     use crate::vault::storage::tests::TestType;
     use aes_prng::AesRng;
     use kms_grpc::kms::v1::TypedPlaintext;
@@ -793,8 +784,8 @@ mod tests {
             .signcrypt(&mut rng, b"TESTTEST", &msg)
             .unwrap();
         let decrypted_msg = client_signcryption_keys
-            .designcryption_key
-            .designcrypt(b"TESTTEST", &cipher)
+            .unsigncryption_key
+            .unsigncrypt(b"TESTTEST", &cipher)
             .unwrap();
         assert_eq!(msg, decrypted_msg);
     }
@@ -813,22 +804,22 @@ mod tests {
             bc2wrap::deserialize(&serialized_cipher).unwrap();
 
         let serialized_server_verf_key =
-            bc2wrap::serialize(&client_signcryption_keys.designcryption_key.sender_verf_key)
+            bc2wrap::serialize(&client_signcryption_keys.unsigncryption_key.sender_verf_key)
                 .unwrap();
         let deserialized_server_verf_key: PublicSigKey =
             bc2wrap::deserialize(&serialized_server_verf_key).unwrap();
         let client_id = client_signcryption_keys
-            .designcryption_key
+            .unsigncryption_key
             .receiver_id
             .clone();
-        let new_keys = UnifiedDesigncryptionKey::new(
-            &client_signcryption_keys.designcryption_key.decryption_key,
-            &client_signcryption_keys.designcryption_key.encryption_key,
+        let new_keys = UnifiedUnsigncryptionKey::new(
+            &client_signcryption_keys.unsigncryption_key.decryption_key,
+            &client_signcryption_keys.unsigncryption_key.encryption_key,
             &deserialized_server_verf_key,
             &client_id,
         );
         let decrypted_msg = new_keys
-            .designcrypt(b"TESTTEST", &deserialized_cipher)
+            .unsigncrypt(b"TESTTEST", &deserialized_cipher)
             .unwrap();
         assert_eq!(msg, decrypted_msg);
     }
@@ -848,18 +839,18 @@ mod tests {
             cipher.payload[0] ^= 1;
 
             assert!(client_signcryption_keys
-                .designcryption_key
-                .designcrypt::<TestType>(b"TESTTEST", &cipher)
+                .unsigncryption_key
+                .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
                 .is_err());
         }
 
         // wrong scheme
         {
             let mut cipher = correct_cipher.clone();
-            cipher.encryption_type = EncryptionSchemeType::MlKem1024;
+            cipher.pke_type = PkeSchemeType::MlKem1024;
             assert!(client_signcryption_keys
-                .designcryption_key
-                .designcrypt::<TestType>(b"TESTTEST", &cipher)
+                .unsigncryption_key
+                .unsigncrypt::<TestType>(b"TESTTEST", &cipher)
                 .is_err());
         }
 
@@ -868,12 +859,12 @@ mod tests {
             let mut rng = AesRng::seed_from_u64(2);
             let wrong_keys = ephemeral_signcryption_key_generation(
                 &mut rng,
-                &client_signcryption_keys.designcryption_key.receiver_id,
+                &client_signcryption_keys.unsigncryption_key.receiver_id,
                 Some(&client_signcryption_keys.signcrypt_key.signing_key),
             );
             assert!(wrong_keys
-                .designcryption_key
-                .designcrypt::<TestType>(b"TESTTEST", &correct_cipher)
+                .unsigncryption_key
+                .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
                 .is_err());
         }
 
@@ -881,29 +872,29 @@ mod tests {
         {
             let mut rng = AesRng::seed_from_u64(2);
             let (wrong_verf_key, _) = gen_sig_keys(&mut rng);
-            let wrong_keys = UnifiedDesigncryptionKey::new(
-                &client_signcryption_keys.designcryption_key.decryption_key,
-                &client_signcryption_keys.designcryption_key.encryption_key,
+            let wrong_keys = UnifiedUnsigncryptionKey::new(
+                &client_signcryption_keys.unsigncryption_key.decryption_key,
+                &client_signcryption_keys.unsigncryption_key.encryption_key,
                 &wrong_verf_key,
-                &client_signcryption_keys.designcryption_key.receiver_id,
+                &client_signcryption_keys.unsigncryption_key.receiver_id,
             );
             assert!(wrong_keys
-                .designcrypt::<TestType>(b"TESTTEST", &correct_cipher)
+                .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
                 .is_err());
         }
 
         // use bad domain separator
         {
             assert!(client_signcryption_keys
-                .designcryption_key
-                .designcrypt::<TestType>(b"blahblah", &correct_cipher)
+                .unsigncryption_key
+                .unsigncrypt::<TestType>(b"blahblah", &correct_cipher)
                 .is_err());
         }
 
         // happy path should still work at the end
         let decrypted_msg = client_signcryption_keys
-            .designcryption_key
-            .designcrypt::<TestType>(b"TESTTEST", &correct_cipher)
+            .unsigncryption_key
+            .unsigncrypt::<TestType>(b"TESTTEST", &correct_cipher)
             .unwrap();
         assert_eq!(msg, decrypted_msg);
     }
@@ -932,8 +923,8 @@ mod tests {
             .unwrap();
         let bad_link = vec![1, 2, 3, 4u8];
         let _ = client_signcryption_keys
-            .designcryption_key
-            .designcrypt_plaintext(b"TESTTEST", &cipher.payload, &bad_link)
+            .unsigncryption_key
+            .unsigncrypt_plaintext(b"TESTTEST", &cipher.payload, &bad_link)
             .unwrap_err();
     }
 

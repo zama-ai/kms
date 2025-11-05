@@ -1,7 +1,6 @@
 use anyhow::ensure;
 use clap::Parser;
 use futures_util::future::OptionFuture;
-use k256::ecdsa::SigningKey;
 use kms_grpc::rpc_types::PubDataType;
 use kms_lib::{
     conf::{
@@ -199,6 +198,7 @@ async fn build_tls_config(
                 ca_cert_x509.public_key().parsed()?
             {
                 let ca_pk = Box::new(pk_sec1.data());
+                #[allow(deprecated)]
                 let sk_vk = sk.sk().verifying_key().to_encoded_point(false).to_bytes();
                 ensure!(
                     **ca_pk == *sk_vk,
@@ -464,15 +464,11 @@ async fn main_exec() -> anyhow::Result<()> {
     let sk = get_core_signing_key(&private_vault).await?;
 
     // compute corresponding public key and derive address from private sig key
-    let pk = SigningKey::verifying_key(sk.sk());
-    tracing::info!(
-        "KMS verifying key is {}",
-        hex::encode(pk.to_encoded_point(false).to_bytes())
-    );
-    tracing::info!(
-        "Public ethereum address is {}",
-        alloy_signer::utils::public_key_to_address(pk)
-    );
+    #[allow(deprecated)]
+    let pk_bytes = sk.verf_key().pk().to_encoded_point(false).to_bytes();
+
+    tracing::info!("KMS verifying key is {}", hex::encode(pk_bytes));
+    tracing::info!("Public ethereum address is {}", sk.address());
 
     // backup vault (unlike for private/public storage, there cannot be a
     // default location for backup storage, so there has to be

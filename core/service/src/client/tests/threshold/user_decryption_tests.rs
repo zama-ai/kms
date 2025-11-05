@@ -12,9 +12,7 @@ use crate::consts::TEST_PARAM;
 #[cfg(feature = "slow_tests")]
 use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
-use crate::cryptography::encryption::{
-    EncryptionSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
-};
+use crate::cryptography::encryption::{PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey};
 use crate::cryptography::signatures::{internal_sign, PrivateSigKey};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
@@ -496,9 +494,9 @@ pub(crate) async fn user_decryption_threshold(
                 external_handle: j.to_be_bytes().to_vec(),
             }];
             let encryption_scheme = if legacy {
-                EncryptionSchemeType::MlKem1024
+                PkeSchemeType::MlKem1024
             } else {
-                EncryptionSchemeType::MlKem512
+                PkeSchemeType::MlKem512
             };
             let (req, enc_pk, enc_sk) = internal_client
                 .user_decryption_request(

@@ -5,7 +5,7 @@ use crate::cryptography::signcryption::insecure_decrypt_ignoring_signature;
 use crate::cryptography::{
     encryption::{UnifiedPrivateEncKey, UnifiedPublicEncKey},
     signatures::{internal_verify_sig, PublicSigKey, Signature},
-    signcryption::{DesigncryptFHEPlaintext, UnifiedDesigncryptionKey},
+    signcryption::{UnifiedUnsigncryptionKey, UnsigncryptFHEPlaintext},
 };
 use crate::engine::validation::{
     check_ext_user_decryption_signature, validate_user_decrypt_responses_against_request,
@@ -105,7 +105,7 @@ impl Client {
             }
         };
         let receiver_id = self.client_address.to_vec();
-        let client_keys = UnifiedDesigncryptionKey {
+        let client_keys = UnifiedUnsigncryptionKey {
             sender_verf_key: &sig_sk.verf_key(),
             decryption_key: dec_key,
             encryption_key: enc_key,
@@ -151,7 +151,7 @@ impl Client {
 
         // NOTE: ID starts at 1
         let expected_server_addr = if let Some(server_addr) = stored_server_addrs.get(&1) {
-            if *server_addr != alloy_signer::utils::public_key_to_address(cur_verf_key.pk()) {
+            if *server_addr != cur_verf_key.address() {
                 return Err(anyhow_error_and_log("server address is not consistent"));
             }
             server_addr
@@ -194,17 +194,17 @@ impl Client {
             })?;
         }
         let receiver_id = self.client_address.to_vec();
-        let design_key =
-            UnifiedDesigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
+        let unsign_key =
+            UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &receiver_id);
 
         payload
             .signcrypted_ciphertexts
             .into_iter()
             .map(|ct| {
-                design_key
-                    .designcrypt_plaintext(&DSEP_USER_DECRYPTION, &ct.signcrypted_ciphertext, &link)
+                unsign_key
+                    .unsigncrypt_plaintext(&DSEP_USER_DECRYPTION, &ct.signcrypted_ciphertext, &link)
                     .map(|res| res.plaintext)
-                    .map_err(|e| anyhow::anyhow!("designcrypt_plaintext failed: {}", e))
+                    .map_err(|e| anyhow::anyhow!("unsigncrypt_plaintext failed: {}", e))
             })
             .collect()
     }
@@ -215,7 +215,7 @@ impl Client {
     fn insecure_centralized_user_decryption_resp(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedDesigncryptionKey,
+        client_keys: &UnifiedUnsigncryptionKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
@@ -409,7 +409,7 @@ impl Client {
     fn insecure_threshold_user_decryption_resp(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedDesigncryptionKey,
+        client_keys: &UnifiedUnsigncryptionKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
@@ -427,7 +427,7 @@ impl Client {
     #[allow(clippy::type_complexity)]
     fn insecure_threshold_user_decryption_resp_to_blocks<Z: BaseRing>(
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedDesigncryptionKey,
+        client_keys: &UnifiedUnsigncryptionKey,
     ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ResiduePolyF4<Z>>)>>
     where
         ResiduePolyF4<Z>: ErrorCorrect + MemoizedExceptionals,
@@ -543,7 +543,7 @@ impl Client {
     fn insecure_threshold_user_decryption_resp_z128(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedDesigncryptionKey,
+        client_keys: &UnifiedUnsigncryptionKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let all_decrypted_blocks =
             Self::insecure_threshold_user_decryption_resp_to_blocks::<Z128>(agg_resp, client_keys)?;
@@ -585,7 +585,7 @@ impl Client {
     fn insecure_threshold_user_decryption_resp_z64(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &UnifiedDesigncryptionKey,
+        client_keys: &UnifiedUnsigncryptionKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let all_decrypted_blocks =
             Self::insecure_threshold_user_decryption_resp_to_blocks::<Z64>(agg_resp, client_keys)?;
@@ -673,9 +673,9 @@ impl Client {
                 // that it matches with the original request
                 let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&cur_resp.verification_key)?; // TODO(#2781)
                 let client_id = self.client_address.to_vec();
-                let design_key =
-                    UnifiedDesigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &client_id);
-                match design_key.designcrypt_plaintext(
+                let unsign_key =
+                    UnifiedUnsigncryptionKey::new(dec_key, enc_key, &cur_verf_key, &client_id);
+                match unsign_key.unsigncrypt_plaintext(
                     &DSEP_USER_DECRYPTION,
                     &cur_resp.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
                     &cur_resp.digest,

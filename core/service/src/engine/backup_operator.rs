@@ -8,11 +8,10 @@ use crate::{
     cryptography::{
         attestation::{SecurityModule, SecurityModuleProxy},
         encryption::{
-            Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
-            UnifiedPublicEncKey,
+            Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
         },
         signatures::{PrivateSigKey, PublicSigKey},
-        signcryption::{Designcrypt, UnifiedDesigncryptionKey},
+        signcryption::{UnifiedUnsigncryptionKey, Unsigncrypt},
     },
     engine::{
         base::{BaseKmsStruct, CrsGenMetadata, KmsFheKeyHandles},
@@ -89,8 +88,8 @@ where
     ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey, UnifiedPublicEncKey)> {
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
-        let (backup_priv_key, backup_pub_key) = enc
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (ephem_operator_priv_key, ephem_operator_pub_key) = enc
             .keygen()
             .map_err(|e| anyhow::anyhow!("Failure in ephemeral key generation for backup: {e}"))?;
         let mut cts = HashMap::new();
@@ -99,18 +98,18 @@ where
         }
         let mut serialized_priv_key = Vec::new();
         safe_serialize(
-            &backup_priv_key,
+            &ephem_operator_priv_key,
             &mut serialized_priv_key,
             SAFE_SER_SIZE_LIMIT,
         )?;
         let mut serialized_pub_key = Vec::new();
         safe_serialize(
-            &backup_pub_key,
+            &ephem_operator_pub_key,
             &mut serialized_pub_key,
             SAFE_SER_SIZE_LIMIT,
         )?;
         let recovery_request = RecoveryRequest {
-            enc_key: serialized_pub_key,
+            ephem_op_enc_key: serialized_pub_key,
             cts,
             backup_id: Some(backup_id.into()),
             operator_role: self.my_role.one_based() as u64,
@@ -119,7 +118,11 @@ where
             "Generated outer recovery request for backup_id/context_id={}",
             backup_id
         );
-        Ok((recovery_request, backup_priv_key, backup_pub_key))
+        Ok((
+            recovery_request,
+            ephem_operator_priv_key,
+            ephem_operator_pub_key,
+        ))
     }
 }
 
@@ -207,7 +210,7 @@ where
                     )
                 })?
         };
-        let (recovery_request, backup_priv_key, backup_pub_key) = self
+        let (recovery_request, ephem_op_dec_key, ephem_op_enc_key) = self
             .gen_outer_recovery_request(backup_id, recovery_request_payload)
             .await
             .map_err(|e| {
@@ -217,7 +220,7 @@ where
                 )
             })?;
         // We already ensured that no key is previously set, so ignore the result
-        let _ = guarded_priv_key.replace((backup_priv_key, backup_pub_key));
+        let _ = guarded_priv_key.replace((ephem_op_dec_key, ephem_op_enc_key));
         Ok(Response::new(recovery_request))
     }
 
@@ -470,7 +473,7 @@ async fn filter_custodian_data(
         };
 
         let verf_key_id = my_verf_key.verf_key_id();
-        let design_key = UnifiedDesigncryptionKey::new(
+        let unsign_key = UnifiedUnsigncryptionKey::new(
             ephemeral_dec_key,
             ephemeral_enc_key,
             cur_verf,
@@ -486,7 +489,7 @@ async fn filter_custodian_data(
                 continue;
             }
         };
-        if design_key
+        if unsign_key
             .validate_signcryption(&DSEP_BACKUP_RECOVERY, &cur_signcryption)
             .is_err()
         {
@@ -780,7 +783,7 @@ mod tests {
     ) {
         let mut rng = AesRng::seed_from_u64(0);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (dec_key, enc_key) = enc.keygen().unwrap();
         let backup_id = derive_request_id("test").unwrap();
         let commitments = BTreeMap::new();
@@ -832,7 +835,7 @@ mod tests {
             operator_role,
             backup_output: Some(OperatorBackupOutput {
                 signcryption: vec![1, 2, 3],
-                encryption_type: 0,
+                pke_type: 0,
                 signing_type: 0,
             }),
         }

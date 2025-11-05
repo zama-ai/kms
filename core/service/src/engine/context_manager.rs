@@ -3,7 +3,7 @@ use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{Operator, RecoveryRequestPayload, RecoveryValidationMaterial};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::encryption::{
-    Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+    Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
@@ -197,7 +197,7 @@ where
 
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric keys for the operator to use to encrypt the backup
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen()?;
         let inner_context = InternalCustodianContext::new(context, backup_enc_key.clone())?;
         let (recovery_request_payload, commitments) = gen_recovery_request_payload(
@@ -357,9 +357,9 @@ mod tests {
             seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
         },
         cryptography::{
-            encryption::{Encryption, EncryptionScheme, EncryptionSchemeType},
+            encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{gen_sig_keys, PublicSigKey},
-            signcryption::UnifiedDesigncryptionKey,
+            signcryption::UnifiedUnsigncryptionKey,
         },
         engine::context::{NodeInfo, SoftwareVersion},
         util::meta_store::MetaStore,
@@ -416,7 +416,7 @@ mod tests {
     #[tokio::test]
     async fn test_kms_context() {
         let mut rng = AesRng::seed_from_u64(42);
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_enc_sk, backup_encryption_public_key) = encryption.keygen().unwrap();
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
@@ -499,7 +499,7 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(40);
         let backup_id = RequestId::new_random(&mut rng);
         let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
-        let mut enc = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let mnemonic = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
         let custodian1: Custodian =
@@ -547,14 +547,14 @@ mod tests {
         )
         .unwrap();
         let custodian_id = custodian1.verification_key().verf_key_id();
-        let design_key = UnifiedDesigncryptionKey::new(
+        let unsign_key = UnifiedUnsigncryptionKey::new(
             custodian1.public_dec_key(),
             custodian1.public_enc_key(),
             &server_verf_key,
             &custodian_id,
         );
         assert!(internal_rec_req
-            .is_valid(Role::indexed_from_one(1), &design_key)
+            .is_valid(Role::indexed_from_one(1), &unsign_key)
             .unwrap());
     }
 }

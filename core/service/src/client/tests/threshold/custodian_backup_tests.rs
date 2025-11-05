@@ -648,7 +648,7 @@ async fn emulate_custodian(
             .unwrap();
             let cur_cus_reenc = cur_recovery_req.cts.get(&((cur_idx + 1) as u64)).unwrap();
             let cur_enc_key = safe_deserialize(
-                std::io::Cursor::new(&cur_recovery_req.enc_key),
+                std::io::Cursor::new(&cur_recovery_req.ephem_op_enc_key),
                 SAFE_SER_SIZE_LIMIT,
             )
             .unwrap();

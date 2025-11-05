@@ -1,12 +1,4 @@
-use crate::cryptography::{
-    encryption::UnifiedPublicEncKey, internal_crypto_types::LegacySerialization,
-};
-use alloy_dyn_abi::Eip712Domain;
-use alloy_primitives::B256;
 use anyhow::anyhow;
-use kms_grpc::{
-    kms::v1::UserDecryptionResponsePayload, solidity_types::UserDecryptResponseVerification,
-};
 use std::{fmt, panic::Location};
 
 pub mod client;
@@ -85,57 +77,6 @@ pub(crate) fn anyhow_tracked<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Er
 pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {
     tracing::warn!("Warning in {}: {}", Location::caller(), msg);
     anyhow!("Warning in {}: {}", Location::caller(), msg)
-}
-
-// TODO move
-pub fn compute_user_decrypt_message_hash(
-    payload: &UserDecryptionResponsePayload,
-    eip712_domain: &Eip712Domain,
-    user_pk: &UnifiedPublicEncKey,
-    extra_data: Vec<u8>,
-) -> anyhow::Result<B256> {
-    use alloy_sol_types::SolStruct;
-    // convert external_handles back to bytes32 to be signed
-    let external_handles: Vec<_> = payload
-        .signcrypted_ciphertexts
-        .iter()
-        .enumerate()
-        .map(|(idx, c)| {
-            if c.external_handle.len() > 32 {
-                anyhow::bail!(
-                    "external_handle at index {idx} too long: {} bytes (max 32)",
-                    c.external_handle.len()
-                );
-            } else {
-                Ok(alloy_primitives::FixedBytes::<32>::left_padding_from(
-                    c.external_handle.as_slice(),
-                ))
-            }
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let user_decrypted_share_buf = bc2wrap::serialize(payload)?;
-
-    // LEGACY CODE: we used to only support ML-KEM1024 encoded with bincode
-    // the solidity structure to sign with EIP-712
-    // note that the JS client must also use the same encoding to verify the result
-    let user_pk_buf = user_pk
-        .to_legacy_bytes()
-        .map_err(|e| anyhow::anyhow!("serialization error: {e}"))?;
-
-    let message = UserDecryptResponseVerification {
-        publicKey: user_pk_buf.into(),
-        ctHandles: external_handles,
-        userDecryptedShare: user_decrypted_share_buf.into(),
-        extraData: extra_data.into(),
-    };
-
-    let message_hash = message.eip712_signing_hash(eip712_domain);
-    tracing::info!(
-        "UserDecryptResponseVerification EIP-712 Message hash: {:?}",
-        message_hash
-    );
-    Ok(message_hash)
 }
 
 /// Create a dummy domain for testing
