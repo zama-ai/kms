@@ -1941,6 +1941,7 @@ pub async fn execute_cmd(
                         ct_batch,
                         &dummy_domain(),
                         &req_id,
+                        None,
                         &key_id.into(),
                     )?;
 

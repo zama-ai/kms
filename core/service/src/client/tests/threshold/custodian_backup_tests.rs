@@ -245,7 +245,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         "test_decrypt_after_recovery_threshold_cus_{amount_parties}"
     ))
     .unwrap();
-    let req_key: RequestId = derive_request_id(&format!(
+    let req_key_id: RequestId = derive_request_id(&format!(
         "test_decrypt_after_recovery_threshold_key_{amount_parties}"
     ))
     .unwrap();
@@ -277,7 +277,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         &kms_clients,
         &internal_client,
         &INSECURE_PREPROCESSING_ID,
-        &req_key,
+        &req_key_id,
         None,
         true,
         test_path,
@@ -372,7 +372,8 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         &mut kms_servers,
         &mut kms_clients,
         &mut internal_client,
-        &req_key,
+        &req_key_id,
+        None,
         vec![TestingPlaintext::U8(u8::MAX)],
         EncryptionConfig {
             compression: false,

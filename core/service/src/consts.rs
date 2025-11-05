@@ -140,6 +140,8 @@ lazy_static::lazy_static! {
     // This is a bit hackish, but it works for now.
     pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
 
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // In the future we will remove the default context.
     pub static ref DEFAULT_MPC_CONTEXT: ContextId = ContextId::from_bytes([
         1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
         4,
