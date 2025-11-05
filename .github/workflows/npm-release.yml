@@ -57,6 +57,7 @@ jobs:
           rm -rf pkg
           wasm-pack build --target nodejs . --no-default-features
           sed -i 's/"kms"/"node-tkms"/g' pkg/package.json
+          sed -i 's/\"version\": \".*\"/\"version\": \"${{ github.event.release.tag_name }}\"/' pkg/package.json
           echo "# node-tkms" > pkg/README.md
 
       - name: NPM publish Node package
@@ -75,6 +76,7 @@ jobs:
           rm -rf pkg
           wasm-pack build --target web . --no-default-features
           sed -i 's/"kms"/"tkms"/g' pkg/package.json
+          sed -i 's/\"version\": \".*\"/\"version\": \"${{ github.event.release.tag_name }}\"/' pkg/package.json
           echo "# tkms" > pkg/README.md
 
       - name: NPM publish web package
