@@ -489,11 +489,19 @@
         kms_core_version_min: "0.12.2",
         kms_core_module: "kms",
         metadata: InternalCustodianContext((
-            test_filename: "recovery_material",
+            test_filename: "internal_cus_context",
             internal_cus_setup_filename: "internal_cus_setup_handle",
             unified_enc_key_filename: "unified_enc_key_handle",
             state: 300,
             custodian_count: 5,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.12.2",
+        kms_core_module: "kms",
+        metadata: InternalCustodianSetupMessage((
+            test_filename: "internal_custodian_setup_message",
+            state: 42,
         )),
     ),
     (
@@ -615,7 +623,7 @@
         kms_core_module: "kms",
         metadata: InternalCustodianSetupMessage((
             test_filename: "internal_custodian_setup_message",
-            seed: 42,
+            state: 42,
         )),
     ),
     (
@@ -623,7 +631,7 @@
         kms_core_module: "kms",
         metadata: InternalCustodianSetupMessage((
             test_filename: "internal_custodian_setup_message",
-            seed: 42,
+            state: 42,
         )),
     ),
     (
@@ -631,7 +639,7 @@
         kms_core_module: "kms",
         metadata: OperatorBackupOutput((
             test_filename: "operator_backup_output",
-            custodian_count: 4,
+            custodian_count: 3,
             custodian_threshold: 1,
             plaintext: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
             backup_id: (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),

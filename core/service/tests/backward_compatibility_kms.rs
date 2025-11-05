@@ -616,8 +616,8 @@ fn test_internal_custodian_message(
     let original_custodian_setup_message: InternalCustodianSetupMessage =
         load_and_unversionize(dir, test, format)?;
 
-    let mut rng = AesRng::seed_from_u64(test.seed);
-    let name = "Testname".to_string();
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let name = "custodian-1".to_string();
     let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
     let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (dec_key, enc_key) = enc.keygen().unwrap();
@@ -650,9 +650,10 @@ fn test_operator_backup_output(
         load_and_unversionize(dir, test, format)?;
 
     let mut rng = AesRng::seed_from_u64(test.seed);
-    let custodians: Vec<_> = (0..test.custodian_count)
+
+    let custodians: Vec<_> = (1..=test.custodian_count)
         .map(|i| {
-            let custodian_role = Role::indexed_from_zero(i);
+            let custodian_role = Role::indexed_from_one(i);
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
             let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
             let (dec_key, enc_key) = enc.keygen().unwrap();
@@ -671,7 +672,7 @@ fn test_operator_backup_output(
     let operator = {
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         Operator::new(
-            Role::indexed_from_zero(0),
+            Role::indexed_from_one(1),
             custodian_messages.clone(),
             signing_key,
             test.custodian_threshold,

@@ -544,7 +544,7 @@ impl TestType for InternalCustodianContextTest {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct InternalCustodianSetupMessageTest {
     pub test_filename: Cow<'static, str>,
-    pub seed: u64,
+    pub state: u64,
 }
 
 impl TestType for InternalCustodianSetupMessageTest {

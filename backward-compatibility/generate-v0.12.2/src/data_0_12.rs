@@ -6,6 +6,7 @@ use kms_0_12_2::backup::custodian::{
     Custodian, CustodianSetupMessagePayload, InternalCustodianContext,
 };
 use kms_0_12_2::backup::{
+    custodian::InternalCustodianSetupMessage,
     operator::{BackupMaterial, Operator, RecoveryValidationMaterial, DSEP_BACKUP_COMMITMENT},
     BackupCiphertext,
 };
@@ -347,7 +348,7 @@ const RECOVERY_MATERIAL_TEST: RecoveryValidationMaterialTest = RecoveryValidatio
 
 // KMS test
 const INTERNAL_CUS_CONTEXT_TEST: InternalCustodianContextTest = InternalCustodianContextTest {
-    test_filename: Cow::Borrowed("recovery_material"),
+    test_filename: Cow::Borrowed("internal_cus_context"),
     internal_cus_setup_filename: Cow::Borrowed("internal_cus_setup_handle"),
     unified_enc_key_filename: Cow::Borrowed("unified_enc_key_handle"),
     state: 300,
@@ -358,13 +359,13 @@ const INTERNAL_CUS_CONTEXT_TEST: InternalCustodianContextTest = InternalCustodia
 const INTERNAL_CUS_SETUP_MSG_TEST: InternalCustodianSetupMessageTest =
     InternalCustodianSetupMessageTest {
         test_filename: Cow::Borrowed("internal_custodian_setup_message"),
-        seed: 42,
+        state: 42,
     };
 
 // KMS test
 const OPERATOR_BACKUP_OUTPUT_TEST: OperatorBackupOutputTest = OperatorBackupOutputTest {
     test_filename: Cow::Borrowed("operator_backup_output"),
-    custodian_count: 4,
+    custodian_count: 3,
     custodian_threshold: 1,
     plaintext: [0u8; 32],
     backup_id: [1u8; 32],
@@ -637,16 +638,50 @@ impl KmsV0_12 {
         TestMetadataKMS::RecoveryValidationMaterial(RECOVERY_MATERIAL_TEST)
     }
 
-    fn generate_internal_cus_context_handles(dir: &PathBuf) -> TestMetadataKMS {
+    fn gen_internal_cus_context_handles(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_CONTEXT_TEST.state);
-
+        let context_id: RequestId = RequestId::new_random(&mut rng);
+        let mut cus_nodes = BTreeMap::new();
+        for role_j in 1..=INTERNAL_CUS_CONTEXT_TEST.custodian_count {
+            let cus_role = Role::indexed_from_one(role_j);
+            let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+            let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let (_, cus_enc_key) = encryption.keygen().unwrap();
+            let mut rnd = [0_u8; 32];
+            rng.fill_bytes(&mut rnd);
+            let setup_msg = InternalCustodianSetupMessage {
+                header: "header".to_string(),
+                custodian_role: cus_role,
+                name: format!("role{role_j}"),
+                random_value: rnd,
+                timestamp: 42,
+                public_enc_key: cus_enc_key,
+                public_verf_key: custodian_verf_key,
+            };
+            cus_nodes.insert(cus_role, setup_msg);
+        }
+        // Generate the extra encryption key last since it will be loaded from file and
+        // thus we should avoid using the RNG for the things that it will be used to generate in the test
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_, cus_enc_key) = encryption.keygen().unwrap();
+        let internal_cus_context = InternalCustodianContext {
+            threshold: 1,
+            context_id,
+            previous_context_id: None,
+            custodian_nodes: cus_nodes,
+            backup_enc_key: cus_enc_key.clone(),
+        };
         store_versioned_auxiliary!(
             &cus_enc_key,
             dir,
             &INTERNAL_CUS_CONTEXT_TEST.test_filename,
             &INTERNAL_CUS_CONTEXT_TEST.unified_enc_key_filename,
+        );
+
+        store_versioned_test!(
+            &internal_cus_context,
+            dir,
+            &INTERNAL_CUS_CONTEXT_TEST.test_filename
         );
 
         TestMetadataKMS::InternalCustodianContext(INTERNAL_CUS_CONTEXT_TEST)
@@ -820,7 +855,7 @@ impl KmsV0_12 {
 
     /// Generates the _internal_ custodian setup message
     fn gen_internal_cus_setup_msg(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_SETUP_MSG_TEST.seed);
+        let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_SETUP_MSG_TEST.state);
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (private_key, public_key) = encryption.keygen().unwrap();
@@ -861,8 +896,9 @@ impl KmsV0_12 {
             .collect();
         let custodian_messages: Vec<_> = custodians
             .iter()
-            .map(|c| {
-                c.generate_setup_message(&mut rng, "Custodian-1".to_string())
+            .enumerate()
+            .map(|(i, c)| {
+                c.generate_setup_message(&mut rng, format!("Custodian-{i}"))
                     .unwrap()
             })
             .collect();
@@ -874,7 +910,7 @@ impl KmsV0_12 {
                 custodian_messages,
                 signing_key,
                 OPERATOR_BACKUP_OUTPUT_TEST.custodian_threshold,
-                OPERATOR_BACKUP_OUTPUT_TEST.custodian_count,
+                custodians.len(),
             )
             .unwrap()
         };
@@ -885,7 +921,7 @@ impl KmsV0_12 {
                 RequestId::from_bytes(OPERATOR_BACKUP_OUTPUT_TEST.backup_id),
             )
             .unwrap()
-            .0;
+            .0[&Role::indexed_from_one(1)];
 
         store_versioned_test!(
             operator_backup_output,
@@ -1004,7 +1040,8 @@ impl KMSCoreVersion for V0_12 {
             KmsV0_12::gen_unified_cipher(&dir),
             KmsV0_12::gen_hybrid_kem_ct(&dir),
             KmsV0_12::gen_recovery_material(&dir),
-            KmsV0_12::generate_internal_cus_context_handles(&dir),
+            KmsV0_12::gen_internal_cus_context_handles(&dir),
+            KmsV0_12::gen_internal_cus_setup_msg(&dir),
             KmsV0_12::gen_kms_fhe_key_handles(&dir),
             KmsV0_12::gen_threshold_fhe_keys(&dir),
             KmsV0_12::gen_internal_cus_setup_msg(&dir),
