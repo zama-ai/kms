@@ -621,17 +621,9 @@
     (
         kms_core_version_min: "0.12.2",
         kms_core_module: "kms",
-        metadata: InternalCustodianSetupMessage((
-            test_filename: "internal_custodian_setup_message",
-            state: 42,
-        )),
-    ),
-    (
-        kms_core_version_min: "0.12.2",
-        kms_core_module: "kms",
-        metadata: InternalCustodianSetupMessage((
-            test_filename: "internal_custodian_setup_message",
-            state: 42,
+        metadata: InternalCustodianRecoveryOutput((
+            test_filename: "internal_custodian_recovery_output",
+            state: 43,
         )),
     ),
     (

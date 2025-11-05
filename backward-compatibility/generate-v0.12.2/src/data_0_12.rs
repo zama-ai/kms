@@ -6,7 +6,7 @@ use kms_0_12_2::backup::custodian::{
     Custodian, CustodianSetupMessagePayload, InternalCustodianContext,
 };
 use kms_0_12_2::backup::{
-    custodian::InternalCustodianSetupMessage,
+    custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
     operator::{BackupMaterial, Operator, RecoveryValidationMaterial, DSEP_BACKUP_COMMITMENT},
     BackupCiphertext,
 };
@@ -14,8 +14,10 @@ use kms_0_12_2::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_12_2::cryptography::{
     encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
     hybrid_ml_kem::HybridKemCt,
-    signatures::gen_sig_keys,
-    signcryption::{UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned},
+    signatures::{gen_sig_keys, SigningSchemeType},
+    signcryption::{
+        UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
+    },
 };
 use kms_0_12_2::engine::base::{safe_serialize_hash_element_versioned, KmsFheKeyHandles};
 use kms_0_12_2::engine::centralized::central_kms::generate_client_fhe_key;
@@ -72,13 +74,13 @@ use backward_compatibility::parameters::{
 };
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, HybridKemCtTest, InternalCustodianContextTest,
-    InternalCustodianSetupMessageTest, KmsFheKeyHandlesTest, OperatorBackupOutputTest,
-    PRSSSetupTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest, PubDataTypeTest,
-    PublicKeyTypeTest, PublicSigKeyTest, RecoveryValidationMaterialTest, SigncryptionPayloadTest,
-    SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
-    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
-    UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
-    KMS_MODULE_NAME,
+    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest, KmsFheKeyHandlesTest,
+    OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest,
+    PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS,
+    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
+    UnifiedSigncryptionKeyTest, UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
+    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 
 use kms_0_12_2::cryptography::signcryption::SigncryptionPayload;
@@ -364,6 +366,13 @@ const INTERNAL_CUS_SETUP_MSG_TEST: InternalCustodianSetupMessageTest =
     InternalCustodianSetupMessageTest {
         test_filename: Cow::Borrowed("internal_custodian_setup_message"),
         state: 42,
+    };
+
+// KMS test
+const INTERNAL_CUS_REC_OUT_TEST: InternalCustodianRecoveryOutputTest =
+    InternalCustodianRecoveryOutputTest {
+        test_filename: Cow::Borrowed("internal_custodian_recovery_output"),
+        state: 43,
     };
 
 // KMS test
@@ -881,6 +890,24 @@ impl KmsV0_12 {
         TestMetadataKMS::InternalCustodianSetupMessage(INTERNAL_CUS_SETUP_MSG_TEST)
     }
 
+    fn gen_internal_cus_rec_out(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_REC_OUT_TEST.state);
+        let mut buf = [0u8; 100];
+        rng.fill_bytes(&mut buf);
+        let signcryption = UnifiedSigncryption {
+            payload: buf.to_vec(),
+            pke_type: PkeSchemeType::MlKem512,
+            signing_type: SigningSchemeType::Ecdsa256k1,
+        };
+        let icro = InternalCustodianRecoveryOutput {
+            signcryption,
+            custodian_role: Role::indexed_from_one(2),
+            operator_role: Role::indexed_from_one(3),
+        };
+        store_versioned_test!(&icro, dir, &INTERNAL_CUS_REC_OUT_TEST.test_filename);
+        TestMetadataKMS::InternalCustodianRecoveryOutput(INTERNAL_CUS_REC_OUT_TEST)
+    }
+
     fn gen_operator_backup_output(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(OPERATOR_BACKUP_OUTPUT_TEST.seed);
 
@@ -1055,8 +1082,7 @@ impl KMSCoreVersion for V0_12 {
             KmsV0_12::gen_internal_cus_setup_msg(&dir),
             KmsV0_12::gen_kms_fhe_key_handles(&dir),
             KmsV0_12::gen_threshold_fhe_keys(&dir),
-            KmsV0_12::gen_internal_cus_setup_msg(&dir),
-            KmsV0_12::gen_internal_cus_setup_msg(&dir),
+            KmsV0_12::gen_internal_cus_rec_out(&dir),
             KmsV0_12::gen_operator_backup_output(&dir),
         ]
     }

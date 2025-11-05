@@ -561,6 +561,27 @@ impl TestType for InternalCustodianContextTest {
 
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct InternalCustodianRecoveryOutputTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for InternalCustodianRecoveryOutputTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "InternalCustodianRecoveryOutput".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct InternalCustodianSetupMessageTest {
     pub test_filename: Cow<'static, str>,
     pub state: u64,
@@ -598,6 +619,7 @@ pub enum TestMetadataKMS {
     RecoveryValidationMaterial(RecoveryValidationMaterialTest),
     InternalCustodianContext(InternalCustodianContextTest),
     InternalCustodianSetupMessage(InternalCustodianSetupMessageTest),
+    InternalCustodianRecoveryOutput(InternalCustodianRecoveryOutputTest),
     OperatorBackupOutput(OperatorBackupOutputTest),
 }
 

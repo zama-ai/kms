@@ -13,10 +13,11 @@ use backward_compatibility::{
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
     AppKeyBlobTest, BackupCiphertextTest, HybridKemCtTest, InternalCustodianContextTest,
-    InternalCustodianSetupMessageTest, KmsFheKeyHandlesTest, OperatorBackupOutputTest,
-    PrivateSigKeyTest, PublicSigKeyTest, RecoveryValidationMaterialTest, SigncryptionPayloadTest,
-    TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedUnsigncryptionKeyTest,
+    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest, KmsFheKeyHandlesTest,
+    OperatorBackupOutputTest, PrivateSigKeyTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    SigncryptionPayloadTest, TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
+    TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
+    UnifiedUnsigncryptionKeyTest,
 };
 use kms_grpc::{
     kms::v1::TypedPlaintext,
@@ -25,7 +26,10 @@ use kms_grpc::{
 };
 use kms_lib::{
     backup::{
-        custodian::{Custodian, InternalCustodianContext, InternalCustodianSetupMessage},
+        custodian::{
+            Custodian, InternalCustodianContext, InternalCustodianRecoveryOutput,
+            InternalCustodianSetupMessage,
+        },
         operator::{
             BackupMaterial, InnerOperatorBackupOutput, Operator, RecoveryValidationMaterial,
             DSEP_BACKUP_COMMITMENT,
@@ -35,9 +39,10 @@ use kms_lib::{
     cryptography::{
         encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPublicEncKey},
         hybrid_ml_kem::HybridKemCt,
-        signatures::{gen_sig_keys, PrivateSigKey, PublicSigKey},
+        signatures::{gen_sig_keys, PrivateSigKey, PublicSigKey, SigningSchemeType},
         signcryption::{
-            SigncryptionPayload, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
+            SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
+            UnifiedUnsigncryptionKeyOwned,
         },
     },
     engine::{
@@ -483,6 +488,40 @@ fn test_internal_custodian_context(
     }
 }
 
+fn test_internal_custodian_recovery_output(
+    dir: &Path,
+    test: &InternalCustodianRecoveryOutputTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: InternalCustodianRecoveryOutput =
+        load_and_unversionize(dir, test, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let mut buf = [0u8; 100];
+    rng.fill_bytes(&mut buf);
+    let signcryption = UnifiedSigncryption {
+        payload: buf.to_vec(),
+        pke_type: PkeSchemeType::MlKem512,
+        signing_type: SigningSchemeType::Ecdsa256k1,
+    };
+
+    let new_versionized = InternalCustodianRecoveryOutput {
+        signcryption,
+        custodian_role: Role::indexed_from_one(2),
+        operator_role: Role::indexed_from_one(3),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid InternalCustodianRecoveryOutput:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 fn test_kms_fhe_key_handles(
     dir: &Path,
     test: &KmsFheKeyHandlesTest,
@@ -756,6 +795,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::InternalCustodianSetupMessage(test) => {
                 test_internal_custodian_message(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::InternalCustodianRecoveryOutput(test) => {
+                test_internal_custodian_recovery_output(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::OperatorBackupOutput(test) => {
                 test_operator_backup_output(test_dir.as_ref(), test, format).into()
