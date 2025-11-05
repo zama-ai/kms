@@ -1667,9 +1667,8 @@ pub(crate) mod tests {
         let bad_handles = vec![vec![0u8; 33]];
         let err = compute_public_decryption_message(bad_handles, &pts, vec![]).unwrap_err();
         assert!(
-            err.to_string()
-                .contains("Expected error for handle > 32 bytes"),
-            "Error message should mention 'Expected error for handle > 32 bytes', got: {err}"
+            err.to_string().contains("too long: 33 bytes (max 32"),
+            "Error message should mention 'too long: 33 bytes (max 32', got: {err}"
         );
         assert!(
             err.to_string().contains("too long"),
