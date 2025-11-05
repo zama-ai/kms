@@ -1655,7 +1655,7 @@ checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 [[package]]
 name = "bc2wrap"
 version = "2.0.1"
-source = "git+https://github.com/zama-ai/kms.git?branch=tore%2Frefactor%2F2782%2Fbackup-signcryption-integration#15b75e889c1f8579f7a7bb0a78e22e350853115c"
+source = "git+https://github.com/zama-ai/kms.git?rev=e924c61#e924c61d7a07a3354983061e1c9ddb09945d2f83"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -3768,7 +3768,7 @@ dependencies = [
 [[package]]
 name = "kms"
 version = "0.12.2"
-source = "git+https://github.com/zama-ai/kms.git?branch=tore%2Frefactor%2F2782%2Fbackup-signcryption-integration#15b75e889c1f8579f7a7bb0a78e22e350853115c"
+source = "git+https://github.com/zama-ai/kms.git?rev=e924c61#e924c61d7a07a3354983061e1c9ddb09945d2f83"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3788,7 +3788,7 @@ dependencies = [
  "aws-smithy-runtime",
  "aws-smithy-runtime-api",
  "aws-smithy-types",
- "bc2wrap 2.0.1 (git+https://github.com/zama-ai/kms.git?branch=tore%2Frefactor%2F2782%2Fbackup-signcryption-integration)",
+ "bc2wrap 2.0.1 (git+https://github.com/zama-ai/kms.git?rev=e924c61)",
  "bincode 2.0.1",
  "bip39",
  "cbc",
@@ -3845,13 +3845,13 @@ dependencies = [
 [[package]]
 name = "kms-grpc"
 version = "0.12.2"
-source = "git+https://github.com/zama-ai/kms.git?branch=tore%2Frefactor%2F2782%2Fbackup-signcryption-integration#15b75e889c1f8579f7a7bb0a78e22e350853115c"
+source = "git+https://github.com/zama-ai/kms.git?rev=e924c61#e924c61d7a07a3354983061e1c9ddb09945d2f83"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
  "alloy-sol-types",
  "anyhow",
- "bc2wrap 2.0.1 (git+https://github.com/zama-ai/kms.git?branch=tore%2Frefactor%2F2782%2Fbackup-signcryption-integration)",
+ "bc2wrap 2.0.1 (git+https://github.com/zama-ai/kms.git?rev=e924c61)",
  "cfg-if",
  "hex",
  "prost",
@@ -4354,7 +4354,7 @@ dependencies = [
 [[package]]
 name = "observability"
 version = "0.12.2"
-source = "git+https://github.com/zama-ai/kms.git?branch=tore%2Frefactor%2F2782%2Fbackup-signcryption-integration#15b75e889c1f8579f7a7bb0a78e22e350853115c"
+source = "git+https://github.com/zama-ai/kms.git?rev=e924c61#e924c61d7a07a3354983061e1c9ddb09945d2f83"
 dependencies = [
  "anyhow",
  "axum",
@@ -6653,7 +6653,7 @@ dependencies = [
 [[package]]
 name = "threshold-fhe"
 version = "0.12.2"
-source = "git+https://github.com/zama-ai/kms.git?branch=tore%2Frefactor%2F2782%2Fbackup-signcryption-integration#15b75e889c1f8579f7a7bb0a78e22e350853115c"
+source = "git+https://github.com/zama-ai/kms.git?rev=e924c61#e924c61d7a07a3354983061e1c9ddb09945d2f83"
 dependencies = [
  "aes",
  "aes-prng",
@@ -6661,7 +6661,7 @@ dependencies = [
  "async-trait",
  "attestation-doc-validation",
  "backoff",
- "bc2wrap 2.0.1 (git+https://github.com/zama-ai/kms.git?branch=tore%2Frefactor%2F2782%2Fbackup-signcryption-integration)",
+ "bc2wrap 2.0.1 (git+https://github.com/zama-ai/kms.git?rev=e924c61)",
  "bincode 2.0.1",
  "cfg-if",
  "clap",

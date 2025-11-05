@@ -430,7 +430,7 @@
     (
         kms_core_version_min: "0.12.2",
         kms_core_module: "kms",
-        metadata: UnifiedDesigncryptionKeyOwned((
+        metadata: UnifiedUnsigncryptionKeyOwned((
             test_filename: "designcryption_key",
             state: 200,
         )),
@@ -440,6 +440,7 @@
         kms_core_module: "kms",
         metadata: BackupCiphertext((
             test_filename: "backup_ciphertext",
+            unified_cipher_filename: "unified_ciphertext_handle",
             state: 200,
         )),
     ),
@@ -448,13 +449,8 @@
         kms_core_module: "kms",
         metadata: UnifiedCipher((
             test_filename: "unified_ciphertext",
-            cipher: [
-                1,
-                2,
-                3,
-                4,
-                5,
-            ],
+            hybrid_kem_filename: "hybrid_kem_ct_handle",
+            state: 123,
         )),
     ),
     (

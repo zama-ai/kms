@@ -213,12 +213,14 @@ impl HasSigningScheme for UnifiedUnsigncryptionKey<'_> {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
+)]
 pub enum UnifiedUnsigncryptionKeyOwnedVersioned {
     V0(UnifiedUnsigncryptionKeyOwned),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedUnsigncryptionKeyOwnedVersioned)]
 pub struct UnifiedUnsigncryptionKeyOwned {
     pub decryption_key: UnifiedPrivateEncKey,

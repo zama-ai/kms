@@ -16,7 +16,7 @@ use backward_compatibility::{
     InternalCustodianSetupMessageTest, KmsFheKeyHandlesTest, OperatorBackupOutputTest,
     PrivateSigKeyTest, PublicSigKeyTest, RecoveryValidationMaterialTest, SigncryptionPayloadTest,
     TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedDesigncryptionKeyTest, UnifiedSigncryptionKeyTest,
+    UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedUnsigncryptionKeyTest,
 };
 use kms_grpc::{
     kms::v1::TypedPlaintext,
@@ -37,7 +37,7 @@ use kms_lib::{
         hybrid_ml_kem::HybridKemCt,
         signatures::{gen_sig_keys, PrivateSigKey, PublicSigKey},
         signcryption::{
-            SigncryptionPayload, UnifiedDesigncryptionKeyOwned, UnifiedSigncryptionKeyOwned,
+            SigncryptionPayload, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
         },
     },
     engine::{
@@ -238,7 +238,7 @@ fn test_signcryption_keys(
     let mut rng = AesRng::seed_from_u64(test.state);
     let (_, server_sig_key) = gen_sig_keys(&mut rng);
     let (client_verf_key, _) = gen_sig_keys(&mut rng);
-    let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (_, enc_key) = encryption.keygen().unwrap();
     let new_versionized = UnifiedSigncryptionKeyOwned::new(
         server_sig_key.clone(),
@@ -262,19 +262,19 @@ fn test_signcryption_keys(
 /// Also note that while these keys are currently not stored on disc, they are generated from a seedphrase
 /// for the custodians, so we still need to ensure that they do not change format unexpectedly!
 /// Hence we keep them versioned
-fn test_designcryption_keys(
+fn test_unsigncryption_keys(
     dir: &Path,
-    test: &UnifiedDesigncryptionKeyTest,
+    test: &UnifiedUnsigncryptionKeyTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: UnifiedDesigncryptionKeyOwned =
+    let original_versionized: UnifiedUnsigncryptionKeyOwned =
         load_and_unversionize(dir, test, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
     let (server_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
     let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
-    let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
     let (dec_key, enc_key) = encryption.keygen().unwrap();
-    let new_versionized = UnifiedDesigncryptionKeyOwned::new(
+    let new_versionized = UnifiedUnsigncryptionKeyOwned::new(
         dec_key,
         enc_key,
         server_verf_key,
@@ -284,7 +284,7 @@ fn test_designcryption_keys(
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid UnifiedDesigncryptionKeyOwned:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+                "Invalid UnifiedUnsigncryptionKeyOwned:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -299,16 +299,12 @@ fn test_backup_ciphertext(
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: BackupCiphertext = load_and_unversionize(dir, test, format)?;
+    let unified_cipher: UnifiedCipher =
+        load_and_unversionize_auxiliary(dir, test, &test.unified_cipher_filename, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
-    let mut ct = [0_u8; 32];
-    rng.fill_bytes(&mut ct);
-    let ciphertext: UnifiedCipher = UnifiedCipher {
-        cipher: ct.to_vec(),
-        encryption_type: EncryptionSchemeType::MlKem512,
-    };
     let backup_id: RequestId = RequestId::new_random(&mut rng);
     let new_versionized = BackupCiphertext {
-        ciphertext,
+        ciphertext: unified_cipher,
         priv_data_type: PrivDataType::SigningKey,
         backup_id,
     };
@@ -330,9 +326,11 @@ fn test_unified_cipher(
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
     let original_versionized: UnifiedCipher = load_and_unversionize(dir, test, format)?;
+    let kem: HybridKemCt =
+        load_and_unversionize_auxiliary(dir, test, &test.hybrid_kem_filename, format)?;
     let new_versionized = UnifiedCipher {
-        cipher: test.cipher.clone(),
-        encryption_type: EncryptionSchemeType::MlKem512,
+        cipher: kem,
+        pke_type: PkeSchemeType::MlKem512,
     };
     if original_versionized != new_versionized {
         Err(test.failure(
@@ -450,7 +448,7 @@ fn test_internal_custodian_context(
     for role_j in 1..=test.custodian_count {
         let cus_role = Role::indexed_from_one(role_j);
         let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_, cus_enc_key) = encryption.keygen().unwrap();
         let mut rnd = [0_u8; 32];
         rng.fill_bytes(&mut rnd);
@@ -737,8 +735,8 @@ impl TestedModule for KMS {
             Self::Metadata::UnifiedSigncryptionKeyOwned(test) => {
                 test_signcryption_keys(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::UnifiedDesigncryptionKeyOwned(test) => {
-                test_designcryption_keys(test_dir.as_ref(), test, format).into()
+            Self::Metadata::UnifiedUnsigncryptionKeyOwned(test) => {
+                test_unsigncryption_keys(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::BackupCiphertext(test) => {
                 test_backup_ciphertext(test_dir.as_ref(), test, format).into()

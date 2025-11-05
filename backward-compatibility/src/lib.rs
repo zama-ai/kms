@@ -407,18 +407,18 @@ impl TestType for UnifiedSigncryptionKeyTest {
 
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct UnifiedDesigncryptionKeyTest {
+pub struct UnifiedUnsigncryptionKeyTest {
     pub test_filename: Cow<'static, str>,
     pub state: u64,
 }
 
-impl TestType for UnifiedDesigncryptionKeyTest {
+impl TestType for UnifiedUnsigncryptionKeyTest {
     fn module(&self) -> String {
         KMS_MODULE_NAME.to_string()
     }
 
     fn target_type(&self) -> String {
-        "UnifiedDesigncryptionKeyOwned".to_string()
+        "UnifiedUnsigncryptionKeyOwned".to_string()
     }
 
     fn test_filename(&self) -> String {
@@ -430,6 +430,7 @@ impl TestType for UnifiedDesigncryptionKeyTest {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BackupCiphertextTest {
     pub test_filename: Cow<'static, str>,
+    pub unified_cipher_filename: Cow<'static, str>,
     pub state: u64,
 }
 
@@ -451,7 +452,8 @@ impl TestType for BackupCiphertextTest {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UnifiedCipherTest {
     pub test_filename: Cow<'static, str>,
-    pub cipher: Vec<u8>,
+    pub hybrid_kem_filename: Cow<'static, str>,
+    pub state: u64,
 }
 
 impl TestType for UnifiedCipherTest {
@@ -570,7 +572,7 @@ pub enum TestMetadataKMS {
     AppKeyBlob(AppKeyBlobTest),
     SigncryptionPayload(SigncryptionPayloadTest),
     UnifiedSigncryptionKeyOwned(UnifiedSigncryptionKeyTest),
-    UnifiedDesigncryptionKeyOwned(UnifiedDesigncryptionKeyTest),
+    UnifiedUnsigncryptionKeyOwned(UnifiedUnsigncryptionKeyTest),
     BackupCiphertext(BackupCiphertextTest),
     UnifiedCipher(UnifiedCipherTest),
     HybridKemCt(HybridKemCtTest),
