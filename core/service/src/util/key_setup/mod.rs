@@ -666,6 +666,7 @@ where
             subject_str.as_str(),
             tls_wildcard,
             sk.sk(),
+            None,
         )?;
 
         // Store public verification key
