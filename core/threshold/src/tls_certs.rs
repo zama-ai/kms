@@ -87,10 +87,10 @@ pub struct Cli {
 
     #[clap(
         long,
-        default_value = None,
-        help = "an optional context ID used in the certificate serial number, defaults to using the DEFAULT_MPC_CONTEXT.derive_session_id()"
+        help = "an optional session number used in the certificate, defaults to using the DEFAULT_MPC_CONTEXT.derive_session_id() \
+        for the certificate to be used in the MPC context, it must be the context ID converted to u128 using derive_session_id"
     )]
-    context_id: Option<u128>,
+    session_number: Option<u128>,
 }
 
 /// Validates if a user-specified CA name is valid.
@@ -343,7 +343,7 @@ pub async fn entry_point() -> anyhow::Result<()> {
     let mut all_certs = vec![];
     for ca_name in ca_set {
         let (ca_keypair, ca_cert, ca_cert_params) =
-            create_ca_cert(&ca_name, &is_ca, args.wildcard, args.context_id)?;
+            create_ca_cert(&ca_name, &is_ca, args.wildcard, args.session_number)?;
 
         write_certs_and_keys(
             &args.output_dir,
@@ -362,7 +362,7 @@ pub async fn entry_point() -> anyhow::Result<()> {
                 &ca_keypair,
                 &ca_cert_params,
                 args.wildcard,
-                args.context_id,
+                args.session_number,
             )?;
 
             // write all core keypairs and certificates to disk
@@ -542,17 +542,20 @@ mod tests {
         let ca_name = "p1.kms.zama.ai";
         let is_ca = IsCa::NoCa;
 
+        let extract_u128_serial = |cert: x509_parser::prelude::X509Certificate<'_>| -> u128 {
+            let mut u128_buf = [0u8; 16];
+            let n = u128_buf.len();
+            let serial_buf = cert.serial.to_bytes_be();
+            u128_buf[n - serial_buf.len()..].copy_from_slice(&serial_buf);
+            u128::from_be_bytes(u128_buf)
+        };
+
         {
             let (_ca_keypair, ca_cert, _ca_cert_params) =
                 create_ca_cert(ca_name, &is_ca, false, None).unwrap();
             let (_, cert) = x509_parser::parse_x509_certificate(ca_cert.der().as_ref()).unwrap();
 
-            let mut u128_buf = [0u8; 16];
-            let n = u128_buf.len();
-            let serial_buf = cert.serial.to_bytes_be();
-            u128_buf[n - serial_buf.len()..].copy_from_slice(&serial_buf);
-
-            let sid = u128::from_be_bytes(u128_buf);
+            let sid = extract_u128_serial(cert);
             assert_eq!(sid, super::DEFAULT_SESSION_ID_FROM_CONTEXT);
         }
         {
@@ -561,12 +564,7 @@ mod tests {
                 create_ca_cert(ca_name, &is_ca, false, Some(context_id)).unwrap();
             let (_, cert) = x509_parser::parse_x509_certificate(ca_cert.der().as_ref()).unwrap();
 
-            let mut u128_buf = [0u8; 16];
-            let n = u128_buf.len();
-            let serial_buf = cert.serial.to_bytes_be();
-            u128_buf[n - serial_buf.len()..].copy_from_slice(&serial_buf);
-
-            let sid = u128::from_be_bytes(u128_buf);
+            let sid = extract_u128_serial(cert);
             assert_eq!(sid, context_id);
         }
     }
