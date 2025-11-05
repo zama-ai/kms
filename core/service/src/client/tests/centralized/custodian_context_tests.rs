@@ -41,6 +41,7 @@ pub(crate) async fn new_custodian_context(
         threshold,
     )
     .await;
+
     // Check that the files are backed up
     assert!(backup_exists(1, test_path).await);
     let first_sig_keys = read_backup_files(
@@ -60,6 +61,7 @@ pub(crate) async fn new_custodian_context(
         threshold,
     )
     .await;
+
     let second_sig_keys = read_backup_files(
         1,
         test_path,

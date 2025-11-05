@@ -322,7 +322,6 @@ impl GrpcNetworkingManager {
 
     pub async fn make_healthcheck_session(
         &self,
-        context_id: SessionId,
         role_assignment: &RoleAssignment,
         my_role: Role,
     ) -> anyhow::Result<HealthCheckSession> {
@@ -354,7 +353,6 @@ impl GrpcNetworkingManager {
         Ok(HealthCheckSession::new(
             owner,
             my_role,
-            context_id,
             // We use the same timeout in HealthCheck than
             // in Sync MPC protocols
             self.conf.get_network_timeout(),
@@ -1120,5 +1118,4 @@ pub struct Tag {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct HealthTag {
     pub(crate) sender: MpcIdentity,
-    pub(crate) context_id: SessionId,
 }
