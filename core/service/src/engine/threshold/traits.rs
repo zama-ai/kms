@@ -58,6 +58,13 @@ pub trait KeyGenPreprocessor {
         &self,
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status>;
+
+    #[cfg(feature = "insecure")]
+    async fn partial_key_gen_preproc(
+        &self,
+        request: Request<PartialKeyGenPreprocRequest>,
+    ) -> Result<Response<Empty>, Status>;
+
     async fn get_result(
         &self,
         request: Request<RequestId>,

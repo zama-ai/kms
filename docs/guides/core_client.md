@@ -357,6 +357,8 @@ $ cargo run -- -f <path-to-toml-config-file> insecure-key-gen-result --request-i
 Upon success, both the command to request to generate a key _and_ the command to fetch the result, will save the key material produced by the core in the `object_folder` given in the configuration file.
 
 #### Preprocessing for Secure Key-Generation
+
+#### Secure Preprocessing
 Secure key-generation (see [below](#secure-key-generation)) requires a pre-processing step, that can be triggered via the following command:
 
 ```{bash}
@@ -370,6 +372,16 @@ $ cargo run -- -f <path-to-toml-config-file> preproc-key-gen-result --request-id
 ```
 
 Upon success, both the command to request to generate preprocessing material _and_ the command to fetch the result, will print the following: `preproc done - <REQUEST_ID>`.
+
+#### Partial (Insecure) Preprocessing
+Due to how long the preprocessing phase can take, we also provide a way to perform only partially the preprocessing phase.
+One can thus specify the percentage of the offline phase that should run, as well as whether at the end of this partial preprocessing we want to store a _dummy_ (__insecure__) preprocessing to be able to run the Key-Generaiton phase nonetheless.
+Partial preprocessing can be triggered via the following command:
+
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> partial-preproc-key-gen --percentage-offline <percentage_to_run> [--store-dummy-preprocessing]
+```
+
 
 #### Secure Key-Generation
 Analogously to above, _secure_ key-generation can be done using the following command:

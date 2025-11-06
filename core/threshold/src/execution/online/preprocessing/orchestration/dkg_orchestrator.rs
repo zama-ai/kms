@@ -54,7 +54,7 @@ pub struct PreprocessingOrchestrator<Z> {
     bit_progress_tracker: ProgressTracker,
     // For testing purposes, can set the percentage of offline phase
     // we actually want to run
-    #[cfg(feature = "choreographer")]
+    #[cfg(feature = "testing")]
     percentage_offline: usize,
 }
 
@@ -93,7 +93,7 @@ impl<Z> PreprocessingOrchestrator<Z> {
         get_num_tuniform_raw_bits_required(
             &self.params,
             self.keyset_config,
-            #[cfg(feature = "choreographer")]
+            #[cfg(feature = "testing")]
             self.percentage_offline,
         )
     }
@@ -102,7 +102,7 @@ impl<Z> PreprocessingOrchestrator<Z> {
         get_num_correlated_randomness_required(
             &self.params,
             self.keyset_config,
-            #[cfg(feature = "choreographer")]
+            #[cfg(feature = "testing")]
             self.percentage_offline,
         )
     }
@@ -127,7 +127,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
         let (num_bits, num_triples, num_randomness) = get_num_correlated_randomness_required(
             &params,
             keyset_config,
-            #[cfg(feature = "choreographer")]
+            #[cfg(feature = "testing")]
             100,
         );
 
@@ -144,12 +144,12 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z64, E
             triple_progress_tracker,
             random_progress_tracker,
             bit_progress_tracker,
-            #[cfg(feature = "choreographer")]
+            #[cfg(feature = "testing")]
             percentage_offline: 100,
         })
     }
 
-    #[cfg(feature = "choreographer")]
+    #[cfg(feature = "testing")]
     pub fn new_partial<F: PreprocessorFactory<EXTENSION_DEGREE> + ?Sized>(
         factory: &mut F,
         params: DKGParams,
@@ -204,7 +204,7 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
         let (num_bits, num_triples, num_randomness) = get_num_correlated_randomness_required(
             &params,
             keyset_config,
-            #[cfg(feature = "choreographer")]
+            #[cfg(feature = "testing")]
             100,
         );
 
@@ -221,12 +221,12 @@ impl<const EXTENSION_DEGREE: usize> PreprocessingOrchestrator<ResiduePoly<Z128, 
             triple_progress_tracker,
             random_progress_tracker,
             bit_progress_tracker,
-            #[cfg(feature = "choreographer")]
+            #[cfg(feature = "testing")]
             percentage_offline: 100,
         })
     }
 
-    #[cfg(feature = "choreographer")]
+    #[cfg(feature = "testing")]
     pub fn new_partial<F: PreprocessorFactory<EXTENSION_DEGREE> + ?Sized>(
         factory: &mut F,
         params: DKGParams,
@@ -330,7 +330,7 @@ where
         S: ParameterHandles + 'static,
         P: ProducerFactory<Z, S>,
     {
-        #[cfg(feature = "choreographer")]
+        #[cfg(feature = "testing")]
         tracing::Span::current().record("percentage_offline", self.percentage_offline);
 
         let party_id = sessions[0].my_role();
@@ -469,7 +469,7 @@ where
 fn get_num_correlated_randomness_required(
     params: &DKGParams,
     keyset_config: KeySetConfig,
-    #[cfg(feature = "choreographer")] percentage_offline: usize,
+    #[cfg(feature = "testing")] percentage_offline: usize,
 ) -> (usize, usize, usize) {
     let params_basics_handle = params.get_params_basics_handle();
 
@@ -477,7 +477,7 @@ fn get_num_correlated_randomness_required(
     let num_triples = params_basics_handle.total_triples_required(keyset_config) - num_bits;
     let num_randomness = params_basics_handle.total_randomness_required(keyset_config) - num_bits;
 
-    #[cfg(feature = "choreographer")]
+    #[cfg(feature = "testing")]
     {
         let (num_bits, num_triples, num_randomness) = if percentage_offline < 100 {
             (
@@ -496,7 +496,7 @@ fn get_num_correlated_randomness_required(
         );
         (num_bits, num_triples, num_randomness)
     }
-    #[cfg(not(feature = "choreographer"))]
+    #[cfg(not(feature = "testing"))]
     {
         tracing::info!(
             "About to create {} bits, {} triples and {} randomness",
@@ -512,7 +512,7 @@ fn get_num_correlated_randomness_required(
 fn get_num_tuniform_raw_bits_required(
     params: &DKGParams,
     keyset_config: KeySetConfig,
-    #[cfg(feature = "choreographer")] percentage_offline: usize,
+    #[cfg(feature = "testing")] percentage_offline: usize,
 ) -> (Vec<NoiseInfo>, usize) {
     let mut tuniform_productions = Vec::new();
     let params_basics_handle = params.get_params_basics_handle();
@@ -535,7 +535,7 @@ fn get_num_tuniform_raw_bits_required(
 
     //Required number of _raw_ bits
     let num_bits_required = params_basics_handle.num_raw_bits(keyset_config);
-    #[cfg(feature = "choreographer")]
+    #[cfg(feature = "testing")]
     {
         let num_bits_required = if percentage_offline < 100 {
             for tuniform_production in tuniform_productions.iter_mut() {
@@ -561,7 +561,7 @@ fn get_num_tuniform_raw_bits_required(
         );
         (tuniform_productions, num_bits_required)
     }
-    #[cfg(not(feature = "choreographer"))]
+    #[cfg(not(feature = "testing"))]
     {
         tracing::info!(
             "Bits will be split into {:?}, and {} raw bits.",
