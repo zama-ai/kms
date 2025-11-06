@@ -187,6 +187,16 @@ threshold_fhe_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "
     "testing",
 ] }
 ```
+Furthermore, you might need to temporarily remove the ` --locked` argument from the command compiling the new version in the `Makefile` in the root of the project. For example by changing:
+```
+generate-backward-compatibility-v0.13.0:
+	cd backward-compatibility/generate-v0.13.0 && cargo run --release --locked
+```
+to 
+```
+generate-backward-compatibility-v0.13.0:
+	cd backward-compatibility/generate-v0.13.0 && cargo run --release
+```
 
 ### In the backward-compatibility module
 

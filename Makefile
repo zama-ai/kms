@@ -62,13 +62,13 @@ clean-backward-compatibility-data:
 	rm -rf backward-compatibility/data/0_13_0
 
 generate-backward-compatibility-v0.11.0:
-	cd backward-compatibility/generate-v0.11.0 && cargo run --release
+	cd backward-compatibility/generate-v0.11.0 && cargo run --release --locked
 
 generate-backward-compatibility-v0.11.1:
-	cd backward-compatibility/generate-v0.11.1 && cargo run --release
+	cd backward-compatibility/generate-v0.11.1 && cargo run --release --locked
 
 generate-backward-compatibility-v0.13.0:
-	cd backward-compatibility/generate-v0.13.0 && cargo run --release
+	cd backward-compatibility/generate-v0.13.0 && cargo run --release --locked
 
 generate-backward-compatibility-all: clean-backward-compatibility-data generate-backward-compatibility-v0.11.0 generate-backward-compatibility-v0.11.1 generate-backward-compatibility-v0.13.0
 	@echo "✅ Generated backward compatibility data for all versions"
