@@ -249,20 +249,25 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 dummy::DummyPreprocessing, DKGPreprocessing,
             };
 
-            match handle_update {
-                Err(e) => Err(e),
-                Ok((sessions, _)) => {
-                    let preproc = Box::new(DummyPreprocessing::<ResiduePolyF4Z128>::new(
-                        0,
-                        sessions.first().ok_or_else(|| {
-                            tracing::error!(
-                                "Could not retrieve any session after partial preprocessing"
-                            )
-                        })?,
-                    ));
-                    let preproc: Box<dyn DKGPreprocessing<ResiduePolyF4Z128>> = preproc;
-                    Ok((sessions, Arc::new(Mutex::new(preproc))))
+            match (handle_update, partial_params) {
+                (Err(e), _) => Err(e),
+                (Ok((sessions, handle)), Some(partial_params)) => {
+                    if partial_params.store_dummy_preprocessing {
+                        let preproc = Box::new(DummyPreprocessing::<ResiduePolyF4Z128>::new(
+                            0,
+                            sessions.first().ok_or_else(|| {
+                                tracing::error!(
+                                    "Could not retrieve any session after partial preprocessing"
+                                )
+                            })?,
+                        ));
+                        let preproc: Box<dyn DKGPreprocessing<ResiduePolyF4Z128>> = preproc;
+                        Ok((sessions, Arc::new(Mutex::new(preproc))))
+                    } else {
+                        Ok((sessions, handle))
+                    }
                 }
+                (Ok((sessions, handle)), None) => Ok((sessions, handle)),
             }
         };
 
