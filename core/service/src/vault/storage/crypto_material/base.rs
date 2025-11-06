@@ -18,8 +18,8 @@ use crate::{
         keychain::KeychainProxy,
         storage::{
             delete_all_at_request_id, delete_at_request_id, delete_pk_at_request_id,
-            read_all_data_versioned, store_context_at_id, store_pk_at_request_id,
-            store_versioned_at_request_id, Storage,
+            read_all_data_versioned, read_context_at_id, store_context_at_id,
+            store_pk_at_request_id, store_versioned_at_request_id, Storage,
         },
         Vault,
     },
@@ -1016,6 +1016,34 @@ where
             is_threshold,
         );
         Ok(())
+    }
+
+    pub async fn read_context_info(
+        &self,
+        context_id: &ContextId,
+        is_threshold: bool,
+    ) -> anyhow::Result<ContextInfo> {
+        let priv_storage = self.private_storage.lock().await;
+        let res = read_context_at_id(&*priv_storage, context_id).await?;
+        log_storage_success(
+            context_id,
+            priv_storage.info(),
+            "context info",
+            false,
+            is_threshold,
+        );
+        Ok(res)
+    }
+
+    /// Read all context info entries from storage.
+    pub async fn read_all_context_info(&self) -> anyhow::Result<Vec<ContextInfo>> {
+        let priv_storage = self.private_storage.lock().await;
+
+        let context_map: HashMap<_, ContextInfo> =
+            read_all_data_versioned(&*priv_storage, &PrivDataType::ContextInfo.to_string())
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to read context info: {}", e))?;
+        Ok(context_map.into_values().collect())
     }
 }
 

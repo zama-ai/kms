@@ -56,6 +56,24 @@ impl SessionMaker {
     }
 
     #[cfg(test)]
+    pub(crate) async fn context_count(&self) -> usize {
+        self.context_map.read().await.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn empty_dummy_session(rng: Arc<Mutex<AesRng>>) -> Self {
+        let networking_manager = Arc::new(RwLock::new(
+            GrpcNetworkingManager::new(None, None, false).unwrap(),
+        ));
+        Self {
+            networking_manager,
+            context_map: Arc::new(RwLock::new(HashMap::new())),
+            epoch_map: Arc::new(RwLock::new(HashMap::new())),
+            rng,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn four_party_dummy_session(
         prss_setup_z128: Option<PRSSSetup<ResiduePolyF4Z128>>,
         prss_setup_z64: Option<PRSSSetup<ResiduePolyF4Z64>>,
@@ -145,7 +163,7 @@ impl SessionMaker {
         }
     }
 
-    pub(crate) async fn add_context(
+    async fn add_context(
         &self,
         context_id: ContextId,
         my_role: Role,
@@ -163,6 +181,7 @@ impl SessionMaker {
         );
     }
 
+    /// Adds information given by [ContextInfo] struct into the session maker.
     pub(crate) async fn add_context_info(
         &self,
         my_role: Role,
