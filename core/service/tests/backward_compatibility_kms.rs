@@ -470,28 +470,6 @@ fn test_hybrid_kem_ct(
 ) -> Result<TestSuccess, TestFailure> {
     // Load the serialized HybridKemCt
     let original_versionized: HybridKemCt = load_and_unversionize(dir, test, format)?;
-    // // Observe that what we want to test is that we can still correctly decrypt an old CT even if the encryption algorithm change
-    // let mut ct_buf = Vec::new();
-    // tfhe::safe_serialization::safe_serialize(&test.ciphertext, &mut ct_buf, SAFE_SER_SIZE_LIMIT)
-    //     .unwrap();
-    // let ct = UnifiedCipher {
-    //     cipher: ct_buf,
-    //     encryption_type: EncryptionSchemeType::MlKem512,
-    // };
-    // let mut rng = AesRng::seed_from_u64(test.state);
-    // let dec_key: UnifiedPrivateEncKey =
-    //     load_and_unversionize_auxiliary(dir, test, &test.dec_key_path, format)?;
-    // let res: storage::TestType = dec_key.decrypt(&ct).unwrap();
-    // if res.i != test.plaintext {
-    //     return Err(test.failure(
-    //         format!(
-    //             "Invalid HybridKemCt:\n Expected :\n{:?}\nGot:\n{:?}",
-    //             res.i, test.plaintext
-    //         ),
-    //         format,
-    //     ));
-    // }
-    // For completeness also ensure that format is the same, although not strictly needed
 
     let new_versionized = HybridKemCt {
         nonce: test.nonce,
