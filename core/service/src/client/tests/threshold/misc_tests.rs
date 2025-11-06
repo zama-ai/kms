@@ -47,6 +47,7 @@ async fn test_threshold_health_endpoint_availability() {
     let (dec_tasks, req_id) = crate::client::tests::common::send_dec_reqs(
         1,
         &TEST_THRESHOLD_KEY_ID,
+        None,
         &kms_clients,
         &mut internal_client,
     )
@@ -250,6 +251,7 @@ async fn test_threshold_shutdown() {
     let (tasks, _req_id) = crate::client::tests::common::send_dec_reqs(
         3,
         &TEST_THRESHOLD_KEY_ID,
+        None,
         &kms_clients,
         &mut internal_client,
     )

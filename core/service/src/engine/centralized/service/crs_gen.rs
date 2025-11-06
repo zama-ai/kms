@@ -12,7 +12,7 @@ use tokio::sync::{OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::CrsGenMetadata;
 use crate::engine::centralized::central_kms::{async_generate_crs, CentralizedKms};
 use crate::engine::traits::{BackupOperator, ContextManager};

@@ -94,15 +94,15 @@ kmsCore:
     initialIntervalMs: 100
     enableSysMetrics: true
     refreshIntervalMs: 5000
-    tokioWorkerThreads: 6
-    rayonNumThreads: 43
+    tokioWorkerThreads: 10
+    rayonNumThreads: 40
     # Threshold value is the number of corruptions that the protocol handles.
     # 1 for 4 parties, 4 for 13 parties
     thresholdValue: 4
     decCapacity: 10000
     minDecCache: 6000
     # Number of sessions to pre-process should be equal to number of vCPUs
-    numSessionsPreproc: 64
+    numSessionsPreproc: 100
     decryptionMode: "NoiseFloodSmall"
   # Add the following to enable nitro enclave:
   # Nitro enclave needs specific instance types

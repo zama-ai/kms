@@ -8,7 +8,6 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::runtime::party::Identity,
     networking::{grpc::HealthTag, Role},
-    session_id::SessionId,
 };
 
 pub struct HealthCheckSession {
@@ -17,7 +16,6 @@ pub struct HealthCheckSession {
     /// My own [`Role`]
     pub(crate) my_role: Role,
     pub(crate) timeout: Duration,
-    pub(crate) context_id: SessionId,
     pub(crate) connection_channels: HashMap<
         (Role, Identity),
         GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
@@ -36,7 +34,6 @@ impl HealthCheckSession {
     pub fn new(
         owner: Identity,
         my_role: Role,
-        context_id: SessionId,
         timeout: Duration,
         connection_channels: HashMap<
             (Role, Identity),
@@ -46,7 +43,6 @@ impl HealthCheckSession {
         Self {
             owner,
             my_role,
-            context_id,
             timeout,
             connection_channels,
         }
@@ -68,7 +64,6 @@ impl HealthCheckSession {
     pub async fn run_healthcheck(&self) -> anyhow::Result<HealthCheckResult> {
         let tag = HealthTag {
             sender: self.owner.mpc_identity(),
-            context_id: self.context_id,
         };
 
         let tag_serialized = bc2wrap::serialize(&tag)

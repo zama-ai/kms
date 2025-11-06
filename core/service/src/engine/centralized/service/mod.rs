@@ -23,7 +23,7 @@ pub use preprocessing::*;
 #[cfg(test)]
 mod tests {
     use crate::{
-        cryptography::internal_crypto_types::{gen_sig_keys, PublicSigKey},
+        cryptography::signatures::{gen_sig_keys, PublicSigKey},
         engine::centralized::central_kms::RealCentralizedKms,
         vault::storage::ram::RamStorage,
     };
