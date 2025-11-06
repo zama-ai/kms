@@ -14,12 +14,14 @@ use kms_0_12_2::consts::SAFE_SER_SIZE_LIMIT;
 use kms_0_12_2::cryptography::{
     encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher},
     hybrid_ml_kem::HybridKemCt,
-    signatures::{gen_sig_keys, SigningSchemeType},
+    signatures::{compute_eip712_signature, gen_sig_keys, SigningSchemeType},
     signcryption::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKeyOwned, UnifiedUnsigncryptionKeyOwned,
     },
 };
-use kms_0_12_2::engine::base::{safe_serialize_hash_element_versioned, KmsFheKeyHandles};
+use kms_0_12_2::engine::base::{
+    safe_serialize_hash_element_versioned, KeyGenMetadataInner, KmsFheKeyHandles,
+};
 use kms_0_12_2::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_12_2::engine::threshold::service::ThresholdFheKeys;
 use kms_0_12_2::util::key_setup::FhePublicKey;
@@ -27,6 +29,7 @@ use kms_0_12_2::vault::keychain::AppKeyBlob;
 use kms_grpc_0_12_2::{
     kms::v1::{CustodianContext, CustodianSetupMessage, TypedPlaintext},
     rpc_types::{PrivDataType, PubDataType, PublicKeyType, SignedPubDataHandleInternal},
+    solidity_types::KeygenVerification,
     RequestId,
 };
 use rand::{RngCore, SeedableRng};
@@ -74,13 +77,14 @@ use backward_compatibility::parameters::{
 };
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, HybridKemCtTest, InternalCustodianContextTest,
-    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest, KmsFheKeyHandlesTest,
-    OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest,
-    PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
-    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS,
-    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest, KeyGenMetadataTest,
+    KmsFheKeyHandlesTest, OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest,
+    PrivateSigKeyTest, PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest,
+    RecoveryValidationMaterialTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest,
+    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
+    UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
+    UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
+    KMS_MODULE_NAME,
 };
 
 use kms_0_12_2::cryptography::signcryption::SigncryptionPayload;
@@ -280,6 +284,13 @@ const THRESHOLD_FHE_KEYS_TEST: ThresholdFheKeysTest = ThresholdFheKeysTest {
 };
 
 // KMS test
+const KEY_GEN_METADATA_TEST: KeyGenMetadataTest = KeyGenMetadataTest {
+    test_filename: Cow::Borrowed("key_gen_metadata"),
+    legacy_filename: Cow::Borrowed("legacy_key_gen_metadata"),
+    state: 100,
+};
+
+// KMS test
 const APP_KEY_BLOB_TEST: AppKeyBlobTest = AppKeyBlobTest {
     test_filename: Cow::Borrowed("app_key_blob"),
     root_key_id: Cow::Borrowed("root_key_id"),
@@ -451,6 +462,65 @@ impl KmsV0_12 {
         store_versioned_test!(&app_key_blob, dir, &APP_KEY_BLOB_TEST.test_filename);
 
         TestMetadataKMS::AppKeyBlob(APP_KEY_BLOB_TEST)
+    }
+
+    fn gen_key_gen_metadata(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(KEY_GEN_METADATA_TEST.state);
+        let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+        // We need to serialize something that is versioned, so let us just use signing keys for the test
+        let (pretend_server_key, pretend_public_key) = gen_sig_keys(&mut rng);
+        let preprocessing_id: RequestId = RequestId::new_random(&mut rng);
+        let key_id: RequestId = RequestId::new_random(&mut rng);
+
+        let mut key_digest_map: HashMap<PubDataType, Vec<u8>> = HashMap::new();
+        let mut legacy: HashMap<PubDataType, SignedPubDataHandleInternal> = HashMap::new();
+        let server_key_digest =
+            safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
+        let pub_key_digest =
+            safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
+        let sol_type = KeygenVerification::new(
+            &preprocessing_id,
+            &key_id,
+            server_key_digest.clone(),
+            pub_key_digest.clone(),
+        );
+        key_digest_map.insert(PubDataType::ServerKey, server_key_digest);
+        key_digest_map.insert(PubDataType::PublicKey, pub_key_digest);
+        let external_signature =
+            compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
+
+        legacy.insert(
+            PubDataType::ServerKey,
+            SignedPubDataHandleInternal {
+                key_handle: key_id.to_string(),
+                signature: vec![1_u8; 65],
+                external_signature: external_signature.clone(),
+            },
+        );
+        legacy.insert(
+            PubDataType::PublicKey,
+            SignedPubDataHandleInternal {
+                key_handle: key_id.to_string(),
+                signature: vec![2_u8; 65],
+                external_signature: external_signature.clone(),
+            },
+        );
+
+        let current = KeyGenMetadataInner {
+            key_id,
+            preprocessing_id,
+            key_digest_map,
+            external_signature,
+        };
+        store_versioned_auxiliary!(
+            &legacy,
+            dir,
+            &KEY_GEN_METADATA_TEST.test_filename,
+            &KEY_GEN_METADATA_TEST.legacy_filename,
+        );
+        store_versioned_test!(&current, dir, &KEY_GEN_METADATA_TEST.test_filename);
+
+        TestMetadataKMS::KeyGenMetadata(KEY_GEN_METADATA_TEST)
     }
 
     #[allow(clippy::ptr_arg)]
@@ -1095,6 +1165,7 @@ impl KMSCoreVersion for V0_12 {
             KmsV0_12::gen_private_sig_key(&dir),
             KmsV0_12::gen_public_sig_key(&dir),
             KmsV0_12::gen_app_key_blob(&dir),
+            KmsV0_12::gen_key_gen_metadata(&dir),
             KmsV0_12::gen_typed_plaintext(&dir),
             KmsV0_12::gen_signcryption_payload(&dir),
             KmsV0_12::gen_signcryption_key(&dir),

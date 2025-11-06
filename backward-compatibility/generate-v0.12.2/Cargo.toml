@@ -18,9 +18,9 @@ bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev
 
 # This is a list of kms-core versions we will generate data for. This list will grow over time.
 # rev = "v0.12.2"  instead of branch
-kms_0_12_2 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "e924c61"} 
-kms_grpc_0_12_2 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "e924c61"} 
-threshold_fhe_0_12_2 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "e924c61", features = [
+kms_0_12_2 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "fb80b7ef7c3376866db4ca32b6f461d6ea70e202"} 
+kms_grpc_0_12_2 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "fb80b7ef7c3376866db4ca32b6f461d6ea70e202"} 
+threshold_fhe_0_12_2 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "fb80b7ef7c3376866db4ca32b6f461d6ea70e202", features = [
     "testing",
 ] }
 

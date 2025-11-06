@@ -13,15 +13,16 @@ use backward_compatibility::{
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
     AppKeyBlobTest, BackupCiphertextTest, HybridKemCtTest, InternalCustodianContextTest,
-    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest, KmsFheKeyHandlesTest,
-    OperatorBackupOutputTest, PrivateSigKeyTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
-    SigncryptionPayloadTest, TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
-    TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest,
+    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest, KeyGenMetadataTest,
+    KmsFheKeyHandlesTest, OperatorBackupOutputTest, PrivateSigKeyTest, PublicSigKeyTest,
+    RecoveryValidationMaterialTest, SigncryptionPayloadTest, TestMetadataKMS, TestType, Testcase,
+    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
 };
 use kms_grpc::{
     kms::v1::TypedPlaintext,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
+    solidity_types::KeygenVerification,
     RequestId,
 };
 use kms_lib::{
@@ -39,14 +40,19 @@ use kms_lib::{
     cryptography::{
         encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPublicEncKey},
         hybrid_ml_kem::HybridKemCt,
-        signatures::{gen_sig_keys, PrivateSigKey, PublicSigKey, SigningSchemeType},
+        signatures::{
+            compute_eip712_signature, gen_sig_keys, PrivateSigKey, PublicSigKey, SigningSchemeType,
+        },
         signcryption::{
             Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
             UnifiedUnsigncryptionKeyOwned,
         },
     },
     engine::{
-        base::{safe_serialize_hash_element_versioned, KeyGenMetadata, KmsFheKeyHandles},
+        base::{
+            safe_serialize_hash_element_versioned, KeyGenMetadata, KeyGenMetadataInner,
+            KmsFheKeyHandles,
+        },
         threshold::service::ThresholdFheKeys,
     },
     util::key_setup::FhePublicKey,
@@ -158,6 +164,85 @@ fn test_app_key_blob(
         Err(test.failure(
             format!(
                 "Invalid app key blob:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_key_gen_metadata(
+    dir: &Path,
+    test: &KeyGenMetadataTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: KeyGenMetadataInner = load_and_unversionize(dir, test, format)?;
+
+    let original_legacy: HashMap<PubDataType, SignedPubDataHandleInternal> =
+        load_and_unversionize_auxiliary(dir, test, &test.legacy_filename, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+    // We need to serialize something that is versioned, so let us just use signing keys for the test
+    let (pretend_server_key, pretend_public_key) = gen_sig_keys(&mut rng);
+    let preprocessing_id: RequestId = RequestId::new_random(&mut rng);
+    let key_id: RequestId = RequestId::new_random(&mut rng);
+
+    let mut key_digest_map: HashMap<PubDataType, Vec<u8>> = HashMap::new();
+    let mut new_legacy: HashMap<PubDataType, SignedPubDataHandleInternal> = HashMap::new();
+    let server_key_digest =
+        safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
+    let pub_key_digest =
+        safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
+    let sol_type = KeygenVerification::new(
+        &preprocessing_id,
+        &key_id,
+        server_key_digest.clone(),
+        pub_key_digest.clone(),
+    );
+    key_digest_map.insert(PubDataType::ServerKey, server_key_digest);
+    key_digest_map.insert(PubDataType::PublicKey, pub_key_digest);
+    let external_signature =
+        compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
+
+    new_legacy.insert(
+        PubDataType::ServerKey,
+        SignedPubDataHandleInternal {
+            key_handle: key_id.to_string(),
+            signature: vec![1_u8; 65],
+            external_signature: external_signature.clone(),
+        },
+    );
+    new_legacy.insert(
+        PubDataType::PublicKey,
+        SignedPubDataHandleInternal {
+            key_handle: key_id.to_string(),
+            signature: vec![2_u8; 65],
+            external_signature: external_signature.clone(),
+        },
+    );
+
+    let new_versionized = KeyGenMetadataInner {
+        key_id,
+        preprocessing_id,
+        key_digest_map,
+        external_signature,
+    };
+
+    if original_legacy != new_legacy {
+        return Err(test.failure(
+            format!(
+                "Invalid legacy key gen metadata:\n Expected :\n{original_legacy:?}\nGot:\n{new_legacy:?}"
+            ),
+            format,
+        ));
+    }
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid key gen metadata:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -797,6 +882,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::AppKeyBlob(test) => {
                 test_app_key_blob(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::KeyGenMetadata(test) => {
+                test_key_gen_metadata(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::SigncryptionPayload(test) => {
                 test_signcryption_payload(test_dir.as_ref(), test, format).into()
