@@ -13,16 +13,17 @@ bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev
 
 # NOTE: Some dependencies below are duplicated from ../Cargo.toml
 # This is intentional - these crates are excluded from the workspace for isolation.
-# Each generator may need different versions to match its target KMS version.
+# Each generator may need different versions to match its targegit KMS version.
 
 # This is a list of kms-core versions we will generate data for. This list will grow over time.
+# TODO observe that the commit is only temporary to make the new tests work and must be updated when cutting the real 0.13.0 release
 kms_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "fb80b7ef7c3376866db4ca32b6f461d6ea70e202"} 
 kms_grpc_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "fb80b7ef7c3376866db4ca32b6f461d6ea70e202"} 
 threshold_fhe_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "fb80b7ef7c3376866db4ca32b6f461d6ea70e202", features = [
     "testing",
 ] }
 
-# Dependencies for the 0.11 version
+# Dependencies for the 0.13 version
 # Note: these dependencies should match the versions used by the KMS and distributed decryption
 # modules as much as possible to avoid serialization differences
 tfhe_versionable_0_6 = { package = "tfhe-versionable", version = "=0.6.2" }
