@@ -122,6 +122,7 @@ pub fn encrypt_under_data_key(
 ) -> anyhow::Result<Vec<u8>> {
     let cipher = Aes256GcmSiv::new_from_slice(key)
         .map_err(|_| anyhow_error_and_log("Invalid data key length: must be 256 bits"))?;
+    #[allow(deprecated)]
     let nonce = Nonce::from_slice(iv);
     let auth_tag = cipher
         .encrypt_in_place_detached(nonce, b"", plaintext)
@@ -136,8 +137,10 @@ pub fn decrypt_under_data_key(
     iv: &[u8],
     auth_tag: &Vec<u8>,
 ) -> anyhow::Result<()> {
+    #[allow(deprecated)]
     let cipher = Aes256GcmSiv::new_from_slice(key)
         .map_err(|_| anyhow_error_and_log("Invalid data key length: must be 256 bits"))?;
+    #[allow(deprecated)]
     let nonce = Nonce::from_slice(iv);
     cipher
         .decrypt_in_place_detached(nonce, b"", ciphertext, auth_tag.as_slice().into())
