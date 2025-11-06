@@ -15,8 +15,9 @@ use aws_config::SdkConfig;
 use aws_sdk_kms::{
     primitives::Blob,
     types::{
-        DataKeySpec::Aes256 as Aes256Type, KeyEncryptionMechanism, KeySpec::Rsa4096 as Rsa4096Type,
-        KeyUsageType::EncryptDecrypt, RecipientInfo as KMSRecipientInfo,
+        DataKeySpec::Aes256 as Aes256Type, EncryptionAlgorithmSpec, KeyEncryptionMechanism,
+        KeySpec::Rsa4096 as Rsa4096Type, KeyUsageType::EncryptDecrypt,
+        RecipientInfo as KMSRecipientInfo,
     },
     Client as AWSKMSClient,
 };
@@ -176,6 +177,7 @@ impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> 
             .decrypt()
             .key_id(&envelope.root_key_id)
             .ciphertext_blob(Blob::new(envelope.data_key_blob.clone()))
+            .encryption_algorithm(EncryptionAlgorithmSpec::RsaesOaepSha256)
             .recipient(
                 KMSRecipientInfo::builder()
                     .key_encryption_algorithm(KeyEncryptionMechanism::RsaesOaepSha256)
