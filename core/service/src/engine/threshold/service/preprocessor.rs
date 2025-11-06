@@ -81,6 +81,9 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         epoch_id: Option<EpochId>,
         domain: &alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
+        #[cfg(feature = "insecure")] percentage_offline: Option<
+            kms_grpc::kms::v1::PartialKeyGenPreprocParams,
+        >,
     ) -> anyhow::Result<()> {
         // TODO(zama-ai/kms-internal/issues/2758)
         // remove the default context when all of context is ready
@@ -133,7 +136,19 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 //Start the metric timer, it will end on drop
                 let _timer = timer.start();
                  tokio::select! {
-                    res = Self::preprocessing_background(sk, &request_id, &domain_clone, small_sessions, bucket_store, my_identity, dkg_params, keyset_config, factory, permit) => {
+                    res = Self::preprocessing_background(
+                        sk,
+                        &request_id,
+                        &domain_clone,
+                        small_sessions,
+                        bucket_store,
+                        my_identity,
+                        dkg_params,
+                        keyset_config,
+                        factory,
+                        permit,
+                        #[cfg(feature = "insecure")] percentage_offline
+                    ) => {
                         if res.is_err() {
                             metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, ERR_USER_PREPROC_FAILED);
                         }
@@ -167,11 +182,37 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         keyset_config: ddec_keyset_config::KeySetConfig,
         factory: Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
         permit: OwnedSemaphorePermit,
+        #[cfg(feature = "insecure")] partial_params: Option<
+            kms_grpc::kms::v1::PartialKeyGenPreprocParams,
+        >,
     ) -> Result<(), ()> {
         // dropped at the end of the function
         let _permit = permit;
 
         // Create the orchestrator
+        // !! If insecure we allow generating partial preprocessing !!
+        #[cfg(feature = "insecure")]
+        let orchestrator_result = {
+            let mut factory_guard = factory.lock().await;
+            let factory = factory_guard.as_mut();
+            match partial_params {
+                Some(partial_params) => {
+                    PreprocessingOrchestrator::<ResiduePolyF4Z128>::new_partial(
+                        factory,
+                        params,
+                        keyset_config,
+                        partial_params.percentage_offline as usize,
+                    )
+                }
+                None => PreprocessingOrchestrator::<ResiduePolyF4Z128>::new(
+                    factory,
+                    params,
+                    keyset_config,
+                ),
+            }
+        };
+
+        #[cfg(not(feature = "insecure"))]
         let orchestrator_result = {
             let mut factory_guard = factory.lock().await;
             let factory = factory_guard.as_mut();
@@ -187,7 +228,9 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                     .orchestrate_dkg_processing_small_session::<P>(sessions)
                     .await
                 {
-                    Ok((_, preproc_handle)) => Ok(Arc::new(Mutex::new(preproc_handle))),
+                    Ok((sessions, preproc_handle)) => {
+                        Ok((sessions, Arc::new(Mutex::new(preproc_handle))))
+                    }
                     Err(error) => {
                         tracing::error!("Failed during preprocessing orchestration: {}", error);
                         Err(error.to_string())
@@ -197,6 +240,34 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             Err(err) => {
                 tracing::error!("Failed to create preprocessing orchestrator: {}", err);
                 Err(err.to_string())
+            }
+        };
+
+        #[cfg(feature = "insecure")]
+        let handle_update = {
+            use threshold_fhe::execution::online::preprocessing::{
+                dummy::DummyPreprocessing, DKGPreprocessing,
+            };
+
+            match (handle_update, partial_params) {
+                (Err(e), _) => Err(e),
+                (Ok((sessions, handle)), Some(partial_params)) => {
+                    if partial_params.store_dummy_preprocessing {
+                        let preproc = Box::new(DummyPreprocessing::<ResiduePolyF4Z128>::new(
+                            0,
+                            sessions.first().ok_or_else(|| {
+                                tracing::error!(
+                                    "Could not retrieve any session after partial preprocessing"
+                                )
+                            })?,
+                        ));
+                        let preproc: Box<dyn DKGPreprocessing<ResiduePolyF4Z128>> = preproc;
+                        Ok((sessions, Arc::new(Mutex::new(preproc))))
+                    } else {
+                        Ok((sessions, handle))
+                    }
+                }
+                (Ok((sessions, handle)), None) => Ok((sessions, handle)),
             }
         };
 
@@ -211,6 +282,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
 
         let mut guarded_meta_store = bucket_store.write().await;
 
+        let handle_update = handle_update.map(|(_sessions, inner)| inner);
         // We cannot do much if updating the storage fails at this point...
         let meta_store_write = guarded_meta_store.update(
             req_id,
@@ -240,6 +312,68 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         }
         Ok(())
     }
+
+    async fn inner_key_gen_preproc(
+        &self,
+        request: KeyGenPreprocRequest,
+        #[cfg(feature = "insecure")] partial_params: Option<
+            kms_grpc::kms::v1::PartialKeyGenPreprocParams,
+        >,
+    ) -> Result<Response<Empty>, Status> {
+        let domain = optional_protobuf_to_alloy_domain(request.domain.as_ref())?;
+        let request_id = parse_optional_proto_request_id(
+            &request.request_id,
+            RequestIdParsingErr::PreprocRequest,
+        )?;
+
+        //Retrieve the DKG parameters
+        let dkg_params = retrieve_parameters(Some(request.params))?;
+
+        //Ensure there's no entry in preproc buckets for that request_id
+        if self.preproc_buckets.read().await.exists(&request_id) {
+            return Err(tonic::Status::already_exists(format!(
+                "Preprocessing for request ID {request_id} already exists"
+            )));
+        }
+
+        let keyset_config = preproc_proto_to_keyset_config(&request.keyset_config)?;
+
+        // If the entry did not exist before, start the preproc
+        // NOTE: We currently consider an existing entry is NOT an error
+        //
+        // We don't increment the error counter here but rather in launch_dkg_preproc
+        let ctx_id = request
+            .context_id
+            .map(|x| x.try_into())
+            .transpose()
+            .map_err(|e: kms_grpc::IdentifierError| {
+                tonic::Status::new(tonic::Code::Internal, e.to_string())
+            })?;
+
+        let epoch_id = request.epoch_id.map(|x| x.try_into()).transpose().map_err(
+            |e: kms_grpc::IdentifierError| tonic::Status::new(tonic::Code::Internal, e.to_string()),
+        )?;
+
+        // Check for resource exhaustion once all the other checks are ok
+        // because resource exhaustion can be recovered by sending the exact same request
+        // but the errors above cannot be tried again.
+        let permit = self.rate_limiter.start_preproc().await?;
+
+        tracing::info!("Starting preproc generation for Request ID {}", request_id);
+        ok_or_tonic_abort(
+            self.launch_dkg_preproc(
+                dkg_params,
+                keyset_config,
+                request_id,
+                ctx_id,
+                epoch_id,
+                &domain,
+                permit,
+            #[cfg(feature = "insecure")] partial_params
+        ).await,
+            format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
+        Ok(Response::new(Empty {}))
+    }
 }
 
 #[tonic::async_trait]
@@ -250,53 +384,25 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         &self,
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
+        self.inner_key_gen_preproc(
+            request.into_inner(),
+            #[cfg(feature = "insecure")]
+            None,
+        )
+        .await
+    }
+
+    #[cfg(feature = "insecure")]
+    async fn partial_key_gen_preproc(
+        &self,
+        request: Request<kms_grpc::kms::v1::PartialKeyGenPreprocRequest>,
+    ) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
-        let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
-        let request_id = parse_optional_proto_request_id(
-            &inner.request_id,
-            RequestIdParsingErr::PreprocRequest,
-        )?;
-
-        //Retrieve the DKG parameters
-        let dkg_params = retrieve_parameters(Some(inner.params))?;
-
-        //Ensure there's no entry in preproc buckets for that request_id
-        if self.preproc_buckets.read().await.exists(&request_id) {
-            return Err(tonic::Status::already_exists(format!(
-                "Preprocessing for request ID {request_id} already exists"
-            )));
-        }
-
-        let keyset_config = preproc_proto_to_keyset_config(&inner.keyset_config)?;
-
-        // If the entry did not exist before, start the preproc
-        // NOTE: We currently consider an existing entry is NOT an error
-        //
-        // We don't increment the error counter here but rather in launch_dkg_preproc
-        let ctx_id = inner.context_id.map(|x| x.try_into()).transpose().map_err(
-            |e: kms_grpc::IdentifierError| tonic::Status::new(tonic::Code::Internal, e.to_string()),
-        )?;
-
-        let epoch_id = inner.epoch_id.map(|x| x.try_into()).transpose().map_err(
-            |e: kms_grpc::IdentifierError| tonic::Status::new(tonic::Code::Internal, e.to_string()),
-        )?;
-
-        // Check for resource exhaustion once all the other checks are ok
-        // because resource exhaustion can be recovered by sending the exact same request
-        // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_preproc().await?;
-
-        tracing::info!("Starting preproc generation for Request ID {}", request_id);
-        ok_or_tonic_abort(self.launch_dkg_preproc(
-                dkg_params,
-                keyset_config,
-                request_id,
-                ctx_id,
-                epoch_id,
-                &domain,
-                permit).await,
-            format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
-        Ok(Response::new(Empty {}))
+        let base_request = inner.base_request.ok_or_else(|| {
+            tonic::Status::new(tonic::Code::Aborted, "Missing preproc base_request")
+        })?;
+        self.inner_key_gen_preproc(base_request, inner.partial_params)
+            .await
     }
 
     async fn get_result(
