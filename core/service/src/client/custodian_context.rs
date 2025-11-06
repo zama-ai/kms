@@ -4,7 +4,6 @@ use crate::{
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
     client::client_wasm::Client,
-    cryptography::{backup_pke::BackupPrivateKey, internal_crypto_types::PrivateSigKey},
 };
 use aes_prng::AesRng;
 use kms_grpc::{
@@ -46,8 +45,7 @@ fn custodian_setup_msgs(
     for cur_idx in 1..=amount_custodians {
         let role = Role::indexed_from_one(cur_idx);
         let mnemonic = seed_phrase_from_rng(rng).expect("Failed to generate seed phrase");
-        let custodian: Custodian<PrivateSigKey, BackupPrivateKey> =
-            custodian_from_seed_phrase(&mnemonic, role)?;
+        let custodian: Custodian = custodian_from_seed_phrase(&mnemonic, role)?;
         let setup_msg = custodian.generate_setup_message(rng, format!("Custodian-{cur_idx}"))?;
         setup_msgs.push(setup_msg.try_into()?);
         mnemonics.push(mnemonic);

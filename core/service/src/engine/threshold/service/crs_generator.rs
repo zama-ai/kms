@@ -33,7 +33,7 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     consts::DEFAULT_MPC_CONTEXT,
-    cryptography::internal_crypto_types::PrivateSigKey,
+    cryptography::signatures::PrivateSigKey,
     engine::{
         base::{compute_info_crs, BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS},
         threshold::{service::session::ImmutableSessionMaker, traits::CrsGenerator},
@@ -478,9 +478,8 @@ mod tests {
     };
 
     use crate::{
-        consts::DURATION_WAITING_ON_RESULT_SECONDS,
-        cryptography::internal_crypto_types::gen_sig_keys, dummy_domain,
-        engine::threshold::service::session::SessionMaker,
+        consts::DURATION_WAITING_ON_RESULT_SECONDS, cryptography::signatures::gen_sig_keys,
+        dummy_domain, engine::threshold::service::session::SessionMaker,
     };
 
     use super::*;

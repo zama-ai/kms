@@ -36,7 +36,7 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
-    cryptography::internal_crypto_types::PrivateSigKey,
+    cryptography::signatures::PrivateSigKey,
     engine::{
         base::{compute_external_signature_preprocessing, retrieve_parameters},
         keyset_configuration::preproc_proto_to_keyset_config,
@@ -336,6 +336,9 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
+    use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::FheParameter,
@@ -350,14 +353,6 @@ mod tests {
             DummyProducerFactory, FailingProducerFactory,
         },
     };
-
-    use crate::{
-        cryptography::internal_crypto_types::gen_sig_keys, dummy_domain,
-        engine::threshold::service::session::SessionMaker,
-    };
-
-    use super::*;
-    use crate::engine::base::BaseKmsStruct;
 
     impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
         fn init_test(sk: Arc<PrivateSigKey>, session_maker: ImmutableSessionMaker) -> Self {

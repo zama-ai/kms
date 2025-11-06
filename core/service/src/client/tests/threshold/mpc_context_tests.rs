@@ -15,7 +15,7 @@ use crate::{
         },
     },
     consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID_4P},
-    cryptography::internal_crypto_types::PublicSigKey,
+    cryptography::signatures::PublicSigKey,
     util::{
         key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
         rate_limiter::RateLimiterConfig,

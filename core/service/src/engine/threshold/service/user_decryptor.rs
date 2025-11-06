@@ -56,7 +56,7 @@ use crate::{
     consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
     cryptography::{
         error::CryptographyError,
-        internal_crypto_types::{SigncryptFHEPlaintext, UnifiedSigncryptionKey},
+        signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
     },
     engine::{
         base::{
@@ -178,7 +178,7 @@ impl<
         rng: impl CryptoRng + RngCore + Send + 'static,
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
-        signcryption_key: Arc<UnifiedSigncryptionKey>,
+        signcryption_key: Arc<UnifiedSigncryptionKeyOwned>,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
@@ -316,7 +316,7 @@ impl<
             let (partial_signcryption, packing_factor) = match pdec {
                 Ok((pdec_serialized, packing_factor, time)) => {
                     let rng = rng.clone();
-                    let signcryption_key_clone = signcryption_key.clone();
+                    let signcryption_key_clone = Arc::clone(&signcryption_key);
                     let link_clone = link.clone();
 
                     let enc_res = spawn_compute_bound(move || {
@@ -361,6 +361,7 @@ impl<
             .threshold(&context_id)
             .await
             .map_err(|e| anyhow::anyhow!("Could not get threshold: {e}"))?;
+        #[allow(deprecated)]
         let payload = UserDecryptionResponsePayload {
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
@@ -521,7 +522,6 @@ impl<
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let rng = self.base_kms.new_rng().await;
-        let sig_key = Arc::clone(&self.base_kms.sig_key);
 
         self.crypto_storage
             .refresh_threshold_fhe_keys(&key_id)
@@ -555,6 +555,11 @@ impl<
             ),
         ];
 
+        let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
+            (*self.base_kms.sig_key).clone(),
+            client_enc_key,
+            client_address.to_vec(),
+        ));
         // the result of the computation is tracked the tracker
         let session_maker = self.session_maker.clone();
         self.tracker.spawn(
@@ -563,11 +568,6 @@ impl<
                 let _timer = timer;
                 // explicitly move the rate limiter context
                 let _permit = permit;
-                let signcryption_key = Arc::new(UnifiedSigncryptionKey::new(
-                    (*sig_key).clone(),
-                    client_enc_key.clone(),
-                    client_address.to_vec(),
-                ));
 
                 // Note that we'll hold a read lock for some time
                 // but this should be ok since write locks
@@ -584,7 +584,7 @@ impl<
                             epoch_id,
                             rng,
                             typed_ciphertexts,
-                            link.clone(),
+                            link,
                             signcryption_key,
                             k,
                             dec_mode,
@@ -673,8 +673,9 @@ mod tests {
 
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
-        cryptography::internal_crypto_types::{
-            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
+        cryptography::{
+            encryption::{Encryption, PkeScheme, PkeSchemeType},
+            signatures::gen_sig_keys,
         },
         dummy_domain,
         engine::{
@@ -728,7 +729,7 @@ mod tests {
     }
 
     fn make_dummy_enc_pk(rng: &mut AesRng) -> Vec<u8> {
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, rng);
         let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
         let mut enc_key_buf = Vec::new();
         // The key is freshly generated, so we can safely unwrap the serialization

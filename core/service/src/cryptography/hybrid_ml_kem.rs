@@ -40,9 +40,10 @@ pub enum HybridKemCtVersioned {
 // but serde cannot derive Serialize/Deserialize for arrays
 // larger than 32. So we have this [HybridKemCt] type where
 // [kem_ct] is a Vec.
-#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Versionize)]
 #[versionize(HybridKemCtVersioned)]
-// TODO(#2782) implement a new version along with LegacySerialization to allow safe serialization of newer encryptions and only keep unversioned bincode for signcryption
+// WARNING: This type is currently using a legacy approach to serialization using bincode. When updating please also update the serialization to safe serialization
+// In connection with this the trait `LegacySerialization` must also be implemented and used!
 pub struct HybridKemCt {
     pub nonce: [u8; NONCE_LEN],
     // normally [kem_ct] is an array, but serde cannot serialize large arrays
@@ -138,12 +139,56 @@ pub(crate) fn dec<C: KemCore>(
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use crate::cryptography::encryption::{PrivateEncKey, PublicEncKey};
+    use crate::cryptography::hybrid_ml_kem;
     use ml_kem::EncodedSizeUser;
     use proptest::prelude::*;
     use rand::rngs::OsRng;
-
     const SERIALIZED_SIZE_LIMIT: u64 = 1024 * 1024;
+
+    // Test is purely here as a reference and sanity check.
+    // That it passes comes directly from the way serde works
+    #[test]
+    fn validate_consistent_cipher_encoding() {
+        #[derive(Clone, Serialize, Deserialize, Debug)]
+        struct Cipher(pub hybrid_ml_kem::HybridKemCt);
+
+        let ct = hybrid_ml_kem::HybridKemCt {
+            nonce: [0_u8; NONCE_LEN],
+            kem_ct: vec![1u8; 100],
+            payload_ct: vec![2u8; 200],
+        };
+
+        let plain_encoding = bc2wrap::serialize(&Cipher(ct.clone())).unwrap();
+        let wrapped_encoding = bc2wrap::serialize(&Cipher(ct.clone())).unwrap();
+        assert_eq!(plain_encoding, wrapped_encoding);
+        let decoded_wrapping = bc2wrap::deserialize::<Cipher>(&plain_encoding).unwrap();
+        let decoded_unwrapped = bc2wrap::deserialize::<HybridKemCt>(&wrapped_encoding).unwrap();
+        assert_eq!(decoded_wrapping.0.nonce, decoded_unwrapped.nonce);
+        assert_eq!(decoded_wrapping.0.kem_ct, decoded_unwrapped.kem_ct);
+        assert_eq!(decoded_wrapping.0.payload_ct, decoded_unwrapped.payload_ct);
+    }
+
+    #[test]
+    fn test_pke_serialize_size() {
+        let mut rng = OsRng;
+        let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng);
+        let pk_buf = bc2wrap::serialize(&PublicEncKey::<ml_kem::MlKem512>(pk)).unwrap();
+        let sk_buf = bc2wrap::serialize(&PrivateEncKey::<ml_kem::MlKem512>(sk)).unwrap();
+        // there is extra 8 bytes in the serialization to encode the length
+        // see https://github.com/bincode-org/bincode/blob/trunk/docs/spec.md#linear-collections-vec-arrays-etc
+
+        assert_eq!(sk_buf.len(), ML_KEM_512_SK_LEN + 8);
+        assert_eq!(pk_buf.len(), ML_KEM_512_PK_LENGTH + 8);
+        // deserialize and test if encryption still works.
+        let pk2: PublicEncKey<ml_kem::MlKem512> = bc2wrap::deserialize(&pk_buf).unwrap();
+        let sk2: PrivateEncKey<ml_kem::MlKem512> = bc2wrap::deserialize(&sk_buf).unwrap();
+
+        let msg = b"four legs good, two legs better";
+        let ct = enc::<ml_kem::MlKem512, _>(&mut rng, msg, &pk2.0).unwrap();
+        let pt = dec::<ml_kem::MlKem512>(ct, &sk2.0).unwrap();
+        assert_eq!(msg.to_vec(), pt);
+    }
 
     proptest! {
         #[test]
@@ -182,7 +227,7 @@ mod tests {
         }
 
         #[test]
-        fn pke_wrong_ct(msg: Vec<u8>) {
+        fn pke_wrong_ct_hybrid(msg: Vec<u8>) {
             let mut rng = OsRng;
             let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng);
             let mut ct = enc::<ml_kem::MlKem512, _>(&mut rng, &msg, &pk).unwrap();

@@ -1,14 +1,12 @@
 cfg_if::cfg_if! {
     if #[cfg(feature = "insecure")] {
         use crate::backup::custodian::Custodian;
-        use crate::backup::operator::InternalRecoveryRequest;
         use crate::backup::seed_phrase::custodian_from_seed_phrase;
         use crate::client::tests::threshold::crs_gen_tests::run_crs;
         use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
         use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
         use crate::consts::SAFE_SER_SIZE_LIMIT;
-        use crate::cryptography::backup_pke::BackupPrivateKey;
-        use crate::cryptography::internal_crypto_types::PrivateSigKey;
+        use crate::cryptography::signatures::PrivateSigKey;
         use crate::engine::base::INSECURE_PREPROCESSING_ID;
         use crate::util::key_setup::test_tools::purge_priv;
         use crate::util::key_setup::test_tools::EncryptionConfig;
@@ -30,13 +28,14 @@ cfg_if::cfg_if! {
 
     }
 }
+use crate::backup::BackupCiphertext;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 use crate::consts::SIGNING_KEY_ID;
+use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::util::key_setup::test_tools::{purge_backup, read_backup_files};
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,
     client::tests::threshold::common::threshold_handles_custodian_backup,
-    cryptography::{backup_pke::BackupCiphertext, internal_crypto_types::WrappedDKGParams},
     engine::base::derive_request_id,
 };
 use kms_grpc::{kms::v1::FheParameter, rpc_types::PrivDataType, RequestId};
@@ -394,10 +393,10 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 async fn test_decrypt_after_recovery_threshold_negative() {
     decrypt_after_recovery_negative(5, 2).await;
     assert!(logs_contain(
-        "Could not verify recovery validation material signature for custodian role 1"
+        "Could not validate signcryption for custodian role 1"
     ));
     assert!(logs_contain(
-        "Could not verify recovery validation material signature for custodian role 3"
+        "Could not validate signcryption for custodian role 3"
     ));
 }
 
@@ -482,16 +481,24 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
         cur_payload
             .custodian_recovery_outputs
             .get_mut(0)
-            .unwrap()
-            // Flip a bit in the 11th byte
-            .ciphertext[11] ^= 1;
+            .map(|inner| {
+                inner
+                    .backup_output
+                    .as_mut()
+                    // Flip a bit in the 11th byte
+                    .map(|back_out| back_out.signcryption[11] ^= 1)
+            });
         // Then in custodian 3
         cur_payload
             .custodian_recovery_outputs
             .get_mut(2)
-            .unwrap()
-            // Flip a bit in the 7th byte
-            .ciphertext[7] ^= 1;
+            .map(|inner| {
+                inner
+                    .backup_output
+                    .as_mut()
+                    // Flip a bit in the 7th byte
+                    .map(|back_out| back_out.signcryption[7] ^= 1)
+            });
     }
 
     let recovery_output = run_custodian_backup_recovery(&kms_clients, &cus_out).await;
@@ -622,7 +629,7 @@ async fn emulate_custodian(
         outputs_for_operators.insert(idx, Vec::new());
     }
     for (cur_idx, cur_mnemonic) in mnemonics.iter().enumerate() {
-        let custodian: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian: Custodian =
             custodian_from_seed_phrase(cur_mnemonic, Role::indexed_from_zero(cur_idx)).unwrap();
         for cur_recovery_req in &recovery_requests {
             let pub_storage = FileStorage::new(
@@ -640,19 +647,16 @@ async fn emulate_custodian(
             )
             .await
             .unwrap();
-            let internal_recovery_req: InternalRecoveryRequest =
-                cur_recovery_req.to_owned().try_into().unwrap();
-            assert!(internal_recovery_req.is_valid(&cur_verf_key).unwrap());
             let cur_cus_reenc = cur_recovery_req.cts.get(&((cur_idx + 1) as u64)).unwrap();
             let cur_enc_key = safe_deserialize(
-                std::io::Cursor::new(&cur_recovery_req.enc_key),
+                std::io::Cursor::new(&cur_recovery_req.ephem_op_enc_key),
                 SAFE_SER_SIZE_LIMIT,
             )
             .unwrap();
             let cur_out = custodian
                 .verify_reencrypt(
                     rng,
-                    &cur_cus_reenc.to_owned().into(),
+                    &cur_cus_reenc.to_owned().try_into().unwrap(),
                     &cur_verf_key,
                     &cur_enc_key,
                     backup_id.clone().try_into().unwrap(),

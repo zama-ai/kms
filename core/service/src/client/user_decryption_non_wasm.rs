@@ -1,10 +1,8 @@
 use crate::client::client_wasm::Client;
-use crate::cryptography::internal_crypto_types::Encryption;
-use crate::cryptography::internal_crypto_types::EncryptionScheme;
-use crate::cryptography::internal_crypto_types::EncryptionSchemeType;
+use crate::cryptography::encryption::{
+    Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+};
 use crate::cryptography::internal_crypto_types::LegacySerialization;
-use crate::cryptography::internal_crypto_types::UnifiedPrivateEncKey;
-use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::kms::v1::{TypedCiphertext, UserDecryptionRequest};
@@ -29,7 +27,7 @@ impl Client {
         typed_ciphertexts: Vec<TypedCiphertext>,
         request_id: &RequestId,
         key_id: &RequestId,
-        encryption_scheme: EncryptionSchemeType,
+        encryption_scheme: PkeSchemeType,
     ) -> anyhow::Result<(
         UserDecryptionRequest,
         UnifiedPublicEncKey,

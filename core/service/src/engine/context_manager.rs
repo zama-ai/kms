@@ -2,8 +2,10 @@ use crate::anyhow_error_and_log;
 use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{Operator, RecoveryRequestPayload, RecoveryValidationMaterial};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::backup_pke::{self, BackupPrivateKey, BackupPublicKey};
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::cryptography::encryption::{
+    Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+};
+use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::session::SessionMaker;
@@ -129,13 +131,14 @@ where
 
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric keys for the operator to use to encrypt the backup
-        let (backup_enc_key, backup_priv_key) = backup_pke::keygen(&mut rng)?;
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (backup_dec_key, backup_enc_key) = enc.keygen()?;
         let inner_context = InternalCustodianContext::new(context, backup_enc_key.clone())?;
         let (recovery_request_payload, commitments) = gen_recovery_request_payload(
             &mut rng,
             &self.base_kms.sig_key,
             backup_enc_key.clone(),
-            backup_priv_key,
+            backup_dec_key,
             &inner_context,
             self.my_role,
         )
@@ -505,8 +508,8 @@ where
 async fn gen_recovery_request_payload(
     rng: &mut AesRng,
     sig_key: &PrivateSigKey,
-    backup_enc_key: BackupPublicKey,
-    backup_priv_key: BackupPrivateKey,
+    backup_enc_key: UnifiedPublicEncKey,
+    backup_priv_key: UnifiedPrivateEncKey,
     custodian_context: &InternalCustodianContext,
     my_role: Role,
 ) -> anyhow::Result<(RecoveryRequestPayload, RecoveryValidationMaterial)> {
@@ -528,7 +531,7 @@ async fn gen_recovery_request_payload(
         &mut serialized_priv_key,
         SAFE_SER_SIZE_LIMIT,
     )?;
-    let (ct_map, commitments) = operator.secret_share_and_encrypt(
+    let (ct_map, commitments) = operator.secret_share_and_signcrypt(
         rng,
         &serialized_priv_key,
         custodian_context.context_id,
@@ -555,7 +558,11 @@ mod tests {
             operator::InternalRecoveryRequest,
             seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
         },
-        cryptography::internal_crypto_types::{gen_sig_keys, PublicSigKey},
+        cryptography::{
+            encryption::{Encryption, PkeScheme, PkeSchemeType},
+            signatures::{gen_sig_keys, PublicSigKey},
+            signcryption::UnifiedUnsigncryptionKey,
+        },
         engine::context::{NodeInfo, SoftwareVersion},
         util::meta_store::MetaStore,
         vault::storage::{
@@ -690,14 +697,15 @@ mod tests {
     async fn test_gen_recovery_request_payloads() {
         let mut rng = AesRng::seed_from_u64(40);
         let backup_id = RequestId::new_random(&mut rng);
-        let (verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let (ephemeral_enc_key, ephemeral_dec_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let mnemonic = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
-        let custodian1: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian1: Custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(1)).unwrap();
-        let custodian2: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian2: Custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(2)).unwrap();
-        let custodian3: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian3: Custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(3)).unwrap();
         let setup_msg_1 = custodian1
             .generate_setup_message(&mut rng, "Custodian-1".to_string())
@@ -719,12 +727,12 @@ mod tests {
             threshold: 1,
         };
         let internal_context =
-            InternalCustodianContext::new(context, ephemeral_enc_key.clone()).unwrap();
+            InternalCustodianContext::new(context, backup_enc_key.clone()).unwrap();
         let (recovery_request_payload, _commitments) = gen_recovery_request_payload(
             &mut rng,
-            &sig_key,
-            ephemeral_enc_key.clone(),
-            ephemeral_dec_key,
+            &server_sig_key,
+            backup_enc_key.clone(),
+            backup_dec_key.clone(),
             &internal_context,
             Role::indexed_from_one(1),
         )
@@ -735,9 +743,17 @@ mod tests {
             recovery_request_payload.cts,
             backup_id,
             Role::indexed_from_one(1),
-            Some(&verf_key),
         )
         .unwrap();
-        assert!(internal_rec_req.is_valid(&verf_key).unwrap());
+        let custodian_id = custodian1.verification_key().verf_key_id();
+        let unsign_key = UnifiedUnsigncryptionKey::new(
+            custodian1.public_dec_key(),
+            custodian1.public_enc_key(),
+            &server_verf_key,
+            &custodian_id,
+        );
+        assert!(internal_rec_req
+            .is_valid(Role::indexed_from_one(1), &unsign_key)
+            .unwrap());
     }
 }

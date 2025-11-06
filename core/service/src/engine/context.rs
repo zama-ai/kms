@@ -8,7 +8,7 @@ use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::execution::runtime::party::Role;
 
 use crate::{
-    cryptography::internal_crypto_types::PublicSigKey,
+    cryptography::signatures::PublicSigKey,
     engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     vault::storage::{crypto_material::get_core_signing_key, StorageReader},
 };
@@ -198,7 +198,7 @@ impl ContextInfo {
     pub async fn verify<S: StorageReader>(&self, storage: &S) -> anyhow::Result<Role> {
         // Check the signing key is consistent with the private key in storage.
         let signing_key = get_core_signing_key(storage).await?;
-        let verification_key = signing_key.sk().verifying_key();
+        let verification_key = signing_key.verf_key();
 
         let my_node = self
             .kms_nodes
@@ -206,7 +206,7 @@ impl ContextInfo {
             .find(|node| {
                 node.verification_key
                     .as_ref()
-                    .map(|inner| inner.pk() == verification_key)
+                    .map(|inner| inner == &verification_key)
                     .unwrap_or(false)
             })
             .ok_or_else(|| {
@@ -342,7 +342,7 @@ mod tests {
     use kms_grpc::rpc_types::PrivDataType;
 
     use crate::{
-        cryptography::internal_crypto_types::gen_sig_keys,
+        cryptography::signatures::gen_sig_keys,
         vault::storage::{ram::RamStorage, store_versioned_at_request_id},
     };
 

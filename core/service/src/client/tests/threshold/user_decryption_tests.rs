@@ -12,8 +12,8 @@ use crate::consts::TEST_PARAM;
 #[cfg(feature = "slow_tests")]
 use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
-use crate::cryptography::internal_crypto_types::{EncryptionSchemeType, PrivateSigKey};
-use crate::cryptography::internal_crypto_types::{UnifiedPrivateEncKey, UnifiedPublicEncKey};
+use crate::cryptography::encryption::{PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey};
+use crate::cryptography::signatures::{internal_sign, PrivateSigKey};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
@@ -494,9 +494,9 @@ pub(crate) async fn user_decryption_threshold(
                 external_handle: j.to_be_bytes().to_vec(),
             }];
             let encryption_scheme = if legacy {
-                EncryptionSchemeType::MlKem1024
+                PkeSchemeType::MlKem1024
             } else {
-                EncryptionSchemeType::MlKem512
+                PkeSchemeType::MlKem512
             };
             let (req, enc_pk, enc_sk) = internal_client
                 .user_decryption_request(
@@ -732,7 +732,7 @@ async fn process_batch_threshold_user_decryption(
                                 payload.party_id -= 1;
                             }
                             let sig_payload_vec = bc2wrap::serialize(&payload).unwrap();
-                            let sig = crate::cryptography::signcryption::internal_sign(
+                            let sig = internal_sign(
                                 &DSEP_USER_DECRYPTION,
                                 &sig_payload_vec,
                                 &server_private_keys[&orig_party_id],

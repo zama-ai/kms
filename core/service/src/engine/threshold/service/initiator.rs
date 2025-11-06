@@ -238,7 +238,7 @@ mod tests {
     use crate::{
         client::test_tools::{self},
         consts::PRSS_INIT_REQ_ID,
-        cryptography::internal_crypto_types::gen_sig_keys,
+        cryptography::signatures::gen_sig_keys,
         engine::base::BaseKmsStruct,
         util::key_setup::test_tools::purge,
         vault::storage::{file::FileStorage, ram, StorageType},
