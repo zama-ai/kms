@@ -16,7 +16,7 @@ members = [
 # backward-compatibility/                - Test loading/execution logic with current dependencies
 # backward-compatibility/generate-v0.11.0 - Data generation for v0.11.0 with old KMS version dependencies
 # backward-compatibility/generate-v0.11.1 - Data generation for v0.11.1 with old KMS version dependencies
-# backward-compatibility/generate-v0.12.2 - Data generation for v0.12.2 with old KMS version dependencies
+# backward-compatibility/generate-v0.13.0 - Data generation for v0.13.0 with old KMS version dependencies
 #
 # The generate crates need to import old KMS versions (e.g., v0.11.0, v0.11.1) which conflict with the
 # current workspace dependencies, creating name conflicts as described in:
@@ -25,14 +25,14 @@ members = [
 # Note: It's not possible to only generate the lock file using specific features as the resolver
 # builds the graph as if all features are enabled:
 # https://doc.rust-lang.org/cargo/reference/resolver.html#features
-exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11.0", "backward-compatibility/generate-v0.11.1", "backward-compatibility/generate-v0.12.2"]
+exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11.0", "backward-compatibility/generate-v0.11.1", "backward-compatibility/generate-v0.13.0"]
 
 [workspace.package]
 authors = ["Zama"]
 publish = true
 edition = "2021"
 license = "BSD-3-Clause-Clear"
-version = "0.12.2"
+version = "0.13.0"
 repository = "https://github.com/zama-ai/kms"
 description = "Key Management System for the Zama Protocol."
 

@@ -173,17 +173,17 @@ impl KMSCoreVersion for V0_9 {
 If the type you are testing is already present in the releases already being tested for backwards compatibility (i.e. there is an appropriate `data_0_XX_X.rs` file and associated `Cargo.toml` that checks out a specific version of the KMS) then proceed to the next section. If the type is new and does not exist in any release already, then start [here](#Adding-a-new-kms-core-release) instead, before proceeding to the next section. 
 Furthermore, be aware that in this situation you will likely end up in a catch-22 situation when you want to test a LFS release of the KMS that does not already exist. To circumvent this you can use a specific commit from the KMS repo instead of a release. For example by replacing this part in the toml file:
 ```
-kms_0_12_2 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "v0.12.2"} 
-kms_grpc_0_12_2 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "v0.12.2"} 
-threshold_fhe_0_12_2 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "v0.12.2", features = [
+kms_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "v0.13.0"} 
+kms_grpc_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "v0.13.0"} 
+threshold_fhe_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "v0.13.0", features = [
     "testing",
 ] }
 ```
 with this
 ```
-kms_0_12_2 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "e924c61"} 
-kms_grpc_0_12_2 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "e924c61"} 
-threshold_fhe_0_12_2 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "e924c61", features = [
+kms_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "e924c61"} 
+kms_grpc_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "e924c61"} 
+threshold_fhe_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "e924c61", features = [
     "testing",
 ] }
 ```
