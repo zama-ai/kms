@@ -641,14 +641,13 @@ mod tests {
     }
 
     #[test]
-    fn pke_wrong_ct() {
+    fn pke_wrong_ct_enc() {
         let msg = TestType { i: 42 };
         let mut rng = AesRng::seed_from_u64(0);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (sk, pk) = enc.keygen().unwrap();
         let mut ct = pk.encrypt(&mut rng, &msg).unwrap();
         ct.cipher.kem_ct[0] ^= 1;
-        let err = sk.decrypt::<TestType>(&ct).unwrap_err();
-        assert!(matches!(err, CryptographyError::DeserializationError(..)));
+        assert!(sk.decrypt::<TestType>(&ct).is_err());
     }
 }

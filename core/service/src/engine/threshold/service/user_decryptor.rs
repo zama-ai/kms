@@ -8,7 +8,7 @@ use std::{
 // === External Crates ===
 use anyhow::anyhow;
 use kms_grpc::{
-    identifiers::ContextId,
+    identifiers::{ContextId, EpochId},
     kms::v1::{
         self, Empty, TypedCiphertext, TypedSigncryptedCiphertext, UserDecryptionRequest,
         UserDecryptionResponse, UserDecryptionResponsePayload,
@@ -53,7 +53,7 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    consts::DEFAULT_MPC_CONTEXT,
+    consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
     cryptography::{
         error::CryptographyError,
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
@@ -63,7 +63,7 @@ use crate::{
             compute_external_user_decrypt_signature, deserialize_to_low_level, BaseKmsStruct,
             UserDecryptCallValues,
         },
-        threshold::{service::session::SessionPreparerGetter, traits::UserDecryptor},
+        threshold::{service::session::ImmutableSessionMaker, traits::UserDecryptor},
         traits::BaseKms,
         validation::{
             parse_proto_request_id, validate_user_decrypt_req, RequestIdParsingErr,
@@ -79,7 +79,7 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::{session::SessionPreparer, ThresholdFheKeys};
+use super::ThresholdFheKeys;
 
 #[tonic::async_trait]
 pub trait NoiseFloodPartialDecryptor: Send + Sync {
@@ -146,7 +146,7 @@ pub struct RealUserDecryptor<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub user_decrypt_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
-    pub session_preparer_getter: SessionPreparerGetter,
+    pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
     pub decryption_mode: DecryptionMode,
@@ -172,8 +172,9 @@ impl<
     #[allow(clippy::too_many_arguments)]
     async fn inner_user_decrypt(
         req_id: &RequestId,
-        session_prep: Arc<SessionPreparer>,
+        session_maker: ImmutableSessionMaker,
         context_id: ContextId,
+        epoch_id: EpochId,
         rng: impl CryptoRng + RngCore + Send + 'static,
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
@@ -223,8 +224,8 @@ impl<
             let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
                     let session = ok_or_tonic_abort(
-                        session_prep
-                            .make_small_async_session_z128(session_id, context_id)
+                        session_maker
+                            .make_small_async_session_z128(session_id, context_id, epoch_id)
                             .await,
                         "Could not prepare ddec data for noiseflood decryption".to_string(),
                     )?;
@@ -267,8 +268,8 @@ impl<
                 }
                 DecryptionMode::BitDecSmall => {
                     let mut session = ok_or_tonic_abort(
-                        session_prep
-                            .make_small_async_session_z64(session_id, context_id)
+                        session_maker
+                            .make_small_async_session_z64(session_id, context_id, epoch_id)
                             .await,
                         "Could not prepare ddec data for bitdec decryption".to_string(),
                     )?;
@@ -352,6 +353,14 @@ impl<
             drop(inner_timer);
         }
 
+        let my_role = session_maker
+            .my_role(&context_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("Could not get my role: {e}"))?;
+        let threshold = session_maker
+            .threshold(&context_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("Could not get threshold: {e}"))?;
         #[allow(deprecated)]
         let payload = UserDecryptionResponsePayload {
             signcrypted_ciphertexts: all_signcrypted_cts,
@@ -360,8 +369,8 @@ impl<
                 .signing_key
                 .verf_key()
                 .get_serialized_verf_key()?,
-            party_id: session_prep.my_role()?.one_based() as u32,
-            degree: session_prep.threshold()? as u32,
+            party_id: my_role.one_based() as u32,
+            degree: threshold as u32,
         };
 
         // NOTE: extra_data is not used in the current implementation
@@ -381,7 +390,7 @@ impl<
         base_kms: BaseKmsStruct,
         pub_storage: PubS,
         priv_storage: PrivS,
-        session_preparer_getter: SessionPreparerGetter,
+        session_maker: ImmutableSessionMaker,
     ) -> Self {
         let crypto_storage = ThresholdCryptoMaterialStorage::new(
             pub_storage,
@@ -398,7 +407,7 @@ impl<
             base_kms,
             crypto_storage,
             user_decrypt_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-            session_preparer_getter,
+            session_maker,
             tracker,
             rate_limiter,
             decryption_mode: DecryptionMode::NoiseFloodSmall,
@@ -454,23 +463,22 @@ impl<
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
             None => *DEFAULT_MPC_CONTEXT,
         };
-        let session_preparer = Arc::new(
-            self.session_preparer_getter
-                .get(&context_id)
-                .await
-                .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?,
-        );
+        let epoch_id: EpochId = match &inner.epoch_id {
+            Some(c) => c
+                .try_into()
+                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
+            None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap since `PRSS_INIT_REQ_ID` is valid
+        };
+        let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
+            tonic::Status::not_found(format!(
+                "Could not get my role for context {context_id}: {e}"
+            ))
+        })?;
 
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
             .time_operation(OP_USER_DECRYPT_REQUEST)
-            .tag(
-                TAG_PARTY_ID,
-                session_preparer
-                    .my_role()
-                    .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?
-                    .to_string(),
-            )
+            .tag(TAG_PARTY_ID, my_role.to_string())
             .start();
 
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) = {
@@ -536,11 +544,10 @@ impl<
             )?;
         }
 
-        let prep = Arc::clone(&session_preparer);
         let dec_mode = self.decryption_mode;
 
         let metric_tags = vec![
-            (TAG_PARTY_ID, prep.my_role_string_unchecked()),
+            (TAG_PARTY_ID, my_role.to_string()),
             (TAG_KEY_ID, key_id.as_str()),
             (
                 TAG_PUBLIC_DECRYPTION_KIND,
@@ -554,6 +561,7 @@ impl<
             client_address.to_vec(),
         ));
         // the result of the computation is tracked the tracker
+        let session_maker = self.session_maker.clone();
         self.tracker.spawn(
             async move {
                 // Capture the timer, it is stopped when it's dropped
@@ -571,8 +579,9 @@ impl<
                     Ok(k) => {
                         Self::inner_user_decrypt(
                             &req_id,
-                            prep,
+                            session_maker,
                             context_id,
+                            epoch_id,
                             rng,
                             typed_ciphertexts,
                             link,
@@ -671,7 +680,7 @@ mod tests {
         dummy_domain,
         engine::{
             base::{compute_info_standard_keygen, DSEP_PUBDATA_KEY},
-            threshold::service::session::SessionPreparerManager,
+            threshold::service::session::SessionMaker,
         },
         vault::storage::ram,
     };
@@ -711,11 +720,11 @@ mod tests {
     impl RealUserDecryptor<ram::RamStorage, ram::RamStorage, DummyNoiseFloodPartialDecryptor> {
         pub async fn init_test_dummy_decryptor(
             base_kms: BaseKmsStruct,
-            session_preparer_getter: SessionPreparerGetter,
+            session_maker: ImmutableSessionMaker,
         ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(base_kms, pub_storage, priv_storage, session_preparer_getter).await
+            Self::init_test(base_kms, pub_storage, priv_storage, session_maker).await
         }
     }
 
@@ -739,30 +748,18 @@ mod tests {
         let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
-        let session_preparer_manager = SessionPreparerManager::new_test_session();
 
-        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
+        let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
 
-        let session_preparer = SessionPreparer::new_test_session(
-            base_kms.new_instance().await,
+        let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,
+            base_kms.rng.clone(),
         );
-        session_preparer_manager
-            .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
-            .await;
-        let user_decryptor = RealUserDecryptor::init_test_dummy_decryptor(
-            base_kms,
-            session_preparer_manager.make_getter(),
-        )
-        .await;
+        let user_decryptor =
+            RealUserDecryptor::init_test_dummy_decryptor(base_kms, session_maker.make_immutable())
+                .await;
 
         let key_id = RequestId::new_random(rng);
 

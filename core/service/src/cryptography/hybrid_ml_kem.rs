@@ -227,7 +227,7 @@ mod tests {
         }
 
         #[test]
-        fn pke_wrong_ct(msg: Vec<u8>) {
+        fn pke_wrong_ct_hybrid(msg: Vec<u8>) {
             let mut rng = OsRng;
             let (sk, pk) = keygen::<ml_kem::MlKem512, _>(&mut rng);
             let mut ct = enc::<ml_kem::MlKem512, _>(&mut rng, &msg, &pk).unwrap();
