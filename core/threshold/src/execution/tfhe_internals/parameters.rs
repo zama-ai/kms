@@ -1993,51 +1993,6 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     }),
 });
 
-// Old set of parameters from before we had dedicated pk parameters and PKSK
-pub const OLD_PARAMS_P32_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
-    regular_params: DKGParamsRegular {
-        dkg_mode: DkgMode::Z128,
-        sec: 128,
-        ciphertext_parameters: ClassicPBSParameters {
-            lwe_dimension: LweDimension(1024),
-            glwe_dimension: GlweDimension(1),
-            polynomial_size: PolynomialSize(2048),
-            lwe_noise_distribution: DynamicDistribution::new_t_uniform(41),
-            glwe_noise_distribution: DynamicDistribution::new_t_uniform(14),
-            pbs_base_log: DecompositionBaseLog(21),
-            pbs_level: DecompositionLevelCount(1),
-            ks_base_log: DecompositionBaseLog(6),
-            ks_level: DecompositionLevelCount(3),
-            message_modulus: MessageModulus(4),
-            carry_modulus: CarryModulus(4),
-            max_noise_level: MaxNoiseLevel::from_msg_carry_modulus(
-                MessageModulus(4),
-                CarryModulus(4),
-            ),
-            log2_p_fail: -80., //most likely not true, but these should be deprecated anyway
-            ciphertext_modulus: CiphertextModulus::new_native(),
-            encryption_key_choice: EncryptionKeyChoice::Small,
-            modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
-        },
-        compression_decompression_parameters: None,
-        dedicated_compact_public_key_parameters: None,
-        secret_key_deviations: None,
-        cpk_re_randomization_ksk_params: None,
-    },
-    sns_params: NoiseSquashingParameters::Classic(NoiseSquashingClassicParameters {
-        glwe_dimension: GlweDimension(2),
-        glwe_noise_distribution: DynamicDistribution::new_t_uniform(24),
-        polynomial_size: PolynomialSize(2048),
-        decomp_base_log: DecompositionBaseLog(24),
-        decomp_level_count: DecompositionLevelCount(3),
-        ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-        modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
-        message_modulus: MessageModulus(4),
-        carry_modulus: CarryModulus(4),
-    }),
-    sns_compression_params: None,
-});
-
 pub const NIST_PARAMS_P8_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
     dkg_mode: DkgMode::Z128,
     sec: 128,
@@ -2048,7 +2003,7 @@ pub const NIST_PARAMS_P8_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128,
     )),
     compression_decompression_parameters: None,
-    secret_key_deviations: None,
+    secret_key_deviations: Some(SecretKeyDeviations{ log2_failure_proba: -80, pmax: 0.798 }),
     cpk_re_randomization_ksk_params: Some(super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128)
 };
 
@@ -2071,7 +2026,7 @@ pub const NIST_PARAMS_P32_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128,
     )),
     compression_decompression_parameters: None,
-    secret_key_deviations: None,
+    secret_key_deviations: Some(SecretKeyDeviations{ log2_failure_proba: -80, pmax: 0.8044 }),
     cpk_re_randomization_ksk_params: Some(super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128)
 };
 
@@ -2095,7 +2050,7 @@ pub const NIST_PARAMS_P8_INTERNAL_FGLWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128,
     )),
     compression_decompression_parameters: None,
-    secret_key_deviations: None,
+    secret_key_deviations: Some(SecretKeyDeviations{ log2_failure_proba: -80, pmax: 0.5022 }),
     cpk_re_randomization_ksk_params: Some(super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128)
 };
 
@@ -2120,7 +2075,7 @@ pub const NIST_PARAMS_P32_INTERNAL_FGLWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
     )),
     compression_decompression_parameters: None,
-    secret_key_deviations: None,
+    secret_key_deviations: Some(SecretKeyDeviations{ log2_failure_proba: -80, pmax: 0.7499 }),
     cpk_re_randomization_ksk_params: Some(super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128)
 };
 
