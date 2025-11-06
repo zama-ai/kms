@@ -1,6 +1,6 @@
-//! Data generation for kms-core v0.12.2
+//! Data generation for kms-core v0.13.0
 //! This file provides the code that is used to generate all the data to serialize and versionize
-//! for kms-core v0.12.2
+//! for kms-core v0.13.0
 use aes_prng::AesRng;
 use kms_0_13_0::backup::custodian::{
     Custodian, CustodianSetupMessagePayload, InternalCustodianContext,
@@ -1146,7 +1146,7 @@ impl KmsGrpcV0_13 {
 }
 
 impl KMSCoreVersion for V0_13 {
-    const VERSION_NUMBER: &'static str = "0.12.2";
+    const VERSION_NUMBER: &'static str = "0.13.0";
 
     // Without this, some keys will be generated differently every time we run the script
     fn seed_prng(seed: u128) {

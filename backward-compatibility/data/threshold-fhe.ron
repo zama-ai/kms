@@ -60,7 +60,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.12.2",
+        kms_core_version_min: "0.13.0",
         kms_core_module: "threshold-fhe",
         metadata: PRSSSetup((
             test_filename: "prss_setup_rpoly_64",
@@ -71,7 +71,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.12.2",
+        kms_core_version_min: "0.13.0",
         kms_core_module: "threshold-fhe",
         metadata: PRSSSetup((
             test_filename: "prss_setup_rpoly_128",
@@ -82,7 +82,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.12.2",
+        kms_core_version_min: "0.13.0",
         kms_core_module: "threshold-fhe",
         metadata: PrfKey((
             test_filename: "prf_key",

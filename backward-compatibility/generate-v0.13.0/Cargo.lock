@@ -1577,7 +1577,7 @@ dependencies = [
 
 [[package]]
 name = "backward-compatibility"
-version = "0.13.0"
+version = "0.13.0-rc.0"
 dependencies = [
  "bincode 1.3.3",
  "ron 0.10.1",
@@ -1593,7 +1593,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "backward-compatibility",
- "bc2wrap 2.0.1 (git+https://github.com/zama-ai/kms.git?rev=v0.12.2)",
+ "bc2wrap",
  "bincode 2.0.1",
  "kms",
  "kms-grpc",
@@ -1656,15 +1656,6 @@ checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 name = "bc2wrap"
 version = "2.0.1"
 source = "git+https://github.com/zama-ai/kms.git?rev=fb80b7ef7c3376866db4ca32b6f461d6ea70e202#fb80b7ef7c3376866db4ca32b6f461d6ea70e202"
-dependencies = [
- "bincode 2.0.1",
- "serde",
-]
-
-[[package]]
-name = "bc2wrap"
-version = "2.0.1"
-source = "git+https://github.com/zama-ai/kms.git?rev=v0.12.2#8a406de72886a469eef71ed590c114775f6ce653"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -3788,7 +3779,7 @@ dependencies = [
  "aws-smithy-runtime",
  "aws-smithy-runtime-api",
  "aws-smithy-types",
- "bc2wrap 2.0.1 (git+https://github.com/zama-ai/kms.git?rev=fb80b7ef7c3376866db4ca32b6f461d6ea70e202)",
+ "bc2wrap",
  "bincode 2.0.1",
  "bip39",
  "cbc",
@@ -3851,7 +3842,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "anyhow",
- "bc2wrap 2.0.1 (git+https://github.com/zama-ai/kms.git?rev=fb80b7ef7c3376866db4ca32b6f461d6ea70e202)",
+ "bc2wrap",
  "cfg-if",
  "hex",
  "prost",
@@ -6661,7 +6652,7 @@ dependencies = [
  "async-trait",
  "attestation-doc-validation",
  "backoff",
- "bc2wrap 2.0.1 (git+https://github.com/zama-ai/kms.git?rev=fb80b7ef7c3376866db4ca32b6f461d6ea70e202)",
+ "bc2wrap",
  "bincode 2.0.1",
  "cfg-if",
  "clap",

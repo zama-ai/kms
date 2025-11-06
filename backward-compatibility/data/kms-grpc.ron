@@ -57,7 +57,7 @@
         )),
     ),
     (
-        kms_core_version_min: "0.12.2",
+        kms_core_version_min: "0.13.0",
         kms_core_module: "kms-grpc",
         metadata: SignedPubDataHandleInternal((
             test_filename: "signed_pub_data_handle_internal",
@@ -68,21 +68,21 @@
         )),
     ),
     (
-        kms_core_version_min: "0.12.2",
+        kms_core_version_min: "0.13.0",
         kms_core_module: "kms-grpc",
         metadata: PublicKeyType((
             test_filename: "public_key_type",
         )),
     ),
     (
-        kms_core_version_min: "0.12.2",
+        kms_core_version_min: "0.13.0",
         kms_core_module: "kms-grpc",
         metadata: PubDataType((
             test_filename: "pub_data_type",
         )),
     ),
     (
-        kms_core_version_min: "0.12.2",
+        kms_core_version_min: "0.13.0",
         kms_core_module: "kms-grpc",
         metadata: PrivDataType((
             test_filename: "priv_data_type",

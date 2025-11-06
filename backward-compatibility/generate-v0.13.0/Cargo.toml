@@ -9,8 +9,7 @@ license = "BSD-3-Clause-Clear"
 [dependencies]
 # Import the base backward-compatibility crate for shared types and utilities
 backward-compatibility = { path = ".." }
-# Import bc2wrap from v0.12.2 to match exact serialization behavior
-bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "v0.12.2" }
+bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "fb80b7ef7c3376866db4ca32b6f461d6ea70e202" }
 
 # NOTE: Some dependencies below are duplicated from ../Cargo.toml
 # This is intentional - these crates are excluded from the workspace for isolation.
