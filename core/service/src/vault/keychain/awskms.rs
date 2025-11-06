@@ -53,24 +53,35 @@ const AWS_KMS_ENVELOPED_DATA_VERSION: isize = 2;
 // AWS KMS is expected to produce this version of the recipient substructure
 const AWS_KMS_ENVELOPED_DATA_RECIPIENT_VERSION: isize = 2;
 
-pub trait RootKey {}
+pub trait RootKey {
+    fn enc_algo_spec(&self) -> EncryptionAlgorithmSpec;
+}
 
 #[derive(Debug, Clone)]
 pub struct Symm {
     pub key_id: String,
+    pub enc_algo_spec: EncryptionAlgorithmSpec,
 }
 
 impl Symm {
     pub fn new(key_id: String) -> Self {
-        Self { key_id }
+        Self {
+            key_id,
+            enc_algo_spec: EncryptionAlgorithmSpec::SymmetricDefault,
+        }
     }
 }
 
-impl RootKey for Symm {}
+impl RootKey for Symm {
+    fn enc_algo_spec(&self) -> EncryptionAlgorithmSpec {
+        self.enc_algo_spec.clone()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Asymm {
     pub key_id: String,
+    pub enc_algo_spec: EncryptionAlgorithmSpec,
     pub pk: RsaPublicKey,
 }
 
@@ -115,12 +126,17 @@ impl Asymm {
 
         Ok(Self {
             key_id: root_key_id,
+            enc_algo_spec: EncryptionAlgorithmSpec::RsaesOaepSha256,
             pk,
         })
     }
 }
 
-impl RootKey for Asymm {}
+impl RootKey for Asymm {
+    fn enc_algo_spec(&self) -> EncryptionAlgorithmSpec {
+        self.enc_algo_spec.clone()
+    }
+}
 
 /// Keeps together everything needed for running a chain of trust for working
 /// with application secret keys (such as FHE private keys). The root key
@@ -177,7 +193,7 @@ impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> 
             .decrypt()
             .key_id(&envelope.root_key_id)
             .ciphertext_blob(Blob::new(envelope.data_key_blob.clone()))
-            .encryption_algorithm(EncryptionAlgorithmSpec::RsaesOaepSha256)
+            .encryption_algorithm(self.root_key.enc_algo_spec())
             .recipient(
                 KMSRecipientInfo::builder()
                     .key_encryption_algorithm(KeyEncryptionMechanism::RsaesOaepSha256)
