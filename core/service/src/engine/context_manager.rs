@@ -100,10 +100,9 @@ where
             tonic::Status::invalid_argument("new_context is required in NewCustodianContextRequest")
         })?;
         tracing::info!(
-            "Custodian context addition starting with context_id={:?}, threshold={}, previous_context_id={:?}, from {} custodians",
+            "Custodian context addition starting with context_id={:?}, threshold={} from {} custodians",
             inner.context_id,
             inner.threshold,
-            inner.previous_context_id,
             inner.custodian_nodes.len()
         );
         ok_or_tonic_abort(
@@ -723,7 +722,6 @@ mod tests {
                 setup_msg_3.try_into().unwrap(),
             ],
             context_id: Some(backup_id.into()),
-            previous_context_id: None,
             threshold: 1,
         };
         let internal_context =

@@ -822,7 +822,6 @@ mod kms_custodian_binary_tests {
                     .map(|cur| cur.to_owned().try_into().unwrap())
                     .collect(),
                 context_id: Some(backup_id.into()),
-                previous_context_id: None,
                 threshold: threshold as u32,
             },
             backup_pke,

@@ -1484,7 +1484,6 @@ async fn do_new_custodian_context(
     let new_context = CustodianContext {
         custodian_nodes,
         context_id: Some(context_id.into()),
-        previous_context_id: None, // TODO(#2748) not really used now, should be refactored
         threshold,
     };
     for (_party_id, ce) in core_endpoints.iter() {

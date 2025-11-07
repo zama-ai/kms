@@ -553,15 +553,11 @@ message CustodianContext {
   // that is increased by 1 every time a new context of a specific type is generated.
   RequestId context_id = 2;
 
-  // The previous context ID which might be empty if this is the first context.
-  // Contexts are linked together in a chain, but they are not allowed to fork or cycle.
-  RequestId previous_context_id = 3;
-
   // The corruption threshold for this context.
   // It does not need to match the KMS context threshold
   // and we only need to ensure a majority of custodian nodes are honest
   // since the backup and recovery steps are synchronous.
-  uint32 threshold = 4;
+  uint32 threshold = 3;
 }
 
 // Request to create a new KMS context.

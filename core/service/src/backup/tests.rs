@@ -617,7 +617,6 @@ fn operator_handle_init(
             .map(|msg| msg.to_owned().try_into().unwrap())
             .collect(),
         context_id: Some((*backup_id).into()),
-        previous_context_id: None,
         threshold: custodian_threshold as u32,
     };
     for op_idx in 1..=operator_count {

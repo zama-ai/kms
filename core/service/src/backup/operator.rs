@@ -843,7 +843,6 @@ mod tests {
         let custodian_context = CustodianContext {
             custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
             context_id: Some(backup_id.into()),
-            previous_context_id: None,
             threshold: 1,
         };
         let internal_custodian_context =

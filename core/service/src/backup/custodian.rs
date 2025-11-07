@@ -192,7 +192,6 @@ pub enum InternalCustodianContextVersioned {
 pub struct InternalCustodianContext {
     pub threshold: u32,
     pub context_id: RequestId,
-    pub previous_context_id: Option<RequestId>,
     pub custodian_nodes: BTreeMap<Role, InternalCustodianSetupMessage>,
     pub backup_enc_key: UnifiedPublicEncKey,
 }
@@ -243,15 +242,9 @@ impl InternalCustodianContext {
             &custodian_context.context_id,
             RequestIdParsingErr::CustodianContext,
         )?;
-        let prev_context_id = custodian_context
-            .previous_context_id
-            .as_ref()
-            .map(|id| id.clone().try_into())
-            .transpose()?;
         Ok(InternalCustodianContext {
             context_id,
             threshold: custodian_context.threshold,
-            previous_context_id: prev_context_id,
             custodian_nodes: node_map,
             backup_enc_key,
         })
@@ -418,7 +411,6 @@ mod tests {
         let context = CustodianContext {
             custodian_nodes: vec![setup_msg],
             context_id: None,
-            previous_context_id: None,
             threshold: 1,
         };
         let result = InternalCustodianContext::new(context, backup_pk.clone());
@@ -443,7 +435,6 @@ mod tests {
         let context = CustodianContext {
             custodian_nodes: vec![setup_msg1, setup_msg2],
             context_id: None,
-            previous_context_id: None,
             threshold: 1, // Invalid threshold, since 1 is not less than 2/2
         };
         let result = InternalCustodianContext::new(context, backup_pk.clone());
@@ -474,7 +465,6 @@ mod tests {
         let context = CustodianContext {
             custodian_nodes: vec![setup_msg1, setup_msg2],
             context_id: None,
-            previous_context_id: None,
             threshold: 2,
         };
         let result = InternalCustodianContext::new(context, backup_pk.clone());
@@ -494,7 +484,6 @@ mod tests {
         let context = CustodianContext {
             custodian_nodes: vec![setup_msg],
             context_id: None,
-            previous_context_id: None,
             threshold: 1,
         };
         let result = InternalCustodianContext::new(context, backup_pk.clone());

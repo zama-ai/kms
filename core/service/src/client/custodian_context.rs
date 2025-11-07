@@ -27,7 +27,6 @@ impl Client {
                 new_context: Some(CustodianContext {
                     custodian_nodes: custodian_setup_msgs,
                     context_id: Some((*request_id).into()),
-                    previous_context_id: None, // TODO(#2748) not used now
                     threshold,
                 }),
             },
