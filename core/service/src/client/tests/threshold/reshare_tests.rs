@@ -92,6 +92,7 @@ pub(crate) async fn reshare(
         &req_preproc,
         None,
         expected_num_parties_crashed,
+        None,
     )
     .await;
 
@@ -211,6 +212,7 @@ pub(crate) async fn reshare(
         &mut kms_clients,
         &mut internal_client,
         &req_key,
+        None,
         vec![TestingPlaintext::U8(u8::MAX)],
         EncryptionConfig {
             compression: true,

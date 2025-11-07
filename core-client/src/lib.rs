@@ -3,8 +3,7 @@
 /// This library implements most functionalities to interact with deployed KMS cores.
 /// This library also includes an associated CLI.
 use aes_prng::AesRng;
-use alloy_primitives::Signature;
-use alloy_sol_types::{Eip712Domain, SolStruct};
+use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -12,21 +11,22 @@ use core::str;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenResult, CustodianContext, CustodianRecoveryInitRequest,
     CustodianRecoveryOutput, CustodianRecoveryRequest, Empty, FheParameter, KeyGenPreprocResult,
-    KeyGenResult, NewCustodianContextRequest, PublicDecryptionRequest, PublicDecryptionResponse,
-    TypedCiphertext, TypedPlaintext,
+    KeyGenResult, NewCustodianContextRequest, OperatorBackupOutput, PublicDecryptionRequest,
+    PublicDecryptionResponse, TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain, InternalCustodianRecoveryOutput, PubDataType};
+use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::solidity_types::{CrsgenVerification, KeygenVerification};
 use kms_grpc::{KeyId, RequestId};
-use kms_lib::backup::custodian::InternalCustodianSetupMessage;
+use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage};
 use kms_lib::backup::operator::InternalRecoveryRequest;
 use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
-use kms_lib::cryptography::internal_crypto_types::EncryptionSchemeType;
-use kms_lib::engine::base::compute_pt_message_hash;
+use kms_lib::cryptography::encryption::PkeSchemeType;
+use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
 use kms_lib::engine::base::{
-    hash_sol_struct, safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
+    compute_public_decryption_message, safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS,
+    DSEP_PUBDATA_KEY,
 };
 use kms_lib::util::file_handling::{
     read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
@@ -589,9 +589,19 @@ pub struct ReshareParameters {
     pub preproc_id: RequestId,
 }
 
+#[derive(Debug, Parser, Clone)]
+pub struct PartialKeyGenPreprocParameters {
+    /// Percentage of offline phase to run (0-100)
+    #[clap(long, short = 'p')]
+    pub percentage_offline: u32,
+    /// Whether to store dummy preprocessing, needed to run online DKG if percentage is not 100
+    #[clap(long, short = 's')]
+    pub store_dummy_preprocessing: bool,
+}
 #[derive(Debug, Subcommand, Clone)]
 pub enum CCCommand {
     PreprocKeyGen(NoParameters),
+    PartialPreprocKeyGen(PartialKeyGenPreprocParameters),
     PreprocKeyGenResult(ResultParameters),
     KeyGen(KeyGenParameters),
     KeyGenResult(ResultParameters),
@@ -973,33 +983,6 @@ async fn fetch_kms_addresses_remote(
     Ok(kms_addrs)
 }
 
-fn recover_address_from_ext_signature<S: SolStruct>(
-    data: &S,
-    domain: &Eip712Domain,
-    external_sig: &[u8],
-) -> anyhow::Result<alloy_primitives::Address> {
-    // convert received data into proper format for EIP-712 verification
-    if external_sig.len() != 65 {
-        return Err(anyhow!(
-            "Expected external signature of length 65 Bytes, but got {:?}",
-            external_sig.len()
-        ));
-    }
-    // Deserialize the Signature. It reverses the call to `signature.as_bytes()` that we use for serialization.
-    let sig = Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
-
-    tracing::debug!("ext. signature bytes: {:x?}", external_sig);
-    tracing::debug!("ext. signature: {:?}", sig);
-    tracing::debug!("EIP-712 domain: {:?}", domain);
-
-    let hash = hash_sol_struct(data, domain)?;
-
-    let addr = sig.recover_address_from_prehash(&hash)?;
-    tracing::info!("reconstructed address: {}", addr);
-
-    Ok(addr)
-}
-
 /// check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
 fn check_standard_keyset_ext_signature(
     public_key: &CompactPublicKey,
@@ -1059,25 +1042,10 @@ fn check_ext_pt_signature(
     kms_addrs: &[alloy_primitives::Address],
     extra_data: Vec<u8>,
 ) -> anyhow::Result<()> {
-    // convert received data into proper format for EIP-712 verification
-    if external_sig.len() != 65 {
-        return Err(anyhow!(
-            "Expected external signature of length 65 Bytes, but got {:?}",
-            external_sig.len()
-        ));
-    }
-    // this reverses the call to `signature.as_bytes()` that we use for serialization
-    let sig = Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
-
-    tracing::debug!("ext. signature bytes: {:x?}", external_sig);
-    tracing::debug!("ext. signature: {:?}", sig);
-    tracing::debug!("EIP-712 domain: {:?}", domain);
     tracing::debug!("PTs: {:?}", plaintexts);
     tracing::debug!("ext. handles: {:?}", external_handles);
-
-    let hash = compute_pt_message_hash(external_handles, plaintexts, domain, extra_data)?;
-
-    let addr = sig.recover_address_from_prehash(&hash)?;
+    let message = compute_public_decryption_message(external_handles, plaintexts, extra_data)?;
+    let addr = recover_address_from_ext_signature(&message, &domain, external_sig)?;
     tracing::info!("recovered address: {}", addr);
 
     // check that the address is in the list of known KMS addresses
@@ -1374,7 +1342,7 @@ async fn do_preproc(
     rng: &mut AesRng,
     cmd_conf: &CmdConfig,
     num_parties: usize,
-    param: FheParameter,
+    fhe_params: FheParameter,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -1382,7 +1350,7 @@ async fn do_preproc(
     // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
     // this function is only used for testing.
     let domain = dummy_domain();
-    let pp_req = internal_client.preproc_request(&req_id, Some(param), None, &domain)?; //TODO keyset config
+    let pp_req = internal_client.preproc_request(&req_id, Some(fhe_params), None, &domain)?; //TODO keyset config
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -1393,6 +1361,59 @@ async fn do_preproc(
         req_tasks.spawn(async move {
             cur_client
                 .key_gen_preproc(tonic::Request::new(req_cloned))
+                .await
+        });
+    }
+
+    let mut req_response_vec = Vec::new();
+    while let Some(inner) = req_tasks.join_next().await {
+        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+    }
+    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+
+    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    for response in responses {
+        internal_client.process_preproc_response(&req_id, &domain, &response)?;
+    }
+
+    Ok(req_id)
+}
+
+async fn do_partial_preproc(
+    internal_client: &mut Client,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    rng: &mut AesRng,
+    cmd_conf: &CmdConfig,
+    num_parties: usize,
+    fhe_params: FheParameter,
+    preproc_params: &PartialKeyGenPreprocParameters,
+) -> anyhow::Result<RequestId> {
+    let req_id = RequestId::new_random(rng);
+
+    let max_iter = cmd_conf.max_iter;
+    // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
+    // this function is only used for testing.
+    let domain = dummy_domain();
+    let pp_req = internal_client.partial_preproc_request(
+        &req_id,
+        Some(fhe_params),
+        None,
+        &domain,
+        Some(kms_grpc::kms::v1::PartialKeyGenPreprocParams {
+            percentage_offline: preproc_params.percentage_offline,
+            store_dummy_preprocessing: preproc_params.store_dummy_preprocessing,
+        }),
+    )?;
+
+    // make parallel requests by calling insecure keygen in a thread
+    let mut req_tasks = JoinSet::new();
+
+    for (_party_id, ce) in core_endpoints.iter() {
+        let req_cloned = pp_req.clone();
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .partial_key_gen_preproc(tonic::Request::new(req_cloned))
                 .await
         });
     }
@@ -1526,8 +1547,11 @@ async fn do_custodian_backup_recovery(
             // Find the recoveries designated for the correct server
             if cur_recover.operator_role == Role::indexed_from_one(core_idx) {
                 cur_recoveries.push(CustodianRecoveryOutput {
-                    signature: cur_recover.signature.clone(),
-                    ciphertext: cur_recover.ciphertext.clone(),
+                    backup_output: Some(OperatorBackupOutput {
+                        signcryption: cur_recover.signcryption.payload.clone(),
+                        pke_type: cur_recover.signcryption.pke_type as i32,
+                        signing_type: cur_recover.signcryption.signing_type as i32,
+                    }),
                     custodian_role: cur_recover.custodian_role.one_based() as u64,
                     operator_role: cur_recover.operator_role.one_based() as u64,
                 });
@@ -1756,8 +1780,8 @@ pub async fn execute_cmd(
     let mut core_endpoints_resp = HashMap::with_capacity(num_parties);
 
     // use secure default params if nothing is set
-    let param = cc_conf.fhe_params.unwrap_or(FheParameter::Default);
-    let client_param = match param {
+    let fhe_params = cc_conf.fhe_params.unwrap_or(FheParameter::Default);
+    let client_param = match fhe_params {
         FheParameter::Test => TEST_PARAM,
         _ => DEFAULT_PARAM,
     };
@@ -1897,7 +1921,7 @@ pub async fn execute_cmd(
     tracing::info!(
         "Parties: {}. FHE Parameters: {}",
         num_parties,
-        param.as_str_name()
+        fhe_params.as_str_name()
     );
 
     let kms_addrs = Arc::new(addr_vec);
@@ -1980,6 +2004,7 @@ pub async fn execute_cmd(
                         ct_batch,
                         &dummy_domain(),
                         &req_id,
+                        None,
                         &key_id.into(),
                     )?;
 
@@ -2108,7 +2133,10 @@ pub async fn execute_cmd(
             shared_args,
         }) => {
             let mut internal_client = internal_client.unwrap();
-            tracing::info!("Key generation with parameter {}.", param.as_str_name());
+            tracing::info!(
+                "Key generation with parameter {}.",
+                fhe_params.as_str_name()
+            );
             let req_id = do_keygen(
                 &mut internal_client,
                 &core_endpoints_req,
@@ -2117,7 +2145,7 @@ pub async fn execute_cmd(
                 cmd_config,
                 num_parties,
                 &kms_addrs,
-                param,
+                fhe_params,
                 *preproc_id,
                 false,
                 shared_args,
@@ -2131,7 +2159,7 @@ pub async fn execute_cmd(
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
                 "Insecure key generation with parameter {}.",
-                param.as_str_name()
+                fhe_params.as_str_name()
             );
             let dummy_preproc_id = RequestId::new_random(&mut rng);
             let req_id = do_keygen(
@@ -2142,7 +2170,7 @@ pub async fn execute_cmd(
                 cmd_config,
                 num_parties,
                 &kms_addrs,
-                param,
+                fhe_params,
                 dummy_preproc_id,
                 true,
                 shared_args,
@@ -2154,29 +2182,9 @@ pub async fn execute_cmd(
         }
         CCCommand::CrsGen(CrsParameters { max_num_bits }) => {
             let mut internal_client = internal_client.unwrap();
-            tracing::info!("CRS generation with parameter {}.", param.as_str_name());
-
-            let req_id = do_crsgen(
-                &mut internal_client,
-                &core_endpoints_req,
-                &mut rng,
-                &cc_conf,
-                cmd_config,
-                num_parties,
-                &kms_addrs,
-                Some(*max_num_bits),
-                param,
-                false,
-                destination_prefix,
-            )
-            .await?;
-            vec![(Some(req_id), "crsgen done".to_string())]
-        }
-        CCCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
-            let mut internal_client = internal_client.unwrap();
             tracing::info!(
-                "Insecure CRS generation with parameter {}.",
-                param.as_str_name()
+                "CRS generation with parameter {}.",
+                fhe_params.as_str_name()
             );
 
             let req_id = do_crsgen(
@@ -2188,7 +2196,30 @@ pub async fn execute_cmd(
                 num_parties,
                 &kms_addrs,
                 Some(*max_num_bits),
-                param,
+                fhe_params,
+                false,
+                destination_prefix,
+            )
+            .await?;
+            vec![(Some(req_id), "crsgen done".to_string())]
+        }
+        CCCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
+            let mut internal_client = internal_client.unwrap();
+            tracing::info!(
+                "Insecure CRS generation with parameter {}.",
+                fhe_params.as_str_name()
+            );
+
+            let req_id = do_crsgen(
+                &mut internal_client,
+                &core_endpoints_req,
+                &mut rng,
+                &cc_conf,
+                cmd_config,
+                num_parties,
+                &kms_addrs,
+                Some(*max_num_bits),
+                fhe_params,
                 true,
                 destination_prefix,
             )
@@ -2197,7 +2228,7 @@ pub async fn execute_cmd(
         }
         CCCommand::PreprocKeyGen(NoParameters {}) => {
             let mut internal_client = internal_client.unwrap();
-            tracing::info!("Preprocessing with parameter {}.", param.as_str_name());
+            tracing::info!("Preprocessing with parameter {}.", fhe_params.as_str_name());
 
             let req_id = do_preproc(
                 &mut internal_client,
@@ -2205,10 +2236,37 @@ pub async fn execute_cmd(
                 &mut rng,
                 cmd_config,
                 num_parties,
-                param,
+                fhe_params,
             )
             .await?;
             vec![(Some(req_id), "preproc done".to_string())]
+        }
+        CCCommand::PartialPreprocKeyGen(partial_params) => {
+            let mut internal_client = internal_client.unwrap();
+            tracing::info!(
+                "Partial Preprocessing with parameter {} (running {}% , storing dummy: {}).",
+                fhe_params.as_str_name(),
+                partial_params.percentage_offline,
+                partial_params.store_dummy_preprocessing
+            );
+
+            let req_id = do_partial_preproc(
+                &mut internal_client,
+                &core_endpoints_req,
+                &mut rng,
+                cmd_config,
+                num_parties,
+                fhe_params,
+                partial_params,
+            )
+            .await?;
+            vec![(
+                Some(req_id),
+                format!(
+                    "partial preproc done, generated {} % (dummy preproc stored: {})",
+                    partial_params.percentage_offline, partial_params.store_dummy_preprocessing
+                ),
+            )]
         }
         CCCommand::DoNothing(NoParameters {}) => {
             tracing::info!("Nothing to do.");
@@ -2460,7 +2518,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 &kms_addrs,
                 num_parties,
-                param,
+                fhe_params,
                 *key_id,
                 *preproc_id,
             )
@@ -2549,7 +2607,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                 ct_batch,
                 &req_id,
                 &key_id.into(),
-                EncryptionSchemeType::MlKem512,
+                PkeSchemeType::MlKem512,
             )?;
 
             let (user_decrypt_req, enc_pk, enc_sk) = user_decrypt_req_tuple;
@@ -3179,12 +3237,10 @@ async fn fetch_and_check_crsgen(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_signer::k256::ecdsa::SigningKey;
     use kms_grpc::rpc_types::PrivDataType;
     use kms_lib::{
         consts::{TEST_CENTRAL_CRS_ID, TEST_PARAM},
-        cryptography::internal_crypto_types::PrivateSigKey,
-        engine::base::compute_external_pubdata_signature,
+        cryptography::signatures::{compute_eip712_signature, PrivateSigKey},
         util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
         vault::storage::{ram::RamStorage, read_versioned_at_request_id},
     };
@@ -3282,8 +3338,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let pk = SigningKey::verifying_key(sk.sk());
-        let addr = alloy_signer::utils::public_key_to_address(pk);
+        let addr = sk.address();
 
         // set up a dummy EIP 712 domain
         let domain = alloy_sol_types::eip712_domain!(
@@ -3299,8 +3354,7 @@ mod tests {
         let crs_sol_struct = CrsgenVerification::new(crs_id, max_num_bits, crs_digest);
 
         // sign with EIP712
-        let external_sig =
-            compute_external_pubdata_signature(&sk, &crs_sol_struct, &domain).unwrap();
+        let external_sig = compute_eip712_signature(&sk, &crs_sol_struct, &domain).unwrap();
 
         // check that the signature verifies and unwraps without error
         check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, &[addr]).unwrap();

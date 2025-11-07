@@ -1,6 +1,6 @@
 use crate::anyhow_error_and_log;
 use crate::client::client_wasm::Client;
-use crate::engine::base::hash_sol_struct;
+use crate::cryptography::signatures::recover_address_from_ext_signature;
 use crate::vault::storage::{
     crypto_material::{
         get_client_signing_key, get_client_verification_key, get_core_verification_key,
@@ -71,13 +71,11 @@ impl Client {
         }
 
         let client_pk = get_client_verification_key(&client_storage).await?;
-        let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
-
         let client_sk = get_client_signing_key(&client_storage).await?;
 
         Ok(Client::new(
             pks,
-            client_address,
+            client_pk.address(),
             Some(client_sk),
             *params,
             decryption_mode,
@@ -106,27 +104,7 @@ impl Client {
         domain: &Eip712Domain,
         external_sig: &[u8],
     ) -> Option<alloy_primitives::Address> {
-        if external_sig.len() != 65 {
-            tracing::error!(
-                "external signature has the wrong length, expected 65 got {}",
-                external_sig.len()
-            );
-            return None;
-        }
-        // Since the signature is 65 bytes long, the last byte is the parity bit
-        // so we extract it and use it as the parity.
-        let sig = alloy_signer::Signature::from_bytes_and_parity(
-            external_sig,
-            external_sig[64] & 0x01 == 0,
-        );
-        let hash = if let Ok(h) = hash_sol_struct(data, domain) {
-            h
-        } else {
-            tracing::error!("Could not hash SolStruct");
-            return None;
-        };
-
-        let addr = if let Ok(a) = sig.recover_address_from_prehash(&hash) {
+        let addr = if let Ok(a) = recover_address_from_ext_signature(data, domain, external_sig) {
             a
         } else {
             tracing::error!("Could not recover address from signature");

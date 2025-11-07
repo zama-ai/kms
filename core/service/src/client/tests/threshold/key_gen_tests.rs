@@ -158,21 +158,41 @@ async fn test_insecure_threshold_decompression_keygen() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn secure_threshold_keygen_test() {
-    preproc_and_keygen(4, FheParameter::Test, false, 1, false, None, None).await;
+    preproc_and_keygen(4, FheParameter::Test, false, 1, false, None, None, None).await;
 }
 
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn secure_threshold_keygen_test_crash_online() {
-    preproc_and_keygen(4, FheParameter::Test, false, 1, false, None, Some(vec![2])).await;
+    preproc_and_keygen(
+        4,
+        FheParameter::Test,
+        false,
+        1,
+        false,
+        None,
+        Some(vec![2]),
+        None,
+    )
+    .await;
 }
 
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn secure_threshold_keygen_test_crash_preprocessing() {
-    preproc_and_keygen(4, FheParameter::Test, false, 1, false, Some(vec![3]), None).await;
+    preproc_and_keygen(
+        4,
+        FheParameter::Test,
+        false,
+        1,
+        false,
+        Some(vec![3]),
+        None,
+        None,
+    )
+    .await;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -459,6 +479,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
             &preproc_id_1,
             None,
             0,
+            None,
         )
         .await;
     }
@@ -487,6 +508,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
             &preproc_id_2,
             None,
             0,
+            None,
         )
         .await;
     }
@@ -515,6 +537,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         &preproc_id_3,
         None,
         0,
+        None,
     )
     .await;
 
@@ -547,15 +570,17 @@ pub(crate) async fn run_threshold_decompression_keygen(
 }
 
 #[cfg(feature = "slow_tests")]
+#[allow(clippy::too_many_arguments)]
 /// __NOTE__: Parties that are crashed during preproc will also be crashed during keygen
 pub(crate) async fn preproc_and_keygen(
     amount_parties: usize,
     parameter: FheParameter,
-    insecure: bool,
+    insecure_key_gen: bool,
     iterations: usize,
     concurrent: bool,
     party_ids_to_crash_preproc: Option<Vec<usize>>,
     party_ids_to_crash_keygen: Option<Vec<usize>>,
+    partial_preproc: Option<kms_grpc::kms::v1::PartialKeyGenPreprocParams>,
 ) {
     for i in 0..iterations {
         let req_preproc: RequestId = derive_request_id(&format!(
@@ -627,6 +652,7 @@ pub(crate) async fn preproc_and_keygen(
                         &cur_id,
                         None,
                         expected_num_parties_crashed,
+                        partial_preproc,
                     )
                     .await
                 }
@@ -675,7 +701,7 @@ pub(crate) async fn preproc_and_keygen(
                             &preproc_ids_clone,
                             &key_id,
                             None,
-                            insecure,
+                            insecure_key_gen,
                             None,
                             expected_num_parties_crashed,
                         )
@@ -712,6 +738,7 @@ pub(crate) async fn preproc_and_keygen(
                 &cur_id,
                 None,
                 expected_num_parties_crashed,
+                partial_preproc,
             )
             .await;
             preproc_ids.insert(i, cur_id);
@@ -748,7 +775,7 @@ pub(crate) async fn preproc_and_keygen(
                 preproc_ids.get(&i).unwrap(),
                 &key_id,
                 None,
-                insecure,
+                insecure_key_gen,
                 None,
                 expected_num_parties_crashed,
             )
@@ -769,6 +796,7 @@ pub(crate) async fn preproc_and_keygen(
                 &mut kms_clients,
                 &mut internal_client,
                 &key_id,
+                None,
                 vec![TestingPlaintext::U8(u8::MAX)],
                 EncryptionConfig {
                     compression: true,
@@ -801,6 +829,7 @@ pub(crate) async fn run_preproc(
     preproc_req_id: &RequestId,
     decompression_keygen: Option<(RequestId, RequestId)>,
     expected_num_parties_crashed: usize,
+    partial_preproc: Option<kms_grpc::kms::v1::PartialKeyGenPreprocParams>,
 ) {
     let keyset_config = decompression_keygen.map(|(_from, _to)| KeySetConfig {
         keyset_type: KeySetType::DecompressionOnly.into(),
@@ -809,21 +838,46 @@ pub(crate) async fn run_preproc(
 
     let domain = dummy_domain();
 
-    let preproc_request = internal_client
-        .preproc_request(preproc_req_id, Some(parameter), keyset_config, &domain)
-        .unwrap();
-
-    // Execute preprocessing
     let mut tasks_gen = JoinSet::new();
-    for (_, cur_client) in kms_clients.iter() {
-        let mut cur_client = cur_client.clone();
-        let req_clone = preproc_request.clone();
-        tasks_gen.spawn(async move {
-            cur_client
-                .key_gen_preproc(tonic::Request::new(req_clone))
-                .await
-        });
-    }
+    let preproc_request = if let Some(partial_preproc) = partial_preproc {
+        let preproc_request = internal_client
+            .partial_preproc_request(
+                preproc_req_id,
+                Some(parameter),
+                keyset_config,
+                &domain,
+                Some(partial_preproc),
+            )
+            .unwrap();
+
+        // Execute partial preprocessing
+        for (_, cur_client) in kms_clients.iter() {
+            let mut cur_client = cur_client.clone();
+            let req_clone = preproc_request.clone();
+            tasks_gen.spawn(async move {
+                cur_client
+                    .partial_key_gen_preproc(tonic::Request::new(req_clone))
+                    .await
+            });
+        }
+        preproc_request.base_request.unwrap()
+    } else {
+        let preproc_request = internal_client
+            .preproc_request(preproc_req_id, Some(parameter), keyset_config, &domain)
+            .unwrap();
+
+        // Execute preprocessing
+        for (_, cur_client) in kms_clients.iter() {
+            let mut cur_client = cur_client.clone();
+            let req_clone = preproc_request.clone();
+            tasks_gen.spawn(async move {
+                cur_client
+                    .key_gen_preproc(tonic::Request::new(req_clone))
+                    .await
+            });
+        }
+        preproc_request
+    };
     let preproc_res = tasks_gen.join_all().await;
     preproc_res.iter().for_each(|x| {
         assert!(x.is_ok());

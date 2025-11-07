@@ -45,8 +45,8 @@ use tracing::Instrument;
 
 // === Internal Crate Imports ===
 use crate::{
-    consts::DEFAULT_MPC_CONTEXT,
-    cryptography::internal_crypto_types::PrivateSigKey,
+    consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
+    cryptography::signatures::PrivateSigKey,
     engine::{
         base::{
             compute_info_decompression_keygen, compute_info_standard_keygen, retrieve_parameters,
@@ -54,7 +54,7 @@ use crate::{
         },
         keyset_configuration::InternalKeySetConfig,
         threshold::{
-            service::{session::SessionPreparerGetter, ThresholdFheKeys},
+            service::{session::ImmutableSessionMaker, ThresholdFheKeys},
             traits::KeyGenerator,
         },
         validation::{
@@ -95,7 +95,7 @@ pub struct RealKeyGenerator<
     // TODO eventually add mode to allow for nlarge as well.
     pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     pub dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
-    pub session_preparer_getter: SessionPreparerGetter,
+    pub(crate) session_maker: ImmutableSessionMaker,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
     // Map of ongoing key generation tasks
@@ -133,7 +133,7 @@ impl<
                 crypto_storage: value.crypto_storage.clone(),
                 preproc_buckets: Arc::clone(&value.preproc_buckets),
                 dkg_pubinfo_meta_store: Arc::clone(&value.dkg_pubinfo_meta_store),
-                session_preparer_getter: value.session_preparer_getter.clone(),
+                session_maker: value.session_maker.clone(),
                 tracker: Arc::clone(&value.tracker),
                 ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
@@ -213,12 +213,17 @@ impl<
         preproc_id: Option<RequestId>,
         eip712_domain: &alloy_sol_types::Eip712Domain,
         context_id: Option<ContextId>,
+        epoch_id: Option<RequestId>,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
         // TODO(zama-ai/kms-internal/issues/2758)
         // remove the default context when all of context is ready
         let context_id = context_id.unwrap_or(*DEFAULT_MPC_CONTEXT);
-        let session_preparer = self.session_preparer_getter.get(&context_id).await?;
+
+        // TODO(zama-ai/kms-internal/issues/2809)
+        // we don't need epoch ID for the actual keygen
+        // but it will be needed when we store the key material
+        let _epoch_id = epoch_id.unwrap_or(RequestId::try_from(PRSS_INIT_REQ_ID).unwrap());
 
         //Retrieve the right metric tag
         let op_tag = match (
@@ -248,9 +253,11 @@ impl<
 
         // Prepare the timer before giving it to the tokio task
         // that runs the computation
+        let my_role = self.session_maker.my_role(&context_id).await?;
         let timer = metrics::METRICS
             .time_operation(op_tag)
-            .tag(TAG_PARTY_ID, session_preparer.my_role()?.to_string());
+            .tag(TAG_PARTY_ID, my_role.to_string());
+
         // Update status
         {
             let mut guarded_meta_store = self.dkg_pubinfo_meta_store.write().await;
@@ -260,7 +267,7 @@ impl<
         // Create the base session necessary to run the DKG
         let base_session = {
             let session_id = req_id.derive_session_id()?;
-            session_preparer
+            self.session_maker
                 .make_base_session(session_id, context_id, NetworkMode::Async)
                 .await?
         };
@@ -417,6 +424,30 @@ impl<
         let (preproc_handle, dkg_params, preproc_id) =
             self.retrieve_preproc_handle(insecure, &inner).await?;
 
+        let context_id = inner
+            .context_id
+            .as_ref()
+            .map(|id| id.try_into())
+            .transpose()
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!("invalid context id: {e}"),
+                )
+            })?;
+
+        let epoch_id = inner
+            .epoch_id
+            .as_ref()
+            .map(|id| id.try_into())
+            .transpose()
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!("invalid epoch id: {e}"),
+                )
+            })?;
+
         ok_or_tonic_abort(
             self.launch_dkg(
                 dkg_params,
@@ -425,17 +456,8 @@ impl<
                 request_id,
                 preproc_id,
                 &eip712_domain,
-                inner
-                    .context_id
-                    .as_ref()
-                    .map(|id| id.try_into())
-                    .transpose()
-                    .map_err(|e| {
-                        tonic::Status::new(
-                            tonic::Code::InvalidArgument,
-                            format!("invalid context id: {e}"),
-                        )
-                    })?,
+                context_id,
+                epoch_id,
                 permit,
             )
             .await,
@@ -1131,9 +1153,7 @@ mod tests {
     };
 
     use crate::{
-        consts::TEST_PARAM,
-        dummy_domain,
-        engine::threshold::service::session::{SessionPreparer, SessionPreparerManager},
+        consts::TEST_PARAM, dummy_domain, engine::threshold::service::session::SessionMaker,
         vault::storage::ram,
     };
 
@@ -1149,7 +1169,7 @@ mod tests {
             base_kms: BaseKmsStruct,
             pub_storage: PubS,
             priv_storage: PrivS,
-            session_preparer_getter: SessionPreparerGetter,
+            session_maker: ImmutableSessionMaker,
         ) -> Self {
             let crypto_storage = ThresholdCryptoMaterialStorage::new(
                 pub_storage,
@@ -1167,7 +1187,7 @@ mod tests {
                 crypto_storage,
                 preproc_buckets: Arc::new(RwLock::new(MetaStore::new_unlimited())),
                 dkg_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-                session_preparer_getter,
+                session_maker,
                 tracker,
                 ongoing,
                 rate_limiter,
@@ -1188,13 +1208,13 @@ mod tests {
     impl<KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static>
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>
     {
-        pub async fn init_ram_keygen(
+        async fn init_ram_keygen(
             base_kms: BaseKmsStruct,
-            session_preparer_getter: SessionPreparerGetter,
+            session_maker: ImmutableSessionMaker,
         ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(base_kms, pub_storage, priv_storage, session_preparer_getter).await
+            Self::init_test(base_kms, pub_storage, priv_storage, session_maker).await
         }
     }
 
@@ -1204,22 +1224,14 @@ mod tests {
         [RequestId; 4],
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
-        use crate::cryptography::internal_crypto_types::gen_sig_keys;
+        use crate::cryptography::signatures::gen_sig_keys;
         let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
-        let session_preparer_manager = SessionPreparerManager::new_test_session();
-        let session_preparer = SessionPreparer::new_test_session(
-            base_kms.new_instance().await,
-            Arc::new(RwLock::new(None)),
-            Arc::new(RwLock::new(None)),
-        );
-        let context_id = *DEFAULT_MPC_CONTEXT;
-        session_preparer_manager
-            .insert(context_id, session_preparer)
-            .await;
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, base_kms.rng.clone());
         let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
             base_kms,
-            session_preparer_manager.make_getter(),
+            session_maker.make_immutable(),
         )
         .await;
 
@@ -1230,20 +1242,20 @@ mod tests {
             .unwrap();
 
         // We need to setup the preprocessor metastore so that keygen will pass
+        let context_id = *DEFAULT_MPC_CONTEXT; // this context ID must be the one used in the session maker
         for prep_id in &prep_ids {
             let session_id = prep_id.derive_session_id().unwrap();
-            let session_preparer = session_preparer_manager.get(&context_id).await.unwrap();
+            let session = session_maker
+                .make_base_session(session_id, context_id, NetworkMode::Sync)
+                .await
+                .unwrap();
             let dummy_prep = BucketMetaStore {
                 preprocessing_id: *prep_id,
                 external_signature: vec![],
                 preprocessing_store: Arc::new(Mutex::new(Box::new(DummyPreprocessing::<
                     ResiduePolyF4Z128,
                 >::new(
-                    42,
-                    &session_preparer
-                        .make_base_session(session_id, context_id, NetworkMode::Sync)
-                        .await
-                        .unwrap(),
+                    42, &session
                 )))),
                 dkg_param: TEST_PARAM,
             };

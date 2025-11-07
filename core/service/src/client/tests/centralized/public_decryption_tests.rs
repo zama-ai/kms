@@ -12,6 +12,7 @@ use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
 };
+use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::{Empty, TypedCiphertext};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::RequestId;
@@ -143,6 +144,7 @@ pub(crate) async fn decryption_centralized(
         &kms_client,
         &mut internal_client,
         key_id,
+        None,
         msgs,
         encryption_config,
         parallelism,
@@ -152,10 +154,12 @@ pub(crate) async fn decryption_centralized(
     kms_server.assert_shutdown().await;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_decryption_centralized(
     kms_client: &CoreServiceEndpointClient<Channel>,
     internal_client: &mut Client,
     key_id: &RequestId,
+    context_id: Option<&ContextId>,
     msgs: Vec<TestingPlaintext>,
     encryption_config: EncryptionConfig,
     parallelism: usize,
@@ -178,7 +182,13 @@ pub(crate) async fn run_decryption_centralized(
         .map(|j: usize| {
             let request_id = derive_request_id(&format!("TEST_DEC_ID_{key_id}_{j}")).unwrap();
             internal_client
-                .public_decryption_request(cts.clone(), &dummy_domain(), &request_id, key_id)
+                .public_decryption_request(
+                    cts.clone(),
+                    &dummy_domain(),
+                    &request_id,
+                    context_id,
+                    key_id,
+                )
                 .unwrap()
         })
         .collect();

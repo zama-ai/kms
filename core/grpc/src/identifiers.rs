@@ -1,3 +1,12 @@
+//! This module defines strongly-typed identifiers used throughout the KMS system.
+//! When identifiers are passed into the KMS via gRPC, they are represented as RequestId types from
+//! the kms_grpc crate (this is not the RequestId defined in this module).
+//! Upon receiving such identifiers, they should be converted into the appropriate identifier types
+//! defined in this module for internal use.
+//!
+//! Ideally the types should be present in the gRPC proto files as well, but we wish to
+//! maintain compatibility with currently deployed connectors, we do not use strongly typed
+//! identifiers in the gRPC interface for now.
 use crate::kms::v1;
 use alloy_primitives::hex;
 use anyhow::{Error, Result};
@@ -46,6 +55,10 @@ pub struct KeyId([u8; ID_LENGTH]);
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
 pub struct RequestId([u8; ID_LENGTH]); // TODO(#2748) rename to InternalRequestId
 
+/// EpochId represents a unique identifier for an epoch/PRSS.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
+pub struct EpochId([u8; ID_LENGTH]);
+
 /// ContextId represents a unique identifier for a context,
 /// which is usually an operator context in the KMS,
 /// defined by [crate::engine::context::ContextInfo].
@@ -76,7 +89,7 @@ impl Ord for RequestId {
 
 // Common implementation for identifier types
 macro_rules! impl_identifiers {
-    ($type1:ident, $type2:ident, $type3:ident) => {
+    ($request_id:ident, $key_id:ident, $context_id:ident, $epoch_id:ident) => {
         // Implement common methods for each type
         macro_rules! impl_identifier_common {
             ($type:ident) => {
@@ -432,33 +445,46 @@ macro_rules! impl_identifiers {
             };
         }
 
-        // Implement common methods for both types
-        impl_identifier_common!($type1);
-        impl_identifier_common!($type2);
-        impl_identifier_common!($type3);
+        // Implement common methods for all types
+        impl_identifier_common!($request_id);
+        impl_identifier_common!($key_id);
+        impl_identifier_common!($context_id);
+        impl_identifier_common!($epoch_id);
 
-        // Implement conversions between type1 and the rest
+        // Implement conversions between request_id and the rest
         // Both types have the same internal representation, so we can just copy the bytes
-        impl From<$type1> for $type2 {
-            fn from(other: $type1) -> Self {
+        impl From<$request_id> for $key_id {
+            fn from(other: $request_id) -> Self {
                 Self(other.into_bytes())
             }
         }
 
-        impl From<$type2> for $type1 {
-            fn from(other: $type2) -> Self {
+        impl From<$key_id> for $request_id {
+            fn from(other: $key_id) -> Self {
                 Self(other.into_bytes())
             }
         }
 
-        impl From<$type1> for $type3 {
-            fn from(other: $type1) -> Self {
+        impl From<$request_id> for $context_id {
+            fn from(other: $request_id) -> Self {
                 Self(other.into_bytes())
             }
         }
 
-        impl From<$type3> for $type1 {
-            fn from(other: $type3) -> Self {
+        impl From<$context_id> for $request_id {
+            fn from(other: $context_id) -> Self {
+                Self(other.into_bytes())
+            }
+        }
+
+        impl From<$request_id> for $epoch_id {
+            fn from(other: $request_id) -> Self {
+                Self(other.into_bytes())
+            }
+        }
+
+        impl From<$epoch_id> for $request_id {
+            fn from(other: $epoch_id) -> Self {
                 Self(other.into_bytes())
             }
         }
@@ -466,7 +492,7 @@ macro_rules! impl_identifiers {
 }
 
 // Implement common methods for both identifier types with a single macro call
-impl_identifiers!(RequestId, KeyId, ContextId);
+impl_identifiers!(RequestId, KeyId, ContextId, EpochId);
 
 // Add tests
 #[cfg(test)]

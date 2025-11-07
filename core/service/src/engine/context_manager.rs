@@ -2,10 +2,13 @@ use crate::anyhow_error_and_log;
 use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{Operator, RecoveryRequestPayload, RecoveryValidationMaterial};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::backup_pke::{self, BackupPrivateKey, BackupPublicKey};
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::cryptography::encryption::{
+    Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+};
+use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::ContextInfo;
+use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
 use crate::engine::validation::{parse_proto_context_id, RequestIdParsingErr};
@@ -21,7 +24,8 @@ use crate::{
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
-use kms_grpc::kms::v1::{CustodianContext, NewKmsContextRequest};
+use kms_grpc::identifiers::ContextId;
+use kms_grpc::kms::v1::CustodianContext;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::{kms::v1::Empty, utils::tonic_result::ok_or_tonic_abort};
 use std::sync::Arc;
@@ -31,31 +35,28 @@ use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::RwLock;
 use tonic::{Response, Status};
 
-pub struct RealContextManager<
+/// This is a shared data structure for both centralized and threshold context managers.
+struct SharedContextManager<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 > {
-    pub base_kms: BaseKmsStruct,
-    pub crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
-    pub custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
-    pub my_role: Role,
+    base_kms: BaseKmsStruct,
+    crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
+    custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
+    my_role: Role,
 }
 
-#[tonic::async_trait]
-impl<PubS, PrivS> ContextManager for RealContextManager<PubS, PrivS>
+impl<PubS, PrivS> SharedContextManager<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 {
-    async fn new_kms_context(
+    async fn verify_and_extract_new_mpc_context(
         &self,
         request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
-    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+    ) -> Result<(Role, ContextInfo), tonic::Status> {
         // first verify that the context is valid
-        let NewKmsContextRequest {
-            active_context,
-            new_context,
-        } = request.into_inner();
+        let kms_grpc::kms::v1::NewKmsContextRequest { new_context } = request.into_inner();
 
         let new_context =
             new_context.ok_or_else(|| Status::invalid_argument("new_context is required"))?;
@@ -63,57 +64,32 @@ where
             .map_err(|e| Status::invalid_argument(format!("Invalid context info: {e}")))?;
 
         // verify new context
-        {
+        let my_role = {
             let storage_ref = self.crypto_storage.private_storage.clone();
             let guarded_priv_storage = storage_ref.lock().await;
-            // my_id is always 1 in the centralized case
             new_context
-                .verify(
-                    1,
-                    &(*guarded_priv_storage),
-                    active_context
-                        .and_then(|c| ContextInfo::try_from(c).ok())
-                        .as_ref(),
-                )
+                .verify(&(*guarded_priv_storage))
                 .await
                 .map_err(|e| {
                     Status::invalid_argument(format!("Failed to verify new context: {e}"))
-                })?;
-        }
+                })?
+        };
 
-        // store the new context
-        let res = self
-            .crypto_storage
-            .write_context_info(new_context.context_id(), &new_context, false)
-            .await;
-
-        ok_or_tonic_abort(
-            res,
-            format!(
-                "Failed to write new KMS context for ID {}",
-                new_context.context_id()
-            ),
-        )?;
-
-        Ok(Response::new(Empty {}))
+        Ok((my_role, new_context))
     }
 
-    async fn destroy_kms_context(
+    async fn parse_mpc_context_for_destruction(
         &self,
         request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
-    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+    ) -> Result<ContextId, tonic::Status> {
         let proto_context_id = request
             .into_inner()
             .context_id
             .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
-        let storage_ref = self.crypto_storage.private_storage.clone();
-        let mut guarded_priv_storage = storage_ref.lock().await;
         let context_id =
             parse_proto_context_id(&proto_context_id, RequestIdParsingErr::CustodianContext)?;
-        delete_context_at_id(&mut *guarded_priv_storage, &context_id)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
-        Ok(Response::new(Empty {}))
+
+        Ok(context_id)
     }
 
     async fn new_custodian_context(
@@ -145,47 +121,7 @@ where
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
         todo!()
     }
-}
 
-async fn backup_priv_data<
-    S1: Storage + Sync + Send + 'static,
-    T: serde::de::DeserializeOwned
-        + tfhe::Unversionize
-        + tfhe::named::Named
-        + Send
-        + serde::ser::Serialize
-        + tfhe::Versionize
-        + Sync
-        + 'static,
->(
-    priv_storage: &S1,
-    backup_vault: &mut Vault,
-    data_type_enum: PrivDataType,
-) -> anyhow::Result<()>
-where
-    for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
-{
-    let data_ids = priv_storage
-        .all_data_ids(&data_type_enum.to_string())
-        .await?;
-    for data_id in data_ids.iter() {
-        let data: T = priv_storage
-            .read_data(data_id, &data_type_enum.to_string())
-            .await?;
-        // Delete the old backup data
-        // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
-        delete_at_request_id(backup_vault, data_id, &data_type_enum.to_string()).await?;
-        store_versioned_at_request_id(backup_vault, data_id, &data, &data_type_enum.to_string())
-            .await?;
-    }
-    Ok(())
-}
-
-impl<PubS, PrivS> RealContextManager<PubS, PrivS>
-where
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
-{
     /// Observe that in case a custodian is missing or something bad is detected in the data then the function will fail
     async fn inner_new_custodian_context(&self, context: CustodianContext) -> anyhow::Result<()> {
         let backup_vault = match self.crypto_storage.backup_vault {
@@ -195,13 +131,14 @@ where
 
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric keys for the operator to use to encrypt the backup
-        let (backup_enc_key, backup_priv_key) = backup_pke::keygen(&mut rng)?;
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (backup_dec_key, backup_enc_key) = enc.keygen()?;
         let inner_context = InternalCustodianContext::new(context, backup_enc_key.clone())?;
         let (recovery_request_payload, commitments) = gen_recovery_request_payload(
             &mut rng,
             &self.base_kms.sig_key,
             backup_enc_key.clone(),
-            backup_priv_key,
+            backup_dec_key,
             &inner_context,
             self.my_role,
         )
@@ -299,12 +236,280 @@ where
     }
 }
 
+pub struct CentralizedContextManager<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+> {
+    inner: SharedContextManager<PubS, PrivS>,
+}
+
+impl<PubS, PrivS> CentralizedContextManager<PubS, PrivS>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+{
+    pub(crate) fn new(
+        base_kms: BaseKmsStruct,
+        crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
+        custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
+        my_role: Role,
+    ) -> Self {
+        Self {
+            inner: SharedContextManager {
+                base_kms,
+                crypto_storage,
+                custodian_meta_store,
+                my_role,
+            },
+        }
+    }
+}
+
+#[tonic::async_trait]
+impl<PubS, PrivS> ContextManager for CentralizedContextManager<PubS, PrivS>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+{
+    async fn new_kms_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        let (_my_role, new_context) = self
+            .inner
+            .verify_and_extract_new_mpc_context(request)
+            .await?;
+
+        // store the new context
+        let res = self
+            .inner
+            .crypto_storage
+            .write_context_info(new_context.context_id(), &new_context, false)
+            .await;
+
+        ok_or_tonic_abort(
+            res,
+            format!(
+                "Failed to write new KMS context for ID {}",
+                new_context.context_id()
+            ),
+        )?;
+
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn destroy_kms_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        let context_id = self
+            .inner
+            .parse_mpc_context_for_destruction(request)
+            .await?;
+
+        let storage_ref = self.inner.crypto_storage.private_storage.clone();
+        let mut guarded_priv_storage = storage_ref.lock().await;
+
+        delete_context_at_id(&mut *guarded_priv_storage, &context_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
+
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn new_custodian_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        self.inner.new_custodian_context(request).await
+    }
+
+    async fn destroy_custodian_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        self.inner.destroy_custodian_context(request).await
+    }
+}
+
+pub struct ThresholdContextManager<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+> {
+    inner: SharedContextManager<PubS, PrivS>,
+    session_maker: SessionMaker,
+}
+
+impl<PubS, PrivS> ThresholdContextManager<PubS, PrivS>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+{
+    pub(crate) fn new(
+        base_kms: BaseKmsStruct,
+        crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
+        custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
+        my_role: Role,
+        session_maker: SessionMaker,
+    ) -> Self {
+        Self {
+            inner: SharedContextManager {
+                base_kms,
+                crypto_storage,
+                custodian_meta_store,
+                my_role,
+            },
+            session_maker,
+        }
+    }
+}
+
+/// Atomically update both the storage and the session maker with the new context info.
+/// If any of the two operations fail, rollback to the original state.
+async fn atomic_update_context<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+>(
+    session_maker: &SessionMaker,
+    crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
+    my_role: Role,
+    new_context: &ContextInfo,
+) -> anyhow::Result<()> {
+    let context_id = new_context.context_id();
+    let res1 = crypto_storage
+        .write_context_info(new_context.context_id(), new_context, false)
+        .await;
+
+    let res2 = session_maker.add_context_info(my_role, new_context).await;
+
+    match (res1, res2) {
+        (Ok(_), Ok(_)) => (),
+        _ => {
+            // Rollback if any operation failed
+            // first delete the context from storage
+            let storage_ref = crypto_storage.private_storage.clone();
+            let mut guarded_priv_storage = storage_ref.lock().await;
+            _ = delete_context_at_id(&mut *guarded_priv_storage, context_id).await;
+
+            // next delete the context from session maker
+            session_maker.remove_context(context_id).await;
+            return Err(anyhow::anyhow!("Failed to atomically update context"));
+        }
+    }
+
+    Ok(())
+}
+
+#[tonic::async_trait]
+impl<PubS, PrivS> ContextManager for ThresholdContextManager<PubS, PrivS>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+{
+    async fn new_kms_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
+    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        let (my_role, new_context) = self
+            .inner
+            .verify_and_extract_new_mpc_context(request)
+            .await?;
+
+        let res = atomic_update_context(
+            &self.session_maker,
+            &self.inner.crypto_storage,
+            my_role,
+            &new_context,
+        )
+        .await;
+        ok_or_tonic_abort(
+            res,
+            format!(
+                "Failed to write new KMS context for ID {}",
+                new_context.context_id()
+            ),
+        )?;
+
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn destroy_kms_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
+    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        let context_id = self
+            .inner
+            .parse_mpc_context_for_destruction(request)
+            .await?;
+
+        let storage_ref = self.inner.crypto_storage.private_storage.clone();
+        let mut guarded_priv_storage = storage_ref.lock().await;
+
+        self.session_maker.remove_context(&context_id).await;
+
+        // There is nothing we can do if deletion fails here.
+        // Note that it cannot fail if the context does not exist.
+        delete_context_at_id(&mut *guarded_priv_storage, &context_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn new_custodian_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
+    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        self.inner.new_custodian_context(request).await
+    }
+
+    async fn destroy_custodian_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
+    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        self.inner.destroy_custodian_context(request).await
+    }
+}
+
+async fn backup_priv_data<
+    S1: Storage + Sync + Send + 'static,
+    T: serde::de::DeserializeOwned
+        + tfhe::Unversionize
+        + tfhe::named::Named
+        + Send
+        + serde::ser::Serialize
+        + tfhe::Versionize
+        + Sync
+        + 'static,
+>(
+    priv_storage: &S1,
+    backup_vault: &mut Vault,
+    data_type_enum: PrivDataType,
+) -> anyhow::Result<()>
+where
+    for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
+{
+    let data_ids = priv_storage
+        .all_data_ids(&data_type_enum.to_string())
+        .await?;
+    for data_id in data_ids.iter() {
+        let data: T = priv_storage
+            .read_data(data_id, &data_type_enum.to_string())
+            .await?;
+        // Delete the old backup data
+        // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
+        delete_at_request_id(backup_vault, data_id, &data_type_enum.to_string()).await?;
+        store_versioned_at_request_id(backup_vault, data_id, &data, &data_type_enum.to_string())
+            .await?;
+    }
+    Ok(())
+}
+
 /// Generate a recovery request to the backup vault.
 async fn gen_recovery_request_payload(
     rng: &mut AesRng,
     sig_key: &PrivateSigKey,
-    backup_enc_key: BackupPublicKey,
-    backup_priv_key: BackupPrivateKey,
+    backup_enc_key: UnifiedPublicEncKey,
+    backup_priv_key: UnifiedPrivateEncKey,
     custodian_context: &InternalCustodianContext,
     my_role: Role,
 ) -> anyhow::Result<(RecoveryRequestPayload, RecoveryValidationMaterial)> {
@@ -326,7 +531,7 @@ async fn gen_recovery_request_payload(
         &mut serialized_priv_key,
         SAFE_SER_SIZE_LIMIT,
     )?;
-    let (ct_map, commitments) = operator.secret_share_and_encrypt(
+    let (ct_map, commitments) = operator.secret_share_and_signcrypt(
         rng,
         &serialized_priv_key,
         custodian_context.context_id,
@@ -353,8 +558,10 @@ mod tests {
             operator::InternalRecoveryRequest,
             seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
         },
-        cryptography::internal_crypto_types::{
-            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, PublicSigKey,
+        cryptography::{
+            encryption::{Encryption, PkeScheme, PkeSchemeType},
+            signatures::{gen_sig_keys, PublicSigKey},
+            signcryption::UnifiedUnsigncryptionKey,
         },
         engine::context::{NodeInfo, SoftwareVersion},
         util::meta_store::MetaStore,
@@ -365,7 +572,7 @@ mod tests {
     };
     use kms_grpc::{
         identifiers::ContextId,
-        kms::v1::DestroyKmsContextRequest,
+        kms::v1::{DestroyKmsContextRequest, NewKmsContextRequest},
         rpc_types::{KMSType, PrivDataType},
         RequestId,
     };
@@ -410,25 +617,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_kms_context() {
-        let mut rng = AesRng::seed_from_u64(42);
-        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
-        let (_enc_sk, backup_encryption_public_key) = encryption.keygen().unwrap();
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
         let context_id = ContextId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
             kms_nodes: vec![NodeInfo {
-                name: "Node1".to_string(),
+                mpc_identity: "Node1".to_string(),
                 party_id: 1,
-                verification_key: verification_key.clone(),
-                backup_encryption_public_key,
-                external_url: "localhost:12345".to_string(),
+                verification_key: Some(verification_key.clone()),
+                external_url: "http://localhost:12345".to_string(),
                 tls_cert: vec![],
                 public_storage_url: "http://storage".to_string(),
                 extra_verification_keys: vec![],
             }],
             context_id,
-            previous_context_id: None,
             software_version: SoftwareVersion {
                 major: 0,
                 minor: 1,
@@ -439,15 +641,17 @@ mod tests {
         };
 
         let request = Request::new(NewKmsContextRequest {
-            active_context: None,
             new_context: Some(new_context.try_into().unwrap()),
         });
-        let context_manager = RealContextManager {
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, base_kms.rng.clone());
+        let context_manager = ThresholdContextManager::new(
             base_kms,
-            crypto_storage: crypto_storage.clone(),
-            custodian_meta_store: Arc::new(RwLock::new(MetaStore::new(100, 10))),
-            my_role: Role::indexed_from_one(1),
-        };
+            crypto_storage.clone(),
+            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            Role::indexed_from_one(1),
+            session_maker,
+        );
 
         let response = context_manager.new_kms_context(request).await;
         response.unwrap();
@@ -465,7 +669,7 @@ mod tests {
             assert_eq!(stored_context.kms_nodes[0].party_id, 1);
             assert_eq!(
                 stored_context.kms_nodes[0].verification_key,
-                verification_key
+                Some(verification_key)
             );
         }
 
@@ -493,14 +697,15 @@ mod tests {
     async fn test_gen_recovery_request_payloads() {
         let mut rng = AesRng::seed_from_u64(40);
         let backup_id = RequestId::new_random(&mut rng);
-        let (verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let (ephemeral_enc_key, ephemeral_dec_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let mnemonic = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
-        let custodian1: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian1: Custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(1)).unwrap();
-        let custodian2: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian2: Custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(2)).unwrap();
-        let custodian3: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian3: Custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(3)).unwrap();
         let setup_msg_1 = custodian1
             .generate_setup_message(&mut rng, "Custodian-1".to_string())
@@ -522,12 +727,12 @@ mod tests {
             threshold: 1,
         };
         let internal_context =
-            InternalCustodianContext::new(context, ephemeral_enc_key.clone()).unwrap();
+            InternalCustodianContext::new(context, backup_enc_key.clone()).unwrap();
         let (recovery_request_payload, _commitments) = gen_recovery_request_payload(
             &mut rng,
-            &sig_key,
-            ephemeral_enc_key.clone(),
-            ephemeral_dec_key,
+            &server_sig_key,
+            backup_enc_key.clone(),
+            backup_dec_key.clone(),
             &internal_context,
             Role::indexed_from_one(1),
         )
@@ -538,9 +743,17 @@ mod tests {
             recovery_request_payload.cts,
             backup_id,
             Role::indexed_from_one(1),
-            Some(&verf_key),
         )
         .unwrap();
-        assert!(internal_rec_req.is_valid(&verf_key).unwrap());
+        let custodian_id = custodian1.verification_key().verf_key_id();
+        let unsign_key = UnifiedUnsigncryptionKey::new(
+            custodian1.public_dec_key(),
+            custodian1.public_enc_key(),
+            &server_verf_key,
+            &custodian_id,
+        );
+        assert!(internal_rec_req
+            .is_valid(Role::indexed_from_one(1), &unsign_key)
+            .unwrap());
     }
 }

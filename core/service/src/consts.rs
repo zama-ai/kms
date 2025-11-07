@@ -12,7 +12,6 @@ pub const KEY_PATH_PREFIX: &str = "keys";
 pub const DEFAULT_PARAM: DKGParams = BC_PARAMS_SNS;
 pub const TEST_PARAM: DKGParams = PARAMS_TEST_BK_SNS;
 
-pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 pub const RND_SIZE: usize = 128 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
 
 // TODO do we want to load this from a configuration?
@@ -141,6 +140,8 @@ lazy_static::lazy_static! {
     // This is a bit hackish, but it works for now.
     pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
 
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // In the future we will remove the default context.
     pub static ref DEFAULT_MPC_CONTEXT: ContextId = ContextId::from_bytes([
         1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
         4,

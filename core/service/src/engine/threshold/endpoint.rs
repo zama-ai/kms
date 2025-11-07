@@ -90,6 +90,20 @@ impl_endpoint! {
             })
         }
 
+        #[cfg(feature = "insecure")]
+        #[tracing::instrument(skip(self, request))]
+        async fn partial_key_gen_preproc(
+            &self,
+            request: Request<kms_grpc::kms::v1::PartialKeyGenPreprocRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
+            self.keygen_preprocessor.partial_key_gen_preproc(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, tag);
+            })
+        }
+
         #[tracing::instrument(skip(self, request))]
         async fn get_key_gen_preproc_result(
             &self,
@@ -434,7 +448,7 @@ impl_endpoint! {
             // Add preprocessing IDs from the preprocessor
             own_material.preprocessing_ids = self.keygen_preprocessor.get_all_preprocessing_ids().await?;
 
-            let health_check_sessions = self.session_preparer.get_healthcheck_session_all_contexts().await
+            let health_check_sessions = self.session_maker.get_healthcheck_session_all_contexts().await
             .map_err(|e| {tonic::Status::internal(format!("Failed to get health check sessions: {}", e))})?;
 
             let mut peers_from_all_contexts = Vec::new();

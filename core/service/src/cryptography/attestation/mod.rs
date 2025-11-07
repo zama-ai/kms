@@ -1,4 +1,4 @@
-use super::internal_crypto_types::PrivateSigKey;
+use super::signatures::PrivateSigKey;
 use anyhow::{bail, ensure};
 use enum_dispatch::enum_dispatch;
 use k256::pkcs8::EncodePrivateKey;
@@ -185,6 +185,7 @@ pub trait SecurityModule {
         ]
         .concat();
 
+        #[allow(deprecated)]
         let sk_der = ca_key.sk().to_pkcs8_der()?;
         let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
             &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
