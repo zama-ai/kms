@@ -369,7 +369,12 @@ pub struct NetworkSession {
     pub(crate) session_id: SessionId,
     pub(crate) context_id: SessionId,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`]
-    /// Sending channels for this session
+    /// Sending channels for this session, namely when this party wants to
+    /// send to another party (identified by Role), it will pick the value in the hashmap
+    /// and use it to send.
+    ///
+    /// Using Role to identify the receiver is fine even if the sender is not a part of
+    /// the current session, since the Role will only identify a party in the receiving session.
     pub(crate) sending_channels: HashMap<Role, UnboundedSender<ArcSendValueRequest>>,
     /// Channels which are filled by the grpc server receiving messages from the other parties
     /// owned by the session and thus automatically cleaned up on drop

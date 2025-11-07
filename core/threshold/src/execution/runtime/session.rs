@@ -5,9 +5,14 @@ use crate::{
         structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
     },
     error::error_handler::anyhow_error_and_log,
-    execution::small_execution::{
-        prf::PRSSConversions,
-        prss::{DerivePRSSState, PRSSInit, PRSSPrimitives, RobustSecurePrssInit, SecurePRSSState},
+    execution::{
+        runtime::party::MpcIdentity,
+        small_execution::{
+            prf::PRSSConversions,
+            prss::{
+                DerivePRSSState, PRSSInit, PRSSPrimitives, RobustSecurePrssInit, SecurePRSSState,
+            },
+        },
     },
     networking::Networking,
     session_id::SessionId,
@@ -38,7 +43,7 @@ pub enum DeSerializationRunTime {
 pub struct SessionParameters {
     threshold: u8,
     session_id: SessionId,
-    my_role: Role,
+    my_role: Role, // this might not exist if the sender from outside the set of parties
     roles: HashSet<Role>,
     all_sorted_roles: Vec<Role>,
     deserialization_runtime: DeSerializationRunTime,
@@ -137,9 +142,170 @@ impl ParameterHandles for SessionParameters {
 // multiple sessions with the same networking instance (i.e. shared sid but different round counter).
 pub struct BaseSession {
     pub parameters: SessionParameters,
-    pub network: NetworkingImpl,
+    pub network: NetworkingImpl, // this is a NetworkSession
     pub rng: AesRng,
     pub corrupt_roles: HashSet<Role>,
+}
+
+pub struct BaseSessionExt {
+    base_session: BaseSession,
+    my_role: Role,
+    external_roles: HashSet<Role>,
+}
+
+pub enum MyResharingSet {
+    S1,
+    S2,
+    Both,
+}
+
+pub struct ResharingBaseSession {
+    resharing_set: MyResharingSet,
+    base_session_s1: BaseSessionExt,
+    base_session_s2: BaseSessionExt, // I might not be a part of one of these sessions
+}
+
+impl ParameterHandles for BaseSessionExt {
+    fn my_role(&self) -> Role {
+        self.my_role
+    }
+
+    fn num_parties(&self) -> usize {
+        self.base_session.num_parties() + self.external_roles.len()
+    }
+
+    fn threshold(&self) -> u8 {
+        self.base_session.threshold()
+    }
+
+    fn session_id(&self) -> SessionId {
+        self.base_session.session_id()
+    }
+
+    fn roles(&self) -> &HashSet<Role> {
+        self.base_session.roles()
+    }
+
+    fn roles_mut(&mut self) -> &mut HashSet<Role> {
+        self.base_session.roles_mut()
+    }
+
+    fn to_parameters(&self) -> SessionParameters {
+        let mut all_roles = self.base_session.roles().clone();
+        for role in &self.external_roles {
+            all_roles.insert(*role);
+        }
+        SessionParameters::new(
+            self.threshold(),
+            self.session_id(),
+            self.my_role(),
+            all_roles,
+        )
+        .unwrap()
+    }
+
+    fn get_all_sorted_roles(&self) -> &Vec<Role> {
+        self.base_session.get_all_sorted_roles()
+    }
+
+    fn get_deserialization_runtime(&self) -> DeSerializationRunTime {
+        self.base_session.get_deserialization_runtime()
+    }
+
+    fn set_deserialization_runtime(&mut self, serialization_runtime: DeSerializationRunTime) {
+        self.base_session
+            .set_deserialization_runtime(serialization_runtime);
+    }
+}
+
+impl BaseSessionHandles for BaseSessionExt {
+    type RngType = AesRng;
+
+    fn rng(&mut self) -> &mut Self::RngType {
+        &mut self.base_session.rng
+    }
+
+    fn network(&self) -> &NetworkingImpl {
+        &self.base_session.network
+    }
+
+    fn corrupt_roles(&self) -> &HashSet<Role> {
+        &self.base_session.corrupt_roles
+    }
+
+    fn add_corrupt(&mut self, role: Role) -> bool {
+        self.base_session.add_corrupt(role)
+    }
+}
+
+impl ResharingBaseSession {
+    pub async fn send_within_s2(&self, value: Arc<Vec<u8>>, receiver: &Role) -> anyhow::Result<()> {
+        // make sure I'm in S2 or both
+        match self.resharing_set {
+            MyResharingSet::S2 | MyResharingSet::Both => {
+                self.base_session_s2.network().send(value, receiver).await
+            }
+            _ => Err(anyhow_error_and_log(
+                "Trying to send within S2 but I'm not part of S2",
+            )),
+        }
+    }
+
+    pub async fn send_within_s1(&self, value: Arc<Vec<u8>>, receiver: &Role) -> anyhow::Result<()> {
+        // make sure I'm in S1 or both
+        match self.resharing_set {
+            MyResharingSet::S1 | MyResharingSet::Both => {
+                self.base_session_s1.network().send(value, receiver).await
+            }
+            _ => Err(anyhow_error_and_log(
+                "Trying to send within S1 but I'm not part of S1",
+            )),
+        }
+    }
+
+    pub async fn send_to_s2(&self, value: Arc<Vec<u8>>, receiver: &Role) -> anyhow::Result<()> {
+        // Suppose I'm in S1 and want to send to S2
+        // Make sure I'm in S1 only
+        match self.resharing_set {
+            MyResharingSet::S1 => self.base_session_s2.network().send(value, receiver).await,
+            _ => Err(anyhow_error_and_log(
+                "Trying to send to S2 as an external party but I'm not part of S1",
+            )),
+        }
+    }
+
+    pub async fn send_to_s1(&self, value: Arc<Vec<u8>>, receiver: &Role) -> anyhow::Result<()> {
+        // Suppose I'm in S2 and want to send to S1
+        // Make sure I'm in S2 only
+        match self.resharing_set {
+            MyResharingSet::S2 => self.base_session_s1.network().send(value, receiver).await,
+            _ => Err(anyhow_error_and_log(
+                "Trying to send to S1 as an external party but I'm not part of S2",
+            )),
+        }
+    }
+
+    pub async fn receive_as_s1(&self, role: &Role) -> anyhow::Result<Vec<u8>> {
+        self.base_session_s1.network().receive(role).await
+    }
+
+    pub async fn receive_as_s2(&self, role: &Role) -> anyhow::Result<Vec<u8>> {
+        self.base_session_s2.network().receive(role).await
+    }
+
+    pub async fn receive_as_s1_from_ext(
+        &self,
+        identity: &MpcIdentity,
+    ) -> anyhow::Result<Arc<Vec<u8>>> {
+        todo!()
+    }
+
+    pub async fn receive_as_s2_from_ext(
+        &self,
+        identity: &MpcIdentity,
+    ) -> anyhow::Result<Arc<Vec<u8>>> {
+        todo!()
+    }
 }
 
 pub trait BaseSessionHandles: ParameterHandles {

@@ -493,9 +493,14 @@ pub struct NetworkRoundValue {
 
 #[derive(Debug, Clone)]
 pub(crate) struct InitializedMessageQueueStore {
-    // role assignment is needed because the message store
-    // needs to translate between identity and role
+    /// Tx is the sending side of the channel, which is filled by
+    /// the grpc server when it receives the message on the `send_value` endpoint.
     tx: DashMap<MpcIdentity, Arc<Sender<NetworkRoundValue>>>,
+    /// Rx is the receiving side of the channel, which is used on the
+    /// `NetworkSession` to receive messages for a given role.
+    ///
+    /// NOTE: this will not work if the sender is not a part of the session
+    /// because it will not have a role.
     rx: DashMap<Role, Arc<Mutex<Receiver<NetworkRoundValue>>>>,
 }
 
@@ -642,6 +647,10 @@ impl MessageQueueStore {
     }
 }
 
+/// SessionStore is a concurrent map that holds the status of each session.
+///
+/// It currently does not delete completed sessions, but the completed sessions
+/// only holds a timestamp, so the memory usage should be minimal.
 pub(crate) type SessionStore = DashMap<SessionId, SessionStatus>;
 
 #[derive(Debug)]
@@ -665,6 +674,7 @@ pub enum TlsExtensionGetter {
     SslConnectInfo,
 }
 
+/// Singleton
 #[derive(Default)]
 pub struct NetworkingImpl {
     session_store: Arc<SessionStore>,
