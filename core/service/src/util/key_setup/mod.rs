@@ -28,7 +28,7 @@ cfg_if::cfg_if! {
 
 use crate::client::client_non_wasm::ClientDataType;
 use crate::consts::SIGNING_KEY_ID;
-use crate::cryptography::signatures::gen_sig_keys;
+use crate::cryptography::signatures::{gen_sig_keys, PrivateSigKey};
 use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{get_rng, log_data_exists, log_storage_success};
 use crate::vault::storage::{
@@ -770,7 +770,7 @@ where
 /// certificates in the enclave.
 async fn ensure_ca_cert_exists<PubS: StorageForBytes>(
     pub_storage: &mut PubS,
-    sk: &crate::cryptography::internal_crypto_types::PrivateSigKey,
+    sk: &PrivateSigKey,
     req_id: &RequestId,
     subject: String,
     tls_wildcard: bool,
