@@ -172,9 +172,14 @@ async fn build_tls_config(
             tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
             let eif_signing_cert_pem = cert.into_pem(my_id, peers)?;
             let (cert, key) = security_module
-                .wrap_x509_cert(context_id, eif_signing_cert_pem, true)
+                .wrap_x509_cert(eif_signing_cert_pem, true)
                 .await?;
-            (cert, key, Some(Arc::new(trusted_releases.clone())), true)
+            (
+                cert,
+                key,
+                Some(trusted_releases.iter().cloned().collect()),
+                true,
+            )
         }
         TlsConf::FullAuto {
             ref trusted_releases,
@@ -211,9 +216,7 @@ async fn build_tls_config(
                 panic!("CA certificate public key isn't ECDSA");
             };
 
-            let (cert, key) = security_module
-                .issue_x509_cert(context_id, &ca_cert, sk, true)
-                .await?;
+            let (cert, key) = security_module.issue_x509_cert(&ca_cert, sk, true).await?;
 
             // sanity check
             EndEntityCert::try_from(&cert.contents.as_slice().into())?
@@ -232,7 +235,12 @@ async fn build_tls_config(
                     panic!("TLS certificate signed by enclave CA is invalid, cannot proceed: {e}")
                 });
 
-            (cert, key, Some(Arc::new(trusted_releases.clone())), false)
+            (
+                cert,
+                key,
+                Some(trusted_releases.iter().cloned().collect()),
+                false,
+            )
         }
     };
 

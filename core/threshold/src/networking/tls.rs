@@ -1,10 +1,10 @@
-use crate::session_id::SessionId;
+use crate::{execution::runtime::party::MpcIdentity, session_id::SessionId};
 
 use anyhow::{anyhow, bail, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha384};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, RwLock},
 };
 use tfhe::Versionize;
@@ -33,7 +33,7 @@ pub enum ReleasePCRValuesVersioned {
 /// PCR8 which is the hash of the certificate that signed a running enclave
 /// image but its reference value comes from hashing the certificate bundled
 /// within the mTLS certificate, not through configuration.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Versionize)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Versionize, Hash, Eq)]
 #[versionize(ReleasePCRValuesVersioned)]
 #[serde(deny_unknown_fields)]
 pub struct ReleasePCRValues {
@@ -46,59 +46,6 @@ pub struct ReleasePCRValues {
     // rootfs hash
     #[serde(with = "hex::serde")]
     pub pcr2: Vec<u8>,
-}
-
-#[derive(Debug)]
-pub struct AttestedTLSContext {
-    #[allow(dead_code)]
-    root_hint_subjects: Vec<DistinguishedName>,
-    verifiers: HashMap<String, (Arc<dyn ClientCertVerifier>, Arc<WebPkiServerVerifier>)>,
-    // allowed software hashes
-    release_pcrs: Option<Arc<Vec<ReleasePCRValues>>>,
-}
-
-impl AttestedTLSContext {
-    /// - *`ca_certs`: map from subject name to CA certificate PEM
-    /// - *`release_pcrs`: allowed software release PCR values
-    pub fn new(
-        ca_certs: HashMap<String, Pem>,
-        release_pcrs: Option<Arc<Vec<ReleasePCRValues>>>,
-    ) -> anyhow::Result<Self> {
-        let verifiers = ca_certs
-            .iter()
-            .map(|(subject, ca_cert)| {
-                let mut roots = RootCertStore::empty();
-                roots
-                    .add(CertificateDer::from_slice(&ca_cert.contents))
-                    .map_err(|e| anyhow::anyhow!("{e}"))
-                    .map(|_| Arc::new(roots))
-                    .and_then(|roots| {
-                        WebPkiClientVerifier::builder(roots.clone())
-                            .build()
-                            .map_err(|e| anyhow::anyhow!("{e}"))
-                            .map(|client_verifier| (roots, client_verifier))
-                    })
-                    .and_then(|(roots, client_verifier)| {
-                        WebPkiServerVerifier::builder(roots)
-                            .build()
-                            .map_err(|e| anyhow::anyhow!("{e}"))
-                            .map(|server_verifier| {
-                                (subject.clone(), (client_verifier, server_verifier))
-                            })
-                    })
-            })
-            .collect::<anyhow::Result<HashMap<String, _>>>()?;
-        let root_hint_subjects: Vec<_> = verifiers
-            .values()
-            .flat_map(|(client_verifier, _)| client_verifier.root_hint_subjects())
-            .cloned()
-            .collect();
-        Ok(Self {
-            root_hint_subjects,
-            verifiers,
-            release_pcrs,
-        })
-    }
 }
 
 /// Our custom verifier for our custom mTLS certificates extended with AWS Nitro
@@ -117,9 +64,22 @@ impl AttestedTLSContext {
 pub struct AttestedVerifier {
     root_hint_subjects: Vec<DistinguishedName>,
     supported_algs: WebPkiSupportedAlgorithms,
-    // SessionId is supposed to be based on RequestId, and we're representing
-    // ContextId as RequestId so far, so let's say it's all the same for now
-    contexts: RwLock<HashMap<SessionId, Arc<AttestedTLSContext>>>,
+    // There is one trust root per MPC identity but one MPC identity can belong
+    // to multiple contexts.  SessionId is supposed to be based on RequestId,
+    // and we're representing ContextId as RequestId so far, so let's say it's
+    // all the same for now.
+    trust_roots: RwLock<
+        HashMap<
+            MpcIdentity,
+            (
+                Arc<dyn ClientCertVerifier>,
+                Arc<WebPkiServerVerifier>,
+                HashSet<SessionId>,
+            ),
+        >,
+    >,
+    // Each context can specify a list of valid PCR values
+    release_pcrs: RwLock<HashMap<SessionId, HashSet<ReleasePCRValues>>>,
     // If the "semi-auto" TLS scheme is used, where the party TLS identity is
     // linked to some certificate issued and managed by some traditional PKI,
     // the enclave image should be signed by that certificate and the
@@ -146,7 +106,8 @@ impl AttestedVerifier {
 Crypto provider should exist at this point"
                 ))?
                 .signature_verification_algorithms,
-            contexts: RwLock::new(HashMap::new()),
+            trust_roots: RwLock::new(HashMap::new()),
+            release_pcrs: RwLock::new(HashMap::new()),
             pcr8_expected,
             #[cfg(feature = "testing")]
             mock_enclave,
@@ -156,85 +117,123 @@ Crypto provider should exist at this point"
     pub fn add_context(
         &self,
         context_id: SessionId,
-        ca_certs: HashMap<String, Pem>,
-        release_pcrs: Option<Arc<Vec<ReleasePCRValues>>>,
+        ca_certs: HashMap<MpcIdentity, Pem>,
+        release_pcrs: Option<HashSet<ReleasePCRValues>>,
     ) -> anyhow::Result<()> {
-        let mut contexts = self
-            .contexts
+        let mut trust_roots = self
+            .trust_roots
             .write()
             .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {e}"))?;
-        ensure!(
-            !contexts.contains_key(&context_id),
-            "Context with ID {context_id} already exists"
-        );
-        let context = AttestedTLSContext::new(ca_certs, release_pcrs)
-            .map_err(|e| anyhow::anyhow!("Failed to add new TLS context: {e}"))?;
-        contexts.insert(context_id, Arc::new(context));
+        for (mpc_identity, ca_cert) in ca_certs {
+            match trust_roots.get_mut(&mpc_identity) {
+                Some((_, _, contexts)) => {
+                    if !contexts.insert(context_id) {
+                        tracing::warn!("MPC identity {mpc_identity} is already present in context {context_id}")
+                    }
+                }
+                None => {
+                    let mut roots = RootCertStore::empty();
+                    roots.add(CertificateDer::from_slice(&ca_cert.contents))?;
+                    let roots = Arc::new(roots);
+                    let client_verifier = WebPkiClientVerifier::builder(roots.clone()).build()?;
+                    let server_verifier = WebPkiServerVerifier::builder(roots).build()?;
+                    trust_roots.insert(
+                        mpc_identity,
+                        (
+                            client_verifier,
+                            server_verifier,
+                            HashSet::from([context_id]),
+                        ),
+                    );
+                }
+            }
+        }
+        if let Some(new_release_pcrs) = release_pcrs {
+            let mut release_pcrs = self
+                .release_pcrs
+                .write()
+                .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {e}"))?;
+            if !release_pcrs.contains_key(&context_id) {
+                release_pcrs.insert(context_id, new_release_pcrs);
+            } else {
+                tracing::warn!("PCR values already defined in context {context_id}")
+            }
+        }
         Ok(())
     }
 
     pub fn remove_context(&self, context_id: SessionId) -> anyhow::Result<()> {
-        let mut contexts = self
-            .contexts
+        let mut trust_roots = self
+            .trust_roots
             .write()
             .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {e}"))?;
-        contexts.remove(&context_id);
+        trust_roots.retain(|_, (_, _, contexts)| {
+            contexts.remove(&context_id);
+            !contexts.is_empty()
+        });
+        let mut release_pcrs = self
+            .release_pcrs
+            .write()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {e}"))?;
+        release_pcrs.remove(&context_id);
         Ok(())
     }
 
     #[allow(clippy::type_complexity)]
-    fn get_context_and_verifiers_for_x509_cert(
+    fn get_verifiers_and_pcrs_for_x509_cert(
         &self,
         cert: &X509Certificate<'_>,
     ) -> Result<
         (
-            Arc<AttestedTLSContext>,
             Arc<dyn ClientCertVerifier>,
             Arc<dyn ServerCertVerifier>,
+            HashSet<ReleasePCRValues>,
         ),
         Error,
     > {
-        let context_id =
-            extract_context_id_from_cert(cert).map_err(|e| Error::General(e.to_string()))?;
         let subject = extract_subject_from_cert(cert).map_err(|e| Error::General(e.to_string()))?;
         tracing::debug!("Getting context and verifiers for {subject}");
 
-        let contexts = self
-            .contexts
+        let trust_roots = self
+            .trust_roots
             .read()
             .map_err(|e| Error::General(format!("Failed to acquire read lock: {e}")))?;
-        let context = contexts
-            .get(&context_id)
-            .ok_or_else(|| Error::General(format!("Context {context_id} not found")))
-            .inspect_err(|e| {
-                tracing::error!("{e}");
-            })?;
-        let (client_verifier, server_verifier) = context
-            .verifiers
-            .get(subject.as_str())
+        let (client_verifier, server_verifier, contexts) = trust_roots
+            .get(&MpcIdentity(subject.clone()))
             .ok_or(Error::General(format!("{subject} is not a trust anchor")))
             .cloned()
             .inspect_err(|e| {
                 tracing::error!("{e}");
             })?;
-        Ok((context.clone(), client_verifier, server_verifier))
+        let release_pcrs = self
+            .release_pcrs
+            .read()
+            .map_err(|e| Error::General(format!("Failed to acquire read lock: {e}")))?;
+        let pcrs_for_mpc_identity = contexts
+            .iter()
+            .filter_map(|context_id| release_pcrs.get(context_id))
+            .flatten()
+            .cloned()
+            .collect::<HashSet<_>>();
+
+        Ok((client_verifier, server_verifier, pcrs_for_mpc_identity))
     }
 
     #[allow(clippy::type_complexity)]
-    fn get_context_and_verifiers_for_cert_der(
+    fn get_verifiers_and_pcrs_for_cert_der(
         &self,
         cert: &CertificateDer<'_>,
     ) -> Result<
         (
-            Arc<AttestedTLSContext>,
             Arc<dyn ClientCertVerifier>,
             Arc<dyn ServerCertVerifier>,
+            HashSet<ReleasePCRValues>,
         ),
         Error,
     > {
         let (_, x509_cert) =
             parse_x509_certificate(cert.as_ref()).map_err(|e| Error::General(e.to_string()))?;
-        self.get_context_and_verifiers_for_x509_cert(&x509_cert)
+        self.get_verifiers_and_pcrs_for_x509_cert(&x509_cert)
     }
 }
 
@@ -251,7 +250,8 @@ impl ServerCertVerifier for AttestedVerifier {
     ) -> Result<ServerCertVerified, Error> {
         let (_, cert) = parse_x509_certificate(end_entity.as_ref())
             .map_err(|e| Error::General(e.to_string()))?;
-        let (context, _, server_verifier) = self.get_context_and_verifiers_for_x509_cert(&cert)?;
+        let (_, server_verifier, release_pcrs) =
+            self.get_verifiers_and_pcrs_for_x509_cert(&cert)?;
         // check the enclave-generated certificate used for the TLS session as
         // usual (however, we expect it to be self-signed)
         tracing::debug!("Verifying certificate for server {:?}", server_name,);
@@ -267,7 +267,7 @@ impl ServerCertVerifier for AttestedVerifier {
         let do_validation = true;
 
         if do_validation {
-            if let Some(release_pcrs) = &context.release_pcrs {
+            if !release_pcrs.is_empty() {
                 validate_wrapped_cert(
                     &cert,
                     release_pcrs,
@@ -291,8 +291,8 @@ impl ServerCertVerifier for AttestedVerifier {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
-        self.get_context_and_verifiers_for_cert_der(cert)?
-            .2
+        self.get_verifiers_and_pcrs_for_cert_der(cert)?
+            .1
             .verify_tls12_signature(message, cert, dss)
     }
 
@@ -302,8 +302,8 @@ impl ServerCertVerifier for AttestedVerifier {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
-        self.get_context_and_verifiers_for_cert_der(cert)?
-            .2
+        self.get_verifiers_and_pcrs_for_cert_der(cert)?
+            .1
             .verify_tls13_signature(message, cert, dss)
     }
 
@@ -342,7 +342,8 @@ impl ClientCertVerifier for AttestedVerifier {
             .map_err(|e| Error::General(e.to_string()))?;
         // if none of the trust roots has a subject name matching the client
         // subject name, verification will fail
-        let (context, client_verifier, _) = self.get_context_and_verifiers_for_x509_cert(&cert)?;
+        let (client_verifier, _, release_pcrs) =
+            self.get_verifiers_and_pcrs_for_x509_cert(&cert)?;
 
         // check the enclave-generated certificate used for the TLS session as
         // usual
@@ -359,7 +360,7 @@ impl ClientCertVerifier for AttestedVerifier {
         let do_validation = true;
 
         if do_validation {
-            if let Some(release_pcrs) = &context.release_pcrs {
+            if !release_pcrs.is_empty() {
                 validate_wrapped_cert(
                     &cert,
                     release_pcrs,
@@ -384,8 +385,8 @@ impl ClientCertVerifier for AttestedVerifier {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
-        self.get_context_and_verifiers_for_cert_der(cert)?
-            .1
+        self.get_verifiers_and_pcrs_for_cert_der(cert)?
+            .0
             .verify_tls12_signature(message, cert, dss)
     }
 
@@ -395,8 +396,8 @@ impl ClientCertVerifier for AttestedVerifier {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
-        self.get_context_and_verifiers_for_cert_der(cert)?
-            .1
+        self.get_verifiers_and_pcrs_for_cert_der(cert)?
+            .0
             .verify_tls13_signature(message, cert, dss)
     }
 
@@ -417,7 +418,7 @@ pub enum CertVerified {
 
 fn validate_wrapped_cert(
     cert: &X509Certificate,
-    trusted_releases: &[ReleasePCRValues],
+    trusted_releases: HashSet<ReleasePCRValues>,
     pcr8_expected: bool,
     verifier: CertVerifier,
     intermediates: &[CertificateDer<'_>],
@@ -512,26 +513,6 @@ fn validate_wrapped_cert(
     Ok(())
 }
 
-/// Extract the context ID from the certificate. All TLS certificates are signed
-/// by the party CA certificate, so we can see context ID as the serial number
-/// of the certificate.
-pub fn extract_context_id_from_cert(cert: &X509Certificate) -> anyhow::Result<SessionId> {
-    // Each TLS certificate is issued in a specific configuration context, we
-    // use the context ID as the certificate serial number
-    //
-    // Note that `cert.serial` is a BigInt, so we need to convert it to
-    // bytes and then convert it to u128. As such, it does not matter
-    // what endianess we use for the conversion, as long as we are
-    // consistent on both sides. Here we use big-endian.
-    let context_id = SessionId::from(u128::from_be_bytes(
-        cert.serial
-            .to_bytes_be()
-            .try_into()
-            .or(Err(anyhow!("Invalid context ID length")))?,
-    ));
-    Ok(context_id)
-}
-
 /// Extract the party name from the certificate.
 ///
 /// Each party should have its own self-signed certificate.
@@ -586,14 +567,14 @@ pub fn extract_subject_from_cert(cert: &X509Certificate) -> anyhow::Result<Strin
 
 pub fn build_ca_certs_map<I: Iterator<Item = Pem>>(
     cert_pems: I,
-) -> anyhow::Result<HashMap<String, Pem>> {
+) -> anyhow::Result<HashMap<MpcIdentity, Pem>> {
     cert_pems
         .map(|c| {
             c.parse_x509()
                 .map_err(|e| anyhow::anyhow!("Could not parse X509 structure: {e}"))
                 .and_then(|ref x509_cert| {
-                    extract_subject_from_cert(x509_cert).map(|s| (s, c.clone()))
+                    extract_subject_from_cert(x509_cert).map(|s| (MpcIdentity(s), c.clone()))
                 })
         })
-        .collect::<Result<HashMap<String, Pem>, _>>()
+        .collect::<Result<HashMap<MpcIdentity, Pem>, _>>()
 }

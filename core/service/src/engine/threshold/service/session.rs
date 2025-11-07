@@ -9,7 +9,7 @@ use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
         runtime::{
-            party::{Identity, Role, RoleAssignment},
+            party::{Identity, MpcIdentity, Role, RoleAssignment},
             session::{BaseSession, SessionParameters, SmallSession},
         },
         small_execution::prss::{DerivePRSSState, PRSSSetup},
@@ -193,7 +193,7 @@ impl SessionMaker {
 
             if let Some(ca_cert) = &node.ca_cert {
                 let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert)?.1;
-                ca_certs_map.insert(node.mpc_identity.clone(), ca_cert);
+                ca_certs_map.insert(MpcIdentity(node.mpc_identity.clone()), ca_cert);
             }
         }
 
@@ -219,7 +219,7 @@ impl SessionMaker {
                 );
                     None
                 } else {
-                    Some(Arc::new(info.pcr_values.clone()))
+                    Some(info.pcr_values.iter().cloned().collect())
                 };
                 verifier.add_context(context_id_as_session_id, ca_certs_map, release_pcrs)?;
             }

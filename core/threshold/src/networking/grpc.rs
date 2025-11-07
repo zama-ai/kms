@@ -830,9 +830,9 @@ lazy_static::lazy_static! {
         DashMap::new();
 }
 
-fn parse_identity_context_from_cert(
+fn parse_identity_from_cert(
     certs: Arc<Vec<CertificateDer<'static>>>,
-) -> Result<(String, SessionId), Box<tonic::Status>> {
+) -> Result<String, Box<tonic::Status>> {
     if certs.len() != 1 {
         // it shouldn't happen because we expect TLS certificates to
         // be signed by party CA certificates directly, without any
@@ -843,9 +843,7 @@ fn parse_identity_context_from_cert(
     parse_x509_certificate(certs[0].as_ref())
         .map_err(|e| Box::new(tonic::Status::new(tonic::Code::Aborted, e.to_string())))
         .and_then(|(_rem, cert)| {
-            let context_id = u128::from_be_bytes(cert.serial.to_bytes_be().try_into().unwrap());
             extract_subject_from_cert(&cert)
-                .map(|res| (res, SessionId::from(context_id)))
                 .map_err(|e| Box::new(tonic::Status::new(tonic::Code::Aborted, e.to_string())))
         })
 }
@@ -909,15 +907,15 @@ impl Gnetworking for NetworkingImpl {
         request: tonic::Request<HealthCheckRequest>,
     ) -> std::result::Result<tonic::Response<HealthCheckResponse>, tonic::Status> {
         // Perform the exact same check as we do for a "real" MPC message
-        let valid_tls_sender_and_context = match self.tls_extension {
+        let valid_tls_sender = match self.tls_extension {
             TlsExtensionGetter::TlsConnectInfo => request
                 .extensions()
                 .get::<tonic::transport::server::TlsConnectInfo<TcpConnectInfo>>()
-                .and_then(|i| i.peer_certs().map(parse_identity_context_from_cert)),
+                .and_then(|i| i.peer_certs().map(parse_identity_from_cert)),
             TlsExtensionGetter::SslConnectInfo => request
                 .extensions()
                 .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
-                .and_then(|i| i.peer_certs().map(parse_identity_context_from_cert)),
+                .and_then(|i| i.peer_certs().map(parse_identity_from_cert)),
         }
         .transpose()
         .map_err(|boxed| *boxed)?;
@@ -933,7 +931,7 @@ impl Gnetworking for NetworkingImpl {
             #[cfg(feature = "testing")]
             self.force_tls,
             &health_tag.sender,
-            valid_tls_sender_and_context.map(|(sender, _)| sender),
+            valid_tls_sender,
         )
         .map_err(|e| *e)?;
 
@@ -952,15 +950,15 @@ impl Gnetworking for NetworkingImpl {
         // in this case it's party1.com.
         // We also require party1.com to be the subject and the issuer CN too,
         // since we're using self-signed certificates at the moment.
-        let valid_tls_sender_and_context = match self.tls_extension {
+        let valid_tls_sender = match self.tls_extension {
             TlsExtensionGetter::TlsConnectInfo => request
                 .extensions()
                 .get::<tonic::transport::server::TlsConnectInfo<TcpConnectInfo>>()
-                .and_then(|i| i.peer_certs().map(parse_identity_context_from_cert)),
+                .and_then(|i| i.peer_certs().map(parse_identity_from_cert)),
             TlsExtensionGetter::SslConnectInfo => request
                 .extensions()
                 .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
-                .and_then(|i| i.peer_certs().map(parse_identity_context_from_cert)),
+                .and_then(|i| i.peer_certs().map(parse_identity_from_cert)),
         }
         .transpose()
         .map_err(|boxed| *boxed)?;
@@ -973,18 +971,11 @@ impl Gnetworking for NetworkingImpl {
             )
         })?;
 
-        // Extract context ID
-        // If TLS is used, it is taken from the certificate and is trusted
-        let context_id = match valid_tls_sender_and_context {
-            Some((_, context_id)) => context_id,
-            None => tag.context_id,
-        };
-
         sender_verification(
             #[cfg(feature = "testing")]
             self.force_tls,
             &tag.sender,
-            valid_tls_sender_and_context.map(|(sender, _)| sender),
+            valid_tls_sender,
         )
         .map_err(|e| *e)?;
 
@@ -1079,7 +1070,7 @@ impl Gnetworking for NetworkingImpl {
             self.max_waiting_time_for_message_queue,
             tx.send(NetworkRoundValue {
                 value: request.value,
-                context_id,
+                context_id: tag.context_id,
                 round_counter: tag.round_counter,
             }),
         )
