@@ -1492,7 +1492,6 @@ async fn do_new_custodian_context(
         req_tasks.spawn(async move {
             cur_client
                 .new_custodian_context(tonic::Request::new(NewCustodianContextRequest {
-                    active_context: None, // TODO(#2748) not really used now, should be refactored
                     new_context: Some(new_context_cloned),
                 }))
                 .await

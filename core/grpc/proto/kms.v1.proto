@@ -574,10 +574,8 @@ message DestroyKmsContextRequest {
 }
 
 message NewCustodianContextRequest {
-  // The active custodian context, may be empty if this is the first context.
-  CustodianContext active_context = 1;
   // The new custodian context to create.
-  CustodianContext new_context = 2;
+  CustodianContext new_context = 1;
 }
 
 message DestroyCustodianContextRequest {
