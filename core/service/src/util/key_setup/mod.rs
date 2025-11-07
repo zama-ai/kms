@@ -27,6 +27,7 @@ cfg_if::cfg_if! {
 }
 
 use crate::client::client_non_wasm::ClientDataType;
+use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::signatures::{gen_sig_keys, PrivateSigKey};
 use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{get_rng, log_data_exists, log_storage_success};
@@ -655,18 +656,29 @@ where
                 "",
                 "Threshold server signing keys",
             );
+            // Even if signing keys exist, CA certificates might not
+            if let Some(sk) = temp.get(&SIGNING_KEY_ID) {
+                if !pub_storages[i - 1]
+                    .data_exists(&SIGNING_KEY_ID, &PubDataType::CACert.to_string())
+                    .await?
+                {
+                    ensure_ca_cert_exists(
+                        &mut pub_storages[i - 1],
+                        sk,
+                        request_id,
+                        subject_str,
+                        tls_wildcard,
+                    )
+                    .await?;
+                }
+            } else {
+                tracing::error!("Failed to regenerate CA certificate from existing server signing key for party {i}")
+            };
+
             continue;
         }
 
         let (pk, sk) = gen_sig_keys(&mut rng);
-
-        // self-sign a CA certificate with the private signing key
-        #[allow(deprecated)]
-        let (ca_cert_ki, ca_cert) = threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
-            subject_str.as_str(),
-            tls_wildcard,
-            sk.sk(),
-        )?;
 
         // Store public verification key
         if let Err(store_err) = store_versioned_at_request_id(
@@ -717,29 +729,6 @@ where
             pub_storages[i - 1].info()
         );
 
-        // Store self-signed CA certificate
-        if let Err(store_err) = store_text_at_request_id(
-            &mut pub_storages[i - 1],
-            request_id,
-            &ca_cert.pem(),
-            &PubDataType::CACert.to_string(),
-        )
-        .await
-        {
-            tracing::error!(
-                "Failed to store CA certificate for party {}: {}",
-                i,
-                store_err
-            );
-            continue; // Skip this party but try others
-        }
-        tracing::info!(
-            "Successfully stored CA certificate {} under the handle {} in storage \"{}\"",
-            hex::encode(ca_cert_ki),
-            request_id,
-            pub_storages[i - 1].info()
-        );
-
         // Store private signing key
         if let Err(store_err) = store_versioned_at_request_id(
             &mut priv_storages[i - 1],
@@ -763,9 +752,62 @@ where
             false,
             true,
         );
+
+        // Generate CA certificate
+        ensure_ca_cert_exists(
+            &mut pub_storages[i - 1],
+            &sk,
+            request_id,
+            subject_str,
+            tls_wildcard,
+        )
+        .await?;
     }
     Ok(true)
 }
+
+/// Generates stores CA certificates that are used to issue ephemeral mTLS
+/// certificates in the enclave.
+async fn ensure_ca_cert_exists<PubS: StorageForBytes>(
+    pub_storage: &mut PubS,
+    sk: &PrivateSigKey,
+    req_id: &RequestId,
+    subject: String,
+    tls_wildcard: bool,
+) -> anyhow::Result<()> {
+    // self-sign a CA certificate with the private signing key
+    let (ca_cert_ki, ca_cert) = threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
+        subject.as_str(),
+        tls_wildcard,
+        #[allow(deprecated)]
+        sk.sk(),
+    )?;
+
+    // Store self-signed CA certificate
+    if let Err(store_err) = store_text_at_request_id(
+        pub_storage,
+        req_id,
+        &ca_cert.pem(),
+        &PubDataType::CACert.to_string(),
+    )
+    .await
+    {
+        tracing::error!(
+            "Failed to store CA certificate for party {}: {}",
+            subject,
+            store_err
+        );
+    }
+    tracing::info!(
+        "Successfully stored CA certificate {} under the handle {} in storage \"{}\"",
+        hex::encode(ca_cert_ki),
+        req_id,
+        pub_storage.info()
+    );
+
+    Ok(())
+}
+
 /// Generates and stores threshold FHE key shares and metadata.
 ///
 /// Manages the complete threshold FHE key lifecycle:
