@@ -218,7 +218,7 @@ mod kms_gen_keys_binary_test {
         assert!(output.status.success());
         assert!(log.contains("Deleting VerfKey under request ID"));
         assert!(log.contains("Deleting SigningKey under request ID "));
-        assert!(log.contains("Successfully stored public server signing key under the handle"));
+        assert!(log.contains("Successfully stored public centralized server signing key under the handle"));
 
         let new_output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
@@ -390,8 +390,8 @@ mod kms_gen_keys_binary_test {
         println!("Command output: {log}");
         println!("Command error output: {err_log}");
         assert!(output.status.success());
-        assert!(log.contains("Successfully stored public server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"S3 storage with"));
-        assert!(log.contains("Successfully stored private central server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with"));
+        assert!(log.contains("Successfully stored public centralized server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"S3 storage with"));
+        assert!(log.contains("Successfully stored private centralized server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with"));
     }
 }
 

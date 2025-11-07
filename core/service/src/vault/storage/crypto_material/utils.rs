@@ -183,7 +183,7 @@ pub fn log_storage_success_optional_variant<T: Display, U: Display>(
     let visibility = if is_public { "public" } else { "private" };
     let variant = match is_threshold {
         Some(true) => "threshold ",
-        Some(false) => "centralized",
+        Some(false) => "centralized ",
         None => "",
     };
 
