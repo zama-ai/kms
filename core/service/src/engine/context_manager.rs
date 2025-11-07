@@ -284,8 +284,13 @@ where
         let res = self
             .inner
             .crypto_storage
-            .write_context_info(new_context.context_id(), &new_context, false)
+            .write_context_info(new_context.context_id(), &new_context)
             .await;
+
+        // TODO(zama-ai/kms-internal/issues/2814)
+        // in addition to storing the context in storage
+        // we need to make sure it's also loaded in memory so that the centralized KMS
+        // can check whether context changes are valid
 
         ok_or_tonic_abort(
             res,
@@ -313,6 +318,11 @@ where
         delete_context_at_id(&mut *guarded_priv_storage, &context_id)
             .await
             .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
+
+        // TODO(zama-ai/kms-internal/issues/2814)
+        // in addition to deleting the context from storage
+        // we need to make sure it's also deleted from memory so that the centralized KMS
+        // can check whether context changes are valid
 
         Ok(Response::new(Empty {}))
     }
@@ -390,7 +400,7 @@ async fn atomic_update_context<
 ) -> anyhow::Result<()> {
     let context_id = new_context.context_id();
     let res1 = crypto_storage
-        .write_context_info(new_context.context_id(), new_context, true)
+        .write_context_info(new_context.context_id(), new_context)
         .await;
 
     let res2 = session_maker.add_context_info(my_role, new_context).await;

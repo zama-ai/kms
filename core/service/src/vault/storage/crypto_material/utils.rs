@@ -152,8 +152,40 @@ pub fn log_storage_success<T: Display, U: Display>(
     is_public: bool,
     is_threshold: bool,
 ) {
+    log_storage_success_optional_variant(
+        req_id,
+        storage_info,
+        data_type,
+        is_public,
+        Some(is_threshold),
+    );
+}
+
+/// Logs a message indicating successful storage of data.
+///
+/// # Arguments
+/// * `req_id` - The request ID associated with the stored data
+/// * `storage_info` - Information about the storage where data was stored
+/// * `data_type` - Type of the data that was stored
+/// * `is_public` - Whether the stored data is public or private
+/// * `is_threshold` - If this is None, then no variant is logged.
+///   If Some(true), threshold is logged, if Some(false), centralized is logged.
+///
+/// # Note
+/// The log level is set to `info` to track successful storage operations.
+pub fn log_storage_success_optional_variant<T: Display, U: Display>(
+    req_id: T,
+    storage_info: U,
+    data_type: &str,
+    is_public: bool,
+    is_threshold: Option<bool>,
+) {
     let visibility = if is_public { "public" } else { "private" };
-    let variant = if is_threshold { "threshold " } else { "" };
+    let variant = match is_threshold {
+        Some(true) => "threshold ",
+        Some(false) => "centralized",
+        None => "",
+    };
 
     tracing::info!(
         "Successfully stored {} {}{} under the handle {} in storage \"{}\"",

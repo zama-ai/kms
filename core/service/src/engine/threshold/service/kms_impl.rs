@@ -466,6 +466,17 @@ where
         base_kms: base_kms.new_instance().await,
     };
 
+    // NOTE: context must be loaded before attempting to automatically start the PRSS
+    // since the PRSS requires a context to be present.
+    let context_manager = ThresholdContextManager::new(
+        base_kms.new_instance().await,
+        crypto_storage.inner.clone(),
+        custodian_meta_store,
+        Role::indexed_from_one(config.my_id),
+        session_maker,
+    );
+    context_manager.load_mpc_context_from_disk().await?;
+
     // TODO eventually this PRSS ID should come from the context request
     // the PRSS should never be run in this function.
     let epoch_id_prss: EpochId = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?.into(); // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
@@ -556,15 +567,6 @@ where
 
     #[cfg(feature = "insecure")]
     let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
-
-    let context_manager = ThresholdContextManager::new(
-        base_kms.new_instance().await,
-        crypto_storage.inner.clone(),
-        custodian_meta_store,
-        Role::indexed_from_one(config.my_id),
-        session_maker,
-    );
-    context_manager.load_mpc_context_from_disk().await?;
 
     let backup_operator = RealBackupOperator::new(
         Role::indexed_from_one(config.my_id),
