@@ -29,7 +29,6 @@ use kms_grpc::{
     rpc_types::{KMSType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
     RequestId,
 };
-use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
@@ -236,58 +235,6 @@ where
             &PrivDataType::FheKeyInfo.to_string(),
         )
         .await
-    }
-
-    // =========================
-    // Storage Primitives
-    // =========================
-    // TODO(#2748) seems to be dead code
-    // Simplified storage methods without metadata
-    pub async fn store_private_serializable_data<T>(
-        &self,
-        req_id: &RequestId,
-        data: &T,
-        data_type: PrivDataType,
-    ) -> anyhow::Result<()>
-    where
-        T: Serialize + tfhe::Versionize + tfhe::named::Named + Send + Sync,
-        for<'a> <T as tfhe::Versionize>::Versioned<'a>: Serialize + Send + Sync,
-    {
-        let mut priv_storage = self.private_storage.lock().await;
-        store_versioned_at_request_id(&mut *priv_storage, req_id, data, &data_type.to_string())
-            .await?;
-
-        tracing::info!(
-            "Successfully stored private {} data for request ID {} in {}",
-            data_type.to_string(),
-            req_id,
-            priv_storage.info()
-        );
-        Ok(())
-    }
-
-    // TODO(#2748) seems to be dead code
-    pub async fn store_public_serializable_data<T>(
-        &self,
-        req_id: &RequestId,
-        data: &T,
-        data_type: PubDataType,
-    ) -> anyhow::Result<()>
-    where
-        T: Serialize + tfhe::Versionize + tfhe::named::Named + Send + Sync,
-        for<'a> <T as tfhe::Versionize>::Versioned<'a>: Serialize + Send + Sync,
-    {
-        let mut pub_storage = self.public_storage.lock().await;
-        store_versioned_at_request_id(&mut *pub_storage, req_id, data, &data_type.to_string())
-            .await?;
-
-        tracing::info!(
-            "Successfully stored public {} data for request ID {} in {}",
-            data_type.to_string(),
-            req_id,
-            pub_storage.info()
-        );
-        Ok(())
     }
 
     // =========================
