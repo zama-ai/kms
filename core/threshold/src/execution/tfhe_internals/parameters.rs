@@ -2127,6 +2127,8 @@ mod tests {
     #[test]
     fn test_required_preproc() {
         let keyset_config = KeySetConfig::default();
+        // Note that BC_PARAMS_NO_SNS doesn't have fixed HW
+        // so sk_num_bits_to_sample == sk_num_bits
         let param = BC_PARAMS_NO_SNS;
         let h = param.get_params_basics_handle();
         let sk_total = h.lwe_dimension().0
@@ -2194,7 +2196,7 @@ mod tests {
         let pmax = 0.6;
         let key_size = 100;
         let result = compute_prob_hw_within_range(pmax, key_size);
-        // Bound is kinda loose, but it's more of a sanity check
+        // Bound is a bit loose to cope with f64 precision
         assert!(result > 0.95 && result < 0.96);
     }
 

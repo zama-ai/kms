@@ -405,7 +405,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use aes_prng::AesRng;
     use itertools::Itertools;
+    use num_integer::Integer;
+    use rand::SeedableRng;
     use std::collections::HashMap;
     use tfhe::{
         core_crypto::{
@@ -432,12 +435,14 @@ mod tests {
     use crate::execution::tfhe_internals::lwe_key::to_tfhe_hl_api_compact_public_key;
     use crate::{
         algebra::{
-            base_ring::Z64, galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring,
+            base_ring::Z64,
+            galois_rings::degree_4::ResiduePolyF4Z64,
+            structure_traits::{One, Ring, Zero},
         },
         execution::{
             online::{
                 gen_bits::{BitGenEven, SecureBitGenEven},
-                preprocessing::dummy::DummyPreprocessing,
+                preprocessing::{dummy::DummyPreprocessing, memory::InMemoryBitPreprocessing},
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
             runtime::session::{LargeSession, ParameterHandles},
@@ -603,5 +608,102 @@ mod tests {
         let ct: FheUint8 = expanded_encrypt(&pk, 42_u8, 8).unwrap();
         let msg: u8 = ct.decrypt(&client_key);
         assert_eq!(42, msg);
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_forced_hw_keygen() {
+        // Params such that we need a key with HW between 4 and 6
+        let pmax = 0.6;
+        let key_size = 10;
+
+        let mut task = |mut session: LargeSession| async move {
+            let my_role = session.my_role();
+            let mut rng = AesRng::seed_from_u64(42);
+
+            let my_share_of_zero = DummyPreprocessing::share(
+                session.num_parties(),
+                session.threshold(),
+                ResiduePolyF4Z64::ZERO,
+                &mut rng,
+            )
+            .unwrap()[&my_role];
+
+            let my_share_of_one = DummyPreprocessing::share(
+                session.num_parties(),
+                session.threshold(),
+                ResiduePolyF4Z64::ONE,
+                &mut rng,
+            )
+            .unwrap()[&my_role];
+
+            // Create a vector of shares of zero and one to be used in preprocessing
+            let available_bits = (0..2 * key_size)
+                .map(|i| {
+                    // Vector with a first chunk of  HW = 2
+                    // and a second chunk of HW = 5
+                    if i < key_size {
+                        if i % 5 == 0 {
+                            my_share_of_one
+                        } else {
+                            my_share_of_zero
+                        }
+                    } else if i.is_even() {
+                        my_share_of_one
+                    } else {
+                        my_share_of_zero
+                    }
+                })
+                .collect_vec();
+
+            let mut preprocessing = InMemoryBitPreprocessing { available_bits };
+
+            let lwe_key = LweSecretKeyShare::new_from_preprocessing(
+                LweDimension(key_size),
+                &mut preprocessing,
+                Some(pmax),
+                &mut session,
+            )
+            .await
+            .unwrap();
+            (my_role, lwe_key)
+        };
+
+        let parties = 5;
+        let threshold = 1;
+        let results = execute_protocol_large::<
+            _,
+            _,
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
+        >(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Async,
+            None,
+            &mut task,
+        )
+        .await;
+
+        let mut lwe_key_shares = HashMap::new();
+        for (role, key_shares) in results {
+            lwe_key_shares.insert(role, Vec::new());
+            let lwe_key_shares = lwe_key_shares.get_mut(&role).unwrap();
+            for key_share in key_shares.data {
+                (*lwe_key_shares).push(key_share);
+            }
+        }
+        //Try and reconstruct the key
+        let key = reconstruct_bit_vec(lwe_key_shares, key_size, threshold);
+
+        // Assert correct HW of the key
+        let hw = key.iter().filter(|b| **b == 1).count();
+        assert_eq!(hw, 5);
+
+        //Assert tracing contains "Hamming weight out of bounds"
+        assert!(logs_contain(
+            "Hamming weight out of bounds: 2. Expected min : 4, max : 6"
+        ));
     }
 }
