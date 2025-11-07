@@ -1127,7 +1127,7 @@ pub mod tests {
                     DKGParams, BC_PARAMS_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE,
                     NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE,
                     NIST_PARAMS_P8_NO_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_LWE,
-                    NIST_PARAMS_P8_SNS_FGLWE, OLD_PARAMS_P32_REAL_WITH_SNS, PARAMS_TEST_BK_SNS,
+                    NIST_PARAMS_P8_SNS_FGLWE, PARAMS_TEST_BK_SNS,
                 },
                 test_feature::to_hl_client_key,
                 utils::tests::reconstruct_glwe_secret_key_from_file,
@@ -1211,47 +1211,6 @@ pub mod tests {
         try_tfhe_pk_compactlist_computation(&client_key, &server_key, &public_key);
         set_server_key(server_key);
         try_tfhe_rerand(&client_key, &public_key);
-    }
-
-    #[cfg(feature = "extension_degree_8")]
-    #[tokio::test]
-    #[ignore]
-    async fn old_keygen_params32_with_sns_f8() {
-        old_keygen_params32_with_sns::<8>(false).await
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn old_keygen_params32_with_sns_f4() {
-        old_keygen_params32_with_sns::<4>(false).await
-    }
-
-    #[cfg(feature = "extension_degree_3")]
-    #[tokio::test]
-    #[ignore]
-    async fn old_keygen_params32_with_sns_f3() {
-        old_keygen_params32_with_sns::<3>(false).await
-    }
-
-    async fn old_keygen_params32_with_sns<const EXTENSION_DEGREE: usize>(run_compressed: bool)
-    where
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
-    {
-        run_keygen_test::<EXTENSION_DEGREE>(
-            OLD_PARAMS_P32_REAL_WITH_SNS,
-            5,
-            1,
-            KeygenTestConfig {
-                run_switch_and_squash: true,
-                run_shortint_with_compact: false,
-                run_fheuint: true,
-                run_fheuint_with_compression: false,
-                run_rerand: false,
-                run_compressed,
-            },
-        )
-        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
