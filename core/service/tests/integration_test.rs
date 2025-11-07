@@ -218,7 +218,9 @@ mod kms_gen_keys_binary_test {
         assert!(output.status.success());
         assert!(log.contains("Deleting VerfKey under request ID"));
         assert!(log.contains("Deleting SigningKey under request ID "));
-        assert!(log.contains("Successfully stored public centralized server signing key under the handle"));
+        assert!(log.contains(
+            "Successfully stored public centralized server signing key under the handle"
+        ));
 
         let new_output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
