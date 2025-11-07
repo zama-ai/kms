@@ -98,7 +98,6 @@ impl PublicSigKey {
         note = "This is legacy code and should not be used for new development. Will be handled in #2781"
     )]
     pub fn get_serialized_verf_key(&self) -> anyhow::Result<Vec<u8>> {
-        // TODO check if this is the same as hex::encode(pk.pk().to_encoded_point(false).to_bytes()) same with verf id
         let serialized_verf_key = bc2wrap::serialize(&PublicSigKey::new(self.pk.0.to_owned()))?;
         Ok(serialized_verf_key)
     }

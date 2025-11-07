@@ -367,8 +367,6 @@ pub async fn purge(
     id: &RequestId,
     amount_parties: usize,
 ) {
-    // TODO(#2748) backups should probably be handled separately since this does not delete all the custodian based backups
-    // but only the non-custodian ones. Hence the following lines are commented out for now.
     let vault_storage_option = backup_path.map(|path| {
         StorageConf::File(FileStorageConf {
             path: path.to_path_buf(),
