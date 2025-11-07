@@ -284,7 +284,7 @@ pub async fn compute_hamming_weight_secret_vector_by_chunks<
     let secret_hws = secret_vector
         .chunks(chunk_size)
         .map(|chunk| chunk.iter().fold(Z::ZERO, |acc, share| acc + share.value()))
-        .map(|cunk_hw| Share::new(session.my_role(), cunk_hw))
+        .map(|chunk_hw| Share::new(session.my_role(), chunk_hw))
         .collect::<Vec<_>>();
     open_list(&secret_hws, session).await
 }

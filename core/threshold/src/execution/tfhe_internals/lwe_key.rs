@@ -612,7 +612,7 @@ mod tests {
 
     #[tracing_test::traced_test]
     #[tokio::test]
-    async fn test_forced_hw_keygen() {
+    async fn test_forced_hw_keygen_lwe() {
         // Params such that we need a key with HW between 4 and 6
         let pmax = 0.6;
         let key_size = 10;
@@ -643,7 +643,7 @@ mod tests {
                     // Vector with a first chunk of  HW = 2
                     // and a second chunk of HW = 5
                     if i < key_size {
-                        if i % 5 == 0 {
+                        if i % (key_size / 2) == 0 {
                             my_share_of_one
                         } else {
                             my_share_of_zero
