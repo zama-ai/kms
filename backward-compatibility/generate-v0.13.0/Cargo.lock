@@ -1655,7 +1655,7 @@ checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 [[package]]
 name = "bc2wrap"
 version = "2.0.1"
-source = "git+https://github.com/zama-ai/kms.git?rev=fb80b7ef7c3376866db4ca32b6f461d6ea70e202#fb80b7ef7c3376866db4ca32b6f461d6ea70e202"
+source = "git+https://github.com/zama-ai/kms.git?rev=8d809b8#8d809b839534ce25c67f2f7039de655fef66758d"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -3758,8 +3758,8 @@ dependencies = [
 
 [[package]]
 name = "kms"
-version = "0.12.2"
-source = "git+https://github.com/zama-ai/kms.git?rev=fb80b7ef7c3376866db4ca32b6f461d6ea70e202#fb80b7ef7c3376866db4ca32b6f461d6ea70e202"
+version = "0.13.0-rc.0"
+source = "git+https://github.com/zama-ai/kms.git?rev=8d809b8#8d809b839534ce25c67f2f7039de655fef66758d"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3835,8 +3835,8 @@ dependencies = [
 
 [[package]]
 name = "kms-grpc"
-version = "0.12.2"
-source = "git+https://github.com/zama-ai/kms.git?rev=fb80b7ef7c3376866db4ca32b6f461d6ea70e202#fb80b7ef7c3376866db4ca32b6f461d6ea70e202"
+version = "0.13.0-rc.0"
+source = "git+https://github.com/zama-ai/kms.git?rev=8d809b8#8d809b839534ce25c67f2f7039de655fef66758d"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -4344,8 +4344,8 @@ dependencies = [
 
 [[package]]
 name = "observability"
-version = "0.12.2"
-source = "git+https://github.com/zama-ai/kms.git?rev=fb80b7ef7c3376866db4ca32b6f461d6ea70e202#fb80b7ef7c3376866db4ca32b6f461d6ea70e202"
+version = "0.13.0-rc.0"
+source = "git+https://github.com/zama-ai/kms.git?rev=8d809b8#8d809b839534ce25c67f2f7039de655fef66758d"
 dependencies = [
  "anyhow",
  "axum",
@@ -6643,8 +6643,8 @@ dependencies = [
 
 [[package]]
 name = "threshold-fhe"
-version = "0.12.2"
-source = "git+https://github.com/zama-ai/kms.git?rev=fb80b7ef7c3376866db4ca32b6f461d6ea70e202#fb80b7ef7c3376866db4ca32b6f461d6ea70e202"
+version = "0.13.0-rc.0"
+source = "git+https://github.com/zama-ai/kms.git?rev=8d809b8#8d809b839534ce25c67f2f7039de655fef66758d"
 dependencies = [
  "aes",
  "aes-prng",

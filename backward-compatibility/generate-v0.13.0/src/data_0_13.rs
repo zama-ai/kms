@@ -7,7 +7,10 @@ use kms_0_13_0::backup::custodian::{
 };
 use kms_0_13_0::backup::{
     custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
-    operator::{BackupMaterial, Operator, RecoveryValidationMaterial, DSEP_BACKUP_COMMITMENT},
+    operator::{
+        BackupMaterial, InnerOperatorBackupOutput, Operator, RecoveryValidationMaterial,
+        DSEP_BACKUP_COMMITMENT,
+    },
     BackupCiphertext,
 };
 use kms_0_13_0::consts::SAFE_SER_SIZE_LIMIT;
@@ -673,6 +676,7 @@ impl KmsV0_13 {
         let backup_id: RequestId = RequestId::new_random(&mut rng);
         let (operator_pk, operator_sk) = gen_sig_keys(&mut rng);
         let mut commitments = BTreeMap::new();
+        let mut cts = BTreeMap::new();
         for role_j in 1..=RECOVERY_MATERIAL_TEST.custodian_count {
             let cus_role = Role::indexed_from_one(role_j);
             let (custodian_pk, _) = gen_sig_keys(&mut rng);
@@ -688,6 +692,16 @@ impl KmsV0_13 {
                 safe_serialize_hash_element_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
                     .unwrap();
             commitments.insert(cus_role, msg_digest);
+            let mut payload = [0_u8; 32];
+            rng.fill_bytes(&mut payload);
+            let cts_out = InnerOperatorBackupOutput {
+                signcryption: UnifiedSigncryption {
+                    payload: payload.to_vec(),
+                    pke_type: PkeSchemeType::MlKem512,
+                    signing_type: SigningSchemeType::Ecdsa256k1,
+                },
+            };
+            cts.insert(cus_role, cts_out);
         }
 
         // Dummy payload; but needs to be a properly serialized payload
@@ -705,25 +719,18 @@ impl KmsV0_13 {
         };
         let mut payload_serial = Vec::new();
         safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
-        let setup_msg1 = CustodianSetupMessage {
-            custodian_role: 1,
-            name: "Custodian-1".to_string(),
-            payload: payload_serial.clone(),
-        };
-        let setup_msg2 = CustodianSetupMessage {
-            custodian_role: 2,
-            name: "Custodian-2".to_string(),
-            payload: payload_serial.clone(),
-        };
-        let setup_msg3 = CustodianSetupMessage {
-            custodian_role: 3,
-            name: "Custodian-3".to_string(),
-            payload: payload_serial.clone(),
-        };
+        let mut custodian_nodes = Vec::new();
+        for role_j in 1..=RECOVERY_MATERIAL_TEST.custodian_count {
+            let setup_msg = CustodianSetupMessage {
+                custodian_role: role_j as u64,
+                name: format!("Custodian-{role_j}"),
+                payload: payload_serial.clone(),
+            };
+            custodian_nodes.push(setup_msg);
+        }
         let custodian_context = CustodianContext {
-            custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
+            custodian_nodes,
             context_id: Some(backup_id.into()),
-            previous_context_id: None,
             threshold: 1,
         };
         let internal_custodian_context =
@@ -734,10 +741,24 @@ impl KmsV0_13 {
             &RECOVERY_MATERIAL_TEST.test_filename,
             &RECOVERY_MATERIAL_TEST.internal_cus_context_filename,
         );
-
-        let recovery_material =
-            RecoveryValidationMaterial::new(commitments, internal_custodian_context, &operator_sk)
-                .unwrap();
+        let mut cts = BTreeMap::new();
+        let cts_out = InnerOperatorBackupOutput {
+            signcryption: UnifiedSigncryption {
+                payload: vec![1, 2, 3],
+                pke_type: PkeSchemeType::MlKem512,
+                signing_type: SigningSchemeType::Ecdsa256k1,
+            },
+        };
+        cts.insert(Role::indexed_from_one(1), cts_out.clone());
+        cts.insert(Role::indexed_from_one(2), cts_out.clone());
+        cts.insert(Role::indexed_from_one(3), cts_out);
+        let recovery_material = RecoveryValidationMaterial::new(
+            cts,
+            commitments,
+            internal_custodian_context,
+            &operator_sk,
+        )
+        .unwrap();
         store_versioned_test!(
             &recovery_material,
             dir,
@@ -775,7 +796,6 @@ impl KmsV0_13 {
         let internal_cus_context = InternalCustodianContext {
             threshold: 1,
             context_id,
-            previous_context_id: None,
             custodian_nodes: cus_nodes,
             backup_enc_key: cus_enc_key.clone(),
         };

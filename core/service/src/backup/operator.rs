@@ -1037,6 +1037,7 @@ mod tests {
         assert!(logs_contain("Invalid timestamp in custodian setup message"));
     }
 
+    #[tracing_test::traced_test]
     #[test]
     fn operator_timestamp_validation() {
         let mut rng = AesRng::seed_from_u64(5);

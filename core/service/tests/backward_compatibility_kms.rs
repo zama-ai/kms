@@ -501,6 +501,7 @@ fn test_recovery_material(
     let backup_id: RequestId = RequestId::new_random(&mut rng);
     let (operator_pk, operator_sk) = gen_sig_keys(&mut rng);
     let mut commitments = BTreeMap::new();
+    let mut cts = BTreeMap::new();
     for role_j in 1..=test.custodian_count {
         let cus_role = Role::indexed_from_one(role_j);
         let (custodian_pk, _) = gen_sig_keys(&mut rng);
@@ -516,8 +517,19 @@ fn test_recovery_material(
             safe_serialize_hash_element_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
                 .unwrap();
         commitments.insert(cus_role, msg_digest);
+        let mut payload = [0_u8; 32];
+        rng.fill_bytes(&mut payload);
+        let cts_out = InnerOperatorBackupOutput {
+            signcryption: UnifiedSigncryption {
+                payload: payload.to_vec(),
+                pke_type: PkeSchemeType::MlKem512,
+                signing_type: SigningSchemeType::Ecdsa256k1,
+            },
+        };
+        cts.insert(cus_role, cts_out.clone());
     }
-    let new_versionized = RecoveryValidationMaterial::new(commitments, icc, &operator_sk).unwrap();
+    let new_versionized =
+        RecoveryValidationMaterial::new(cts, commitments, icc, &operator_sk).unwrap();
 
     if original_versionized != new_versionized {
         Err(test.failure(
@@ -563,7 +575,6 @@ fn test_internal_custodian_context(
     let new_versionized = InternalCustodianContext {
         threshold: 1,
         context_id,
-        previous_context_id: None,
         custodian_nodes: cus_nodes,
         backup_enc_key: enc_key,
     };
@@ -808,6 +819,8 @@ fn test_operator_backup_output(
             signing_key,
             test.custodian_threshold,
             custodian_messages.len(), // Testing a sunshine case where all custodians are present
+            // Don't validate the timestamp
+            false,
         )
         .unwrap()
     };

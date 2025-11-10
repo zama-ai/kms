@@ -807,6 +807,7 @@ mod kms_custodian_binary_tests {
             signing_key.clone(),
             threshold,
             setup_msgs.len(),
+            true,
         )
         .unwrap();
         let (backup_ske, backup_pke) = enc.keygen().unwrap();
