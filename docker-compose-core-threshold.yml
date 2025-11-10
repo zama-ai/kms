@@ -29,7 +29,7 @@ services:
           kms-gen-keys --mock-enclave --aws-region us-east-1 \
             --public-storage s3 --public-s3-bucket kms \
             --aws-s3-endpoint http://dev-s3-mock:9000 \
-            --private-storage file --private-file-path ./keys \
+            --private-storage s3 --private-s3-bucket kms \
             --cmd signing-keys \
             threshold \
             --signing-key-party-id $$i --tls-subject dev-kms-core-$$i.com \
