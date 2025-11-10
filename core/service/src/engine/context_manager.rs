@@ -542,6 +542,7 @@ async fn gen_recovery_validation(
         custodian_context.threshold as usize,
         // the amount of custodians are defined by the initial context
         custodian_context.custodian_nodes.len(),
+        true,
     )?;
     let mut serialized_priv_key = Vec::new();
     safe_serialize(

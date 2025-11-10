@@ -64,6 +64,7 @@ fn operator_setup() {
             signing_key,
             custodian_threshold,
             custodian_count,
+            true,
         );
         assert!(operator.is_ok());
         assert!(logs_contain(
@@ -83,6 +84,7 @@ fn operator_setup() {
             signing_key,
             custodian_threshold,
             custodian_count,
+            true,
         );
         assert!(operator.is_ok());
         assert!(logs_contain(
@@ -128,6 +130,7 @@ fn custodian_reencrypt() {
                 signing_key,
                 custodian_threshold,
                 custodian_count,
+                true,
             )
             .unwrap()
         })
@@ -398,6 +401,7 @@ fn full_flow_malicious_custodian_init() {
             signing_key.clone(),
             custodian_threshold,
             custodian_count,
+            true,
         )
         .unwrap();
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
@@ -628,6 +632,7 @@ fn operator_handle_init(
             signing_key.clone(),
             custodian_threshold,
             custodian_count,
+            true,
         )
         .unwrap();
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, rng);

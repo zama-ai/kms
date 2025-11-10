@@ -316,6 +316,8 @@ where
                             self.base_kms.sig_key.as_ref().clone(),
                             recovery_material.custodian_context().threshold as usize,
                             amount_custodians,
+                            // Don't validate the timestamp since it is expired at this point in time, and we only cared about the timestamp during custodian context setup
+                            false,
                         ).map_err(|e| {
                             Status::new(
                                 tonic::Code::Internal,
