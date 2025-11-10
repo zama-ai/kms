@@ -692,7 +692,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     cipher: &[u8],
     client_keys: &UnifiedUnsigncryptionKey,
 ) -> Result<TypedPlaintext, CryptographyError> {
-    // LEGACY should be using safe_deserialization
+    // LEGACY should be using safe_deserialization from tfhe-rs
     let cipher: HybridKemCt = bc2wrap::deserialize_safe(cipher)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
     let decrypted_plaintext = match &client_keys.decryption_key {
@@ -707,7 +707,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     // strip off the signature bytes (these are ignored here)
     let msg_len = decrypted_plaintext.len() - DIGEST_BYTES - SIG_SIZE;
     let msg = &decrypted_plaintext[..msg_len];
-    // LEGACY should be using safe_deserialization
+    // LEGACY should be using safe_deserialization from tfhe-rs
     let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize_safe(msg)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
 
