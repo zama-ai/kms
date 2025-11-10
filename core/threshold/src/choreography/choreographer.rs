@@ -1,6 +1,8 @@
 //! Choreographer is a GRPC client that communicates with
 //! the kms-core (with the moby binary) parties to do benchmarks.
 //! It is a trusted entity and should not be used with production kms-core.
+//! It is not really an issue to have "unsafe" code here (e.g. unsafe deserialization)
+//! as this is meant for testing and benchmarking, and definitely not for production use.
 use crate::choreography::grpc::gen::{
     CrsGenRequest, CrsGenResultRequest, PreprocDecryptRequest, ReshareRequest,
     ThresholdDecryptRequest, ThresholdKeyGenResultRequest,
@@ -186,7 +188,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses.push(
+                    bc2wrap::deserialize_unsafe(&(response?.into_inner().request_id)).unwrap(),
+                );
             }
         }
 
@@ -238,7 +242,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses.push(
+                    bc2wrap::deserialize_unsafe(&(response?.into_inner().request_id)).unwrap(),
+                );
             }
         }
 
@@ -299,7 +305,7 @@ impl ChoreoRuntime {
         //    assert_eq!(response, ref_response);
         //}
         let pub_key = responses.pop().unwrap();
-        let pub_key = bc2wrap::deserialize(&pub_key)?;
+        let pub_key = bc2wrap::deserialize_unsafe(&pub_key)?;
         Ok(pub_key)
     }
 
@@ -347,7 +353,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses.push(
+                    bc2wrap::deserialize_unsafe(&(response?.into_inner().request_id)).unwrap(),
+                );
             }
         }
 
@@ -408,7 +416,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses.push(
+                    bc2wrap::deserialize_unsafe(&(response?.into_inner().request_id)).unwrap(),
+                );
             }
         }
 
@@ -447,7 +457,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().plaintext))?);
+                responses.push(bc2wrap::deserialize_unsafe(
+                    &(response?.into_inner().plaintext),
+                )?);
             }
         }
 
@@ -506,7 +518,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses.push(
+                    bc2wrap::deserialize_unsafe(&(response?.into_inner().request_id)).unwrap(),
+                );
             }
         }
 
@@ -545,7 +559,7 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner()).crs).unwrap());
+                responses.push(bc2wrap::deserialize_unsafe(&(response?.into_inner()).crs).unwrap());
             }
         }
 
@@ -597,7 +611,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses.push(
+                    bc2wrap::deserialize_unsafe(&(response?.into_inner().request_id)).unwrap(),
+                );
             }
         }
 
@@ -633,7 +649,7 @@ impl ChoreoRuntime {
 
             while let Some(response) = join_set.join_next().await {
                 let (role, response) = response?;
-                let status: Status = bc2wrap::deserialize(&response?.into_inner().status)?;
+                let status: Status = bc2wrap::deserialize_unsafe(&response?.into_inner().status)?;
                 result.push((role, status));
             }
 

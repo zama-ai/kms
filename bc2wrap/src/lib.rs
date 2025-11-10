@@ -16,13 +16,16 @@ pub fn serialize<T: serde::Serialize + ?Sized>(
 }
 
 /// wrapper around bincode::serde::decode_from_slice that discards the length info and uses the legacy config
-/// (using bincode v2 underneath)
-pub fn deserialize<T: serde::de::DeserializeOwned>(
+/// (using bincode v2 underneath).
+/// This is unsafe as it does not limit the size of the deserialized object and thus may lead to OOM errors.
+pub fn deserialize_unsafe<T: serde::de::DeserializeOwned>(
     bytes: &[u8],
 ) -> Result<T, bincode::error::DecodeError> {
     bincode::serde::decode_from_slice(bytes, bincode::config::legacy()).map(|t| t.0)
 }
 
+/// wrapper around bincode::serde::decode_from_slice that uses the legacy config
+/// and a size limit of [`BINCODE_SMALL_DESER_SIZE_LIMIT`] bytes for safer deserialization (avoid exhausting memory errors)
 pub fn deserialize_safe<T: serde::de::DeserializeOwned>(
     bytes: &[u8],
 ) -> Result<T, bincode::error::DecodeError> {

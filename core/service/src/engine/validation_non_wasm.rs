@@ -303,7 +303,8 @@ fn validate_public_decrypt_meta_data(
                 );
         return Ok(false);
     }
-    let resp_verf_key: PublicSigKey = bc2wrap::deserialize(&other_resp.verification_key)?;
+    // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
+    let resp_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&other_resp.verification_key)?;
     if !server_pks.values().contains(&resp_verf_key) {
         tracing::warn!("Server key is unknown or incorrect.");
         return Ok(false);

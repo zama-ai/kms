@@ -1,4 +1,6 @@
 //! gRPC-based choreography.
+//! It is not really an issue to have "unsafe" code here (e.g. unsafe deserialization)
+//! as this is meant for testing and benchmarking, and definitely not for production use.
 
 pub mod gen {
     #![allow(clippy::derive_partial_eq_without_eq)]
@@ -585,7 +587,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_unsafe(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -593,12 +595,13 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let prss_params: PrssInitParams = bc2wrap::deserialize(&request.params).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to parse prss params: {e:?}"),
-            )
-        })?;
+        let prss_params: PrssInitParams =
+            bc2wrap::deserialize_unsafe(&request.params).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse prss params: {e:?}"),
+                )
+            })?;
 
         let session_id = prss_params.session_id;
         let ring = prss_params.ring;
@@ -701,7 +704,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_unsafe(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -709,8 +712,8 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let preproc_params: PreprocKeyGenParams =
-            bc2wrap::deserialize(&request.params).map_err(|e| {
+        let preproc_params: PreprocKeyGenParams = bc2wrap::deserialize_unsafe(&request.params)
+            .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Preproc KeyGen params: {e:?}"),
@@ -923,7 +926,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_unsafe(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -931,8 +934,8 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let kg_params: ThresholdKeyGenParams =
-            bc2wrap::deserialize(&request.params).map_err(|e| {
+        let kg_params: ThresholdKeyGenParams = bc2wrap::deserialize_unsafe(&request.params)
+            .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Threshold KeyGen params: {e:?}"),
@@ -1097,20 +1100,20 @@ where
         // should match what is in [self.threshold_key_gen]
         let tag = tfhe::Tag::default();
 
-        let kg_result_params: ThresholdKeyGenResultParams = bc2wrap::deserialize(&request.params)
-            .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to parse Threshold KeyGen Result params: {e:?}"),
-            )
-        })?;
+        let kg_result_params: ThresholdKeyGenResultParams =
+            bc2wrap::deserialize_unsafe(&request.params).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse Threshold KeyGen Result params: {e:?}"),
+                )
+            })?;
 
         let session_id = kg_result_params.session_id;
         let dkg_params = kg_result_params.dkg_params;
 
         if let Some(dkg_params) = dkg_params {
             let role_assignment: HashMap<Role, Identity> =
-                bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+                bc2wrap::deserialize_unsafe(&request.role_assignment).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
                         format!("Failed to parse role assignment: {e:?}"),
@@ -1197,7 +1200,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_unsafe(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -1205,8 +1208,8 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let preproc_params: PreprocDecryptParams =
-            bc2wrap::deserialize(&request.params).map_err(|e| {
+        let preproc_params: PreprocDecryptParams = bc2wrap::deserialize_unsafe(&request.params)
+            .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Preproc Decrypt params: {e:?}"),
@@ -1538,7 +1541,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_unsafe(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -1548,13 +1551,13 @@ where
         let roles = role_assignment.keys().cloned().collect();
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let decrypt_params: ThresholdDecryptParams = bc2wrap::deserialize(&request.params)
+        let decrypt_params: ThresholdDecryptParams = bc2wrap::deserialize_unsafe(&request.params)
             .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    format!("Failed to parse Threshold Decrypt params: {e:?}"),
-                )
-            })?;
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Failed to parse Threshold Decrypt params: {e:?}"),
+            )
+        })?;
 
         let session_id = decrypt_params.session_id;
         let decryption_mode = decrypt_params.decryption_mode;
@@ -2245,7 +2248,7 @@ where
         request: tonic::Request<ThresholdDecryptResultRequest>,
     ) -> Result<tonic::Response<ThresholdDecryptResultResponse>, tonic::Status> {
         let request = request.into_inner();
-        let session_id = bc2wrap::deserialize(&request.request_id).map_err(|e| {
+        let session_id = bc2wrap::deserialize_unsafe(&request.request_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error deserializing session_id: {e}"),
@@ -2298,7 +2301,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_unsafe(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -2306,12 +2309,13 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let crs_params: CrsGenParams = bc2wrap::deserialize(&request.params).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to parse Crs Gen params: {e:?}"),
-            )
-        })?;
+        let crs_params: CrsGenParams =
+            bc2wrap::deserialize_unsafe(&request.params).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse Crs Gen params: {e:?}"),
+                )
+            })?;
 
         let session_id = crs_params.session_id;
         let witness_dim = crs_params.witness_dim;
@@ -2371,12 +2375,13 @@ where
     ) -> Result<tonic::Response<CrsGenResultResponse>, tonic::Status> {
         let request = request.into_inner();
 
-        let session_id: SessionId = bc2wrap::deserialize(&request.request_id).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Error deserializing session_id: {e}"),
-            )
-        })?;
+        let session_id: SessionId =
+            bc2wrap::deserialize_unsafe(&request.request_id).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Error deserializing session_id: {e}"),
+                )
+            })?;
 
         let res = self
             .data
@@ -2407,7 +2412,7 @@ where
         request: tonic::Request<StatusCheckRequest>,
     ) -> Result<tonic::Response<StatusCheckResponse>, tonic::Status> {
         let request = request.into_inner();
-        let sid: SessionId = bc2wrap::deserialize(&request.request_id).map_err(|e| {
+        let sid: SessionId = bc2wrap::deserialize_unsafe(&request.request_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error deserializing session_id: {e}"),
@@ -2458,19 +2463,20 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_unsafe(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
 
-        let reshare_params: ReshareParams = bc2wrap::deserialize(&request.params).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to parse Reshare params: {e:?}"),
-            )
-        })?;
+        let reshare_params: ReshareParams =
+            bc2wrap::deserialize_unsafe(&request.params).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse Reshare params: {e:?}"),
+                )
+            })?;
 
         let session_type = reshare_params.session_type;
         //We use the new_key_sid as the session_id for the protocol

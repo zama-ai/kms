@@ -1,3 +1,6 @@
+//! Choreographer is the client of the grpc choreography service.
+//! It is not really an issue to have "unsafe" code here (e.g. unsafe deserialization)
+//! as this is meant for testing and benchmarking, and definitely not for production use.
 use crate::choreography::grpc::gen::{
     PreprocKeyGenRequest, PrssInitRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,
     ThresholdKeyGenRequest, ThresholdKeyGenResultRequest,
@@ -90,7 +93,8 @@ impl ChoreoRuntime {
 
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
-            responses.push(bc2wrap::deserialize(&(response??.into_inner().request_id)).unwrap());
+            responses
+                .push(bc2wrap::deserialize_unsafe(&(response??.into_inner().request_id)).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -133,7 +137,8 @@ impl ChoreoRuntime {
 
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
-            responses.push(bc2wrap::deserialize(&(response??.into_inner().request_id)).unwrap());
+            responses
+                .push(bc2wrap::deserialize_unsafe(&(response??.into_inner().request_id)).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -186,7 +191,7 @@ impl ChoreoRuntime {
         //    assert_eq!(response, ref_response);
         //}
         let pub_key = responses.pop().unwrap();
-        let pub_key = bc2wrap::deserialize(&pub_key)?;
+        let pub_key = bc2wrap::deserialize_unsafe(&pub_key)?;
         Ok(pub_key)
     }
 
@@ -226,7 +231,8 @@ impl ChoreoRuntime {
 
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
-            responses.push(bc2wrap::deserialize(&(response??.into_inner().request_id)).unwrap());
+            responses
+                .push(bc2wrap::deserialize_unsafe(&(response??.into_inner().request_id)).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -258,7 +264,9 @@ impl ChoreoRuntime {
 
         let mut responses: Vec<Vec<Vec<u32>>> = Vec::new();
         while let Some(response) = join_set.join_next().await {
-            responses.push(bc2wrap::deserialize(&(response??.into_inner().plaintext))?);
+            responses.push(bc2wrap::deserialize_unsafe(
+                &(response??.into_inner().plaintext),
+            )?);
         }
 
         let ref_response = responses.first().unwrap();

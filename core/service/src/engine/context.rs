@@ -8,7 +8,8 @@ use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::execution::runtime::party::Role;
 
 use crate::{
-    cryptography::signatures::PublicSigKey,
+    consts::SAFE_SER_SIZE_LIMIT,
+    cryptography::{decompression::tfhe_safe_deserialize, signatures::PublicSigKey},
     engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     vault::storage::{crypto_material::get_core_signing_key, StorageReader},
 };
@@ -133,7 +134,7 @@ impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
             party_id: value.party_id.try_into()?,
             verification_key: match value.verification_key {
                 None => None,
-                Some(vk_bytes) => Some(bc2wrap::deserialize(&vk_bytes)?),
+                Some(vk_bytes) => Some(tfhe_safe_deserialize(&vk_bytes)?),
             },
             external_url: value.external_url,
             tls_cert: value.tls_cert,
@@ -141,7 +142,7 @@ impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
             extra_verification_keys: value
                 .extra_verification_keys
                 .into_iter()
-                .map(|k| bc2wrap::deserialize(&k))
+                .map(|k| tfhe_safe_deserialize(&k))
                 .collect::<Result<Vec<_>, _>>()?,
         })
     }
@@ -302,7 +303,7 @@ impl TryFrom<kms_grpc::kms::v1::KmsContext> for ContextInfo {
     type Error = anyhow::Error;
 
     fn try_from(value: kms_grpc::kms::v1::KmsContext) -> anyhow::Result<Self> {
-        let software_version = bc2wrap::deserialize(&value.software_version)?;
+        let software_version = tfhe_safe_deserialize(&value.software_version)?;
         Ok(ContextInfo {
             kms_nodes: value
                 .kms_nodes
@@ -324,6 +325,12 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::KmsContext {
     type Error = anyhow::Error;
 
     fn try_from(value: ContextInfo) -> anyhow::Result<Self> {
+        let mut software_version = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &value.software_version,
+            &mut software_version,
+            SAFE_SER_SIZE_LIMIT,
+        )?;
         Ok(kms_grpc::kms::v1::KmsContext {
             kms_nodes: value
                 .kms_nodes
@@ -331,7 +338,7 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::KmsContext {
                 .map(kms_grpc::kms::v1::KmsNode::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
             context_id: Some(value.context_id.into()),
-            software_version: bc2wrap::serialize(&value.software_version)?,
+            software_version,
             threshold: value.threshold.try_into()?,
         })
     }
