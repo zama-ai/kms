@@ -165,7 +165,8 @@ mod tests {
         let wrapped_encoding = bc2wrap::serialize(&Cipher(ct.clone())).unwrap();
         assert_eq!(plain_encoding, wrapped_encoding);
         let decoded_wrapping = bc2wrap::deserialize_unsafe::<Cipher>(&plain_encoding).unwrap();
-        let decoded_unwrapped = bc2wrap::deserialize_unsafe::<HybridKemCt>(&wrapped_encoding).unwrap();
+        let decoded_unwrapped =
+            bc2wrap::deserialize_unsafe::<HybridKemCt>(&wrapped_encoding).unwrap();
         assert_eq!(decoded_wrapping.0.nonce, decoded_unwrapped.nonce);
         assert_eq!(decoded_wrapping.0.kem_ct, decoded_unwrapped.kem_ct);
         assert_eq!(decoded_wrapping.0.payload_ct, decoded_unwrapped.payload_ct);
