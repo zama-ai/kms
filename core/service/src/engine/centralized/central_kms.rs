@@ -1513,7 +1513,8 @@ pub(crate) mod tests {
                     Some(kms.base_kms.sig_key.as_ref()),
                 );
                 // Change the decryption key
-                keys.unsigncryption_key.decryption_key = bad_keys.unsigncryption_key.decryption_key;
+                keys.unsigncryption_key.decryption_key =
+                    bad_keys.unsigncryption_key.decryption_key.to_owned();
             }
             if sim_type == SimulationType::BadSigKey {
                 // Change the signing key

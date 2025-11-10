@@ -27,7 +27,7 @@ use threshold_fhe_0_11_1::{
 use kms_0_11_1::vault::keychain::AppKeyBlob;
 use kms_grpc_0_11_1::{
     kms::v1::TypedPlaintext,
-    rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal},
+    rpc_types::{PrivDataType, PubDataType, PublicKeyType, SignedPubDataHandleInternal},
 };
 use rand::{RngCore, SeedableRng};
 use tfhe_1_3::{
@@ -54,11 +54,11 @@ use backward_compatibility::parameters::{
     SwitchAndSquashCompressionParametersTest, SwitchAndSquashParametersTest,
 };
 use backward_compatibility::{
-    AppKeyBlobTest, KmsFheKeyHandlesTest, PRSSSetupTest, PrfKeyTest, PrivateSigKeyTest,
-    PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, SigncryptionPayloadTest,
-    SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
-    ThresholdFheKeysTest, TypedPlaintextTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
-    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    AppKeyBlobTest, KmsFheKeyHandlesTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest,
+    PrivateSigKeyTest, PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest,
+    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS,
+    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
+    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 
 use kms_0_11_1::cryptography::signcryption::SigncryptionPayload;
@@ -212,6 +212,10 @@ const PUBLIC_KEY_TYPE: PublicKeyTypeTest = PublicKeyTypeTest {
 
 const PUB_DATA_TYPE: PubDataTypeTest = PubDataTypeTest {
     test_filename: Cow::Borrowed("pub_data_type"),
+};
+
+const PRIV_DATA_TYPE: PrivDataTypeTest = PrivDataTypeTest {
+    test_filename: Cow::Borrowed("priv_data_type"),
 };
 
 // KMS test
@@ -703,6 +707,13 @@ impl KmsGrpcV0_11 {
 
         TestMetadataKmsGrpc::PubDataType(PUB_DATA_TYPE)
     }
+
+    fn gen_priv_data_type(dir: &PathBuf) -> TestMetadataKmsGrpc {
+        let priv_data_type = PrivDataType::ContextInfo;
+        store_versioned_test!(&priv_data_type, dir, &PRIV_DATA_TYPE.test_filename);
+
+        TestMetadataKmsGrpc::PrivDataType(PRIV_DATA_TYPE)
+    }
 }
 
 impl KMSCoreVersion for V0_11 {
@@ -753,6 +764,7 @@ impl KMSCoreVersion for V0_11 {
             KmsGrpcV0_11::gen_signed_pub_data_handle_internal(&dir),
             KmsGrpcV0_11::gen_public_key_type(&dir),
             KmsGrpcV0_11::gen_pub_data_type(&dir),
+            KmsGrpcV0_11::gen_priv_data_type(&dir),
         ]
     }
 }

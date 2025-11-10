@@ -805,10 +805,10 @@ pub enum KeyGenMetadataInnerVersioned {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeyGenMetadataInnerVersioned)]
 pub struct KeyGenMetadataInner {
-    pub(crate) key_id: RequestId,
-    pub(crate) preprocessing_id: RequestId,
-    pub(crate) key_digest_map: HashMap<PubDataType, Vec<u8>>,
-    pub(crate) external_signature: Vec<u8>,
+    pub key_id: RequestId,
+    pub preprocessing_id: RequestId,
+    pub key_digest_map: HashMap<PubDataType, Vec<u8>>,
+    pub external_signature: Vec<u8>,
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]

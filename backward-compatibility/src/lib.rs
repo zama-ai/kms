@@ -204,6 +204,25 @@ impl TestType for PubDataTypeTest {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PrivDataTypeTest {
+    pub test_filename: Cow<'static, str>,
+}
+
+impl TestType for PrivDataTypeTest {
+    fn module(&self) -> String {
+        KMS_GRPC_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "PrivDataType".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct KmsFheKeyHandlesTest {
@@ -233,6 +252,29 @@ impl TestType for KmsFheKeyHandlesTest {
     }
 }
 
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct KeyGenMetadataTest {
+    pub test_filename: Cow<'static, str>,
+    pub legacy_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for KeyGenMetadataTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "KeyGenMetadata".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppKeyBlobTest {
     pub test_filename: Cow<'static, str>,
@@ -333,26 +375,6 @@ impl TestType for ThresholdFheKeysTest {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct CustodianSetupMessageTest {
-    pub test_filename: Cow<'static, str>,
-    pub seed: u64,
-}
-
-impl TestType for CustodianSetupMessageTest {
-    fn module(&self) -> String {
-        KMS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "CustodianSetupMessage".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct OperatorBackupOutputTest {
     pub test_filename: Cow<'static, str>,
     pub custodian_count: usize,
@@ -404,6 +426,225 @@ impl TestType for SigncryptionPayloadTest {
     }
 }
 
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UnifiedSigncryptionKeyTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for UnifiedSigncryptionKeyTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "UnifiedSigncryptionKeyOwned".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UnifiedUnsigncryptionKeyTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for UnifiedUnsigncryptionKeyTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "UnifiedUnsigncryptionKeyOwned".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UnifiedSigncryptionTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for UnifiedSigncryptionTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "UnifiedSigncryption".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct BackupCiphertextTest {
+    pub test_filename: Cow<'static, str>,
+    pub unified_cipher_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for BackupCiphertextTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "BackupCiphertext".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct UnifiedCipherTest {
+    pub test_filename: Cow<'static, str>,
+    pub hybrid_kem_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for UnifiedCipherTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "UnifiedCipher".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct HybridKemCtTest {
+    pub test_filename: Cow<'static, str>,
+    pub nonce: [u8; 12],
+    pub kem_ct: Vec<u8>,
+    pub payload_ct: Vec<u8>,
+}
+
+impl TestType for HybridKemCtTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "HybridKemCt".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct RecoveryValidationMaterialTest {
+    pub test_filename: Cow<'static, str>,
+    pub internal_cus_context_filename: Cow<'static, str>,
+    pub state: u64,
+    pub custodian_count: usize,
+}
+
+impl TestType for RecoveryValidationMaterialTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "RecoveryValidationMaterial".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct InternalCustodianContextTest {
+    pub test_filename: Cow<'static, str>,
+    pub internal_cus_setup_filename: Cow<'static, str>,
+    pub unified_enc_key_filename: Cow<'static, str>,
+    pub state: u64,
+    pub custodian_count: usize,
+}
+
+impl TestType for InternalCustodianContextTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "InternalCustodianContext".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct InternalCustodianRecoveryOutputTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for InternalCustodianRecoveryOutputTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "InternalCustodianRecoveryOutput".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct InternalCustodianSetupMessageTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for InternalCustodianSetupMessageTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "InternalCustodianSetupMessage".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 /// KMS metadata
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum TestMetadataKMS {
@@ -413,9 +654,19 @@ pub enum TestMetadataKMS {
     KmsFheKeyHandles(KmsFheKeyHandlesTest),
     ThresholdFheKeys(ThresholdFheKeysTest),
     AppKeyBlob(AppKeyBlobTest),
+    KeyGenMetadata(KeyGenMetadataTest),
     SigncryptionPayload(SigncryptionPayloadTest),
-    // CustodianSetupMessage(CustodianSetupMessageTest),
-    // OperatorBackupOutput(OperatorBackupOutputTest),
+    UnifiedSigncryptionKeyOwned(UnifiedSigncryptionKeyTest),
+    UnifiedUnsigncryptionKeyOwned(UnifiedUnsigncryptionKeyTest),
+    UnifiedSigncryption(UnifiedSigncryptionTest),
+    BackupCiphertext(BackupCiphertextTest),
+    UnifiedCipher(UnifiedCipherTest),
+    HybridKemCt(HybridKemCtTest),
+    RecoveryValidationMaterial(RecoveryValidationMaterialTest),
+    InternalCustodianContext(InternalCustodianContextTest),
+    InternalCustodianSetupMessage(InternalCustodianSetupMessageTest),
+    InternalCustodianRecoveryOutput(InternalCustodianRecoveryOutputTest),
+    OperatorBackupOutput(OperatorBackupOutputTest),
 }
 
 /// KMS-grpc metadata
@@ -424,6 +675,7 @@ pub enum TestMetadataKmsGrpc {
     SignedPubDataHandleInternal(SignedPubDataHandleInternalTest),
     PublicKeyType(PublicKeyTypeTest),
     PubDataType(PubDataTypeTest),
+    PrivDataType(PrivDataTypeTest),
 }
 
 /// Distributed Decryption metadata

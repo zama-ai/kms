@@ -31,7 +31,7 @@ struct InnerHybridKemCt<C: KemCore> {
     pub payload_ct: Vec<u8>,
 }
 
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, VersionsDispatch)]
 pub enum HybridKemCtVersioned {
     V0(HybridKemCt),
 }
@@ -97,6 +97,7 @@ pub(crate) fn enc<C: KemCore, R: Rng + CryptoRng>(
         .map_err(|_| CryptographyError::MlKemError)?;
 
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
+    #[allow(deprecated)]
     let aead_key = Key::<Aes256Gcm>::from_slice(&kem_shared_secret[0..key_size]);
     let cipher = Aes256Gcm::new(aead_key);
     let nonce = Aes256Gcm::generate_nonce(rng);
@@ -129,6 +130,7 @@ pub(crate) fn dec<C: KemCore>(
         .map_err(|_| CryptographyError::MlKemError)?;
 
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
+    #[allow(deprecated)]
     let aead_key = Key::<aes_gcm::Aes256Gcm>::clone_from_slice(&kem_shared_secret[0..key_size]);
 
     let cipher = aes_gcm::Aes256Gcm::new(&aead_key);
