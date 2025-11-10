@@ -75,6 +75,7 @@ impl SessionMaker {
             networking_manager,
             context_map: Arc::new(RwLock::new(HashMap::new())),
             epoch_map: Arc::new(RwLock::new(HashMap::new())),
+            verifier: None,
             rng,
         }
     }
@@ -417,10 +418,6 @@ impl SessionMaker {
         context_id: ContextId,
         network_mode: NetworkMode,
     ) -> anyhow::Result<threshold_fhe::execution::runtime::session::NetworkingImpl> {
-        // We need to convert [ContextId] type to [SessionId]
-        // because the core/threshold library is only aware of the [SessionId]
-        // since we cannot store something as long as ContextId in the x509 certificate.
-        let context_id_as_session_id = context_id.derive_session_id()?;
         let nm = self.networking_manager.read().await;
 
         let (role_assignment, my_role) = {
@@ -432,13 +429,7 @@ impl SessionMaker {
         };
 
         let networking = nm
-            .make_network_session(
-                session_id,
-                context_id_as_session_id,
-                &role_assignment,
-                my_role,
-                network_mode,
-            )
+            .make_network_session(session_id, &role_assignment, my_role, network_mode)
             .await?;
         tracing::debug!(
             "Created networking for session_id={}, context_id={:?}, network_mode={:?}",

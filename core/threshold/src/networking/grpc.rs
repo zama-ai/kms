@@ -368,7 +368,6 @@ impl GrpcNetworkingManager {
     pub async fn make_network_session(
         &self,
         session_id: SessionId,
-        context_id: SessionId, // not the true context ID as it's a session ID derived from the context ID
         role_assignment: &RoleAssignment,
         my_role: Role,
         network_mode: NetworkMode,
@@ -421,7 +420,6 @@ impl GrpcNetworkingManager {
                 let session = Arc::new(NetworkSession {
                     owner: owner.clone(),
                     session_id,
-                    context_id,
                     sending_channels: connection_channel,
                     receiving_channels: message_store.0,
                     round_counter: tokio::sync::RwLock::new(0),
@@ -451,7 +449,6 @@ impl GrpcNetworkingManager {
                 let session = Arc::new(NetworkSession {
                     owner: owner.clone(),
                     session_id,
-                    context_id,
                     sending_channels: connection_channel,
                     receiving_channels: message_queue,
                     round_counter: tokio::sync::RwLock::new(0),
@@ -487,7 +484,6 @@ impl GrpcNetworkingManager {
 #[derive(Debug)]
 pub struct NetworkRoundValue {
     pub value: Vec<u8>,
-    pub context_id: SessionId,
     pub round_counter: usize,
 }
 
@@ -1070,7 +1066,6 @@ impl Gnetworking for NetworkingImpl {
             self.max_waiting_time_for_message_queue,
             tx.send(NetworkRoundValue {
                 value: request.value,
-                context_id: tag.context_id,
                 round_counter: tag.round_counter,
             }),
         )
@@ -1102,7 +1097,6 @@ impl Gnetworking for NetworkingImpl {
 pub struct Tag {
     pub(crate) session_id: SessionId,
     pub(crate) sender: MpcIdentity,
-    pub(crate) context_id: SessionId,
     pub(crate) round_counter: usize,
 }
 
