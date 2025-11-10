@@ -53,10 +53,13 @@ jobs:
       # Node package build and publish
       - name: NPM build node package
         working-directory: ./core/service
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
           rm -rf pkg
           wasm-pack build --target nodejs . --no-default-features
           sed -i 's/"kms"/"node-tkms"/g' pkg/package.json
+          sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"${TAG_NAME}\"/" pkg/package.json
           echo "# node-tkms" > pkg/README.md
 
       - name: NPM publish Node package
@@ -71,10 +74,13 @@ jobs:
       # Web package build and publish
       - name: NPM build web package
         working-directory: ./core/service
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
         run: |
           rm -rf pkg
           wasm-pack build --target web . --no-default-features
           sed -i 's/"kms"/"tkms"/g' pkg/package.json
+          sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"${TAG_NAME}\"/" pkg/package.json
           echo "# tkms" > pkg/README.md
 
       - name: NPM publish web package

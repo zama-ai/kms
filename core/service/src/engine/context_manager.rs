@@ -280,8 +280,13 @@ where
         let res = self
             .inner
             .crypto_storage
-            .write_context_info(new_context.context_id(), &new_context, false)
+            .write_context_info(new_context.context_id(), &new_context)
             .await;
+
+        // TODO(zama-ai/kms-internal/issues/2814)
+        // in addition to storing the context in storage
+        // we need to make sure it's also loaded in memory so that the centralized KMS
+        // can check whether context changes are valid
 
         ok_or_tonic_abort(
             res,
@@ -309,6 +314,11 @@ where
         delete_context_at_id(&mut *guarded_priv_storage, &context_id)
             .await
             .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
+
+        // TODO(zama-ai/kms-internal/issues/2814)
+        // in addition to deleting the context from storage
+        // we need to make sure it's also deleted from memory so that the centralized KMS
+        // can check whether context changes are valid
 
         Ok(Response::new(Empty {}))
     }
@@ -358,10 +368,23 @@ where
             session_maker,
         }
     }
+
+    pub(crate) async fn load_mpc_context_from_disk(&self) -> anyhow::Result<()> {
+        let contexts = self.inner.crypto_storage.read_all_context_info().await?;
+        let my_role = self.inner.my_role;
+        for context in contexts {
+            self.session_maker
+                .add_context_info(my_role, &context)
+                .await?;
+        }
+        Ok(())
+    }
 }
 
 /// Atomically update both the storage and the session maker with the new context info.
 /// If any of the two operations fail, rollback to the original state.
+///
+/// This function should only be used in the threshold setting since SessionMaker does not exist in centralized mode.
 async fn atomic_update_context<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
@@ -373,7 +396,7 @@ async fn atomic_update_context<
 ) -> anyhow::Result<()> {
     let context_id = new_context.context_id();
     let res1 = crypto_storage
-        .write_context_info(new_context.context_id(), new_context, false)
+        .write_context_info(new_context.context_id(), new_context)
         .await;
 
     let res2 = session_maker.add_context_info(my_role, new_context).await;
@@ -683,6 +706,91 @@ mod tests {
             let _ = read_context_at_id(&*guarded_priv_storage, &context_id)
                 .await
                 .unwrap_err();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_kms_context_load_from_disk() {
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let context_id = ContextId::from_bytes([4u8; 32]);
+        let new_context = ContextInfo {
+            kms_nodes: vec![NodeInfo {
+                mpc_identity: "Node1".to_string(),
+                party_id: 1,
+                verification_key: Some(verification_key.clone()),
+                external_url: "http://localhost:12345".to_string(),
+                tls_cert: vec![],
+                public_storage_url: "http://storage".to_string(),
+                extra_verification_keys: vec![],
+            }],
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+        };
+
+        let request = Request::new(NewKmsContextRequest {
+            new_context: Some(new_context.try_into().unwrap()),
+        });
+
+        // create the context manager and store the new context
+        {
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key.clone()).unwrap();
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.rng.clone());
+            let context_manager = ThresholdContextManager::new(
+                base_kms,
+                crypto_storage.clone(),
+                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                Role::indexed_from_one(1),
+                session_maker,
+            );
+
+            let response = context_manager.new_kms_context(request).await;
+            response.unwrap();
+
+            assert_eq!(1, context_manager.session_maker.context_count().await);
+        }
+
+        // check that the context is stored
+        {
+            let storage_ref = Arc::clone(&crypto_storage.private_storage);
+            let guarded_priv_storage = storage_ref.lock().await;
+            let stored_context = read_context_at_id(&*guarded_priv_storage, &context_id)
+                .await
+                .unwrap();
+
+            assert_eq!(*stored_context.context_id(), context_id);
+            assert_eq!(stored_context.kms_nodes.len(), 1);
+            assert_eq!(stored_context.kms_nodes[0].party_id, 1);
+            assert_eq!(
+                stored_context.kms_nodes[0].verification_key,
+                Some(verification_key)
+            );
+        }
+
+        // recreate another new context manager that's initially empty
+        // and then we should have nothing in the session maker.
+        {
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key.clone()).unwrap();
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.rng.clone());
+            let context_manager = ThresholdContextManager::new(
+                base_kms,
+                crypto_storage.clone(),
+                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                Role::indexed_from_one(1),
+                session_maker,
+            );
+
+            // check that there are no contexts
+            assert_eq!(0, context_manager.session_maker.context_count().await);
+
+            // load the contexts from disk
+            context_manager.load_mpc_context_from_disk().await.unwrap();
+            assert_eq!(1, context_manager.session_maker.context_count().await);
         }
     }
 

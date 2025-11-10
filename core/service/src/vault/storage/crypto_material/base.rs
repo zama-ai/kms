@@ -17,8 +17,9 @@ use crate::{
     vault::{
         keychain::KeychainProxy,
         storage::{
-            delete_all_at_request_id, delete_at_request_id, delete_pk_at_request_id,
-            read_all_data_versioned, store_context_at_id, store_pk_at_request_id,
+            crypto_material::log_storage_success_optional_variant, delete_all_at_request_id,
+            delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned,
+            read_context_at_id, store_context_at_id, store_pk_at_request_id,
             store_versioned_at_request_id, Storage,
         },
         Vault,
@@ -913,18 +914,41 @@ where
         &self,
         context_id: &ContextId,
         context_info: &ContextInfo,
-        is_threshold: bool,
     ) -> anyhow::Result<()> {
         let mut priv_storage = self.private_storage.lock().await;
         store_context_at_id(&mut *priv_storage, context_id, context_info).await?;
-        log_storage_success(
+        log_storage_success_optional_variant(
             context_id,
             priv_storage.info(),
             "context info",
             false,
-            is_threshold,
+            None,
         );
         Ok(())
+    }
+
+    pub async fn read_context_info(&self, context_id: &ContextId) -> anyhow::Result<ContextInfo> {
+        let priv_storage = self.private_storage.lock().await;
+        let res = read_context_at_id(&*priv_storage, context_id).await?;
+        log_storage_success_optional_variant(
+            context_id,
+            priv_storage.info(),
+            "context info",
+            false,
+            None,
+        );
+        Ok(res)
+    }
+
+    /// Read all context info entries from storage.
+    pub async fn read_all_context_info(&self) -> anyhow::Result<Vec<ContextInfo>> {
+        let priv_storage = self.private_storage.lock().await;
+
+        let context_map: HashMap<_, ContextInfo> =
+            read_all_data_versioned(&*priv_storage, &PrivDataType::ContextInfo.to_string())
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to read context info: {}", e))?;
+        Ok(context_map.into_values().collect())
     }
 }
 

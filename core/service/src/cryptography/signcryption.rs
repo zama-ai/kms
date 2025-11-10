@@ -29,7 +29,7 @@ use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::FheTypes;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_fhe::hashing::{serialize_hash_element, DomainSep, DIGEST_BYTES};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";
 
@@ -92,12 +92,14 @@ pub trait UnsigncryptFHEPlaintext: Unsigncrypt {
     ) -> Result<SigncryptionPayload, CryptographyError>;
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
+)]
 pub enum UnifiedSigncryptionKeyOwnedVersioned {
     V0(UnifiedSigncryptionKeyOwned),
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, Versionize)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Debug, Zeroize, Versionize)]
 #[versionize(UnifiedSigncryptionKeyOwnedVersioned)]
 pub struct UnifiedSigncryptionKeyOwned {
     pub signing_key: PrivateSigKey,
@@ -211,19 +213,28 @@ impl HasSigningScheme for UnifiedUnsigncryptionKey<'_> {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
+)]
 pub enum UnifiedUnsigncryptionKeyOwnedVersioned {
     V0(UnifiedUnsigncryptionKeyOwned),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedUnsigncryptionKeyOwnedVersioned)]
 pub struct UnifiedUnsigncryptionKeyOwned {
     pub decryption_key: UnifiedPrivateEncKey,
     pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
     pub sender_verf_key: PublicSigKey,
-    /// The ID of the receiver of the signcryption, e.g. blockchain address
+    /// The ID of the receiver of the signcryption, e.g. blockchain address]
     pub receiver_id: Vec<u8>,
+}
+
+impl Zeroize for UnifiedUnsigncryptionKeyOwned {
+    fn zeroize(&mut self) {
+        // We only need to zeroize the private key
+        self.decryption_key.zeroize();
+    }
 }
 
 impl UnifiedUnsigncryptionKeyOwned {
@@ -705,7 +716,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
 /// Helper method for what the client is supposed to do when generating ephemeral keys linked to the
 /// client's blockchain signing key
 #[cfg(test)]
-pub(crate) fn ephemeral_signcryption_key_generation(
+pub fn ephemeral_signcryption_key_generation(
     rng: &mut (impl CryptoRng + RngCore + Send + Sync + 'static),
     client_verf_key_id: &[u8],
     server_sig_key: Option<&PrivateSigKey>,
@@ -739,7 +750,7 @@ pub(crate) fn ephemeral_signcryption_key_generation(
 /// Helper struct that contains both signcryption and unsigncryption keys for a client
 /// For now only used for testing
 #[cfg(test)]
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct UnifiedSigncryptionKeyPairOwned {
     pub signcrypt_key: UnifiedSigncryptionKeyOwned,
     pub unsigncryption_key: UnifiedUnsigncryptionKeyOwned,
@@ -799,7 +810,10 @@ mod tests {
                 .unwrap();
         let deserialized_server_verf_key: PublicSigKey =
             bc2wrap::deserialize(&serialized_server_verf_key).unwrap();
-        let client_id = client_signcryption_keys.unsigncryption_key.receiver_id;
+        let client_id = client_signcryption_keys
+            .unsigncryption_key
+            .receiver_id
+            .clone();
         let new_keys = UnifiedUnsigncryptionKey::new(
             &client_signcryption_keys.unsigncryption_key.decryption_key,
             &client_signcryption_keys.unsigncryption_key.encryption_key,
