@@ -48,6 +48,12 @@ pub struct ReleasePCRValues {
     pub pcr2: Vec<u8>,
 }
 
+pub type TrustRootValue = (
+    Arc<dyn ClientCertVerifier>,
+    Arc<WebPkiServerVerifier>,
+    HashSet<SessionId>,
+);
+
 /// Our custom verifier for our custom mTLS certificates extended with AWS Nitro
 /// attestation documents. It doesn't reimplement normal X.509 certificate
 /// verification and wraps around the well-tested
@@ -68,16 +74,7 @@ pub struct AttestedVerifier {
     // to multiple contexts.  SessionId is supposed to be based on RequestId,
     // and we're representing ContextId as RequestId so far, so let's say it's
     // all the same for now.
-    trust_roots: RwLock<
-        HashMap<
-            MpcIdentity,
-            (
-                Arc<dyn ClientCertVerifier>,
-                Arc<WebPkiServerVerifier>,
-                HashSet<SessionId>,
-            ),
-        >,
-    >,
+    trust_roots: RwLock<HashMap<MpcIdentity, TrustRootValue>>,
     // Each context can specify a list of valid PCR values
     release_pcrs: RwLock<HashMap<SessionId, HashSet<ReleasePCRValues>>>,
     // If the "semi-auto" TLS scheme is used, where the party TLS identity is
@@ -153,8 +150,8 @@ Crypto provider should exist at this point"
                 .release_pcrs
                 .write()
                 .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {e}"))?;
-            if !release_pcrs.contains_key(&context_id) {
-                release_pcrs.insert(context_id, new_release_pcrs);
+            if let std::collections::hash_map::Entry::Vacant(e) = release_pcrs.entry(context_id) {
+                e.insert(new_release_pcrs);
             } else {
                 tracing::warn!("PCR values already defined in context {context_id}")
             }
@@ -266,21 +263,19 @@ impl ServerCertVerifier for AttestedVerifier {
         #[cfg(not(feature = "testing"))]
         let do_validation = true;
 
-        if do_validation {
-            if !release_pcrs.is_empty() {
-                validate_wrapped_cert(
-                    &cert,
-                    release_pcrs,
-                    self.pcr8_expected,
-                    CertVerifier::Server(server_verifier.clone(), server_name, ocsp_response),
-                    intermediates,
-                    now,
-                )
-                .map_err(|e| {
-                    tracing::error!("bundled attestation document validation error: {e}");
-                    Error::General(e.to_string())
-                })?;
-            }
+        if do_validation && !release_pcrs.is_empty() {
+            validate_wrapped_cert(
+                &cert,
+                release_pcrs,
+                self.pcr8_expected,
+                CertVerifier::Server(server_verifier.clone(), server_name, ocsp_response),
+                intermediates,
+                now,
+            )
+            .map_err(|e| {
+                tracing::error!("bundled attestation document validation error: {e}");
+                Error::General(e.to_string())
+            })?;
         }
         Ok(ServerCertVerified::assertion())
     }
@@ -359,21 +354,19 @@ impl ClientCertVerifier for AttestedVerifier {
         #[cfg(not(feature = "testing"))]
         let do_validation = true;
 
-        if do_validation {
-            if !release_pcrs.is_empty() {
-                validate_wrapped_cert(
-                    &cert,
-                    release_pcrs,
-                    self.pcr8_expected,
-                    CertVerifier::Client(client_verifier.clone()),
-                    intermediates,
-                    now,
-                )
-                .map_err(|e| {
-                    tracing::error!("bundled attestation document validation error: {e}");
-                    Error::General(e.to_string())
-                })?;
-            }
+        if do_validation && !release_pcrs.is_empty() {
+            validate_wrapped_cert(
+                &cert,
+                release_pcrs,
+                self.pcr8_expected,
+                CertVerifier::Client(client_verifier.clone()),
+                intermediates,
+                now,
+            )
+            .map_err(|e| {
+                tracing::error!("bundled attestation document validation error: {e}");
+                Error::General(e.to_string())
+            })?;
         }
 
         Ok(ClientCertVerified::assertion())

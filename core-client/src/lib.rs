@@ -602,9 +602,19 @@ pub struct ReshareParameters {
     pub preproc_id: RequestId,
 }
 
+#[derive(Debug, Parser, Clone)]
+pub struct PartialKeyGenPreprocParameters {
+    /// Percentage of offline phase to run (0-100)
+    #[clap(long, short = 'p')]
+    pub percentage_offline: u32,
+    /// Whether to store dummy preprocessing, needed to run online DKG if percentage is not 100
+    #[clap(long, short = 's')]
+    pub store_dummy_preprocessing: bool,
+}
 #[derive(Debug, Subcommand, Clone)]
 pub enum CCCommand {
     PreprocKeyGen(NoParameters),
+    PartialPreprocKeyGen(PartialKeyGenPreprocParameters),
     PreprocKeyGenResult(ResultParameters),
     KeyGen(KeyGenParameters),
     KeyGenResult(ResultParameters),
@@ -1161,7 +1171,7 @@ async fn do_preproc(
     rng: &mut AesRng,
     cmd_conf: &CmdConfig,
     num_parties: usize,
-    param: FheParameter,
+    fhe_params: FheParameter,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -1169,7 +1179,7 @@ async fn do_preproc(
     // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
     // this function is only used for testing.
     let domain = dummy_domain();
-    let pp_req = internal_client.preproc_request(&req_id, Some(param), None, &domain)?; //TODO keyset config
+    let pp_req = internal_client.preproc_request(&req_id, Some(fhe_params), None, &domain)?; //TODO keyset config
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -1180,6 +1190,59 @@ async fn do_preproc(
         req_tasks.spawn(async move {
             cur_client
                 .key_gen_preproc(tonic::Request::new(req_cloned))
+                .await
+        });
+    }
+
+    let mut req_response_vec = Vec::new();
+    while let Some(inner) = req_tasks.join_next().await {
+        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+    }
+    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+
+    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    for response in responses {
+        internal_client.process_preproc_response(&req_id, &domain, &response)?;
+    }
+
+    Ok(req_id)
+}
+
+async fn do_partial_preproc(
+    internal_client: &mut Client,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    rng: &mut AesRng,
+    cmd_conf: &CmdConfig,
+    num_parties: usize,
+    fhe_params: FheParameter,
+    preproc_params: &PartialKeyGenPreprocParameters,
+) -> anyhow::Result<RequestId> {
+    let req_id = RequestId::new_random(rng);
+
+    let max_iter = cmd_conf.max_iter;
+    // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
+    // this function is only used for testing.
+    let domain = dummy_domain();
+    let pp_req = internal_client.partial_preproc_request(
+        &req_id,
+        Some(fhe_params),
+        None,
+        &domain,
+        Some(kms_grpc::kms::v1::PartialKeyGenPreprocParams {
+            percentage_offline: preproc_params.percentage_offline,
+            store_dummy_preprocessing: preproc_params.store_dummy_preprocessing,
+        }),
+    )?;
+
+    // make parallel requests by calling insecure keygen in a thread
+    let mut req_tasks = JoinSet::new();
+
+    for (_party_id, ce) in core_endpoints.iter() {
+        let req_cloned = pp_req.clone();
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .partial_key_gen_preproc(tonic::Request::new(req_cloned))
                 .await
         });
     }
@@ -1546,8 +1609,8 @@ pub async fn execute_cmd(
     let mut core_endpoints_resp = HashMap::with_capacity(num_parties);
 
     // use secure default params if nothing is set
-    let param = cc_conf.fhe_params.unwrap_or(FheParameter::Default);
-    let client_param = match param {
+    let fhe_params = cc_conf.fhe_params.unwrap_or(FheParameter::Default);
+    let client_param = match fhe_params {
         FheParameter::Test => TEST_PARAM,
         _ => DEFAULT_PARAM,
     };
@@ -1687,7 +1750,7 @@ pub async fn execute_cmd(
     tracing::info!(
         "Parties: {}. FHE Parameters: {}",
         num_parties,
-        param.as_str_name()
+        fhe_params.as_str_name()
     );
 
     let kms_addrs = Arc::new(addr_vec);
@@ -1902,7 +1965,10 @@ pub async fn execute_cmd(
             shared_args,
         }) => {
             let mut internal_client = internal_client.unwrap();
-            tracing::info!("Key generation with parameter {}.", param.as_str_name());
+            tracing::info!(
+                "Key generation with parameter {}.",
+                fhe_params.as_str_name()
+            );
             let req_id = do_keygen(
                 &mut internal_client,
                 &core_endpoints_req,
@@ -1911,7 +1977,7 @@ pub async fn execute_cmd(
                 cmd_config,
                 num_parties,
                 &kms_addrs,
-                param,
+                fhe_params,
                 *preproc_id,
                 false,
                 shared_args,
@@ -1925,7 +1991,7 @@ pub async fn execute_cmd(
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
                 "Insecure key generation with parameter {}.",
-                param.as_str_name()
+                fhe_params.as_str_name()
             );
             let dummy_preproc_id = RequestId::new_random(&mut rng);
             let req_id = do_keygen(
@@ -1936,7 +2002,7 @@ pub async fn execute_cmd(
                 cmd_config,
                 num_parties,
                 &kms_addrs,
-                param,
+                fhe_params,
                 dummy_preproc_id,
                 true,
                 shared_args,
@@ -1948,29 +2014,9 @@ pub async fn execute_cmd(
         }
         CCCommand::CrsGen(CrsParameters { max_num_bits }) => {
             let mut internal_client = internal_client.unwrap();
-            tracing::info!("CRS generation with parameter {}.", param.as_str_name());
-
-            let req_id = do_crsgen(
-                &mut internal_client,
-                &core_endpoints_req,
-                &mut rng,
-                &cc_conf,
-                cmd_config,
-                num_parties,
-                &kms_addrs,
-                Some(*max_num_bits),
-                param,
-                false,
-                destination_prefix,
-            )
-            .await?;
-            vec![(Some(req_id), "crsgen done".to_string())]
-        }
-        CCCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
-            let mut internal_client = internal_client.unwrap();
             tracing::info!(
-                "Insecure CRS generation with parameter {}.",
-                param.as_str_name()
+                "CRS generation with parameter {}.",
+                fhe_params.as_str_name()
             );
 
             let req_id = do_crsgen(
@@ -1982,7 +2028,30 @@ pub async fn execute_cmd(
                 num_parties,
                 &kms_addrs,
                 Some(*max_num_bits),
-                param,
+                fhe_params,
+                false,
+                destination_prefix,
+            )
+            .await?;
+            vec![(Some(req_id), "crsgen done".to_string())]
+        }
+        CCCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
+            let mut internal_client = internal_client.unwrap();
+            tracing::info!(
+                "Insecure CRS generation with parameter {}.",
+                fhe_params.as_str_name()
+            );
+
+            let req_id = do_crsgen(
+                &mut internal_client,
+                &core_endpoints_req,
+                &mut rng,
+                &cc_conf,
+                cmd_config,
+                num_parties,
+                &kms_addrs,
+                Some(*max_num_bits),
+                fhe_params,
                 true,
                 destination_prefix,
             )
@@ -1991,7 +2060,7 @@ pub async fn execute_cmd(
         }
         CCCommand::PreprocKeyGen(NoParameters {}) => {
             let mut internal_client = internal_client.unwrap();
-            tracing::info!("Preprocessing with parameter {}.", param.as_str_name());
+            tracing::info!("Preprocessing with parameter {}.", fhe_params.as_str_name());
 
             let req_id = do_preproc(
                 &mut internal_client,
@@ -1999,10 +2068,37 @@ pub async fn execute_cmd(
                 &mut rng,
                 cmd_config,
                 num_parties,
-                param,
+                fhe_params,
             )
             .await?;
             vec![(Some(req_id), "preproc done".to_string())]
+        }
+        CCCommand::PartialPreprocKeyGen(partial_params) => {
+            let mut internal_client = internal_client.unwrap();
+            tracing::info!(
+                "Partial Preprocessing with parameter {} (running {}% , storing dummy: {}).",
+                fhe_params.as_str_name(),
+                partial_params.percentage_offline,
+                partial_params.store_dummy_preprocessing
+            );
+
+            let req_id = do_partial_preproc(
+                &mut internal_client,
+                &core_endpoints_req,
+                &mut rng,
+                cmd_config,
+                num_parties,
+                fhe_params,
+                partial_params,
+            )
+            .await?;
+            vec![(
+                Some(req_id),
+                format!(
+                    "partial preproc done, generated {} % (dummy preproc stored: {})",
+                    partial_params.percentage_offline, partial_params.store_dummy_preprocessing
+                ),
+            )]
         }
         CCCommand::DoNothing(NoParameters {}) => {
             tracing::info!("Nothing to do.");
@@ -2261,7 +2357,7 @@ pub async fn execute_cmd(
                 destination_prefix,
                 &kms_addrs,
                 num_parties,
-                param,
+                fhe_params,
                 *key_id,
                 *preproc_id,
             )

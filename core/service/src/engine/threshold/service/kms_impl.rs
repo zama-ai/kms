@@ -22,7 +22,7 @@ use threshold_fhe::{
             create_memory_factory, create_redis_factory,
             orchestration::producer_traits::SecureSmallProducerFactory, DKGPreprocessing,
         },
-        runtime::party::{Role, RoleAssignment},
+        runtime::party::Role,
         small_execution::prss::RobustSecurePrssInit,
         tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
         zk::ceremony::SecureCeremony,
@@ -42,8 +42,6 @@ use tonic::transport::{server::TcpIncoming, Server};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_tls::rustls::TlsIncoming;
 
-#[cfg(test)]
-use crate::vault::storage::delete_context_at_id;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
@@ -75,8 +73,8 @@ use crate::{
     },
     vault::{
         storage::{
-            crypto_material::ThresholdCryptoMaterialStorage, read_all_data_versioned,
-            read_pk_at_request_id, store_context_at_id, Storage,
+            crypto_material::ThresholdCryptoMaterialStorage, delete_context_at_id,
+            read_all_data_versioned, read_pk_at_request_id, store_context_at_id, Storage,
         },
         Vault,
     },
@@ -300,8 +298,8 @@ where
         mpc_socket_addr
     );
 
+    // clone the verifier for later use
     let verifier = tls_config.as_ref().map(|(_, _, verifier)| verifier.clone());
-
     let manager_clone = Arc::clone(&networking_manager);
     let abort_handle = tokio::spawn(async move {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -387,24 +385,11 @@ where
     let custodian_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(custodian_context)));
 
     // TODO(zama-ai/kms-internal/issues/2758)
-    // currently we need to insert a default context
-    // this can be removed when we have dynamic session preparers
-    let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.rng.clone());
+    // If we're still using peer config, we need to manually write the default context into storage.
+    // This way we can load it into SessionMaker later when creating the ThresholdContextManager.
     let _ = match config.peers {
         Some(ref peers) => {
-            let role_assignment = RoleAssignment {
-                inner: peers
-                    .iter()
-                    .map(|peer_config| peer_config.into_role_identity())
-                    .collect(),
-            };
-            let my_role = Role::indexed_from_one(config.my_id);
             let context_id = *DEFAULT_MPC_CONTEXT;
-            session_maker
-                .add_context(context_id, my_role, role_assignment, config.threshold)
-                .await;
-            // we also need to store it in the storage
-
             let kms_nodes = peers
                 .iter()
                 .map(|peer| {
@@ -449,8 +434,8 @@ where
             };
 
             // Note that we have to delete the old context under DEFAULT_MPC_CONTEXT
-            // because in tests we restart KMS with different ports.
-            #[cfg(test)]
+            // because we may have previously stored a different context there with an older peerlist.
+            // The default context must always be consistent with the latest peerlist file if present.
             delete_context_at_id(&mut private_storage, &context_id).await?;
 
             store_context_at_id(&mut private_storage, &context_id, &context_info).await?;
@@ -486,6 +471,7 @@ where
             .await;
     }
 
+    let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.rng.clone());
     let immutable_session_maker = session_maker.make_immutable();
 
     let initiator = RealInitiator {
@@ -495,6 +481,17 @@ where
         _init: PhantomData,
         base_kms: base_kms.new_instance().await,
     };
+
+    // NOTE: context must be loaded before attempting to automatically start the PRSS
+    // since the PRSS requires a context to be present.
+    let context_manager = ThresholdContextManager::new(
+        base_kms.new_instance().await,
+        crypto_storage.inner.clone(),
+        custodian_meta_store,
+        Role::indexed_from_one(config.my_id),
+        session_maker,
+    );
+    context_manager.load_mpc_context_from_disk().await?;
 
     // TODO eventually this PRSS ID should come from the context request
     // the PRSS should never be run in this function.
@@ -586,14 +583,6 @@ where
 
     #[cfg(feature = "insecure")]
     let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
-
-    let context_manager = ThresholdContextManager::new(
-        base_kms.new_instance().await,
-        crypto_storage.inner.clone(),
-        custodian_meta_store,
-        Role::indexed_from_one(config.my_id),
-        session_maker,
-    );
 
     let backup_operator = RealBackupOperator::new(
         Role::indexed_from_one(config.my_id),
