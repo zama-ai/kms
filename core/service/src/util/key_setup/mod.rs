@@ -242,7 +242,7 @@ where
     log_storage_success(
         req_id,
         priv_storage.info(),
-        "central server signing key",
+        "server signing key",
         false,
         false,
     );
