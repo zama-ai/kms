@@ -199,7 +199,8 @@ impl SessionMaker {
         let mut ca_certs_map = HashMap::new();
 
         for node in &info.kms_nodes {
-            let mpc_url = url::Url::parse(&node.external_url)?;
+            let mpc_url = url::Url::parse(&node.external_url)
+                .map_err(|e| anyhow::anyhow!("url parsing error for party: {}", e))?;
             let hostname = mpc_url
                 .host_str()
                 .ok_or_else(|| anyhow::anyhow!("missing host"))?;
@@ -212,7 +213,9 @@ impl SessionMaker {
             );
 
             if let Some(ca_cert) = &node.ca_cert {
-                let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert)?.1;
+                let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert)
+                    .map_err(|e| anyhow::anyhow!("x509 parsing error for party: {}", e))?
+                    .1;
                 ca_certs_map.insert(MpcIdentity(node.mpc_identity.clone()), ca_cert);
             }
         }
@@ -241,7 +244,9 @@ impl SessionMaker {
                 } else {
                     Some(info.pcr_values.iter().cloned().collect())
                 };
-                verifier.add_context(context_id_as_session_id, ca_certs_map, release_pcrs)?;
+                verifier
+                    .add_context(context_id_as_session_id, ca_certs_map, release_pcrs)
+                    .map_err(|e| anyhow::anyhow!("Failed to add context to verifier: {}", e))?;
             }
             _ => { /* do nothing */ }
         }

@@ -130,6 +130,19 @@ impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
     type Error = anyhow::Error;
 
     fn try_from(value: kms_grpc::kms::v1::KmsNode) -> anyhow::Result<Self> {
+        // check the ca_cert is valid PEM if present
+        let ca_cert = match &value.ca_cert {
+            Some(cert_bytes) => {
+                let _pem = x509_parser::pem::parse_x509_pem(cert_bytes)
+                    .map_err(|e| anyhow::anyhow!("Invalid PEM in ca_cert: {}", e))?;
+                Some(cert_bytes.clone())
+            }
+            None => None,
+        };
+
+        // check the external_url is a valid URL
+        let _ = url::Url::parse(&value.external_url)?;
+
         Ok(NodeInfo {
             mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
@@ -138,7 +151,7 @@ impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
                 Some(vk_bytes) => Some(bc2wrap::deserialize(&vk_bytes)?),
             },
             external_url: value.external_url,
-            ca_cert: value.ca_cert,
+            ca_cert,
             public_storage_url: value.public_storage_url,
             extra_verification_keys: value
                 .extra_verification_keys

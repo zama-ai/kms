@@ -13,7 +13,7 @@ use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
 use crate::{
-    s3_operations::{fetch_ca_certs, fetch_kms_verification_keys},
+    s3_operations::{fetch_kms_signing_keys, fetch_kms_verification_keys},
     CoreClientConfig,
 };
 
@@ -24,8 +24,7 @@ pub(crate) async fn do_new_mpc_context(
 ) -> anyhow::Result<ContextId> {
     // first download the verification and signing keys from all parties
     let verification_keys = fetch_kms_verification_keys(sim_conf).await?;
-    let ca_certs = fetch_ca_certs(sim_conf).await?;
-    // TODO check that they are consistent
+    let signing_keys = fetch_kms_signing_keys(sim_conf).await?;
 
     // load the compose_x.toml files, because we need the MPC identities and dummy pcr values
     let mut pcr_values = HashMap::new();
@@ -63,17 +62,25 @@ pub(crate) async fn do_new_mpc_context(
                 role.one_based()
             )
         })?;
-        let ca_cert = ca_certs
-            .get(&role.one_based())
-            .ok_or_else(|| anyhow::anyhow!("No CA cert found for party ID {}", role.one_based()))?;
+        let sk = signing_keys.get(&role.one_based()).ok_or_else(|| {
+            anyhow::anyhow!("No signing key found for party ID {}", role.one_based())
+        })?;
+
+        let mpc_identity = identity.mpc_identity();
+        let (_ca_cert_ki, ca_cert) = threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
+            mpc_identity.as_ref(),
+            true,
+            #[allow(deprecated)]
+            sk.sk(),
+        )?;
 
         kms_nodes.push(NodeInfo {
-            mpc_identity: identity.mpc_identity().to_string(),
+            mpc_identity: mpc_identity.to_string(),
             party_id: role.one_based() as u32,
             verification_key: Some(verification_key.clone()),
             external_url: format!("https://{}:{}", identity.hostname(), identity.port()),
-            ca_cert: Some(ca_cert.contents.clone()),
-            public_storage_url: "".to_string(), // TODO
+            ca_cert: Some(ca_cert.pem().as_bytes().to_vec()),
+            public_storage_url: c.s3_endpoint.clone(),
             extra_verification_keys: vec![],
         });
 

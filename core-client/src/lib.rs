@@ -116,8 +116,14 @@ pub struct CoreConf {
     /// The folder at the S3 endpoint where the data is stored.
     pub object_folder: String,
 
+    #[cfg(feature = "testing")]
+    /// The folder at the S3 endpoint where the private data is stored.
+    /// This is only used for testing context switching.
+    pub private_object_folder: Option<String>,
+
+    #[cfg(feature = "testing")]
     /// The path for the KMS configuration file,
-    /// this is needed for context switching.
+    /// this is only needed for testing context switching.
     pub config_path: Option<PathBuf>,
 }
 

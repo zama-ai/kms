@@ -4,7 +4,10 @@ use bytes::Bytes;
 use kms_grpc::rpc_types::PubDataType;
 
 #[cfg(feature = "testing")]
-use kms_lib::{consts::SIGNING_KEY_ID, cryptography::signatures::PublicSigKey};
+use kms_lib::{
+    consts::SIGNING_KEY_ID,
+    cryptography::signatures::{PrivateSigKey, PublicSigKey},
+};
 #[cfg(feature = "testing")]
 use std::collections::HashMap;
 
@@ -70,7 +73,7 @@ pub(crate) async fn fetch_elements(
     }
 }
 
-/// This fetches the KMS public keys from S3
+/// This fetches the KMS public verification keys from S3
 #[cfg(feature = "testing")]
 pub(crate) async fn fetch_kms_verification_keys(
     sim_conf: &CoreClientConfig,
@@ -98,28 +101,38 @@ pub(crate) async fn fetch_kms_verification_keys(
     Ok(addrs)
 }
 
-/// This fetches the KMS public keys from S3
+/// This fetches the KMS private signing keys from S3
 #[cfg(feature = "testing")]
-pub(crate) async fn fetch_ca_certs(
+pub(crate) async fn fetch_kms_signing_keys(
     sim_conf: &CoreClientConfig,
-) -> anyhow::Result<HashMap<usize, x509_parser::pem::Pem>> {
+) -> anyhow::Result<HashMap<usize, PrivateSigKey>> {
     let key_id = &SIGNING_KEY_ID.to_string();
     let mut addrs = HashMap::with_capacity(sim_conf.cores.len());
 
     for cur_core in &sim_conf.cores {
+        use kms_grpc::rpc_types::PrivDataType;
+
         let content = fetch_element(
             &cur_core.s3_endpoint.clone(),
             &format!(
                 "{}/{}",
-                cur_core.object_folder,
-                &PubDataType::CACert.to_string()
+                cur_core
+                    .private_object_folder
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!(
+                        "Private object folder not set for core {}",
+                        cur_core.party_id
+                    ))?,
+                &PrivDataType::SigningKey.to_string()
             ),
             key_id,
         )
         .await?;
 
-        let ca_cert = x509_parser::pem::parse_x509_pem(&content)?.1;
-        addrs.insert(cur_core.party_id, ca_cert);
+        let signing_key: PrivateSigKey =
+            tfhe::safe_serialization::safe_deserialize(std::io::Cursor::new(&content), 1000)
+                .unwrap();
+        addrs.insert(cur_core.party_id, signing_key);
     }
 
     Ok(addrs)
@@ -179,7 +192,7 @@ pub async fn fetch_element(
         } else {
             let response_status = response.status();
             let response_content = response.text().await?;
-            tracing::error!("Error: {}", response_status);
+            tracing::error!("Fetch element error: {}", response_status);
             tracing::error!("Response: {}", response_content);
             Err(anyhow::anyhow!(format!(
                 "Couldn't fetch element {element_id} from endpoint {endpoint}/{folder}\nStatus: {}\nResponse: {}",

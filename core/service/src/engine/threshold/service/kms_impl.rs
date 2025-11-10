@@ -402,10 +402,10 @@ where
                     match peer
                         .tls_cert
                         .as_ref()
-                        .map(|cert| cert.into_pem(peer.party_id, peers))
+                        .map(|cert| cert.unchecked_cert_string())
                         .transpose()
                     {
-                        Ok(pem) => {
+                        Ok(pem_string) => {
                             Ok(NodeInfo {
                                 mpc_identity: identity.mpc_identity().to_string(),
                                 party_id: role.one_based() as u32,
@@ -416,7 +416,7 @@ where
                                     identity.hostname(),
                                     identity.port()
                                 ),
-                                ca_cert: pem.map(|pem| pem.contents),
+                                ca_cert: pem_string.map(|cert_pem| cert_pem.into_bytes()),
                                 public_storage_url: "".to_string(),
                                 extra_verification_keys: vec![],
                             })
@@ -491,7 +491,16 @@ where
         Role::indexed_from_one(config.my_id),
         session_maker,
     );
-    context_manager.load_mpc_context_from_disk().await?;
+    context_manager
+        .load_mpc_context_from_storage()
+        .await
+        .inspect_err(|e| {
+            tracing::error!(
+                "Failed to load MPC context from storage during KMS startup for party {}: {}",
+                config.my_id,
+                e
+            )
+        })?;
 
     // TODO eventually this PRSS ID should come from the context request
     // the PRSS should never be run in this function.
@@ -507,7 +516,7 @@ where
             "Trying to initializing threshold KMS server and reading PRSS from storage for {}",
             config.my_id
         );
-        if let Err(e) = initiator.init_prss_from_disk(&epoch_id_prss).await {
+        if let Err(e) = initiator.init_prss_from_storage(&epoch_id_prss).await {
             tracing::warn!(
                 "Could not read PRSS Setup from storage for {}: {}. You will need to call the init end-point later before you can use the KMS server",
                 config.my_id,
