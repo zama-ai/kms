@@ -860,12 +860,8 @@ impl<
                 anyhow::bail!("Invalid recovery validation material for key id {cur_req_id}");
             }
         }
-        let custodian_context = validation_material
-            .into_iter()
-            .map(|(r, com)| (r, com.custodian_context().to_owned()))
-            .collect();
         let custodian_meta_store =
-            Arc::new(RwLock::new(MetaStore::new_from_map(custodian_context)));
+            Arc::new(RwLock::new(MetaStore::new_from_map(validation_material)));
         let tracker = Arc::new(TaskTracker::new());
 
         let crypto_storage = CentralizedCryptoMaterialStorage::new(

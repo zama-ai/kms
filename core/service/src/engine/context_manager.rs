@@ -1,10 +1,8 @@
 use crate::anyhow_error_and_log;
 use crate::backup::custodian::InternalCustodianContext;
-use crate::backup::operator::{Operator, RecoveryRequestPayload, RecoveryValidationMaterial};
+use crate::backup::operator::{Operator, RecoveryValidationMaterial};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::encryption::{
-    Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
-};
+use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey};
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::ContextInfo;
@@ -132,11 +130,11 @@ where
         // Generate asymmetric keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen()?;
-        let inner_context = InternalCustodianContext::new(context, backup_enc_key.clone())?;
-        let (recovery_request_payload, commitments) = gen_recovery_request_payload(
+        let inner_context: InternalCustodianContext =
+            InternalCustodianContext::new(context, backup_enc_key.clone())?;
+        let recovery_validation = gen_recovery_validation(
             &mut rng,
             &self.base_kms.sig_key,
-            backup_enc_key.clone(),
             backup_dec_key,
             &inner_context,
             self.my_role,
@@ -220,8 +218,7 @@ where
         // Then store the results
         self.crypto_storage
             .write_backup_keys_with_meta_store(
-                &recovery_request_payload,
-                &commitments,
+                &recovery_validation,
                 Arc::clone(&self.custodian_meta_store),
             )
             .await;
@@ -504,14 +501,13 @@ where
 }
 
 /// Generate a recovery request to the backup vault.
-async fn gen_recovery_request_payload(
+async fn gen_recovery_validation(
     rng: &mut AesRng,
     sig_key: &PrivateSigKey,
-    backup_enc_key: UnifiedPublicEncKey,
     backup_priv_key: UnifiedPrivateEncKey,
     custodian_context: &InternalCustodianContext,
     my_role: Role,
-) -> anyhow::Result<(RecoveryRequestPayload, RecoveryValidationMaterial)> {
+) -> anyhow::Result<RecoveryValidationMaterial> {
     let operator = Operator::new(
         my_role,
         custodian_context
@@ -535,17 +531,17 @@ async fn gen_recovery_request_payload(
         &serialized_priv_key,
         custodian_context.context_id,
     )?;
-    let recovery_request = RecoveryRequestPayload {
-        cts: ct_map,
-        backup_enc_key,
-    };
-    let validation_material =
-        RecoveryValidationMaterial::new(commitments, custodian_context.to_owned(), sig_key)?;
+    let validation_material = RecoveryValidationMaterial::new(
+        ct_map,
+        commitments,
+        custodian_context.to_owned(),
+        sig_key,
+    )?;
     tracing::info!(
         "Generated inner recovery request for backup_id/context_id={}",
         custodian_context.context_id
     );
-    Ok((recovery_request, validation_material))
+    Ok(validation_material)
 }
 
 #[cfg(test)]
@@ -726,10 +722,9 @@ mod tests {
         };
         let internal_context =
             InternalCustodianContext::new(context, backup_enc_key.clone()).unwrap();
-        let (recovery_request_payload, _commitments) = gen_recovery_request_payload(
+        let recovery_material = gen_recovery_validation(
             &mut rng,
             &server_sig_key,
-            backup_enc_key.clone(),
             backup_dec_key.clone(),
             &internal_context,
             Role::indexed_from_one(1),
@@ -737,8 +732,8 @@ mod tests {
         .await
         .unwrap();
         let internal_rec_req = InternalRecoveryRequest::new(
-            recovery_request_payload.backup_enc_key,
-            recovery_request_payload.cts,
+            recovery_material.payload.custodian_context.backup_enc_key,
+            recovery_material.payload.cts,
             backup_id,
             Role::indexed_from_one(1),
         )

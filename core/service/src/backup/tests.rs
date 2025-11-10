@@ -642,6 +642,7 @@ fn operator_handle_init(
         let operator_cus_context =
             InternalCustodianContext::new(cus_context.clone(), backup_enc_key.clone()).unwrap();
         let validation_material = RecoveryValidationMaterial::new(
+            cur_op_output.to_owned(),
             cur_comm.to_owned(),
             operator_cus_context,
             &signing_key,

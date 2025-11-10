@@ -49,28 +49,6 @@ pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRECO";
 const TIMESTAMP_VALIDATION_WINDOW_SECS: u64 = 24 * 3600; // 1 day
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum RecoveryRequestPayloadVersioned {
-    V0(RecoveryRequestPayload),
-}
-
-/// The backup data constructed whenever a new custodian context is created.
-///
-/// It is meant to be stored in the public storage as it is self-trusted via the signcryption in `InnerOperatorBackupOutput`.
-/// Note that this data is different from what is returned to the custodians (`InternalRecoveryRequest`) during recovery
-/// since during recovery it gets augmented with an ephemeral encryption key and operator information and the actual backup key is not used at that point.
-#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
-#[versionize(RecoveryRequestPayloadVersioned)]
-pub struct RecoveryRequestPayload {
-    /// The ciphertexts that are the backup. Indexed by the custodian role.
-    pub cts: BTreeMap<Role, InnerOperatorBackupOutput>,
-    pub backup_enc_key: UnifiedPublicEncKey,
-}
-
-impl Named for RecoveryRequestPayload {
-    const NAME: &'static str = "backup::RecoveryRequestPayload";
-}
-
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum InternalRecoveryRequestVersioned {
     V0(InternalRecoveryRequest),
 }
@@ -284,6 +262,11 @@ pub enum RecoveryValidationMaterialVersioned {
     V0(RecoveryValidationMaterial),
 }
 
+/// The data stored by an operator after a custodian context switch.
+/// The data contains the contains the signcrypted shares for each custodian
+/// along with information about the custodians.
+/// Furthermore, the data is singed by the operator to allow it to verify the
+/// data upon load.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(RecoveryValidationMaterialVersioned)]
 pub struct RecoveryValidationMaterial {
@@ -297,11 +280,29 @@ impl Named for RecoveryValidationMaterial {
 
 impl RecoveryValidationMaterial {
     pub fn new(
+        cts: BTreeMap<Role, InnerOperatorBackupOutput>,
         commitments: BTreeMap<Role, Vec<u8>>,
         custodian_context: InternalCustodianContext,
         sk: &PrivateSigKey,
     ) -> anyhow::Result<Self> {
+        if custodian_context.custodian_nodes.len() != cts.len() {
+            return Err(anyhow::anyhow!(
+                "Mismatch between number of custodian nodes ({}) and number of backup signcrypted shares ({})",
+                custodian_context.custodian_nodes.len(),
+                cts.len()
+            ));
+        }
+        for role in 1..=custodian_context.custodian_nodes.len() {
+            let r = Role::indexed_from_one(role);
+            if !cts.contains_key(&r) {
+                return Err(anyhow::anyhow!(
+                    "Missing backup signcrypted share for custodian role {}",
+                    role
+                ));
+            }
+        }
         let payload = RecoveryValidationMaterialPayload {
+            cts,
             commitments,
             custodian_context,
         };
@@ -380,7 +381,11 @@ pub enum RecoveryValidationMaterialPayloadVersioned {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(RecoveryValidationMaterialPayloadVersioned)]
 pub struct RecoveryValidationMaterialPayload {
+    /// The signcrypted shares of the operators' private backup decryption key
+    pub cts: BTreeMap<Role, InnerOperatorBackupOutput>,
+    /// The commitments to each operator's share, secret shared to each custodian. Hence custodian indexed
     pub commitments: BTreeMap<Role, Vec<u8>>,
+    /// The custodian context used during backup
     pub custodian_context: InternalCustodianContext,
 }
 impl Named for RecoveryValidationMaterialPayload {
@@ -795,10 +800,10 @@ impl Operator {
 mod tests {
     use super::*;
     use crate::{
-        backup::custodian::CustodianSetupMessagePayload,
+        backup::{custodian::CustodianSetupMessagePayload, operator::RecoveryValidationMaterial},
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
-            signatures::gen_sig_keys,
+            signatures::{gen_sig_keys, SigningSchemeType},
         },
         engine::base::derive_request_id,
     };
@@ -839,7 +844,21 @@ mod tests {
             name: "Custodian-3".to_string(),
             payload: payload_serial.clone(),
         };
-        let commitments = BTreeMap::new();
+        let mut commitments = BTreeMap::new();
+        commitments.insert(Role::indexed_from_one(1), vec![1_u8; 32]);
+        commitments.insert(Role::indexed_from_one(2), vec![2_u8; 32]);
+        commitments.insert(Role::indexed_from_one(3), vec![3_u8; 32]);
+        let mut cts = BTreeMap::new();
+        let cts_out = InnerOperatorBackupOutput {
+            signcryption: UnifiedSigncryption {
+                payload: vec![1, 2, 3],
+                pke_type: PkeSchemeType::MlKem512,
+                signing_type: SigningSchemeType::Ecdsa256k1,
+            },
+        };
+        cts.insert(Role::indexed_from_one(1), cts_out.clone());
+        cts.insert(Role::indexed_from_one(2), cts_out.clone());
+        cts.insert(Role::indexed_from_one(3), cts_out.clone());
         let custodian_context = CustodianContext {
             custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
             context_id: Some(backup_id.into()),
@@ -848,7 +867,7 @@ mod tests {
         let internal_custodian_context =
             InternalCustodianContext::new(custodian_context, enc_key).unwrap();
         let rvm =
-            RecoveryValidationMaterial::new(commitments, internal_custodian_context, &sig_key)
+            RecoveryValidationMaterial::new(cts, commitments, internal_custodian_context, &sig_key)
                 .unwrap();
         assert!(rvm.validate(&verf_key));
     }

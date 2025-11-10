@@ -3,7 +3,7 @@ use crate::backup::operator::DSEP_BACKUP_RECOVERY;
 use crate::engine::utils::query_key_material_availability;
 use crate::{
     anyhow_error_and_log,
-    backup::operator::{Operator, RecoveryRequestPayload, RecoveryValidationMaterial},
+    backup::operator::{InnerOperatorBackupOutput, Operator, RecoveryValidationMaterial},
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         attestation::{SecurityModule, SecurityModuleProxy},
@@ -40,7 +40,10 @@ use kms_grpc::{
     kms::v1::{Empty, KeyMaterialAvailabilityResponse, OperatorPublicKey},
     rpc_types::PrivDataType,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 use strum::IntoEnumIterator;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use threshold_fhe::execution::runtime::party::Role;
@@ -81,10 +84,11 @@ where
 
     /// Generate a recovery request to return to the custodians
     /// based on the already stored [`InternalCustodianContext`]
+    /// More specifically using the `cts` containing the signcryptions of the operator's share of the private backup decryption key
     async fn gen_outer_recovery_request(
         &self,
         backup_id: RequestId,
-        recovery_request: RecoveryRequestPayload,
+        cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     ) -> anyhow::Result<(RecoveryRequest, UnifiedPrivateEncKey, UnifiedPublicEncKey)> {
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
@@ -92,9 +96,9 @@ where
         let (ephem_operator_priv_key, ephem_operator_pub_key) = enc
             .keygen()
             .map_err(|e| anyhow::anyhow!("Failure in ephemeral key generation for backup: {e}"))?;
-        let mut cts = HashMap::new();
-        for (cur_cus_role, cur_cus_ct) in recovery_request.cts {
-            cts.insert(cur_cus_role.one_based() as u64, cur_cus_ct.try_into()?);
+        let mut grpc_cts = HashMap::new();
+        for (cur_cus_role, cur_cus_ct) in cts {
+            grpc_cts.insert(cur_cus_role.one_based() as u64, cur_cus_ct.try_into()?);
         }
         let mut serialized_priv_key = Vec::new();
         safe_serialize(
@@ -110,7 +114,7 @@ where
         )?;
         let recovery_request = RecoveryRequest {
             ephem_op_enc_key: serialized_pub_key,
-            cts,
+            cts: grpc_cts,
             backup_id: Some(backup_id.into()),
             operator_role: self.my_role.one_based() as u64,
         };
@@ -197,11 +201,11 @@ where
                     format!("Failed to get latest backup id: {e}"),
                 )
             })?;
-        let recovery_request_payload: RecoveryRequestPayload = {
+        let recovery_material: RecoveryValidationMaterial = {
             let pub_storage = self.crypto_storage.get_public_storage();
             let guarded_pub_storage = pub_storage.lock().await;
             guarded_pub_storage
-                .read_data(&backup_id, &PubDataType::RecoveryRequest.to_string())
+                .read_data(&backup_id, &PubDataType::RecoveryMaterial.to_string())
                 .await
                 .map_err(|e| {
                     Status::new(
@@ -211,7 +215,7 @@ where
                 })?
         };
         let (recovery_request, ephem_op_dec_key, ephem_op_enc_key) = self
-            .gen_outer_recovery_request(backup_id, recovery_request_payload)
+            .gen_outer_recovery_request(backup_id, recovery_material.payload.cts)
             .await
             .map_err(|e| {
                 Status::new(
@@ -762,7 +766,10 @@ mod tests {
     use super::*;
     use crate::{
         backup::custodian::{CustodianSetupMessagePayload, InternalCustodianContext, HEADER},
-        cryptography::signatures::gen_sig_keys,
+        cryptography::{
+            signatures::{gen_sig_keys, SigningSchemeType},
+            signcryption::UnifiedSigncryption,
+        },
         engine::base::derive_request_id,
     };
     use aes_prng::AesRng;
@@ -786,7 +793,10 @@ mod tests {
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (dec_key, enc_key) = enc.keygen().unwrap();
         let backup_id = derive_request_id("test").unwrap();
-        let commitments = BTreeMap::new();
+        let mut commitments = BTreeMap::new();
+        commitments.insert(Role::indexed_from_one(1), vec![1_u8; 32]);
+        commitments.insert(Role::indexed_from_one(2), vec![2_u8; 32]);
+        commitments.insert(Role::indexed_from_one(3), vec![3_u8; 32]);
         // Dummy payload; but needs to be a properly serialized payload
         let payload = CustodianSetupMessagePayload {
             header: HEADER.to_string(),
@@ -822,8 +832,19 @@ mod tests {
         };
         let internal_custodian_context =
             InternalCustodianContext::new(custodian_context, enc_key.clone()).unwrap();
+        let mut cts = BTreeMap::new();
+        let cts_out = InnerOperatorBackupOutput {
+            signcryption: UnifiedSigncryption {
+                payload: vec![1, 2, 3],
+                pke_type: PkeSchemeType::MlKem512,
+                signing_type: SigningSchemeType::Ecdsa256k1,
+            },
+        };
+        cts.insert(Role::indexed_from_one(1), cts_out.clone());
+        cts.insert(Role::indexed_from_one(2), cts_out.clone());
+        cts.insert(Role::indexed_from_one(3), cts_out.clone());
         let rec_material =
-            RecoveryValidationMaterial::new(commitments, internal_custodian_context, &sig_key)
+            RecoveryValidationMaterial::new(cts, commitments, internal_custodian_context, &sig_key)
                 .unwrap();
         (rec_material, verf_key, dec_key, enc_key)
     }

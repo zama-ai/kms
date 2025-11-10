@@ -490,7 +490,7 @@ pub async fn purge_pub(pub_path: Option<&Path>) {
 
 /// Purge _all_ backed up data. Both custodian and non-custodian based backups.
 /// Note however that this method does _not_ purge anything in the private or public storage.
-/// Thus, if you want to avoid new custodian backups being constructed at boot ensure that `purge_recovery_info`
+/// Thus, if you want to avoid new custodian backups being constructed at boot ensure that `purge_recovery_material`
 /// is also called, as it deletes all the custodian recovery info.
 pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
     if amount_parties == 1 {
@@ -582,12 +582,14 @@ pub async fn read_backup_files(
 /// Remove all the data needed to perform custodian backups.
 /// This then allows your to prevent the automatic backup being done at boot
 /// when the system is configured with custodian backups.
-pub async fn purge_recovery_info(path: Option<&Path>, amount_parties: usize) {
+/// TODO currently not used anywhere
+pub async fn purge_recovery_material(path: Option<&Path>, amount_parties: usize) {
     if amount_parties == 1 {
         let storage = FileStorage::new(path, StorageType::PUB, None).unwrap();
         let base_dir = storage.root_dir();
-        let _ = tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryRequest.to_string()))
-            .await;
+        let _ =
+            tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryMaterial.to_string()))
+                .await;
         let _ =
             tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryMaterial.to_string()))
                 .await;
@@ -601,9 +603,10 @@ pub async fn purge_recovery_info(path: Option<&Path>, amount_parties: usize) {
             )
             .unwrap();
             let base_dir = storage.root_dir();
-            let _ =
-                tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryRequest.to_string()))
-                    .await;
+            let _ = tokio::fs::remove_dir_all(
+                &base_dir.join(PubDataType::RecoveryMaterial.to_string()),
+            )
+            .await;
             let _ = tokio::fs::remove_dir_all(
                 &base_dir.join(PubDataType::RecoveryMaterial.to_string()),
             )

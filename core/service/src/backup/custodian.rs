@@ -181,7 +181,7 @@ impl TryFrom<InternalCustodianSetupMessage> for CustodianSetupMessage {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum InternalCustodianContextVersioned {
     V0(InternalCustodianContext),
 }
@@ -190,14 +190,18 @@ pub enum InternalCustodianContextVersioned {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(InternalCustodianContextVersioned)]
 pub struct InternalCustodianContext {
+    /// The custodian threshold for recovery
     pub threshold: u32,
+    /// The custodian context ID that will identify this custodian context
     pub context_id: RequestId,
+    /// The information received by the custodians during custodian context setup
     pub custodian_nodes: BTreeMap<Role, InternalCustodianSetupMessage>,
+    /// The backup encryption key used to encrypt the backup shares
     pub backup_enc_key: UnifiedPublicEncKey,
 }
 
 impl Named for InternalCustodianContext {
-    const NAME: &'static str = "backup::CustodianContext";
+    const NAME: &'static str = "backup::InternalCustodianContext";
 }
 
 impl InternalCustodianContext {
@@ -413,8 +417,12 @@ mod tests {
             context_id: None,
             threshold: 1,
         };
-        let result = InternalCustodianContext::new(context, backup_pk.clone());
+        let result = InternalCustodianContext::new(context, backup_pk);
         assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Custodian role cannot be zero"));
     }
 
     #[test]
@@ -469,6 +477,11 @@ mod tests {
         };
         let result = InternalCustodianContext::new(context, backup_pk.clone());
         assert!(result.is_err());
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("Duplicate custodian role found"));
     }
 
     #[test]
@@ -488,5 +501,8 @@ mod tests {
         };
         let result = InternalCustodianContext::new(context, backup_pk.clone());
         assert!(result.is_err());
+        assert!(result.err().unwrap().to_string().contains(
+            "Custodian role 5 is greater than the number of custodians in custodian context"
+        ));
     }
 }

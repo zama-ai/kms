@@ -44,7 +44,7 @@ use crate::vault::storage::delete_context_at_id;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    backup::{custodian::InternalCustodianContext, operator::RecoveryValidationMaterial},
+    backup::operator::RecoveryValidationMaterial,
     conf::threshold::ThresholdPartyConf,
     consts::{DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
     cryptography::{
@@ -253,10 +253,6 @@ where
             anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
         }
     }
-    let custodian_context: HashMap<RequestId, InternalCustodianContext> = validation_material
-        .into_iter()
-        .map(|(r, com)| (r, com.custodian_context().to_owned()))
-        .collect();
     for (id, info) in key_info_versioned.clone().into_iter() {
         public_key_info.insert(id, info.meta_data.clone());
 
@@ -379,7 +375,7 @@ where
         config.dec_capacity,
         config.min_dec_cache,
     )));
-    let custodian_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(custodian_context)));
+    let custodian_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(validation_material)));
 
     // TODO(zama-ai/kms-internal/issues/2758)
     // currently we need to insert a default context

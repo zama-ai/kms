@@ -230,7 +230,6 @@ pub enum PubDataType {
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
-    RecoveryRequest, // Recovery request for backup vault TODO(#2748) ensure that data gets validated at read, since we cannot fully trust the public storage
     RecoveryMaterial, // Recovery material for the backup vault
 }
 
@@ -245,7 +244,6 @@ impl fmt::Display for PubDataType {
             PubDataType::VerfAddress => write!(f, "VerfAddress"),
             PubDataType::DecompressionKey => write!(f, "DecompressionKey"),
             PubDataType::CACert => write!(f, "CACert"),
-            PubDataType::RecoveryRequest => write!(f, "RecoveryRequest"),
             PubDataType::RecoveryMaterial => write!(f, "RecoveryMaterial"),
         }
     }

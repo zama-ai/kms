@@ -5,7 +5,7 @@
 use super::{check_data_exists, log_storage_success, CryptoMaterialReader};
 use crate::{
     anyhow_error_and_warn_log,
-    backup::operator::{RecoveryRequestPayload, RecoveryValidationMaterial},
+    backup::operator::RecoveryValidationMaterial,
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
@@ -557,7 +557,6 @@ where
     #[allow(clippy::too_many_arguments)]
     pub async fn write_backup_keys_with_meta_store(
         &self,
-        recovery_request: &RecoveryRequestPayload,
         recovery_material: &RecoveryValidationMaterial,
         meta_store: Arc<RwLock<CustodianMetaStore>>,
     ) {
@@ -571,36 +570,14 @@ where
             let mut public_storage_guard = self.public_storage.lock().await;
 
             let pub_storage_future = async {
-                let recovery_store_result = store_versioned_at_request_id(
-                    &mut (*public_storage_guard),
-                    &req_id,
-                    recovery_request,
-                    &PubDataType::RecoveryRequest.to_string(),
-                )
-                .await;
-                if let Err(e) = &recovery_store_result {
-                    tracing::error!(
-                        "Failed to store recovery request to the public storage for request {}: {}",
-                        req_id,
-                        e
-                    );
-                } else {
-                    log_storage_success(
-                        req_id,
-                        public_storage_guard.info(),
-                        &PubDataType::RecoveryRequest.to_string(),
-                        true,
-                        true,
-                    );
-                }
-                let commit_store_result = store_versioned_at_request_id(
+                let store_result = store_versioned_at_request_id(
                     &mut (*public_storage_guard),
                     &req_id,
                     recovery_material,
                     &PubDataType::RecoveryMaterial.to_string(),
                 )
                 .await;
-                if let Err(e) = &recovery_store_result {
+                if let Err(e) = &store_result {
                     tracing::error!(
                         "Failed to store commitments to the public storage for request {}: {}",
                         req_id,
@@ -615,7 +592,7 @@ where
                         true,
                     );
                 }
-                recovery_store_result.is_ok() && commit_store_result.is_ok()
+                store_result.is_ok()
             };
             tokio::join!(pub_storage_future).0
         };
@@ -634,9 +611,7 @@ where
             };
             // If everything is ok, we update the meta store with a success
             if pub_res {
-                if let Err(e) = guarded_meta_store
-                    .update(&req_id, Ok(recovery_material.custodian_context().clone()))
-                {
+                if let Err(e) = guarded_meta_store.update(&req_id, Ok(recovery_material.clone())) {
                     tracing::error!("Failed to update meta store for request {req_id}: {e}");
                     self.purge_backup_material(&req_id, guarded_meta_store)
                         .await;
@@ -692,33 +667,20 @@ where
         };
 
         let pub_purge = async {
-            let request_res = delete_at_request_id(
-                &mut (*pub_storage),
-                req_id,
-                &PubDataType::RecoveryRequest.to_string(),
-            )
-            .await;
-            if let Err(e) = &request_res {
-                tracing::warn!(
-                    "Failed to delete public backup key material for request {}: {}",
-                    req_id,
-                    e
-                );
-            }
-            let commit_res = delete_at_request_id(
+            let res = delete_at_request_id(
                 &mut (*pub_storage),
                 req_id,
                 &PubDataType::RecoveryMaterial.to_string(),
             )
             .await;
-            if let Err(e) = &commit_res {
+            if let Err(e) = &res {
                 tracing::warn!(
                     "Failed to delete commitment material for request {}: {}",
                     req_id,
                     e
                 );
             }
-            request_res.is_err() && commit_res.is_err()
+            res.is_err()
         };
         let vault_purge = async {
             match back_vault {
