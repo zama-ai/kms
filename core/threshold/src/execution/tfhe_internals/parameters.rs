@@ -1740,7 +1740,7 @@ fn compute_prob_hw_within_range(pmax: f64, size: u64) -> f64 {
 fn compute_min_trials(p: f64, log2_p_failure: i64) -> Result<usize, String> {
     // Input validation
     if p <= 0.0 || p >= 1.0 {
-        return Err(format!("p={} must be in the range (0, 1). ", p));
+        return Err(format!("p={} must be in the range (0, 1).", p));
     }
 
     let one_minus_p = 1.0 - p;
