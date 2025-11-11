@@ -81,10 +81,22 @@ impl Named for PublicSigKey {
 }
 
 impl PublicSigKey {
-    pub fn new(pk: k256::ecdsa::VerifyingKey) -> Self {
+    fn new(pk: k256::ecdsa::VerifyingKey) -> Self {
         Self {
             pk: WrappedVerifyingKey(pk),
         }
+    }
+
+    pub fn from_sk(sk: &PrivateSigKey) -> Self {
+        let pk = SigningKey::verifying_key(&sk.sk.0).to_owned();
+        PublicSigKey {
+            pk: WrappedVerifyingKey(pk),
+        }
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+        bc2wrap::deserialize_safe(bytes)
+            .map_err(|e| anyhow::anyhow!("Could not deserialize key {}", e))
     }
 
     /// Return a concise identifier for this verification key. For ECDSA keys, this is the Ethereum address.
@@ -98,15 +110,7 @@ impl PublicSigKey {
         note = "This is legacy code and should not be used for new development. Will be handled in #2781"
     )]
     pub fn get_serialized_verf_key(&self) -> anyhow::Result<Vec<u8>> {
-        let serialized_verf_key = bc2wrap::serialize(&PublicSigKey::new(self.pk.0.to_owned()))?;
-        Ok(serialized_verf_key)
-    }
-
-    pub fn from_sk(sk: &PrivateSigKey) -> Self {
-        let pk = SigningKey::verifying_key(&sk.sk.0).to_owned();
-        PublicSigKey {
-            pk: WrappedVerifyingKey(pk),
-        }
+        bc2wrap::serialize(&self).map_err(|e| anyhow::anyhow!("Could not serialize key {}", e))
     }
 
     pub fn address(&self) -> alloy_primitives::Address {
@@ -567,5 +571,15 @@ mod tests {
         let verf_id = verf_key.verf_key_id();
         let signing_id = sig_key.signing_key_id();
         assert!(verf_id == signing_id);
+    }
+
+    #[test]
+    fn sunshine_verf_key_serialization() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+        #[allow(deprecated)]
+        let serialized_key = verf_key.get_serialized_verf_key().unwrap();
+        let deserialized_key = PublicSigKey::from_bytes(&serialized_key).unwrap();
+        assert_eq!(verf_key, deserialized_key);
     }
 }

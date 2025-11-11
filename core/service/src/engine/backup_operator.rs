@@ -178,10 +178,11 @@ where
         &self,
         request: Request<CustodianRecoveryInitRequest>,
     ) -> Result<Response<RecoveryRequest>, Status> {
+        let inner = request.into_inner();
         // Lock the ephemeral key for the entire duration of the method
         let mut guarded_priv_key = self.ephemeral_keys.lock().await;
         if guarded_priv_key.is_some() {
-            match request.into_inner().overwrite_ephemeral_key {
+            match inner.overwrite_ephemeral_key {
                 true => {
                     tracing::warn!("Ephemeral decryption key already exists. OVERWRITING the old ephemeral key, thus invalidating any previous recovery initialization!");
                 }
@@ -214,6 +215,20 @@ where
                     )
                 })?
         };
+        // Validate that the recovery material is correct
+        let my_verf_key =
+            PublicSigKey::from_bytes(inner.public_verf_key.as_slice()).map_err(|e| {
+                Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!("Failed to parse provided public verification key: {e}"),
+                )
+            })?;
+        if !recovery_material.validate(&my_verf_key) {
+            return Err(Status::new(
+                tonic::Code::InvalidArgument,
+                "Could not validate the signature on the recovery material",
+            ));
+        }
         let (recovery_request, ephem_op_dec_key, ephem_op_enc_key) = self
             .gen_outer_recovery_request(backup_id, recovery_material.payload.cts)
             .await

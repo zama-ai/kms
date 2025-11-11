@@ -501,12 +501,14 @@ async fn custodian_backup_init<T: DockerComposeContext>(
     ctx: &T,
     test_path: &Path,
     operator_recovery_resp_paths: Vec<PathBuf>,
+    operator_verf_key_paths: Vec<PathBuf>,
 ) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
 
     let init_command = CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
-        operator_recovery_resp_paths,
         overwrite_ephemeral_key: false,
+        operator_recovery_resp_paths,
+        operator_verf_key_paths,
     });
     let init_config = CmdConfig {
         file_conf: Some(String::from(path_to_config.to_str().unwrap())),
@@ -748,10 +750,19 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
         .join("recovery")
         .join(&cus_backup_id)
         .join("central");
+    let operator_verf_key_path = temp_path
+        .join("PUB")
+        .join(PubDataType::VerfKey.to_string())
+        .join(SIGNING_KEY_ID.to_string());
     // Ensure the dir exists locally
     assert!(create_dir_all(operator_recovery_resp_path.parent().unwrap()).is_ok());
-    let init_backup_id =
-        custodian_backup_init(ctx, temp_path, vec![operator_recovery_resp_path.clone()]).await;
+    let init_backup_id = custodian_backup_init(
+        ctx,
+        temp_path,
+        vec![operator_recovery_resp_path.clone()],
+        vec![operator_verf_key_path],
+    )
+    .await;
     assert_eq!(cus_backup_id, init_backup_id);
     let recovery_output_paths = custodian_reencrypt(
         temp_path,
@@ -1080,6 +1091,7 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianCo
         new_custodian_context(ctx, temp_path, custodian_threshold, setup_msg_paths).await;
     // Paths to where the results of the backup init will be stored
     let mut operator_recovery_resp_paths = Vec::new();
+    let mut operator_verf_key_paths = Vec::new();
     for cur_op_idx in 1..=amount_operators {
         let cur_resp_path = temp_path
             .join("CUSTODIAN")
@@ -1089,9 +1101,20 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianCo
         // Ensure the dir exists locally
         assert!(create_dir_all(cur_resp_path.parent().unwrap()).is_ok());
         operator_recovery_resp_paths.push(cur_resp_path);
+        operator_verf_key_paths.push(
+            temp_path
+                .join(format!("PUB-p{}", cur_op_idx))
+                .join(PubDataType::VerfKey.to_string())
+                .join(SIGNING_KEY_ID.to_string()),
+        );
     }
-    let init_backup_id =
-        custodian_backup_init(ctx, temp_path, operator_recovery_resp_paths.clone()).await;
+    let init_backup_id = custodian_backup_init(
+        ctx,
+        temp_path,
+        operator_recovery_resp_paths.clone(),
+        operator_verf_key_paths,
+    )
+    .await;
     assert_eq!(cus_backup_id, init_backup_id);
     let recovery_output_paths = custodian_reencrypt(
         temp_path,

@@ -4320,6 +4320,7 @@ dependencies = [
  "cc-tests-utils",
  "clap",
  "hex",
+ "itertools 0.14.0",
  "kms",
  "kms-grpc",
  "observability",
