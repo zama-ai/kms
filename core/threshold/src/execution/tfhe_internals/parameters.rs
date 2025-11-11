@@ -2121,6 +2121,10 @@ mod tests {
             let _ = h.all_glwe_noise(keyset_config);
             let _ = h.all_lwe_hat_noise(keyset_config);
             let _ = h.all_lwe_noise(keyset_config);
+            let _ = h.lwe_sk_num_bits_to_sample();
+            let _ = h.lwe_hat_sk_num_bits_to_sample();
+            let _ = h.glwe_sk_num_bits_to_sample();
+            let _ = h.compression_sk_num_bits_to_sample();
         }
     }
 
