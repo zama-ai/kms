@@ -573,7 +573,11 @@ impl<
 
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
-        let sigkey = Arc::clone(&self.base_kms.sig_key);
+        let sigkey = self.base_kms.sig_key().map_err(|e| {
+            tonic::Status::internal(format!(
+                "Failed to get signing key for decryption request {req_id}: {e:?}"
+            ))
+        })?;
         let dec_sig_future = move |_permit| async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
@@ -703,16 +707,11 @@ impl<
             )));
         }
 
-        let server_verf_key = self
-            .base_kms
-            .sig_key
-            .verf_key()
-            .to_legacy_bytes()
-            .map_err(|e| {
-                Status::internal(format!(
-                    "Failed to serialize server verification key: {e:?}"
-                ))
-            })?;
+        let server_verf_key = self.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
+            Status::internal(format!(
+                "Failed to serialize server verification key: {e:?}"
+            ))
+        })?;
         let sig_payload = PublicDecryptionResponsePayload {
             plaintexts,
             verification_key: server_verf_key,
@@ -870,7 +869,7 @@ mod tests {
         let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,
-            base_kms.rng.clone(),
+            base_kms.new_rng().await,
         );
 
         let public_decryptor = RealPublicDecryptor::init_test_dummy_decryptor(

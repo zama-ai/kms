@@ -555,9 +555,17 @@ impl<
                 dec_mode.as_str_name().to_string(),
             ),
         ];
-
+        let sk = (*self.base_kms.sig_key().map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::FailedPrecondition,
+                    format!(
+                        "Signing key is not present. This should only happen when server is booted in recovery mode: {}",
+                        e
+                    ),
+                )
+            })?).clone();
         let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
-            (*self.base_kms.sig_key).clone(),
+            sk,
             client_enc_key,
             client_address.to_vec(),
         ));
@@ -756,7 +764,7 @@ mod tests {
         let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,
-            base_kms.rng.clone(),
+            base_kms.new_rng().await,
         );
         let user_decryptor =
             RealUserDecryptor::init_test_dummy_decryptor(base_kms, session_maker.make_immutable())

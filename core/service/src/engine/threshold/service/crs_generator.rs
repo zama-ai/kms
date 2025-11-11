@@ -198,7 +198,7 @@ impl<
 
         // we need to clone the signature key because it needs to be given
         // the thread that spawns the CRS ceremony
-        let sk = self.base_kms.sig_key.clone();
+        let sk = self.base_kms.sig_key()?;
 
         // we do not need to hold the handle,
         // the result of the computation is tracked the crs_meta_store
@@ -574,7 +574,7 @@ mod tests {
         let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,
-            base_kms.rng.clone(),
+            base_kms.new_rng().await,
         );
 
         let pub_storage = ram::RamStorage::new();

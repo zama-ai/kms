@@ -38,7 +38,7 @@ use crate::{
     consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
     cryptography::signatures::PrivateSigKey,
     engine::{
-        base::{compute_external_signature_preprocessing, retrieve_parameters},
+        base::{compute_external_signature_preprocessing, retrieve_parameters, BaseKmsStruct},
         keyset_configuration::preproc_proto_to_keyset_config,
         threshold::{service::session::ImmutableSessionMaker, traits::KeyGenPreprocessor},
         validation::{
@@ -58,7 +58,7 @@ use super::BucketMetaStore;
 pub struct RealPreprocessor<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>>
 {
     // TODO eventually add mode to allow for nlarge as well.
-    pub(crate) sig_key: Arc<PrivateSigKey>,
+    pub(crate) base_kms: BaseKmsStruct,
     pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     pub preproc_factory:
         Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
@@ -129,7 +129,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         }
         let ongoing = Arc::clone(&self.ongoing);
 
-        let sk = Arc::clone(&self.sig_key);
+        let sk = self.base_kms.sig_key()?;
         let domain_clone = domain.clone();
         self.tracker.spawn(
             async move {
@@ -461,12 +461,12 @@ mod tests {
     };
 
     impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
-        fn init_test(sk: Arc<PrivateSigKey>, session_maker: ImmutableSessionMaker) -> Self {
+        fn init_test(base_kms: BaseKmsStruct, session_maker: ImmutableSessionMaker) -> Self {
             let tracker = Arc::new(TaskTracker::new());
             let rate_limiter = RateLimiter::default();
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
             Self {
-                sig_key: sk,
+                base_kms,
                 preproc_buckets: Arc::new(RwLock::new(MetaStore::new_unlimited())),
                 preproc_factory: Arc::new(Mutex::new(create_memory_factory())),
                 num_sessions_preproc: 2,
@@ -507,9 +507,9 @@ mod tests {
         let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,
-            base_kms.rng.clone(),
+            base_kms.new_rng().await,
         );
-        RealPreprocessor::<P>::init_test(Arc::new(sk), session_maker.make_immutable())
+        RealPreprocessor::<P>::init_test(base_kms, session_maker.make_immutable())
     }
 
     #[tokio::test]

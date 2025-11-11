@@ -5,7 +5,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 use kms_grpc::{
     identifiers::EpochId,
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
-    rpc_types::{KMSType, PrivDataType, PubDataType, SignedPubDataHandleInternal},
+    rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
     RequestId,
 };
 use serde::{Deserialize, Serialize};
@@ -45,10 +45,7 @@ use crate::{
     backup::operator::RecoveryValidationMaterial,
     conf::threshold::ThresholdPartyConf,
     consts::{DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
-    cryptography::{
-        attestation::SecurityModuleProxy,
-        signatures::{PrivateSigKey, PublicSigKey},
-    },
+    cryptography::attestation::SecurityModuleProxy,
     engine::{
         backup_operator::RealBackupOperator,
         base::{BaseKmsStruct, CrsGenMetadata, KeyGenMetadata},
@@ -221,7 +218,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     backup_storage: Option<Vault>,
     security_module: Option<Arc<SecurityModuleProxy>>,
     mpc_listener: TcpListener,
-    sk: PrivateSigKey,
+    base_kms: BaseKmsStruct,
     tls_config: Option<(ServerConfig, ClientConfig)>,
     peer_tcp_proxy: bool,
     run_prss: bool,
@@ -245,9 +242,9 @@ where
     let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
-    let verf_key = PublicSigKey::from_sk(&sk);
+    // Validate the recovery material against the provided verification key
     for (cur_req_id, cur_rec_material) in &validation_material {
-        if !cur_rec_material.validate(&verf_key) {
+        if !cur_rec_material.validate(&base_kms.verf_key()) {
             anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
         }
     }
@@ -359,7 +356,6 @@ where
         .map_or(MINIMUM_SESSIONS_PREPROC, |x| {
             std::cmp::max(x, MINIMUM_SESSIONS_PREPROC)
         });
-    let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk)?;
 
     let preproc_buckets = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
@@ -451,7 +447,7 @@ where
             .await;
     }
 
-    let session_maker = SessionMaker::new(networking_manager, base_kms.rng.clone());
+    let session_maker = SessionMaker::new(networking_manager, base_kms.new_rng().await);
     let immutable_session_maker = session_maker.make_immutable();
 
     let initiator = RealInitiator {
@@ -539,7 +535,7 @@ where
     let insecure_keygenerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
 
     let keygen_preprocessor = RealPreprocessor {
-        sig_key: Arc::clone(&base_kms.sig_key),
+        base_kms: base_kms.new_instance().await,
         session_maker: immutable_session_maker.clone(),
         preproc_buckets,
         preproc_factory,

@@ -521,9 +521,7 @@ impl<
     > fmt::Debug for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CentralizedKms")
-            .field("sig_key", &self.base_kms.sig_key)
-            .finish() // Don't include fhe_dec_key
+        f.debug_struct("CentralizedKms").finish() // Don't include fhe_dec_key or signing key
     }
 }
 
@@ -535,15 +533,6 @@ impl<
         BO: BackupOperator + Sync + Send + 'static,
     > BaseKms for CentralizedKms<PubS, PrivS, CM, BO>
 {
-    fn verify_sig<T: Serialize + AsRef<[u8]>>(
-        dsep: &DomainSep,
-        payload: &T,
-        signature: &Signature,
-        verification_key: &PublicSigKey,
-    ) -> anyhow::Result<()> {
-        BaseKmsStruct::verify_sig(dsep, payload, signature, verification_key)
-    }
-
     fn sign<T: Serialize + AsRef<[u8]>>(
         &self,
         dsep: &DomainSep,
@@ -1500,13 +1489,13 @@ pub(crate) mod tests {
             let mut keys = ephemeral_signcryption_key_generation(
                 &mut rng,
                 &client_verf_key.verf_key_id(),
-                Some(kms.base_kms.sig_key.as_ref()),
+                kms.base_kms.sig_key().ok().as_deref(),
             );
             if sim_type == SimulationType::BadEphemeralKey {
                 let bad_keys = ephemeral_signcryption_key_generation(
                     &mut rng,
                     &client_verf_key.verf_key_id(),
-                    Some(kms.base_kms.sig_key.as_ref()),
+                    kms.base_kms.sig_key().ok().as_deref(),
                 );
                 // Change the decryption key
                 keys.unsigncryption_key.decryption_key =
@@ -1525,7 +1514,7 @@ pub(crate) mod tests {
                 .read_cloned_centralized_fhe_keys_from_cache(key_handle)
                 .await
                 .unwrap(),
-            &kms.base_kms.sig_key,
+            kms.base_kms.sig_key().unwrap().as_ref(),
             &mut rng,
             &ct,
             fhe_type,

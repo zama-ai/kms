@@ -82,9 +82,14 @@ pub async fn preprocessing_impl<
     )?;
 
     let params = retrieve_parameters(Some(inner.params))?;
-    let external_signature =
-        compute_external_signature_preprocessing(&service.base_kms.sig_key, &request_id, &domain)
-            .map_err(|e| e.to_string());
+    let sk = service.base_kms.sig_key().map_err(|e| {
+        tonic::Status::new(
+            tonic::Code::FailedPrecondition,
+            format!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+        )
+    })?;
+    let external_signature = compute_external_signature_preprocessing(&sk, &request_id, &domain)
+        .map_err(|e| e.to_string());
 
     let preproc_bucket = external_signature.map(|external_signature| CentralizedPreprocBucket {
         preprocessing_id: request_id,
@@ -166,7 +171,7 @@ mod tests {
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
-        let verf_key = kms.base_kms.sig_key.verf_key();
+        let verf_key = kms.base_kms.verf_key();
         let preproc_req_id = derive_request_id("test_preprocessing_sunshine").unwrap();
         let domain = dummy_domain();
         let preproc_req = KeyGenPreprocRequest {

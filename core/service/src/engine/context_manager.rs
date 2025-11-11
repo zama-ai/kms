@@ -134,7 +134,7 @@ where
             InternalCustodianContext::new(context, backup_enc_key.clone())?;
         let recovery_validation = gen_recovery_validation(
             &mut rng,
-            &self.base_kms.sig_key,
+            self.base_kms.sig_key()?.as_ref(),
             backup_dec_key,
             &inner_context,
             self.my_role,
@@ -531,7 +531,7 @@ async fn gen_recovery_validation(
     custodian_context: &InternalCustodianContext,
     my_role: Role,
 ) -> anyhow::Result<RecoveryValidationMaterial> {
-    let operator = Operator::new(
+    let operator = Operator::new_for_sharing(
         my_role,
         custodian_context
             .custodian_nodes
@@ -542,7 +542,6 @@ async fn gen_recovery_validation(
         custodian_context.threshold as usize,
         // the amount of custodians are defined by the initial context
         custodian_context.custodian_nodes.len(),
-        true,
     )?;
     let mut serialized_priv_key = Vec::new();
     safe_serialize(
@@ -663,7 +662,7 @@ mod tests {
             new_context: Some(new_context.try_into().unwrap()),
         });
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, base_kms.rng.clone());
+            SessionMaker::four_party_dummy_session(None, None, base_kms.new_rng().await);
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage.clone(),
@@ -741,7 +740,7 @@ mod tests {
         // create the context manager and store the new context
         {
             let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key.clone()).unwrap();
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.rng.clone());
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
@@ -777,7 +776,7 @@ mod tests {
         // and then we should have nothing in the session maker.
         {
             let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key.clone()).unwrap();
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.rng.clone());
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),

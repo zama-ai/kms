@@ -61,7 +61,16 @@ pub async fn crs_gen_impl<
 
     let meta_store = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();
-    let sk = Arc::clone(&service.base_kms.sig_key);
+    let sk = 
+        service
+            .base_kms
+            .sig_key()
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::FailedPrecondition,
+                    format!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+                )
+            })?;
     let rng = service.base_kms.new_rng().await;
 
     let handle = service.tracker.spawn(

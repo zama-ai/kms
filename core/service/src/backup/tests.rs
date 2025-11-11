@@ -58,13 +58,12 @@ fn operator_setup() {
         wrong_custodian_messages[0].header.push('z');
 
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let operator = Operator::new(
+        let operator = Operator::new_for_sharing(
             Role::indexed_from_zero(0),
             wrong_custodian_messages,
             signing_key,
             custodian_threshold,
             custodian_count,
-            true,
         );
         assert!(operator.is_ok());
         assert!(logs_contain(
@@ -78,13 +77,12 @@ fn operator_setup() {
         wrong_custodian_messages[1].timestamp += 24 * 3700;
 
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let operator = Operator::new(
+        let operator = Operator::new_for_sharing(
             Role::indexed_from_zero(0),
             wrong_custodian_messages,
             signing_key,
             custodian_threshold,
             custodian_count,
-            true,
         );
         assert!(operator.is_ok());
         assert!(logs_contain(
@@ -124,13 +122,12 @@ fn custodian_reencrypt() {
         .map(|i| {
             let operator_role = Role::indexed_from_zero(i);
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-            Operator::new(
+            Operator::new_for_sharing(
                 operator_role,
                 custodian_messages.clone(),
                 signing_key,
                 custodian_threshold,
                 custodian_count,
-                true,
             )
             .unwrap()
         })
@@ -395,13 +392,12 @@ fn full_flow_malicious_custodian_init() {
     for op_idx in 1..=operator_count {
         let operator_role = Role::indexed_from_one(op_idx);
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let operator = Operator::new(
+        let operator = Operator::new_for_sharing(
             operator_role,
             setup_msgs_malicious.to_vec(),
             signing_key.clone(),
             custodian_threshold,
             custodian_count,
-            true,
         )
         .unwrap();
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
@@ -626,13 +622,12 @@ fn operator_handle_init(
     for op_idx in 1..=operator_count {
         let operator_role = Role::indexed_from_one(op_idx);
         let (verification_key, signing_key) = gen_sig_keys(rng);
-        let operator = Operator::new(
+        let operator = Operator::new_for_sharing(
             operator_role,
             setup_msgs.to_vec(),
             signing_key.clone(),
             custodian_threshold,
             custodian_count,
-            true,
         )
         .unwrap();
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, rng);

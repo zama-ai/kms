@@ -801,13 +801,12 @@ mod kms_custodian_binary_tests {
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (ephemeral_priv_key, ephemeral_pub_key) = enc.keygen().unwrap();
-        let operator: Operator = Operator::new(
+        let operator: Operator = Operator::new_for_sharing(
             operator_role,
             setup_msgs.clone(),
             signing_key.clone(),
             threshold,
             setup_msgs.len(),
-            true,
         )
         .unwrap();
         let (backup_ske, backup_pke) = enc.keygen().unwrap();

@@ -1,7 +1,7 @@
 use anyhow::ensure;
 use clap::Parser;
 use futures_util::future::OptionFuture;
-use kms_grpc::rpc_types::PubDataType;
+use kms_grpc::rpc_types::{KMSType, PubDataType};
 use kms_lib::{
     conf::{
         init_conf, init_conf_kms_core_telemetry,
@@ -11,13 +11,14 @@ use kms_lib::{
     consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID},
     cryptography::{
         attestation::{make_security_module, SecurityModule, SecurityModuleProxy},
-        signatures::PrivateSigKey,
+        signatures::{PrivateSigKey, PublicSigKey},
     },
     engine::{
-        centralized::central_kms::RealCentralizedKms, run_server,
+        base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms, run_server,
         threshold::service::new_real_threshold_kms,
     },
     grpc::MetaStoreStatusServiceImpl,
+    util::file_handling::safe_read_element_versioned,
     vault::{
         aws::build_aws_sdk_config,
         keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
@@ -70,6 +71,7 @@ struct KmsArgs {
         help = "path to the configuration file"
     )]
     config_file: String,
+    recovery: Option<String>,
 }
 
 async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener {
@@ -460,16 +462,6 @@ async fn main_exec() -> anyhow::Result<()> {
         keychain: private_keychain,
     };
 
-    // load signing key
-    let sk = get_core_signing_key(&private_vault).await?;
-
-    // compute corresponding public key and derive address from private sig key
-    #[allow(deprecated)]
-    let pk_bytes = sk.verf_key().pk().to_encoded_point(false).to_bytes();
-
-    tracing::info!("KMS verifying key is {}", hex::encode(pk_bytes));
-    tracing::info!("Public ethereum address is {}", sk.address());
-
     // backup vault (unlike for private/public storage, there cannot be a
     // default location for backup storage, so there has to be
     // Some(storage_url))
@@ -537,37 +529,62 @@ async fn main_exec() -> anyhow::Result<()> {
         .await
         .unwrap_or_else(|e| panic!("Could not bind to {service_socket_addr} \n {e:?}"));
 
+    let mode = match core_config.threshold {
+        Some(_) => KMSType::Threshold,
+        None => KMSType::Centralized,
+    };
+    let base_kms = match &args.recovery {
+        Some(verf_key_path) => {
+            tracing::warn!(
+                "ENTERING RECOVERY MODE!!!!\nOnly backup recovery operations are allowed!"
+            );
+            let verf_key: PublicSigKey = safe_read_element_versioned(verf_key_path).await?;
+            BaseKmsStruct::new_no_signing_key(mode, verf_key)
+        }
+        None => {
+            // load signing key
+            let sk = get_core_signing_key(&private_vault).await?;
+            BaseKmsStruct::new(mode, sk)?
+        }
+    };
+    // compute corresponding public key and derive address from private sig key
+    #[allow(deprecated)]
+    let pk_bytes = base_kms.verf_key().pk().to_encoded_point(false).to_bytes();
+    tracing::info!("KMS verifying key is {}", hex::encode(pk_bytes));
+    tracing::info!(
+        "Public ethereum address is {}",
+        base_kms.verf_key().address()
+    );
+
     match core_config.threshold {
         Some(threshold_config) => {
             let mpc_listener = make_mpc_listener(&threshold_config).await;
-
-            let tls_identity = match &threshold_config.tls {
-                Some(tls_config) => Some(match &threshold_config.peers {
-                    Some(peers) => {
+            // Setup TLS if configured and we are not in recovery mode
+            let tls_identity = if let (Some(tls_config), None) =
+                (&threshold_config.tls, &args.recovery)
+            {
+                match &threshold_config.peers {
+                    Some(peers) => Some(
                         build_tls_config(
                             threshold_config.my_id,
                             peers,
                             tls_config,
                             security_module.clone(),
                             &public_vault,
-                            &sk,
+                            base_kms.sig_key()?.as_ref(),
                             #[cfg(feature = "insecure")]
                             core_config.mock_enclave.is_some_and(|m| m),
                         )
-                        .await?
-                    }
+                        .await?,
+                    ),
                     None => {
                         panic!("TLS enabled but peer list not provided: reading peer list from the context unsupported yet")
                     }
-                }),
-                None => {
-                    tracing::warn!(
-                        "No TLS identity - using plaintext communication between MPC nodes"
-                    );
-                    None
                 }
+            } else {
+                tracing::warn!("No TLS identity - using plaintext communication between MPC nodes");
+                None
             };
-
             #[cfg(not(feature = "insecure"))]
             let need_peer_tcp_proxy = need_security_module;
             #[cfg(feature = "insecure")]
@@ -587,7 +604,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 backup_vault,
                 security_module,
                 mpc_listener,
-                sk,
+                base_kms,
                 tls_identity,
                 need_peer_tcp_proxy,
                 false,
@@ -616,7 +633,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 private_vault,
                 backup_vault,
                 security_module,
-                sk,
+                (*base_kms.sig_key()?).clone(),
                 core_config.rate_limiter_conf,
             )
             .await?;

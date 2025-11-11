@@ -92,7 +92,12 @@ pub async fn user_decrypt_impl<
     timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 
     let meta_store = Arc::clone(&service.user_dec_meta_store);
-    let sig_key = Arc::clone(&service.base_kms.sig_key);
+    let sig_key = service.base_kms.sig_key().map_err(|e| {
+        tonic::Status::new(
+            tonic::Code::FailedPrecondition,
+            format!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+        )
+    })?;
     let crypto_storage = service.crypto_storage.clone();
     let mut rng = service.base_kms.new_rng().await;
 
@@ -108,16 +113,11 @@ pub async fn user_decrypt_impl<
         (TAG_PUBLIC_DECRYPTION_KIND, "centralized".to_string()),
     ];
 
-    let server_verf_key = service
-        .base_kms
-        .sig_key
-        .verf_key()
-        .to_legacy_bytes()
-        .map_err(|e| {
-            Status::internal(format!(
-                "Failed to serialize server verification key: {e:?}"
-            ))
-        })?;
+    let server_verf_key = service.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
+        Status::internal(format!(
+            "Failed to serialize server verification key: {e:?}"
+        ))
+    })?;
 
     let handle = tokio::spawn(
         async move {
@@ -302,7 +302,12 @@ pub async fn public_decrypt_impl<
     timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 
     let meta_store = Arc::clone(&service.pub_dec_meta_store);
-    let sigkey = Arc::clone(&service.base_kms.sig_key);
+    let sigkey = service.base_kms.sig_key().map_err(|e| {
+        tonic::Status::new(
+            tonic::Code::FailedPrecondition,
+            format!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+        )
+    })?;
     let crypto_storage = service.crypto_storage.clone();
 
     ok_or_tonic_abort(
@@ -457,16 +462,11 @@ pub async fn get_public_decryption_result_impl<
         external_signature
     );
 
-    let server_verf_key = service
-        .base_kms
-        .sig_key
-        .verf_key()
-        .to_legacy_bytes()
-        .map_err(|e| {
-            Status::internal(format!(
-                "Failed to serialize server verification key: {e:?}"
-            ))
-        })?;
+    let server_verf_key = service.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
+        Status::internal(format!(
+            "Failed to serialize server verification key: {e:?}"
+        ))
+    })?;
 
     // the payload to be signed for verification inside the KMS
     let kms_sig_payload = PublicDecryptionResponsePayload {

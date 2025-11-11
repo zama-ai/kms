@@ -7,7 +7,7 @@ use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::cryptography::signatures::compute_eip712_signature;
 
-use crate::cryptography::signatures::{internal_sign, internal_verify_sig};
+use crate::cryptography::signatures::internal_sign;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
@@ -587,25 +587,57 @@ pub(crate) fn compute_external_pt_signature(
 }
 
 pub struct BaseKmsStruct {
-    pub(crate) kms_type: KMSType,
-    pub(crate) sig_key: Arc<PrivateSigKey>,
-    pub(crate) rng: Arc<Mutex<AesRng>>,
+    kms_type: KMSType,
+    sig_key: Option<Arc<PrivateSigKey>>,
+    verf_key: Arc<PublicSigKey>,
+    rng: Arc<Mutex<AesRng>>,
 }
 
 impl BaseKmsStruct {
     pub fn new(kms_type: KMSType, sig_key: PrivateSigKey) -> anyhow::Result<Self> {
         Ok(BaseKmsStruct {
             kms_type,
-            sig_key: Arc::new(sig_key),
+            verf_key: Arc::new(sig_key.verf_key()),
+            sig_key: Some(Arc::new(sig_key)),
             rng: Arc::new(Mutex::new(AesRng::from_entropy())),
         })
     }
 
+    pub fn new_no_signing_key(kms_type: KMSType, verf_key: PublicSigKey) -> Self {
+        tracing::warn!("Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE.");
+        BaseKmsStruct {
+            kms_type,
+            sig_key: None,
+            verf_key: Arc::new(verf_key),
+            rng: Arc::new(Mutex::new(AesRng::from_entropy())),
+        }
+    }
+
+    pub fn kms_type(&self) -> KMSType {
+        self.kms_type
+    }
+
+    pub fn sig_key(&self) -> anyhow::Result<Arc<PrivateSigKey>> {
+        match &self.sig_key {
+            Some(sk) => Ok(Arc::clone(sk)),
+            None => anyhow::bail!("No signing key available"),
+        }
+    }
+
+    pub fn verf_key(&self) -> Arc<PublicSigKey> {
+        Arc::clone(&self.verf_key)
+    }
+
     /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use.
     pub async fn new_instance(&self) -> Self {
+        let sig_key = match &self.sig_key {
+            Some(sk) => Some(Arc::clone(sk)),
+            None => None,
+        };
         Self {
             kms_type: self.kms_type,
-            sig_key: self.sig_key.clone(),
+            verf_key: Arc::clone(&self.verf_key),
+            sig_key,
             rng: Arc::new(Mutex::new(self.new_rng().await)),
         }
     }
@@ -622,24 +654,15 @@ impl BaseKmsStruct {
 }
 
 impl BaseKms for BaseKmsStruct {
-    fn verify_sig<T>(
-        dsep: &DomainSep,
-        payload: &T,
-        signature: &Signature,
-        key: &PublicSigKey,
-    ) -> anyhow::Result<()>
-    where
-        T: Serialize + AsRef<[u8]>,
-    {
-        internal_verify_sig(dsep, &payload, signature, key)
-    }
-
     /// sign `msg` using the KMS' private signing key
     fn sign<T>(&self, dsep: &DomainSep, msg: &T) -> anyhow::Result<Signature>
     where
         T: Serialize + AsRef<[u8]>,
     {
-        internal_sign(dsep, msg, &self.sig_key)
+        match self.sig_key.as_ref() {
+            None => anyhow::bail!("KMS has no signing key"),
+            Some(sk) => internal_sign(dsep, msg, sk),
+        }
     }
 
     fn digest<T>(domain_separator: &DomainSep, msg: &T) -> anyhow::Result<Vec<u8>>

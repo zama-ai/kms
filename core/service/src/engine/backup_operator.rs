@@ -273,12 +273,11 @@ where
             &inner.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
         )?;
-        let my_verf_key = PublicSigKey::from_sk(&self.base_kms.sig_key);
         let recovery_material = {
             load_recovery_validation_material(
                 &self.crypto_storage.get_public_storage(),
                 &context_id,
-                &my_verf_key,
+                &self.base_kms.verf_key(),
             )
             .await
             .map_err(|e| {
@@ -293,7 +292,7 @@ where
                 inner.custodian_recovery_outputs,
                 &recovery_material,
                 self.my_role,
-                &my_verf_key,
+                &self.base_kms.verf_key(),
                 &ephemeral_dec_key,
                 &ephemeral_enc_key,
             )
@@ -326,14 +325,12 @@ where
                     Some(KeychainProxy::SecretSharing(ref mut keychain)) => {
                         // Amount of custodians get defined during context creation
                         let amount_custodians = recovery_material.payload.custodian_context.custodian_nodes.len();
-                        let operator = Operator::new(
+                        let operator = Operator::new_for_validating(
                             self.my_role,
                             recovery_material.custodian_context().custodian_nodes.values().cloned().collect_vec(),
-                            self.base_kms.sig_key.as_ref().clone(),
+                            (*self.base_kms.verf_key()).clone(),
                             recovery_material.custodian_context().threshold as usize,
                             amount_custodians,
-                            // Don't validate the timestamp since it is expired at this point in time, and we only cared about the timestamp during custodian context setup
-                            false,
                         ).map_err(|e| {
                             Status::new(
                                 tonic::Code::Internal,
@@ -421,7 +418,7 @@ where
         // from the preprocessor service which has access to the metastore
         let response = query_key_material_availability(
             &*priv_guard,
-            self.base_kms.kms_type,
+            self.base_kms.kms_type(),
             Vec::new(), // Will be populated by the endpoint from preprocessor
         )
         .await?;
