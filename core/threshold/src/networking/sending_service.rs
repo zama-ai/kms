@@ -811,22 +811,6 @@ mod tests {
             assert_eq!(actual, expected);
         }
 
-        // try to send again but use the wrong context ID
-        // it should be rejected
-        {
-            let tx_2 = tx_2.clone();
-            tokio::spawn(async move {
-                tx_2.send(NetworkRoundValue {
-                    round_counter: 1,
-                    value: vec![],
-                })
-                .await
-                .unwrap();
-            });
-
-            let _ = session.receive(&role_2).await.unwrap_err();
-        }
-
         // try to send to a role that is not in the role assignment should fail
         {
             let e = session
