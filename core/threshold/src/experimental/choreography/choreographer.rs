@@ -94,7 +94,7 @@ impl ChoreoRuntime {
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
             responses
-                .push(bc2wrap::deserialize_unsafe(&(response??.into_inner().request_id)).unwrap());
+                .push(bc2wrap::deserialize_safe(&(response??.into_inner().request_id)).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -138,7 +138,7 @@ impl ChoreoRuntime {
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
             responses
-                .push(bc2wrap::deserialize_unsafe(&(response??.into_inner().request_id)).unwrap());
+                .push(bc2wrap::deserialize_safe(&(response??.into_inner().request_id)).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -191,7 +191,7 @@ impl ChoreoRuntime {
         //    assert_eq!(response, ref_response);
         //}
         let pub_key = responses.pop().unwrap();
-        let pub_key = bc2wrap::deserialize_unsafe(&pub_key)?;
+        let pub_key = bc2wrap::deserialize_safe(&pub_key)?;
         Ok(pub_key)
     }
 
@@ -232,7 +232,7 @@ impl ChoreoRuntime {
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
             responses
-                .push(bc2wrap::deserialize_unsafe(&(response??.into_inner().request_id)).unwrap());
+                .push(bc2wrap::deserialize_safe(&(response??.into_inner().request_id)).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -264,7 +264,7 @@ impl ChoreoRuntime {
 
         let mut responses: Vec<Vec<Vec<u32>>> = Vec::new();
         while let Some(response) = join_set.join_next().await {
-            responses.push(bc2wrap::deserialize_unsafe(
+            responses.push(bc2wrap::deserialize_safe(
                 &(response??.into_inner().plaintext),
             )?);
         }
