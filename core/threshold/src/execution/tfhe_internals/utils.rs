@@ -257,7 +257,7 @@ where
 
 /// Computes the Hamming weight of a vector of secret shared values.
 /// Assuming the input vector is indeed shares of bits !
-pub async fn compute_hamming_weight_secret_vector<
+pub(crate) async fn compute_hamming_weight_secret_vector<
     Z: Ring + ErrorCorrect,
     Ses: BaseSessionHandles,
 >(
@@ -273,7 +273,7 @@ pub async fn compute_hamming_weight_secret_vector<
 
 /// Computes the Hamming weight of a vector of secret shared values.
 /// Assuming the input vector is indeed shares of bits !
-pub async fn compute_hamming_weight_secret_vector_by_chunks<
+pub(crate) async fn compute_hamming_weight_secret_vector_by_chunks<
     Z: Ring + ErrorCorrect,
     Ses: BaseSessionHandles,
 >(
