@@ -26,7 +26,7 @@
 
 ## KMS Core Metrics
 
-KMS exposes metrics via Prometheus format on the configured metrics endpoint (default: `:9646/metrics`). This document lists and describes metrics supported by KMS services to help operators monitor these services, configure alarms based on the metrics, and act on those in case of issues.
+KMS exposes metrics via Prometheus format on the configured metrics endpoint (default: `:<METRICS_PORT>/metrics` where `<METRICS_PORT>` defaults to `9646`). This document lists and describes metrics supported by KMS services to help operators monitor these services, configure alarms based on the metrics, and act on those in case of issues.
 
 **Metric Naming**: All metrics use the configurable prefix (default: `kms`) followed by the metric type. The actual metric names will be `{prefix}_{metric_type}` (e.g., `kms_operations`, `kms_operation_errors`).
 
@@ -91,21 +91,21 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - `key_not_found` - Requested key not available
 - `public_decryption_failed` - Public decryption operation failed
 - `user_decryption_failed` - User decryption operation failed
-- `preproc_failed` - Preprocessing operation failed
+- `preproc_failed` - Preprocessing operation failed (user preprocessing)
 - `preproc_not_found` - Preprocessing material not found
 - `keygen_failed` - Key generation operation failed
 - `verification_failed` - Verification operation failed
 - `crs_gen_failed` - CRS generation failed
-- `meta_storage_error` - Metadata storage error
+- `meta_storage_error` - Metadata storage error (with meta storage)
 - `invalid_request` - Malformed or invalid request
 - `cancelled` - Operation cancelled
-- `invalid_argument` - Invalid argument provided
-- `aborted` - Operation aborted
-- `already_exists` - Resource already exists
-- `not_found` - Resource not found
-- `internal_error` - Internal service error
-- `unavailable` - Service temporarily unavailable
-- `other` - Other unspecified errors
+- `invalid_argument` - Invalid argument provided (mapped from tonic::Code::InvalidArgument)
+- `aborted` - Operation aborted (mapped from tonic::Code::Aborted)
+- `already_exists` - Resource already exists (mapped from tonic::Code::AlreadyExists)
+- `not_found` - Resource not found (mapped from tonic::Code::NotFound)
+- `internal_error` - Internal service error (mapped from tonic::Code::Internal)
+- `unavailable` - Service temporarily unavailable (mapped from tonic::Code::Unavailable)
+- `other` - Other unspecified errors (default mapping for unmapped tonic codes)
 
 ### Network Metrics
 
@@ -147,6 +147,26 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 - **Type**: Gauge
 - **Description**: General-purpose gauge for tracking active operations and other values.
 - **Alarm**: If active operations exceed capacity thresholds.
+
+### Metric Tags
+
+**Common Metric Tag Keys**: All metrics include contextual tags for filtering and aggregation:
+
+- `operation` - The specific operation being performed (see operation types above)
+- `error` - The error type for error metrics (see error types above)
+- `key_id` - Identifier for the key being operated on
+- `algorithm` - Cryptographic algorithm being used
+- `operation_type` - Sub-type of operation (e.g., `total`, `load_crs_pk`, `proof_verification`, `ct_proof`)
+- `party_id` - ID of the party performing the operation
+- `request_id` - Unique identifier for the request
+- `tfhe_type` - Type of TFHE operation being performed
+- `public_decryption_mode` - Mode for public decryption operations
+
+**Operation Type Values**:
+- `total` - Total operations across all sub-types
+- `load_crs_pk` - Loading CRS public key operations
+- `proof_verification` - Proof verification operations
+- `ct_proof` - Ciphertext proof operations
 
 ### Insecure Operations (Development Only)
 
@@ -191,12 +211,12 @@ The KMS health check system provides additional operational metrics through the 
 
 ```bash
 # Metrics endpoint
-curl http://localhost:9646/metrics
+curl http://localhost:<METRICS_PORT>/metrics
 
 # Health endpoints
-curl http://localhost:9646/health    # Returns "ok"
-curl http://localhost:9646/ready     # Readiness check
-curl http://localhost:9646/live      # Liveness check
+curl http://localhost:<METRICS_PORT>/health    # Returns "ok"
+curl http://localhost:<METRICS_PORT>/ready     # Readiness check
+curl http://localhost:<METRICS_PORT>/live      # Liveness check
 
 # Health check tool integration
 kms-health-check live --endpoint localhost:<GRPC_PORT>
@@ -206,7 +226,7 @@ kms-health-check live --endpoint localhost:<GRPC_PORT>
 
 ### Metrics Collection
 
-KMS exposes Prometheus-compatible metrics on the configured endpoint (default: `:9646/metrics`).
+KMS exposes Prometheus-compatible metrics on the configured endpoint (default: `:<METRICS_PORT>/metrics` where `<METRICS_PORT>` defaults to `9646`).
 
 **Key Configuration Points**:
 - **Metrics Endpoint**: `/metrics` on the configured metrics port

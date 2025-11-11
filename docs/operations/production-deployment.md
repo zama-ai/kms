@@ -462,7 +462,7 @@ kubectl exec -n kms-threshold kms-core-1 -- \
 
 **Prometheus Integration**:
 - The Helm chart includes ServiceMonitor configuration for Prometheus scraping
-- Metrics exposed on port 9646 at `/metrics` endpoint
+- Metrics exposed on port <METRICS_PORT> at `/metrics` endpoint (default: 9646)
 - See [Metrics Documentation](advanced/metrics.md) for complete monitoring setup
 
 **Health Monitoring**:

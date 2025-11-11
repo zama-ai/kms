@@ -33,7 +33,7 @@ This documentation is designed for:
 - **AWS Instance**: `c7a.16xlarge` with AMI `1.32.3-20250620` (Nitro Enclaves)
 - **Memory**: 32Gi minimum for production operations (96Gi allocated to Nitro Enclaves)
 - **Network**: PrivateLink connections to other 12 parties required
-- **Ports**: 50100 (gRPC), 50001 (P2P - varies by party ID), 9646 (metrics)
+- **Ports**: <GRPC_PORT> (gRPC, default: 50100), <P2P_PORT> (P2P - varies by party ID, default: 50001), <METRICS_PORT> (metrics, default: 9646)
 
 > **Common Issues**: See [Emergency Procedures](emergency-procedures.md) for `enable_sys_metrics` deprecation, OOMKilled errors, and resource limit fixes.
 

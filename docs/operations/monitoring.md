@@ -39,7 +39,7 @@ The health check tool reports status in four levels: **Optimal**, **Healthy**, *
 ## Key Metrics
 
 **Metrics Access**:
-- KMS exposes Prometheus metrics on port 9646 at `/metrics` endpoint
+- KMS exposes Prometheus metrics on port <METRICS_PORT> at `/metrics` endpoint (default: 9646)
 - Use `kubectl top` for basic resource monitoring in Kubernetes
 - See [Metrics Documentation](advanced/metrics.md) for complete metrics reference and monitoring setup
 
@@ -54,7 +54,7 @@ The health check tool reports status in four levels: **Optimal**, **Healthy**, *
 ## Prometheus Integration
 
 **Metrics Collection**:
-- KMS exposes Prometheus metrics on port 9646 at `/metrics` endpoint
+- KMS exposes Prometheus metrics on port <METRICS_PORT> at `/metrics` endpoint (default: 9646)
 - Configure Prometheus to scrape KMS metrics based on your deployment
 - See [Metrics Documentation](advanced/metrics.md) for complete setup and alerting guidance
 
@@ -64,7 +64,7 @@ The health check tool reports status in four levels: **Optimal**, **Healthy**, *
 
 ### Docker Compose Integration (Development Only)
 **Development Setup**:
-- Expose gRPC port (default: 50100) and metrics port (9646)
+- Expose gRPC port (<GRPC_PORT>, default: 50100) and metrics port (<METRICS_PORT>, default: 9646)
 - Configure Prometheus to scrape KMS metrics endpoint
 - See [Configuration Guide](configuration.md) for Docker setup guidance
 
@@ -87,7 +87,7 @@ The health check tool reports status in four levels: **Optimal**, **Healthy**, *
 
 **Prometheus Operator**:
 - KMS Helm chart includes ServiceMonitor configuration
-- Metrics exposed on port 9646 at `/metrics` endpoint
+- Metrics exposed on port <METRICS_PORT> at `/metrics` endpoint (default: 9646)
 - See [Metrics Documentation](advanced/metrics.md) for complete setup
 
 ## 📱 Notification Setup

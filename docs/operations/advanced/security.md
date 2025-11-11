@@ -175,7 +175,7 @@ S3 = {
 [telemetry]
 tracing_service_name = "kms-<ENVIRONMENT>"
 tracing_endpoint = "https://<LOGGING_ENDPOINT>/api/traces"
-metrics_bind_address = "0.0.0.0:9646"
+metrics_bind_address = "0.0.0.0:<METRICS_PORT>"
 ```
 
 **Security Events to Monitor**:
