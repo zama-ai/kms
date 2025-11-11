@@ -54,7 +54,7 @@ You deploy and manage:
 ### Critical Requirements
 - **AWS Instance Type**: `c7a.16xlarge` (required for Nitro Enclaves)
 - **AMI Version**: `1.32.3-20250620` (specific version required)
-- **Memory**: Minimum 16Gi RAM per party (32Gi recommended for production)
+- **Memory**: Minimum 32Gi RAM per party (96Gi allocated to Nitro Enclaves)
 - **CPU**: Minimum 8 cores (16 cores recommended for production)
 - **Storage**: 100Gi+ for key material and logs
 
@@ -353,7 +353,7 @@ kubectl get pods -n kms-threshold -l app=kms-core
 
 # Check health
 kubectl exec -n kms-threshold kms-core-1 -- \
-  kms-health-check live --endpoint localhost:50100
+  kms-health-check live --endpoint localhost:<GRPC_PORT>
 ```
 
 Repeat for all parties with appropriate values files.
@@ -388,7 +388,7 @@ for i in "${!PARTIES[@]}"; do
   
   # Check pod health
   if ! kubectl exec -n "$namespace" kms-core-1 -- \
-       kms-health-check live --endpoint localhost:50100 | grep -q "Optimal\|Healthy"; then
+       kms-health-check live --endpoint localhost:<GRPC_PORT> | grep -q "Optimal\|Healthy"; then
     echo "ERROR: $party health check failed"
     exit 1
   fi
@@ -419,9 +419,9 @@ kubectl logs -n kms-threshold job/kms-party-1-threshold-init -f
 # Validate PRSS setup on all parties
 for party in {1..4}; do
   echo "Checking PRSS setup for party $party..."
-  # Check S3 for PRSS files via AWS CLI or kubectl
-  kubectl exec -n kms-threshold kms-core-1 -- \
-    aws s3 ls s3://zama-kms-prod-party$party-private/PRIV-p$party/PrssSetup/
+  # Use health check tool to verify key material and PRSS setup
+  kubectl exec -n kms-threshold kms-core-$party -- \
+    kms-health-check live --endpoint localhost:<GRPC_PORT>
 done
 ```
 
@@ -441,71 +441,39 @@ helm upgrade kms-party-1 . \
 
 # Monitor key generation progress
 watch -n 30 'kubectl exec -n kms-threshold kms-core-1 -- \
-  kms-health-check live --endpoint localhost:50100'
+  kms-health-check live --endpoint localhost:<GRPC_PORT>'
 
-# Check key material in S3
+# Check key material using health check tool
 kubectl exec -n kms-threshold kms-core-1 -- \
-  aws s3 ls s3://zama-kms-prod-party1-public/PUB-p1/PublicKey/
+  kms-health-check live --endpoint localhost:<GRPC_PORT>
 
-kubectl exec -n kms-threshold kms-core-1 -- \
-  aws s3 ls s3://zama-kms-prod-party1-private/PRIV-p1/FheKeyInfo/
+# This will show:
+# - FHE key IDs and counts
+# - CRS key availability  
+# - Preprocessing material status
+# - Storage backend information
 ```
 
 ---
 
 ## Monitoring & Operations
 
-### Prometheus Integration
+### Monitoring Integration
 
-The Helm chart includes ServiceMonitor for Prometheus:
+**Prometheus Integration**:
+- The Helm chart includes ServiceMonitor configuration for Prometheus scraping
+- Metrics exposed on port 9646 at `/metrics` endpoint
+- See [Metrics Documentation](advanced/metrics.md) for complete monitoring setup
 
-```yaml
-# prometheus-values.yaml
-serviceMonitor:
-  enabled: true
-  labels:
-    app: kms-core
-  annotations:
-    prometheus.io/scrape: "true"
-    prometheus.io/port: "9646"
-    prometheus.io/path: "/metrics"
-```
+**Health Monitoring**:
+- Use `kms-health-check` tool for continuous health monitoring
+- Configure monitoring frequency based on your operational requirements
+- See [Health Check Tool](../../tools/kms-health-check/README.md) for automation options
 
-### Health Monitoring
-
-```bash
-# Continuous health monitoring
-kubectl create cronjob kms-health-monitor \
-  --image=ghcr.io/zama-ai/kms/core-service:latest \
-  --schedule="*/5 * * * *" \
-  --restart=OnFailure \
-  -- kms-health-check live --endpoint kms-core:50100
-```
-
-### Log Aggregation
-
-```yaml
-# fluent-bit-config.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: fluent-bit-config
-  namespace: kms-threshold
-data:
-  fluent-bit.conf: |
-    [INPUT]
-        Name tail
-        Path /var/log/containers/kms-core-*.log
-        Parser docker
-        Tag kms.*
-        
-    [OUTPUT]
-        Name cloudwatch_logs
-        Match kms.*
-        log_group_name /aws/eks/kms-threshold
-        log_stream_name ${hostname}
-        region eu-west-1
-```
+**Log Aggregation**:
+- Configure log collection based on your logging infrastructure (CloudWatch, ELK, etc.)
+- KMS logs are available through standard Kubernetes logging mechanisms
+- See your Kubernetes platform documentation for log aggregation setup
 
 ---
 
@@ -570,34 +538,10 @@ kubectl exec -n kms-threshold kms-core-1 -- \
 
 ---
 
-## Production Checklist
-
-### Pre-Deployment
-- [ ] AWS accounts and IAM permissions configured
-- [ ] Terraform modules version pinned
-- [ ] Network connectivity planned and tested
-- [ ] Security groups and VPC endpoints configured
-- [ ] Helm chart values validated
-
-### Deployment
-- [ ] Infrastructure deployed via Terraform
-- [ ] VPC endpoints configured and tested
-- [ ] KMS StatefulSets deployed and healthy
-- [ ] Inter-party connectivity verified
-- [ ] Monitoring and logging configured
-
-### Post-Deployment
-- [ ] PRSS initialization completed
-- [ ] Key generation process validated
-- [ ] Health checks passing consistently
-- [ ] Security audit completed
-- [ ] Disaster recovery procedures tested
-
----
 
 **Success Criteria**: A fully operational, production-ready KMS threshold cluster deployed across 4 AWS accounts using official Terraform modules and Helm charts, with Nitro Enclaves security, comprehensive monitoring, and validated cryptographic operations.
 
 **Need Help?** 
-- [Quick Reference](quick-reference.md) for emergency procedures
+- [Emergency Procedures](emergency-procedures.md) for emergency procedures
 - [Terraform MPC Modules](https://github.com/zama-ai/terraform-mpc-modules) for infrastructure
 - KMS Helm Charts (`charts/kms-core/`) for application deployment

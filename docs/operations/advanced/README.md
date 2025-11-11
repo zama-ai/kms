@@ -4,17 +4,16 @@
 
 ## Available Documentation
 
-### Detailed Troubleshooting
+### Troubleshooting & Diagnostics
 - [**Common Errors**](common-errors.md) - Comprehensive error database with solutions
 - [**Troubleshooting Guide**](troubleshooting.md) - Systematic diagnostic procedures
 
-### Alternative Deployment Methods
-- [**Alternative Deployment Patterns**](deployment.md) - Docker and manual Kubernetes deployment references
-- [**Kubernetes Deployment**](kubernetes-deployment.md) - Alternative K8s deployment patterns
+### Deployment & Infrastructure
+- [**Kubernetes Deployment**](kubernetes-deployment.md) - Advanced Kubernetes deployment patterns
 
 ### Monitoring & Security
-- [**Metrics, Monitoring & Alerting**](metrics.md) - Health checks, Prometheus metrics, Grafana dashboards, alerting rules
-- [**Security Checklist**](security.md) - Security hardening, compliance, incident response
+- [**Advanced Metrics**](metrics.md) - Detailed metrics, alerting, and monitoring configuration
+- [**Security Hardening**](security.md) - Security best practices, compliance, and incident response
 
 ## When to Use Advanced Documentation
 
@@ -28,10 +27,10 @@ Use these guides when:
 ## Getting Started
 
 If you're new to KMS operations, start with the [essential documentation](../) first:
-1. [Quick Reference](../quick-reference.md) - Emergency procedures for your party
+1. [Emergency Procedures](../emergency-procedures.md) - Quick fixes and emergency commands
 2. [Quickstart Guide](../quickstart.md) - 30-minute setup for your party
 3. [Production Deployment](../production-deployment.md) - Complete single-party deployment
-4. [Monitoring Basics](../monitoring-basics.md) - Essential monitoring
+4. [Monitoring & Metrics](../monitoring.md) - Essential monitoring
 
 Then return here for advanced topics as needed.
 

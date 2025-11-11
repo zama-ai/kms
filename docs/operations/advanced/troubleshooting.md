@@ -2,7 +2,7 @@
 
 **Systematic troubleshooting procedures for complex KMS operational issues in 13-party threshold deployments.**
 
-> **Quick Fixes**: For immediate solutions to common problems, see [Common Errors](common-errors.md) and [Quick Reference](../quick-reference.md).
+> **Quick Fixes**: For immediate solutions to common problems, see [Common Errors](common-errors.md) and [Emergency Procedures](../emergency-procedures.md).
 
 ## Systematic Troubleshooting Approach
 
@@ -10,55 +10,28 @@
 
 Before starting troubleshooting, collect the following information:
 
-```bash
-# Kubernetes cluster information
-kubectl version --short
-kubectl get nodes
-kubectl get pods,svc,pvc -n kms-threshold
-
-# Your party's resource utilization
-kubectl top pods -n kms-threshold
-kubectl top nodes
-
-# Network status (production ports)
-kubectl exec -n kms-threshold kms-core-${PARTY_ID} -- \
-  netstat -tlnp | grep -E "(50100|50001|9646)"
-
-# For Docker development environments only
-docker --version && docker ps -a | grep kms
-```
+**System Information**:
+- Kubernetes cluster version and node status
+- Pod, service, and storage status
+- Resource utilization (CPU, memory, storage)
+- Network connectivity and port status
 
 ### 2. Initial Health Assessment
 
-> **Standard Health Checks**: See [Monitoring Guide](../monitoring-basics.md#standard-health-check-commands) for complete health check procedures.
+> **Standard Health Checks**: See [Monitoring Guide](../monitoring.md#standard-health-check-commands) for complete health check procedures.
 
-```bash
-# Kubernetes production health assessment
-kubectl exec -n kms-threshold kms-core-${PARTY_ID} -- \
-  kms-health-check live --endpoint localhost:50100
-
-# Configuration validation (if needed)
-kubectl exec -n kms-threshold kms-core-${PARTY_ID} -- \
-  kms-health-check config --file /app/config/config.toml
-```
+**Health Assessment**:
+- Use `kms-health-check` tool for comprehensive health verification
+- Validate configuration syntax and settings
+- Check service connectivity and responsiveness
 
 ### 3. Log Analysis
 
-```bash
-# Kubernetes production log analysis
-kubectl logs -n kms-threshold kms-core-${PARTY_ID} --tail 100
-kubectl logs -n kms-threshold kms-core-${PARTY_ID} -f
-
-# Search for specific patterns
-kubectl logs -n kms-threshold kms-core-${PARTY_ID} --tail 1000 | \
-  grep -E "(ERROR|FATAL|PANIC|WARN)"
-
-# Check recent events
-kubectl get events -n kms-threshold --sort-by='.lastTimestamp' | tail -20
-
-# For Docker development environments only
-docker logs kms-container-name --tail 100 | grep -E "(ERROR|FATAL|PANIC|WARN)"
-```
+**Log Review**:
+- Review recent logs for error patterns (ERROR, FATAL, PANIC, WARN)
+- Check Kubernetes events for system-level issues
+- Monitor logs in real-time during issue reproduction
+- Focus on timestamps around when issues started
 
 ## Issue Classification & Resolution
 
@@ -74,33 +47,18 @@ docker logs kms-container-name --tail 100 | grep -E "(ERROR|FATAL|PANIC|WARN)"
 **Diagnostic Steps:**
 
 1. **Check Pod Status**
-   ```bash
-   kubectl get pods -n kms-threshold -l app=kms-core
-   kubectl describe pod kms-core-${PARTY_ID} -n kms-threshold
-   kubectl logs -n kms-threshold kms-core-${PARTY_ID} --previous
-   ```
+   - Verify pod state and restart count
+   - Review pod description for events and conditions
+   - Check previous container logs if pod is restarting
 
 2. **Verify Configuration**
-   ```bash
-   # Check ConfigMap
-   kubectl get configmap -n kms-threshold -o yaml
-   
-   # Validate Helm values
-   helm get values kms-party-${PARTY_ID} -n kms-threshold
-   
-   # Check PVC status
-   kubectl get pvc -n kms-threshold
-   ```
+   - Validate ConfigMap and Helm values
+   - Check persistent volume claims status
+   - Verify service account and RBAC permissions
 
 3. **Resource Constraints**
-   ```bash
-   # Check resource limits
-   kubectl describe pod kms-core-${PARTY_ID} -n kms-threshold | grep -A 10 "Limits\|Requests"
-   
-   # Node resource availability
-   kubectl top nodes
-   kubectl describe node | grep -A 5 "Allocated resources"
-   ```
+   - Check resource limits and requests
+   - Verify node resource availability and capacity
 
 **Resolution Steps:**
 1. Fix configuration errors in Helm values
@@ -120,35 +78,19 @@ docker logs kms-container-name --tail 100 | grep -E "(ERROR|FATAL|PANIC|WARN)"
 **Diagnostic Steps:**
 
 1. **Network Connectivity**
-   ```bash
-   # Test basic connectivity
-   telnet localhost 50100
-   nc -zv localhost 50100
-   
-   # Test from different locations
-   curl -f http://localhost:50100/health
-   curl -f http://external-ip:50100/health
-   ```
+   - Test basic port connectivity with telnet or nc
+   - Verify health endpoints are accessible
+   - Test from different network locations
 
 2. **Firewall & Security Groups**
-   ```bash
-   # Check local firewall
-   iptables -L | grep 50100
-   ufw status
-   
-   # Test from external hosts
-   nmap -p 50100 your-kms-host
-   ```
+   - Check local firewall rules and port access
+   - Verify security group configurations
+   - Test external connectivity with network tools
 
 3. **DNS Resolution**
-   ```bash
-   # Verify hostname resolution
-   nslookup kms-server
-   dig kms-server
-   
-   # Test with IP address
-   kms-health-check live --endpoint 192.168.1.100:50100
-   ```
+   - Verify hostname resolution for services
+   - Check DNS configuration and records
+   - Test with IP addresses to isolate DNS issues
 
 **Resolution Steps:**
 1. Verify service is running and listening on correct interface
@@ -168,42 +110,19 @@ docker logs kms-container-name --tail 100 | grep -E "(ERROR|FATAL|PANIC|WARN)"
 **Diagnostic Steps:**
 
 1. **Resource Monitoring**
-   ```bash
-   # Real-time resource usage
-   htop
-   docker stats
-   
-   # Memory analysis
-   free -h
-   cat /proc/meminfo
-   
-   # Disk I/O
-   iostat -x 1
-   iotop
-   ```
+   - Monitor real-time resource usage (CPU, memory, disk I/O)
+   - Use system monitoring tools for detailed analysis
+   - Check for resource bottlenecks and constraints
 
 2. **Application Performance**
-   ```bash
-   # Request timing
-   time kms-health-check live --endpoint localhost:50100
-   
-   # Concurrent load testing
-   for i in {1..10}; do
-     (time grpcurl -plaintext localhost:50100 kms.v1.CoreService/GetHealthStatus) &
-   done
-   wait
-   ```
+   - Measure request timing and response latency
+   - Test concurrent load handling
+   - Profile application performance patterns
 
 3. **Network Latency**
-   ```bash
-   # Ping test to peers
-   for peer in kms-threshold-{1..4}; do
-     ping -c 5 $peer
-   done
-   
-   # Traceroute analysis
-   traceroute kms-threshold-1
-   ```
+   - Test connectivity and latency to other parties
+   - Analyze network paths and routing
+   - Identify network bottlenecks
 
 **Optimization Steps:**
 1. Scale resources (CPU, memory) if needed
@@ -225,35 +144,19 @@ docker logs kms-container-name --tail 100 | grep -E "(ERROR|FATAL|PANIC|WARN)"
 **Diagnostic Steps:**
 
 1. **Your Party's Health Assessment**
-   ```bash
-   # Check your party's connectivity to others
-   kubectl exec -n kms-threshold kms-core-${PARTY_ID} -- \
-     kms-health-check live --endpoint localhost:50100
-   
-   # Test connectivity to other parties (after network setup)
-   kubectl exec -n kms-threshold kms-core-${PARTY_ID} -- \
-     nc -zv party1-external.kms-threshold.svc.cluster.local 50001
-   ```
+   - Check your party's connectivity to others using `kms-health-check`
+   - Test connectivity to other parties' external endpoints
+   - Verify your party's health status and peer reachability
 
 2. **PRSS Setup Verification**
-   ```bash
-   # Check PRSS initialization status
-   kubectl logs -n kms-threshold job/kms-party-${PARTY_ID}-threshold-init
-   
-   # Verify PRSS files in S3
-   kubectl exec -n kms-threshold kms-core-${PARTY_ID} -- \
-     aws s3 ls s3://zama-kms-party${PARTY_ID}-private/PRIV-p${PARTY_ID}/PrssSetup/
-   ```
+   - Check PRSS initialization status in job logs
+   - Verify PRSS setup using `kms-health-check` tool
+   - Ensure PRSS files are present and accessible
 
 3. **Network Coordination**
-   ```bash
-   # Check PrivateLink VPC endpoints
-   kubectl get svc -n kms-threshold | grep external
-   
-   # Verify DNS resolution to other parties
-   kubectl exec -n kms-threshold kms-core-${PARTY_ID} -- \
-     nslookup party1-external.kms-threshold.svc.cluster.local
-   ```
+   - Check PrivateLink VPC endpoint configuration
+   - Verify DNS resolution to other parties
+   - Test connectivity to external services
 
 **Resolution Steps:**
 1. Coordinate with other parties to ensure their nodes are online
@@ -274,39 +177,21 @@ docker logs kms-container-name --tail 100 | grep -E "(ERROR|FATAL|PANIC|WARN)"
 **Diagnostic Steps:**
 
 1. **File Storage**
-   ```bash
-   # Check file permissions
-   ls -la keys/
-   find keys/ -type f -exec ls -la {} \;
-   
-   # Verify directory structure
-   tree keys/
-   
-   # Check disk space
-   df -h /path/to/keys
-   ```
+   - Check file permissions and ownership
+   - Verify directory structure and key file presence
+   - Check available disk space
+   - Validate file integrity and accessibility
 
-2. **S3 Storage**
-   ```bash
-   # Test S3 connectivity
-   aws s3 ls s3://your-kms-bucket/
-   
-   # Check credentials
-   aws sts get-caller-identity
-   
-   # Test permissions
-   aws s3 cp test-file s3://your-kms-bucket/test/
-   aws s3 rm s3://your-kms-bucket/test/test-file
-   ```
+2. **Storage Connectivity**
+   - Test storage connectivity using `kms-health-check` tool
+   - Verify AWS credentials and permissions (if using S3)
+   - Test read/write access to storage backend
+   - Check network connectivity to storage services
 
 3. **Database Storage**
-   ```bash
-   # Test database connectivity
-   psql -h db-host -U username -d kms_db -c "SELECT 1;"
-   
-   # Check table structure
-   psql -h db-host -U username -d kms_db -c "\dt"
-   ```
+   - Test database connectivity and authentication
+   - Verify table structure and schema
+   - Check database permissions and access rights
 
 **Resolution Steps:**
 1. Fix file permissions and ownership
@@ -329,7 +214,7 @@ docker logs kms-container-name --tail 100 | grep -E "(ERROR|FATAL|PANIC|WARN)"
 1. **Key Inventory**
    ```bash
    # List available keys
-   kms-health-check live --endpoint localhost:50100 | grep -A 10 "KEY MATERIAL"
+   kms-health-check live --endpoint localhost:<GRPC_PORT> | grep -A 10 "KEY MATERIAL"
    
    # Check key files directly
    find keys/ -name "*.key" -o -name "*Key*" | head -10
@@ -347,7 +232,7 @@ docker logs kms-container-name --tail 100 | grep -E "(ERROR|FATAL|PANIC|WARN)"
 3. **Cryptographic Operations**
    ```bash
    # Test basic operations
-   grpcurl -plaintext localhost:50100 kms.v1.CoreService/GetOperatorPublicKey
+   grpcurl -plaintext localhost:<GRPC_PORT> kms.v1.CoreService/GetOperatorPublicKey
    ```
 
 **Resolution Steps:**
@@ -501,7 +386,7 @@ perf top -p $(pgrep kms)
 #!/bin/bash
 # custom-health-check.sh
 
-ENDPOINT="localhost:50100"
+ENDPOINT="localhost:<GRPC_PORT>"
 LOG_FILE="/var/log/kms-health.log"
 
 # Function to log with timestamp
@@ -568,7 +453,7 @@ docker ps -a > "$DIAG_DIR/docker-containers.txt"
 systemctl status kms > "$DIAG_DIR/service-status.txt" 2>&1
 
 # Health checks
-kms-health-check live --endpoint localhost:50100 > "$DIAG_DIR/health-check.txt" 2>&1
+kms-health-check live --endpoint localhost:<GRPC_PORT> > "$DIAG_DIR/health-check.txt" 2>&1
 kms-health-check config --file config.toml > "$DIAG_DIR/config-validation.txt" 2>&1
 
 # Logs
@@ -633,5 +518,5 @@ echo "Diagnostics collected: kms-diagnostics-$TIMESTAMP.tar.gz"
 
 - [Common Errors](common-errors.md) - Quick fixes for frequent issues
 - [Metrics & Monitoring](metrics.md) - Monitoring tools and procedures
-- [Deployment Guide](deployment.md) - Alternative deployment procedures
+- [Kubernetes Deployment](kubernetes-deployment.md) - Alternative deployment procedures
 - [Configuration Management](../configuration.md) - Configuration best practices

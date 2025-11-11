@@ -21,8 +21,8 @@
 - [Operations Overview](operations/README.md)
 - [Quickstart Guide](operations/quickstart.md)
 - [Production Deployment](operations/production-deployment.md)
-- [Quick Reference](operations/quick-reference.md)
-- [Monitoring Basics](operations/monitoring-basics.md)
+- [Emergency Procedures](operations/emergency-procedures.md)
+- [Monitoring & Metrics](operations/monitoring.md)
 - [Configuration Management](operations/configuration.md)
 - [Advanced Topics](operations/advanced/README.md)
 

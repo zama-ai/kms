@@ -16,23 +16,13 @@ Out of Memory error, OOMKilled
 **Root Cause:** Insufficient memory allocation for KMS operations.
 
 **Immediate Solution:**
-```bash
-# Check current memory usage (Kubernetes production)
-kubectl top pods -n kms-threshold
-kubectl describe pod kms-core-${PARTY_ID} -n kms-threshold | grep -A 5 "Last State"
-
-# Increase memory limits in Helm values
-helm upgrade kms-party-${PARTY_ID} . \
-  --set kmsCore.resources.limits.memory=32Gi \
-  --wait
-
-# For Docker development environments
-docker stats
-```
+- Check memory usage with `kubectl top pods` or `docker stats`
+- Increase memory limits to 32Gi in Helm values or Docker configuration
+- Restart the service after resource adjustment
 
 **Prevention:**
-- Minimum 16Gi RAM for production (32Gi recommended)
-- 4Gi RAM minimum for development/testing
+- Minimum 32Gi RAM for production (96Gi allocated to Nitro Enclaves)
+- 8Gi RAM minimum for development/testing
 - Monitor with `kubectl top pods` or Prometheus metrics
 
 ---
@@ -45,18 +35,10 @@ No space left on device
 ```
 
 **Immediate Solution:**
-```bash
-# Check disk usage (Kubernetes production)
-kubectl exec -n kms-threshold kms-core-${PARTY_ID} -- df -h
-kubectl get pvc -n kms-threshold  # Check persistent volume claims
-
-# Clean up if using Docker for development
-docker system prune -a --volumes
-
-# For Kubernetes: Increase PVC size or add storage
-kubectl patch pvc kms-data-kms-core-${PARTY_ID} -n kms-threshold \
-  -p '{"spec":{"resources":{"requests":{"storage":"200Gi"}}}}'
-```
+- Check disk usage with `df -h` or `kubectl get pvc`
+- Clean up unnecessary files or Docker volumes
+- Increase PVC size for Kubernetes deployments
+- Expand storage allocation in your environment
 
 **Prevention:**
 - Monitor disk usage regularly
@@ -78,22 +60,10 @@ INFO kms_lib::threshold::threshold_kms: Initializing threshold KMS server withou
 **Root Cause:** Threshold KMS requires PRSS (Pseudo-Random Secret Sharing) initialization across all parties.
 
 **Immediate Solution:**
-```bash
-# Initialize PRSS for 13-party threshold network
-# (Network coordinator triggers this across all parties)
-helm upgrade kms-party-${PARTY_ID} . \
-  --set kmsInit.enabled=true \
-  --wait
-
-# Monitor PRSS initialization
-kubectl logs -n kms-threshold job/kms-party-${PARTY_ID}-threshold-init
-```
-
-**File Location Check:**
-```bash
-# PRSS files should exist at:
-ls -la keys/PRIV-p*/PrssSetup/000*0001
-```
+- Enable PRSS initialization in Helm values (`kmsInit.enabled=true`)
+- Coordinate with network coordinator for multi-party initialization
+- Monitor initialization logs and verify PRSS files are created
+- Use `kms-health-check` tool to verify PRSS setup completion
 
 **Prevention:**
 - Ensure PRSS initialization is part of deployment automation
@@ -114,25 +84,16 @@ Failed to connect to WebSocket provider: JsonRpcClientError(InternalError(Io(Os 
 ```
 
 **Diagnosis Steps:**
-```bash
-# 1. Check if your KMS pod is running (Kubernetes production)
-kubectl get pods -n kms-threshold -l app=kms-core
-kubectl describe pod kms-core-${PARTY_ID} -n kms-threshold
-
-# 2. Test connectivity
-kubectl exec -n kms-threshold kms-core-${PARTY_ID} -- \
-  kms-health-check live --endpoint localhost:50100
-
-# For Docker development environments
-docker ps | grep kms
-curl -f http://localhost:50100/health
-```
+- Check if KMS pod/container is running
+- Test connectivity with `kms-health-check` tool
+- Verify service status and endpoints
+- Check recent logs for error details
 
 **Common Solutions:**
-- Verify pod is running: `kubectl get pods -n kms-threshold`
-- Check service status: `kubectl get svc -n kms-threshold`
-- Restart if needed: `kubectl rollout restart statefulset/kms-core -n kms-threshold`
-- For Docker development: `docker-compose up -d`
+- Restart the service if it's not running
+- Verify network connectivity and port configuration
+- Check resource limits and availability
+- Review service configuration for errors
 
 ---
 
@@ -148,18 +109,10 @@ ERROR distributed_decryption::networking::grpc: msg="unknown session id SessionI
 **Solutions:**
 1. **Temporary Fix:** Wait and retry - the protocol includes automatic retry mechanisms
 2. **Persistent Issues:** 
-   ```bash
-   # Check party synchronization
-   kms-health-check full --config threshold-config.toml --endpoint localhost:50100
-   
-   # Verify your party health and connectivity to others
-   kubectl exec -n kms-threshold kms-core-${PARTY_ID} -- \
-     kms-health-check live --endpoint localhost:50100
-   
-   # Test connectivity to other parties (after network setup)
-   kubectl exec -n kms-threshold kms-core-${PARTY_ID} -- \
-     nc -zv party1-external.kms-threshold.svc.cluster.local 50001
-   ```
+   - Check party synchronization with `kms-health-check` tool
+   - Verify connectivity to other parties in the network
+   - Ensure all parties are online and responsive
+   - Check network latency and stability between parties
 
 **Prevention:**
 - Ensure stable network connectivity between threshold parties
@@ -182,19 +135,10 @@ We can't deserialize our own validated sks key: DeserializationError("invalid va
 **Root Cause:** Incompatible TFHE-rs versions between components or using keys from different versions.
 
 **Solutions:**
-```bash
-# 1. Check TFHE versions in use
-grep tfhe Cargo.toml
-
-# 2. Regenerate keys with current version
-rm -rf keys/
-# Run key generation process
-
-# 3. For coprocessor version mismatch, update image:
-# In docker-compose.yaml:
-# coproc:
-#   image: ghcr.io/zama-ai/fhevm-coprocessor:v0.1.0-3  # Uses tfhe-rs 0.9
-```
+- Check TFHE versions in use across all components
+- Regenerate keys with the current TFHE version
+- Update coprocessor image to match TFHE version
+- Ensure all components use compatible TFHE-rs versions
 
 **Prevention:**
 - Use consistent TFHE-rs versions across all components
@@ -238,15 +182,9 @@ error: unexpected argument '--priv-url' found
 ```
 
 **Solution:** Update to current argument format:
-```bash
-# Old (deprecated):
---pub-url file:///path/to/keys
---priv-url file:///path/to/keys
-
-# New (current):
---pub-path /path/to/keys
---priv-path /path/to/keys
-```
+- Replace `--pub-url` with `--pub-path`
+- Replace `--priv-url` with `--priv-path`
+- Use local file paths instead of file:// URLs
 
 ---
 
@@ -262,18 +200,10 @@ Error loading from ghcr.io during docker image generation
 ```
 
 **Solutions:**
-```bash
-# 1. Login to GitHub Container Registry
-echo '<your-github-token>' | docker login ghcr.io -u <username> --password-stdin
-
-# 2. For Chainguard images, login with proper token:
-# Visit: https://console.chainguard.dev/org/zama.ai/settings/pull-tokens
-# Use your Zama Google account (not GitHub)
-
-# 3. Ensure token has proper permissions:
-# - read:packages for GitHub
-# - Zama organization access for Chainguard
-```
+- Login to GitHub Container Registry with proper token
+- For Chainguard images, use Zama organization access tokens
+- Ensure tokens have read:packages permissions
+- Visit registry console to generate proper access tokens
 
 ---
 
@@ -287,18 +217,34 @@ max 819200 bytes: exceeds limit: create wasm contract failed
 **Root Cause:** Smart contract exceeds blockchain size limits.
 
 **Solutions:**
+- Optimize WebAssembly build with aggressive optimization flags
+- Use cosmwasm optimizer for size reduction
+- Consider splitting large contracts into smaller components
+- Review contract code for unnecessary dependencies
+
+---
+
+### Docker Registry Authentication Issues
+
+**Error Messages:**
 ```bash
-# 1. Optimize WebAssembly build
-# In dev.dockerfile, change from -Os to -Oz for aggressive optimization
-
-# 2. Use cosmwasm optimizer
-docker run --rm -v "$(pwd)":/code \
-  --mount type=volume,source="$(basename "$(pwd)")_cache",target=/code/target \
-  --mount type=volume,source=registry_cache,target=/usr/local/cargo/registry \
-  cosmwasm/rust-optimizer:0.12.6
-
-# 3. Consider splitting large contracts into smaller components
+Error loading from ghcr.io during docker image generation
+# or
+pull access denied for repository, may require 'docker login'
 ```
+
+**Root Cause:** Authentication issues with container registries or missing access permissions.
+
+**Solutions:**
+- Login to GitHub Container Registry with proper authentication
+- For Chainguard images, use Zama organization access tokens
+- Verify token permissions for registry access
+- Use service accounts for automated deployments
+
+**Prevention:**
+- Set up proper registry authentication in CI/CD pipelines
+- Use service accounts for automated deployments
+- Regularly rotate access tokens
 
 ---
 
@@ -315,18 +261,10 @@ Could not reconstruct decryption result
 **Root Cause:** Public key doesn't match the deployed private key.
 
 **Solution:**
-```bash
-# 1. Verify key pair consistency
-kms-health-check live --endpoint localhost:50100
-
-# 2. Copy correct public key from deployment source
-# From S3:
-aws s3 cp s3://your-bucket/keys/public.key ./keys/
-# From container:
-docker cp kms-container:/app/keys/public.key ./keys/
-# From Kubernetes:
-kubectl cp kms-pod:/app/keys/public.key ./keys/
-```
+- Verify key pair consistency with `kms-health-check` tool
+- Copy correct public key from deployment source
+- Ensure public and private keys were generated together
+- Validate key pair before deployment
 
 **Prevention:**
 - Always use key pairs generated together
@@ -344,17 +282,10 @@ account wasm1... not found
 ```
 
 **Solutions:**
-```bash
-# 1. Check wallet balance
-wasmd query bank balances <wallet-address>
-
-# 2. Fund wallet from faucet or validator
-# Faucet method:
-curl -X POST "http://faucet-url/fund" -d '{"address":"<wallet-address>"}'
-
-# Transfer from validator:
-wasmd tx bank send <validator-address> <target-address> 1000000stake --fees 5000stake
-```
+- Check wallet balance using blockchain query commands
+- Fund wallet from faucet or validator
+- Ensure sufficient funds for transaction fees
+- Monitor wallet balance regularly
 
 ---
 
@@ -368,17 +299,10 @@ Too many open files
 ```
 
 **Solutions:**
-```bash
-# Temporary fix:
-ulimit -n 4096
-
-# Permanent fix (add to ~/.bash_profile or ~/.bashrc):
-echo "ulimit -n 4096" >> ~/.bash_profile
-
-# System-wide fix (/etc/security/limits.conf):
-* soft nofile 4096
-* hard nofile 8192
-```
+- Increase file descriptor limits with `ulimit -n 4096`
+- Add ulimit settings to shell profile for permanent fix
+- Configure system-wide limits in `/etc/security/limits.conf`
+- Restart services after applying changes
 
 ---
 
@@ -390,24 +314,10 @@ echo "ulimit -n 4096" >> ~/.bash_profile
 - OOMKilled events
 
 **Solutions:**
-```bash
-# 1. Monitor memory usage (Kubernetes production)
-kubectl top pods -n kms-threshold
-kubectl describe pod kms-core-${PARTY_ID} -n kms-threshold | grep -A 10 "Limits\|Requests"
-
-# 2. Increase memory limits
-helm upgrade kms-party-${PARTY_ID} . \
-  --set kmsCore.resources.limits.memory=48Gi \
-  --set kmsCore.resources.requests.memory=32Gi \
-  --wait
-
-# 3. For Docker development environments
-docker stats
-htop
-
-# 4. Scale horizontally (not applicable for single-party deployment)
-# 5. Upgrade to higher memory instances (c7a.24xlarge)
-```
+- Monitor memory usage with `kubectl top pods` or `docker stats`
+- Increase memory limits in Helm values or Docker configuration
+- Upgrade to higher memory instances if needed
+- Review memory usage patterns and optimize if possible
 
 ---
 
@@ -415,72 +325,26 @@ htop
 
 ### Quick Health Check
 
-> **Standard Commands**: See [Monitoring Guide](../monitoring-basics.md#standard-health-check-commands) for complete health check procedures.
+> **Standard Commands**: See [Monitoring Guide](../monitoring.md#standard-health-check-commands) for complete health check procedures.
 
-```bash
-# Emergency diagnostics only
-kubectl get pods,events -n kms-threshold --sort-by='.lastTimestamp'
-kubectl describe pod kms-core-${PARTY_ID} -n kms-threshold
-```
+**Emergency Diagnostics**:
+- Use `kms-health-check` tool for comprehensive health verification
+- Check pod/container status and recent events
+- Review logs for error details
 
 ### Service Status
-```bash
-# Kubernetes production
-kubectl get pods,svc,pvc -n kms-threshold
-kubectl logs -n kms-threshold kms-core-${PARTY_ID} --tail 50
-kubectl top pods -n kms-threshold
-
-# Docker development environments
-docker ps
-docker logs kms-container-name
-docker stats
-```
+**Status Verification**:
+- Check pods, services, and storage status
+- Review recent logs for errors
+- Monitor resource usage
+- See [Monitoring Guide](../monitoring.md) for detailed procedures
 
 ### Network Diagnostics
-```bash
-# Port connectivity
-telnet localhost 50100
-nc -zv localhost 50100
-
-# DNS resolution
-# DNS resolution for other parties
-nslookup party1-external.kms-threshold.svc.cluster.local
-dig party1-external.kms-threshold.svc.cluster.local
-
-# Network latency to other parties
-kubectl exec -n kms-threshold kms-core-${PARTY_ID} -- \
-  ping party1-external.kms-threshold.svc.cluster.local
-```
-
----
-
-## Emergency Checklist
-
-When encountering issues:
-
-1. **Identify the Error**
-   - [ ] Check error message against this guide
-   - [ ] Note exact error text and context
-
-2. **Quick Diagnostics**
-   - [ ] Follow [Quick Reference](../quick-reference.md#emergency-health-check) emergency procedures
-   - [ ] Check service status: `kubectl get pods -n kms-threshold`
-   - [ ] Review recent events: `kubectl get events -n kms-threshold --sort-by='.lastTimestamp'`
-
-3. **Apply Solution**
-   - [ ] Follow specific solution from this guide
-   - [ ] Test fix with health check tool
-   - [ ] Monitor for recurrence
-
-4. **Document & Prevent**
-   - [ ] Document the incident and solution
-   - [ ] Update monitoring/alerting if needed
-   - [ ] Consider automation for common fixes
-
-5. **Escalation**
-   - [ ] If issue persists, gather logs and system information
-   - [ ] Contact MPC development team with detailed information
-   - [ ] Include configuration (sanitized) and error logs
+**Connectivity Testing**:
+- Test port connectivity and DNS resolution
+- Check network latency to other parties
+- Verify service discovery and endpoints
+- See [Troubleshooting Guide](troubleshooting.md) for detailed network diagnostics
 
 ---
 
@@ -488,5 +352,5 @@ When encountering issues:
 
 - [Troubleshooting Guide](troubleshooting.md) - Systematic problem diagnosis
 - [Metrics & Monitoring](metrics.md) - Monitoring tools and procedures
-- [Deployment Guide](deployment.md) - Alternative deployment procedures
+- [Kubernetes Deployment](kubernetes-deployment.md) - Alternative deployment procedures
 - [Configuration Management](../configuration.md) - Configuration best practices
