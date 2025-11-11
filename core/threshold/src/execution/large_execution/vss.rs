@@ -1219,6 +1219,7 @@ pub(crate) mod tests {
         // VSS assumes sync network
         let runtime = DistributedTestRuntime::<
             ResiduePolyF4Z128,
+            Role,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(roles.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId::from(1);
@@ -1290,6 +1291,7 @@ pub(crate) mod tests {
         // VSS assumes sync network
         let runtime = DistributedTestRuntime::<
             ResiduePolyF4Z128,
+            Role,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(roles.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId::from(1);

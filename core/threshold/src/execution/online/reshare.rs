@@ -809,6 +809,7 @@ mod tests {
         //Reshare assumes Sync network
         let mut runtime: DistributedTestRuntime<
             ResiduePoly<Z128, EXTENSION_DEGREE>,
+            Role,
             EXTENSION_DEGREE,
         > = DistributedTestRuntime::new(roles, threshold as u8, NetworkMode::Sync, None);
         if add_error {

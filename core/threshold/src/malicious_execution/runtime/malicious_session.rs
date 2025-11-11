@@ -6,8 +6,8 @@ use crate::{
         runtime::{
             party::Role,
             session::{
-                BaseSession, BaseSessionHandles, DeSerializationRunTime, NetworkingImpl,
-                ParameterHandles, SessionParameters, SmallSession, SmallSessionHandles,
+                BaseSession, BaseSessionHandles, DeSerializationRunTime, ParameterHandles,
+                SessionParameters, SingleSetNetworkingImpl, SmallSession, SmallSessionHandles,
                 ToBaseSession,
             },
         },
@@ -109,7 +109,7 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> BaseSessionHandles
         self.base_session.rng()
     }
 
-    fn network(&self) -> &NetworkingImpl {
+    fn network(&self) -> &SingleSetNetworkingImpl {
         self.base_session.network()
     }
 

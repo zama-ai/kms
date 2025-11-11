@@ -35,6 +35,7 @@ fn bench_ceremony(c: &mut Criterion) {
                 //CRS generation requires sync network
                 let runtime: DistributedTestRuntime<
                     ResiduePolyF8Z64,
+                    _,
                     { ResiduePolyF8Z64::EXTENSION_DEGREE },
                 > = DistributedTestRuntime::new(roles, threshold as u8, NetworkMode::Sync, None);
 

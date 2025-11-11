@@ -1552,6 +1552,7 @@ mod tests {
         //Could probably be run Async, but NIST doc says all offline is Sync
         let runtime = DistributedTestRuntime::<
             ResiduePolyF4Z128,
+            Role,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(roles.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId::from(23);
@@ -1613,6 +1614,7 @@ mod tests {
         //Could probably be run Async, but NIST doc says all offline is Sync
         let runtime = DistributedTestRuntime::<
             ResiduePolyF4Z128,
+            Role,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(roles.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId::from(17);

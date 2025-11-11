@@ -665,7 +665,7 @@ mod tests {
 
         let mut set = JoinSet::new();
         //Broadcast assumes Sync network
-        let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
+        let test_runtime = DistributedTestRuntime::<Z, Role, EXTENSION_DEGREE>::new(
             roles.clone(),
             threshold,
             NetworkMode::Sync,

@@ -165,7 +165,7 @@ impl ExperimentalGrpcChoreography {
         context_id: SessionId,
         threshold: u8,
         // TODO does not need to be Arc
-        role_assignment: Arc<RwLock<RoleAssignment>>,
+        role_assignment: Arc<RwLock<RoleAssignment<Role>>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<BaseSession> {
@@ -199,7 +199,7 @@ impl ExperimentalGrpcChoreography {
         context_id: SessionId,
         num_sessions: usize,
         threshold: u8,
-        role_assignment: Arc<RwLock<RoleAssignment>>,
+        role_assignment: Arc<RwLock<RoleAssignment<Role>>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<Vec<BaseSession>> {

@@ -5,6 +5,7 @@ use super::{
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Ring},
     execution::{
+        runtime::party::RoleTrait,
         small_execution::{
             agree_random::DummyAgreeRandom,
             prf::PRSSConversions,
@@ -32,12 +33,12 @@ use tfhe::{core_crypto::prelude::LweKeyswitchKey, ServerKey};
 //
 // NOTE: Unfortunately generic params can not be used in const expression,
 // so we need an explicit degree here although it is exactly Z::EXTENSION_DEGREE
-pub struct DistributedTestRuntime<Z: Ring, const EXTENSION_DEGREE: usize> {
+pub struct DistributedTestRuntime<Z: Ring, R: RoleTrait, const EXTENSION_DEGREE: usize> {
     pub threshold: u8,
     pub prss_setups: Option<HashMap<Role, PRSSSetup<Z>>>,
     pub keyshares: Option<Vec<PrivateKeySet<EXTENSION_DEGREE>>>,
-    pub user_nets: HashMap<Role, Arc<LocalNetworking>>,
-    pub roles: HashSet<Role>,
+    pub user_nets: HashMap<R, Arc<LocalNetworking<R>>>,
+    pub roles: HashSet<R>,
     pub server_key: Option<Arc<ServerKey>>,
     pub ks_key: Option<Arc<LweKeyswitchKey<Vec<u64>>>>,
 }
@@ -47,7 +48,7 @@ pub fn generate_fixed_roles(parties: usize) -> HashSet<Role> {
     (1..=parties).map(Role::indexed_from_one).collect()
 }
 
-impl<Z: Ring, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, EXTENSION_DEGREE> {
+impl<Z: Ring, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, Role, EXTENSION_DEGREE> {
     pub fn new(
         roles: HashSet<Role>,
         threshold: u8,
@@ -129,7 +130,7 @@ impl<Z: Ring, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, EXTENSION
     }
 }
 
-impl<Z, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, EXTENSION_DEGREE>
+impl<Z, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, Role, EXTENSION_DEGREE>
 where
     Z: ErrorCorrect,
     Z: Invert,

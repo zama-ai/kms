@@ -178,15 +178,15 @@ pub(crate) mod tests {
         // Create roles  and runtime
         let roles = generate_fixed_roles(num_parties);
         // Preprocessing assumes Sync network
-        let runtimes =
-            (0..num_sessions)
-                .map(|_| {
-                    DistributedTestRuntime::<
+        let runtimes = (0..num_sessions)
+            .map(|_| {
+                DistributedTestRuntime::<
                     ResiduePoly<Z64, EXTENSION_DEGREE>,
+                    Role,
                     EXTENSION_DEGREE ,
                 >::new(roles.clone(), threshold, NetworkMode::Sync, None)
-                })
-                .collect_vec();
+            })
+            .collect_vec();
         let runtimes = Arc::new(runtimes);
 
         let mut handles = OsThreadGroup::new();
@@ -291,12 +291,11 @@ pub(crate) mod tests {
         // Preprocessing assumes Sync network
         let runtimes = (0..num_sessions)
             .map(|_| {
-                DistributedTestRuntime::<ResiduePoly<Z64, EXTENSION_DEGREE>, EXTENSION_DEGREE>::new(
-                    roles.clone(),
-                    threshold,
-                    NetworkMode::Sync,
-                    None,
-                )
+                DistributedTestRuntime::<
+                        ResiduePoly<Z64,  EXTENSION_DEGREE>,
+                        Role,
+                        EXTENSION_DEGREE,
+                    >::new(roles.clone(), threshold, NetworkMode::Sync, None)
             })
             .collect_vec();
         let runtimes = Arc::new(runtimes);

@@ -1015,6 +1015,7 @@ mod tests {
         //CRS generation is round robin, so Sync by nature
         let runtime: DistributedTestRuntime<
             ResiduePolyF4Z64,
+            _,
             { ResiduePolyF4Z64::EXTENSION_DEGREE },
         > = DistributedTestRuntime::new(roles, threshold as u8, NetworkMode::Sync, None);
 

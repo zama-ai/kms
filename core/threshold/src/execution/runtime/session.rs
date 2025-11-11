@@ -21,7 +21,7 @@ use std::{
     sync::Arc,
 };
 
-pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
+pub type SingleSetNetworkingImpl = Arc<dyn Networking<Role> + Send + Sync>;
 
 /// Enum to decide where to run (de)serialization
 /// of MPC messages.
@@ -137,7 +137,7 @@ impl ParameterHandles for SessionParameters {
 // multiple sessions with the same networking instance (i.e. shared sid but different round counter).
 pub struct BaseSession {
     pub parameters: SessionParameters,
-    pub network: NetworkingImpl,
+    pub network: SingleSetNetworkingImpl,
     pub rng: AesRng,
     pub corrupt_roles: HashSet<Role>,
 }
@@ -148,13 +148,13 @@ pub trait BaseSessionHandles: ParameterHandles {
     fn corrupt_roles(&self) -> &HashSet<Role>;
     fn add_corrupt(&mut self, role: Role) -> bool;
     fn rng(&mut self) -> &mut Self::RngType;
-    fn network(&self) -> &NetworkingImpl;
+    fn network(&self) -> &SingleSetNetworkingImpl;
 }
 
 impl BaseSession {
     pub fn new(
         parameters: SessionParameters,
-        network: NetworkingImpl,
+        network: SingleSetNetworkingImpl,
         rng: AesRng,
     ) -> anyhow::Result<Self> {
         Ok(Self {
@@ -216,7 +216,7 @@ impl BaseSessionHandles for BaseSession {
         &mut self.rng
     }
 
-    fn network(&self) -> &NetworkingImpl {
+    fn network(&self) -> &SingleSetNetworkingImpl {
         &self.network
     }
 
@@ -334,7 +334,7 @@ impl<Z: Ring> BaseSessionHandles for SmallSession<Z> {
         self.base_session.rng()
     }
 
-    fn network(&self) -> &NetworkingImpl {
+    fn network(&self) -> &SingleSetNetworkingImpl {
         self.base_session.network()
     }
 
@@ -446,7 +446,7 @@ impl BaseSessionHandles for LargeSession {
         self.base_session.rng()
     }
 
-    fn network(&self) -> &NetworkingImpl {
+    fn network(&self) -> &SingleSetNetworkingImpl {
         self.base_session.network()
     }
 

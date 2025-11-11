@@ -248,7 +248,7 @@ mod tests {
             *roles.get(&Role::indexed_from_one(1)).unwrap(),
             tokio::time::Duration::from_secs(1),
         )]);
-        let runtime: DistributedTestRuntime<LevelOne, { LevelOne::EXTENSION_DEGREE }> =
+        let runtime: DistributedTestRuntime<LevelOne, Role, { LevelOne::EXTENSION_DEGREE }> =
             DistributedTestRuntime::new(roles, threshold, NetworkMode::Async, Some(delay_map));
 
         let session_id = SessionId::from(1);

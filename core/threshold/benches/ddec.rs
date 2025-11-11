@@ -76,6 +76,7 @@ fn ddec_nsmall(c: &mut Criterion) {
         //Using Sync because threshold_decrypt64 encompasses both online and offline
         let mut runtime = DistributedTestRuntime::<
             ResiduePolyF8Z128,
+            _,
             { ResiduePolyF8Z128::EXTENSION_DEGREE },
         >::new(roles, config.t as u8, NetworkMode::Sync, None);
         let ctc = Arc::new(raw_ct);
@@ -133,6 +134,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
         //Using Sync because threshold_decrypt64 encompasses both online and offline
         let mut runtime = DistributedTestRuntime::<
             ResiduePolyF8Z64,
+            _,
             { ResiduePolyF8Z64::EXTENSION_DEGREE },
         >::new(roles.clone(), config.t as u8, NetworkMode::Sync, None);
         runtime.setup_sks(key_shares.clone().to_vec());
@@ -180,6 +182,7 @@ fn ddec_nlarge(c: &mut Criterion) {
         //Using Sync because threshold_decrypt64 encompasses both online and offline
         let mut runtime = DistributedTestRuntime::<
             ResiduePolyF8Z128,
+            _,
             { ResiduePolyF8Z128::EXTENSION_DEGREE },
         >::new(roles, config.t as u8, NetworkMode::Sync, None);
 
@@ -239,7 +242,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
         let key_shares = Arc::new(key_shares);
         let mut runtime =
         //Using Sync because threshold_decrypt64 encompasses both online and offline
-            DistributedTestRuntime::<ResiduePolyF8Z64,{ResiduePolyF8Z64::EXTENSION_DEGREE}>::new(roles.clone(), config.t as u8, NetworkMode::Sync, None);
+            DistributedTestRuntime::<ResiduePolyF8Z64, _, {ResiduePolyF8Z64::EXTENSION_DEGREE}>::new(roles.clone(), config.t as u8, NetworkMode::Sync, None);
         runtime.setup_sks(key_shares.clone().to_vec());
         group.bench_with_input(
             BenchmarkId::from_parameter(config),

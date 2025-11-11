@@ -258,12 +258,11 @@ fn test_dkg_orchestrator_large(
     //Executing offline, so require Sync network
     let runtimes = (0..num_sessions)
         .map(|_| {
-            DistributedTestRuntime::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>::new(
-                roles.clone(),
-                threshold,
-                NetworkMode::Sync,
-                None,
-            )
+            DistributedTestRuntime::<
+                    ResiduePolyF4Z64,
+                    Role,
+                    { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                >::new(roles.clone(), threshold, NetworkMode::Sync, None)
         })
         .collect_vec();
     let runtimes = Arc::new(runtimes);

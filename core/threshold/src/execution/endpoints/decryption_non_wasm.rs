@@ -740,7 +740,7 @@ where
 
 #[cfg(any(test, feature = "testing"))]
 pub async fn threshold_decrypt64<Z: Ring, const EXTENSION_DEGREE: usize>(
-    runtime: &DistributedTestRuntime<Z, EXTENSION_DEGREE>,
+    runtime: &DistributedTestRuntime<Z, Role, EXTENSION_DEGREE>,
     ct: &RadixOrBoolCiphertext,
     mode: DecryptionMode,
 ) -> anyhow::Result<HashMap<Role, Z64>>
@@ -770,7 +770,7 @@ async fn threshold_decrypt64_maybe_malicious<
     MalDec: OnlineNoiseFloodDecryption<EXTENSION_DEGREE>,
     const EXTENSION_DEGREE: usize,
 >(
-    runtime: &DistributedTestRuntime<Z, EXTENSION_DEGREE>,
+    runtime: &DistributedTestRuntime<Z, Role, EXTENSION_DEGREE>,
     ct: &RadixOrBoolCiphertext,
     mode: DecryptionMode,
     malicious_set: HashSet<Role>,
@@ -1420,6 +1420,7 @@ mod tests {
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z128, EXTENSION_DEGREE>,
+            Role,
             EXTENSION_DEGREE,
         >::new(roles, threshold as u8, NetworkMode::Sync, None);
 
@@ -1510,6 +1511,7 @@ mod tests {
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z128, EXTENSION_DEGREE>,
+            Role,
             EXTENSION_DEGREE,
         >::new(roles, threshold as u8, NetworkMode::Sync, None);
 
@@ -1595,6 +1597,7 @@ mod tests {
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z64, EXTENSION_DEGREE>,
+            Role,
             EXTENSION_DEGREE,
         >::new(roles, threshold as u8, NetworkMode::Sync, None);
 
@@ -1696,6 +1699,7 @@ mod tests {
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z64, EXTENSION_DEGREE>,
+            Role,
             EXTENSION_DEGREE,
         >::new(roles, threshold as u8, NetworkMode::Sync, None);
 

@@ -8,7 +8,7 @@ pub mod tests_and_benches {
 
     use crate::{
         algebra::structure_traits::{ErrorCorrect, Invert, Ring},
-        execution::small_execution::prf::PRSSConversions,
+        execution::{runtime::party::Role, small_execution::prf::PRSSConversions},
         networking::NetworkMode,
     };
     use aes_prng::AesRng;
@@ -58,7 +58,7 @@ pub mod tests_and_benches {
                 .zip(delay_vec.iter().cloned())
                 .collect()
         });
-        let test_runtime: DistributedTestRuntime<Z, EXTENSION_DEGREE> =
+        let test_runtime: DistributedTestRuntime<Z, Role, EXTENSION_DEGREE> =
             DistributedTestRuntime::new(roles.clone(), threshold, network_mode, delay_map);
         let session_id = SessionId::from(1);
 
@@ -164,7 +164,7 @@ pub mod tests_and_benches {
                 .zip(delay_vec.iter().cloned())
                 .collect()
         });
-        let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
+        let test_runtime = DistributedTestRuntime::<Z, Role, EXTENSION_DEGREE>::new(
             roles.clone(),
             threshold as u8,
             network_mode,
@@ -522,7 +522,7 @@ pub mod tests {
                 .collect()
         });
 
-        let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
+        let test_runtime = DistributedTestRuntime::<Z, Role, EXTENSION_DEGREE>::new(
             roles.clone(),
             threshold,
             network_mode,
@@ -633,7 +633,7 @@ pub mod tests {
                 .collect()
         });
 
-        let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
+        let test_runtime = DistributedTestRuntime::<Z, Role, EXTENSION_DEGREE>::new(
             roles.clone(),
             threshold,
             network_mode,
