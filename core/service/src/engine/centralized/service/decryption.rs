@@ -13,6 +13,7 @@ use observability::metrics_names::{
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
+use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::engine::base::compute_external_pt_signature;
 use crate::engine::centralized::central_kms::{
     async_user_decrypt, central_public_decrypt, CentralizedKms,
@@ -107,12 +108,11 @@ pub async fn user_decrypt_impl<
         (TAG_PUBLIC_DECRYPTION_KIND, "centralized".to_string()),
     ];
 
-    #[allow(deprecated)]
     let server_verf_key = service
         .base_kms
         .sig_key
         .verf_key()
-        .get_serialized_verf_key()
+        .to_legacy_bytes()
         .map_err(|e| {
             Status::internal(format!(
                 "Failed to serialize server verification key: {e:?}"
@@ -457,12 +457,11 @@ pub async fn get_public_decryption_result_impl<
         external_signature
     );
 
-    #[allow(deprecated)]
     let server_verf_key = service
         .base_kms
         .sig_key
         .verf_key()
-        .get_serialized_verf_key()
+        .to_legacy_bytes()
         .map_err(|e| {
             Status::internal(format!(
                 "Failed to serialize server verification key: {e:?}"

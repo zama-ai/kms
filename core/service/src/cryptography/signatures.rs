@@ -1,4 +1,8 @@
-use crate::{anyhow_tracked, cryptography::error::CryptographyError, impl_generic_versionize};
+use crate::{
+    anyhow_tracked,
+    cryptography::{error::CryptographyError, internal_crypto_types::LegacySerialization},
+    impl_generic_versionize,
+};
 use ::signature::{Signer, Verifier};
 use aes_prng::AesRng;
 use alloy_primitives::B256;
@@ -105,14 +109,6 @@ impl PublicSigKey {
         self.address().to_vec()
     }
 
-    /// DEPRECATED LEGACY code since this is not the right way to serialize as it is not versioned
-    #[deprecated(
-        note = "This is legacy code and should not be used for new development. Will be handled in #2781"
-    )]
-    pub fn get_serialized_verf_key(&self) -> anyhow::Result<Vec<u8>> {
-        bc2wrap::serialize(&self).map_err(|e| anyhow::anyhow!("Could not serialize key {}", e))
-    }
-
     pub fn address(&self) -> alloy_primitives::Address {
         alloy_primitives::Address::from_public_key(&self.pk.0)
     }
@@ -129,6 +125,23 @@ impl HasSigningScheme for PublicSigKey {
     fn signing_scheme_type(&self) -> SigningSchemeType {
         // Only one scheme for now
         SigningSchemeType::Ecdsa256k1
+    }
+}
+
+impl LegacySerialization for PublicSigKey {
+    fn to_legacy_bytes(&self) -> Result<Vec<u8>, CryptographyError> {
+        bc2wrap::serialize(self).map_err(|e| {
+            CryptographyError::SerializationError(format!("Could not serialize key {}", e))
+        })
+    }
+
+    fn from_legacy_bytes(bytes: &[u8]) -> Result<Self, CryptographyError>
+    where
+        Self: Sized,
+    {
+        bc2wrap::deserialize_safe(bytes).map_err(|e| {
+            CryptographyError::DeserializationError(format!("Could not deserialize key {}", e))
+        })
     }
 }
 
@@ -574,12 +587,11 @@ mod tests {
     }
 
     #[test]
-    fn sunshine_verf_key_serialization() {
+    fn sunshine_verf_key_legacy_serialization() {
         let mut rng = AesRng::seed_from_u64(42);
         let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
-        #[allow(deprecated)]
-        let serialized_key = verf_key.get_serialized_verf_key().unwrap();
-        let deserialized_key = PublicSigKey::from_bytes(&serialized_key).unwrap();
+        let serialized_key = verf_key.to_legacy_bytes().unwrap();
+        let deserialized_key = PublicSigKey::from_legacy_bytes(&serialized_key).unwrap();
         assert_eq!(verf_key, deserialized_key);
     }
 }

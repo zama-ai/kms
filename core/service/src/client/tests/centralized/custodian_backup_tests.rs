@@ -7,6 +7,7 @@ use crate::client::tests::centralized::custodian_context_tests::run_new_cus_cont
 use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized;
 use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
+use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::util::key_setup::test_tools::{purge_backup, read_backup_files};
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
@@ -219,8 +220,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let mut rng = AesRng::seed_from_u64(13);
     let recovery_req_resp = kms_client
         .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
-            #[allow(deprecated)]
-            public_verf_key: sig_key.verf_key().get_serialized_verf_key().unwrap(),
+            public_verf_key: sig_key.verf_key().to_legacy_bytes().unwrap(),
             overwrite_ephemeral_key: false,
         }))
         .await
@@ -329,7 +329,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     let recovery_req_resp = kms_client
         .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
             overwrite_ephemeral_key: false,
-            public_verf_key: sig_key.verf_key().get_serialized_verf_key().unwrap(),
+            public_verf_key: sig_key.verf_key().to_legacy_bytes().unwrap(),
         }))
         .await
         .unwrap()

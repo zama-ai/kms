@@ -56,6 +56,7 @@ use crate::{
     consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
     cryptography::{
         error::CryptographyError,
+        internal_crypto_types::LegacySerialization,
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
     },
     engine::{
@@ -361,14 +362,14 @@ impl<
             .threshold(&context_id)
             .await
             .map_err(|e| anyhow::anyhow!("Could not get threshold: {e}"))?;
-        #[allow(deprecated)]
         let payload = UserDecryptionResponsePayload {
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
             verification_key: signcryption_key
                 .signing_key
                 .verf_key()
-                .get_serialized_verf_key()?,
+                .to_legacy_bytes()
+                .map_err(|e| anyhow::anyhow!("Could not serialize verification key {}", e))?,
             party_id: my_role.one_based() as u32,
             degree: threshold as u32,
         };

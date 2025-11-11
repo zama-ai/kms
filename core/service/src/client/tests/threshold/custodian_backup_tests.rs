@@ -31,7 +31,7 @@ cfg_if::cfg_if! {
 use crate::backup::BackupCiphertext;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 use crate::consts::SIGNING_KEY_ID;
-use crate::cryptography::internal_crypto_types::WrappedDKGParams;
+use crate::cryptography::internal_crypto_types::{LegacySerialization, WrappedDKGParams};
 #[cfg(feature = "insecure")]
 use crate::cryptography::signatures::PublicSigKey;
 use crate::util::key_setup::test_tools::{purge_backup, read_backup_files};
@@ -537,12 +537,7 @@ async fn run_custodian_recovery_init(
     let mut tasks_gen = JoinSet::new();
     for i in 1..=amount_parties as u32 {
         let mut cur_client = kms_clients.get(&i).unwrap().clone();
-        #[allow(deprecated)]
-        let cur_verf_key = server_verf_keys
-            .get(&i)
-            .unwrap()
-            .get_serialized_verf_key()
-            .unwrap();
+        let cur_verf_key = server_verf_keys.get(&i).unwrap().to_legacy_bytes().unwrap();
         tasks_gen.spawn(async move {
             cur_client
                 .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {

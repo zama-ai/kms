@@ -48,6 +48,7 @@ use tracing::Instrument;
 use crate::{
     anyhow_error_and_log,
     consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
+    cryptography::internal_crypto_types::LegacySerialization,
     engine::{
         base::{
             compute_external_pt_signature, deserialize_to_low_level, BaseKmsStruct,
@@ -702,12 +703,11 @@ impl<
             )));
         }
 
-        #[allow(deprecated)]
         let server_verf_key = self
             .base_kms
             .sig_key
             .verf_key()
-            .get_serialized_verf_key()
+            .to_legacy_bytes()
             .map_err(|e| {
                 Status::internal(format!(
                     "Failed to serialize server verification key: {e:?}"

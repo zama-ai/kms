@@ -24,6 +24,7 @@ use kms_lib::backup::operator::InternalRecoveryRequest;
 use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
 use kms_lib::cryptography::encryption::PkeSchemeType;
+use kms_lib::cryptography::internal_crypto_types::LegacySerialization;
 use kms_lib::cryptography::signatures::{recover_address_from_ext_signature, PublicSigKey};
 use kms_lib::engine::base::{
     compute_public_decryption_message, safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS,
@@ -1524,12 +1525,10 @@ async fn do_custodian_recovery_init(
     for (party_id, verf_key) in core_endpoints.keys().sorted().zip(public_verf_keys) {
         // We know the party ID exists since we are iterating over the keys
         let mut cur_client = core_endpoints.get(party_id).unwrap().clone();
-        #[allow(deprecated)]
-        let cur_public_verf_key = verf_key.get_serialized_verf_key()?;
+        let cur_public_verf_key = verf_key.to_legacy_bytes().unwrap();
         req_tasks.spawn(async move {
             cur_client
                 .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
-                    #[allow(deprecated)]
                     public_verf_key: cur_public_verf_key,
                     overwrite_ephemeral_key,
                 }))
