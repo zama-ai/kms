@@ -14,7 +14,7 @@
 - [Using KMS as a SaaS](guides/saas_usage.md)
 - [On-Premises Installation Guide](guides/on_prem_installation.md)
 - [Calling KMS main entry points](guides/entry_points.md)
-- [Common errors](guides/common_errors.md)
+- [Common errors](operations/advanced/common-errors.md)
 
 ## Operations
 
