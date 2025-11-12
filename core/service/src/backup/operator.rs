@@ -815,38 +815,37 @@ fn validate_custodian_messages(
                 );
                 continue;
             }
+        }
+        if header != HEADER {
+            tracing::warn!("Invalid header in custodian setup message from custodian {custodian_role}. Expected header {HEADER} but got {header}");
+            continue;
+        }
 
-            if header != HEADER {
-                tracing::warn!("Invalid header in custodian setup message from custodian {custodian_role}. Expected header {HEADER} but got {header}");
-                continue;
-            }
-
-            if custodian_role.one_based() > amount_custodians {
-                tracing::warn!(
+        if custodian_role.one_based() > amount_custodians {
+            tracing::warn!(
                     "Invalid custodian role in custodian setup message: {custodian_role}. Expected role between 1 and {amount_custodians}"
                 );
-                continue;
-            }
+            continue;
+        }
 
-            if let Some(old_val) =
-                custodian_keys.insert(custodian_role, (public_enc_key, public_verf_key))
-            {
-                tracing::warn!(
+        if let Some(old_val) =
+            custodian_keys.insert(custodian_role, (public_enc_key, public_verf_key))
+        {
+            tracing::warn!(
                         "Duplicate custodian role in custodian setup message: {custodian_role}. Will use first value for this role"
                     );
-                let _ = custodian_keys.insert(custodian_role, old_val);
-                continue;
-            }
+            let _ = custodian_keys.insert(custodian_role, old_val);
+            continue;
         }
-        if custodian_keys.len() < threshold + 1 {
-            let msg = format!(
-                "Not enough valid custodian setup messages: expected at least {} but got {}",
-                threshold + 1,
-                custodian_keys.len()
-            );
-            tracing::error!("{msg}");
-            return Err(BackupError::SetupError(msg));
-        }
+    }
+    if custodian_keys.len() < threshold + 1 {
+        let msg = format!(
+            "Not enough valid custodian setup messages: expected at least {} but got {}",
+            threshold + 1,
+            custodian_keys.len()
+        );
+        tracing::error!("{msg}");
+        return Err(BackupError::SetupError(msg));
     }
     Ok(custodian_keys)
 }
