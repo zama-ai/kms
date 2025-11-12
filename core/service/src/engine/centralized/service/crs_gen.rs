@@ -61,8 +61,7 @@ pub async fn crs_gen_impl<
 
     let meta_store = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();
-    let sk = 
-        service
+    let sk = service
             .base_kms
             .sig_key()
             .map_err(|e| {
