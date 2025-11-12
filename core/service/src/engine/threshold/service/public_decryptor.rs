@@ -708,7 +708,7 @@ impl<
         }
 
         let server_verf_key = self.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
-            Status::internal(format!(
+            Status::failed_precondition(format!(
                 "Failed to serialize server verification key: {e:?}"
             ))
         })?;

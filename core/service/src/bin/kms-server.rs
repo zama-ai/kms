@@ -11,6 +11,7 @@ use kms_lib::{
     consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID},
     cryptography::{
         attestation::{make_security_module, SecurityModule, SecurityModuleProxy},
+        internal_crypto_types::LegacySerialization,
         signatures::{PrivateSigKey, PublicSigKey},
     },
     engine::{
@@ -18,7 +19,6 @@ use kms_lib::{
         threshold::service::new_real_threshold_kms,
     },
     grpc::MetaStoreStatusServiceImpl,
-    util::file_handling::safe_read_element_versioned,
     vault::{
         aws::build_aws_sdk_config,
         keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
@@ -71,6 +71,11 @@ struct KmsArgs {
         help = "path to the configuration file"
     )]
     config_file: String,
+    #[clap(
+        long,
+        short = 'r',
+        help = "Hex encoding of the KMS node's current verification key, fetched from the gateway"
+    )]
     recovery: Option<String>,
 }
 
@@ -534,11 +539,16 @@ async fn main_exec() -> anyhow::Result<()> {
         None => KMSType::Centralized,
     };
     let base_kms = match &args.recovery {
-        Some(verf_key_path) => {
+        Some(verf_key_hex) => {
             tracing::warn!(
                 "ENTERING RECOVERY MODE!!!!\nOnly backup recovery operations are allowed!"
             );
-            let verf_key: PublicSigKey = safe_read_element_versioned(verf_key_path).await?;
+            let bin_verf_key = hex::decode(verf_key_hex).map_err(|e| {
+                anyhow::anyhow!("Failed to decode recovery verification key from hex string: {e:?}")
+            })?;
+            let verf_key = PublicSigKey::from_legacy_bytes(&bin_verf_key).map_err(|e| {
+                anyhow::anyhow!("Failed to parse recovery verification key from bytes: {e:?}")
+            })?;
             BaseKmsStruct::new_no_signing_key(mode, verf_key)
         }
         None => {

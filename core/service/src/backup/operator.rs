@@ -1070,7 +1070,7 @@ mod tests {
         let mut msg3 =
             valid_custodian_msg(Role::indexed_from_one(3), enc_key.clone(), verf_key.clone());
         msg3.timestamp = present + 24 * 3600 + 2; // too far in the future by 2 seconds
-        let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, true);
+        let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, false);
         // The result is ok since we do not validate the timestamp
         assert!(result.is_ok());
         // Check that no logs about timestamp is present

@@ -382,21 +382,63 @@ where
     ) -> Result<Response<Empty>, Status> {
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
-                let private_storage = self.crypto_storage.get_private_storage().clone();
-                let mut private_storage = private_storage.lock().await;
-                let backup_vault: tokio::sync::MutexGuard<'_, Vault> = backup_vault.lock().await;
-                restore_data(&backup_vault, &mut private_storage)
-                    .await
-                    .map_err(|e| {
-                        Status::new(
-                            tonic::Code::Internal,
-                            format!("Failed to restore backup data: {e}"),
-                        )
-                    })?;
-
-                let mut ephemeral_keys = self.ephemeral_keys.lock().await;
-                // Remove any decryption key (if it is there) now that restoration is done.
-                *ephemeral_keys = None;
+                // Do the actual restoring
+                {
+                    let private_storage = self.crypto_storage.get_private_storage().clone();
+                    let mut private_storage = private_storage.lock().await;
+                    let backup_vault: tokio::sync::MutexGuard<'_, Vault> =
+                        backup_vault.lock().await;
+                    restore_data(&backup_vault, &mut private_storage)
+                        .await
+                        .map_err(|e| {
+                            Status::new(
+                                tonic::Code::Internal,
+                                format!("Failed to restore backup data: {e}"),
+                            )
+                        })?;
+                }
+                // // Return the possibly newly restored signing key
+                // let sk = self.crypto_storage.get_signing_key().await.map_err(|e| {
+                //     Status::new(
+                //         tonic::Code::Internal,
+                //         format!("Failed to fetch signing key: {e}"),
+                //     )
+                // })?;
+                // let backup_id = get_latest_backup_id(&self.crypto_storage.backup_vault)
+                //     .await
+                //     .map_err(|e| {
+                //         Status::new(
+                //             tonic::Code::Internal,
+                //             format!("Failed to get latest backup id: {e}"),
+                //         )
+                //     })?;
+                // // Then validate that the restore material is correct now that we have the signing key again.
+                // // Observe that this is sufficient since we assume that the adversary cannot corrupt a quorum of custodians.
+                // // Thus, even if the adversary has replaced the `RecoveryValidationMaterial` in the public storage, it could
+                // // could not fake the signcryptions on the custodian recovery outputs needed to recover the backup decryption key
+                // // and thus the recovery request could not have succeeded.
+                // {
+                //     let _recovery_material = {
+                //         load_recovery_validation_material(
+                //             &self.crypto_storage.get_public_storage(),
+                //             &backup_id,
+                //             &sk.verf_key(),
+                //         )
+                //         .await
+                //         .map_err(|e| {
+                //             Status::new(
+                //                 tonic::Code::Internal,
+                //                 format!("Failed to load recovery validation material: {e}"),
+                //             )
+                //         })?
+                //     };
+                // }
+                // Finally remove the ephemeral keys
+                {
+                    let mut ephemeral_keys = self.ephemeral_keys.lock().await;
+                    // Remove any decryption key (if it is there) now that restoration is done.
+                    *ephemeral_keys = None;
+                }
                 tracing::info!("Successfully restored private data from backup vault");
                 Ok(Response::new(Empty {}))
             }
