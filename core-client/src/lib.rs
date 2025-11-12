@@ -58,8 +58,7 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use validator::{Validate, ValidationError};
 
-#[cfg(feature = "testing")]
-mod mpc_context;
+pub mod mpc_context;
 mod s3_operations;
 
 const SLEEP_TIME_BETWEEN_REQUESTS_MS: u64 = 500;
@@ -576,6 +575,14 @@ pub struct NewCustodianContextParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct NewMpcContextParameters {
+    /// Safe Serialized version of the struct ContextInfo
+    /// stored in a file.
+    #[clap(long)]
+    pub context_path: PathBuf,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct ResultParameters {
     #[clap(long, short = 'i')]
     pub request_id: RequestId,
@@ -637,13 +644,12 @@ pub enum CCCommand {
     InsecureCrsGen(CrsParameters),
     InsecureCrsGenResult(ResultParameters),
     NewCustodianContext(NewCustodianContextParameters),
-    #[cfg(feature = "testing")]
-    NewMpcContext(NoParameters),
     GetOperatorPublicKey(NoParameters),
     CustodianRecoveryInit(RecoveryInitParameters),
     CustodianBackupRecovery(RecoveryParameters),
     BackupRestore(NoParameters),
     Reshare(ReshareParameters),
+    NewMpcContext(NewMpcContextParameters),
     DoNothing(NoParameters),
 }
 
@@ -2298,13 +2304,6 @@ pub async fn execute_cmd(
                 "new custodian context created".to_string(),
             )]
         }
-        #[cfg(feature = "testing")]
-        CCCommand::NewMpcContext(NoParameters {}) => {
-            use crate::mpc_context::do_new_mpc_context;
-
-            let ctx_id = do_new_mpc_context(&core_endpoints_req, &mut rng, &cc_conf).await?;
-            vec![(Some(ctx_id.into()), "new mpc context created".to_string())]
-        }
         CCCommand::GetOperatorPublicKey(NoParameters {}) => {
             let pks = do_get_operator_pub_keys(&core_endpoints_req).await?;
             pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
@@ -2373,6 +2372,12 @@ pub async fn execute_cmd(
                 (Some(request_id), "Reshare complete".to_string()),
                 (Some(*key_id), "Key ready to be used".to_string()),
             ]
+        }
+        CCCommand::NewMpcContext(NewMpcContextParameters { context_path }) => {
+            use crate::mpc_context::do_new_mpc_context;
+
+            let ctx_id = do_new_mpc_context(&core_endpoints_req, context_path).await?;
+            vec![(Some(ctx_id.into()), "new mpc context created".to_string())]
         }
     };
 

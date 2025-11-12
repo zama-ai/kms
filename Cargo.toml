@@ -66,6 +66,7 @@ description = "Key Management System for the Zama Protocol."
 backward-compatibility = { path = "./backward-compatibility" }  # Internal backward compatibility testing
 bc2wrap = { path = "./bc2wrap" }  # Internal bincode wrapper custom implementation
 kms = { path = "./core/service", default-features = false }  # Core KMS service
+kms-core-client = { path = "./core-client" }  # Core KMS client library
 kms-grpc = { path = "./core/grpc", default-features = false }  # KMS gRPC interface
 observability = { path = "./observability" }  # Internal observability module
 threshold-fhe = { path = "./core/threshold/", default-features = false }  # Threshold FHE implementation

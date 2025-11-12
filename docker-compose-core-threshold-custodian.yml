@@ -84,7 +84,7 @@ services:
       echo 'region=us-east-1' >> ~/.aws/config &&
       cat ~/.aws/config &&
       echo 'Generating signing keys' &&
-      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 1 &&
+      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage s3 --private-s3-bucket kms --cmd signing-keys threshold --signing-key-party-id 1 &&
       echo 'Starting kms service' &&
       kms-server --config-file config/compose_1.toml
       "
@@ -126,7 +126,7 @@ services:
       export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
       export AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       echo 'Generating signing keys' &&
-      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 2 &&
+      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage s3 --private-s3-bucket kms --cmd signing-keys threshold --signing-key-party-id 2 &&
       echo 'Starting kms service' &&
       kms-server --config-file config/compose_2.toml
       "
@@ -173,7 +173,7 @@ services:
       export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
       export AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       echo 'Generating signing keys' &&
-      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 3 &&
+      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage s3 --private-s3-bucket kms --cmd signing-keys threshold --signing-key-party-id 3 &&
       echo 'Starting kms service' &&
       kms-server --config-file config/compose_3.toml
       "
@@ -220,7 +220,7 @@ services:
       export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
       export AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       echo 'Generating signing keys' &&
-      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 4 &&
+      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage s3 --private-s3-bucket kms --cmd signing-keys threshold --signing-key-party-id 4 &&
       echo 'Starting kms service' &&
       kms-server --config-file config/compose_4.toml
       "

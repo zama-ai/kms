@@ -1,27 +1,30 @@
 use std::collections::HashMap;
 
-use aes_prng::AesRng;
 use kms_grpc::{
     identifiers::ContextId, kms::v1::NewKmsContextRequest,
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
 };
+#[cfg(feature = "testing")]
 use kms_lib::{
     conf::{init_conf, CoreConfig},
-    engine::context::{ContextInfo, NodeInfo, SoftwareVersion},
+    engine::context::{NodeInfo, SoftwareVersion},
 };
+use kms_lib::{consts::SAFE_SER_SIZE_LIMIT, engine::context::ContextInfo};
+use tfhe::safe_serialization::safe_deserialize;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
+#[cfg(feature = "testing")]
 use crate::{
     s3_operations::{fetch_kms_signing_keys, fetch_kms_verification_keys},
     CoreClientConfig,
 };
 
-pub(crate) async fn do_new_mpc_context(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    rng: &mut AesRng,
+#[cfg(feature = "testing")]
+pub async fn create_test_context_info_from_config(
+    context_id: ContextId,
     sim_conf: &CoreClientConfig,
-) -> anyhow::Result<ContextId> {
+) -> anyhow::Result<ContextInfo> {
     // first download the verification and signing keys from all parties
     let verification_keys = fetch_kms_verification_keys(sim_conf).await?;
     let signing_keys = fetch_kms_signing_keys(sim_conf).await?;
@@ -113,8 +116,6 @@ pub(crate) async fn do_new_mpc_context(
         ));
     }
 
-    let context_id = ContextId::new_random(rng);
-    let mut req_tasks = JoinSet::new();
     let new_context = ContextInfo {
         kms_nodes,
         context_id,
@@ -122,6 +123,23 @@ pub(crate) async fn do_new_mpc_context(
         threshold: *threshold as u32,
         pcr_values: first_pcr_values.to_vec(),
     };
+    Ok(new_context)
+}
+
+pub(crate) async fn do_new_mpc_context(
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    context_path: &std::path::Path,
+) -> anyhow::Result<ContextId> {
+    // note that we use the BufReader from std instead of tokio
+    // because the one from tokio does not implement std::io::Read
+    let file = std::fs::File::open(context_path)?;
+    let mut buf_reader = std::io::BufReader::new(file);
+
+    let new_context: ContextInfo = safe_deserialize(&mut buf_reader, SAFE_SER_SIZE_LIMIT)
+        .map_err(|e| anyhow::anyhow!("Failed to deserialize context info from file: {}", e))?;
+    let context_id = new_context.context_id;
+
+    let mut req_tasks = JoinSet::new();
     for (_party_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let new_context_cloned = new_context.clone();

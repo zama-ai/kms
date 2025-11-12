@@ -4298,12 +4298,12 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "attestation-doc-validation",
- "bc2wrap",
  "bytes",
  "cc-tests-utils",
  "clap",
  "hex",
  "kms",
+ "kms-core-client",
  "kms-grpc",
  "observability",
  "rand 0.8.5",
@@ -4323,7 +4323,6 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "validator",
- "x509-parser 0.18.0",
 ]
 
 [[package]]
