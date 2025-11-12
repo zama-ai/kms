@@ -12,13 +12,13 @@ use crate::{
     anyhow_error_and_log,
     client::user_decryption_wasm::{compute_link, ParsedUserDecryptionRequest},
     cryptography::{
+        compute_user_decrypt_message,
         encryption::UnifiedPublicEncKey,
         internal_crypto_types::LegacySerialization,
         signatures::{
             internal_verify_sig, recover_address_from_ext_signature, PublicSigKey, Signature,
         },
     },
-    engine::base::compute_user_decrypt_message,
     some_or_err,
 };
 

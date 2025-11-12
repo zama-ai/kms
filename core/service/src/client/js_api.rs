@@ -74,11 +74,11 @@ use crate::client::user_decryption_wasm::{
     ParsedUserDecryptionRequestHex, TestingUserDecryptionTranscript,
 };
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::hybrid_ml_kem;
-use crate::cryptography::internal_crypto_types::{
+use crate::cryptography::encryption::{
     PrivateEncKey, PublicEncKey, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::hybrid_ml_kem;
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use aes_prng::AesRng;
 use bc2wrap::{deserialize, serialize};
 use kms_grpc::kms::v1::FheParameter;
@@ -113,6 +113,7 @@ pub fn ml_kem_pke_sk_len() -> usize {
 
 #[wasm_bindgen]
 pub fn public_sig_key_to_u8vec(pk: &PublicSigKey) -> Vec<u8> {
+    #[allow(deprecated)]
     pk.pk().to_sec1_bytes().to_vec()
 }
 
