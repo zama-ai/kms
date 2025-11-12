@@ -539,7 +539,7 @@ impl Operator {
         amount_custodians: usize,
     ) -> Result<Self, BackupError> {
         let custodian_keys =
-            validate_custodian_messages(custodian_messages, amount_custodians, threshold, false)?;
+            validate_custodian_messages(custodian_messages, threshold, amount_custodians, false)?;
         Ok(Self {
             my_role,
             custodian_keys,
