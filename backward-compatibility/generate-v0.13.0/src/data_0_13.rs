@@ -741,17 +741,6 @@ impl KmsV0_13 {
             &RECOVERY_MATERIAL_TEST.test_filename,
             &RECOVERY_MATERIAL_TEST.internal_cus_context_filename,
         );
-        let mut cts = BTreeMap::new();
-        let cts_out = InnerOperatorBackupOutput {
-            signcryption: UnifiedSigncryption {
-                payload: vec![1, 2, 3],
-                pke_type: PkeSchemeType::MlKem512,
-                signing_type: SigningSchemeType::Ecdsa256k1,
-            },
-        };
-        cts.insert(Role::indexed_from_one(1), cts_out.clone());
-        cts.insert(Role::indexed_from_one(2), cts_out.clone());
-        cts.insert(Role::indexed_from_one(3), cts_out);
         let recovery_material = RecoveryValidationMaterial::new(
             cts,
             commitments,
@@ -1051,7 +1040,7 @@ impl KmsV0_13 {
 
         let operator = {
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-            Operator::new(
+            Operator::new_for_sharing(
                 Role::indexed_from_one(1),
                 custodian_messages,
                 signing_key,

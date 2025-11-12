@@ -813,14 +813,12 @@ fn test_operator_backup_output(
 
     let operator = {
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-        Operator::new(
+        Operator::new_for_sharing(
             Role::indexed_from_one(1),
             custodian_messages.clone(),
             signing_key,
             test.custodian_threshold,
             custodian_messages.len(), // Testing a sunshine case where all custodians are present
-            // Don't validate the timestamp
-            false,
         )
         .unwrap()
     };
