@@ -518,7 +518,7 @@ impl Operator {
     ) -> Result<Self, BackupError> {
         let verf_key = signing_key.verf_key();
         let custodian_keys =
-            validate_custodian_messages(custodian_messages, amount_custodians, threshold, true)?;
+            validate_custodian_messages(custodian_messages, threshold, amount_custodians, true)?;
         Ok(Self {
             my_role,
             custodian_keys,
