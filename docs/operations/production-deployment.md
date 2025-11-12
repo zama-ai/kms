@@ -488,6 +488,11 @@ kubectl exec -n kms-threshold kms-core-1 -- \
 
 > 🚨 **CRITICAL SECURITY REQUIREMENT**: The KMS gRPC port (default: 50100) configured in `listen_port` **MUST NEVER** be exposed to the internet. This port handles sensitive cryptographic operations and should only be accessible from localhost or authorized connectors within your secure network.
 
+**Recommended Deployment Pattern**:
+- **Co-locate KMS with Connector**: Deploy KMS and connector on the same VM/pod for maximum security
+- **Localhost Communication**: Configure connector to access KMS via `localhost:<GRPC_PORT>`
+- **Zero Network Exposure**: Eliminates any network-based attack vectors on gRPC endpoint
+
 - **PrivateLink**: All inter-party communication via AWS PrivateLink
 - **TLS**: Mutual TLS between all threshold peers
 - **Network Policies**: Kubernetes network policies restrict pod communication

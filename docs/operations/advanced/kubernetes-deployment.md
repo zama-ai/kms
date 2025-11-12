@@ -96,7 +96,6 @@ Use the KMS Helm charts for application deployment. See [Configuration Guide](..
 ### Network Security
 - **PrivateLink**: All inter-party communication via AWS PrivateLink (planned implementation)
 - **Access Control**: gRPC endpoint (port 50100) must be restricted to localhost access only
-- **TLS**: All P2P communication uses mutual TLS
 
 ### Access Control
 - **IRSA**: Service accounts use IAM roles for AWS access

@@ -33,6 +33,20 @@ KMS security involves multiple layers of protection:
 - **Port 9646 (Metrics)**: Restrict to monitoring systems only  
 - **SSH/Management**: Limit to management networks only
 
+### Recommended Deployment Pattern
+
+**Co-location with Connector**:
+- **Ideal Setup**: Deploy KMS and connector on the same VM/container for maximum security
+- **Localhost Communication**: Eliminates network exposure of gRPC port entirely
+- **Reduced Attack Surface**: No network-based attacks possible on gRPC endpoint
+- **Simplified Firewall Rules**: No need for complex port access controls
+
+**Benefits of Co-location**:
+- gRPC communication stays within localhost (0.0.0.0)
+- Zero network exposure of sensitive cryptographic operations
+- Simplified security configuration and monitoring
+- Reduced latency between KMS and connector
+
 **Implementation**:
 - Use cloud provider security groups (AWS Security Groups, etc.)
 - Configure Kubernetes NetworkPolicies for pod-level restrictions

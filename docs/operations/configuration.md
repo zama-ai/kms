@@ -25,6 +25,8 @@ KMS uses TOML configuration files with different sections for various components
 - Security settings
 
 > ⚠️ **CRITICAL SECURITY WARNING**: The gRPC port (default: 50100) configured in `listen_port` **MUST NEVER** be exposed to the internet. This port handles sensitive cryptographic operations and should only be accessible from localhost or authorized connectors within your secure network. Always use firewall rules to restrict access.
+>
+> **RECOMMENDED**: Deploy KMS and connector on the same VM/container for maximum security. This ensures gRPC communication stays on localhost (127.0.0.1) with zero network exposure.
 
 **Threshold Configuration** (13-party mode):
 - P2P network settings
