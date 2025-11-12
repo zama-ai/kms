@@ -485,9 +485,13 @@ kubectl exec -n kms-threshold kms-core-1 -- \
 - **Resource Isolation**: Enclaves get dedicated CPU cores and memory
 
 ### Network Security
+
+> 🚨 **CRITICAL SECURITY REQUIREMENT**: The KMS gRPC port (default: 50100) configured in `listen_port` **MUST NEVER** be exposed to the internet. This port handles sensitive cryptographic operations and should only be accessible from localhost or authorized connectors within your secure network.
+
 - **PrivateLink**: All inter-party communication via AWS PrivateLink
 - **TLS**: Mutual TLS between all threshold peers
 - **Network Policies**: Kubernetes network policies restrict pod communication
+- **Port Security**: gRPC port restricted to cluster-internal access only
 
 ### Access Control
 - **IRSA**: Service accounts use IAM roles for AWS access
