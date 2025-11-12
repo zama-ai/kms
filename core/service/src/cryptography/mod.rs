@@ -11,14 +11,19 @@ pub mod encryption;
 #[allow(deprecated)]
 pub mod signcryption;
 
+use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
+#[cfg(any(feature = "non-wasm", test))]
 use crate::cryptography::signatures::compute_eip712_signature;
-use crate::cryptography::{encryption::UnifiedPublicEncKey, signatures::PrivateSigKey};
+#[cfg(any(feature = "non-wasm", test))]
+use crate::cryptography::signatures::PrivateSigKey;
+#[cfg(any(feature = "non-wasm", test))]
 use alloy_dyn_abi::Eip712Domain;
 use kms_grpc::{
     kms::v1::UserDecryptionResponsePayload, solidity_types::UserDecryptResponseVerification,
 };
 
+#[cfg(any(feature = "non-wasm", test))]
 pub(crate) fn compute_external_user_decrypt_signature(
     server_sk: &PrivateSigKey,
     payload: &UserDecryptionResponsePayload,

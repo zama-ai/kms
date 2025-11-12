@@ -432,19 +432,16 @@ mod tests {
             compute_link, CiphertextHandle, ParsedUserDecryptionRequest,
         },
         cryptography::{
+            compute_external_user_decrypt_signature,
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{
                 gen_sig_keys, internal_sign, PublicSigKey, ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH,
             },
         },
         dummy_domain,
-        engine::{
-            base::compute_external_user_decrypt_signature,
-            validation_wasm::{
-                ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE,
-                ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND,
-                ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS,
-            },
+        engine::validation_wasm::{
+            ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE,
+            ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND, ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS,
         },
     };
 
