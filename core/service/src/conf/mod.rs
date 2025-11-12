@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn test_threshold_config() {
         let core_config: CoreConfig = init_conf("config/default_2").unwrap();
-        core_config.validate().unwrap();
+        core_config.validate().unwrap(); // core config must be valid
         let threshold_config = core_config.threshold.unwrap();
         assert_eq!(core_config.service.listen_address, "0.0.0.0");
         assert_eq!(core_config.service.listen_port, 50200);
@@ -340,6 +340,55 @@ mod tests {
             core_to_core_net.max_opened_inactive_sessions_per_party,
             Some(100)
         );
+    }
+
+    #[test]
+    fn test_threshold_config_negative() {
+        // the test below assumes we're using a valid config with 4 parties and threshold 1, which is the case for the default configs
+        let core_config: CoreConfig = init_conf("config/default_2").unwrap();
+        core_config.validate().unwrap(); // inital core config must be valid
+
+        // clone the config, so we just need to read and parse it once
+        let mut cc = core_config.clone();
+        cc.threshold.as_mut().unwrap().peers = None;
+        let s = cc.validate().unwrap_err().to_string();
+        assert!(s.contains("Validation error: Peer list is required but was not provided."));
+
+        let mut cc = core_config.clone();
+        cc.threshold.as_mut().unwrap().my_id = 0;
+        let s = cc.validate().unwrap_err().to_string();
+        // the actual values are not ordered deterministically, so we just check for the generic error message
+        assert!(s.contains("Validation error:"));
+
+        let mut cc = core_config.clone();
+        cc.threshold.as_mut().unwrap().listen_port = 0;
+        let s = cc.validate().unwrap_err().to_string();
+        assert!(s.contains("Validation error:"));
+
+        let mut cc = core_config.clone();
+        cc.threshold.as_mut().unwrap().threshold = 0;
+        let s = cc.validate().unwrap_err().to_string();
+        assert!(s.contains("Validation error:"));
+
+        let mut cc = core_config.clone();
+        cc.threshold.as_mut().unwrap().threshold = 42;
+        let s = cc.validate().unwrap_err().to_string();
+        assert!(s.contains("Got t=42 but expected t=1 for n=4 parties"));
+
+        let mut cc = core_config.clone();
+        cc.threshold.as_mut().unwrap().my_id = 9001;
+        let s = cc.validate().unwrap_err().to_string();
+        assert!(s.contains("ID cannot be greater than the number of parties (4), but was 9001."));
+
+        let mut cc = core_config.clone();
+        cc.threshold.as_mut().unwrap().listen_address = "".to_string();
+        let s = cc.validate().unwrap_err().to_string();
+        assert!(s.contains("Validation error:"));
+
+        let mut cc = core_config.clone();
+        cc.threshold.as_mut().unwrap().peers.as_mut().unwrap()[2].party_id = 123;
+        let s = cc.validate().unwrap_err().to_string();
+        assert!(s.contains("Peer party ID cannot be greater than the number of parties (4)."));
     }
 
     #[test]
