@@ -639,7 +639,7 @@ pub(crate) mod setup {
         .await;
     }
 
-    pub(crate) async fn ensure_testing_material_exists(path: Option<&Path>) {
+    pub async fn ensure_testing_material_exists(path: Option<&Path>) {
         testing_material(path).await;
     }
 
@@ -791,8 +791,97 @@ pub(crate) mod setup {
     }
 
     #[cfg(feature = "slow_tests")]
-    pub(crate) async fn ensure_default_material_exists() {
+    pub async fn ensure_default_material_exists() {
         default_material().await;
+    }
+
+    /// Enhanced version of ensure_testing_material_exists that only checks for existence
+    /// without generating material. Used in the new isolated test approach.
+    pub(crate) async fn ensure_testing_material_exists_check_only(path: Option<&Path>) -> bool {
+        use crate::vault::storage::{file::FileStorage, StorageReader, StorageType};
+        use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+
+        let base_path = path;
+
+        // Check if basic directory structure exists
+        if let Some(path) = base_path {
+            if !path.exists() {
+                return false;
+            }
+        }
+
+        // Check for signing keys (basic requirement)
+        let priv_storage = match FileStorage::new(base_path, StorageType::PRIV, None) {
+            Ok(storage) => storage,
+            Err(_) => return false,
+        };
+
+        let signing_keys_exist = priv_storage
+            .data_exists(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
+            .await
+            .unwrap_or(false);
+
+        if !signing_keys_exist {
+            return false;
+        }
+
+        // Check for basic FHE keys
+        let pub_storage = match FileStorage::new(base_path, StorageType::PUB, None) {
+            Ok(storage) => storage,
+            Err(_) => return false,
+        };
+
+        let fhe_keys_exist = pub_storage
+            .data_exists(&TEST_CENTRAL_KEY_ID, &PubDataType::PublicKey.to_string())
+            .await
+            .unwrap_or(false);
+
+        signing_keys_exist && fhe_keys_exist
+    }
+
+    /// Enhanced version of ensure_default_material_exists that only checks for existence
+    #[cfg(feature = "slow_tests")]
+    pub(crate) async fn ensure_default_material_exists_check_only(path: Option<&Path>) -> bool {
+        use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM};
+        use crate::vault::storage::{file::FileStorage, StorageReader, StorageType};
+        use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+
+        let base_path = path;
+
+        // Check if basic directory structure exists
+        if let Some(path) = base_path {
+            if !path.exists() {
+                return false;
+            }
+        }
+
+        // Check for signing keys
+        let priv_storage = match FileStorage::new(base_path, StorageType::PRIV, None) {
+            Ok(storage) => storage,
+            Err(_) => return false,
+        };
+
+        let signing_keys_exist = priv_storage
+            .data_exists(&SIGNING_KEY_ID, &PrivDataType::SigningKey.to_string())
+            .await
+            .unwrap_or(false);
+
+        if !signing_keys_exist {
+            return false;
+        }
+
+        // Check for default FHE keys
+        let pub_storage = match FileStorage::new(base_path, StorageType::PUB, None) {
+            Ok(storage) => storage,
+            Err(_) => return false,
+        };
+
+        let fhe_keys_exist = pub_storage
+            .data_exists(&DEFAULT_CENTRAL_KEY_ID, &PubDataType::PublicKey.to_string())
+            .await
+            .unwrap_or(false);
+
+        signing_keys_exist && fhe_keys_exist
     }
 }
 

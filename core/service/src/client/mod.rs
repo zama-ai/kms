@@ -25,5 +25,6 @@ pub mod user_decryption_wasm;
 pub(crate) mod tests {
     mod centralized;
     mod common;
+    mod isolated_test_example;
     mod threshold;
 }

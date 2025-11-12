@@ -1,6 +1,8 @@
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
         pub mod test_tools;
+        pub mod test_material_spec;
+        pub mod test_material_manager;
 
         use crate::dummy_domain;
         use crate::engine::base::INSECURE_PREPROCESSING_ID;

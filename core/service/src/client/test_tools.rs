@@ -405,6 +405,79 @@ pub async fn setup_threshold<
     (server_handles, client_handles)
 }
 
+/// Setup_threshold that supports isolated test material
+#[cfg(any(test, feature = "testing"))]
+pub async fn setup_threshold_isolated<
+    PubS: Storage + Clone + Sync + Send + 'static,
+    PrivS: Storage + Clone + Sync + Send + 'static,
+>(
+    threshold: u8,
+    pub_storage: Vec<PubS>,
+    priv_storage: Vec<PrivS>,
+    vaults: Vec<Option<Vault>>,
+    run_prss: bool,
+    rate_limiter_conf: Option<RateLimiterConfig>,
+    decryption_mode: Option<DecryptionMode>,
+    test_material_path: Option<&std::path::Path>,
+) -> (
+    HashMap<u32, ServerHandle>,
+    HashMap<u32, CoreServiceEndpointClient<Channel>>,
+) {
+    use crate::util::key_setup::test_material_manager::TestMaterialManager;
+    use crate::util::key_setup::test_material_spec::TestMaterialSpec;
+    #[cfg(any(test, feature = "testing"))]
+    use tempfile::TempDir;
+
+    let num_parties = priv_storage.len();
+
+    // If test_material_path is provided, set up isolated test material
+    let _temp_dir: Option<TempDir> = if let Some(source_path) = test_material_path {
+        let manager = TestMaterialManager::new(Some(source_path.to_path_buf()));
+        let spec = TestMaterialSpec::threshold_basic(num_parties);
+
+        let temp_dir = manager
+            .setup_test_material(&spec, "threshold_test")
+            .await
+            .expect("Failed to setup isolated test material");
+
+        tracing::info!(
+            "Using isolated test material from: {}",
+            temp_dir.path().display()
+        );
+        Some(temp_dir)
+    } else {
+        None
+    };
+
+    // Setup the threshold scheme
+    let server_handles = setup_threshold_no_client::<PubS, PrivS>(
+        threshold,
+        pub_storage,
+        priv_storage,
+        vaults,
+        run_prss,
+        rate_limiter_conf,
+        decryption_mode,
+    )
+    .await;
+
+    assert_eq!(server_handles.len(), num_parties);
+    let mut client_handles = HashMap::new();
+
+    for (i, server_handle) in &server_handles {
+        let url = format!(
+            "{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{}",
+            server_handle.service_port()
+        );
+        let uri = Uri::from_str(&url).unwrap();
+        let channel = connect_with_retry(uri).await;
+        client_handles.insert(*i, CoreServiceEndpointClient::new(channel));
+    }
+
+    tracing::info!("Client connected to servers with isolated test material");
+    (server_handles, client_handles)
+}
+
 /// Setup a client and a server running with non-persistent storage.
 pub async fn setup_centralized_no_client<
     PubS: Storage + Sync + Send + 'static,
@@ -487,6 +560,60 @@ pub(crate) async fn setup_centralized<
     let uri = Uri::from_str(&url).unwrap();
     let channel = connect_with_retry(uri).await;
     let client = CoreServiceEndpointClient::new(channel);
+    (server_handle, client)
+}
+
+/// Centralized setup that supports isolated test material
+#[cfg(any(test, feature = "testing"))]
+pub async fn setup_centralized_isolated<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+>(
+    pub_storage: PubS,
+    priv_storage: PrivS,
+    backup_vault: Option<Vault>,
+    rate_limiter_conf: Option<RateLimiterConfig>,
+    test_material_path: Option<&std::path::Path>,
+) -> (
+    ServerHandle,
+    CoreServiceEndpointClient<tonic::transport::Channel>,
+) {
+    use crate::util::key_setup::test_material_manager::TestMaterialManager;
+    use crate::util::key_setup::test_material_spec::TestMaterialSpec;
+    #[cfg(any(test, feature = "testing"))]
+    use tempfile::TempDir;
+
+    // If test_material_path is provided, set up isolated test material
+    let _temp_dir: Option<TempDir> = if let Some(source_path) = test_material_path {
+        let manager = TestMaterialManager::new(Some(source_path.to_path_buf()));
+        let spec = TestMaterialSpec::centralized_basic();
+
+        let temp_dir = manager
+            .setup_test_material(&spec, "centralized_test")
+            .await
+            .expect("Failed to setup isolated test material");
+
+        tracing::info!(
+            "Using isolated test material from: {}",
+            temp_dir.path().display()
+        );
+        Some(temp_dir)
+    } else {
+        None
+    };
+
+    let server_handle =
+        setup_centralized_no_client(pub_storage, priv_storage, backup_vault, rate_limiter_conf)
+            .await;
+    let url = format!(
+        "{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{}",
+        server_handle.service_port
+    );
+    let uri = Uri::from_str(&url).unwrap();
+    let channel = connect_with_retry(uri).await;
+    let client = CoreServiceEndpointClient::new(channel);
+
+    tracing::info!("Centralized server setup with isolated test material");
     (server_handle, client)
 }
 

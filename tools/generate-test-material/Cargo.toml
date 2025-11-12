@@ -1,0 +1,39 @@
+[package]
+name = "generate-test-material"
+version = "0.1.0"
+edition = "2021"
+description = "Pre-generates test material for KMS tests"
+
+[[bin]]
+name = "generate-test-material"
+path = "src/main.rs"
+
+[dependencies]
+# Core KMS dependencies
+kms = { path = "../../core/service", features = ["testing", "non-wasm"] }
+kms-grpc = { path = "../../core/grpc" }
+
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+
+# CLI and configuration
+clap = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+# Error handling
+anyhow = { workspace = true }
+
+# File system operations
+tempfile = { workspace = true }
+
+# Path utilities
+path-absolutize = "3.0"
+
+[features]
+default = []
+slow_tests = ["kms/slow_tests"]
