@@ -9,6 +9,7 @@ license = "BSD-3-Clause-Clear"
 [dependencies]
 # Import the base backward-compatibility crate for shared types and utilities
 backward-compatibility = { path = ".." }
+# TODO the references in this file to 7a1445d4dc98a2bde9ce490063e3230c7ccd9481 should be updated to the release tag of 0.13.0 once it is made
 bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "7a1445d4dc98a2bde9ce490063e3230c7ccd9481" }
 
 # NOTE: Some dependencies below are duplicated from ../Cargo.toml
