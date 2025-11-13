@@ -11,8 +11,7 @@ use kms_lib::{
     consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID},
     cryptography::{
         attestation::{make_security_module, SecurityModule, SecurityModuleProxy},
-        internal_crypto_types::LegacySerialization,
-        signatures::{PrivateSigKey, PublicSigKey},
+        signatures::PrivateSigKey,
     },
     engine::{
         base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms, run_server,
@@ -24,7 +23,7 @@ use kms_lib::{
         keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
         storage::{
             crypto_material::get_core_signing_key, make_storage, read_text_at_request_id,
-            s3::build_s3_client, StorageCache, StorageType,
+            s3::build_s3_client, StorageCache, StorageReader, StorageType,
         },
         Vault,
     },
@@ -71,12 +70,6 @@ struct KmsArgs {
         help = "path to the configuration file"
     )]
     config_file: String,
-    #[clap(
-        long,
-        short = 'r',
-        help = "Hex encoding of the KMS node's current verification key, fetched from the gateway"
-    )]
-    recovery: Option<String>,
 }
 
 async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener {
@@ -427,7 +420,7 @@ async fn main_exec() -> anyhow::Result<()> {
     )
     .inspect_err(|e| tracing::warn!("Could not initialize public storage: {e}"))?;
     let public_vault = Vault {
-        storage: public_storage,
+        storage: public_storage.clone(),
         keychain: None,
     };
 
@@ -538,25 +531,22 @@ async fn main_exec() -> anyhow::Result<()> {
         Some(_) => KMSType::Threshold,
         None => KMSType::Centralized,
     };
-    let base_kms = match &args.recovery {
-        Some(verf_key_hex) => {
+    // load key
+    let base_kms = match get_core_signing_key(&private_vault).await {
+        Ok(sk) => BaseKmsStruct::new(mode, sk)?,
+        Err(e) => {
+            tracing::warn!("Error loading signing key: {e:?}");
             tracing::warn!(
-                "ENTERING RECOVERY MODE!!!!\nOnly backup recovery operations are allowed!"
+                "SIGNING KEY NOT AVAILABLE, ENTERING RECOVERY MODE!!!!\nOnly backup recovery operations are possible!\n
+                Make sure to validate that the current verification key in public storage is EXACTLY equal to the one on the gateway before proceeding!"
             );
-            let bin_verf_key = hex::decode(verf_key_hex).map_err(|e| {
-                anyhow::anyhow!("Failed to decode recovery verification key from hex string: {e:?}")
-            })?;
-            let verf_key = PublicSigKey::from_legacy_bytes(&bin_verf_key).map_err(|e| {
-                anyhow::anyhow!("Failed to parse recovery verification key from bytes: {e:?}")
-            })?;
+            let verf_key = public_storage
+                .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
+                .await?;
             BaseKmsStruct::new_no_signing_key(mode, verf_key)
         }
-        None => {
-            // load signing key
-            let sk = get_core_signing_key(&private_vault).await?;
-            BaseKmsStruct::new(mode, sk)?
-        }
     };
+
     // compute corresponding public key and derive address from private sig key
     #[allow(deprecated)]
     let pk_bytes = base_kms.verf_key().pk().to_encoded_point(false).to_bytes();
@@ -569,9 +559,9 @@ async fn main_exec() -> anyhow::Result<()> {
     match core_config.threshold {
         Some(threshold_config) => {
             let mpc_listener = make_mpc_listener(&threshold_config).await;
-            // Setup TLS if configured and we are not in recovery mode
-            let tls_identity = if let (Some(tls_config), None) =
-                (&threshold_config.tls, &args.recovery)
+            // Setup TLS if configured and we have a singing key
+            let tls_identity = if let (Some(tls_config), true) =
+                (&threshold_config.tls, base_kms.sig_key().is_ok())
             {
                 match &threshold_config.peers {
                     Some(peers) => Some(

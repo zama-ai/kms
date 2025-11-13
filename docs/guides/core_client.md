@@ -198,6 +198,8 @@ path = "./backup_vault"
 ```
 
 #### Recovery
+WARNING: DURING RECOVERY WE ASSUME THE KMS DOES NOT HAVE ACCESS TO IT'S PRIVATE STORAGE. HENCE IT IS CRUCIAL THAT THE `VerfKey` IN THE PUBLIC STORAGE OF THE KMS IS VALIDATED TO BE BYTE-EQUAL TO THE CURRENT VERIFICATION KEY ON THE GATEWAY BEFORE STARTING! THIS VALIDATION IS NEEDED SINCE WE DO NOT ASSUME THAT THE PUBLIC STORAGE CANNOT BE MODIFIED BY AN ADVERSARY, BUT DURING RECOVERY THE VERIFICATION KEY OF THE KMS IS THE TRUST ANCHOR!
+
 Recovery with custodians is rather complex and requires multiple steps and manually transferring data in a trusted manner. For this reason, we walk through all the steps needed from the beginning to the end in order to set up custodian-based backup and recovery.
 
 Assuming the TOML file has been appropriately modified to allow custodian-based backup, as discussed above, then the steps needed are as follows:
@@ -251,15 +253,6 @@ Assuming the TOML file has been appropriately modified to allow custodian-based 
   ```{bash}
   $ cargo run -- -f config/client_local_threshold.toml backup-restore
   ```
-
-### Pitfalls
-One subtle problem remains in restoring, regardless of using the import/export approach or the custodian approach; the fact that a KMS server cannot boot without the existence of a signing key in the private storage. Furthermore, until contexts are fully implemented, it is the case that all signing keys will have the static name `60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee`.
-Hence to allow booting the KMS server for restoring, it is recommended to use the KMS key generation tool to generate a temporary signing key s.t. the KMS server will boot.
-After the KMS server has booted the signing key should manually be removed from the private file system such that the true signing key, which is backed up, can be restored.
-
-Another subtle pitfall is the fact that custodian setup messages will _only_ be valid for 1 hour for security reasons. Hence `custodian-recovery-init` will fail if the setup messages are more than 1 hour old.
-
-Ensure that the correct KMS verification keys are used. Since keys are not overwritten, they must be deleted manually in order to generate new ones.
 
 ### Concrete e2e example for custodian backup
 For completeness we here list all the steps needed to carry out for custodian-based manual recovery. Hence this can be considered a manual feasibility test. We present these steps under the assumption that everything is running on a local machine using docker, after having checked out the source code of the project.

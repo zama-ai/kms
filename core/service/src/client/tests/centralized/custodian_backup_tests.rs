@@ -7,7 +7,6 @@ use crate::client::tests::centralized::custodian_context_tests::run_new_cus_cont
 use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized;
 use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
-use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::util::key_setup::test_tools::{purge_backup, read_backup_files};
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};

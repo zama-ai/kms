@@ -31,9 +31,7 @@ cfg_if::cfg_if! {
 use crate::backup::BackupCiphertext;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 use crate::consts::SIGNING_KEY_ID;
-use crate::cryptography::internal_crypto_types::{LegacySerialization, WrappedDKGParams};
-#[cfg(feature = "insecure")]
-use crate::cryptography::signatures::PublicSigKey;
+use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::util::key_setup::test_tools::{purge_backup, read_backup_files};
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,
@@ -328,8 +326,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 
     // Execute the backup restoring
     let mut rng = AesRng::seed_from_u64(13);
-    let recovery_req_resp =
-        run_custodian_recovery_init(&kms_clients, internal_client.get_server_pks().unwrap()).await;
+    let recovery_req_resp = run_custodian_recovery_init(&kms_clients).await;
     assert_eq!(recovery_req_resp.len(), amount_parties);
     let cus_out = emulate_custodian(&mut rng, recovery_req_resp, mnemnonics, test_path).await;
     let recovery_output = run_custodian_backup_recovery(&kms_clients, &cus_out).await;
@@ -459,7 +456,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     purge_priv(test_path).await;
 
     // Reboot the servers
-    let (_kms_servers, kms_clients, internal_client) = threshold_handles_custodian_backup(
+    let (_kms_servers, kms_clients, _internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
         true,
@@ -474,8 +471,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
 
     // Execute the backup restoring
     let mut rng = AesRng::seed_from_u64(13);
-    let recovery_req_resp =
-        run_custodian_recovery_init(&kms_clients, internal_client.get_server_pks().unwrap()).await;
+    let recovery_req_resp = run_custodian_recovery_init(&kms_clients).await;
     assert_eq!(recovery_req_resp.len(), amount_parties);
     let mut cus_out = emulate_custodian(&mut rng, recovery_req_resp, mnemnonics, test_path).await;
 
@@ -531,7 +527,6 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
 #[cfg(feature = "insecure")]
 async fn run_custodian_recovery_init(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    server_verf_keys: &HashMap<u32, PublicSigKey>,
 ) -> Vec<RecoveryRequest> {
     let amount_parties = kms_clients.len();
     let mut tasks_gen = JoinSet::new();
