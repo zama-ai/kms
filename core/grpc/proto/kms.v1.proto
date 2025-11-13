@@ -592,10 +592,8 @@ message OperatorPublicKey {
 }
 
 message CustodianRecoveryInitRequest {
-  // The verification keys of the operator as per the gateway's ground truth.
-  bytes public_verf_key = 1;
   // Allow overwriting in case an ephemeral key has already been set
-  bool overwrite_ephemeral_key = 2;
+  bool overwrite_ephemeral_key = 1;
 }
 
 // The data constructed by a single custodian to help a single operator recover their private master decryption key

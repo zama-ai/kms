@@ -1,6 +1,5 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
-use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::engine::utils::query_key_material_availability;
 use crate::{
     anyhow_error_and_log,
@@ -217,14 +216,7 @@ where
                 })?
         };
         // Validate that the recovery material is correct
-        let my_verf_key = PublicSigKey::from_legacy_bytes(inner.public_verf_key.as_slice())
-            .map_err(|e| {
-                Status::new(
-                    tonic::Code::InvalidArgument,
-                    format!("Failed to parse provided public verification key: {e}"),
-                )
-            })?;
-        if !recovery_material.validate(&my_verf_key) {
+        if !recovery_material.validate(&self.base_kms.verf_key()) {
             return Err(Status::new(
                 tonic::Code::InvalidArgument,
                 "Could not validate the signature on the recovery material",

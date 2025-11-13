@@ -8,7 +8,6 @@ use anyhow::anyhow;
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
-use itertools::Itertools;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenResult, CustodianContext, CustodianRecoveryInitRequest,
     CustodianRecoveryOutput, CustodianRecoveryRequest, Empty, FheParameter, KeyGenPreprocResult,
@@ -24,8 +23,7 @@ use kms_lib::backup::operator::InternalRecoveryRequest;
 use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
 use kms_lib::cryptography::encryption::PkeSchemeType;
-use kms_lib::cryptography::internal_crypto_types::LegacySerialization;
-use kms_lib::cryptography::signatures::{recover_address_from_ext_signature, PublicSigKey};
+use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
 use kms_lib::engine::base::{
     compute_public_decryption_message, safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS,
     DSEP_PUBDATA_KEY,
@@ -570,10 +568,6 @@ pub struct RecoveryInitParameters {
     /// If false, the call will be indempotent, if true, this will not be the case
     #[clap(long, short = 'o', default_value_t = false)]
     pub overwrite_ephemeral_key: bool,
-    /// Paths to the pre-validated operator verification keys
-    /// The paths must be sorted in monotonically increasing order of party ID
-    #[clap(long, short = 'k')]
-    pub operator_verf_key_paths: Vec<PathBuf>,
     /// Paths to write the operator responses
     /// They may be unordered
     #[clap(long, short = 'r')]
@@ -1516,19 +1510,14 @@ async fn do_new_custodian_context(
 
 async fn do_custodian_recovery_init(
     core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    public_verf_keys: &[PublicSigKey],
     overwrite_ephemeral_key: bool,
 ) -> anyhow::Result<Vec<InternalRecoveryRequest>> {
     let mut req_tasks = JoinSet::new();
-    // Sort so we ensure we have endpoints sorted according to party ID, like the verification key paths
-    for (party_id, verf_key) in core_endpoints.keys().sorted().zip(public_verf_keys) {
-        // We know the party ID exists since we are iterating over the keys
-        let mut cur_client = core_endpoints.get(party_id).unwrap().clone();
-        let cur_public_verf_key = verf_key.to_legacy_bytes().unwrap();
+    for (_party_id, ce) in core_endpoints.iter() {
+        let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client
                 .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
-                    public_verf_key: cur_public_verf_key,
                     overwrite_ephemeral_key,
                 }))
                 .await
@@ -2479,31 +2468,15 @@ pub async fn execute_cmd(
         }
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
             overwrite_ephemeral_key,
-            operator_verf_key_paths,
             operator_recovery_resp_paths,
         }) => {
-            assert_eq!(
-                operator_verf_key_paths.len(),
-                num_parties,
-                "Number of operator verification key paths must match number of operators in the configuration files"
-            );
             assert_eq!(
                 operator_recovery_resp_paths.len(),
                 num_parties,
                 "Number of operator recovery response paths must match number of operators in the configuration files"
             );
-            let mut verf_keys = Vec::new();
-            // Note that it is crucial the verification keys are ordered in monotonically increasing order of operator index
-            for verf_key_path in operator_verf_key_paths {
-                let verf_key: PublicSigKey = safe_read_element_versioned(&verf_key_path).await?;
-                verf_keys.push(verf_key);
-            }
-            let res = do_custodian_recovery_init(
-                &core_endpoints_req,
-                &verf_keys,
-                *overwrite_ephemeral_key,
-            )
-            .await?;
+            let res =
+                do_custodian_recovery_init(&core_endpoints_req, *overwrite_ephemeral_key).await?;
             assert_eq!(res.len(), operator_recovery_resp_paths.len());
             for (op_zero_idx, cur_path) in operator_recovery_resp_paths.iter().enumerate() {
                 let cur_res = res

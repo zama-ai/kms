@@ -29,7 +29,6 @@ attestation-doc-validation.workspace = true
 bytes.workspace = true
 clap = { workspace = true, features = ["derive"] }
 hex.workspace = true
-itertools = { workspace = true}
 kms = { workspace = true, default-features = false, features = [
     "non-wasm",
     "testing",

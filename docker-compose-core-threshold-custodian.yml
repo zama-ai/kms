@@ -1,11 +1,9 @@
-name: zama-core-threshold-custodian
+name: zama-core-threshold
 # TODO: proper networking between nodes
-# add keygen, tls, and pushing keys to s3 mock
 
 services:
-  # 1. Generate TLS certificates
-  # NOTE: for now we do the key-generation here because kms-server requires one to start
-  dev-kms-core-certs:
+  # 1. We generate signing keys and CA certificates for all nodes
+  dev-kms-core-gen-signing-keys-ca-certs:
     image: ghcr.io/zama-ai/kms/core-service:latest-dev
     build:
       context: .
@@ -18,16 +16,36 @@ services:
         RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
     env_file:
       - "docker-compose-kms-core.env"
-    entrypoint: >
-      /bin/sh -c "
-      echo \"Starting TLS certificates generation with wildcard\" &&
-      kms-gen-tls-certs --wildcard --ca-names dev-kms-core-1.com dev-kms-core-2.com dev-kms-core-3.com dev-kms-core-4.com &&
-      echo \"TLS certificates generated\" &&
-      exit 0
-      "
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
+        export AWS_ACCESS_KEY_ID &&
+        AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
+        export AWS_SECRET_ACCESS_KEY &&
+        echo 'Starting signing key and CA certificates generation for all cores' &&
+        for i in 1 2 3 4; do \
+          kms-gen-keys --mock-enclave --aws-region us-east-1 \
+            --public-storage s3 --public-s3-bucket kms \
+            --aws-s3-endpoint http://dev-s3-mock:9000 \
+            --private-storage file --private-file-path ./keys \
+            --cmd signing-keys \
+            threshold \
+            --signing-key-party-id $$i --tls-subject dev-kms-core-$$i.com \
+            --tls-wildcard && \
+            wget -O ./certs/cert_dev-kms-core-$$i.com.pem ftp://$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY@dev-s3-mock:8021/kms/PUB-p$$i/CACert/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee && \
+            cat ./certs/cert_dev-kms-core-$$i.com.pem; \
+        done &&
+        exit 0
     volumes:
+      - keys:/app/kms/core/service/keys
       - certs:/app/kms/core/service/certs
-
+      - minio_secrets:/minio_secrets
+    depends_on:
+      dev-s3-mock-setup:
+        condition: service_completed_successfully
+  
   # 2. We start all cores
   dev-kms-core-1:
     hostname: abcd.dev-kms-core-1.com
@@ -53,12 +71,13 @@ services:
       start_period: 1s
     volumes:
       - ./core/service/config/:/app/kms/core/service/config
+      - keys:/app/kms/core/service/keys
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
-      dev-kms-core-certs:
+      dev-kms-core-gen-signing-keys-ca-certs:
         condition: service_completed_successfully
     env_file:
       - "docker-compose-kms-core.env"
@@ -72,19 +91,10 @@ services:
     # Credentials are set with both credentials file and env-var
     entrypoint: >
       /bin/sh -c "
-      export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
-      export AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
-      mkdir -p ~/.aws/ &&
-      echo '[default]' > ~/.aws/credentials &&
-      echo 'aws_access_key_id = ${AWS_ACCESS_KEY_ID}' >> ~/.aws/credentials &&
-      echo 'aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}' >> ~/.aws/credentials &&
-      cat ~/.aws/credentials &&
-      echo '[default]' > ~/.aws/config &&
-      echo 'output=json' >> ~/.aws/config &&
-      echo 'region=us-east-1' >> ~/.aws/config &&
-      cat ~/.aws/config &&
-      echo 'Generating signing keys' &&
-      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 1 &&
+      AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
+      export AWS_ACCESS_KEY_ID &&
+      AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
+      export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
       kms-server --config-file config/compose_1.toml
       "
@@ -112,28 +122,26 @@ services:
       start_period: 1s
     volumes:
       - ./core/service/config/:/app/kms/core/service/config
+      - keys:/app/kms/core/service/keys
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
     env_file:
       - "docker-compose-kms-core.env"
     environment:
       - DOCKER_BUILDKIT=1
-      # Observe there is no field called `enabled` in the SecretSharingKeychain structure,
-      # but it seems it is the only way we can set the SecretSharingKeychain structure through environment variables
-      - KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true
     entrypoint: >
       /bin/sh -c "
-      export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
-      export AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
-      echo 'Generating signing keys' &&
-      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 2 &&
+      AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
+      export AWS_ACCESS_KEY_ID &&
+      AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
+      export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
       kms-server --config-file config/compose_2.toml
       "
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
-      dev-kms-core-certs:
+      dev-kms-core-gen-signing-keys-ca-certs:
         condition: service_completed_successfully
 
   dev-kms-core-3:
@@ -159,28 +167,26 @@ services:
       start_period: 1s
     volumes:
       - ./core/service/config/:/app/kms/core/service/config
+      - keys:/app/kms/core/service/keys
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
     env_file:
       - "docker-compose-kms-core.env"
     environment:
       - DOCKER_BUILDKIT=1
-      # Observe there is no field called `enabled` in the SecretSharingKeychain structure,
-      # but it seems it is the only way we can set the SecretSharingKeychain structure through environment variables
-      - KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true
     entrypoint: >
       /bin/sh -c "
-      export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
-      export AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
-      echo 'Generating signing keys' &&
-      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 3 &&
+      AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
+      export AWS_ACCESS_KEY_ID &&
+      AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
+      export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
       kms-server --config-file config/compose_3.toml
       "
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
-      dev-kms-core-certs:
+      dev-kms-core-gen-signing-keys-ca-certs:
         condition: service_completed_successfully
 
   dev-kms-core-4:
@@ -206,28 +212,26 @@ services:
       start_period: 1s
     volumes:
       - ./core/service/config/:/app/kms/core/service/config
+      - keys:/app/kms/core/service/keys
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
     env_file:
       - "docker-compose-kms-core.env"
     environment:
       - DOCKER_BUILDKIT=1
-      # Observe there is no field called `enabled` in the SecretSharingKeychain structure,
-      # but it seems it is the only way we can set the SecretSharingKeychain structure through environment variables
-      - KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true
     entrypoint: >
       /bin/sh -c "
-      export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
-      export AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
-      echo 'Generating signing keys' &&
-      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 4 &&
+      AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
+      export AWS_ACCESS_KEY_ID &&
+      AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
+      export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
       kms-server --config-file config/compose_4.toml
       "
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
-      dev-kms-core-certs:
+      dev-kms-core-gen-signing-keys-ca-certs:
         condition: service_completed_successfully
 
   # 3. Initialize the different cores
@@ -272,7 +276,13 @@ services:
     # For better interactive debugging
     stdin_open: true
     tty: true
+    volumes:
+      - keys:/app/kms/core/service/keys
+      - certs:/app/kms/core/service/certs
+      - minio_secrets:/minio_secrets
 
 volumes:
+  keys:
   certs:
+  minio_data:
   minio_secrets:
