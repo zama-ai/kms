@@ -241,9 +241,16 @@ mod tests {
 
     #[test]
     fn test_threshold_config() {
-        let core_config: CoreConfig = init_conf("config/default_2").unwrap();
-        core_config.validate().unwrap(); // core config must be valid
-        let threshold_config = core_config.threshold.unwrap();
+        let core_config: CoreConfig =
+            init_conf("config/default_2").expect("default_2 config must parse");
+        core_config
+            .validate()
+            .expect("default_2 config should validate");
+
+        let threshold_config = core_config
+            .threshold
+            .as_ref()
+            .expect("threshold section required for threshold config");
         assert_eq!(core_config.service.listen_address, "0.0.0.0");
         assert_eq!(core_config.service.listen_port, 50200);
         assert_eq!(threshold_config.listen_address, "0.0.0.0");
@@ -251,43 +258,36 @@ mod tests {
         assert_eq!(threshold_config.threshold, 1);
         assert_eq!(threshold_config.num_sessions_preproc, Some(2));
 
-        let peers = threshold_config.peers.unwrap();
-
+        let peers = threshold_config
+            .peers
+            .as_ref()
+            .expect("peers must be present");
         assert_eq!(peers.len(), 4);
-        assert_eq!(peers[0].address, "p1");
-        assert_eq!(peers[0].port, 50001);
-        assert_eq!(peers[0].party_id, 1);
-        assert_eq!(
-            peers[0].tls_cert,
-            Some(TlsCert::Path(PathBuf::from(r"certs/cert_p1.pem")))
-        );
-        assert_eq!(peers[1].address, "p2");
-        assert_eq!(peers[1].port, 50002);
-        assert_eq!(peers[1].party_id, 2);
-        assert_eq!(
-            peers[1].tls_cert,
-            Some(TlsCert::Path(PathBuf::from(r"certs/cert_p2.pem")))
-        );
-        assert_eq!(peers[2].address, "p3");
-        assert_eq!(peers[2].port, 50003);
-        assert_eq!(peers[2].party_id, 3);
-        assert_eq!(
-            peers[2].tls_cert,
-            Some(TlsCert::Path(PathBuf::from(r"certs/cert_p3.pem")))
-        );
-        assert_eq!(peers[3].address, "p4");
-        assert_eq!(peers[3].port, 50004);
-        assert_eq!(peers[3].party_id, 4);
-        assert_eq!(
-            peers[3].tls_cert,
-            Some(TlsCert::Path(PathBuf::from(r"certs/cert_p4.pem")))
-        );
+        for (i, (addr, port)) in [("p1", 50001), ("p2", 50002), ("p3", 50003), ("p4", 50004)]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(peers[i].address, addr, "peer[{i}] address mismatch");
+            assert_eq!(peers[i].port, port, "peer[{i}] port mismatch");
+            assert_eq!(peers[i].party_id, i + 1, "peer[{i}] party_id mismatch");
+            assert!(
+                peers[i].tls_cert.is_some(),
+                "peer[{i}] expected a TLS cert path"
+            );
+            let cert = Some(TlsCert::Path(PathBuf::from(format!(
+                "certs/cert_{addr}.pem"
+            ))));
+            assert_eq!(peers[i].tls_cert, cert, "peer[{i}] TLS cert mismatch");
+        }
 
         assert!(threshold_config.preproc_redis.is_none());
-        let tls_config = threshold_config.tls.unwrap();
+        let tls_config = threshold_config
+            .tls
+            .as_ref()
+            .expect("tls config must be present");
         assert_eq!(
             tls_config,
-            TlsConf::Manual {
+            &TlsConf::Manual {
                 cert: TlsCert::Path(PathBuf::from(r"certs/cert_p2.pem")),
                 key: TlsKey::Path(PathBuf::from(r"certs/key_p2.pem")),
             }
@@ -345,8 +345,10 @@ mod tests {
     #[test]
     fn test_threshold_config_negative() {
         // the test below assumes we're using a valid config with 4 parties and threshold 1, which is the case for the default configs
-        let core_config: CoreConfig = init_conf("config/default_2").unwrap();
-        core_config.validate().unwrap(); // inital core config must be valid
+        let core_config: CoreConfig = init_conf("config/default_2").expect("config must parse");
+        core_config
+            .validate()
+            .expect("baseline config must validate");
 
         // clone the config, so we just need to read and parse it once
         let mut cc = core_config.clone();
@@ -394,11 +396,13 @@ mod tests {
     #[test]
     fn test_centralized_config() {
         let core_config: CoreConfig = init_conf("config/default_centralized").unwrap();
-        core_config.validate().unwrap();
+        core_config
+            .validate()
+            .expect("centralized config must validate");
         assert_eq!(core_config.service.listen_address, "0.0.0.0");
         assert_eq!(core_config.service.listen_port, 50051);
 
-        let private_vault = core_config.private_vault.unwrap();
+        let private_vault = core_config.private_vault.as_ref().expect("private_vault");
 
         assert_eq!(
             private_vault.storage,
@@ -406,7 +410,7 @@ mod tests {
                 path: PathBuf::from("./keys"),
             })
         );
-        assert!(private_vault.keychain.is_none());
+        assert!(private_vault.keychain.is_none(), "no keychain expected");
         assert_eq!(
             core_config.public_vault.unwrap().storage,
             Storage::File(FileStorage {
@@ -416,6 +420,10 @@ mod tests {
         assert_eq!(
             core_config.rate_limiter_conf.unwrap(),
             RateLimiterConfig::default()
+        );
+        assert!(
+            core_config.threshold.is_none(),
+            "threshold section should be absent in centralized config"
         );
     }
 }
