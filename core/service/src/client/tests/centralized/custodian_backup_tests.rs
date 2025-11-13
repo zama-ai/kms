@@ -220,7 +220,6 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let mut rng = AesRng::seed_from_u64(13);
     let recovery_req_resp = kms_client
         .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
-            public_verf_key: sig_key.verf_key().to_legacy_bytes().unwrap(),
             overwrite_ephemeral_key: false,
         }))
         .await
@@ -329,7 +328,6 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     let recovery_req_resp = kms_client
         .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
             overwrite_ephemeral_key: false,
-            public_verf_key: sig_key.verf_key().to_legacy_bytes().unwrap(),
         }))
         .await
         .unwrap()

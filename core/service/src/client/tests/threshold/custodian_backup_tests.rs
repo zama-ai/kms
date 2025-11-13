@@ -537,12 +537,10 @@ async fn run_custodian_recovery_init(
     let mut tasks_gen = JoinSet::new();
     for i in 1..=amount_parties as u32 {
         let mut cur_client = kms_clients.get(&i).unwrap().clone();
-        let cur_verf_key = server_verf_keys.get(&i).unwrap().to_legacy_bytes().unwrap();
         tasks_gen.spawn(async move {
             cur_client
                 .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
                     overwrite_ephemeral_key: false,
-                    public_verf_key: cur_verf_key,
                 }))
                 .await
         });
