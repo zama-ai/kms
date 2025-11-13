@@ -607,10 +607,6 @@ pub async fn purge_recovery_material(path: Option<&Path>, amount_parties: usize)
                 &base_dir.join(PubDataType::RecoveryMaterial.to_string()),
             )
             .await;
-            let _ = tokio::fs::remove_dir_all(
-                &base_dir.join(PubDataType::RecoveryMaterial.to_string()),
-            )
-            .await;
         }
     }
 }

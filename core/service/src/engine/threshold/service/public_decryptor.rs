@@ -575,7 +575,7 @@ impl<
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
         let sigkey = self.base_kms.sig_key().map_err(|e| {
             tonic::Status::internal(format!(
-                "Failed to get signing key for decryption request {req_id}: {e:?}"
+                "Failed to get signing key for public decryption request {req_id}: {e:?}"
             ))
         })?;
         let dec_sig_future = move |_permit| async move {

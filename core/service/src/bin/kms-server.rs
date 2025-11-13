@@ -537,7 +537,7 @@ async fn main_exec() -> anyhow::Result<()> {
         Err(e) => {
             tracing::warn!("Error loading signing key: {e:?}");
             tracing::warn!(
-                "SIGNING KEY NOT AVAILABLE, ENTERING RECOVERY MODE!!!!\nOnly backup recovery operations are possible!\n
+                "SIGNING KEY NOT AVAILABLE, ENTERING RECOVERY MODE!!!!\nOnly backup recovery operations should be done as TLS is not available!\n
                 Make sure to validate that the current verification key in public storage is EXACTLY equal to the one on the gateway before proceeding!"
             );
             let verf_key = public_storage
