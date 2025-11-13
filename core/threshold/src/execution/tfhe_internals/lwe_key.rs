@@ -31,7 +31,7 @@ use crate::{
         sharing::share::Share,
         tfhe_internals::{
             parameters::{compute_min_max_hw, DKGParams, NoiseInfo},
-            utils::compute_hamming_weight_secret_vector,
+            utils::compute_hamming_weight_lwe_sk,
         },
     },
 };
@@ -222,7 +222,7 @@ where
             let mut data;
             loop {
                 data = preprocessing.next_bit_vec(dimension.0)?;
-                let hw = compute_hamming_weight_secret_vector(&data, session)
+                let hw = compute_hamming_weight_lwe_sk(&data, session)
                     .await?
                     .to_scalar()?;
                 if hw <= max_hw && hw >= min_hw {

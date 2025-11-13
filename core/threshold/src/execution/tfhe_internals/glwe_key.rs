@@ -15,9 +15,7 @@ use crate::{
         online::preprocessing::BitPreprocessing,
         runtime::session::BaseSessionHandles,
         sharing::share::Share,
-        tfhe_internals::{
-            parameters::compute_min_max_hw, utils::compute_hamming_weight_secret_vector_by_chunks,
-        },
+        tfhe_internals::{parameters::compute_min_max_hw, utils::compute_hamming_weight_glwe_sk},
     },
 };
 
@@ -71,15 +69,12 @@ where
                     anyhow::bail!("Not enough data in preprocessing to sample a GLWE key");
                 }
 
-                let hws: Vec<Z> = compute_hamming_weight_secret_vector_by_chunks(
-                    &local_data,
-                    session,
-                    polynomial_size.0,
-                )
-                .await?
-                .into_iter()
-                .map(|x| x.to_scalar())
-                .try_collect()?;
+                let hws: Vec<Z> =
+                    compute_hamming_weight_glwe_sk(&local_data, session, polynomial_size)
+                        .await?
+                        .into_iter()
+                        .map(|x| x.to_scalar())
+                        .try_collect()?;
 
                 for (index, hw) in hws.into_iter().enumerate() {
                     if hw <= max_hw && hw >= min_hw {

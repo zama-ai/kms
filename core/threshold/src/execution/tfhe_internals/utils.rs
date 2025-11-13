@@ -4,6 +4,7 @@ use std::collections::HashMap;
 //I put them there as they may not be needed anymore when/if
 //part of this code is integrated in tfhe-rs
 use itertools::Itertools;
+use tfhe::boolean::prelude::PolynomialSize;
 use tfhe::HlCompactable;
 use tfhe::{
     core_crypto::prelude::Numeric, prelude::Tagged, CompactCiphertextList, CompactPublicKey,
@@ -257,7 +258,7 @@ where
 
 /// Computes the Hamming weight of a vector of secret shared values.
 /// Assuming the input vector is indeed shares of bits !
-pub(crate) async fn compute_hamming_weight_secret_vector<
+pub(super) async fn compute_hamming_weight_lwe_sk<
     Z: Ring + ErrorCorrect,
     Ses: BaseSessionHandles,
 >(
@@ -273,16 +274,16 @@ pub(crate) async fn compute_hamming_weight_secret_vector<
 
 /// Computes the Hamming weight of a vector of secret shared values.
 /// Assuming the input vector is indeed shares of bits !
-pub(crate) async fn compute_hamming_weight_secret_vector_by_chunks<
+pub(super) async fn compute_hamming_weight_glwe_sk<
     Z: Ring + ErrorCorrect,
     Ses: BaseSessionHandles,
 >(
     secret_vector: &[Share<Z>],
     session: &mut Ses,
-    chunk_size: usize,
+    polynomial_size: PolynomialSize,
 ) -> anyhow::Result<Vec<Z>> {
     let secret_hws = secret_vector
-        .chunks(chunk_size)
+        .chunks(polynomial_size.0)
         .map(|chunk| chunk.iter().fold(Z::ZERO, |acc, share| acc + share.value()))
         .map(|chunk_hw| Share::new(session.my_role(), chunk_hw))
         .collect::<Vec<_>>();
