@@ -415,9 +415,9 @@ async fn generate_custodian_keys_to_file(
     let mut setup_msgs_paths = Vec::new();
     // Use the first server to just play custodian in the tests
     let container_name = if threshold {
-        "zama-core-threshold-custodian-dev-kms-core-1-1".to_string()
+        "zama-core-threshold-dev-kms-core-1-1".to_string()
     } else {
-        "zama-core-centralized-custodian-dev-kms-core-1".to_string()
+        "zama-core-centralized-dev-kms-core-1".to_string()
     };
     for cus_idx in 1..=amount_custodians {
         let cur_setup_path = temp_dir

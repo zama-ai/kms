@@ -52,12 +52,20 @@ impl DockerComposeCmd {
     pub fn up(&self) {
         self.down(); // Make sure that no container is running
         let build_docker = env::var("DOCKER_BUILD_TEST_CORE_CLIENT").unwrap_or("".to_string());
-        if let KMSMode::ThresholdTestParameter = self.mode {
-            env::set_var("CORE_CLIENT__FHE_PARAMS", "Test");
-        } else {
-            env::set_var("CORE_CLIENT__FHE_PARAMS", "Default");
+
+        // set the FHE params based on mode
+        match self.mode {
+            KMSMode::ThresholdDefaultParameter
+            | KMSMode::Centralized
+            | KMSMode::CentralizedCustodian => {
+                env::set_var("CORE_CLIENT__FHE_PARAMS", "Default");
+            }
+            KMSMode::ThresholdTestParameter | KMSMode::ThresholdCustodianTestParameter => {
+                env::set_var("CORE_CLIENT__FHE_PARAMS", "Test");
+            }
         }
 
+        // build the docker compose command
         let mut build = Command::new("docker");
         build
             .current_dir(self.root_path.clone())
@@ -71,10 +79,18 @@ impl DockerComposeCmd {
                 build.arg("docker-compose-core-threshold.yml");
             }
             KMSMode::ThresholdCustodianTestParameter => {
-                build.arg("docker-compose-core-threshold-custodian.yml");
+                build.arg("docker-compose-core-threshold.yml");
+                build.env(
+                    "KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED",
+                    "true",
+                );
             }
             KMSMode::CentralizedCustodian => {
-                build.arg("docker-compose-core-centralized-custodian.yml");
+                build.arg("docker-compose-core-centralized.yml");
+                build.env(
+                    "KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED",
+                    "true",
+                );
             }
             KMSMode::Centralized => {
                 build.arg("docker-compose-core-centralized.yml");
