@@ -507,8 +507,8 @@ impl Operator {
     /// This requires a signing key.
     /// Futhermore, this will also require validating the timestamps of the custodian setup messages.
     /// This is done in this method.
-    /// If instead you want to create an operator for validating backups, use [Self::new_for_validating]
-    /// as this method does not require a signing key, nor will it validate (the likely expeired) timestamps.
+    /// If you want to create an operator for recovery/restore operations (which does not require a signing key), use [Self::new_for_validating]
+    /// as this method does not require a signing key, nor will it validate (the likely expired) timestamps.
     pub fn new_for_sharing(
         my_role: Role,
         custodian_messages: Vec<InternalCustodianSetupMessage>,
