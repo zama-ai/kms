@@ -2069,13 +2069,7 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
-                let (mut public_key, mut server_key) =
-                    compressed_pk.decompress().unwrap().into_raw_parts();
-                // TODO(https://github.com/zama-ai/tfhe-rs-internal/issues/1181)
-                // The tags are lost during decompression, we make a workaround to manually set the tag until this is fixed
-                // Once the issue above is resolve, we can remove the calls to tag_mut.
-                *public_key.tag_mut() = tag.clone();
-                *server_key.tag_mut() = tag;
+                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
                 (
                     FhePubKeySet {
                         public_key,
@@ -2170,13 +2164,7 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
-                let (mut public_key, mut server_key) =
-                    compressed_pk.decompress().unwrap().into_raw_parts();
-                // TODO(https://github.com/zama-ai/tfhe-rs-internal/issues/1181)
-                // The tags are lost during decompression, we make a workaround to manually set the tag until this is fixed
-                // Once the issue above is resolve, we can remove the calls to tag_mut.
-                *public_key.tag_mut() = tag.clone();
-                *server_key.tag_mut() = tag;
+                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
                 (
                     FhePubKeySet {
                         public_key,
