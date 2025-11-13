@@ -425,12 +425,22 @@ where
                     }
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
+            let pcr_values = config.tls.and_then(|tls_conf| match tls_conf {
+                crate::conf::threshold::TlsConf::Manual { cert: _, key: _ } => None,
+                crate::conf::threshold::TlsConf::SemiAuto {
+                    cert: _,
+                    trusted_releases,
+                } => Some(trusted_releases),
+                crate::conf::threshold::TlsConf::FullAuto { trusted_releases } => {
+                    Some(trusted_releases)
+                }
+            });
             let context_info = ContextInfo {
                 kms_nodes,
                 context_id,
                 software_version: SoftwareVersion::current(),
                 threshold: config.threshold as u32,
-                pcr_values: vec![], // TODO(zama-ai/kms-internal/issues/2808)
+                pcr_values: pcr_values.unwrap_or_default(),
             };
 
             // Note that we have to delete the old context under DEFAULT_MPC_CONTEXT
