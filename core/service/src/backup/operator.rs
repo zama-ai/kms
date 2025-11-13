@@ -265,7 +265,7 @@ pub enum RecoveryValidationMaterialVersioned {
 /// The data stored by an operator after a custodian context switch.
 /// The data contains the contains the signcrypted shares for each custodian
 /// along with information about the custodians.
-/// Furthermore, the data is singed by the operator to allow it to verify the
+/// Furthermore, the data is signed by the operator to allow it to verify the
 /// data upon load.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(RecoveryValidationMaterialVersioned)]
