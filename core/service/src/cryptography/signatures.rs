@@ -98,11 +98,6 @@ impl PublicSigKey {
         }
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
-        bc2wrap::deserialize_safe(bytes)
-            .map_err(|e| anyhow::anyhow!("Could not deserialize key {}", e))
-    }
-
     /// Return a concise identifier for this verification key. For ECDSA keys, this is the Ethereum address.
     pub fn verf_key_id(&self) -> Vec<u8> {
         // Let the ID of both a normal ecdsa256k1 key and an eip712 key be the Ethereum address

@@ -505,7 +505,6 @@ mod tests {
         };
         let result = InternalCustodianContext::new(context, backup_pk.clone());
         assert!(result.is_err());
-        println!("{:?}", result);
         assert!(result
             .err()
             .unwrap()

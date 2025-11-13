@@ -571,8 +571,7 @@ pub struct RecoveryInitParameters {
     #[clap(long, short = 'o', default_value_t = false)]
     pub overwrite_ephemeral_key: bool,
     /// Paths to the pre-validated operator verification keys
-    /// The list MUST be in the same order as the `[[cores]]` in the configuration file
-    /// That is, in monotonically increasing order
+    /// The paths must be sorted in monotonically increasing order of party ID
     #[clap(long, short = 'k')]
     pub operator_verf_key_paths: Vec<PathBuf>,
     /// Paths to write the operator responses
@@ -2494,7 +2493,7 @@ pub async fn execute_cmd(
                 "Number of operator recovery response paths must match number of operators in the configuration files"
             );
             let mut verf_keys = Vec::new();
-            // Note that it is crucial the verification keys are ordered in the same manner as core configuration in the toml!
+            // Note that it is crucial the verification keys are ordered in monotonically increasing order of operator index
             for verf_key_path in operator_verf_key_paths {
                 let verf_key: PublicSigKey = safe_read_element_versioned(&verf_key_path).await?;
                 verf_keys.push(verf_key);
