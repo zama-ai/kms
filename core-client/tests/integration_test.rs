@@ -545,9 +545,9 @@ async fn custodian_reencrypt(
             format!("PUB-p{}", operator_index)
         };
         let container_name = if amount_operators > 1 {
-            format!("zama-core-threshold-custodian-dev-kms-core-{operator_index}-1")
+            format!("zama-core-threshold-dev-kms-core-{operator_index}-1")
         } else {
-            "zama-core-centralized-custodian-dev-kms-core-1".to_string()
+            "zama-core-centralized-dev-kms-core-1".to_string()
         };
         let cur_recovery_path = &recovery_paths[operator_index - 1];
         // Ensure the temp dir exists on docker as well. For simplicity we just use the same dir as locally

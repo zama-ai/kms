@@ -93,7 +93,11 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
-      kms-server --config-file config/compose_1.toml
+      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then
+        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_1.toml
+      else
+        kms-server --config-file config/compose_1.toml
+      fi
       "
 
   dev-kms-core-2:
@@ -133,7 +137,11 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
-      kms-server --config-file config/compose_2.toml
+      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then
+        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_2.toml
+      else
+        kms-server --config-file config/compose_2.toml
+      fi
       "
     depends_on:
       dev-s3-mock-setup:
@@ -178,7 +186,11 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
-      kms-server --config-file config/compose_3.toml
+      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then
+        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_3.toml
+      else
+        kms-server --config-file config/compose_3.toml
+      fi
       "
     depends_on:
       dev-s3-mock-setup:
@@ -223,7 +235,11 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
-      kms-server --config-file config/compose_4.toml
+      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then
+        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_4.toml
+      else
+        kms-server --config-file config/compose_4.toml
+      fi
       "
     depends_on:
       dev-s3-mock-setup:
