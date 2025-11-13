@@ -5,7 +5,7 @@ use kms_grpc::rpc_types::PubDataType;
 
 #[cfg(feature = "testing")]
 use kms_lib::{
-    consts::SIGNING_KEY_ID,
+    consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID},
     cryptography::signatures::{PrivateSigKey, PublicSigKey},
 };
 #[cfg(feature = "testing")]
@@ -73,13 +73,13 @@ pub(crate) async fn fetch_elements(
     }
 }
 
-/// This fetches the KMS public verification keys from S3
+/// This fetches the KMS public verification keys from S3 for all the cores.
 #[cfg(feature = "testing")]
 pub(crate) async fn fetch_kms_verification_keys(
     sim_conf: &CoreClientConfig,
 ) -> anyhow::Result<HashMap<usize, PublicSigKey>> {
     let key_id = &SIGNING_KEY_ID.to_string();
-    let mut addrs = HashMap::with_capacity(sim_conf.cores.len());
+    let mut keys_map = HashMap::with_capacity(sim_conf.cores.len());
 
     for cur_core in &sim_conf.cores {
         let content = fetch_element(
@@ -93,21 +93,24 @@ pub(crate) async fn fetch_kms_verification_keys(
         )
         .await?;
 
-        let vk = tfhe::safe_serialization::safe_deserialize(std::io::Cursor::new(&content), 1000)
-            .unwrap();
-        addrs.insert(cur_core.party_id, vk);
+        let vk = tfhe::safe_serialization::safe_deserialize(
+            std::io::Cursor::new(&content),
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        keys_map.insert(cur_core.party_id, vk);
     }
 
-    Ok(addrs)
+    Ok(keys_map)
 }
 
-/// This fetches the KMS private signing keys from S3
+/// This fetches the KMS private signing keys from S3 for all the cores.
 #[cfg(feature = "testing")]
 pub(crate) async fn fetch_kms_signing_keys(
     sim_conf: &CoreClientConfig,
 ) -> anyhow::Result<HashMap<usize, PrivateSigKey>> {
     let key_id = &SIGNING_KEY_ID.to_string();
-    let mut addrs = HashMap::with_capacity(sim_conf.cores.len());
+    let mut keys_map = HashMap::with_capacity(sim_conf.cores.len());
 
     for cur_core in &sim_conf.cores {
         use kms_grpc::rpc_types::PrivDataType;
@@ -129,13 +132,15 @@ pub(crate) async fn fetch_kms_signing_keys(
         )
         .await?;
 
-        let signing_key: PrivateSigKey =
-            tfhe::safe_serialization::safe_deserialize(std::io::Cursor::new(&content), 1000)
-                .unwrap();
-        addrs.insert(cur_core.party_id, signing_key);
+        let signing_key: PrivateSigKey = tfhe::safe_serialization::safe_deserialize(
+            std::io::Cursor::new(&content),
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+        keys_map.insert(cur_core.party_id, signing_key);
     }
 
-    Ok(addrs)
+    Ok(keys_map)
 }
 
 /// This fetches material which is global

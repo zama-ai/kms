@@ -221,5 +221,6 @@ MEUCIEfh23uIR76K+tv+s5pi0uksEeleDonWm+tqStxeRFR5AiEAs4mw/Yi6aoDg
         tls_cert: Some(tls_cert.clone()),
     }];
 
+    // `into_pem` will deserialize the string inside `tls_cert`
     let _ = tls_cert.into_pem(1, &peers).unwrap();
 }

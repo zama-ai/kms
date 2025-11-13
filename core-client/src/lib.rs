@@ -58,6 +58,8 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use validator::{Validate, ValidationError};
 
+use crate::mpc_context::do_new_mpc_context;
+
 pub mod mpc_context;
 mod s3_operations;
 
@@ -2374,8 +2376,6 @@ pub async fn execute_cmd(
             ]
         }
         CCCommand::NewMpcContext(NewMpcContextParameters { context_path }) => {
-            use crate::mpc_context::do_new_mpc_context;
-
             let ctx_id = do_new_mpc_context(&core_endpoints_req, context_path).await?;
             vec![(Some(ctx_id.into()), "new mpc context created".to_string())]
         }

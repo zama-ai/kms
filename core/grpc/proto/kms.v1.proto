@@ -531,6 +531,9 @@ message KmsContext {
   // The threshold must be set to 0 if the kms_nodes list contains only one node.
   int32 threshold = 4;
 
+  // The expected PCR values of the KMS nodes in this context.
+  // There may be more than one set of PCR values to support multiple trusted software builds,
+  // which may be required during a transition period for software upgrades.
   repeated PcrValues pcr_values = 5;
 }
 

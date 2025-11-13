@@ -40,7 +40,8 @@ pub async fn create_test_context_info_from_config(
             .ok_or_else(|| anyhow::anyhow!("Core config path not set for core {}", c.party_id))?;
         let core_config: CoreConfig = init_conf(config_path.to_str().unwrap()).unwrap();
 
-        // at the moment we only support the mocked trusted release mode
+        // For testing, we only support the mocked trusted release mode
+        // this requires the "mock_enclave = true" attribute in the kms-server config toml files.
         let threshold_config = core_config.threshold.clone().unwrap();
         match threshold_config.tls.unwrap() {
             kms_lib::conf::threshold::TlsConf::FullAuto { trusted_releases } => {
