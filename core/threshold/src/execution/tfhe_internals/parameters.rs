@@ -1162,16 +1162,14 @@ impl DKGParamsBasics for DKGParamsRegular {
     // GLWE keys should be seen as GLWE dimension keys, each of size polynomial_size
     fn compression_sk_num_bits_to_sample(&self) -> usize {
         let key_size = self.compression_sk_num_bits();
-        if let Some(deviations) = self.secret_key_deviations {
-            let (indiviual_key_size, log_glwe_dim) =
-                if let Some(comp_params) = self.compression_decompression_parameters {
-                    (
-                        comp_params.packing_ks_polynomial_size.0,
-                        (comp_params.packing_ks_glwe_dimension.0.ilog2() + 1) as i64,
-                    )
-                } else {
-                    (0, 0)
-                };
+        if let (Some(deviations), Some(comp_params)) = (
+            self.secret_key_deviations,
+            self.compression_decompression_parameters,
+        ) {
+            let (indiviual_key_size, log_glwe_dim) = (
+                comp_params.packing_ks_polynomial_size.0,
+                (comp_params.packing_ks_glwe_dimension.0.ilog2() + 1) as i64,
+            );
             let prob_within_range =
                 compute_prob_hw_within_range(deviations.pmax, indiviual_key_size as u64);
             let max_num_tries = compute_min_trials(
@@ -1739,8 +1737,13 @@ fn compute_prob_hw_within_range(pmax: f64, size: u64) -> f64 {
 /// Formula: k >= log_p_failure/log2(1 - p)
 fn compute_min_trials(p: f64, log2_p_failure: i64) -> Result<usize, String> {
     // Input validation
-    if p <= 0.0 || p >= 1.0 {
-        return Err(format!("p={} must be in the range (0, 1).", p));
+    if p <= 0.0 {
+        return Err(format!("p={} must be in the range (0, 1].", p));
+    }
+
+    // If each trial is guaranteed to succeed, only one trial is needed
+    if p == 1.0 {
+        return Ok(1);
     }
 
     let one_minus_p = 1.0 - p;
