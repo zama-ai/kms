@@ -611,6 +611,7 @@ jobs:
       - test-core-service
       - test-core-threshold-pr
       - test-core-threshold-main
+      - test-wasm
       - build-dependabot
     uses: ./.github/workflows/test-reporter.yml
     permissions:
