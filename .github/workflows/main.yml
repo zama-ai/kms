@@ -640,9 +640,7 @@ jobs:
       - check-changes
     if: >-
       needs.check-changes.outputs.changes-core-service == 'true' ||
-      needs.check-changes.outputs.changes-ci == 'true' ||
-      github.ref == 'refs/heads/main' ||
-      github.event_name == 'schedule'
+      needs.check-changes.outputs.changes-ci == 'true'
     uses: ./.github/workflows/wasm-testing.yml
     with:
       working-directory: './core/service'
