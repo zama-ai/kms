@@ -40,7 +40,7 @@ use threshold_fhe::{
             DecryptionMode, LowLevelCiphertext, OfflineNoiseFloodSession,
             SmallOfflineNoiseFloodSession,
         },
-        runtime::session::SmallSession,
+        runtime::sessions::small_session::SmallSession,
         tfhe_internals::private_keysets::PrivateKeySet,
     },
     thread_handles::spawn_compute_bound,
@@ -667,8 +667,8 @@ mod tests {
     use rand::SeedableRng;
     use tfhe::FheTypes;
     use threshold_fhe::execution::{
-        runtime::session::ParameterHandles, small_execution::prss::PRSSSetup,
-        tfhe_internals::utils::expanded_encrypt,
+        runtime::sessions::session_parameters::GenericParameterHandles,
+        small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
     };
 
     use crate::{
@@ -693,7 +693,9 @@ mod tests {
     impl NoiseFloodPartialDecryptor for DummyNoiseFloodPartialDecryptor {
         type Prep = SmallOfflineNoiseFloodSession<
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            threshold_fhe::execution::runtime::session::SmallSession<ResiduePolyF4Z128>,
+            threshold_fhe::execution::runtime::sessions::small_session::SmallSession<
+                ResiduePolyF4Z128,
+            >,
         >;
 
         async fn partial_decrypt(

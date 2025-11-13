@@ -13,7 +13,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::runtime::{
         party::Role,
-        session::{BaseSessionHandles, LargeSessionHandles},
+        sessions::{base_session::BaseSessionHandles, large_session::LargeSessionHandles},
     },
     networking::value::NetworkValue,
 };

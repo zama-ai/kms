@@ -4,7 +4,7 @@ use crate::{
     algebra::structure_traits::{ErrorCorrect, Ring},
     error::error_handler::anyhow_error_and_log,
     execution::{
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         sharing::{
             open::{RobustOpen, SecureRobustOpen},
             share::Share,
@@ -191,7 +191,9 @@ mod tests {
                 triple::{mult, mult_list, open_list},
             },
             runtime::party::Role,
-            runtime::session::{ParameterHandles, SmallSession},
+            runtime::sessions::{
+                session_parameters::GenericParameterHandles, small_session::SmallSession,
+            },
         },
         networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_small,

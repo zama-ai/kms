@@ -27,7 +27,7 @@ use crate::{
             preprocessing::{BitPreprocessing, DKGPreprocessing},
             triple::open_list,
         },
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         sharing::share::Share,
         tfhe_internals::{
             parameters::{compute_min_max_hw, DKGParams, NoiseInfo},
@@ -445,7 +445,9 @@ mod tests {
                 preprocessing::{dummy::DummyPreprocessing, memory::InMemoryBitPreprocessing},
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
+            },
             tfhe_internals::{
                 parameters::TUniformBound,
                 randomness::{

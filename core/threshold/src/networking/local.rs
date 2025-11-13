@@ -281,7 +281,7 @@ mod tests {
     use crate::{
         execution::runtime::{
             party::{Role, TwoSetsRole},
-            session::DeSerializationRunTime,
+            sessions::session_parameters::DeSerializationRunTime,
         },
         networking::value::NetworkValue,
     };

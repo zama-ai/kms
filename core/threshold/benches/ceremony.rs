@@ -6,7 +6,7 @@ use threshold_fhe::{
     algebra::{galois_rings::degree_8::ResiduePolyF8Z64, structure_traits::Ring},
     execution::{
         runtime::{
-            session::ParameterHandles,
+            sessions::session_parameters::GenericParameterHandles,
             test_runtime::{generate_fixed_roles, DistributedTestRuntime},
         },
         zk::ceremony::{Ceremony, SecureCeremony},

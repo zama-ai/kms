@@ -2,8 +2,8 @@ use super::p2p::{generic_receive_from_all, generic_receive_from_all_senders, sen
 use crate::algebra::structure_traits::Ring;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::Role;
-use crate::execution::runtime::session::BaseSessionHandles;
-use crate::execution::runtime::session::DeSerializationRunTime;
+use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
+use crate::execution::runtime::sessions::session_parameters::DeSerializationRunTime;
 use crate::networking::value::BcastHash;
 use crate::networking::value::BroadcastValue;
 use crate::networking::value::NetworkValue;
@@ -630,7 +630,8 @@ mod tests {
     use super::*;
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use crate::algebra::structure_traits::{ErrorCorrect, Invert};
-    use crate::execution::runtime::session::SmallSession;
+    use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
+    use crate::execution::runtime::sessions::small_session::SmallSession;
     use crate::execution::runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime};
     use crate::execution::small_execution::prf::PRSSConversions;
     #[cfg(feature = "slow_tests")]

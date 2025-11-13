@@ -245,7 +245,6 @@ fn test_dkg_orchestrator_large(
         execution::{
             endpoints::keygen::OnlineDistributedKeyGen, keyset_config::KeySetConfig,
             online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator,
-            runtime::session::ParameterHandles,
         },
         file_handling::tests::write_element,
         networking::NetworkMode,
@@ -274,6 +273,8 @@ fn test_dkg_orchestrator_large(
         let rt_handle = rt.handle().clone();
         let tag = tag.clone();
         handles.add(thread::spawn(move || {
+            use threshold_fhe::execution::runtime::sessions::session_parameters::GenericParameterHandles;
+
             let _guard = rt_handle.enter();
             println!("Thread created for party {party}");
 

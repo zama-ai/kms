@@ -12,7 +12,7 @@ use tfhe::{
 };
 
 use crate::execution::online::triple::{open, open_list};
-use crate::execution::runtime::session::BaseSessionHandles;
+use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
 use crate::execution::sharing::shamir::RevealOp;
 use crate::{
     algebra::{

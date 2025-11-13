@@ -10,7 +10,10 @@ use threshold_fhe::{
     execution::{
         runtime::{
             party::{Identity, Role, RoleAssignment},
-            session::{BaseSession, SessionParameters, SmallSession},
+            sessions::{
+                base_session::BaseSession, session_parameters::SessionParameters,
+                small_session::SmallSession,
+            },
         },
         small_execution::prss::{DerivePRSSState, PRSSSetup},
     },
@@ -390,7 +393,9 @@ impl SessionMaker {
         session_id: SessionId,
         context_id: ContextId,
         network_mode: NetworkMode,
-    ) -> anyhow::Result<threshold_fhe::execution::runtime::session::SingleSetNetworkingImpl> {
+    ) -> anyhow::Result<
+        threshold_fhe::execution::runtime::sessions::base_session::SingleSetNetworkingImpl,
+    > {
         // We need to convert [ContextId] type to [SessionId]
         // because the core/threshold library is only aware of the [SessionId]
         // since we cannot store something as long as ContextId in the x509 certificate.

@@ -19,7 +19,7 @@ pub mod tests_and_benches {
 
     use crate::{
         execution::runtime::{
-            session::{LargeSession, SmallSession},
+            sessions::{large_session::LargeSession, small_session::SmallSession},
             test_runtime::{generate_fixed_roles, DistributedTestRuntime},
         },
         networking::Networking,
@@ -201,7 +201,7 @@ pub mod testing {
         execution::{
             runtime::{
                 party::Role,
-                session::{BaseSession, SessionParameters},
+                sessions::{base_session::BaseSession, session_parameters::SessionParameters},
                 test_runtime::generate_fixed_roles,
             },
             small_execution::{
@@ -273,9 +273,11 @@ pub mod tests {
             constants::SMALL_TEST_KEY_PATH,
             runtime::{
                 party::Role,
-                session::{
-                    BaseSession, LargeSession, LargeSessionHandles, ParameterHandles,
-                    SessionParameters, SmallSession,
+                sessions::{
+                    base_session::BaseSession,
+                    large_session::{LargeSession, LargeSessionHandles},
+                    session_parameters::{GenericParameterHandles, SessionParameters},
+                    small_session::SmallSession,
                 },
                 test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },

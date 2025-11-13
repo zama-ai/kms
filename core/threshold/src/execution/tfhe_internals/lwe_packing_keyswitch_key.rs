@@ -1,7 +1,6 @@
-use std::slice::IterMut;
-
 use itertools::Itertools;
 use num_traits::Zero;
+use std::slice::IterMut;
 use tfhe::{
     boolean::prelude::{
         DecompositionBaseLog, DecompositionLevelCount, GlweDimension, LweDimension, PolynomialSize,
@@ -17,6 +16,7 @@ use tfhe::{
     Seed,
 };
 
+use super::{glwe_ciphertext::GlweCiphertextShare, parameters::EncryptionType};
 use crate::{
     algebra::{
         galois_rings::common::ResiduePoly,
@@ -24,11 +24,10 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        online::triple::open_list, runtime::session::BaseSessionHandles, sharing::share::Share,
+        online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles,
+        sharing::share::Share,
     },
 };
-
-use super::{glwe_ciphertext::GlweCiphertextShare, parameters::EncryptionType};
 
 // Data structure to hold the shares of the Packing KS
 // used for compression.

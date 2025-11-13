@@ -5,7 +5,7 @@ use tracing::Instrument;
 
 use crate::execution::{
     online::preprocessing::orchestration::progress_tracker::ProgressTracker,
-    runtime::session::BaseSessionHandles,
+    runtime::sessions::base_session::BaseSessionHandles,
 };
 
 /// Struct that holds a session

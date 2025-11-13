@@ -1,11 +1,16 @@
-use super::{
-    party::Role,
-    session::{BaseSession, LargeSession, ParameterHandles, SessionParameters, SmallSession},
-};
+use super::party::Role;
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Ring},
     execution::{
-        runtime::party::RoleTrait,
+        runtime::{
+            party::RoleTrait,
+            sessions::{
+                base_session::BaseSession,
+                large_session::LargeSession,
+                session_parameters::{GenericParameterHandles, SessionParameters},
+                small_session::SmallSession,
+            },
+        },
         small_execution::{
             agree_random::DummyAgreeRandom,
             prf::PRSSConversions,

@@ -20,6 +20,8 @@ pub trait RoleTrait:
     + Sync
     + Send
     + Eq
+    + PartialOrd
+    + Ord
     + Clone
     + Copy
     + std::hash::Hash
@@ -34,7 +36,7 @@ pub enum RoleKind {
     TwoSet(TwoSetsRole),
 }
 
-#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TwoSetsRole {
     Set1(Role),
     Set2(Role),

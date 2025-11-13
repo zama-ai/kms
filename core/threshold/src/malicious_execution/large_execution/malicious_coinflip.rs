@@ -4,7 +4,7 @@ use crate::{
     algebra::structure_traits::ErrorCorrect,
     execution::{
         large_execution::{coinflip::Coinflip, vss::Vss},
-        runtime::session::LargeSessionHandles,
+        runtime::sessions::large_session::LargeSessionHandles,
         sharing::open::RobustOpen,
     },
     ProtocolDescription,

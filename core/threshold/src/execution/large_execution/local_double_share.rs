@@ -8,7 +8,7 @@ use super::{
 };
 use crate::execution::{
     communication::broadcast::{Broadcast, SyncReliableBroadcast},
-    runtime::session::LargeSessionHandles,
+    runtime::sessions::large_session::LargeSessionHandles,
 };
 use crate::{
     algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
@@ -384,6 +384,7 @@ pub(crate) mod tests {
         share_dispute::ShareDispute,
         vss::{RealVss, SecureVss, Vss},
     };
+    use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
     #[cfg(feature = "slow_tests")]
     use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
     #[cfg(feature = "slow_tests")]
@@ -409,7 +410,7 @@ pub(crate) mod tests {
         execution::{
             large_execution::local_double_share::{LocalDoubleShare, SecureLocalDoubleShare},
             runtime::party::Role,
-            runtime::session::{BaseSessionHandles, LargeSession, LargeSessionHandles},
+            runtime::sessions::large_session::{LargeSession, LargeSessionHandles},
             sharing::{shamir::ShamirSharings, share::Share},
         },
         tests::helper::tests::{
