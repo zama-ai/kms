@@ -1131,6 +1131,7 @@ mod tests {
                 dedicated_compact_public_key_parameters: None,
                 compression_decompression_parameters: None,
                 cpk_re_randomization_ksk_params: None,
+                secret_key_deviations: None,
             },
             sns_params: new_sns_params,
             sns_compression_params: None,

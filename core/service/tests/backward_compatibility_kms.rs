@@ -119,7 +119,7 @@ fn test_typed_plaintext(
                     format,
                 )
             })?;
-            bc2wrap::deserialize(&bytes).map_err(|e| {
+            bc2wrap::deserialize_unsafe(&bytes).map_err(|e| {
                 test.failure(
                     format!("Failed to deserialize TypedPlaintext: {}", e),
                     format,
@@ -267,7 +267,7 @@ fn test_signcryption_payload(
                     format,
                 )
             })?;
-            bc2wrap::deserialize(&bytes).map_err(|e| {
+            bc2wrap::deserialize_unsafe(&bytes).map_err(|e| {
                 test.failure(
                     format!("Failed to deserialize SigncryptionPayload: {}", e),
                     format,

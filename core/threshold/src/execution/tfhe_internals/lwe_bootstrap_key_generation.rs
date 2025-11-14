@@ -331,7 +331,10 @@ mod tests {
             let lwe_secret_key_share = LweSecretKeyShare::<Z128, 4>::new_from_preprocessing(
                 LweDimension(lwe_dimension),
                 &mut dummy_preproc,
+                None,
+                &mut session,
             )
+            .await
             .unwrap();
 
             //Generate the Glwe key
@@ -339,7 +342,10 @@ mod tests {
                 num_key_bits_glwe,
                 PolynomialSize(polynomial_size),
                 &mut dummy_preproc,
+                None,
+                &mut session,
             )
+            .await
             .unwrap();
 
             //Prepare enough noise for the bk

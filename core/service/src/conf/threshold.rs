@@ -72,6 +72,11 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
             );
             }
         }
+    } else {
+        // TODO we might want to allow running without a peer list in some cases (e.g. when starting from a context)
+        return Err(ValidationError::new(
+            "Peer list is required but was not provided.",
+        ));
     }
     Ok(())
 }
