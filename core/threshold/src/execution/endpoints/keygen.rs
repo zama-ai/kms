@@ -1136,7 +1136,13 @@ pub mod tests {
         set_server_key,
         shortint::{
             client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
-            noise_squashing::{NoiseSquashingKey, Shortint128BootstrappingKey},
+            noise_squashing::{
+                atomic_pattern::{
+                    standard::StandardAtomicPatternNoiseSquashingKey,
+                    AtomicPatternNoiseSquashingKey,
+                },
+                NoiseSquashingKey, Shortint128BootstrappingKey,
+            },
             parameters::CoreCiphertextModulus,
             PBSParameters,
         },
@@ -2323,23 +2329,34 @@ pub mod tests {
             let (key, pt_modulus, pt_carry, ct_modulus) =
                 ck.clone().into_raw_parts().into_raw_parts();
             let mod_switch = match key {
-                Shortint128BootstrappingKey::Classic {
-                    bsk: _bsk,
-                    modulus_switch_noise_reduction_key,
-                } => modulus_switch_noise_reduction_key,
-                Shortint128BootstrappingKey::MultiBit {
-                    bsk: _bsk,
-                    thread_count: _thread_count,
-                    deterministic_execution: _deterministic_execution,
-                } => panic!("Do not support multibit for now"),
+                AtomicPatternNoiseSquashingKey::Standard(ref standard_sns_key) => {
+                    match standard_sns_key.bootstrapping_key() {
+                        Shortint128BootstrappingKey::Classic {
+                            bsk: _bsk,
+                            modulus_switch_noise_reduction_key,
+                        } => modulus_switch_noise_reduction_key,
+                        Shortint128BootstrappingKey::MultiBit {
+                            bsk: _bsk,
+                            thread_count: _thread_count,
+                            deterministic_execution: _deterministic_execution,
+                        } => panic!("Do not support multibit for now"),
+                    }
+                }
+                AtomicPatternNoiseSquashingKey::KeySwitch32(_) => {
+                    panic!("Do not support KeySwitch32 for now")
+                }
             };
 
             tfhe::integer::noise_squashing::NoiseSquashingKey::from_raw_parts(
                 NoiseSquashingKey::from_raw_parts(
-                    Shortint128BootstrappingKey::Classic {
-                        bsk: fbsk_out,
-                        modulus_switch_noise_reduction_key: mod_switch,
-                    },
+                    AtomicPatternNoiseSquashingKey::Standard(
+                        StandardAtomicPatternNoiseSquashingKey::from_raw_parts(
+                            Shortint128BootstrappingKey::Classic {
+                                bsk: fbsk_out,
+                                modulus_switch_noise_reduction_key: mod_switch.clone(),
+                            },
+                        ),
+                    ),
                     pt_modulus,
                     pt_carry,
                     ct_modulus,
