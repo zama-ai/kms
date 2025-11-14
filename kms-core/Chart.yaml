@@ -1,0 +1,9 @@
+apiVersion: v2
+appVersion: 0.12.2
+description: A helm chart to distribute and deploy the Zama KMS core service.
+keywords:
+- kms-service
+- threshold
+- centralized
+name: kms-core
+version: 1.4.10

@@ -1,0 +1,149 @@
+{{- if .Values.kmsGenKeys.enabled -}}
+{{- $kmsCoreName := include "kmsCoreName" . }}
+{{- $kmsGenKeyName := include "kmsGenKeyJobName" . }}
+{{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app: kms-core-client-gen-keys
+    app.kubernetes.io/name: {{ $kmsGenKeyName }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+  name: {{ $kmsGenKeyName }}
+spec:
+  template:
+    metadata:
+      labels:
+        app: kms-core-client-gen-keys
+        app.kubernetes.io/name: {{ $kmsGenKeyName }}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-gen-keys-config-writer
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: kms-gen-keys
+          image: {{ .Values.kmsCoreClient.image.name }}:{{ .Values.kmsCoreClient.image.tag }}
+          command:
+            - /app/core-client-gen-keys.sh
+          {{- if not .Values.minio.enabled }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.kmsCoreClient.envFrom.configmap.name }}
+          {{- end }}
+          env:
+            {{- if .Values.minio.enabled }}
+            - name: S3_ENDPOINT
+              value: "{{ .Values.minio.endpoint }}/{{ .Values.kmsCore.publicVault.s3.bucket }}{{- $path := default "" .Values.kmsCore.publicVault.s3.path }}{{- if ne $path "" }}/{{ $path }}{{- end }}"
+            {{- else }}
+            - name: CORE_CLIENT__S3_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.coreClientS3Endpoint }}
+            {{- end }}
+            - name: NUM_MAJORITY
+              value: '{{ .Values.kmsCoreClient.num_majority | int }}'
+            - name: NUM_RECONSTRUCT
+              value: '{{ .Values.kmsCoreClient.num_reconstruct | int }}'
+            - name: DECRYPTION_MODE
+              value: '{{ .Values.kmsCoreClient.decryption_mode | quote }}'
+            - name: FHE_PARAMETER
+              value: '{{ .Values.kmsCoreClient.fhe_parameter | quote }}'
+            {{- if not .Values.kmsGenKeys.forceRecreate }}
+            - name: KMS_KEY_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsGenKeys.configmap.name }}
+                  key: KMS_KEY_ID
+                  optional: true
+            - name: KMS_CRS_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsGenKeys.configmap.name }}
+                  key: KMS_CRS_ID
+                  optional: true
+            {{- end }}
+          {{- with .Values.kmsGenKeys.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - mountPath: /app/core-client-gen-keys.sh
+              subPath: core-client-gen-keys.sh
+              name: config
+            - mountPath: /keygen
+              name: keygen
+      containers:
+        - name: write-gen-keys-to-configmap
+          image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
+          command:
+            - /app/write-gen-keys-to-configmap.sh
+          env:
+            - name: CONFIGMAP_NAME
+              value: {{ .Values.kmsGenKeys.configmap.name }}
+          volumeMounts:
+            - mountPath: /app/write-gen-keys-to-configmap.sh
+              subPath: write-gen-keys-to-configmap.sh
+              name: config
+            - mountPath: /keygen
+              name: keygen
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "kmsGenKeyJobName" . }}-config
+            defaultMode: 0777
+            items:
+              - key: core-client-gen-keys.sh
+                path: core-client-gen-keys.sh
+              - key: write-gen-keys-to-configmap.sh
+                path: write-gen-keys-to-configmap.sh
+        - name: keygen
+          emptyDir: {}
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: registry-credentials
+      {{- with .Values.kmsGenKeys.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kmsGenKeys.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.kmsGenKeys.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{ .Release.Name }}-gen-keys-config-writer
+  namespace: {{ .Release.Namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: [ "get", "list", "create", "patch"{{ if .Values.kmsGenKeys.forceRecreate }}, "delete"{{ end }}]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{ .Release.Name }}-gen-keys-config-writer
+  namespace: {{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-gen-keys-config-writer
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ .Release.Name }}-gen-keys-config-writer
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-gen-keys-config-writer
+  namespace: {{ .Release.Namespace }}
+{{- end -}}

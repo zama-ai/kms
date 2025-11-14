@@ -1,0 +1,174 @@
+{{- if .Values.kmsGenKeys.enabled -}}
+{{- $kmsCoreName := include "kmsCoreName" . }}
+{{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    app: kms-core-client-gen-keys
+  name: {{ include "kmsGenKeyJobName" . }}-config
+data:
+  core-client-gen-keys.sh: |
+    #!/usr/bin/env sh
+    set -ex
+    echo "loading configuration from env vars into the config.toml file"
+
+    # Process the S3 endpoint if it contains a variable
+    if echo "$S3_ENDPOINT" | grep -q '\$'; then
+        S3_ENDPOINT=$(eval echo "$S3_ENDPOINT")
+    fi
+
+    if [ -n "${CORE_CLIENT__S3_ENDPOINT}" ]; then
+      S3_ENDPOINT="${CORE_CLIENT__S3_ENDPOINT}"
+    fi
+
+    cat <<EOF >>config.toml
+    ########################################################################
+    # Config for a threshold deployment of n=4 cores with threshold t=1
+    # The type of the KMS ("centralized" or "threshold")
+    {{ if .Values.kmsCore.thresholdMode.enabled -}}
+    kms_type = "threshold"
+    {{- else }}
+    kms_type = "centralized"
+    {{- end }}
+
+    # The minimum number of matching responses required to have an honest majority
+    {{ if .Values.kmsCore.thresholdMode.enabled -}}
+    num_majority=${NUM_MAJORITY}
+    {{- else }}
+    num_majority=1
+    {{- end }}
+
+    # The minimum number of responses required to reconstruct a value (e.g. in user decryption)
+    {{ if .Values.kmsCore.thresholdMode.enabled -}}
+    num_reconstruct=${NUM_RECONSTRUCT}
+    {{- else }}
+    num_reconstruct=1
+    {{- end }}
+
+    # Decryption mode used in user decryption reconstruction.
+    # Options are NoiseFloodSmall and BitDecSmall.
+    # Must match the deployed core/service setting!
+    # Only relevant for threshold.
+    decryption_mode=${DECRYPTION_MODE}
+
+    # fhe_params = "Test" # Small, insecure parameters for testing
+    fhe_params=${FHE_PARAMETER:=Test} # Large, secure parameters
+
+    # List of connection info to each of the cores
+    {{ if .Values.kmsCore.thresholdMode.enabled -}}
+      {{- if .Values.kmsCore.thresholdMode.peersList }}
+        {{ range .Values.kmsCore.thresholdMode.peersList }}
+
+    [[cores]]
+    # The ID of the given KMS server (monotonically increasing positive integer starting at 1)
+    party_id = {{ int .id }}
+    # The address of the given KMS server, including the port
+    address = "{{ .host }}:{{- $.Values.kmsCore.ports.client }}"
+    # The S3 endpoint where the public material of the given server can be reached
+    s3_endpoint = "${S3_ENDPOINT}"
+    # The folder at the S3 endpoint where the data is stored
+    object_folder = "PUB-p{{ int .id }}"
+        {{ end }}
+      {{- else }}
+        {{ range $i := $peersIDList }}
+    [[cores]]
+    # The ID of the given KMS server (monotonically increasing positive integer starting at 1)
+    party_id = {{ int $i }}
+    # The address of the given KMS server, including the port
+    address = "http://{{- printf "%s-%d" $kmsCoreName $i }}:{{- $.Values.kmsCore.ports.client -}}"
+    # The S3 endpoint where the public material of the given server can be reached
+    s3_endpoint = "${S3_ENDPOINT}"
+    # The folder at the S3 endpoint where the data is stored
+    object_folder = "PUB-p{{ int $i }}"
+        {{ end }}
+      {{- end }}
+
+    {{- else }}
+
+    [[cores]]
+    party_id = 1
+    address = "http://{{- printf "%s-%d" $kmsCoreName 1 }}:{{- $.Values.kmsCore.ports.client -}}"
+    s3_endpoint = "${S3_ENDPOINT}"
+    object_folder = "PUB"
+
+    {{- end }}
+    EOF
+    if [ -n "$KMS_KEY_ID" ]; then
+      echo "KMS_KEY_ID=${KMS_KEY_ID} already exists, skipping key generation"
+    else
+      echo "Launching new KMS key generation with config:"
+      cat config.toml
+      result_key_id=$(bin/kms-core-client -f config.toml {{ .Values.kmsGenKeys.keyGenArgs }})
+      KMS_KEY_ID=$(echo $result_key_id | grep request_id | cut -d'"' -f4)
+      if [ -z "$KMS_KEY_ID" ]; then
+        echo "Error: key-gen failed. Exiting."
+        exit 1
+      fi
+    fi
+    echo $KMS_KEY_ID > /keygen/key_id
+    if [ -n "$KMS_CRS_ID" ]; then
+      echo "KMS_CRS_ID=${KMS_CRS_ID} already exists, skiping crs generation"
+    else
+      echo "Launching crs generation"
+      result_crs_id=$(bin/kms-core-client -f config.toml {{ .Values.kmsGenKeys.crsGenArgs }})
+      KMS_CRS_ID=$(echo $result_crs_id | grep request_id | cut -d'"' -f4)
+      if [ -z "$KMS_CRS_ID" ]; then
+        echo "Error: crs-gen failed. Exiting."
+        exit 1
+      fi
+    fi
+    echo $KMS_CRS_ID > /keygen/crs_id
+    echo "${S3_ENDPOINT}" > /keygen/bucket_url
+    echo "Retrieving previously generated keys from the KMS bucket: ${S3_ENDPOINT}"
+    bin/kms-core-client -f config.toml key-gen-result --request-id "$KMS_KEY_ID"
+    verf_key_id=$(ls keys/CLIENT/VerfKey/)
+    if [ -z "$verf_key_id" ]; then
+        echo "Client VerfKey not found. Please verify KMS initialization. Exiting."
+        exit 1
+    else
+      echo "Client VerfKey found, retrieving KMS Signer Verif Addresses"
+      {{- if .Values.kmsCore.thresholdMode.enabled }}
+        {{- if .Values.kmsCore.thresholdMode.peersList }}
+          {{- range $i, $peer := .Values.kmsCore.thresholdMode.peersList }}
+      wget -O /keygen/kms_signer_address_{{ $peer.id }} "${S3_ENDPOINT}/PUB-p{{ $peer.id }}/VerfAddress/${verf_key_id}"
+          {{- end }}
+        {{- else }}
+          {{ range $i := $peersIDList }}
+      wget -O /keygen/kms_signer_address_{{ $i }} "${S3_ENDPOINT}/PUB-p{{ $i }}/VerfAddress/${verf_key_id}"
+          {{- end }}
+        {{- end }}
+      {{- else }}
+      wget -O /keygen/kms_signer_address_0 "${S3_ENDPOINT}/PUB/VerfAddress/${verf_key_id}"
+      {{- end }}
+    fi
+    exit 0
+  write-gen-keys-to-configmap.sh: |
+    #!/usr/bin/env sh
+    set -ex
+    {{- if .Values.kmsGenKeys.forceRecreate }}
+    echo "kmsGenKey.forceRecreate is enabled, deleting existing configmap"
+    kubectl delete configmap "$CONFIGMAP_NAME"
+    {{- end }}
+    echo "creating kubernetes configmap: $CONFIGMAP_NAME"
+    kubectl create configmap "$CONFIGMAP_NAME" \
+      --from-literal=KMS_BUCKET_URL="$(cat /keygen/bucket_url)" \
+      --from-literal=KMS_KEY_ID="$(cat /keygen/key_id)" \
+      --from-literal=KMS_CRS_ID="$(cat /keygen/crs_id)"
+      {{- if .Values.kmsCore.thresholdMode.enabled -}}
+        {{- if .Values.kmsCore.thresholdMode.peersList -}}
+          {{- range $i, $peer := .Values.kmsCore.thresholdMode.peersList }} \
+      --from-literal=KMS_SIGNER_ADDRESS_{{ $peer.id }}="$(cat /keygen/kms_signer_address_{{ $peer.id }})"
+          {{- end -}}
+        {{- else -}}
+          {{- range $i := $peersIDList }} \
+      --from-literal=KMS_SIGNER_ADDRESS_{{ $i }}="$(cat /keygen/kms_signer_address_{{ $i }})"
+          {{- end }}
+        {{- end }}
+      {{- else }}
+      --from-literal=KMS_SIGNER_ADDRESS_0="$(cat /keygen/kms_signer_address_0)"
+    {{- end }}
+    {{- range $annotationKey, $annotationValue := .Values.kmsGenKeys.configmap.annotations }}
+    kubectl annotate configmap "$CONFIGMAP_NAME" {{ $annotationKey }}={{ $annotationValue | quote }}
+    {{- end }}
+{{- end -}}
