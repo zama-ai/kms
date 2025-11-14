@@ -458,7 +458,7 @@ pub async fn async_user_decrypt<
         metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
 
-    use crate::engine::base::compute_external_user_decrypt_signature;
+    use crate::cryptography::compute_external_user_decrypt_signature;
 
     let mut all_signcrypted_cts = vec![];
     for typed_ciphertext in typed_ciphertexts {
