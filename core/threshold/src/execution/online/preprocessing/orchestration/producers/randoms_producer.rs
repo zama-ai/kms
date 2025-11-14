@@ -15,7 +15,10 @@ use crate::{
             },
             RandomPreprocessing,
         },
-        runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
+        runtime::sessions::{
+            base_session::BaseSessionHandles, large_session::LargeSession,
+            small_session::SmallSession,
+        },
         sharing::share::Share,
         small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
     },

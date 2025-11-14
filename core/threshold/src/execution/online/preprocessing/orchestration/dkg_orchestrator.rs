@@ -26,7 +26,10 @@ use crate::{
             },
             triple::Triple,
         },
-        runtime::session::{DeSerializationRunTime, LargeSession, ParameterHandles, SmallSession},
+        runtime::sessions::{
+            large_session::LargeSession, session_parameters::DeSerializationRunTime,
+            session_parameters::ParameterHandles, small_session::SmallSession,
+        },
         sharing::share::Share,
         small_execution::prf::PRSSConversions,
         tfhe_internals::parameters::{DKGParams, NoiseInfo},

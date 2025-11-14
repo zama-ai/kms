@@ -18,7 +18,7 @@ use crate::{
             },
             triple::Triple,
         },
-        runtime::session::{LargeSession, SmallSession},
+        runtime::sessions::{large_session::LargeSession, small_session::SmallSession},
         sharing::share::Share,
         small_execution::prf::PRSSConversions,
     },

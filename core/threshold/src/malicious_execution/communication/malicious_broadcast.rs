@@ -15,7 +15,7 @@ use crate::{
             },
             p2p::send_to_all,
         },
-        runtime::{party::Role, session::BaseSessionHandles},
+        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
     },
     networking::value::{BroadcastValue, NetworkValue},
     ProtocolDescription,

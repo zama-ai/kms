@@ -6,7 +6,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
     },
     networking::value::BroadcastValue,
     session_id::SessionId,
@@ -972,7 +972,10 @@ mod tests {
         algebra::galois_rings::degree_4::ResiduePolyF4Z64,
         execution::{
             runtime::{
-                session::{LargeSession, ParameterHandles},
+                sessions::{
+                    base_session::GenericBaseSessionHandles, large_session::LargeSession,
+                    session_parameters::GenericParameterHandles,
+                },
                 test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
             tfhe_internals::parameters::BC_PARAMS_NO_SNS,
@@ -1015,6 +1018,7 @@ mod tests {
         //CRS generation is round robin, so Sync by nature
         let runtime: DistributedTestRuntime<
             ResiduePolyF4Z64,
+            _,
             { ResiduePolyF4Z64::EXTENSION_DEGREE },
         > = DistributedTestRuntime::new(roles, threshold as u8, NetworkMode::Sync, None);
 

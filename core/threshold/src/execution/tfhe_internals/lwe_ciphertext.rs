@@ -23,7 +23,8 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        online::triple::open_list, runtime::session::BaseSessionHandles, sharing::share::Share,
+        online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles,
+        sharing::share::Share,
     },
 };
 
@@ -331,7 +332,9 @@ mod tests {
                 preprocessing::dummy::DummyPreprocessing,
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
+            },
             sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{
                 randomness::{

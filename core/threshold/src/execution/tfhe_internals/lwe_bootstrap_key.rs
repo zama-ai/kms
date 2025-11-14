@@ -30,7 +30,8 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        online::triple::open_list, runtime::session::BaseSessionHandles, sharing::share::Share,
+        online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles,
+        sharing::share::Share,
     },
 };
 

@@ -24,7 +24,7 @@ use threshold_fhe::{
             },
             PreprocessorFactory,
         },
-        runtime::{party::Identity, session::SmallSession},
+        runtime::{party::Identity, sessions::small_session::SmallSession},
         tfhe_internals::parameters::DKGParams,
     },
 };

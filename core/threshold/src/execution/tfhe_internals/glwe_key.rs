@@ -13,7 +13,7 @@ use crate::{
     },
     execution::{
         online::preprocessing::BitPreprocessing,
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         sharing::share::Share,
         tfhe_internals::{parameters::compute_min_max_hw, utils::compute_hamming_weight_glwe_sk},
     },
@@ -152,7 +152,9 @@ mod tests {
         },
         execution::{
             online::preprocessing::{dummy::DummyPreprocessing, memory::InMemoryBitPreprocessing},
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
+            },
             tfhe_internals::utils::reconstruct_bit_vec,
         },
         networking::NetworkMode,

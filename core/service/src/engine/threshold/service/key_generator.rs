@@ -27,7 +27,7 @@ use threshold_fhe::{
         endpoints::keygen::{distributed_decompression_keygen_z128, OnlineDistributedKeyGen},
         keyset_config as ddec_keyset_config,
         online::preprocessing::DKGPreprocessing,
-        runtime::session::BaseSession,
+        runtime::sessions::base_session::BaseSession,
         tfhe_internals::{
             parameters::DKGParams,
             private_keysets::{
@@ -78,7 +78,7 @@ use crate::engine::base::INSECURE_PREPROCESSING_ID;
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::InsecureKeyGenerator;
 #[cfg(feature = "insecure")]
-use threshold_fhe::execution::runtime::session::ParameterHandles;
+use threshold_fhe::execution::runtime::sessions::session_parameters::GenericParameterHandles;
 #[cfg(feature = "insecure")]
 use threshold_fhe::execution::tfhe_internals::{
     compression_decompression_key::CompressionPrivateKeyShares, glwe_key::GlweSecretKeyShare,

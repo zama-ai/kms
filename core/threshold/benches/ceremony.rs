@@ -6,7 +6,7 @@ use threshold_fhe::{
     algebra::{galois_rings::degree_8::ResiduePolyF8Z64, structure_traits::Ring},
     execution::{
         runtime::{
-            session::ParameterHandles,
+            sessions::session_parameters::GenericParameterHandles,
             test_runtime::{generate_fixed_roles, DistributedTestRuntime},
         },
         zk::ceremony::{Ceremony, SecureCeremony},
@@ -35,6 +35,7 @@ fn bench_ceremony(c: &mut Criterion) {
                 //CRS generation requires sync network
                 let runtime: DistributedTestRuntime<
                     ResiduePolyF8Z64,
+                    _,
                     { ResiduePolyF8Z64::EXTENSION_DEGREE },
                 > = DistributedTestRuntime::new(roles, threshold as u8, NetworkMode::Sync, None);
 

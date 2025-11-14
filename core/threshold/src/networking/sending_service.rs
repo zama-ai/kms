@@ -24,11 +24,11 @@ use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Uri;
 use tonic::{async_trait, transport::Channel};
 
-use crate::{error::error_handler::anyhow_error_and_log, execution::runtime::party::Identity};
 use crate::{
-    execution::runtime::party::{Role, RoleAssignment},
-    session_id::SessionId,
+    error::error_handler::anyhow_error_and_log,
+    execution::runtime::party::{Identity, RoleKind, RoleTrait},
 };
+use crate::{execution::runtime::party::RoleAssignment, session_id::SessionId};
 
 #[cfg(feature = "choreographer")]
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
@@ -70,10 +70,10 @@ pub trait SendingService: Send + Sync {
     ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>>;
 
     ///Adds multiple connections at once
-    async fn add_connections(
+    async fn add_connections<R: RoleTrait>(
         &self,
-        others: &RoleAssignment,
-    ) -> anyhow::Result<HashMap<Role, UnboundedSender<ArcSendValueRequest>>>;
+        others: &RoleAssignment<R>,
+    ) -> anyhow::Result<HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>>;
 }
 
 #[derive(Debug, Clone)]
@@ -325,16 +325,16 @@ impl SendingService for GrpcSendingService {
     }
 
     ///Adds multiple connections at once
-    async fn add_connections(
+    async fn add_connections<R: RoleTrait>(
         &self,
-        others: &RoleAssignment,
-    ) -> anyhow::Result<HashMap<Role, UnboundedSender<ArcSendValueRequest>>> {
+        others: &RoleAssignment<R>,
+    ) -> anyhow::Result<HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>> {
         let mut result = HashMap::with_capacity(others.len());
 
         for (other_role, other_id) in others.iter() {
             match self.add_connection(other_id.clone()).await {
                 Ok(sender) => {
-                    result.insert(*other_role, sender);
+                    result.insert(other_role.get_role_kind(), sender);
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -370,7 +370,7 @@ pub struct NetworkSession {
     pub(crate) context_id: SessionId,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`]
     /// Sending channels for this session
-    pub(crate) sending_channels: HashMap<Role, UnboundedSender<ArcSendValueRequest>>,
+    pub(crate) sending_channels: HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
     /// Channels which are filled by the grpc server receiving messages from the other parties
     /// owned by the session and thus automatically cleaned up on drop
     pub(crate) receiving_channels: MessageQueueStore,
@@ -392,14 +392,14 @@ pub struct NetworkSession {
 }
 
 #[async_trait]
-impl Networking for NetworkSession {
+impl<R: RoleTrait> Networking<R> for NetworkSession {
     /// WARNING: [`increase_round_counter`] MUST be called right before sending.
     /// In particular a call to [`receive`] cannot be interleaved between a counter increase and a send.
     /// Thus sending and receiving MUST not be interleaved.
     ///
     //Note this need not be async, so do we want to keep the trait definition async
     //if we want to add other implems which may require async ?
-    async fn send(&self, value: Arc<Vec<u8>>, receiver: &Role) -> anyhow::Result<()> {
+    async fn send(&self, value: Arc<Vec<u8>>, receiver: &R) -> anyhow::Result<()> {
         // Lock the counter to ensure no modifications happens while sending
         // This may cause an error if someone tries to increase the round counter at the same time
         // however, this would imply incorrect use of the networking API and thus we want to fail fast.
@@ -424,7 +424,7 @@ impl Networking for NetworkSession {
         let request = ArcSendValueRequest { tag, value };
 
         //Retrieve the local channel that corresponds to the party we want to send to and push into it
-        match self.sending_channels.get(receiver) {
+        match self.sending_channels.get(&receiver.get_role_kind()) {
             Some(channel) => Ok(channel.send(request)?),
             None => Err(anyhow_error_and_log(format!(
                 "Missing local channel for {receiver:?}"
@@ -437,7 +437,7 @@ impl Networking for NetworkSession {
     ///
     /// WARNING: A call to [`receive`] cannot be interleaved between a counter increase and a send.
     /// Thus sending and receiving MUST not be interleaved.
-    async fn receive(&self, sender: &Role) -> anyhow::Result<Vec<u8>> {
+    async fn receive(&self, sender: &R) -> anyhow::Result<Vec<u8>> {
         // Lock the counter to ensure no modifications happens while receiving
         // This may cause an error if someone tries to increase the round counter at the same time
         // however, this would imply incorrect use of the networking API and thus we want to fail fast.
@@ -527,17 +527,7 @@ impl Networking for NetworkSession {
     ///
     /// __NOTE__: If the network mode is Async, this has no effect
     async fn set_timeout_for_next_round(&self, timeout: Duration) {
-        match self.get_network_mode() {
-            NetworkMode::Sync => {
-                let mut next_network_timeout = self.next_network_timeout.write().await;
-                *next_network_timeout = timeout;
-            }
-            NetworkMode::Async => {
-                tracing::warn!(
-                    "Trying to change network timeout with async network, doesn't do anything"
-                );
-            }
-        }
+        self.inner_set_timeout_for_next_round(timeout).await
     }
 
     /// Method to set the timeout for distributed generation of the TFHE bootstrapping key
@@ -545,7 +535,7 @@ impl Networking for NetworkSession {
     /// Useful mostly to use parameters given by config file in grpc networking
     /// Rely on [`Networking::set_timeout_for_next_round`]
     async fn set_timeout_for_bk(&self) {
-        self.set_timeout_for_next_round(self.conf.get_network_timeout_bk())
+        self.inner_set_timeout_for_next_round(self.conf.get_network_timeout_bk())
             .await
     }
 
@@ -554,12 +544,12 @@ impl Networking for NetworkSession {
     /// Useful mostly to use parameters given by config file in grpc networking
     /// Rely on [`Networking::set_timeout_for_next_round`]
     async fn set_timeout_for_bk_sns(&self) {
-        self.set_timeout_for_next_round(self.conf.get_network_timeout_bk_sns())
+        self.inner_set_timeout_for_next_round(self.conf.get_network_timeout_bk_sns())
             .await
     }
 
     fn get_network_mode(&self) -> NetworkMode {
-        self.network_mode
+        self.inner_get_network_mode()
     }
 
     #[cfg(feature = "choreographer")]
@@ -580,12 +570,34 @@ impl Networking for NetworkSession {
     }
 }
 
+impl NetworkSession {
+    fn inner_get_network_mode(&self) -> NetworkMode {
+        self.network_mode
+    }
+
+    async fn inner_set_timeout_for_next_round(&self, timeout: Duration) {
+        match self.inner_get_network_mode() {
+            NetworkMode::Sync => {
+                let mut next_network_timeout = self.next_network_timeout.write().await;
+                *next_network_timeout = timeout;
+            }
+            NetworkMode::Async => {
+                tracing::warn!(
+                    "Trying to change network timeout with async network, doesn't do anything"
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use dashmap::DashMap;
     use tokio::sync::mpsc::channel;
     use tokio::sync::{Mutex, RwLock};
+    use tokio::task::JoinSet;
 
+    use crate::execution::runtime::party::TwoSetsRole;
     use crate::networking::grpc::{
         MessageQueueStore, NetworkRoundValue, OptionConfigWrapper, TlsExtensionGetter,
     };
@@ -858,7 +870,7 @@ mod tests {
         // only the final message at round 5 should be received
         {
             for _ in 0..5 {
-                session.increase_round_counter().await;
+                <NetworkSession as Networking<Role>>::increase_round_counter(&session).await;
             }
             let tx_2 = tx_2.clone();
 
@@ -890,6 +902,117 @@ mod tests {
 
             let actual = session.receive(&role_2).await.unwrap();
             assert_eq!(actual, expected);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_two_set_network() {
+        let sid = SessionId::from(0);
+        let mut role_assignment = RoleAssignment::default();
+        // Create the roles from Set 1
+        let role_1_set_1 = TwoSetsRole::Set1(Role::indexed_from_one(1));
+        let id_1_set_1 = Identity::new("127.0.0.1".to_string(), 6001, None);
+        let role_2_set_1 = TwoSetsRole::Set1(Role::indexed_from_one(2));
+        let id_2_set_1 = Identity::new("127.0.0.1".to_string(), 6002, None);
+
+        // Create the roles from Set 2
+        let role_1_set_2 = TwoSetsRole::Set2(Role::indexed_from_one(1));
+        let id_1_set_2 = Identity::new("127.0.0.1".to_string(), 6003, None);
+        let role_2_set_2 = TwoSetsRole::Set2(Role::indexed_from_one(2));
+        let id_2_set_2 = Identity::new("127.0.0.1".to_string(), 6004, None);
+
+        role_assignment.insert(role_1_set_1, id_1_set_1.clone());
+        role_assignment.insert(role_2_set_1, id_2_set_1.clone());
+        role_assignment.insert(role_1_set_2, id_1_set_2.clone());
+        role_assignment.insert(role_2_set_2, id_2_set_2.clone());
+
+        let expected_message = Arc::new(HashMap::from([
+            (role_1_set_1, vec![1; 10]),
+            (role_2_set_1, vec![2; 10]),
+            (role_1_set_2, vec![3; 10]),
+            (role_2_set_2, vec![4; 10]),
+        ]));
+
+        let context_id = SessionId::from(42);
+
+        // Keep a Vec for collecting results
+        let mut server_handles = JoinSet::new();
+        let mut client_handles = JoinSet::new();
+        for (role, id) in role_assignment.iter() {
+            let role = *role;
+            let my_port = id.port();
+
+            let mut others = role_assignment.clone();
+            others.remove(&role);
+
+            // Spin up gRPC server for current Role
+            let networking = GrpcNetworkingManager::new(None, None, false).unwrap();
+            let networking_server = networking.new_server(TlsExtensionGetter::default());
+            let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(300));
+
+            let core_router = tonic::transport::Server::builder()
+                .timeout(Duration::from_secs(300))
+                .layer(core_grpc_layer)
+                .add_service(networking_server);
+
+            let core_future = core_router.serve(format!("127.0.0.1:{my_port}").parse().unwrap());
+
+            // Spawn server
+            let my_role = role;
+            server_handles.spawn(async move {
+                println!("Starting server on {my_role:?}");
+                core_future.await.unwrap();
+                println!("Server on {my_role:?} shut down");
+            });
+
+            // Spawn client, sending my expected message to all,
+            // receiving all others' expected messages
+            let expected_message = Arc::clone(&expected_message);
+            let role_assignment = role_assignment.clone();
+            client_handles.spawn(async move {
+                // Create network session for current Role
+                let network_session = networking
+                    .make_network_session(
+                        sid,
+                        context_id,
+                        &role_assignment,
+                        role,
+                        crate::networking::NetworkMode::Sync,
+                    )
+                    .await
+                    .unwrap();
+                let msg = Arc::new(expected_message.get(&role).unwrap().clone());
+                for other in others.keys() {
+                    network_session.send(msg.clone(), other).await.unwrap();
+                }
+
+                let mut results = HashMap::new();
+                for other in others.keys() {
+                    let received_msg = network_session.receive(other).await.unwrap();
+                    assert_eq!(
+                        received_msg,
+                        *expected_message.get(other).unwrap(),
+                        "Error receiving message from {} in {}",
+                        other,
+                        role
+                    );
+                    results.insert(*other, received_msg);
+                }
+                (role, results)
+            });
+        }
+
+        while let Some(res) = client_handles.join_next().await {
+            let (role, results) = res.unwrap();
+            for (other_role, received_msg) in results.iter() {
+                assert_eq!(
+                    received_msg,
+                    expected_message.get(other_role).unwrap(),
+                    "Error in final check for {} in {}",
+                    other_role,
+                    role
+                );
+            }
         }
     }
 }

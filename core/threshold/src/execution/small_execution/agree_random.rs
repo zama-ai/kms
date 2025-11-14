@@ -8,7 +8,7 @@ use crate::{
     error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
         communication::p2p::{receive_from_parties, send_to_parties},
-        runtime::{party::Role, session::BaseSessionHandles},
+        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
         sharing::open::{RobustOpen, SecureRobustOpen},
     },
     hashing::{hash_element, hash_element_w_size, DomainSep},
@@ -637,7 +637,9 @@ mod tests {
         execution::{
             runtime::{
                 party::Role,
-                session::{ParameterHandles, SmallSession},
+                sessions::{
+                    session_parameters::GenericParameterHandles, small_session::SmallSession,
+                },
             },
             sharing::open::test::deterministically_compute_my_shares,
             small_execution::{

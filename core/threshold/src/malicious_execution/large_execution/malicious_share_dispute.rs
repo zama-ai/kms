@@ -7,7 +7,7 @@ use crate::{
             send_and_receive_share_dispute_single, share_secrets, ShareDispute, ShareDisputeOutput,
             ShareDisputeOutputDouble,
         },
-        runtime::{party::Role, session::LargeSessionHandles},
+        runtime::{party::Role, sessions::large_session::LargeSessionHandles},
     },
     networking::value::NetworkValue,
     ProtocolDescription,

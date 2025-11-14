@@ -8,7 +8,7 @@ use crate::algebra::structure_traits::{ErrorCorrect, Ring};
 use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
-        runtime::session::LargeSessionHandles,
+        runtime::sessions::large_session::LargeSessionHandles,
         sharing::open::{RobustOpen, SecureRobustOpen},
     },
     ProtocolDescription,
@@ -111,6 +111,7 @@ pub(crate) mod tests {
     use crate::execution::communication::broadcast::SyncReliableBroadcast;
     #[cfg(feature = "slow_tests")]
     use crate::execution::large_execution::{coinflip::RealCoinflip, vss::SecureVss, vss::Vss};
+    use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
     #[cfg(feature = "slow_tests")]
     use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
     #[cfg(feature = "slow_tests")]
@@ -121,9 +122,7 @@ pub(crate) mod tests {
     use crate::{
         algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         execution::runtime::{
-            party::Role,
-            session::{BaseSessionHandles, LargeSession},
-            test_runtime::generate_fixed_roles,
+            party::Role, sessions::large_session::LargeSession, test_runtime::generate_fixed_roles,
         },
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious,

@@ -3,7 +3,7 @@ use crate::{
         online::preprocessing::{
             dummy::DummyPreprocessing, orchestration::producers::bits_producer::GenericBitProducer,
         },
-        runtime::session::{LargeSession, SmallSession},
+        runtime::sessions::{large_session::LargeSession, small_session::SmallSession},
     },
     malicious_execution::{
         online::malicious_gen_bits::DummyBitGenEven,

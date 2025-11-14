@@ -9,7 +9,7 @@ use crate::{
             gen_bits::{BitGenEven, SecureBitGenEven},
             preprocessing::{BasePreprocessing, BitPreprocessing, DKGPreprocessing, NoiseBounds},
         },
-        runtime::session::BaseSession,
+        runtime::sessions::base_session::BaseSession,
         sharing::share::Share,
         small_execution::prf::PRSSConversions,
         tfhe_internals::parameters::DKGParams,

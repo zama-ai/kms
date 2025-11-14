@@ -11,7 +11,7 @@ use crate::execution::online::gen_bits::SecureBitGenEven;
 use crate::execution::online::preprocessing::BitPreprocessing;
 use crate::execution::online::preprocessing::{BitDecPreprocessing, InMemoryBitDecPreprocessing};
 use crate::execution::online::triple::Triple;
-use crate::execution::runtime::session::BaseSession;
+use crate::execution::runtime::sessions::base_session::BaseSession;
 use async_trait::async_trait;
 
 impl<const EXTENSION_DEGREE: usize> TriplePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>

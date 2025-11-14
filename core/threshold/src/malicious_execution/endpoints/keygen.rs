@@ -7,7 +7,7 @@ use crate::{
     execution::{
         endpoints::keygen::OnlineDistributedKeyGen,
         online::preprocessing::DKGPreprocessing,
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         tfhe_internals::{
             compression_decompression_key::CompressionPrivateKeyShares, parameters::DKGParams,
             private_keysets::PrivateKeySet, public_keysets::FhePubKeySet,

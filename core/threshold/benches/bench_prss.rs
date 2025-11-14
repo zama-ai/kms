@@ -9,7 +9,10 @@ use threshold_fhe::{
         large_execution::vss::DummyVss,
         runtime::{
             party::Role,
-            session::{BaseSession, ParameterHandles, SessionParameters},
+            sessions::{
+                base_session::BaseSession,
+                session_parameters::{GenericParameterHandles, SessionParameters},
+            },
             test_runtime::generate_fixed_roles,
         },
         small_execution::{

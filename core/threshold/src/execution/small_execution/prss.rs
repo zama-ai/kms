@@ -20,7 +20,7 @@ use crate::{
         },
         runtime::{
             party::Role,
-            session::{BaseSessionHandles, ParameterHandles},
+            sessions::{base_session::BaseSessionHandles, session_parameters::ParameterHandles},
         },
         small_execution::prf::{chi, phi, psi, PhiAes},
     },
@@ -1024,7 +1024,8 @@ pub(crate) fn create_sets(all_roles: &[Role], t: usize) -> Vec<Vec<Role>> {
 mod tests {
     use super::*;
     use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
-    use crate::execution::runtime::session::SmallSessionHandles;
+    use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
+    use crate::execution::runtime::sessions::small_session::SmallSessionHandles;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::small_execution::agree_random::DSEP_AR;
     use crate::execution::tfhe_internals::test_feature::{
@@ -1049,7 +1050,9 @@ mod tests {
             endpoints::decryption::{threshold_decrypt64, DecryptionMode},
             runtime::party::Role,
             runtime::{
-                session::{BaseSessionHandles, ParameterHandles, SmallSession},
+                sessions::{
+                    session_parameters::GenericParameterHandles, small_session::SmallSession,
+                },
                 test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
             sharing::{shamir::ShamirSharings, share::Share},
@@ -1552,6 +1555,7 @@ mod tests {
         //Could probably be run Async, but NIST doc says all offline is Sync
         let runtime = DistributedTestRuntime::<
             ResiduePolyF4Z128,
+            Role,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(roles.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId::from(23);
@@ -1613,6 +1617,7 @@ mod tests {
         //Could probably be run Async, but NIST doc says all offline is Sync
         let runtime = DistributedTestRuntime::<
             ResiduePolyF4Z128,
+            Role,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(roles.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId::from(17);

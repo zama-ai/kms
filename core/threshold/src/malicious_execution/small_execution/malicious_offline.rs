@@ -6,7 +6,7 @@ use crate::{
         communication::broadcast::Broadcast,
         config::BatchParams,
         online::preprocessing::memory::InMemoryBasePreprocessing,
-        runtime::session::{BaseSessionHandles, SmallSessionHandles},
+        runtime::sessions::{base_session::BaseSessionHandles, small_session::SmallSessionHandles},
         small_execution::offline::{Preprocessing, RealSmallPreprocessing},
     },
     ProtocolDescription,

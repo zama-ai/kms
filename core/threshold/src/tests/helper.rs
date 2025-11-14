@@ -8,7 +8,7 @@ pub mod tests_and_benches {
 
     use crate::{
         algebra::structure_traits::{ErrorCorrect, Invert, Ring},
-        execution::small_execution::prf::PRSSConversions,
+        execution::{runtime::party::Role, small_execution::prf::PRSSConversions},
         networking::NetworkMode,
     };
     use aes_prng::AesRng;
@@ -19,7 +19,7 @@ pub mod tests_and_benches {
 
     use crate::{
         execution::runtime::{
-            session::{LargeSession, SmallSession},
+            sessions::{large_session::LargeSession, small_session::SmallSession},
             test_runtime::{generate_fixed_roles, DistributedTestRuntime},
         },
         networking::Networking,
@@ -58,7 +58,7 @@ pub mod tests_and_benches {
                 .zip(delay_vec.iter().cloned())
                 .collect()
         });
-        let test_runtime: DistributedTestRuntime<Z, EXTENSION_DEGREE> =
+        let test_runtime: DistributedTestRuntime<Z, Role, EXTENSION_DEGREE> =
             DistributedTestRuntime::new(roles.clone(), threshold, network_mode, delay_map);
         let session_id = SessionId::from(1);
 
@@ -164,7 +164,7 @@ pub mod tests_and_benches {
                 .zip(delay_vec.iter().cloned())
                 .collect()
         });
-        let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
+        let test_runtime = DistributedTestRuntime::<Z, Role, EXTENSION_DEGREE>::new(
             roles.clone(),
             threshold as u8,
             network_mode,
@@ -201,7 +201,7 @@ pub mod testing {
         execution::{
             runtime::{
                 party::Role,
-                session::{BaseSession, SessionParameters},
+                sessions::{base_session::BaseSession, session_parameters::SessionParameters},
                 test_runtime::generate_fixed_roles,
             },
             small_execution::{
@@ -273,9 +273,11 @@ pub mod tests {
             constants::SMALL_TEST_KEY_PATH,
             runtime::{
                 party::Role,
-                session::{
-                    BaseSession, LargeSession, LargeSessionHandles, ParameterHandles,
-                    SessionParameters, SmallSession,
+                sessions::{
+                    base_session::BaseSession,
+                    large_session::{LargeSession, LargeSessionHandles},
+                    session_parameters::{GenericParameterHandles, SessionParameters},
+                    small_session::SmallSession,
                 },
                 test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
@@ -522,7 +524,7 @@ pub mod tests {
                 .collect()
         });
 
-        let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
+        let test_runtime = DistributedTestRuntime::<Z, Role, EXTENSION_DEGREE>::new(
             roles.clone(),
             threshold,
             network_mode,
@@ -633,7 +635,7 @@ pub mod tests {
                 .collect()
         });
 
-        let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
+        let test_runtime = DistributedTestRuntime::<Z, Role, EXTENSION_DEGREE>::new(
             roles.clone(),
             threshold,
             network_mode,

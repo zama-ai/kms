@@ -12,8 +12,10 @@ use threshold_fhe::execution::endpoints::decryption::{
 use threshold_fhe::execution::online::bit_manipulation::bit_dec_batch;
 use threshold_fhe::execution::online::preprocessing::dummy::DummyPreprocessing;
 use threshold_fhe::execution::runtime::party::Role;
-use threshold_fhe::execution::runtime::session::ParameterHandles;
-use threshold_fhe::execution::runtime::session::{LargeSession, SmallSession};
+use threshold_fhe::execution::runtime::sessions::session_parameters::GenericParameterHandles;
+use threshold_fhe::execution::runtime::sessions::{
+    large_session::LargeSession, small_session::SmallSession,
+};
 use threshold_fhe::execution::sharing::shamir::InputOp;
 use threshold_fhe::execution::sharing::shamir::ShamirSharings;
 use threshold_fhe::execution::sharing::share::Share;

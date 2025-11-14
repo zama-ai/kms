@@ -1,13 +1,12 @@
 use tokio::task::JoinSet;
 
-use crate::execution::runtime::session::{BaseSession, SessionParameters};
-use crate::hashing::serialize_hash_element;
-use crate::session_id::DSEP_SESSION_ID;
-
 use super::basics::PrivateBgvKeySet;
 use crate::execution::runtime::party::Role;
-use crate::execution::runtime::session::ParameterHandles;
-use crate::execution::runtime::session::SmallSession;
+use crate::execution::runtime::sessions::{
+    base_session::BaseSession,
+    session_parameters::{GenericParameterHandles, SessionParameters},
+    small_session::SmallSession,
+};
 use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::prss::{DerivePRSSState, PRSSInit, RobustSecurePrssInit};
 use crate::experimental::algebra::levels::LevelEll;
@@ -17,6 +16,8 @@ use crate::experimental::bgv::runtime::BGVTestRuntime;
 use crate::experimental::{
     algebra::levels::LevelOne, bgv::basics::LevelledCiphertext, bgv::ddec::noise_flood_decryption,
 };
+use crate::hashing::serialize_hash_element;
+use crate::session_id::DSEP_SESSION_ID;
 use crate::session_id::{SessionId, SESSION_ID_BYTES};
 use aes_prng::AesRng;
 use itertools::Itertools;

@@ -13,12 +13,12 @@ use crate::execution::online::preprocessing::BitDecPreprocessing;
 use crate::execution::online::preprocessing::InMemoryBitDecPreprocessing;
 use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 use crate::execution::runtime::party::Role;
-use crate::execution::runtime::session::BaseSession;
-use crate::execution::runtime::session::ParameterHandles;
+use crate::execution::runtime::sessions::base_session::BaseSession;
+use crate::execution::runtime::sessions::base_session::ToBaseSession;
+use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
 #[cfg(any(test, feature = "testing"))]
-use crate::execution::runtime::session::SessionParameters;
-use crate::execution::runtime::session::SmallSessionHandles;
-use crate::execution::runtime::session::ToBaseSession;
+use crate::execution::runtime::sessions::session_parameters::SessionParameters;
+use crate::execution::runtime::sessions::small_session::SmallSessionHandles;
 use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
 use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
@@ -40,7 +40,10 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         constants::{LOG_B_SWITCH_SQUASH, STATSEC},
-        runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
+        runtime::sessions::{
+            base_session::BaseSessionHandles, large_session::LargeSession,
+            small_session::SmallSession,
+        },
     },
 };
 #[cfg(any(test, feature = "testing"))]
@@ -659,7 +662,9 @@ where
     Z: PRSSConversions,
 {
     use crate::execution::{
-        runtime::session::{ParameterHandles, SmallSession},
+        runtime::sessions::{
+            session_parameters::GenericParameterHandles, small_session::SmallSession,
+        },
         small_execution::prss::{AbortSecurePrssInit, DerivePRSSState, PRSSInit},
     };
     let session_id = base_session.session_id();
@@ -740,7 +745,7 @@ where
 
 #[cfg(any(test, feature = "testing"))]
 pub async fn threshold_decrypt64<Z: Ring, const EXTENSION_DEGREE: usize>(
-    runtime: &DistributedTestRuntime<Z, EXTENSION_DEGREE>,
+    runtime: &DistributedTestRuntime<Z, Role, EXTENSION_DEGREE>,
     ct: &RadixOrBoolCiphertext,
     mode: DecryptionMode,
 ) -> anyhow::Result<HashMap<Role, Z64>>
@@ -770,7 +775,7 @@ async fn threshold_decrypt64_maybe_malicious<
     MalDec: OnlineNoiseFloodDecryption<EXTENSION_DEGREE>,
     const EXTENSION_DEGREE: usize,
 >(
-    runtime: &DistributedTestRuntime<Z, EXTENSION_DEGREE>,
+    runtime: &DistributedTestRuntime<Z, Role, EXTENSION_DEGREE>,
     ct: &RadixOrBoolCiphertext,
     mode: DecryptionMode,
     malicious_set: HashSet<Role>,
@@ -1420,6 +1425,7 @@ mod tests {
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z128, EXTENSION_DEGREE>,
+            Role,
             EXTENSION_DEGREE,
         >::new(roles, threshold as u8, NetworkMode::Sync, None);
 
@@ -1510,6 +1516,7 @@ mod tests {
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z128, EXTENSION_DEGREE>,
+            Role,
             EXTENSION_DEGREE,
         >::new(roles, threshold as u8, NetworkMode::Sync, None);
 
@@ -1595,6 +1602,7 @@ mod tests {
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z64, EXTENSION_DEGREE>,
+            Role,
             EXTENSION_DEGREE,
         >::new(roles, threshold as u8, NetworkMode::Sync, None);
 
@@ -1696,6 +1704,7 @@ mod tests {
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z64, EXTENSION_DEGREE>,
+            Role,
             EXTENSION_DEGREE,
         >::new(roles, threshold as u8, NetworkMode::Sync, None);
 

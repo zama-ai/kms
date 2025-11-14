@@ -15,7 +15,7 @@ use crate::{
     },
     execution::{
         online::preprocessing::{DKGPreprocessing, TriplePreprocessing},
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         tfhe_internals::parameters::BKParams,
     },
 };
@@ -290,7 +290,9 @@ mod tests {
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
             random::{get_rng, seed_from_rng},
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
+            },
             tfhe_internals::{
                 glwe_key::GlweSecretKeyShare,
                 lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof,

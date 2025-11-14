@@ -10,7 +10,9 @@ use threshold_fhe::execution::large_execution::double_sharing::{
 };
 use threshold_fhe::execution::large_execution::offline::SecureLargePreprocessing;
 use threshold_fhe::execution::online::gen_bits::{BitGenEven, SecureBitGenEven};
-use threshold_fhe::execution::runtime::session::{LargeSession, SmallSession128};
+use threshold_fhe::execution::runtime::sessions::{
+    large_session::LargeSession, small_session::SmallSession128,
+};
 use threshold_fhe::execution::sharing::shamir::{InputOp, RevealOp};
 use threshold_fhe::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use threshold_fhe::networking::NetworkMode;

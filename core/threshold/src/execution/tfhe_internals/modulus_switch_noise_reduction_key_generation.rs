@@ -14,7 +14,7 @@ use crate::{
     },
     execution::{
         online::preprocessing::DKGPreprocessing,
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         tfhe_internals::{
             lwe_ciphertext::{self, encrypt_lwe_ciphertext_list, LweCiphertextShare},
             lwe_key::LweSecretKeyShare,

@@ -9,7 +9,7 @@ use crate::{
     algebra::structure_traits::FromU128,
     execution::{
         online::triple::{mult_list, open_list},
-        runtime::{party::Role, session::BaseSessionHandles},
+        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
         sharing::share::Share,
     },
 };
@@ -196,7 +196,9 @@ mod tests {
         algebra::structure_traits::{One, Ring, ZConsts, Zero},
         execution::{
             online::{preprocessing::dummy::DummyPreprocessing, triple::open_list},
-            runtime::session::{BaseSessionHandles, SmallSession},
+            runtime::sessions::{
+                base_session::GenericBaseSessionHandles, small_session::SmallSession,
+            },
         },
         experimental::{
             algebra::{

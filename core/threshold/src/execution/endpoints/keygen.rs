@@ -10,7 +10,9 @@ use crate::{
             preprocessing::{DKGPreprocessing, RandomPreprocessing},
             triple::open_list,
         },
-        runtime::session::{BaseSessionHandles, DeSerializationRunTime},
+        runtime::sessions::{
+            base_session::BaseSessionHandles, session_parameters::DeSerializationRunTime,
+        },
         tfhe_internals::{
             compression_decompression_key::CompressionPrivateKeyShares,
             compression_decompression_key_generation::{
@@ -1105,7 +1107,9 @@ pub mod tests {
         },
         execution::{
             online::preprocessing::dummy::DummyPreprocessing,
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
+            },
             tfhe_internals::{
                 parameters::{DKGParamsBasics, DKGParamsRegular, DKGParamsSnS},
                 public_keysets::FhePubKeySet,
@@ -1177,8 +1181,9 @@ pub mod tests {
             config::BatchParams,
             keyset_config::KeySetConfig,
             online::preprocessing::{create_memory_factory, DKGPreprocessing},
-            runtime::session::{
-                BaseSessionHandles, SmallSession, SmallSessionHandles, ToBaseSession,
+            runtime::sessions::{
+                base_session::ToBaseSession,
+                small_session::{SmallSession, SmallSessionHandles},
             },
             small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
             tfhe_internals::test_feature::run_decompression_test,
@@ -1946,6 +1951,11 @@ pub mod tests {
             assert_eq!(0, dkg_preproc.randoms_len());
 
             use strum::IntoEnumIterator;
+
+            use crate::execution::runtime::sessions::{
+                base_session::GenericBaseSessionHandles,
+                session_parameters::GenericParameterHandles,
+            };
             for bound in crate::execution::tfhe_internals::parameters::NoiseBounds::iter() {
                 assert_eq!(0, dkg_preproc.noise_len(bound));
             }
@@ -1997,7 +2007,10 @@ pub mod tests {
     {
         let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
                         tag: Option<String>| async move {
-            use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
+            use crate::execution::{
+                runtime::sessions::base_session::GenericBaseSessionHandles,
+                tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares,
+            };
             let tag = tag
                 .map(|s| {
                     let mut tag = tfhe::Tag::default();

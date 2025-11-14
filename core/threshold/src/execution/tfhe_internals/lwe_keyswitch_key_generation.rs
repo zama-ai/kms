@@ -4,8 +4,8 @@ use crate::{
         structure_traits::{BaseRing, ErrorCorrect, Zero},
     },
     execution::{
-        online::preprocessing::DKGPreprocessing, runtime::session::BaseSessionHandles,
-        tfhe_internals::parameters::KSKParams,
+        online::preprocessing::DKGPreprocessing,
+        runtime::sessions::base_session::BaseSessionHandles, tfhe_internals::parameters::KSKParams,
     },
 };
 
@@ -266,7 +266,9 @@ mod tests {
                 preprocessing::dummy::DummyPreprocessing,
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
+            },
             tfhe_internals::{
                 glwe_key::GlweSecretKeyShare,
                 lwe_key::LweSecretKeyShare,

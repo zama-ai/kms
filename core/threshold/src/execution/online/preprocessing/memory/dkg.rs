@@ -13,7 +13,7 @@ use crate::{
             },
             triple::Triple,
         },
-        runtime::session::BaseSession,
+        runtime::sessions::base_session::BaseSession,
         sharing::share::Share,
         small_execution::prf::PRSSConversions,
         tfhe_internals::parameters::DKGParams,

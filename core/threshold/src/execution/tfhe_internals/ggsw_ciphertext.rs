@@ -20,7 +20,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         online::{preprocessing::TriplePreprocessing, triple::mult_list},
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         sharing::share::Share,
         tfhe_internals::utils::slice_wrapping_scalar_mul_assign,
     },
@@ -390,7 +390,9 @@ mod tests {
             },
             runtime::{
                 party::Role,
-                session::{LargeSession, ParameterHandles},
+                sessions::{
+                    large_session::LargeSession, session_parameters::GenericParameterHandles,
+                },
             },
             sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{

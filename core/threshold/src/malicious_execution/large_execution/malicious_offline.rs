@@ -10,7 +10,7 @@ use crate::{
             single_sharing::SingleSharing,
         },
         online::triple::Triple,
-        runtime::session::LargeSessionHandles,
+        runtime::sessions::large_session::LargeSessionHandles,
         sharing::{open::RobustOpen, share::Share},
     },
     ProtocolDescription,

@@ -12,7 +12,7 @@ use crate::{
             preprocessing::BasePreprocessing,
             triple::{mult_list, open_list},
         },
-        runtime::session::SmallSessionHandles,
+        runtime::sessions::small_session::SmallSessionHandles,
         sharing::share::Share,
         small_execution::{prf::PRSSConversions, prss::PRSSPrimitives},
     },
@@ -146,7 +146,7 @@ mod tests {
         algebra::structure_traits::{One, Ring, Zero},
         execution::{
             online::preprocessing::dummy::DummyPreprocessing,
-            runtime::session::SmallSession,
+            runtime::sessions::small_session::SmallSession,
             sharing::shamir::{RevealOp, ShamirSharings},
         },
         experimental::algebra::levels::LevelKsw,

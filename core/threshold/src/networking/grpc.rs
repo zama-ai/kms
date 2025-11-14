@@ -5,7 +5,7 @@ use super::gen::{HealthCheckRequest, HealthCheckResponse, SendValueRequest, Send
 use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
 use super::tls::extract_subject_from_cert;
 use super::NetworkMode;
-use crate::execution::runtime::party::{MpcIdentity, Role, RoleAssignment};
+use crate::execution::runtime::party::{MpcIdentity, RoleAssignment, RoleKind, RoleTrait};
 use crate::networking::constants::{
     DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_ELAPSED_TIME,
     MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL, MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY,
@@ -320,11 +320,11 @@ impl GrpcNetworkingManager {
         })
     }
 
-    pub async fn make_healthcheck_session(
+    pub async fn make_healthcheck_session<R: RoleTrait>(
         &self,
-        role_assignment: &RoleAssignment,
-        my_role: Role,
-    ) -> anyhow::Result<HealthCheckSession> {
+        role_assignment: &RoleAssignment<R>,
+        my_role: R,
+    ) -> anyhow::Result<HealthCheckSession<R>> {
         let mut others = role_assignment.clone();
 
         // Removing self from the role_assignment map
@@ -365,14 +365,14 @@ impl GrpcNetworkingManager {
     /// All the communication are performed using sessions.
     /// There may be multiple session in parallel,
     /// identified by different session IDs.
-    pub async fn make_network_session(
+    pub async fn make_network_session<R: RoleTrait>(
         &self,
         session_id: SessionId,
         context_id: SessionId, // not the true context ID as it's a session ID derived from the context ID
-        role_assignment: &RoleAssignment,
-        my_role: Role,
+        role_assignment: &RoleAssignment<R>,
+        my_role: R,
         network_mode: NetworkMode,
-    ) -> anyhow::Result<Arc<impl Networking>> {
+    ) -> anyhow::Result<Arc<impl Networking<R>>> {
         let party_count = role_assignment.len();
         let mut others = role_assignment.clone();
 
@@ -496,7 +496,7 @@ pub(crate) struct InitializedMessageQueueStore {
     // role assignment is needed because the message store
     // needs to translate between identity and role
     tx: DashMap<MpcIdentity, Arc<Sender<NetworkRoundValue>>>,
-    rx: DashMap<Role, Arc<Mutex<Receiver<NetworkRoundValue>>>>,
+    rx: DashMap<RoleKind, Arc<Mutex<Receiver<NetworkRoundValue>>>>,
 }
 
 #[allow(clippy::type_complexity)]
@@ -528,9 +528,9 @@ impl MessageQueueStore {
         MessageQueueStore::Uninitialized(channel_maps)
     }
 
-    pub(crate) fn new_initialized(
+    pub(crate) fn new_initialized<R: RoleTrait>(
         channel_size_limit: usize,
-        others: &RoleAssignment,
+        others: &RoleAssignment<R>,
         opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     ) -> Self {
         let mut out = Self::new_uninitialized(DashMap::new());
@@ -538,10 +538,10 @@ impl MessageQueueStore {
         out
     }
 
-    pub(crate) fn init(
+    pub(crate) fn init<R: RoleTrait>(
         &mut self,
         channel_size_limit: usize,
-        others: &RoleAssignment,
+        others: &RoleAssignment<R>,
         opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     ) {
         if let MessageQueueStore::Uninitialized(channel_maps) = &self {
@@ -563,11 +563,11 @@ impl MessageQueueStore {
                         .or_insert(0);
                     let (tx, rx) = entry.value();
                     tx_map.insert(entry.key().clone(), tx.clone());
-                    rx_map.insert(*role, rx.clone());
+                    rx_map.insert(role.get_role_kind(), rx.clone());
                 } else {
                     let (tx, rx) = channel::<NetworkRoundValue>(channel_size_limit);
                     tx_map.insert(identity.mpc_identity(), Arc::new(tx));
-                    rx_map.insert(*role, Arc::new(Mutex::new(rx)));
+                    rx_map.insert(role.get_role_kind(), Arc::new(Mutex::new(rx)));
                 }
             }
 
@@ -595,14 +595,15 @@ impl MessageQueueStore {
         }
     }
 
-    pub(crate) fn get_rx(
+    pub(crate) fn get_rx<R: RoleTrait>(
         &self,
-        role: &Role,
+        role: &R,
     ) -> anyhow::Result<Option<Arc<Mutex<Receiver<NetworkRoundValue>>>>> {
         match &self {
-            MessageQueueStore::Initialized(store) => {
-                Ok(store.rx.get(role).map(|entry| entry.value().clone()))
-            }
+            MessageQueueStore::Initialized(store) => Ok(store
+                .rx
+                .get(&role.get_role_kind())
+                .map(|entry| entry.value().clone())),
             MessageQueueStore::Uninitialized(_) => Err(anyhow::anyhow!(
                 "trying to get rx message queue on role {role} when it is not initialized",
             )),
@@ -632,7 +633,9 @@ impl MessageQueueStore {
         }
     }
 
-    pub(crate) fn iter_keys(&self) -> Result<impl Iterator<Item = Role> + '_, Box<tonic::Status>> {
+    pub(crate) fn iter_keys(
+        &self,
+    ) -> Result<impl Iterator<Item = RoleKind> + '_, Box<tonic::Status>> {
         match &self {
             MessageQueueStore::Uninitialized(_) => Err(Box::new(tonic::Status::internal(
                 "trying to iterate keys when message queue is not initialized",

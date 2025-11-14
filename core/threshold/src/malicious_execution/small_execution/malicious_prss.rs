@@ -9,7 +9,7 @@ use crate::{
     execution::{
         communication::broadcast::Broadcast,
         large_execution::vss::Vss,
-        runtime::{party::Role, session::BaseSessionHandles},
+        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
         small_execution::{
             agree_random::AgreeRandomFromShare,
             prf::PRSSConversions,

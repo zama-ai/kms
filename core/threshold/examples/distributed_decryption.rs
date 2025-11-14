@@ -51,6 +51,7 @@ async fn main() {
     let roles = generate_fixed_roles(num_parties);
     let mut runtime = DistributedTestRuntime::<
         ResiduePolyF4Z64,
+        _,
         { ResiduePolyF4Z64::EXTENSION_DEGREE },
     >::new(roles.clone(), threshold as u8, NetworkMode::Sync, None);
 
