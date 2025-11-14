@@ -21,9 +21,7 @@ use test_context::{test_context, AsyncTestContext};
 // You can build the images by running the following commands from the root of the repo:
 // ```
 // docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
-// docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold-custodian.yml build
 // docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml build
-// docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized-custodian.yml build
 // ```
 // Any issue might be related to the fact that some obsolete Docker images exist.
 
@@ -415,9 +413,9 @@ async fn generate_custodian_keys_to_file(
     let mut setup_msgs_paths = Vec::new();
     // Use the first server to just play custodian in the tests
     let container_name = if threshold {
-        "zama-core-threshold-custodian-dev-kms-core-1-1".to_string()
+        "zama-core-threshold-dev-kms-core-1-1".to_string()
     } else {
-        "zama-core-centralized-custodian-dev-kms-core-1".to_string()
+        "zama-core-centralized-dev-kms-core-1".to_string()
     };
     for cus_idx in 1..=amount_custodians {
         let cur_setup_path = temp_dir
@@ -545,9 +543,9 @@ async fn custodian_reencrypt(
             format!("PUB-p{}", operator_index)
         };
         let container_name = if amount_operators > 1 {
-            format!("zama-core-threshold-custodian-dev-kms-core-{operator_index}-1")
+            format!("zama-core-threshold-dev-kms-core-{operator_index}-1")
         } else {
-            "zama-core-centralized-custodian-dev-kms-core-1".to_string()
+            "zama-core-centralized-dev-kms-core-1".to_string()
         };
         let cur_recovery_path = &recovery_paths[operator_index - 1];
         // Ensure the temp dir exists on docker as well. For simplicity we just use the same dir as locally
