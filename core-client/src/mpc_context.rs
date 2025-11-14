@@ -21,7 +21,7 @@ use crate::{
 };
 
 #[cfg(feature = "testing")]
-pub async fn create_test_context_info_from_config(
+pub async fn create_test_context_info_from_core_config(
     context_id: ContextId,
     sim_conf: &CoreClientConfig,
 ) -> anyhow::Result<ContextInfo> {

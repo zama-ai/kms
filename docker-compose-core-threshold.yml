@@ -93,10 +93,12 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
-      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then
-        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_1.toml
-      else
-        kms-server --config-file config/compose_1.toml
+      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then \
+        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_1.toml; \
+      elif [[ "${SET_EMPTY_PEERLIST}" = "true" ]]; then \
+        kms-server --ignore-peerlist --config-file config/compose_1.toml; \
+      else \
+        kms-server --config-file config/compose_1.toml; \
       fi
       "
 
@@ -137,10 +139,12 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
-      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then
-        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_2.toml
-      else
-        kms-server --config-file config/compose_2.toml
+      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then \
+        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_2.toml; \
+      elif [[ "${SET_EMPTY_PEERLIST}" = "true" ]]; then \
+        kms-server --ignore-peerlist --config-file config/compose_2.toml; \
+      else \
+        kms-server --config-file config/compose_2.toml; \
       fi
       "
     depends_on:
@@ -186,10 +190,12 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
-      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then
-        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_3.toml
-      else
-        kms-server --config-file config/compose_3.toml
+      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then \
+        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_3.toml; \
+      elif [[ "${SET_EMPTY_PEERLIST}" = "true" ]]; then \
+        kms-server --ignore-peerlist --config-file config/compose_3.toml; \
+      else \
+        kms-server --config-file config/compose_3.toml; \
       fi
       "
     depends_on:
@@ -235,10 +241,12 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
-      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then
-        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_4.toml
-      else
-        kms-server --config-file config/compose_4.toml
+      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then \
+        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_4.toml; \
+      elif [[ "${SET_EMPTY_PEERLIST}" = "true" ]]; then \
+        kms-server --ignore-peerlist --config-file config/compose_4.toml; \
+      else \
+        kms-server --config-file config/compose_4.toml; \
       fi
       "
     depends_on:
@@ -274,12 +282,18 @@ services:
       - RUN_MODE=dev
     entrypoint: >
       /bin/sh -c "
-      echo \"Starting initialization procedure\" &&
-      kms-init -a http://abcd.dev-kms-core-1.com:50100 http://abcd.dev-kms-core-2.com:50200 http://abcd.dev-kms-core-3.com:50300 http://abcd.dev-kms-core-4.com:50400 &&
-      echo \"Core services initialization done\" &&
-      sleep 1 &&
-      echo \"Exiting core service init...\" &&
-      exit 0
+      if [[ "${SET_EMPTY_PEERLIST}" = "true" ]]; then \
+        echo \"Skipping initialization procedure since peerlist is empty\" &&
+        sleep 1 &&
+        exit 0; \
+      else
+        echo \"Starting initialization procedure\" &&
+        kms-init -a http://abcd.dev-kms-core-1.com:50100 http://abcd.dev-kms-core-2.com:50200 http://abcd.dev-kms-core-3.com:50300 http://abcd.dev-kms-core-4.com:50400 &&
+        echo \"Core services initialization done\" &&
+        sleep 1 &&
+        echo \"Exiting core service init...\" &&
+        exit 0; \
+      fi
       "
 
   debug:

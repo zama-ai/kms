@@ -6,6 +6,7 @@ use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
+use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenResult, CustodianContext, CustodianRecoveryInitRequest,
     CustodianRecoveryOutput, CustodianRecoveryRequest, Empty, FheParameter, KeyGenPreprocResult,
@@ -59,8 +60,10 @@ use tracing_subscriber::fmt::writer::MakeWriterExt;
 use validator::{Validate, ValidationError};
 
 use crate::mpc_context::do_new_mpc_context;
+use crate::prss_init::do_prss_init;
 
 pub mod mpc_context;
+pub mod prss_init;
 mod s3_operations;
 
 const SLEEP_TIME_BETWEEN_REQUESTS_MS: u64 = 500;
@@ -438,6 +441,12 @@ pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
     Ok(hex::decode(hex_str)?)
 }
 
+#[derive(Debug, Parser, Clone)]
+pub struct PrssInitParameters {
+    pub context_id: ContextId,
+    pub epoch_id: EpochId,
+}
+
 #[derive(Debug, Subcommand, Clone)]
 pub enum CipherArguments {
     FromFile(CipherFile),
@@ -546,6 +555,8 @@ pub struct SharedKeyGenParameters {
     // TODO(#2799)
     // #[command(flatten)]
     // pub keyset_added_info: Option<KeySetAddedInfo>,
+    pub context_id: Option<ContextId>,
+    pub epoch_id: Option<EpochId>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -575,13 +586,19 @@ pub struct NewCustodianContextParameters {
     #[clap(long, short = 'm')]
     pub setup_msg_paths: Vec<PathBuf>,
 }
+#[derive(Debug, Args, Clone)]
+pub struct ContextPath {
+    /// Input file of the ciphertext.
+    #[clap(long)]
+    pub input_path: PathBuf,
+}
 
-#[derive(Debug, Parser, Clone)]
-pub struct NewMpcContextParameters {
+#[derive(Debug, Subcommand, Clone)]
+pub enum NewMpcContextParameters {
     /// Safe Serialized version of the struct ContextInfo
     /// stored in a file.
-    #[clap(long)]
-    pub context_path: PathBuf,
+    SerializedContextPath(ContextPath),
+    ContextToml(ContextPath),
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -618,7 +635,19 @@ pub struct ReshareParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct KeyGenPreprocParameters {
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct PartialKeyGenPreprocParameters {
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
     /// Percentage of offline phase to run (0-100)
     #[clap(long, short = 'p')]
     pub percentage_offline: u32,
@@ -626,9 +655,10 @@ pub struct PartialKeyGenPreprocParameters {
     #[clap(long, short = 's')]
     pub store_dummy_preprocessing: bool,
 }
+
 #[derive(Debug, Subcommand, Clone)]
 pub enum CCCommand {
-    PreprocKeyGen(NoParameters),
+    PreprocKeyGen(KeyGenPreprocParameters),
     PartialPreprocKeyGen(PartialKeyGenPreprocParameters),
     PreprocKeyGenResult(ResultParameters),
     KeyGen(KeyGenParameters),
@@ -651,7 +681,9 @@ pub enum CCCommand {
     CustodianBackupRecovery(RecoveryParameters),
     BackupRestore(NoParameters),
     Reshare(ReshareParameters),
+    #[clap(subcommand)]
     NewMpcContext(NewMpcContextParameters),
+    PrssInit(PrssInitParameters),
     DoNothing(NoParameters),
 }
 
@@ -884,7 +916,7 @@ async fn read_kms_addresses_local(
     Ok(kms_addrs)
 }
 
-/// check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
+/// Check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
 fn check_standard_keyset_ext_signature(
     public_key: &CompactPublicKey,
     server_key: &ServerKey,
@@ -1034,6 +1066,8 @@ async fn do_keygen(
     let dkg_req = internal_client.key_gen_request(
         &req_id,
         &preproc_id,
+        shared_config.context_id.as_ref(),
+        shared_config.epoch_id.as_ref(),
         Some(param),
         keyset_config,
         None,
@@ -1186,6 +1220,8 @@ async fn do_preproc(
     cmd_conf: &CmdConfig,
     num_parties: usize,
     fhe_params: FheParameter,
+    context_id: Option<&ContextId>,
+    epoch_id: Option<&EpochId>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -1193,7 +1229,14 @@ async fn do_preproc(
     // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
     // this function is only used for testing.
     let domain = dummy_domain();
-    let pp_req = internal_client.preproc_request(&req_id, Some(fhe_params), None, &domain)?; //TODO keyset config
+    let pp_req = internal_client.preproc_request(
+        &req_id,
+        Some(fhe_params),
+        context_id,
+        epoch_id,
+        None,
+        &domain,
+    )?; //TODO keyset config
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -1216,12 +1259,14 @@ async fn do_preproc(
 
     let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
     for response in responses {
+        // this part also verifies the signature
         internal_client.process_preproc_response(&req_id, &domain, &response)?;
     }
 
     Ok(req_id)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn do_partial_preproc(
     internal_client: &mut Client,
     core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -1230,6 +1275,8 @@ async fn do_partial_preproc(
     num_parties: usize,
     fhe_params: FheParameter,
     preproc_params: &PartialKeyGenPreprocParameters,
+    context_id: Option<&ContextId>,
+    epoch_id: Option<&EpochId>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -1240,6 +1287,8 @@ async fn do_partial_preproc(
     let pp_req = internal_client.partial_preproc_request(
         &req_id,
         Some(fhe_params),
+        context_id,
+        epoch_id,
         None,
         &domain,
         Some(kms_grpc::kms::v1::PartialKeyGenPreprocParams {
@@ -2072,7 +2121,10 @@ pub async fn execute_cmd(
             .await?;
             vec![(Some(req_id), "insecure crsgen done".to_string())]
         }
-        CCCommand::PreprocKeyGen(NoParameters {}) => {
+        CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
+            context_id,
+            epoch_id,
+        }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!("Preprocessing with parameter {}.", fhe_params.as_str_name());
 
@@ -2083,6 +2135,8 @@ pub async fn execute_cmd(
                 cmd_config,
                 num_parties,
                 fhe_params,
+                context_id.as_ref(),
+                epoch_id.as_ref(),
             )
             .await?;
             vec![(Some(req_id), "preproc done".to_string())]
@@ -2104,6 +2158,8 @@ pub async fn execute_cmd(
                 num_parties,
                 fhe_params,
                 partial_params,
+                partial_params.context_id.as_ref(),
+                partial_params.epoch_id.as_ref(),
             )
             .await?;
             vec![(
@@ -2375,9 +2431,25 @@ pub async fn execute_cmd(
                 (Some(*key_id), "Key ready to be used".to_string()),
             ]
         }
-        CCCommand::NewMpcContext(NewMpcContextParameters { context_path }) => {
-            let ctx_id = do_new_mpc_context(&core_endpoints_req, context_path).await?;
-            vec![(Some(ctx_id.into()), "new mpc context created".to_string())]
+        CCCommand::NewMpcContext(context_param) => match context_param {
+            NewMpcContextParameters::SerializedContextPath(context_path) => {
+                let ctx_id =
+                    do_new_mpc_context(&core_endpoints_req, &context_path.input_path).await?;
+                vec![(
+                    Some(ctx_id.into()),
+                    "new mpc context created from serialized context".to_string(),
+                )]
+            }
+            NewMpcContextParameters::ContextToml(_context_path) => {
+                unimplemented!("Creating new MPC context from TOML is not yet implemented");
+            }
+        },
+        CCCommand::PrssInit(PrssInitParameters {
+            context_id,
+            epoch_id,
+        }) => {
+            do_prss_init(&core_endpoints_req, context_id, epoch_id).await?;
+            vec![(Some((*epoch_id).into()), "prss init done".to_string())]
         }
     };
 

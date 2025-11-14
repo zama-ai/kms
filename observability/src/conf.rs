@@ -298,6 +298,10 @@ impl Settings<'_> {
             println!("Using config file: {path}");
         }
 
+        // NOTE: Environment variables that correspond to a sequence,
+        // e.g., KMS_CORE__THRESHOLD__PEERS, cannot be configured to be empty
+        // using the config crate due to its limitation
+        // https://github.com/rust-cli/config-rs/issues/443
         let mut env_conf = config::Environment::default()
             .prefix(self.env_prefix)
             .separator("__")

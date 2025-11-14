@@ -115,7 +115,7 @@ pub enum TlsCert {
 }
 
 impl TlsCert {
-    pub(crate) fn unchecked_cert_string(&self) -> anyhow::Result<String> {
+    pub fn unchecked_cert_string(&self) -> anyhow::Result<String> {
         match self {
             TlsCert::Path(ref cert_path) => std::fs::read_to_string(cert_path)
                 .map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", cert_path.display(), e)),
@@ -123,9 +123,14 @@ impl TlsCert {
         }
     }
 
-    pub fn into_pem(&self, my_id: usize, peers: &[PeerConf]) -> anyhow::Result<Pem> {
+    /// Parses the certificate without any validation against peerlist.
+    pub fn unchecked_pem(&self) -> anyhow::Result<Pem> {
         let cert_bytes = self.unchecked_cert_string()?;
-        let cert_pem = parse_x509_pem(cert_bytes.as_ref())?.1;
+        Ok(parse_x509_pem(cert_bytes.as_ref())?.1)
+    }
+
+    pub fn into_pem(&self, my_id: usize, peers: &[PeerConf]) -> anyhow::Result<Pem> {
+        let cert_pem = self.unchecked_pem()?;
         let x509_cert = cert_pem.parse_x509()?;
         // sanity check: peerlist needs to have an entry for the
         // current party

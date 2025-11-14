@@ -227,6 +227,8 @@ pub(crate) async fn run_threshold_keygen(
         .key_gen_request(
             keygen_req_id,
             preproc_req_id,
+            None,
+            None,
             Some(parameter),
             keyset_config,
             keyset_added_info,
@@ -412,6 +414,8 @@ async fn wait_for_keygen_result(
             .key_gen_request(
                 &other_key_gen_id,
                 &req_preproc,
+                None,
+                None,
                 Some(FheParameter::Test),
                 None,
                 None,
@@ -844,6 +848,8 @@ pub(crate) async fn run_preproc(
             .partial_preproc_request(
                 preproc_req_id,
                 Some(parameter),
+                None,
+                None,
                 keyset_config,
                 &domain,
                 Some(partial_preproc),
@@ -863,7 +869,14 @@ pub(crate) async fn run_preproc(
         preproc_request.base_request.unwrap()
     } else {
         let preproc_request = internal_client
-            .preproc_request(preproc_req_id, Some(parameter), keyset_config, &domain)
+            .preproc_request(
+                preproc_req_id,
+                Some(parameter),
+                None,
+                None,
+                keyset_config,
+                &domain,
+            )
             .unwrap();
 
         // Execute preprocessing
