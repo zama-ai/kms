@@ -12,9 +12,14 @@ use crate::{
     algebra::structure_traits::ErrorCorrect,
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::p2p::{generic_receive_from_all, send_to_all},
+        communication::p2p::{
+            generic_receive_from_all, generic_receive_from_all_senders, send_to_all,
+        },
         online::preprocessing::constants::BATCH_SIZE_BITS,
-        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
+        runtime::{
+            party::{Role, RoleTrait, TwoSetsRole},
+            sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
+        },
     },
     networking::value::NetworkValue,
     thread_handles::spawn_compute_bound,
@@ -50,6 +55,23 @@ pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
         session: &B,
         shares: OpeningKind<Z>,
         degree: usize,
+    ) -> anyhow::Result<Option<Vec<Z>>>;
+
+    /// NOTE: As a sender in this function I will send to all the external
+    /// parties I am meant to open to.
+    /// As a receiver I will receive from all the parties in the other set.
+    /// for the specific share I am meant to open.
+    /// This avoids any possible mixup in round number
+    /// Also, I have no shares to send, I am de facto a receiver.
+    async fn robust_open_list_to_external<
+        Z: ErrorCorrect,
+        B: GenericBaseSessionHandles<TwoSetsRole>,
+    >(
+        &self,
+        session: &B,
+        all_shares: Option<HashMap<TwoSetsRole, Vec<Z>>>,
+        degree: usize,
+        expected_output_len: usize,
     ) -> anyhow::Result<Option<Vec<Z>>>;
 
     /// Blanket implementation that relies on [`Self::execute`]
@@ -247,15 +269,135 @@ impl RobustOpen for SecureRobustOpen {
                 crate::networking::NetworkMode::Async => reconstruct_w_errors_async,
             };
 
-            try_reconstruct_from_shares(session, sharings, degree, jobs, reconstruct_fn).await?
+            let num_parties = session.num_parties();
+            let threshold = session.threshold();
+            let num_bots = session.corrupt_roles().len();
+            try_reconstruct_from_shares(
+                num_parties,
+                threshold,
+                num_bots,
+                sharings,
+                degree,
+                jobs,
+                reconstruct_fn,
+            )
+            .await?
         } else {
             None
         };
         Ok(result)
     }
+
+    async fn robust_open_list_to_external<
+        Z: ErrorCorrect,
+        B: GenericBaseSessionHandles<TwoSetsRole>,
+    >(
+        &self,
+        session: &B,
+        all_shares: Option<HashMap<TwoSetsRole, Vec<Z>>>,
+        degree: usize,
+        expected_output_len: usize,
+    ) -> anyhow::Result<Option<Vec<Z>>> {
+        let own_role = session.my_role();
+        session.network().increase_round_counter().await;
+
+        if let Some(all_shares) = all_shares {
+            for (output_party, shares) in all_shares.into_iter() {
+                // Sanity check that the receiver isn't in the same set as me
+                if std::mem::discriminant(&own_role) == std::mem::discriminant(&output_party) {
+                    return Err(anyhow_error_and_log(
+                        "Output party cannot be in the same set as the sender".to_string(),
+                    ));
+                }
+
+                // Send my shares to the receiver
+                session
+                    .network()
+                    .send(
+                        Arc::new(NetworkValue::VecRingValue(shares).to_network()),
+                        &output_party,
+                    )
+                    .await?;
+            }
+
+            // Nothing to return as a sender
+            return Ok(None);
+        } else {
+            // If I am an output party I just receive from all parties
+            // in the other set
+            let mut parties_to_receive_from = session.roles().clone();
+            // Retain only the parties from the other set
+            parties_to_receive_from.retain(|role| match own_role {
+                TwoSetsRole::Set1(_) => matches!(role, TwoSetsRole::Set2(_)),
+                TwoSetsRole::Set2(_) => matches!(role, TwoSetsRole::Set1(_)),
+            });
+            let num_sending_parties = parties_to_receive_from.len();
+            let mut jobs = JoinSet::<Result<(TwoSetsRole, anyhow::Result<Vec<Z>>), Elapsed>>::new();
+            //Note: we give the set of corrupt parties as the non_answering_parties argument
+            //Thus generic_receive_from_all will not receive from corrupt parties.
+            generic_receive_from_all_senders(
+                &mut jobs,
+                session,
+                &own_role,
+                &parties_to_receive_from,
+                Some(session.corrupt_roles()),
+                |msg, _id| match msg {
+                    NetworkValue::VecRingValue(v) => Ok(v),
+                    _ => Err(anyhow_error_and_log(format!(
+                        "Received {}, expected a Ring value in robust open to all",
+                        msg.network_type_name()
+                    ))),
+                },
+            )
+            .await;
+
+            // Get the threshold for the sending set
+            // as well as the number of corrupt parties
+            // from the sending set
+            let (threshold, num_bots) = match own_role {
+                TwoSetsRole::Set1(_) => (
+                    session.threshold().1,
+                    session
+                        .corrupt_roles()
+                        .iter()
+                        .filter(|r| matches!(r, TwoSetsRole::Set2(_)))
+                        .count(),
+                ),
+                TwoSetsRole::Set2(_) => (
+                    session.threshold().0,
+                    session
+                        .corrupt_roles()
+                        .iter()
+                        .filter(|r| matches!(r, TwoSetsRole::Set1(_)))
+                        .count(),
+                ),
+            };
+
+            let reconstruct_fn = match session.network().get_network_mode() {
+                crate::networking::NetworkMode::Sync => reconstruct_w_errors_sync,
+                crate::networking::NetworkMode::Async => reconstruct_w_errors_async,
+            };
+
+            let sharings = vec![
+                ShamirSharings::create(vec![]); //Empty sharings to be filled
+                expected_output_len
+            ];
+            // Now need to reconstruct
+            try_reconstruct_from_shares(
+                num_sending_parties,
+                threshold,
+                num_bots,
+                sharings,
+                degree,
+                jobs,
+                reconstruct_fn,
+            )
+            .await
+        }
+    }
 }
 
-type JobResultType<Z> = (Role, anyhow::Result<Vec<Z>>);
+type JobResultType<R, Z> = (R, anyhow::Result<Vec<Z>>);
 type ReconsFunc<Z> = fn(
     num_parties: usize,
     degree: usize,
@@ -272,16 +414,15 @@ type ReconsFunc<Z> = fn(
 /// - degree as the degree of the secret sharing
 /// - max_num_errors as the max. number of errors we allow (this is session.threshold)
 /// - a set of jobs to receive the shares from the other parties
-async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
-    session: &B,
+async fn try_reconstruct_from_shares<R: RoleTrait, Z: ErrorCorrect>(
+    num_parties: usize,
+    threshold: u8,
+    mut num_bots: usize,
     sharings: Vec<ShamirSharings<Z>>,
     degree: usize,
-    mut jobs: JoinSet<Result<JobResultType<Z>, Elapsed>>,
+    mut jobs: JoinSet<Result<JobResultType<R, Z>, Elapsed>>,
     reconstruct_fn: ReconsFunc<Z>,
 ) -> anyhow::Result<Option<Vec<Z>>> {
-    let num_parties = session.num_parties();
-    let threshold = session.threshold();
-    let mut num_bots = session.corrupt_roles().len();
     let num_secrets = sharings.len();
 
     // OPTIMIZATION: Collect shares concurrently with batched reconstruction
@@ -306,7 +447,7 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
                             .map_err(|_| anyhow_error_and_log("Poisoned lock"))?,
                         values,
                         num_secrets,
-                        party_id,
+                        party_id.get_role_kind().get_role(),
                     )?;
                     collected_shares += 1;
                 } else if let Err(e) = data {

@@ -1,6 +1,6 @@
 use crate::{
     error::error_handler::anyhow_error_and_log,
-    execution::runtime::party::{Role, RoleTrait},
+    execution::runtime::party::{Role, RoleTrait, TwoSetsRole},
     session_id::SessionId,
 };
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ pub enum DeSerializationRunTime {
 }
 
 pub trait GenericParameterHandles<R: RoleTrait>: Sync + Send {
-    fn threshold(&self) -> u8;
+    fn threshold(&self) -> R::ThresholdType;
     fn session_id(&self) -> SessionId;
     fn my_role(&self) -> R;
     fn num_parties(&self) -> usize;
@@ -35,7 +35,7 @@ pub trait ParameterHandles: GenericParameterHandles<Role> {}
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct GenericSessionParameters<R: RoleTrait> {
-    threshold: u8,
+    threshold: R::ThresholdType,
     session_id: SessionId,
     my_role: R,
     roles: HashSet<R>,
@@ -45,17 +45,61 @@ pub struct GenericSessionParameters<R: RoleTrait> {
 
 pub type SessionParameters = GenericSessionParameters<Role>;
 
-impl<R: RoleTrait> GenericSessionParameters<R> {
+impl GenericSessionParameters<Role> {
     pub fn new(
         threshold: u8,
         session_id: SessionId,
-        my_role: R,
-        roles: HashSet<R>,
+        my_role: Role,
+        roles: HashSet<Role>,
     ) -> anyhow::Result<Self> {
         if roles.len() <= threshold as usize {
             return Err(anyhow_error_and_log(format!(
                 "Threshold {threshold} cannot be less than the amount of parties, {:?}",
                 roles.len()
+            )));
+        }
+        if !roles.contains(&my_role) {
+            return Err(anyhow_error_and_log(format!(
+                "My role {my_role} is not in the set of roles: {roles:?}"
+            )));
+        }
+        let mut all_sorted_roles = roles.iter().cloned().collect::<Vec<_>>();
+        all_sorted_roles.sort();
+        let res = Self {
+            threshold,
+            session_id,
+            my_role,
+            roles,
+            all_sorted_roles,
+            deserialization_runtime: DeSerializationRunTime::Tokio,
+        };
+
+        Ok(res)
+    }
+}
+
+impl GenericSessionParameters<TwoSetsRole> {
+    pub fn new(
+        threshold: (u8, u8),
+        session_id: SessionId,
+        my_role: TwoSetsRole,
+        roles: HashSet<TwoSetsRole>,
+    ) -> anyhow::Result<Self> {
+        let (mut num_parties_in_set_1, mut num_parties_in_set_2) = (0, 0);
+        roles.iter().for_each(|role| match role {
+            TwoSetsRole::Set1(_) => num_parties_in_set_1 += 1,
+            TwoSetsRole::Set2(_) => num_parties_in_set_2 += 1,
+        });
+        if num_parties_in_set_1 <= threshold.0 as usize {
+            return Err(anyhow_error_and_log(format!(
+                "Threshold {} cannot be less than the amount of parties in set 1, {:?}",
+                threshold.0, num_parties_in_set_1
+            )));
+        }
+        if num_parties_in_set_1 <= threshold.1 as usize {
+            return Err(anyhow_error_and_log(format!(
+                "Threshold {} cannot be less than the amount of parties in set 1, {:?}",
+                threshold.1, num_parties_in_set_1
             )));
         }
         if !roles.contains(&my_role) {
@@ -87,7 +131,7 @@ impl<R: RoleTrait> GenericParameterHandles<R> for GenericSessionParameters<R> {
         self.roles.len()
     }
 
-    fn threshold(&self) -> u8 {
+    fn threshold(&self) -> R::ThresholdType {
         self.threshold
     }
 
