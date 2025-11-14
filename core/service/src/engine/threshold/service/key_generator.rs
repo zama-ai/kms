@@ -275,7 +275,7 @@ impl<
         // Clone all the Arcs to give them to the tokio thread
         let meta_store = Arc::clone(&self.dkg_pubinfo_meta_store);
         let meta_store_cancelled = Arc::clone(&self.dkg_pubinfo_meta_store);
-        let sk = Arc::clone(&self.base_kms.sig_key);
+        let sk = self.base_kms.sig_key()?;
         let crypto_storage = self.crypto_storage.clone();
         let crypto_storage_cancelled = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.clone();
@@ -1228,7 +1228,7 @@ mod tests {
         let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, base_kms.rng.clone());
+            SessionMaker::four_party_dummy_session(None, None, base_kms.new_rng().await);
         let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
             base_kms,
             session_maker.make_immutable(),

@@ -1,9 +1,11 @@
 use crate::backup::BackupCiphertext;
+use crate::conf::FileStorage as FileStorageConf;
+use crate::conf::Storage as StorageConf;
 use crate::util::file_handling::safe_read_element_versioned;
 use crate::util::key_setup::FhePublicKey;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
-    delete_all_at_request_id, read_versioned_at_request_id, StorageReader,
+    delete_all_at_request_id, make_storage, read_versioned_at_request_id, StorageReader,
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
@@ -22,6 +24,7 @@ use tfhe::{
     Unversionize, Versionize,
 };
 use threshold_fhe::execution::{runtime::party::Role, tfhe_internals::utils::expanded_encrypt};
+use tokio::fs::read_dir;
 
 fn enc_and_serialize_ctxt<M, T>(
     msg: M,
@@ -360,31 +363,48 @@ pub async fn compute_cipher_from_stored_key(
 pub async fn purge(
     pub_path: Option<&Path>,
     priv_path: Option<&Path>,
-    _backup_path: Option<&Path>,
+    backup_path: Option<&Path>,
     id: &RequestId,
     amount_parties: usize,
 ) {
-    // TODO(#2748) backups should probably be handled separately since this does not delete all the custodian based backups
-    // but only the non-custodian ones. Hence the following lines are commented out for now.
-    // let vault_storage_option = backup_path.map(|path| {
-    //     StorageConf::File(FileStorageConf {
-    //         path: path.to_path_buf(),
-    //     })
-    // });
+    let vault_storage_option = backup_path.map(|path| {
+        StorageConf::File(FileStorageConf {
+            path: path.to_path_buf(),
+        })
+    });
     if amount_parties == 1 {
         let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
         delete_all_at_request_id(&mut pub_storage, id).await;
         let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
         delete_all_at_request_id(&mut priv_storage, id).await;
-        // let mut backup_storage = make_storage(
-        //     vault_storage_option.clone(),
-        //     StorageType::BACKUP,
-        //     None,
-        //     None,
-        //     None,
-        // )
-        // .unwrap();
-        // delete_all_at_request_id(&mut backup_storage, id).await;
+        // Delete custodian based backups which are stored in folders with each custodian context id
+        if let Some(inner_backup_path) = backup_path {
+            let mut backup_dirs = read_dir(inner_backup_path).await.unwrap();
+            while let Some(cur_dir) = backup_dirs.next_entry().await.unwrap() {
+                let inner_vault_storage_option = StorageConf::File(FileStorageConf {
+                    path: cur_dir.path(),
+                });
+                let mut cus_backup_storage = make_storage(
+                    Some(inner_vault_storage_option),
+                    StorageType::BACKUP,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+                delete_all_at_request_id(&mut cus_backup_storage, id).await;
+            }
+        }
+        // Delete import/export based backups
+        let mut backup_storage = make_storage(
+            vault_storage_option.clone(),
+            StorageType::BACKUP,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        delete_all_at_request_id(&mut backup_storage, id).await;
     } else {
         for i in 1..=amount_parties {
             let mut threshold_pub =
@@ -398,15 +418,34 @@ pub async fn purge(
             .unwrap();
             delete_all_at_request_id(&mut threshold_pub, id).await;
             delete_all_at_request_id(&mut threshold_priv, id).await;
-            // let mut backup_storage = make_storage(
-            //     vault_storage_option.clone(),
-            //     StorageType::BACKUP,
-            //     Some(Role::indexed_from_one(i)),
-            //     None,
-            //     None,
-            // )
-            // .unwrap();
-            // delete_all_at_request_id(&mut backup_storage, id).await;
+            // Delete custodian based backups which are stored in folders with each custodian context id
+            if let Some(inner_backup_path) = backup_path {
+                let mut backup_dirs = read_dir(inner_backup_path).await.unwrap();
+                while let Some(cur_dir) = backup_dirs.next_entry().await.unwrap() {
+                    let inner_vault_storage_option = StorageConf::File(FileStorageConf {
+                        path: cur_dir.path(),
+                    });
+                    let mut cus_backup_storage = make_storage(
+                        Some(inner_vault_storage_option),
+                        StorageType::BACKUP,
+                        Some(Role::indexed_from_one(i)),
+                        None,
+                        None,
+                    )
+                    .unwrap();
+                    delete_all_at_request_id(&mut cus_backup_storage, id).await;
+                }
+            }
+            // Delete import/export based backups
+            let mut backup_storage = make_storage(
+                vault_storage_option.clone(),
+                StorageType::BACKUP,
+                Some(Role::indexed_from_one(i)),
+                None,
+                None,
+            )
+            .unwrap();
+            delete_all_at_request_id(&mut backup_storage, id).await;
         }
     }
 }
@@ -451,7 +490,7 @@ pub async fn purge_pub(pub_path: Option<&Path>) {
 
 /// Purge _all_ backed up data. Both custodian and non-custodian based backups.
 /// Note however that this method does _not_ purge anything in the private or public storage.
-/// Thus, if you want to avoid new custodian backups being constructed at boot ensure that `purge_recovery_info`
+/// Thus, if you want to avoid new custodian backups being constructed at boot ensure that `purge_recovery_material`
 /// is also called, as it deletes all the custodian recovery info.
 pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
     if amount_parties == 1 {
@@ -543,12 +582,14 @@ pub async fn read_backup_files(
 /// Remove all the data needed to perform custodian backups.
 /// This then allows your to prevent the automatic backup being done at boot
 /// when the system is configured with custodian backups.
-pub async fn purge_recovery_info(path: Option<&Path>, amount_parties: usize) {
+/// TODO currently not used anywhere
+pub async fn purge_recovery_material(path: Option<&Path>, amount_parties: usize) {
     if amount_parties == 1 {
         let storage = FileStorage::new(path, StorageType::PUB, None).unwrap();
         let base_dir = storage.root_dir();
-        let _ = tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryRequest.to_string()))
-            .await;
+        let _ =
+            tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryMaterial.to_string()))
+                .await;
         let _ =
             tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryMaterial.to_string()))
                 .await;
@@ -562,9 +603,6 @@ pub async fn purge_recovery_info(path: Option<&Path>, amount_parties: usize) {
             )
             .unwrap();
             let base_dir = storage.root_dir();
-            let _ =
-                tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryRequest.to_string()))
-                    .await;
             let _ = tokio::fs::remove_dir_all(
                 &base_dir.join(PubDataType::RecoveryMaterial.to_string()),
             )

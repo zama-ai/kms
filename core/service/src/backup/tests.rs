@@ -58,7 +58,7 @@ fn operator_setup() {
         wrong_custodian_messages[0].header.push('z');
 
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let operator = Operator::new(
+        let operator = Operator::new_for_sharing(
             Role::indexed_from_zero(0),
             wrong_custodian_messages,
             signing_key,
@@ -77,7 +77,7 @@ fn operator_setup() {
         wrong_custodian_messages[1].timestamp += 24 * 3700;
 
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let operator = Operator::new(
+        let operator = Operator::new_for_sharing(
             Role::indexed_from_zero(0),
             wrong_custodian_messages,
             signing_key,
@@ -122,7 +122,7 @@ fn custodian_reencrypt() {
         .map(|i| {
             let operator_role = Role::indexed_from_zero(i);
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-            Operator::new(
+            Operator::new_for_sharing(
                 operator_role,
                 custodian_messages.clone(),
                 signing_key,
@@ -392,7 +392,7 @@ fn full_flow_malicious_custodian_init() {
     for op_idx in 1..=operator_count {
         let operator_role = Role::indexed_from_one(op_idx);
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let operator = Operator::new(
+        let operator = Operator::new_for_sharing(
             operator_role,
             setup_msgs_malicious.to_vec(),
             signing_key.clone(),
@@ -617,13 +617,12 @@ fn operator_handle_init(
             .map(|msg| msg.to_owned().try_into().unwrap())
             .collect(),
         context_id: Some((*backup_id).into()),
-        previous_context_id: None,
         threshold: custodian_threshold as u32,
     };
     for op_idx in 1..=operator_count {
         let operator_role = Role::indexed_from_one(op_idx);
         let (verification_key, signing_key) = gen_sig_keys(rng);
-        let operator = Operator::new(
+        let operator = Operator::new_for_sharing(
             operator_role,
             setup_msgs.to_vec(),
             signing_key.clone(),
@@ -643,6 +642,7 @@ fn operator_handle_init(
         let operator_cus_context =
             InternalCustodianContext::new(cus_context.clone(), backup_enc_key.clone()).unwrap();
         let validation_material = RecoveryValidationMaterial::new(
+            cur_op_output.to_owned(),
             cur_comm.to_owned(),
             operator_cus_context,
             &signing_key,

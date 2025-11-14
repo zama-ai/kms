@@ -53,7 +53,7 @@ pub struct KeyId([u8; ID_LENGTH]);
 /// This type provides a strongly-typed wrapper around a fixed-size byte array
 /// with consistent conversion methods to/from various representations.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
-pub struct RequestId([u8; ID_LENGTH]); // TODO(#2748) rename to InternalRequestId
+pub struct RequestId([u8; ID_LENGTH]);
 
 /// EpochId represents a unique identifier for an epoch/PRSS.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]

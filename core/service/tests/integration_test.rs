@@ -801,7 +801,7 @@ mod kms_custodian_binary_tests {
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (ephemeral_priv_key, ephemeral_pub_key) = enc.keygen().unwrap();
-        let operator: Operator = Operator::new(
+        let operator: Operator = Operator::new_for_sharing(
             operator_role,
             setup_msgs.clone(),
             signing_key.clone(),
@@ -824,15 +824,18 @@ mod kms_custodian_binary_tests {
                     .map(|cur| cur.to_owned().try_into().unwrap())
                     .collect(),
                 context_id: Some(backup_id.into()),
-                previous_context_id: None,
                 threshold: threshold as u32,
             },
             backup_pke,
         )
         .unwrap();
-        let validation_material =
-            RecoveryValidationMaterial::new(commitments.clone(), custodian_context, &signing_key)
-                .unwrap();
+        let validation_material = RecoveryValidationMaterial::new(
+            ct_map.clone(),
+            commitments.clone(),
+            custodian_context,
+            &signing_key,
+        )
+        .unwrap();
         let mut ciphertexts = BTreeMap::new();
         for custodian_index in 1..=amount_custodians {
             let custodian_role = Role::indexed_from_one(custodian_index);

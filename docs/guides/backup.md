@@ -36,7 +36,7 @@ $ cargo run --bin kms-custodian generate --randomness 123 --custodian-role 3 --c
 
 Run the CLI tool with the `verify` command in order to validate that a seed phrase is the one used to generate certain setup information. More specifically:
 ```{bash}
-$ cargo run --bin kms-custodian verify --seed-phrase <the seed phrased used for generation> --path <path and name of the file where the custodian setup info should stored>
+$ cargo run --bin kms-custodian verify --seed-phrase <the seed phrase used for generation> --path <path and name of the file where the custodian setup info should stored>
 ```
 The call will print any inconsistencies found between the public keys generated from the seed phrase and those in the data supplied.
 

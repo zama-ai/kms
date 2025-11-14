@@ -17,7 +17,7 @@ use std::{str::FromStr, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::{
-    backup::custodian::InternalCustodianContext,
+    backup::operator::RecoveryValidationMaterial,
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues},
         threshold::service::BucketMetaStore,
@@ -51,8 +51,8 @@ pub type CrsMetaStore = MetaStore<CrsGenMetadata>;
 /// MetaStore for preprocessing data, wrapping the bucket store in an Arc<Mutex<>>
 pub type PreprocMetaStore = MetaStore<BucketMetaStore>;
 
-/// MetaStore for custodian context data, storing setup messages needed for backup operations.
-pub type CustodianMetaStore = MetaStore<InternalCustodianContext>;
+/// MetaStore for recovery information, storing setup messages along with signcrypted payloads of shares needed for backup operations.
+pub type CustodianMetaStore = MetaStore<RecoveryValidationMaterial>;
 
 /// Implementation of the MetaStoreStatusService gRPC service.
 ///
