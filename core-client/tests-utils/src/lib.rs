@@ -140,16 +140,12 @@ impl DockerComposeCmd {
                 .arg("docker-compose-core-base.yml")
                 .arg("-f");
             match self.mode {
-                KMSMode::ThresholdDefaultParameter | KMSMode::ThresholdTestParameter => {
+                KMSMode::ThresholdDefaultParameter
+                | KMSMode::ThresholdTestParameter
+                | KMSMode::ThresholdCustodianTestParameter => {
                     docker_logs.arg("docker-compose-core-threshold.yml");
                 }
-                KMSMode::ThresholdCustodianTestParameter => {
-                    docker_logs.arg("docker-compose-core-threshold-custodian.yml");
-                }
-                KMSMode::CentralizedCustodian => {
-                    docker_logs.arg("docker-compose-core-centralized-custodian.yml");
-                }
-                KMSMode::Centralized => {
+                KMSMode::CentralizedCustodian | KMSMode::Centralized => {
                     docker_logs.arg("docker-compose-core-centralized.yml");
                 }
             }

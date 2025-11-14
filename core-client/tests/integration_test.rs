@@ -21,9 +21,7 @@ use test_context::{test_context, AsyncTestContext};
 // You can build the images by running the following commands from the root of the repo:
 // ```
 // docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
-// docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold-custodian.yml build
 // docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml build
-// docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized-custodian.yml build
 // ```
 // Any issue might be related to the fact that some obsolete Docker images exist.
 
