@@ -12,8 +12,11 @@ use crate::{
     algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
     execution::runtime::{
-        party::Role,
-        sessions::{base_session::BaseSessionHandles, large_session::LargeSessionHandles},
+        party::{Role, RoleTrait},
+        sessions::{
+            base_session::{BaseSessionHandles, GenericBaseSessionHandles},
+            large_session::LargeSessionHandles,
+        },
     },
     networking::value::NetworkValue,
 };
@@ -233,13 +236,18 @@ where
 /// from the inside enum.
 ///
 /// **NOTE: We do not try to receive any value from the non_answering_parties set.**
-pub async fn generic_receive_from_all_senders<V, Z: Ring, B: BaseSessionHandles>(
-    jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
+pub async fn generic_receive_from_all_senders<
+    V,
+    Z: Ring,
+    R: RoleTrait,
+    B: GenericBaseSessionHandles<R>,
+>(
+    jobs: &mut JoinSet<Result<(R, anyhow::Result<V>), Elapsed>>,
     session: &B,
-    receiver: &Role,
-    senders: &HashSet<Role>,
-    non_answering_parties: Option<&HashSet<Role>>,
-    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &Role) -> anyhow::Result<V>,
+    receiver: &R,
+    senders: &HashSet<R>,
+    non_answering_parties: Option<&HashSet<R>>,
+    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &R) -> anyhow::Result<V>,
 ) where
     V: std::marker::Send + 'static,
 {

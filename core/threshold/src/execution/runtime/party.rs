@@ -27,6 +27,7 @@ pub trait RoleTrait:
     + std::hash::Hash
     + 'static
 {
+    type ThresholdType: Copy + Sync + Send;
     fn get_role_kind(&self) -> RoleKind;
 }
 
@@ -34,6 +35,18 @@ pub trait RoleTrait:
 pub enum RoleKind {
     SingleSet(Role),
     TwoSet(TwoSetsRole),
+}
+
+impl RoleKind {
+    pub fn get_role(&self) -> Role {
+        match self {
+            RoleKind::SingleSet(r) => *r,
+            RoleKind::TwoSet(tr) => match tr {
+                TwoSetsRole::Set1(r) => *r,
+                TwoSetsRole::Set2(r) => *r,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -68,6 +81,7 @@ pub enum TwoSetsRole {
 pub struct Role(u64);
 
 impl RoleTrait for Role {
+    type ThresholdType = u8;
     fn get_role_kind(&self) -> RoleKind {
         RoleKind::SingleSet(*self)
     }
@@ -80,6 +94,7 @@ impl Default for TwoSetsRole {
 }
 
 impl RoleTrait for TwoSetsRole {
+    type ThresholdType = (u8, u8);
     fn get_role_kind(&self) -> RoleKind {
         RoleKind::TwoSet(*self)
     }

@@ -71,7 +71,7 @@ impl<R: RoleTrait> GenericParameterHandles<R> for GenericBaseSession<R> {
         self.parameters.num_parties()
     }
 
-    fn threshold(&self) -> u8 {
+    fn threshold(&self) -> R::ThresholdType {
         self.parameters.threshold()
     }
 
