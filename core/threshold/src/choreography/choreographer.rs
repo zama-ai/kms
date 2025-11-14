@@ -186,7 +186,8 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses
+                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
             }
         }
 
@@ -238,7 +239,8 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses
+                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
             }
         }
 
@@ -299,7 +301,7 @@ impl ChoreoRuntime {
         //    assert_eq!(response, ref_response);
         //}
         let pub_key = responses.pop().unwrap();
-        let pub_key = bc2wrap::deserialize(&pub_key)?;
+        let pub_key = bc2wrap::deserialize_safe(&pub_key)?;
         Ok(pub_key)
     }
 
@@ -347,7 +349,8 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses
+                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
             }
         }
 
@@ -408,7 +411,8 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses
+                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
             }
         }
 
@@ -447,7 +451,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().plaintext))?);
+                responses.push(bc2wrap::deserialize_safe(
+                    &(response?.into_inner().plaintext),
+                )?);
             }
         }
 
@@ -506,7 +512,8 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses
+                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
             }
         }
 
@@ -545,7 +552,7 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner()).crs).unwrap());
+                responses.push(bc2wrap::deserialize_safe(&(response?.into_inner()).crs).unwrap());
             }
         }
 
@@ -597,7 +604,8 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses
+                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
             }
         }
 
@@ -633,7 +641,7 @@ impl ChoreoRuntime {
 
             while let Some(response) = join_set.join_next().await {
                 let (role, response) = response?;
-                let status: Status = bc2wrap::deserialize(&response?.into_inner().status)?;
+                let status: Status = bc2wrap::deserialize_safe(&response?.into_inner().status)?;
                 result.push((role, status));
             }
 

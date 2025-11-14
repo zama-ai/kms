@@ -87,7 +87,7 @@ impl LegacySerialization for UnifiedPublicEncKey {
         // NOTE: we need to do some backward compatibility support here so
         // first try to deserialize it using the old format (ML-KEM1024 encoded with bincode)
 
-        match bc2wrap::deserialize::<PublicEncKey<ml_kem::MlKem1024>>(bytes) {
+        match bc2wrap::deserialize_safe::<PublicEncKey<ml_kem::MlKem1024>>(bytes) {
             Ok(inner) => {
                 // we got an old MlKem1024 public key, wrap it in the enum
                 tracing::warn!("🔒 Using MlKem1024 public encryption key");
