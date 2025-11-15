@@ -160,14 +160,7 @@ fn create_ca_cert_from_keypair(
         } else {
             vec![]
         },
-        vec![
-            ca_name.to_string(),
-            "127.0.0.1".to_string(),
-            "localhost".to_string(),
-            "192.168.0.1".to_string(),
-            "0:0:0:0:0:0:0:1".to_string(),
-            "::1".to_string(),
-        ],
+        vec![ca_name.to_string()],
     ]
     .concat();
     let mut cp = CertificateParams::new(sans_vec)?;
@@ -217,13 +210,7 @@ fn create_core_certs(
                 } else {
                     vec![]
                 },
-                vec![
-                    core_name.clone(),
-                    "localhost".to_string(),
-                    "192.168.0.1".to_string(),
-                    "127.0.0.1".to_string(),
-                    "0:0:0:0:0:0:0:1".to_string(),
-                ],
+                vec![core_name.clone()],
             ]
             .concat();
             let mut cp = CertificateParams::new(sans_vec).unwrap();

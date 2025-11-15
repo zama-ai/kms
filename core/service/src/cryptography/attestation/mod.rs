@@ -1,4 +1,5 @@
 use super::signatures::PrivateSigKey;
+use crate::vault::keychain::RootKeyMeasurements;
 use anyhow::{bail, ensure};
 use enum_dispatch::enum_dispatch;
 use k256::pkcs8::EncodePrivateKey;
@@ -27,9 +28,10 @@ pub trait SecurityModule {
     async fn get_random(&self, num_bytes: usize) -> anyhow::Result<Vec<u8>>;
 
     /// Request the attestation document signed by the security module that
-    /// contains PCR values and the provided byte string, usually, an
-    /// application public key
-    async fn attest_pk_bytes(&self, pk: Vec<u8>) -> anyhow::Result<Vec<u8>>;
+    /// contains PCR values and, at the minimum, an application public
+    /// key. Optionally, the attestation document can include some userdata and
+    /// a nonce.
+    async fn attest(&self, pk: Vec<u8>, user_data: Option<Vec<u8>>) -> anyhow::Result<Vec<u8>>;
 
     /// Generate a fresh keypair and issue a self-signed TLS certificate for it
     /// that bundles the provided certificate and the attestation document
@@ -58,13 +60,7 @@ pub trait SecurityModule {
             } else {
                 vec![]
             },
-            vec![
-                subject.clone(),
-                "localhost".to_string(),
-                "192.168.0.1".to_string(),
-                "127.0.0.1".to_string(),
-                "0:0:0:0:0:0:0:1".to_string(),
-            ],
+            vec![subject.clone()],
         ]
         .concat();
 
@@ -112,9 +108,7 @@ pub trait SecurityModule {
         // Enclave-terminated TLS sessions will use this keypair, not the one in
         // `cert`.
         let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
-        let attestation_document = self
-            .attest_pk_bytes(keypair.subject_public_key_info())
-            .await?;
+        let attestation_document = self.attest(keypair.subject_public_key_info(), None).await?;
 
         cp.custom_extensions = vec![
             // This custom extension is meant to carry an AWS Nitro attestation
@@ -152,6 +146,7 @@ pub trait SecurityModule {
         ca_cert_pem: &Pem,
         ca_key: &PrivateSigKey,
         wildcard: bool,
+        private_vault_root_key_measurements: &RootKeyMeasurements,
     ) -> anyhow::Result<(Pem, Pem)> {
         let ca_cert_x509 = ca_cert_pem.parse_x509()?;
         let Some(key_usage) = ca_cert_x509.key_usage()? else {
@@ -161,6 +156,12 @@ pub trait SecurityModule {
             key_usage.value.key_cert_sign(),
             "Bad CA certificate: cannot be used to sign other certificates"
         );
+
+        let private_vault_root_key_measurements_bytes = bincode::serde::encode_to_vec(
+            private_vault_root_key_measurements,
+            bincode::config::standard(),
+        )?;
+        ensure!(private_vault_root_key_measurements_bytes.len() > 1024, "Private vault root key measurements length too long for inclusion into attestation document, impossible to continue");
 
         // The subject name and at least one distinguished name should be set to
         // the party DNS address, as specified on the peer list. Parties connect
@@ -175,13 +176,7 @@ pub trait SecurityModule {
             } else {
                 vec![]
             },
-            vec![
-                subject.clone(),
-                "localhost".to_string(),
-                "192.168.0.1".to_string(),
-                "127.0.0.1".to_string(),
-                "0:0:0:0:0:0:0:1".to_string(),
-            ],
+            vec![subject.clone()],
         ]
         .concat();
 
@@ -219,7 +214,10 @@ pub trait SecurityModule {
         // `cert`.
         let tls_keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
         let attestation_document = self
-            .attest_pk_bytes(tls_keypair.subject_public_key_info())
+            .attest(
+                tls_keypair.subject_public_key_info(),
+                Some(private_vault_root_key_measurements_bytes),
+            )
             .await?;
 
         tls_cp.custom_extensions = vec![
