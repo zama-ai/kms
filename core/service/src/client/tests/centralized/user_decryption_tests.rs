@@ -272,6 +272,7 @@ pub(crate) async fn user_decryption_centralized(
                         typed_ciphertexts,
                         &request_id,
                         key_id,
+                        None,
                         PkeSchemeType::MlKem1024,
                     )
                     .unwrap()
@@ -282,6 +283,7 @@ pub(crate) async fn user_decryption_centralized(
                         typed_ciphertexts,
                         &request_id,
                         key_id,
+                        None,
                         PkeSchemeType::MlKem512,
                     )
                     .unwrap()

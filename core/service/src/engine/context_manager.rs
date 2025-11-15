@@ -373,13 +373,25 @@ where
         }
     }
 
-    pub(crate) async fn load_mpc_context_from_disk(&self) -> anyhow::Result<()> {
-        let contexts = self.inner.crypto_storage.read_all_context_info().await?;
+    pub(crate) async fn load_mpc_context_from_storage(&self) -> anyhow::Result<()> {
+        let contexts = self
+            .inner
+            .crypto_storage
+            .read_all_context_info()
+            .await
+            .inspect_err(|e| tracing::error!("Failed to load all contexts from storage: {}", e))?;
         let my_role = self.inner.my_role;
         for context in contexts {
             self.session_maker
                 .add_context_info(my_role, &context)
-                .await?;
+                .await
+                .inspect_err(|e| {
+                    tracing::error!(
+                        "Failed to add context {} into session maker: {}",
+                        context.context_id(),
+                        e
+                    )
+                })?;
         }
         Ok(())
     }
@@ -649,7 +661,7 @@ mod tests {
                 party_id: 1,
                 verification_key: Some(verification_key.clone()),
                 external_url: "http://localhost:12345".to_string(),
-                tls_cert: vec![],
+                ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 extra_verification_keys: vec![],
             }],
@@ -661,6 +673,7 @@ mod tests {
                 tag: None,
             },
             threshold: 0,
+            pcr_values: vec![],
         };
 
         let request = Request::new(NewKmsContextRequest {
@@ -715,7 +728,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_kms_context_load_from_disk() {
+    async fn test_kms_context_load_from_storage() {
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
         let context_id = ContextId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
@@ -724,7 +737,7 @@ mod tests {
                 party_id: 1,
                 verification_key: Some(verification_key.clone()),
                 external_url: "http://localhost:12345".to_string(),
-                tls_cert: vec![],
+                ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
                 extra_verification_keys: vec![],
             }],
@@ -736,6 +749,7 @@ mod tests {
                 tag: None,
             },
             threshold: 0,
+            pcr_values: vec![],
         };
 
         let request = Request::new(NewKmsContextRequest {
@@ -794,7 +808,10 @@ mod tests {
             assert_eq!(0, context_manager.session_maker.context_count().await);
 
             // load the contexts from disk
-            context_manager.load_mpc_context_from_disk().await.unwrap();
+            context_manager
+                .load_mpc_context_from_storage()
+                .await
+                .unwrap();
             assert_eq!(1, context_manager.session_maker.context_count().await);
         }
     }

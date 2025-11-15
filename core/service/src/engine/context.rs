@@ -5,7 +5,7 @@ use kms_grpc::identifiers::ContextId;
 use serde::{Deserialize, Serialize};
 use tfhe::{named::Named, Versionize};
 use tfhe_versionable::VersionsDispatch;
-use threshold_fhe::execution::runtime::party::Role;
+use threshold_fhe::{execution::runtime::party::Role, networking::tls::ReleasePCRValues};
 
 use crate::{
     cryptography::signatures::PublicSigKey,
@@ -116,9 +116,11 @@ pub struct NodeInfo {
     /// Must be a valid URL.
     pub external_url: String,
 
-    // Unfortunately, the TLS certificate is a Vec<u8> here,
-    // because we cannot versionize the X509Certificate type.
-    pub tls_cert: Vec<u8>,
+    /// The TLS certificate is a String here
+    /// because we cannot versionize the X509Certificate type.
+    ///
+    /// Also it's optional because we need to support non-TLS connections for testing purposes.
+    pub ca_cert: Option<Vec<u8>>,
 
     pub public_storage_url: String,
     pub extra_verification_keys: Vec<PublicSigKey>,
@@ -128,6 +130,19 @@ impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
     type Error = anyhow::Error;
 
     fn try_from(value: kms_grpc::kms::v1::KmsNode) -> anyhow::Result<Self> {
+        // check the ca_cert is valid PEM if present
+        let ca_cert = match &value.ca_cert {
+            Some(cert_bytes) => {
+                let _pem = x509_parser::pem::parse_x509_pem(cert_bytes)
+                    .map_err(|e| anyhow::anyhow!("Invalid PEM in ca_cert: {}", e))?;
+                Some(cert_bytes.clone())
+            }
+            None => None,
+        };
+
+        // check the external_url is a valid URL
+        let _ = url::Url::parse(&value.external_url)?;
+
         Ok(NodeInfo {
             mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
@@ -136,7 +151,7 @@ impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
                 Some(vk_bytes) => Some(bc2wrap::deserialize_safe(&vk_bytes)?),
             },
             external_url: value.external_url,
-            tls_cert: value.tls_cert,
+            ca_cert,
             public_storage_url: value.public_storage_url,
             extra_verification_keys: value
                 .extra_verification_keys
@@ -159,7 +174,7 @@ impl TryFrom<NodeInfo> for kms_grpc::kms::v1::KmsNode {
                 None => None,
             },
             external_url: value.external_url,
-            tls_cert: value.tls_cert,
+            ca_cert: value.ca_cert,
             public_storage_url: value.public_storage_url,
             extra_verification_keys: value
                 .extra_verification_keys
@@ -186,6 +201,7 @@ pub struct ContextInfo {
     pub context_id: ContextId,
     pub software_version: SoftwareVersion,
     pub threshold: u32,
+    pub pcr_values: Vec<ReleasePCRValues>,
 }
 
 impl ContextInfo {
@@ -316,6 +332,15 @@ impl TryFrom<kms_grpc::kms::v1::KmsContext> for ContextInfo {
             .into(),
             software_version,
             threshold: value.threshold as u32,
+            pcr_values: value
+                .pcr_values
+                .into_iter()
+                .map(|v| ReleasePCRValues {
+                    pcr0: v.pcr0,
+                    pcr1: v.pcr1,
+                    pcr2: v.pcr2,
+                })
+                .collect(),
         })
     }
 }
@@ -333,6 +358,15 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::KmsContext {
             context_id: Some(value.context_id.into()),
             software_version: bc2wrap::serialize(&value.software_version)?,
             threshold: value.threshold.try_into()?,
+            pcr_values: value
+                .pcr_values
+                .into_iter()
+                .map(|v| kms_grpc::kms::v1::PcrValues {
+                    pcr0: v.pcr0,
+                    pcr1: v.pcr1,
+                    pcr2: v.pcr2,
+                })
+                .collect(),
         })
     }
 }
@@ -473,7 +507,7 @@ mod tests {
                     party_id: 1,
                     verification_key: Some(verification_key.clone()),
                     external_url: "localhost:12345".to_string(),
-                    tls_cert: vec![],
+                    ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
                     extra_verification_keys: vec![],
                 },
@@ -482,7 +516,7 @@ mod tests {
                     party_id: 1, // Duplicate party_id
                     verification_key: Some(verification_key),
                     external_url: "localhost:12345".to_string(),
-                    tls_cert: vec![],
+                    ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
                     extra_verification_keys: vec![],
                 },
@@ -495,6 +529,7 @@ mod tests {
                 tag: None,
             },
             threshold: 1,
+            pcr_values: vec![],
         };
 
         let mut storage = RamStorage::new();

@@ -26,23 +26,38 @@ party_id = 1
 address = "localhost:50100"
 # The S3 endpoint where the public material of the given server can be reached
 s3_endpoint = "http://localhost:9000/kms"
-# The folder at the S3 endpoint where the data is stored
+# The public folder at the S3 endpoint where the data is stored
 object_folder = "PUB-p1"
+# The folder at the S3 endpoint where the private data is stored.
+# This is only used for testing context switching.
+# Only available when core-client is built with the "testing" feature.
+private_object_folder = "PRIV-p1"
+# The KMS core configuration path.
+# This is another optional parameter and is only used for certain operations
+# that require full knowledge of the KMS core configuration, e.g., context switch.
+# Only available when core-client is built with the "testing" feature.
+config_path = "../core/service/config/compose_1.toml"
 
 [[cores]]
 party_id = 2
 address = "localhost:50200"
 s3_endpoint = "http://localhost:9000/kms"
 object_folder = "PUB-p2"
+private_object_folder = "PRIV-p2"
+config_path = "../core/service/config/compose_2.toml"
 
 [[cores]]
 party_id = 3
 address = "localhost:50300"
 s3_endpoint = "http://localhost:9000/kms"
 object_folder = "PUB-p3"
+private_object_folder = "PRIV-p3"
+config_path = "../core/service/config/compose_3.toml"
 
 [[cores]]
 party_id = 4
 address = "localhost:50400"
 s3_endpoint = "http://localhost:9000/kms"
 object_folder = "PUB-p4"
+private_object_folder = "PRIV-p4"
+config_path = "../core/service/config/compose_4.toml"

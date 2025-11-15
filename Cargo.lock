@@ -4321,6 +4321,7 @@ dependencies = [
  "clap",
  "hex",
  "kms",
+ "kms-core-client",
  "kms-grpc",
  "observability",
  "rand 0.8.5",

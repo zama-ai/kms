@@ -7,6 +7,7 @@ use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::kms::v1::{TypedCiphertext, UserDecryptionRequest};
 use kms_grpc::rpc_types::alloy_to_protobuf_domain;
+use kms_grpc::ContextId;
 use kms_grpc::RequestId;
 
 impl Client {
@@ -27,6 +28,7 @@ impl Client {
         typed_ciphertexts: Vec<TypedCiphertext>,
         request_id: &RequestId,
         key_id: &RequestId,
+        context_id: Option<&ContextId>,
         encryption_scheme: PkeSchemeType,
     ) -> anyhow::Result<(
         UserDecryptionRequest,
@@ -60,7 +62,7 @@ impl Client {
                 key_id: Some((*key_id).into()),
                 domain: Some(domain_msg),
                 extra_data: vec![],
-                context_id: None,
+                context_id: context_id.map(|c| (*c).into()),
                 epoch_id: None,
             },
             enc_pk,

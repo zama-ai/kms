@@ -54,7 +54,7 @@ impl<
     > RealInitiator<PrivS, Init>
 {
     // Note that `req_id` is not the context ID. It is the request ID for the PRSS setup.
-    pub async fn init_prss_from_disk(&self, epoch_id: &EpochId) -> anyhow::Result<()> {
+    pub async fn init_prss_from_storage(&self, epoch_id: &EpochId) -> anyhow::Result<()> {
         // TODO(zama-ai/kms-internal#2530) set the correct context ID here.
         let context_id = *DEFAULT_MPC_CONTEXT;
         let threshold = self.session_maker.threshold(&context_id).await?;
@@ -101,7 +101,10 @@ impl<
             (Err(_e), Err(e)) => return Err(e),
         }
 
-        tracing::info!("Loaded PRSS Setup from disk for request ID {}.", epoch_id);
+        tracing::info!(
+            "Loaded PRSS Setup from storage for request ID {}.",
+            epoch_id
+        );
         {
             // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
             self.health_reporter
@@ -144,7 +147,7 @@ impl<
         let prss_setup_obj_z64: PRSSSetup<ResiduePolyF4Z64> =
             PRSSInit::<ResiduePolyF4Z64>::init(&Init::default(), &mut base_session).await?;
 
-        // serialize and write PRSS Setup to disk into private storage
+        // serialize and write PRSS Setup to storage into private storage
         let private_storage = Arc::clone(&self.private_storage);
         let mut priv_storage = private_storage.lock().await;
         store_versioned_at_request_id(
@@ -206,7 +209,7 @@ impl<
         // the only way to set the role assignment is through the configuration
         // so we do not attempt to modify `session_preparer_manager` or `networking_manager`
         // until we have a context endpoint that can modify these two fields.
-        // In addition, we need to persist context on disk otherwise they'll be lost on restart
+        // In addition, we need to persist context on storage otherwise they'll be lost on restart
         // See zama-ai/kms-internal/#2741
 
         let inner = request.into_inner();
@@ -270,7 +273,7 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     #[tracing_test::traced_test]
-    async fn prss_disk_test() {
+    async fn prss_from_storage_test() {
         // We're starting two sets of servers in this test, both sets of servers will load all the keys
         // but it seems that the when shutting down the first set of servers, the keys are not immediately removed from memory
         // and this leads to OOM. So we reduce the amount of parties to 4 for this test.
@@ -325,11 +328,11 @@ mod tests {
             server_handle.assert_shutdown().await;
         }
 
-        // check that PRSS setups were created (and not read from disk)
-        assert!(!logs_contain("Loaded PRSS Setup from disk"));
+        // check that PRSS setups were created (and not read from storage)
+        assert!(!logs_contain("Loaded PRSS Setup from storage"));
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-        // create parties again without running PrssSetup this time (it should now be read from disk)
+        // create parties again without running PrssSetup this time (it should now be read from storage)
         let server_handles = test_tools::setup_threshold_no_client(
             PRSS_THRESHOLD as u8,
             pub_storage,
@@ -342,8 +345,8 @@ mod tests {
         .await;
         assert_eq!(server_handles.len(), PRSS_AMOUNT_PARTIES);
 
-        // check that PRSS setups were not created, but instead read from disk now
-        assert!(logs_contain("Loaded PRSS Setup from disk"));
+        // check that PRSS setups were not created, but instead read from storage now
+        assert!(logs_contain("Loaded PRSS Setup from storage"));
     }
 
     async fn make_initiator<

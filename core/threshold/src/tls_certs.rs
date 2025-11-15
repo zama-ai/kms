@@ -4,15 +4,12 @@ use k256::{ecdsa::SigningKey, pkcs8::EncodePrivateKey};
 use rcgen::BasicConstraints::Constrained;
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
-    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, SerialNumber,
-    PKCS_ECDSA_P256K1_SHA256, PKCS_ECDSA_P256_SHA256,
+    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256K1_SHA256,
+    PKCS_ECDSA_P256_SHA256,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
-
-/// This is the serial number derived from DEFAULT_MPC_CONTEXT.derive_session_id().unwrap().
-pub const DEFAULT_SESSION_ID_FROM_CONTEXT: u128 = 75144625629816062620302474174838463545;
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy)]
 enum CertFileType {
@@ -84,13 +81,6 @@ pub struct Cli {
         help = "whether to include a wildcard SAN entry for the CA certificates"
     )]
     wildcard: bool,
-
-    #[clap(
-        long,
-        help = "an optional session number used in the certificate, defaults to using the DEFAULT_MPC_CONTEXT.derive_session_id() \
-        for the certificate to be used in the MPC context, it must be the context ID converted to u128 using derive_session_id"
-    )]
-    session_number: Option<u128>,
 }
 
 /// Validates if a user-specified CA name is valid.
@@ -201,12 +191,7 @@ fn create_core_certs(
     ca_keypair: &KeyPair,
     ca_cert_params: &CertificateParams,
     wildcard: bool,
-    context_id_as_session_id: Option<u128>,
 ) -> anyhow::Result<HashMap<usize, (KeyPair, Certificate)>> {
-    let context_id_as_session_id = match context_id_as_session_id {
-        Some(id) => id,
-        None => DEFAULT_SESSION_ID_FROM_CONTEXT,
-    };
     let core_cert_bundle: HashMap<usize, (KeyPair, Certificate)> = (1..=num_cores)
         .map(|i: usize| {
             let core_name = format!("core{i}.{ca_name}");
@@ -248,10 +233,6 @@ fn create_core_certs(
                 ExtendedKeyUsagePurpose::ServerAuth,
                 ExtendedKeyUsagePurpose::ClientAuth,
             ];
-
-            cp.serial_number = Some(SerialNumber::from_slice(
-                &context_id_as_session_id.to_be_bytes(),
-            ));
 
             tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
             let core_cert = cp
@@ -337,7 +318,6 @@ pub async fn entry_point() -> anyhow::Result<()> {
                 &ca_keypair,
                 &ca_cert_params,
                 args.wildcard,
-                args.session_number,
             )?;
 
             // write all core keypairs and certificates to disk
@@ -419,7 +399,7 @@ mod tests {
         let (ca_keypair, ca_cert, ca_cert_params) = create_ca_cert(ca_name, &is_ca, false).unwrap();
 
         let core_certs =
-            create_core_certs(ca_name, 2, &ca_keypair, &ca_cert_params, false, None).unwrap();
+            create_core_certs(ca_name, 2, &ca_keypair, &ca_cert_params, false).unwrap();
 
         // check that we can import the CA cert into the trust store
         let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
@@ -490,7 +470,7 @@ mod tests {
         let ca_cert_params = CertificateParams::from_ca_cert_der(ca_cert.der()).unwrap();
 
         let core_certs =
-            create_core_certs(ca_name, 2, &ca_keypair, &ca_cert_params, false, None).unwrap();
+            create_core_certs(ca_name, 2, &ca_keypair, &ca_cert_params, false).unwrap();
 
         for c in core_certs {
             let verif = signed_verify(&c.1 .1, &ca_cert);
@@ -508,48 +488,5 @@ mod tests {
             validate_ca_name("party/is#bad!").is_err(),
             "this should have been an invalid CA name."
         );
-    }
-
-    #[test]
-    fn test_serial_number() {
-        let ca_name = "p1.kms.zama.ai";
-        let is_ca = IsCa::NoCa;
-
-        let extract_u128_serial = |cert: x509_parser::prelude::X509Certificate<'_>| -> u128 {
-            let mut u128_buf = [0u8; 16];
-            let n = u128_buf.len();
-            let serial_buf = cert.serial.to_bytes_be();
-            u128_buf[n - serial_buf.len()..].copy_from_slice(&serial_buf);
-            u128::from_be_bytes(u128_buf)
-        };
-
-        let (ca_keypair, _ca_cert, ca_cert_params) =
-            create_ca_cert(ca_name, &is_ca, false).unwrap();
-
-        {
-            let (_, core_cert) =
-                &create_core_certs(ca_name, 1, &ca_keypair, &ca_cert_params, true, None).unwrap()
-                    [&1];
-            let (_, cert) = x509_parser::parse_x509_certificate(core_cert.der().as_ref()).unwrap();
-
-            let sid = extract_u128_serial(cert);
-            assert_eq!(sid, super::DEFAULT_SESSION_ID_FROM_CONTEXT);
-        }
-        {
-            let context_id = 42u128;
-            let (_, core_cert) = &create_core_certs(
-                ca_name,
-                1,
-                &ca_keypair,
-                &ca_cert_params,
-                true,
-                Some(context_id),
-            )
-            .unwrap()[&1];
-            let (_, cert) = x509_parser::parse_x509_certificate(core_cert.der().as_ref()).unwrap();
-
-            let sid = extract_u128_serial(cert);
-            assert_eq!(sid, context_id);
-        }
     }
 }
