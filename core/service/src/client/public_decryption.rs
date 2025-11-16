@@ -81,7 +81,8 @@ impl Client {
 
             // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissible keys
-            let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&cur_payload.verification_key)?;
+            let cur_verf_key: PublicSigKey =
+                bc2wrap::deserialize_safe(&cur_payload.verification_key)?;
             internal_verify_sig(
                 &DSEP_PUBLIC_DECRYPTION,
                 &bc2wrap::serialize(&cur_payload)?,
