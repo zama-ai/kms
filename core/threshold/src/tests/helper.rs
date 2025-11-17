@@ -343,9 +343,9 @@ pub mod tests {
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             runtime::{
-                party::Role,
+                party::{Role, RoleTrait, TwoSetsRole, TwoSetsThreshold},
                 sessions::{
-                    base_session::BaseSession,
+                    base_session::{BaseSession, GenericBaseSession},
                     large_session::{LargeSession, LargeSessionHandles},
                     session_parameters::{GenericParameterHandles, SessionParameters},
                     small_session::SmallSession,
@@ -754,6 +754,97 @@ pub mod tests {
                     assert_eq!(rounds, e_r);
                 }
             }
+        }
+
+        (
+            results_honest.into_iter().collect(),
+            results_malicious.into_iter().collect(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute_protocol_two_sets_w_malicious<
+        TaskOutputT,
+        OutputT,
+        TaskOutputM,
+        OutputM,
+        P: Clone,
+        Z: ErrorCorrect,
+        const EXTENSION_DEGREE: usize,
+    >(
+        parties_set_1: usize,
+        parties_set_2: usize,
+        threshold: TwoSetsThreshold,
+        malicious_role: HashSet<TwoSetsRole>,
+        malicious_strategy: P,
+        network_mode: NetworkMode,
+        task_honest: &mut dyn FnMut(GenericBaseSession<TwoSetsRole>) -> TaskOutputT,
+        task_malicious: &mut dyn FnMut(GenericBaseSession<TwoSetsRole>, P) -> TaskOutputM,
+    ) -> (
+        HashMap<TwoSetsRole, OutputT>,
+        HashMap<TwoSetsRole, Result<OutputM, JoinError>>,
+    )
+    where
+        TaskOutputT: Future<Output = OutputT>,
+        TaskOutputT: Send + 'static,
+        OutputT: Send + 'static,
+        TaskOutputM: Future<Output = OutputM>,
+        TaskOutputM: Send + 'static,
+        OutputM: Send + 'static,
+    {
+        let roles = (1..=parties_set_1)
+            .map(Role::indexed_from_one)
+            .map(TwoSetsRole::Set1)
+            .chain(
+                (1..=parties_set_2)
+                    .map(Role::indexed_from_one)
+                    .map(TwoSetsRole::Set2),
+            )
+            .collect::<HashSet<_>>();
+        let test_runtime: DistributedTestRuntime<Z, TwoSetsRole, EXTENSION_DEGREE> =
+            DistributedTestRuntime::new(roles.clone(), threshold, network_mode, None);
+
+        let sid = SessionId::from(1);
+        let honest_sessions = roles.difference(&malicious_role).map(|party| {
+            let session = test_runtime.base_session_for_party(
+                sid,
+                *party,
+                Some(AesRng::seed_from_u64(
+                    party.get_role_kind().get_role().one_based() as u64,
+                )),
+            );
+            (*party, session)
+        });
+
+        let honest_tasks = honest_sessions
+            .map(|(party, session)| task_honest(session).map(move |output| (party, output)));
+
+        let malicious_sessions = malicious_role.iter().map(|party| {
+            let session = test_runtime.base_session_for_party(
+                sid,
+                *party,
+                Some(AesRng::seed_from_u64(
+                    party.get_role_kind().get_role().one_based() as u64,
+                )),
+            );
+            (*party, session)
+        });
+
+        // Spawn the malicious task in its own tokio task as it may panic
+        let mut malicious_task = Vec::new();
+        malicious_sessions.into_iter().for_each(|(party, session)| {
+            malicious_task.push((
+                party,
+                tokio::spawn(task_malicious(session, malicious_strategy.clone())),
+            ));
+        });
+
+        let results_honest = tokio::task::JoinSet::from_iter(honest_tasks)
+            .join_all()
+            .await;
+        let mut results_malicious = Vec::new();
+        for (role, task) in malicious_task.into_iter() {
+            results_malicious.push((role, task.await));
         }
 
         (
