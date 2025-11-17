@@ -10,7 +10,10 @@ use threshold_fhe::{
     execution::{
         runtime::{
             party::{Identity, Role, RoleAssignment},
-            session::{BaseSession, SessionParameters, SmallSession},
+            sessions::{
+                base_session::BaseSession, session_parameters::SessionParameters,
+                small_session::SmallSession,
+            },
         },
         small_execution::prss::{DerivePRSSState, PRSSSetup},
     },
@@ -23,7 +26,10 @@ use crate::engine::context::ContextInfo;
 
 struct Context {
     my_role: Role,
-    role_assignment: RoleAssignment,
+    // A Context always hold only a RoleAssignment on Role
+    // to build a RoleAssignment on a TwoSetRole,
+    // we need 2 contexts
+    role_assignment: RoleAssignment<Role>,
     threshold: u8,
 }
 
@@ -126,7 +132,7 @@ impl SessionMaker {
     // Returns the an health check session per context.
     async fn get_healthcheck_session_all_contexts(
         &self,
-    ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession>> {
+    ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession<Role>>> {
         let mut health_check_sessions = HashMap::new();
         for (context_id, _) in self.context_map.read().await.iter() {
             health_check_sessions
@@ -138,7 +144,7 @@ impl SessionMaker {
     async fn get_healthcheck_session(
         &self,
         context_id: &ContextId,
-    ) -> anyhow::Result<HealthCheckSession> {
+    ) -> anyhow::Result<HealthCheckSession<Role>> {
         let nm = self.networking_manager.read().await;
         let role_assignment = self.get_role_assignment(context_id).await?;
         let my_role = self.my_role(context_id).await?;
@@ -149,7 +155,10 @@ impl SessionMaker {
         Ok(health_check_session)
     }
 
-    async fn get_role_assignment(&self, context_id: &ContextId) -> anyhow::Result<RoleAssignment> {
+    async fn get_role_assignment(
+        &self,
+        context_id: &ContextId,
+    ) -> anyhow::Result<RoleAssignment<Role>> {
         let context_map_guard = self.context_map.read().await;
         let context_info = context_map_guard
             .get(context_id)
@@ -167,7 +176,7 @@ impl SessionMaker {
         &self,
         context_id: ContextId,
         my_role: Role,
-        role_assignment: RoleAssignment,
+        role_assignment: RoleAssignment<Role>,
         threshold: u8,
     ) {
         let mut context_map = self.context_map.write().await;
@@ -384,7 +393,9 @@ impl SessionMaker {
         session_id: SessionId,
         context_id: ContextId,
         network_mode: NetworkMode,
-    ) -> anyhow::Result<threshold_fhe::execution::runtime::session::NetworkingImpl> {
+    ) -> anyhow::Result<
+        threshold_fhe::execution::runtime::sessions::base_session::SingleSetNetworkingImpl,
+    > {
         // We need to convert [ContextId] type to [SessionId]
         // because the core/threshold library is only aware of the [SessionId]
         // since we cannot store something as long as ContextId in the x509 certificate.
@@ -534,7 +545,7 @@ impl ImmutableSessionMaker {
     // Returns the an health check session per context.
     pub(crate) async fn get_healthcheck_session_all_contexts(
         &self,
-    ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession>> {
+    ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession<Role>>> {
         self.inner.get_healthcheck_session_all_contexts().await
     }
 }

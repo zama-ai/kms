@@ -3,7 +3,7 @@ use tonic::async_trait;
 use crate::{
     algebra::structure_traits::ErrorCorrect,
     execution::{
-        runtime::{party::Role, session::BaseSessionHandles},
+        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
         small_execution::{
             agree_random::{AgreeRandom, AgreeRandomFromShare},
             prf::PrfKey,

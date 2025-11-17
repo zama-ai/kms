@@ -12,7 +12,7 @@ use crate::{
 
 pub struct BGVTestRuntime {
     pub threshold: u8,
-    pub user_nets: Vec<Arc<LocalNetworking>>,
+    pub user_nets: Vec<Arc<LocalNetworking<Role>>>,
     pub roles: HashSet<Role>,
 }
 
@@ -24,7 +24,7 @@ impl BGVTestRuntime {
         delayed_map: Option<HashMap<Role, Duration>>,
     ) -> Self {
         let net_producer = LocalNetworkingProducer::from_roles(&roles);
-        let user_nets: Vec<Arc<LocalNetworking>> = roles
+        let user_nets: Vec<Arc<LocalNetworking<Role>>> = roles
             .iter()
             .map(|role| {
                 let delay = if let Some(delayed_map) = &delayed_map {

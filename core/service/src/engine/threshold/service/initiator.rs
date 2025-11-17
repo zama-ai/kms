@@ -11,7 +11,7 @@ use kms_grpc::{
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
-        runtime::session::ParameterHandles,
+        runtime::sessions::session_parameters::GenericParameterHandles,
         small_execution::prss::{PRSSInit, PRSSSetup},
     },
     networking::NetworkMode,

@@ -1,7 +1,3 @@
-use crate::algebra::{
-    galois_rings::common::ResiduePoly,
-    structure_traits::{BaseRing, ErrorCorrect, Zero},
-};
 use itertools::Itertools;
 use tfhe::{
     boolean::prelude::{DecompositionBaseLog, DecompositionLevelCount},
@@ -14,6 +10,10 @@ use super::{
     glwe_ciphertext::encrypt_glwe_ciphertext_list, glwe_key::GlweSecretKeyShare,
     lwe_key::LweSecretKeyShare, lwe_packing_keyswitch_key::LwePackingKeyswitchKeyShares,
     parameters::EncryptionType, randomness::MPCEncryptionRandomGenerator,
+};
+use crate::algebra::{
+    galois_rings::common::ResiduePoly,
+    structure_traits::{BaseRing, ErrorCorrect, Zero},
 };
 
 // Warning: This function will panic if the amount of elements in `input_lwe_sk` is different

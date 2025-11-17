@@ -129,7 +129,10 @@ mod tests {
         },
         execution::{
             online::{preprocessing::dummy::DummyPreprocessing, triple::open_list},
-            runtime::session::{LargeSession, ParameterHandles, SmallSession},
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
+                small_session::SmallSession,
+            },
         },
         networking::NetworkMode,
         tests::helper::tests_and_benches::{execute_protocol_large, execute_protocol_small},

@@ -13,7 +13,7 @@ use crate::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
         config::BatchParams,
         online::preprocessing::BasePreprocessing,
-        runtime::{party::Role, session::BaseSessionHandles},
+        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
         sharing::{
             open::{RobustOpen, SecureRobustOpen},
             shamir::ShamirSharings,
@@ -546,7 +546,7 @@ mod tests {
             constants::SMALL_TEST_KEY_PATH,
             online::preprocessing::dummy::DummyPreprocessing,
             runtime::{
-                session::ParameterHandles,
+                sessions::session_parameters::GenericParameterHandles,
                 test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
             sharing::shamir::InputOp,
@@ -809,6 +809,7 @@ mod tests {
         //Reshare assumes Sync network
         let mut runtime: DistributedTestRuntime<
             ResiduePoly<Z128, EXTENSION_DEGREE>,
+            Role,
             EXTENSION_DEGREE,
         > = DistributedTestRuntime::new(roles, threshold as u8, NetworkMode::Sync, None);
         if add_error {

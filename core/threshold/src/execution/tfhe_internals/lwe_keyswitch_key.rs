@@ -1,6 +1,5 @@
-use std::slice::IterMut;
-
 use itertools::Itertools;
+use std::slice::IterMut;
 use tfhe::{
     core_crypto::{
         commons::{math::random::CompressionSeed, parameters::LweSize},
@@ -14,16 +13,16 @@ use tfhe::{
     Seed,
 };
 
+use super::lwe_ciphertext::{opened_lwe_masks_bodies_to_tfhers_u64, LweCiphertextShare};
+use crate::algebra::galois_rings::common::ResiduePoly;
 use crate::{
     algebra::structure_traits::{BaseRing, ErrorCorrect},
     execution::{
-        online::triple::open_list, runtime::session::BaseSessionHandles, sharing::share::Share,
+        online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles,
+        sharing::share::Share,
         tfhe_internals::lwe_ciphertext::opened_lwe_bodies_to_seeded_tfhers_u64,
     },
 };
-
-use super::lwe_ciphertext::{opened_lwe_masks_bodies_to_tfhers_u64, LweCiphertextShare};
-use crate::algebra::galois_rings::common::ResiduePoly;
 
 #[derive(Clone)]
 pub struct LweKeySwitchKeyShare<Z: BaseRing, const EXTENSION_DEGREE: usize> {

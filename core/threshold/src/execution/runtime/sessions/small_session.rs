@@ -1,7 +1,8 @@
-use std::collections::HashSet;
-
 use crate::{
-    algebra::structure_traits::{Invert, Ring, RingWithExceptionalSequence},
+    algebra::{
+        base_ring::{Z128, Z64},
+        structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
+    },
     execution::{
         runtime::{
             party::Role,
@@ -14,57 +15,64 @@ use crate::{
                     DeSerializationRunTime, GenericParameterHandles, ParameterHandles,
                     SessionParameters,
                 },
-                small_session::{SmallSession, SmallSessionHandles},
             },
         },
         small_execution::{
             prf::PRSSConversions,
-            prss::{DerivePRSSState, PRSSInit, PRSSPrimitives, SecurePRSSState},
+            prss::{
+                DerivePRSSState, PRSSInit, PRSSPrimitives, RobustSecurePrssInit, SecurePRSSState,
+            },
         },
     },
     session_id::SessionId,
 };
+use aes_prng::AesRng;
+use std::collections::HashSet;
 
-/// Defines a generic small session
-/// that accepts any arbitrary PRSS strategy
-/// (whereas the regular small session only executes the secure PRSS)
-/// This is useful for testing purposes
-/// where we want to use a different PRSS strategy
-pub struct GenericSmallSessionStruct<Z: Ring, Prss: PRSSPrimitives<Z>> {
-    pub base_session: BaseSession,
-    pub prss_state: Prss,
-    ring_marker: std::marker::PhantomData<Z>,
+pub type SmallSession64<const EXTENSION_DEGREE: usize> =
+    SmallSession<crate::algebra::galois_rings::common::ResiduePoly<Z64, EXTENSION_DEGREE>>;
+pub type SmallSession128<const EXTENSION_DEGREE: usize> =
+    SmallSession<crate::algebra::galois_rings::common::ResiduePoly<Z128, EXTENSION_DEGREE>>;
+
+pub trait SmallSessionHandles<Z: Ring>: BaseSessionHandles {
+    type PRSSPrimitivesType: PRSSPrimitives<Z>;
+    fn prss_as_mut(&mut self) -> &mut Self::PRSSPrimitivesType;
+    /// Returns the non-mutable prss state if it exists or return an error
+    fn prss(&self) -> Self::PRSSPrimitivesType;
 }
 
-impl<Z: Ring, Prss: PRSSPrimitives<Z>> GenericSmallSessionStruct<Z, Prss> {
-    pub async fn new_and_init_prss_state<PrssInit: PRSSInit<Z>>(
-        mut base_session: BaseSession,
-        prss_init: PrssInit,
-    ) -> anyhow::Result<Self>
+pub struct SmallSession<Z: Ring> {
+    pub base_session: BaseSession,
+    pub prss_state: SecurePRSSState<Z>,
+}
+
+impl<Z> SmallSession<Z>
+where
+    Z: ErrorCorrect + Invert + PRSSConversions,
+{
+    pub async fn new_and_init_prss_state(mut base_session: BaseSession) -> anyhow::Result<Self>
     where
-        <PrssInit::OutputType as DerivePRSSState<Z>>::OutputType: Into<Prss>,
+        Z: ErrorCorrect + Invert,
     {
-        let prss_setup = prss_init.init(&mut base_session).await?;
+        let prss_setup = RobustSecurePrssInit::default()
+            .init(&mut base_session)
+            .await?;
         let session_id = base_session.session_id();
-        let prss_state: Prss = prss_setup.new_prss_session_state(session_id).into();
-        Self::new_from_prss_state(base_session, prss_state)
+        Self::new_from_prss_state(base_session, prss_setup.new_prss_session_state(session_id))
     }
 
     pub fn new_from_prss_state(
         base_session: BaseSession,
-        prss_state: Prss,
+        prss_state: SecurePRSSState<Z>,
     ) -> anyhow::Result<Self> {
-        Ok(GenericSmallSessionStruct {
+        Ok(Self {
             base_session,
             prss_state,
-            ring_marker: std::marker::PhantomData,
         })
     }
 }
 
-impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> GenericParameterHandles<Role>
-    for GenericSmallSessionStruct<Z, Prss>
-{
+impl<Z: Ring> GenericParameterHandles<Role> for SmallSession<Z> {
     fn my_role(&self) -> Role {
         self.base_session.my_role()
     }
@@ -107,15 +115,11 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> GenericParameterHandles<Role>
     }
 }
 
-impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> ParameterHandles
-    for GenericSmallSessionStruct<Z, Prss>
-{
-}
+impl<Z: Ring> ParameterHandles for SmallSession<Z> {}
 
-impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> GenericBaseSessionHandles<Role>
-    for GenericSmallSessionStruct<Z, Prss>
-{
-    type RngType = aes_prng::AesRng;
+impl<Z: Ring> GenericBaseSessionHandles<Role> for SmallSession<Z> {
+    type RngType = AesRng;
+
     fn rng(&mut self) -> &mut Self::RngType {
         self.base_session.rng()
     }
@@ -133,44 +137,27 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> GenericBaseSessionHandles<Role>
     }
 }
 
-impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> BaseSessionHandles
-    for GenericSmallSessionStruct<Z, Prss>
-{
-}
+impl<Z: Ring> BaseSessionHandles for SmallSession<Z> {}
 
-impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> SmallSessionHandles<Z>
-    for GenericSmallSessionStruct<Z, Prss>
+impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions> SmallSessionHandles<Z>
+    for SmallSession<Z>
 {
-    type PRSSPrimitivesType = Prss;
-    fn prss_as_mut(&mut self) -> &mut Prss {
+    type PRSSPrimitivesType = SecurePRSSState<Z>;
+
+    fn prss_as_mut(&mut self) -> &mut SecurePRSSState<Z> {
         &mut self.prss_state
     }
 
-    fn prss(&self) -> Prss {
+    fn prss(&self) -> SecurePRSSState<Z> {
         self.prss_state.to_owned()
     }
 }
 
-impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> ToBaseSession
-    for GenericSmallSessionStruct<Z, Prss>
-{
+impl<Z: Ring> ToBaseSession for SmallSession<Z> {
     fn to_base_session(self) -> BaseSession {
         self.base_session
     }
-
     fn get_mut_base_session(&mut self) -> &mut BaseSession {
         &mut self.base_session
-    }
-}
-
-// If the generic session uses a secure PRSS state, allow convrersion to a SmallSession
-impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions>
-    GenericSmallSessionStruct<Z, SecurePRSSState<Z>>
-{
-    pub fn to_secure_small_session(self) -> SmallSession<Z> {
-        SmallSession {
-            base_session: self.base_session,
-            prss_state: self.prss_state,
-        }
     }
 }

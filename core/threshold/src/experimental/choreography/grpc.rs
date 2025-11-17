@@ -22,10 +22,10 @@ use crate::execution::constants::DEFAULT_CHOREOGRAPHY_CONTEXT_ID;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::PreprocessorFactory;
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
-use crate::execution::runtime::session::BaseSession;
-use crate::execution::runtime::session::ParameterHandles;
-use crate::execution::runtime::session::SessionParameters;
-use crate::execution::runtime::session::SmallSession;
+use crate::execution::runtime::sessions::base_session::BaseSession;
+use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
+use crate::execution::runtime::sessions::session_parameters::SessionParameters;
+use crate::execution::runtime::sessions::small_session::SmallSession;
 use crate::execution::small_execution::prss::{
     DerivePRSSState, PRSSInit, PRSSSetup, RobustSecurePrssInit,
 };
@@ -165,7 +165,7 @@ impl ExperimentalGrpcChoreography {
         context_id: SessionId,
         threshold: u8,
         // TODO does not need to be Arc
-        role_assignment: Arc<RwLock<RoleAssignment>>,
+        role_assignment: Arc<RwLock<RoleAssignment<Role>>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<BaseSession> {
@@ -199,7 +199,7 @@ impl ExperimentalGrpcChoreography {
         context_id: SessionId,
         num_sessions: usize,
         threshold: u8,
-        role_assignment: Arc<RwLock<RoleAssignment>>,
+        role_assignment: Arc<RwLock<RoleAssignment<Role>>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<Vec<BaseSession>> {

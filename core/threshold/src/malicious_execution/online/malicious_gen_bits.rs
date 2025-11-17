@@ -2,7 +2,7 @@ use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Solve},
     execution::{
         online::{gen_bits::BitGenEven, preprocessing::BasePreprocessing},
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         sharing::share::Share,
     },
 };

@@ -5,7 +5,7 @@ use crate::{
     },
     execution::{
         online::preprocessing::DKGPreprocessing,
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         tfhe_internals::{
             compression_decompression_key::CompressionPrivateKeyShares,
             glwe_key::GlweSecretKeyShare,
