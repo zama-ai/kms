@@ -57,12 +57,23 @@ pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
         degree: usize,
     ) -> anyhow::Result<Option<Vec<Z>>>;
 
-    /// NOTE: As a sender in this function I will send to all the external
+    /// As a sender (`all_shares == Some(_)`) in this function I will send to all the external
     /// parties I am meant to open to.
-    /// As a receiver I will receive from all the parties in the other set.
+    ///
+    /// As a receiver (`all_shares == None`) I will receive from all the parties in the other set
     /// for the specific share I am meant to open.
+    ///
     /// This avoids any possible mixup in round number
-    /// Also, I have no shares to send, I am de facto a receiver.
+    ///
+    /// Inputs:
+    /// - session
+    /// - all_shares: if Some, the shares to send to the external parties
+    /// - degree of the sharing
+    /// - expected_output_len: the expected number of secrets to open (checked to be 0 for senders)
+    ///
+    /// Output:
+    /// - The reconstructed secrets if reconstruction for all was possible for receivers,
+    ///  `None`` for senders
     async fn robust_open_list_to_external<
         Z: ErrorCorrect,
         B: GenericBaseSessionHandles<TwoSetsRole>,
