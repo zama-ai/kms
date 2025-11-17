@@ -4,7 +4,7 @@ use tonic::async_trait;
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Ring},
     execution::{
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         sharing::open::{OpeningKind, RobustOpen, SecureRobustOpen},
     },
     ProtocolDescription,

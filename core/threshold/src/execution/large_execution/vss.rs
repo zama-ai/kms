@@ -16,7 +16,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::p2p::{generic_receive_from_all, send_to_parties},
-        runtime::{party::Role, session::BaseSessionHandles},
+        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
     },
     networking::value::{BroadcastValue, NetworkValue},
     ProtocolDescription,
@@ -1170,15 +1170,14 @@ pub(crate) mod tests {
         ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64,
     };
     use crate::algebra::structure_traits::{ErrorCorrect, Invert};
-    use crate::execution::runtime::session::SmallSession;
+    use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
+    use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
+    use crate::execution::runtime::sessions::small_session::SmallSession;
     use crate::execution::runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime};
     use crate::execution::sharing::shamir::{RevealOp, ShamirSharings};
     use crate::execution::sharing::share::Share;
     use crate::execution::small_execution::prf::PRSSConversions;
-    use crate::execution::{
-        runtime::party::Role,
-        runtime::session::{BaseSessionHandles, LargeSession, ParameterHandles},
-    };
+    use crate::execution::{runtime::party::Role, runtime::sessions::large_session::LargeSession};
     use crate::malicious_execution::large_execution::malicious_vss::{
         WrongDegreeSharingVss, WrongSecretLenVss,
     };
@@ -1219,6 +1218,7 @@ pub(crate) mod tests {
         // VSS assumes sync network
         let runtime = DistributedTestRuntime::<
             ResiduePolyF4Z128,
+            Role,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(roles.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId::from(1);
@@ -1290,6 +1290,7 @@ pub(crate) mod tests {
         // VSS assumes sync network
         let runtime = DistributedTestRuntime::<
             ResiduePolyF4Z128,
+            Role,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(roles.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId::from(1);

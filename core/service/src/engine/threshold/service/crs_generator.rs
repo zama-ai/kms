@@ -19,7 +19,9 @@ use observability::{
 use threshold_fhe::{
     algebra::base_ring::Z64,
     execution::{
-        runtime::session::{BaseSession, ParameterHandles},
+        runtime::sessions::{
+            base_session::BaseSession, session_parameters::GenericParameterHandles,
+        },
         tfhe_internals::parameters::DKGParams,
         zk::ceremony::{compute_witness_dim, Ceremony},
     },
@@ -472,7 +474,7 @@ mod tests {
     use threshold_fhe::{
         algebra::structure_traits::Ring,
         execution::{
-            runtime::session::BaseSessionHandles, small_execution::prss::PRSSSetup,
+            runtime::sessions::base_session::BaseSessionHandles, small_execution::prss::PRSSSetup,
             zk::ceremony::FinalizedInternalPublicParameter,
         },
     };

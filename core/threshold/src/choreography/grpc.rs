@@ -55,10 +55,12 @@ use crate::execution::online::preprocessing::{
 };
 use crate::execution::online::reshare::{reshare_sk_same_sets, ResharePreprocRequired};
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
-use crate::execution::runtime::session::ParameterHandles;
-use crate::execution::runtime::session::ToBaseSession;
-use crate::execution::runtime::session::{BaseSession, BaseSessionHandles};
-use crate::execution::runtime::session::{LargeSession, SessionParameters};
+use crate::execution::runtime::sessions::base_session::ToBaseSession;
+use crate::execution::runtime::sessions::base_session::{BaseSession, BaseSessionHandles};
+use crate::execution::runtime::sessions::large_session::LargeSession;
+use crate::execution::runtime::sessions::session_parameters::{
+    GenericParameterHandles, SessionParameters,
+};
 use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::execution::small_execution::prf::PRSSConversions;
 use crate::execution::small_execution::prss::{DerivePRSSState, PRSSPrimitives};
@@ -426,7 +428,7 @@ where
         &self,
         request_sid: SessionId,
         threshold: u8,
-        role_assignment: Arc<RwLock<RoleAssignment>>,
+        role_assignment: Arc<RwLock<RoleAssignment<Role>>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<BaseSession> {
@@ -459,7 +461,7 @@ where
         num_sessions: usize,
         threshold: u8,
         // TODO does not need to be Arc
-        role_assignment: Arc<RwLock<RoleAssignment>>,
+        role_assignment: Arc<RwLock<RoleAssignment<Role>>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<Vec<BaseSession>> {

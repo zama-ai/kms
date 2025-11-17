@@ -4,13 +4,7 @@ pub mod communication {
     pub mod p2p;
 }
 pub mod constants;
-pub mod runtime {
-    pub mod party;
-    #[cfg(feature = "non-wasm")]
-    pub mod session;
-    #[cfg(any(test, feature = "testing"))]
-    pub mod test_runtime;
-}
+pub mod runtime;
 
 #[cfg(feature = "non-wasm")]
 pub mod small_execution {

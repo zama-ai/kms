@@ -10,7 +10,7 @@ use crate::{
             },
             share_dispute::ShareDispute,
         },
-        runtime::{party::Role, session::LargeSessionHandles},
+        runtime::{party::Role, sessions::large_session::LargeSessionHandles},
     },
     ProtocolDescription,
 };

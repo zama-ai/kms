@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Solve},
-    execution::{runtime::session::BaseSessionHandles, sharing::share::Share},
+    execution::{runtime::sessions::base_session::BaseSessionHandles, sharing::share::Share},
     thread_handles::spawn_compute_bound,
 };
 use async_trait::async_trait;
@@ -107,7 +107,9 @@ mod tests {
                 triple::open_list,
             },
             runtime::party::Role,
-            runtime::session::{ParameterHandles, SmallSession},
+            runtime::sessions::{
+                session_parameters::GenericParameterHandles, small_session::SmallSession,
+            },
             sharing::share::Share,
         },
         networking::NetworkMode,

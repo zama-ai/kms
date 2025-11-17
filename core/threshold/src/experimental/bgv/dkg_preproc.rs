@@ -13,7 +13,7 @@ use crate::{
             secret_distributions::{RealSecretDistributions, SecretDistributions},
             triple::Triple,
         },
-        runtime::session::SmallSession,
+        runtime::sessions::small_session::SmallSession,
         sharing::share::Share,
     },
     experimental::{
