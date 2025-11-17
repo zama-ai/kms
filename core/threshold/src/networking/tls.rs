@@ -367,6 +367,8 @@ impl ClientCertVerifier for AttestedVerifier {
                 tracing::error!("bundled attestation document validation error: {e}");
                 Error::General(e.to_string())
             })?;
+        } else {
+            tracing::warn!("Skipping attestation document validation because do_validation={}, release_pcrs.is_empty={}", do_validation, release_pcrs.is_empty());
         }
 
         Ok(ClientCertVerified::assertion())
