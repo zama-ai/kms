@@ -102,10 +102,10 @@ impl<Z: Ring, R: RoleTrait, const EXTENSION_DEGREE: usize>
             RoleKind::SingleSet(role) => AesRng::seed_from_u64(role.one_based() as u64),
             RoleKind::TwoSet(two_sets_role) => match two_sets_role {
                 TwoSetsRole::Set1(role) => {
-                    AesRng::seed_from_u64(role.one_based() as u64 | (1 << 63))
+                    AesRng::seed_from_u64(role.one_based() as u64 | (1 << 62))
                 }
                 TwoSetsRole::Set2(role) => {
-                    AesRng::seed_from_u64(role.one_based() as u64 | (2 << 63))
+                    AesRng::seed_from_u64(role.one_based() as u64 | (2 << 62))
                 }
             },
         });

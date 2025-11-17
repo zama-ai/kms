@@ -70,8 +70,8 @@ pub mod tests_and_benches {
             // Create distinct RNG seed per set
             let mut rng_seed = party.get_role_kind().get_role().one_based() as u64;
             match party {
-                TwoSetsRole::Set1(_) => rng_seed |= 1 << 63,
-                TwoSetsRole::Set2(_) => rng_seed |= 2 << 63,
+                TwoSetsRole::Set1(_) => rng_seed |= 1 << 62,
+                TwoSetsRole::Set2(_) => rng_seed |= 2 << 62,
             }
             let session = test_runtime.base_session_for_party(
                 session_id,
