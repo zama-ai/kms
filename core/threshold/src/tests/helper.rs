@@ -4,11 +4,19 @@
 /// TODO(Dragos) Investigate this afterwards.
 pub mod tests_and_benches {
 
+    use std::collections::HashSet;
+
     use tokio::time::Duration;
 
     use crate::{
         algebra::structure_traits::{ErrorCorrect, Invert, Ring},
-        execution::{runtime::party::Role, small_execution::prf::PRSSConversions},
+        execution::{
+            runtime::{
+                party::{Role, RoleTrait, TwoSetsRole, TwoSetsThreshold},
+                sessions::base_session::GenericBaseSession,
+            },
+            small_execution::prf::PRSSConversions,
+        },
         networking::NetworkMode,
     };
     use aes_prng::AesRng;
@@ -25,6 +33,69 @@ pub mod tests_and_benches {
         networking::Networking,
         session_id::SessionId,
     };
+
+    pub async fn execute_protocol_two_sets<
+        TaskOutputT,
+        OutputT,
+        Z: ErrorCorrect,
+        const EXTENSION_DEGREE: usize,
+    >(
+        parties_set_1: usize,
+        parties_set_2: usize,
+        threshold: TwoSetsThreshold,
+        expected_rounds: Option<usize>,
+        network_mode: NetworkMode,
+        task: &mut dyn FnMut(GenericBaseSession<TwoSetsRole>) -> TaskOutputT,
+    ) -> Vec<OutputT>
+    where
+        TaskOutputT: Future<Output = OutputT>,
+        TaskOutputT: Send + 'static,
+        OutputT: Send + 'static,
+    {
+        let roles = (1..=parties_set_1)
+            .map(Role::indexed_from_one)
+            .map(TwoSetsRole::Set1)
+            .chain(
+                (1..=parties_set_2)
+                    .map(Role::indexed_from_one)
+                    .map(TwoSetsRole::Set2),
+            )
+            .collect::<HashSet<_>>();
+        let test_runtime: DistributedTestRuntime<Z, TwoSetsRole, EXTENSION_DEGREE> =
+            DistributedTestRuntime::new(roles.clone(), threshold, network_mode, None);
+        let session_id = SessionId::from(1);
+
+        let mut tasks = JoinSet::new();
+        for party in roles {
+            // Create distinct RNG seed per set
+            let mut rng_seed = party.get_role_kind().get_role().one_based() as u64;
+            match party {
+                TwoSetsRole::Set1(_) => rng_seed |= 1 << 63,
+                TwoSetsRole::Set2(_) => rng_seed |= 2 << 63,
+            }
+            let session = test_runtime.base_session_for_party(
+                session_id,
+                party,
+                Some(AesRng::seed_from_u64(rng_seed)),
+            );
+            tasks.spawn(task(session));
+        }
+
+        let mut results = Vec::with_capacity(tasks.len());
+        while let Some(v) = tasks.join_next().await {
+            results.push(v.unwrap());
+        }
+
+        // test that the number of rounds is as expected
+        if let Some(e_r) = expected_rounds {
+            for n in test_runtime.user_nets.values() {
+                let rounds = n.get_current_round().await;
+                assert_eq!(rounds, e_r);
+            }
+        }
+
+        results
+    }
 
     /// Helper method for executing networked tests with multiple parties for small session.
     /// The `task` argument contains the code to be execute per party which returns a value of type [OutputT].

@@ -1,7 +1,7 @@
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ops::{Index, IndexMut},
 };
 use tfhe::Versionize;
@@ -27,8 +27,12 @@ pub trait RoleTrait:
     + std::hash::Hash
     + 'static
 {
-    type ThresholdType: Copy + Sync + Send;
+    type ThresholdType: std::fmt::Debug + Copy + Sync + Send;
     fn get_role_kind(&self) -> RoleKind;
+    fn is_threshold_smaller_than_num_parties(
+        threshold: Self::ThresholdType,
+        parties: &HashSet<Self>,
+    ) -> bool;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -85,6 +89,13 @@ impl RoleTrait for Role {
     fn get_role_kind(&self) -> RoleKind {
         RoleKind::SingleSet(*self)
     }
+
+    fn is_threshold_smaller_than_num_parties(
+        threshold: Self::ThresholdType,
+        parties: &HashSet<Self>,
+    ) -> bool {
+        parties.len() > threshold as usize
+    }
 }
 
 impl Default for TwoSetsRole {
@@ -93,10 +104,29 @@ impl Default for TwoSetsRole {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TwoSetsThreshold {
+    pub threshold_set_1: u8,
+    pub threshold_set_2: u8,
+}
+
 impl RoleTrait for TwoSetsRole {
-    type ThresholdType = (u8, u8);
+    type ThresholdType = TwoSetsThreshold;
     fn get_role_kind(&self) -> RoleKind {
         RoleKind::TwoSet(*self)
+    }
+
+    fn is_threshold_smaller_than_num_parties(
+        threshold: Self::ThresholdType,
+        parties: &HashSet<Self>,
+    ) -> bool {
+        let (mut num_parties_in_set_1, mut num_parties_in_set_2) = (0, 0);
+        parties.iter().for_each(|role| match role {
+            TwoSetsRole::Set1(_) => num_parties_in_set_1 += 1,
+            TwoSetsRole::Set2(_) => num_parties_in_set_2 += 1,
+        });
+        num_parties_in_set_1 > threshold.threshold_set_1 as usize
+            && num_parties_in_set_2 > threshold.threshold_set_2 as usize
     }
 }
 
