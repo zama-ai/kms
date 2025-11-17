@@ -2,15 +2,13 @@ use super::signatures::PrivateSigKey;
 use anyhow::{bail, ensure};
 use enum_dispatch::enum_dispatch;
 use k256::pkcs8::EncodePrivateKey;
-use kms_grpc::identifiers::ContextId;
 #[cfg(feature = "insecure")]
 use nsm_nitro_enclave_utils::{driver::dev::DevNitro, pcr::Pcrs};
 #[cfg(feature = "insecure")]
 use rcgen::{BasicConstraints, PKCS_ECDSA_P384_SHA384};
 use rcgen::{
     CertificateParams, CustomExtension, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose, PublicKeyData, SerialNumber, PKCS_ECDSA_P256K1_SHA256,
-    PKCS_ECDSA_P256_SHA256,
+    KeyPair, KeyUsagePurpose, PublicKeyData, PKCS_ECDSA_P256K1_SHA256, PKCS_ECDSA_P256_SHA256,
 };
 use threshold_fhe::networking::tls::extract_subject_from_cert;
 use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
@@ -37,12 +35,7 @@ pub trait SecurityModule {
     /// certificate can be used for establishing TLS connections where both
     /// sides can not only verify each other's identities but also software
     /// versions.
-    async fn wrap_x509_cert(
-        &self,
-        context_id: ContextId,
-        cert_pem: Pem,
-        wildcard: bool,
-    ) -> anyhow::Result<(Pem, Pem)> {
+    async fn wrap_x509_cert(&self, cert_pem: Pem, wildcard: bool) -> anyhow::Result<(Pem, Pem)> {
         let cert = cert_pem.parse_x509()?;
 
         // The subject name and at least one distinguished name should be set to
@@ -58,13 +51,7 @@ pub trait SecurityModule {
             } else {
                 vec![]
             },
-            vec![
-                subject.clone(),
-                "localhost".to_string(),
-                "192.168.0.1".to_string(),
-                "127.0.0.1".to_string(),
-                "0:0:0:0:0:0:0:1".to_string(),
-            ],
+            vec![subject.clone()],
         ]
         .concat();
 
@@ -75,9 +62,6 @@ pub trait SecurityModule {
         let mut distinguished_name = DistinguishedName::new();
         distinguished_name.push(DnType::CommonName, subject);
         cp.distinguished_name = distinguished_name;
-        cp.serial_number = Some(SerialNumber::from_slice(
-            &context_id.derive_session_id()?.to_be_bytes(),
-        ));
 
         // Key usages
         let Some(key_usage) = cert.key_usage()? else {
@@ -148,7 +132,6 @@ pub trait SecurityModule {
     /// certificates with the party EIP712 signing keys managed in the enclave.
     async fn issue_x509_cert(
         &self,
-        context_id: ContextId,
         ca_cert_pem: &Pem,
         ca_key: &PrivateSigKey,
         wildcard: bool,
@@ -175,13 +158,7 @@ pub trait SecurityModule {
             } else {
                 vec![]
             },
-            vec![
-                subject.clone(),
-                "localhost".to_string(),
-                "192.168.0.1".to_string(),
-                "127.0.0.1".to_string(),
-                "0:0:0:0:0:0:0:1".to_string(),
-            ],
+            vec![subject.clone()],
         ]
         .concat();
 
@@ -199,9 +176,6 @@ pub trait SecurityModule {
         let mut distinguished_name = DistinguishedName::new();
         distinguished_name.push(DnType::CommonName, subject);
         tls_cp.distinguished_name = distinguished_name;
-        tls_cp.serial_number = Some(SerialNumber::from_slice(
-            &context_id.derive_session_id()?.to_be_bytes(),
-        ));
 
         // Key usages
         tls_cp.key_usages = vec![

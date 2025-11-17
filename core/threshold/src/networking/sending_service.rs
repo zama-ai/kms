@@ -367,7 +367,6 @@ pub struct NetworkSession {
     pub(crate) owner: Identity,
     /// [`SessionId`] of this Network session
     pub(crate) session_id: SessionId,
-    pub(crate) context_id: SessionId,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`]
     /// Sending channels for this session
     pub(crate) sending_channels: HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
@@ -406,7 +405,6 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         let round_counter = *self.round_counter.read().await;
         let tagged_value = Tag {
             session_id: self.session_id,
-            context_id: self.context_id,
             sender: self.owner.mpc_identity(),
             round_counter,
         };
@@ -455,14 +453,6 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             .recv()
             .await
             .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
-
-        // check that the message has the correct context and ID
-        if self.context_id != local_packet.context_id {
-            return Err(anyhow_error_and_log(format!(
-                "Received message with incorrect context. Expected {}, got {}",
-                self.context_id, local_packet.context_id
-            )));
-        }
 
         // drop old messages
         let network_round = *counter_lock;
@@ -624,8 +614,6 @@ mod tests {
         role_assignment.insert(role_1, id_1.clone());
         role_assignment.insert(role_2, id_2.clone());
 
-        let context_id = SessionId::from(42);
-
         // Keep a Vec for collecting results
         let mut handles = OsThreadGroup::new();
         for (role, id) in role_assignment.iter() {
@@ -640,7 +628,6 @@ mod tests {
             let network_session_1 = networking_1
                 .make_network_session(
                     sid,
-                    context_id,
                     &role_assignment,
                     role,
                     crate::networking::NetworkMode::Sync,
@@ -699,7 +686,6 @@ mod tests {
         let network_session_2 = networking_2
             .make_network_session(
                 sid,
-                context_id,
                 &role_assignment,
                 role_2,
                 crate::networking::NetworkMode::Sync,
@@ -799,12 +785,10 @@ mod tests {
         );
 
         let tx_2 = message_store.get_tx(&id_2.mpc_identity()).unwrap().unwrap();
-        let context_id = SessionId::from(42);
 
         let session = NetworkSession {
             owner: id_1,
             session_id: SessionId::from(0),
-            context_id,
             // no need to fill this channel because we're not forwading
             // messages to the networking service in this test
             sending_channels: HashMap::new(),
@@ -828,7 +812,6 @@ mod tests {
             let tx_2 = tx_2.clone();
             tokio::spawn(async move {
                 tx_2.send(NetworkRoundValue {
-                    context_id,
                     round_counter: 0,
                     value: expected_clone,
                 })
@@ -838,23 +821,6 @@ mod tests {
 
             let actual = session.receive(&role_2).await.unwrap();
             assert_eq!(actual, expected);
-        }
-
-        // try to send again but use the wrong context ID
-        // it should be rejected
-        {
-            let tx_2 = tx_2.clone();
-            tokio::spawn(async move {
-                tx_2.send(NetworkRoundValue {
-                    context_id: SessionId::from(123),
-                    round_counter: 1,
-                    value: vec![],
-                })
-                .await
-                .unwrap();
-            });
-
-            let _ = session.receive(&role_2).await.unwrap_err();
         }
 
         // try to send to a role that is not in the role assignment should fail
@@ -878,21 +844,18 @@ mod tests {
             let expected_clone = expected.clone();
             tokio::spawn(async move {
                 tx_2.send(NetworkRoundValue {
-                    context_id,
                     round_counter: 3,
                     value: vec![],
                 })
                 .await
                 .unwrap();
                 tx_2.send(NetworkRoundValue {
-                    context_id,
                     round_counter: 4,
                     value: vec![],
                 })
                 .await
                 .unwrap();
                 tx_2.send(NetworkRoundValue {
-                    context_id,
                     round_counter: 5,
                     value: expected_clone,
                 })
@@ -933,8 +896,6 @@ mod tests {
             (role_2_set_2, vec![4; 10]),
         ]));
 
-        let context_id = SessionId::from(42);
-
         // Keep a Vec for collecting results
         let mut server_handles = JoinSet::new();
         let mut client_handles = JoinSet::new();
@@ -974,7 +935,6 @@ mod tests {
                 let network_session = networking
                     .make_network_session(
                         sid,
-                        context_id,
                         &role_assignment,
                         role,
                         crate::networking::NetworkMode::Sync,

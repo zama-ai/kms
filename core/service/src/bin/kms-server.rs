@@ -126,7 +126,7 @@ async fn build_tls_config(
     public_vault: &Vault,
     sk: &PrivateSigKey,
     #[cfg(feature = "insecure")] mock_enclave: bool,
-) -> anyhow::Result<(ServerConfig, ClientConfig)> {
+) -> anyhow::Result<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)> {
     let context_id = *DEFAULT_MPC_CONTEXT;
     aws_lc_rs_default_provider()
         .install_default()
@@ -171,9 +171,14 @@ async fn build_tls_config(
             tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
             let eif_signing_cert_pem = cert.into_pem(my_id, peers)?;
             let (cert, key) = security_module
-                .wrap_x509_cert(context_id, eif_signing_cert_pem, true)
+                .wrap_x509_cert(eif_signing_cert_pem, true)
                 .await?;
-            (cert, key, Some(Arc::new(trusted_releases.clone())), true)
+            (
+                cert,
+                key,
+                Some(trusted_releases.iter().cloned().collect()),
+                true,
+            )
         }
         TlsConf::FullAuto {
             ref trusted_releases,
@@ -210,9 +215,7 @@ async fn build_tls_config(
                 panic!("CA certificate public key isn't ECDSA");
             };
 
-            let (cert, key) = security_module
-                .issue_x509_cert(context_id, &ca_cert, sk, true)
-                .await?;
+            let (cert, key) = security_module.issue_x509_cert(&ca_cert, sk, true).await?;
 
             // sanity check
             EndEntityCert::try_from(&cert.contents.as_slice().into())?
@@ -231,7 +234,12 @@ async fn build_tls_config(
                     panic!("TLS certificate signed by enclave CA is invalid, cannot proceed: {e}")
                 });
 
-            (cert, key, Some(Arc::new(trusted_releases.clone())), false)
+            (
+                cert,
+                key,
+                Some(trusted_releases.iter().cloned().collect()),
+                false,
+            )
         }
     };
 
@@ -255,9 +263,9 @@ async fn build_tls_config(
     let client_config = DangerousClientConfigBuilder {
         cfg: ClientConfig::builder_with_protocol_versions(&[&TLS13]),
     }
-    .with_custom_certificate_verifier(verifier)
+    .with_custom_certificate_verifier(verifier.clone())
     .with_client_auth_cert(cert_chain, key_der)?;
-    Ok((server_config, client_config))
+    Ok((server_config, client_config, verifier))
 }
 
 fn main() -> anyhow::Result<()> {
@@ -596,6 +604,10 @@ async fn main_exec() -> anyhow::Result<()> {
             )
             .await?;
             let meta_store_status_service = Arc::new(metastore_status_service);
+            tracing::info!(
+                "Starting threshold KMS server v{}...",
+                env!("CARGO_PKG_VERSION"),
+            );
             run_server(
                 core_config.service,
                 service_listener,

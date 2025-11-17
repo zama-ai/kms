@@ -1,14 +1,18 @@
 use assert_cmd::Command;
 use cc_tests_utils::{DockerCompose, KMSMode};
+use kms_core_client::mpc_context::create_test_context_info_from_config;
 use kms_core_client::*;
 use kms_grpc::rpc_types::PubDataType;
+use kms_grpc::ContextId;
 use kms_grpc::KeyId;
 use kms_grpc::RequestId;
 use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::consts::ID_LENGTH;
+use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
 use kms_lib::consts::SIGNING_KEY_ID;
 use serial_test::serial;
 use std::fs::create_dir_all;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Output;
@@ -16,6 +20,7 @@ use std::str::FromStr;
 use std::string::String;
 use test_context::futures::future::join_all;
 use test_context::{test_context, AsyncTestContext};
+use tfhe::safe_serialization;
 
 // IMPORTANT: These integration tests require Docker running and images build.
 // You can build the images by running the following commands from the root of the repo:
@@ -284,7 +289,7 @@ async fn restore_from_backup<T: DockerComposeContext>(ctx: &T, test_path: &Path)
 }
 
 async fn test_template<T: DockerComposeContext>(
-    ctx: &mut T,
+    ctx: &T,
     commands: Vec<CCCommand>,
     test_path: &Path,
 ) {
@@ -402,6 +407,45 @@ async fn new_custodian_context<T: DockerComposeContext>(
     };
 
     res_id.to_string()
+}
+
+async fn store_mpc_context_in_file(context_path: &Path, config_path: &Path, context_id: ContextId) {
+    let cc_conf: CoreClientConfig = observability::conf::Settings::builder()
+        .path(config_path.to_str().unwrap())
+        .env_prefix("CORE_CLIENT")
+        .build()
+        .init_conf()
+        .unwrap();
+
+    let context = create_test_context_info_from_config(context_id, &cc_conf)
+        .await
+        .unwrap();
+
+    let mut buf = Vec::new();
+    safe_serialization::safe_serialize(&context, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
+
+    let mut file = std::fs::File::create(context_path).unwrap();
+    file.write_all(&buf).unwrap();
+}
+
+// expect the context path to already hold some context
+async fn new_mpc_context<T: DockerComposeContext>(ctx: &T, context_path: &Path, test_path: &Path) {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+
+    let command = CCCommand::NewMpcContext(NewMpcContextParameters {
+        context_path: context_path.to_path_buf(),
+    });
+    let init_config = CmdConfig {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    let context_switch_result = execute_cmd(&init_config, test_path).await.unwrap();
+    assert_eq!(context_switch_result.len(), 1);
 }
 
 async fn generate_custodian_keys_to_file(
@@ -693,7 +737,7 @@ async fn custodian_backup_recovery<T: DockerComposeContext>(
 #[test_context(DockerComposeCentralizedContext)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centralized_insecure(ctx: &mut DockerComposeCentralizedContext) {
+async fn test_centralized_insecure(ctx: &DockerComposeCentralizedContext) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -704,7 +748,7 @@ async fn test_centralized_insecure(ctx: &mut DockerComposeCentralizedContext) {
 #[test_context(DockerComposeCentralizedContext)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centralized_crsgen_secure(ctx: &mut DockerComposeCentralizedContext) {
+async fn test_centralized_crsgen_secure(ctx: &DockerComposeCentralizedContext) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -777,7 +821,7 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
 #[test_context(DockerComposeThresholdContextDefault)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_insecure(ctx: &mut DockerComposeThresholdContextDefault) {
+async fn test_threshold_insecure(ctx: &DockerComposeThresholdContextDefault) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -785,7 +829,7 @@ async fn test_threshold_insecure(ctx: &mut DockerComposeThresholdContextDefault)
     integration_test_commands(ctx, key_id).await;
 }
 
-async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id: String) {
+async fn integration_test_commands<T: DockerComposeContext>(ctx: &T, key_id: String) {
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let ctxt_path: &Path = Path::new("tests/data/test_encrypt_cipher.txt");
@@ -799,6 +843,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -809,6 +854,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -819,6 +865,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 3,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -829,6 +876,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 3,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -839,6 +887,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -850,6 +899,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -861,6 +911,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -872,6 +923,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: Some(ctxt_path.to_path_buf()),
@@ -895,6 +947,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: false,
             key_id,
+            context_id: None,
             batch_size: 2,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -905,6 +958,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: false,
             key_id,
+            context_id: None,
             batch_size: 2,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -915,6 +969,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: false,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -925,6 +980,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: false,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -936,6 +992,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: false,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -947,6 +1004,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: false,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -958,6 +1016,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: false,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: Some(ctxt_with_sns_path.to_path_buf()),
@@ -1112,6 +1171,42 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianCo
     // Observe that we cannot modify the state of the servers, so we cannot really validate recovery.
     // However we are testing this in the service/client. Hence this tests is mainly to ensure that the outer
     // end points and content returned from the KMS to the custodians work as expected.
+}
+
+#[test_context(DockerComposeThresholdContextTest)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_mpc_context(ctx: &DockerComposeThresholdContextTest) {
+    init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = temp_dir.path();
+    let context_path = temp_dir.path().join("mpc_context.bin");
+    let config_path = ctx.root_path().join(ctx.config_path());
+    // do insecure keygen
+    let key_id = insecure_key_gen(ctx, test_path).await;
+
+    // create and store mpc context
+    let context_id =
+        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222222222")
+            .unwrap();
+    store_mpc_context_in_file(&context_path, &config_path, context_id).await;
+
+    // do the context switch
+    new_mpc_context(ctx, &context_path, test_path).await;
+
+    // try to do ddec in the new context
+    let ddec_command = CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+        to_encrypt: "0x1".to_string(),
+        data_type: FheType::Ebool,
+        no_compression: false,
+        no_precompute_sns: true,
+        key_id: KeyId::from_str(&key_id).unwrap(),
+        context_id: Some(context_id),
+        batch_size: 1,
+        num_requests: 1,
+        ciphertext_output_path: None,
+    }));
+    test_template(ctx, vec![ddec_command], test_path).await;
 }
 
 ///////// FULL GEN TESTS//////////

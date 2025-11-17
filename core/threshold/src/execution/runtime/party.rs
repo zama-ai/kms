@@ -190,11 +190,17 @@ impl<T> IndexMut<&mut Role> for Vec<T> {
 ///
 /// When TLS is used, this must be the subject CN in the x509 certificate.
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
-pub struct MpcIdentity(pub(crate) String);
+pub struct MpcIdentity(pub String);
 
 impl std::fmt::Display for MpcIdentity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+impl AsRef<str> for MpcIdentity {
+    fn as_ref(&self) -> &str {
+        &self.0
     }
 }
 

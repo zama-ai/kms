@@ -9,7 +9,7 @@ use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
         runtime::{
-            party::{Identity, Role, RoleAssignment},
+            party::{Identity, MpcIdentity, Role, RoleAssignment},
             sessions::{
                 base_session::BaseSession, session_parameters::SessionParameters,
                 small_session::SmallSession,
@@ -17,7 +17,10 @@ use threshold_fhe::{
         },
         small_execution::prss::{DerivePRSSState, PRSSSetup},
     },
-    networking::{grpc::GrpcNetworkingManager, health_check::HealthCheckSession, NetworkMode},
+    networking::{
+        grpc::GrpcNetworkingManager, health_check::HealthCheckSession, tls::AttestedVerifier,
+        NetworkMode,
+    },
     session_id::SessionId,
 };
 use tokio::sync::{Mutex, RwLock};
@@ -45,18 +48,21 @@ pub(crate) struct SessionMaker {
     networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
     context_map: Arc<RwLock<ContextMap>>,
     epoch_map: Arc<RwLock<HashMap<EpochId, PRSSSetupExtended>>>,
+    verifier: Option<Arc<AttestedVerifier>>, // optional as it's not used when there's no TLS
     rng: Arc<Mutex<AesRng>>,
 }
 
 impl SessionMaker {
     pub(crate) fn new(
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
+        verifier: Option<Arc<AttestedVerifier>>,
         rng: Arc<Mutex<AesRng>>,
     ) -> Self {
         Self {
             networking_manager,
             context_map: Arc::new(RwLock::new(HashMap::new())),
             epoch_map: Arc::new(RwLock::new(HashMap::new())),
+            verifier,
             rng,
         }
     }
@@ -75,6 +81,7 @@ impl SessionMaker {
             networking_manager,
             context_map: Arc::new(RwLock::new(HashMap::new())),
             epoch_map: Arc::new(RwLock::new(HashMap::new())),
+            verifier: None,
             rng,
         }
     }
@@ -125,6 +132,7 @@ impl SessionMaker {
                 Some(prss) => HashMap::from_iter([(default_epoch_id, prss)]),
                 None => HashMap::new(),
             })),
+            verifier: None,
             rng,
         }
     }
@@ -197,8 +205,11 @@ impl SessionMaker {
         info: &ContextInfo,
     ) -> anyhow::Result<()> {
         let mut role_assignment_map = HashMap::new();
+        let mut ca_certs_map = HashMap::new();
+
         for node in &info.kms_nodes {
-            let mpc_url = url::Url::parse(&node.external_url)?;
+            let mpc_url = url::Url::parse(&node.external_url)
+                .map_err(|e| anyhow::anyhow!("url parsing error for party: {}", e))?;
             let hostname = mpc_url
                 .host_str()
                 .ok_or_else(|| anyhow::anyhow!("missing host"))?;
@@ -209,6 +220,13 @@ impl SessionMaker {
                 Role::indexed_from_one(node.party_id as usize),
                 Identity::new(hostname.to_string(), port, Some(node.mpc_identity.clone())),
             );
+
+            if let Some(ca_cert) = &node.ca_cert {
+                let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert)
+                    .map_err(|e| anyhow::anyhow!("x509 parsing error for party: {}", e))?
+                    .1;
+                ca_certs_map.insert(MpcIdentity(node.mpc_identity.clone()), ca_cert);
+            }
         }
 
         let role_assignment = RoleAssignment {
@@ -222,6 +240,26 @@ impl SessionMaker {
             info.threshold as u8,
         )
         .await;
+
+        match self.verifier.as_ref() {
+            Some(verifier) => {
+                let context_id_as_session_id = info.context_id().derive_session_id()?;
+                let release_pcrs = if info.pcr_values.is_empty() {
+                    tracing::warn!(
+                    "No PCR values provided for context {}, attested TLS verification may be weakened",
+                    info.context_id()
+                );
+                    None
+                } else {
+                    Some(info.pcr_values.iter().cloned().collect())
+                };
+                verifier
+                    .add_context(context_id_as_session_id, ca_certs_map, release_pcrs)
+                    .map_err(|e| anyhow::anyhow!("Failed to add context to verifier: {}", e))?;
+            }
+            _ => { /* do nothing */ }
+        }
+
         Ok(())
     }
 
@@ -396,10 +434,6 @@ impl SessionMaker {
     ) -> anyhow::Result<
         threshold_fhe::execution::runtime::sessions::base_session::SingleSetNetworkingImpl,
     > {
-        // We need to convert [ContextId] type to [SessionId]
-        // because the core/threshold library is only aware of the [SessionId]
-        // since we cannot store something as long as ContextId in the x509 certificate.
-        let context_id_as_session_id = context_id.derive_session_id()?;
         let nm = self.networking_manager.read().await;
 
         let (role_assignment, my_role) = {
@@ -411,13 +445,7 @@ impl SessionMaker {
         };
 
         let networking = nm
-            .make_network_session(
-                session_id,
-                context_id_as_session_id,
-                &role_assignment,
-                my_role,
-                network_mode,
-            )
+            .make_network_session(session_id, &role_assignment, my_role, network_mode)
             .await?;
         tracing::debug!(
             "Created networking for session_id={}, context_id={:?}, network_mode={:?}",
