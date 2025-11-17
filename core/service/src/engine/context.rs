@@ -148,7 +148,7 @@ impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
             party_id: value.party_id.try_into()?,
             verification_key: match value.verification_key {
                 None => None,
-                Some(vk_bytes) => Some(bc2wrap::deserialize(&vk_bytes)?),
+                Some(vk_bytes) => Some(bc2wrap::deserialize_safe(&vk_bytes)?),
             },
             external_url: value.external_url,
             ca_cert,
@@ -156,7 +156,7 @@ impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
             extra_verification_keys: value
                 .extra_verification_keys
                 .into_iter()
-                .map(|k| bc2wrap::deserialize(&k))
+                .map(|k| bc2wrap::deserialize_safe(&k))
                 .collect::<Result<Vec<_>, _>>()?,
         })
     }
@@ -318,7 +318,7 @@ impl TryFrom<kms_grpc::kms::v1::KmsContext> for ContextInfo {
     type Error = anyhow::Error;
 
     fn try_from(value: kms_grpc::kms::v1::KmsContext) -> anyhow::Result<Self> {
-        let software_version = bc2wrap::deserialize(&value.software_version)?;
+        let software_version = bc2wrap::deserialize_safe(&value.software_version)?;
         Ok(ContextInfo {
             kms_nodes: value
                 .kms_nodes

@@ -3,6 +3,7 @@ use crate::commitment::KEY_BYTE_LEN;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::constants::{CHI_XOR_CONSTANT, PHI_XOR_CONSTANT};
 use crate::session_id::SessionId;
+#[allow(deprecated)]
 use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
@@ -125,6 +126,7 @@ pub(crate) fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {
     // TODO iterate over blocks form 0..v here if we ever need Bd1 > 2^126
     let mut ctr_bytes = ctr.to_le_bytes();
     ctr_bytes[15] = 0; // v - the block counter, currently fixed to zero
+    #[allow(deprecated)]
     let mut to_enc = GenericArray::from(ctr_bytes);
     pa.aes.encrypt_block(&mut to_enc);
     let out = u128::from_le_bytes(to_enc.into());
@@ -167,6 +169,7 @@ fn inner_psi(pa: &PsiAes, ctr: u128, i: u8, block_ctr: u8) -> u128 {
     // pad/truncate ctr value and put v and i in the MSBs
     ctr_bytes[15] = block_ctr; // v - the block counter
     ctr_bytes[14] = i; // i - the dimension index
+    #[allow(deprecated)]
     let mut to_enc = GenericArray::from(ctr_bytes);
     pa.aes.encrypt_block(&mut to_enc);
     u128::from_le_bytes(to_enc.into())
@@ -206,6 +209,7 @@ fn inner_chi(pa: &ChiAes, ctr: u128, i: u8, j: u8, block_ctr: u8) -> u128 {
     ctr_bytes[15] = block_ctr; // v - the block counter
     ctr_bytes[14] = i; // i - the dimension index
     ctr_bytes[13] = j; // j - the threshold index
+    #[allow(deprecated)]
     let mut to_enc = GenericArray::from(ctr_bytes);
     pa.aes.encrypt_block(&mut to_enc);
     u128::from_le_bytes(to_enc.into())
@@ -332,8 +336,11 @@ mod tests {
         assert_ne!(chi::<Z>(&chiaes, 0, 0).unwrap(), psi(&psiaes, 0).unwrap());
 
         // initialize identical 128-bit block
+        #[allow(deprecated)]
         let mut chi_block = GenericArray::from([42u8; 16]);
+        #[allow(deprecated)]
         let mut psi_block = GenericArray::from([42u8; 16]);
+        #[allow(deprecated)]
         let mut phi_block = GenericArray::from([42u8; 16]);
 
         // encrypt with different PRFs

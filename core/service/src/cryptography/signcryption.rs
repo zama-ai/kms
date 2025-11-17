@@ -29,7 +29,7 @@ use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::FheTypes;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_fhe::hashing::{serialize_hash_element, DomainSep, DIGEST_BYTES};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const DSEP_SIGNCRYPTION: DomainSep = *b"SIGNCRYP";
 
@@ -92,12 +92,14 @@ pub trait UnsigncryptFHEPlaintext: Unsigncrypt {
     ) -> Result<SigncryptionPayload, CryptographyError>;
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
+)]
 pub enum UnifiedSigncryptionKeyOwnedVersioned {
     V0(UnifiedSigncryptionKeyOwned),
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Zeroize, Versionize)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Debug, Zeroize, Versionize)]
 #[versionize(UnifiedSigncryptionKeyOwnedVersioned)]
 pub struct UnifiedSigncryptionKeyOwned {
     pub signing_key: PrivateSigKey,
@@ -211,19 +213,28 @@ impl HasSigningScheme for UnifiedUnsigncryptionKey<'_> {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, VersionsDispatch)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, VersionsDispatch,
+)]
 pub enum UnifiedUnsigncryptionKeyOwnedVersioned {
     V0(UnifiedUnsigncryptionKeyOwned),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, Versionize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(UnifiedUnsigncryptionKeyOwnedVersioned)]
 pub struct UnifiedUnsigncryptionKeyOwned {
     pub decryption_key: UnifiedPrivateEncKey,
     pub encryption_key: UnifiedPublicEncKey, // Needed for validation of the signcrypted payload
     pub sender_verf_key: PublicSigKey,
-    /// The ID of the receiver of the signcryption, e.g. blockchain address
+    /// The ID of the receiver of the signcryption, e.g. blockchain address]
     pub receiver_id: Vec<u8>,
+}
+
+impl Zeroize for UnifiedUnsigncryptionKeyOwned {
+    fn zeroize(&mut self) {
+        // We only need to zeroize the private key
+        self.decryption_key.zeroize();
+    }
 }
 
 impl UnifiedUnsigncryptionKeyOwned {
@@ -547,9 +558,10 @@ impl<'a> UnsigncryptFHEPlaintext for UnifiedUnsigncryptionKey<'a> {
             signing_type: self.sender_verf_key.signing_scheme_type(),
         };
         let decrypted_signcryption = inner_unsigncrypt(self, dsep, &parsed_signcryption)?;
-        // LEGACY should be using safe_deserialization
-        let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize(&decrypted_signcryption)
-            .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
+        // LEGACY should be using safe_deserialization from tfhe-rs
+        let signcrypted_msg: SigncryptionPayload =
+            bc2wrap::deserialize_safe(&decrypted_signcryption)
+                .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
         if link != signcrypted_msg.link {
             return Err(CryptographyError::VerificationError(
                 "signcryption link does not match!".to_string(),
@@ -582,8 +594,8 @@ fn inner_unsigncrypt(
             "encryption type of cipher does not match the decryption key type".to_string(),
         ));
     }
-    // LEGACY Code: should be using safe_deserialization
-    let deserialized_payload: HybridKemCt = bc2wrap::deserialize(&cipher.payload)
+    // LEGACY Code: should be using safe_deserialization from tfhe-rs
+    let deserialized_payload: HybridKemCt = bc2wrap::deserialize_safe(&cipher.payload)
         .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
     let decrypted_plaintext = match &unsign_key.decryption_key {
         UnifiedPrivateEncKey::MlKem512(dec_key) => {
@@ -680,9 +692,9 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     cipher: &[u8],
     client_keys: &UnifiedUnsigncryptionKey,
 ) -> Result<TypedPlaintext, CryptographyError> {
-    // LEGACY should be using safe_deserialization
-    let cipher: HybridKemCt =
-        bc2wrap::deserialize(cipher).map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
+    // LEGACY should be using safe_deserialization from tfhe-rs
+    let cipher: HybridKemCt = bc2wrap::deserialize_safe(cipher)
+        .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
     let decrypted_plaintext = match &client_keys.decryption_key {
         UnifiedPrivateEncKey::MlKem512(client_keys) => {
             hybrid_ml_kem::dec::<ml_kem::MlKem512>(cipher.clone(), &client_keys.0)?
@@ -695,9 +707,9 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     // strip off the signature bytes (these are ignored here)
     let msg_len = decrypted_plaintext.len() - DIGEST_BYTES - SIG_SIZE;
     let msg = &decrypted_plaintext[..msg_len];
-    // LEGACY should be using safe_deserialization
-    let signcrypted_msg: SigncryptionPayload =
-        bc2wrap::deserialize(msg).map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
+    // LEGACY should be using safe_deserialization from tfhe-rs
+    let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize_safe(msg)
+        .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
 
     Ok(signcrypted_msg.plaintext)
 }
@@ -705,7 +717,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
 /// Helper method for what the client is supposed to do when generating ephemeral keys linked to the
 /// client's blockchain signing key
 #[cfg(test)]
-pub(crate) fn ephemeral_signcryption_key_generation(
+pub fn ephemeral_signcryption_key_generation(
     rng: &mut (impl CryptoRng + RngCore + Send + Sync + 'static),
     client_verf_key_id: &[u8],
     server_sig_key: Option<&PrivateSigKey>,
@@ -739,7 +751,7 @@ pub(crate) fn ephemeral_signcryption_key_generation(
 /// Helper struct that contains both signcryption and unsigncryption keys for a client
 /// For now only used for testing
 #[cfg(test)]
-#[derive(Clone, Debug, Serialize, Deserialize, Zeroize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct UnifiedSigncryptionKeyPairOwned {
     pub signcrypt_key: UnifiedSigncryptionKeyOwned,
     pub unsigncryption_key: UnifiedUnsigncryptionKeyOwned,
@@ -792,14 +804,17 @@ mod tests {
             .unwrap();
         let serialized_cipher = bc2wrap::serialize(&cipher).unwrap();
         let deserialized_cipher: UnifiedSigncryption =
-            bc2wrap::deserialize(&serialized_cipher).unwrap();
+            bc2wrap::deserialize_unsafe(&serialized_cipher).unwrap();
 
         let serialized_server_verf_key =
             bc2wrap::serialize(&client_signcryption_keys.unsigncryption_key.sender_verf_key)
                 .unwrap();
         let deserialized_server_verf_key: PublicSigKey =
-            bc2wrap::deserialize(&serialized_server_verf_key).unwrap();
-        let client_id = client_signcryption_keys.unsigncryption_key.receiver_id;
+            bc2wrap::deserialize_unsafe(&serialized_server_verf_key).unwrap();
+        let client_id = client_signcryption_keys
+            .unsigncryption_key
+            .receiver_id
+            .clone();
         let new_keys = UnifiedUnsigncryptionKey::new(
             &client_signcryption_keys.unsigncryption_key.decryption_key,
             &client_signcryption_keys.unsigncryption_key.encryption_key,

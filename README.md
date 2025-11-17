@@ -99,7 +99,11 @@ docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-thres
 
 This will start 4 KMS servers that interact with each other
 to perform threshold operations.
-Note: The yml files above do NOT use custodian-based backup! If this is needed, use instead `docker-compose-core-threshold-custodian.yml` and `docker-compose-core-centralized-custodian.yml` respectively.
+Note: The yml files above do NOT use custodian-based backup! If this is needed, you need to pass in the environment variable `KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED` to `docker compose up`, that is
+
+```sh
+KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up
+```
 
 It is possible to run the centralized version by replacing `docker-compose-core-threshold.yml` with `docker-compose-core-centralized.yml`.
 

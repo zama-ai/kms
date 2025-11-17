@@ -31,7 +31,7 @@ struct InnerHybridKemCt<C: KemCore> {
     pub payload_ct: Vec<u8>,
 }
 
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, VersionsDispatch)]
 pub enum HybridKemCtVersioned {
     V0(HybridKemCt),
 }
@@ -97,6 +97,7 @@ pub(crate) fn enc<C: KemCore, R: Rng + CryptoRng>(
         .map_err(|_| CryptographyError::MlKemError)?;
 
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
+    #[allow(deprecated)]
     let aead_key = Key::<Aes256Gcm>::from_slice(&kem_shared_secret[0..key_size]);
     let cipher = Aes256Gcm::new(aead_key);
     let nonce = Aes256Gcm::generate_nonce(rng);
@@ -129,6 +130,7 @@ pub(crate) fn dec<C: KemCore>(
         .map_err(|_| CryptographyError::MlKemError)?;
 
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
+    #[allow(deprecated)]
     let aead_key = Key::<aes_gcm::Aes256Gcm>::clone_from_slice(&kem_shared_secret[0..key_size]);
 
     let cipher = aes_gcm::Aes256Gcm::new(&aead_key);
@@ -162,8 +164,9 @@ mod tests {
         let plain_encoding = bc2wrap::serialize(&Cipher(ct.clone())).unwrap();
         let wrapped_encoding = bc2wrap::serialize(&Cipher(ct.clone())).unwrap();
         assert_eq!(plain_encoding, wrapped_encoding);
-        let decoded_wrapping = bc2wrap::deserialize::<Cipher>(&plain_encoding).unwrap();
-        let decoded_unwrapped = bc2wrap::deserialize::<HybridKemCt>(&wrapped_encoding).unwrap();
+        let decoded_wrapping = bc2wrap::deserialize_unsafe::<Cipher>(&plain_encoding).unwrap();
+        let decoded_unwrapped =
+            bc2wrap::deserialize_unsafe::<HybridKemCt>(&wrapped_encoding).unwrap();
         assert_eq!(decoded_wrapping.0.nonce, decoded_unwrapped.nonce);
         assert_eq!(decoded_wrapping.0.kem_ct, decoded_unwrapped.kem_ct);
         assert_eq!(decoded_wrapping.0.payload_ct, decoded_unwrapped.payload_ct);
@@ -181,8 +184,8 @@ mod tests {
         assert_eq!(sk_buf.len(), ML_KEM_512_SK_LEN + 8);
         assert_eq!(pk_buf.len(), ML_KEM_512_PK_LENGTH + 8);
         // deserialize and test if encryption still works.
-        let pk2: PublicEncKey<ml_kem::MlKem512> = bc2wrap::deserialize(&pk_buf).unwrap();
-        let sk2: PrivateEncKey<ml_kem::MlKem512> = bc2wrap::deserialize(&sk_buf).unwrap();
+        let pk2: PublicEncKey<ml_kem::MlKem512> = bc2wrap::deserialize_unsafe(&pk_buf).unwrap();
+        let sk2: PrivateEncKey<ml_kem::MlKem512> = bc2wrap::deserialize_unsafe(&sk_buf).unwrap();
 
         let msg = b"four legs good, two legs better";
         let ct = enc::<ml_kem::MlKem512, _>(&mut rng, msg, &pk2.0).unwrap();

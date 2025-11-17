@@ -68,7 +68,7 @@ jobs:
           token: ${{ secrets.NPM_TOKEN }}
           package: ./core/service/pkg/package.json
           dry-run: false
-          provenance: true # change to true when repo is public (see #1048)
+          provenance: true
           tag: ${{ env.NPM_TAG }}
 
       # Web package build and publish
@@ -89,7 +89,7 @@ jobs:
           token: ${{ secrets.NPM_TOKEN }}
           package: ./core/service/pkg/package.json
           dry-run: false
-          provenance: true # change to true when repo is public (see #1048)
+          provenance: true
           tag: ${{ env.NPM_TAG }}
 
       - name: Remove aws credentials file

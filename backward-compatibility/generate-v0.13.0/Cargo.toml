@@ -1,0 +1,52 @@
+[package]
+name = "backward-compatibility-generate-v0-13-0"
+version = "0.13.0"
+publish = false
+authors = ["Zama"]
+edition = "2021"
+license = "BSD-3-Clause-Clear"
+
+[dependencies]
+# Import the base backward-compatibility crate for shared types and utilities
+backward-compatibility = { path = ".." }
+bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "fb80b7ef7c3376866db4ca32b6f461d6ea70e202" }
+
+# NOTE: Some dependencies below are duplicated from ../Cargo.toml
+# This is intentional - these crates are excluded from the workspace for isolation.
+# Each generator may need different versions to match its target KMS version.
+
+# This is a list of kms-core versions we will generate data for. This list will grow over time.
+# TODO observe that the commit is only temporary to make the new tests work and must be updated when cutting the real 0.13.0 release
+kms_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "fb80b7ef7c3376866db4ca32b6f461d6ea70e202"} 
+kms_grpc_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "fb80b7ef7c3376866db4ca32b6f461d6ea70e202"} 
+threshold_fhe_0_13_0 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "fb80b7ef7c3376866db4ca32b6f461d6ea70e202", features = [
+    "testing",
+] }
+
+# Dependencies for the 0.13 version
+# Note: these dependencies should match the versions used by the KMS and distributed decryption
+# modules as much as possible to avoid serialization differences
+tfhe_versionable_0_6 = { package = "tfhe-versionable", version = "=0.6.2" }
+tfhe_1_4 = { package = "tfhe", version = "1.4.0-alpha.3", features = [
+    "shortint",
+] }
+alloy-sol-types-1_4_1 = { package = "alloy-sol-types", version = "=1.4.1" }
+alloy-primitives-1_4_1 = { package = "alloy-primitives", version = "=1.4.1" }
+
+# Common dependencies
+# Note: This serde version is used for metadata types imported from backward-compatibility crate.
+# The old KMS types (kms_0_11) will use their own serde 1.0.210 from their dependency tree.
+# Both serde versions coexist in the same binary - this is intentional and correct!
+serde = { version = "=1.0.226", features = ["derive"] }
+# bincode needed for generate.rs utility functions, must match bc2wrap version (2.0.1 from v0.12.2)
+bincode = { version = "=2.0.1", features = ["serde"] }
+aes-prng = "=0.2.1"
+rand = "=0.8.5"
+ron = { version = "=0.10.1", features = ["integer128"] }
+tokio = { version = "=1.46.1", features = ["full"] }
+
+[[bin]]
+name = "backward-compatibility-generate-v0-13-0"
+
+[patch.crates-io]
+rcgen = { git = 'https://github.com/mkmks/rcgen.git', branch = 'k256' }

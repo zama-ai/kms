@@ -26,16 +26,18 @@ use tfhe::{
 };
 use tracing::instrument;
 
-fn generate_sns_compression_key_shares<
+async fn generate_sns_compression_key_shares<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     Gen: ParallelByteRandomGenerator,
+    S: BaseSessionHandles,
     const EXTENSION_DEGREE: usize,
 >(
     glwe_secret_key_share_sns_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     params: &DistributedSnsCompressionParameters,
     mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     preprocessing: &mut P,
+    session: &mut S,
 ) -> anyhow::Result<(
     SnsCompressionPrivateKeyShares<Z, EXTENSION_DEGREE>,
     LwePackingKeyswitchKeyShares<Z, EXTENSION_DEGREE>,
@@ -47,7 +49,10 @@ where
         SnsCompressionPrivateKeyShares::new_from_preprocessing(
             params.raw_compression_parameters,
             preprocessing,
+            params.pmax,
+            session,
         )
+        .await
         .inspect_err(|e| {
             tracing::error!("failed to generate private sns compression shares: {e}")
         })?;
@@ -104,7 +109,9 @@ where
             &params,
             mpc_encryption_rng,
             preprocessing,
-        )?;
+            session,
+        )
+        .await?;
 
     let packing_key_switching_key = packing_key_switching_key_shares
         .open_to_tfhers_type::<u128, _>(session)
@@ -145,7 +152,9 @@ where
             &params,
             mpc_encryption_rng,
             preprocessing,
-        )?;
+            session,
+        )
+        .await?;
 
     let packing_key_switching_key = packing_key_switching_key_shares
         .open_to_tfhers_seeded_type::<u128, _>(seed, session)

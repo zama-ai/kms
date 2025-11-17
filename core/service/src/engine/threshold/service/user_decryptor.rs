@@ -55,14 +55,12 @@ use crate::{
     anyhow_error_and_log,
     consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
     cryptography::{
+        compute_external_user_decrypt_signature,
         error::CryptographyError,
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
     },
     engine::{
-        base::{
-            compute_external_user_decrypt_signature, deserialize_to_low_level, BaseKmsStruct,
-            UserDecryptCallValues,
-        },
+        base::{deserialize_to_low_level, BaseKmsStruct, UserDecryptCallValues},
         threshold::{service::session::ImmutableSessionMaker, traits::UserDecryptor},
         traits::BaseKms,
         validation::{

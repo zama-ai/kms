@@ -611,6 +611,7 @@ jobs:
       - test-core-service
       - test-core-threshold-pr
       - test-core-threshold-main
+      - test-wasm
       - build-dependabot
     uses: ./.github/workflows/test-reporter.yml
     permissions:
@@ -622,6 +623,30 @@ jobs:
       contents: read # Required to checkout repository code
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
+  ############################################################################
+  # Wasm Testing Pipeline
+  ############################################################################
+  test-wasm:
+    name: main/test-wasm
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs:
+      - check-changes
+    if: >-
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      needs.check-changes.outputs.changes-ci == 'true'
+    uses: ./.github/workflows/wasm-testing.yml
+    with:
+      working-directory: './core/service'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   ############################################################################
   # ██████╗ ██████╗  ██████╗  ██████╗  ██████╗██████╗

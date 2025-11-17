@@ -13,10 +13,15 @@ use tfhe::shortint::atomic_pattern::compressed::{
     CompressedAtomicPatternServerKey, CompressedStandardAtomicPatternServerKey,
 };
 use tfhe::shortint::atomic_pattern::{AtomicPatternServerKey, StandardAtomicPatternServerKey};
+use tfhe::shortint::key_switching_key::KeySwitchingKeyDestinationAtomicPattern;
 use tfhe::shortint::list_compression::{
     CompressedCompressionKey, CompressedDecompressionKey, CompressedNoiseSquashingCompressionKey,
     CompressionKey, DecompressionKey, NoiseSquashingCompressionKey,
 };
+use tfhe::shortint::noise_squashing::atomic_pattern::compressed::standard::CompressedStandardAtomicPatternNoiseSquashingKey;
+use tfhe::shortint::noise_squashing::atomic_pattern::compressed::CompressedAtomicPatternNoiseSquashingKey;
+use tfhe::shortint::noise_squashing::atomic_pattern::standard::StandardAtomicPatternNoiseSquashingKey;
+use tfhe::shortint::noise_squashing::atomic_pattern::AtomicPatternNoiseSquashingKey;
 use tfhe::shortint::noise_squashing::{
     CompressedShortint128BootstrappingKey, NoiseSquashingKey, Shortint128BootstrappingKey,
 };
@@ -158,11 +163,16 @@ impl RawPubKeySet {
                     let sns_param = sns_param.sns_params;
 
                     par_convert_standard_lwe_bootstrap_key_to_fourier_128(bk_sns, &mut fourier_bk);
+
                     let key = NoiseSquashingKey::from_raw_parts(
-                        Shortint128BootstrappingKey::Classic {
-                            bsk: fourier_bk,
-                            modulus_switch_noise_reduction_key: msnrk_sns.clone(),
-                        },
+                        AtomicPatternNoiseSquashingKey::Standard(
+                            StandardAtomicPatternNoiseSquashingKey::from_raw_parts(
+                                Shortint128BootstrappingKey::Classic {
+                                    bsk: fourier_bk,
+                                    modulus_switch_noise_reduction_key: msnrk_sns.clone(),
+                                },
+                            ),
+                        ),
                         sns_param.message_modulus(),
                         sns_param.carry_modulus(),
                         sns_param.ciphertext_modulus(),
@@ -193,6 +203,7 @@ impl RawPubKeySet {
                         .get_params_basics_handle()
                         .get_pksk_destination()
                         .unwrap(),
+                    KeySwitchingKeyDestinationAtomicPattern::Standard,
                 );
 
             tfhe::integer::key_switching_key::KeySwitchingKeyMaterial::from_raw_parts(shortint_pksk)
@@ -211,6 +222,7 @@ impl RawPubKeySet {
                             dedicated_rerand_ksk.clone(),
                             0,
                             EncryptionKeyChoice::Big,
+                    KeySwitchingKeyDestinationAtomicPattern::Standard,
                         );
 
                         let rerand_ksk =
@@ -335,6 +347,7 @@ impl RawCompressedPubKeySet {
                     .get_params_basics_handle()
                     .get_pksk_destination()
                     .unwrap(),
+                    KeySwitchingKeyDestinationAtomicPattern::Standard,
             ))
         });
 
@@ -354,10 +367,10 @@ impl RawCompressedPubKeySet {
             (Some(bk_sns), Some(msnrk_sns), DKGParams::WithSnS(params_with_sns)) => {
                 let noise_squashing_key = Some(
                     tfhe::integer::noise_squashing::CompressedNoiseSquashingKey::from_raw_parts( tfhe::shortint::noise_squashing::CompressedNoiseSquashingKey::from_raw_parts(
-                        CompressedShortint128BootstrappingKey::Classic{
+CompressedAtomicPatternNoiseSquashingKey::Standard(CompressedStandardAtomicPatternNoiseSquashingKey::from_raw_parts(CompressedShortint128BootstrappingKey::Classic{
                             bsk : bk_sns.clone(),
                             modulus_switch_noise_reduction_key: msnrk_sns.clone()
-                        },
+                        })),
                         params_with_sns.sns_params.message_modulus(),
                         params_with_sns.sns_params.carry_modulus(),
                         params_with_sns.sns_params.ciphertext_modulus(),
@@ -388,6 +401,7 @@ impl RawCompressedPubKeySet {
                             dedicated_rerand_ksk.clone(),
                             0,
                             EncryptionKeyChoice::Big,
+                    KeySwitchingKeyDestinationAtomicPattern::Standard,
                         );
 
                         let rerand_ksk =

@@ -458,7 +458,7 @@ pub async fn async_user_decrypt<
         metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
 
-    use crate::engine::base::compute_external_user_decrypt_signature;
+    use crate::cryptography::compute_external_user_decrypt_signature;
 
     let mut all_signcrypted_cts = vec![];
     for typed_ciphertext in typed_ciphertexts {
@@ -1513,7 +1513,8 @@ pub(crate) mod tests {
                     Some(kms.base_kms.sig_key.as_ref()),
                 );
                 // Change the decryption key
-                keys.unsigncryption_key.decryption_key = bad_keys.unsigncryption_key.decryption_key;
+                keys.unsigncryption_key.decryption_key =
+                    bad_keys.unsigncryption_key.decryption_key.to_owned();
             }
             if sim_type == SimulationType::BadSigKey {
                 // Change the signing key

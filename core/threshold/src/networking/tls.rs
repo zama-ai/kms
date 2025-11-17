@@ -500,6 +500,7 @@ fn validate_wrapped_cert(
         let mut hasher = Sha384::new();
         hasher.update(party_cert_bytes.value);
         let party_cert_hash = hasher.finalize();
+        #[allow(deprecated)]
         if party_cert_hash.as_slice() != pcr8.as_slice() {
             bail!("Bad certificate: untrusted party certificate hash {} in attestation document, expected {}", hex::encode(party_cert_hash.as_slice()), hex::encode(pcr8.as_slice()))
         }

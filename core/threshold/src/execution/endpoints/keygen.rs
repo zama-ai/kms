@@ -34,7 +34,7 @@ use crate::{
                 generate_compressed_mod_switch_noise_reduction_key,
                 generate_mod_switch_noise_reduction_key,
             },
-            parameters::{DKGParams, MSNRKConfiguration},
+            parameters::{DKGParams, DKGParamsBasics, MSNRKConfiguration},
             private_keysets::{GenericPrivateKeySet, PrivateKeySet},
             public_keysets::{
                 CompressedReRandomizationRawKeySwitchingKey, FhePubKeySet, RawCompressedPubKeySet,
@@ -105,8 +105,8 @@ trait Finalizable<const EXTENSION_DEGREE: usize> {
 impl<const EXTENSION_DEGREE: usize> Finalizable<EXTENSION_DEGREE>
     for GenericPrivateKeySet<Z128, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
 {
     fn finalize_keyset(self, parameters: ClassicPBSParameters) -> PrivateKeySet<EXTENSION_DEGREE> {
         self.finalize_keyset(parameters)
@@ -116,7 +116,7 @@ where
 impl<const EXTENSION_DEGREE: usize> Finalizable<EXTENSION_DEGREE>
     for GenericPrivateKeySet<Z64, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
 {
     fn finalize_keyset(self, parameters: ClassicPBSParameters) -> PrivateKeySet<EXTENSION_DEGREE> {
         self.finalize_keyset(parameters)
@@ -386,7 +386,10 @@ where
         LweSecretKeyShare::new_from_preprocessing(
             params_basics_handle.lwe_dimension(),
             preprocessing,
-        )?
+            params_basics_handle.get_pmax(),
+            session,
+        )
+        .await?
     } else {
         lwe_hat_secret_key_share.clone()
     };
@@ -399,7 +402,10 @@ where
         params_basics_handle.glwe_sk_num_bits(),
         params_basics_handle.polynomial_size(),
         preprocessing,
-    )?;
+        params_basics_handle.get_pmax(),
+        session,
+    )
+    .await?;
 
     let glwe_sk_share_as_lwe = glwe_secret_key_share.clone().into_lwe_secret_key();
 
@@ -454,7 +460,10 @@ where
                 sns_params.glwe_sk_num_bits_sns(),
                 sns_params.polynomial_size_sns(),
                 preprocessing,
-            )?;
+                sns_params.get_pmax(),
+                session,
+            )
+            .await?;
 
             //Computing and opening BK SNS can take a while, so we increase the timeout
             session.network().set_timeout_for_bk_sns().await;
@@ -704,7 +713,10 @@ where
         LweSecretKeyShare::new_from_preprocessing(
             params_basics_handle.lwe_dimension(),
             preprocessing,
-        )?
+            params_basics_handle.get_pmax(),
+            session,
+        )
+        .await?
     } else {
         lwe_hat_secret_key_share.clone()
     };
@@ -717,7 +729,10 @@ where
         params_basics_handle.glwe_sk_num_bits(),
         params_basics_handle.polynomial_size(),
         preprocessing,
-    )?;
+        params_basics_handle.get_pmax(),
+        session,
+    )
+    .await?;
 
     let glwe_sk_share_as_lwe = glwe_secret_key_share.clone().into_lwe_secret_key();
 
@@ -797,7 +812,10 @@ where
                 sns_params.glwe_sk_num_bits_sns(),
                 sns_params.polynomial_size_sns(),
                 preprocessing,
-            )?;
+                sns_params.get_pmax(),
+                session,
+            )
+            .await?;
 
             //Computing and opening BK SNS can take a while, so we increase the timeout
             //(in theory we should be in async setting here anyway)
@@ -1083,7 +1101,7 @@ pub mod tests {
         algebra::{
             base_ring::{Z128, Z64},
             galois_rings::common::ResiduePoly,
-            structure_traits::{ErrorCorrect, Invert, Ring, Solve},
+            structure_traits::{ErrorCorrect, Invert, Solve},
         },
         execution::{
             online::preprocessing::dummy::DummyPreprocessing,
@@ -1109,7 +1127,7 @@ pub mod tests {
                     DKGParams, BC_PARAMS_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE,
                     NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE,
                     NIST_PARAMS_P8_NO_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_LWE,
-                    NIST_PARAMS_P8_SNS_FGLWE, OLD_PARAMS_P32_REAL_WITH_SNS, PARAMS_TEST_BK_SNS,
+                    NIST_PARAMS_P8_SNS_FGLWE, PARAMS_TEST_BK_SNS,
                 },
                 test_feature::to_hl_client_key,
                 utils::tests::reconstruct_glwe_secret_key_from_file,
@@ -1136,7 +1154,13 @@ pub mod tests {
         set_server_key,
         shortint::{
             client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
-            noise_squashing::{NoiseSquashingKey, Shortint128BootstrappingKey},
+            noise_squashing::{
+                atomic_pattern::{
+                    standard::StandardAtomicPatternNoiseSquashingKey,
+                    AtomicPatternNoiseSquashingKey,
+                },
+                NoiseSquashingKey, Shortint128BootstrappingKey,
+            },
             parameters::CoreCiphertextModulus,
             PBSParameters,
         },
@@ -1193,47 +1217,6 @@ pub mod tests {
         try_tfhe_pk_compactlist_computation(&client_key, &server_key, &public_key);
         set_server_key(server_key);
         try_tfhe_rerand(&client_key, &public_key);
-    }
-
-    #[cfg(feature = "extension_degree_8")]
-    #[tokio::test]
-    #[ignore]
-    async fn old_keygen_params32_with_sns_f8() {
-        old_keygen_params32_with_sns::<8>(false).await
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn old_keygen_params32_with_sns_f4() {
-        old_keygen_params32_with_sns::<4>(false).await
-    }
-
-    #[cfg(feature = "extension_degree_3")]
-    #[tokio::test]
-    #[ignore]
-    async fn old_keygen_params32_with_sns_f3() {
-        old_keygen_params32_with_sns::<3>(false).await
-    }
-
-    async fn old_keygen_params32_with_sns<const EXTENSION_DEGREE: usize>(run_compressed: bool)
-    where
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
-    {
-        run_keygen_test::<EXTENSION_DEGREE>(
-            OLD_PARAMS_P32_REAL_WITH_SNS,
-            5,
-            1,
-            KeygenTestConfig {
-                run_switch_and_squash: true,
-                run_shortint_with_compact: false,
-                run_fheuint: true,
-                run_fheuint_with_compression: false,
-                run_rerand: false,
-                run_compressed,
-            },
-        )
-        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
@@ -2039,7 +2022,10 @@ pub mod tests {
                             .unwrap()
                             .raw_compression_parameters,
                         &mut dummy_preproc,
+                        params_basics_handles.get_pmax(),
+                        &mut session,
                     )
+                    .await
                     .unwrap(),
                 )
             } else {
@@ -2069,13 +2055,7 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
-                let (mut public_key, mut server_key) =
-                    compressed_pk.decompress().unwrap().into_raw_parts();
-                // TODO(https://github.com/zama-ai/tfhe-rs-internal/issues/1181)
-                // The tags are lost during decompression, we make a workaround to manually set the tag until this is fixed
-                // Once the issue above is resolve, we can remove the calls to tag_mut.
-                *public_key.tag_mut() = tag.clone();
-                *server_key.tag_mut() = tag;
+                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
                 (
                     FhePubKeySet {
                         public_key,
@@ -2146,7 +2126,7 @@ pub mod tests {
         run_compressed: bool,
     ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
-        ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
     {
         let mut task = |mut session: LargeSession, tag: Option<String>| async move {
             let my_role = session.my_role();
@@ -2170,13 +2150,7 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
-                let (mut public_key, mut server_key) =
-                    compressed_pk.decompress().unwrap().into_raw_parts();
-                // TODO(https://github.com/zama-ai/tfhe-rs-internal/issues/1181)
-                // The tags are lost during decompression, we make a workaround to manually set the tag until this is fixed
-                // Once the issue above is resolve, we can remove the calls to tag_mut.
-                *public_key.tag_mut() = tag.clone();
-                *server_key.tag_mut() = tag;
+                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
                 (
                     FhePubKeySet {
                         public_key,
@@ -2335,23 +2309,34 @@ pub mod tests {
             let (key, pt_modulus, pt_carry, ct_modulus) =
                 ck.clone().into_raw_parts().into_raw_parts();
             let mod_switch = match key {
-                Shortint128BootstrappingKey::Classic {
-                    bsk: _bsk,
-                    modulus_switch_noise_reduction_key,
-                } => modulus_switch_noise_reduction_key,
-                Shortint128BootstrappingKey::MultiBit {
-                    bsk: _bsk,
-                    thread_count: _thread_count,
-                    deterministic_execution: _deterministic_execution,
-                } => panic!("Do not support multibit for now"),
+                AtomicPatternNoiseSquashingKey::Standard(ref standard_sns_key) => {
+                    match standard_sns_key.bootstrapping_key() {
+                        Shortint128BootstrappingKey::Classic {
+                            bsk: _bsk,
+                            modulus_switch_noise_reduction_key,
+                        } => modulus_switch_noise_reduction_key,
+                        Shortint128BootstrappingKey::MultiBit {
+                            bsk: _bsk,
+                            thread_count: _thread_count,
+                            deterministic_execution: _deterministic_execution,
+                        } => panic!("Do not support multibit for now"),
+                    }
+                }
+                AtomicPatternNoiseSquashingKey::KeySwitch32(_) => {
+                    panic!("Do not support KeySwitch32 for now")
+                }
             };
 
             tfhe::integer::noise_squashing::NoiseSquashingKey::from_raw_parts(
                 NoiseSquashingKey::from_raw_parts(
-                    Shortint128BootstrappingKey::Classic {
-                        bsk: fbsk_out,
-                        modulus_switch_noise_reduction_key: mod_switch,
-                    },
+                    AtomicPatternNoiseSquashingKey::Standard(
+                        StandardAtomicPatternNoiseSquashingKey::from_raw_parts(
+                            Shortint128BootstrappingKey::Classic {
+                                bsk: fbsk_out,
+                                modulus_switch_noise_reduction_key: mod_switch.clone(),
+                            },
+                        ),
+                    ),
                     pt_modulus,
                     pt_carry,
                     ct_modulus,

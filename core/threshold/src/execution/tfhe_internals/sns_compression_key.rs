@@ -9,9 +9,9 @@ use tfhe_versionable::VersionsDispatch;
 use crate::{
     algebra::{
         galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, Ring},
+        structure_traits::{BaseRing, ErrorCorrect},
     },
-    execution::online::preprocessing::BitPreprocessing,
+    execution::{online::preprocessing::BitPreprocessing, runtime::session::BaseSessionHandles},
 };
 
 use super::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare};
@@ -30,13 +30,16 @@ pub struct SnsCompressionPrivateKeyShares<Z: Clone, const EXTENSION_DEGREE: usiz
 
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> SnsCompressionPrivateKeyShares<Z, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    pub fn new_from_preprocessing<
+    pub async fn new_from_preprocessing<
         P: BitPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+        S: BaseSessionHandles,
     >(
         params: NoiseSquashingCompressionParameters,
         preprocessing: &mut P,
+        pmax: Option<f64>,
+        session: &mut S,
     ) -> anyhow::Result<Self> {
         let total_size = params.packing_ks_glwe_dimension.0 * params.packing_ks_polynomial_size.0;
         Ok(Self {
@@ -44,7 +47,10 @@ where
                 total_size,
                 params.packing_ks_polynomial_size,
                 preprocessing,
-            )?,
+                pmax,
+                session,
+            )
+            .await?,
             params,
         })
     }

@@ -2,8 +2,6 @@ use super::traits::BaseKms;
 use crate::consts::ID_LENGTH;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::decompression;
-use crate::cryptography::encryption::UnifiedPublicEncKey;
-use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::cryptography::signatures::compute_eip712_signature;
 
@@ -25,7 +23,6 @@ use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PubDataType;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
-use kms_grpc::solidity_types::UserDecryptResponseVerification;
 use kms_grpc::solidity_types::{
     CrsgenVerification, FheDecompressionUpgradeKey, KeygenVerification, PrepKeygenVerification,
     PublicDecryptVerification,
@@ -517,58 +514,6 @@ where
     }
 }
 
-pub(crate) fn compute_external_user_decrypt_signature(
-    server_sk: &PrivateSigKey,
-    payload: &UserDecryptionResponsePayload,
-    eip712_domain: &Eip712Domain,
-    user_pk: &UnifiedPublicEncKey,
-    extra_data: Vec<u8>,
-) -> anyhow::Result<Vec<u8>> {
-    let message = compute_user_decrypt_message(payload, user_pk, extra_data)?;
-    tracing::debug!("Computing signature for UserDecryptResponseVerification");
-    compute_eip712_signature(server_sk, &message, eip712_domain)
-}
-
-pub(crate) fn compute_user_decrypt_message(
-    payload: &UserDecryptionResponsePayload,
-    user_pk: &UnifiedPublicEncKey,
-    extra_data: Vec<u8>,
-) -> anyhow::Result<UserDecryptResponseVerification> {
-    let external_handles: Vec<_> = payload
-        .signcrypted_ciphertexts
-        .iter()
-        .enumerate()
-        .map(|(idx, c)| {
-            if c.external_handle.len() > 32 {
-                anyhow::bail!(
-                    "external_handle at index {idx} too long: {} bytes (max 32)",
-                    c.external_handle.len()
-                );
-            } else {
-                Ok(alloy_primitives::FixedBytes::<32>::left_padding_from(
-                    c.external_handle.as_slice(),
-                ))
-            }
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let user_decrypted_share_buf = bc2wrap::serialize(payload)?;
-
-    // LEGACY CODE: we used to only support ML-KEM1024 encoded with bincode
-    // the solidity structure to sign with EIP-712
-    // note that the JS client must also use the same encoding to verify the result
-    let user_pk_buf = user_pk
-        .to_legacy_bytes()
-        .map_err(|e| anyhow::anyhow!("serialization error: {e}"))?;
-
-    Ok(UserDecryptResponseVerification {
-        publicKey: user_pk_buf.into(),
-        ctHandles: external_handles,
-        userDecryptedShare: user_decrypted_share_buf.into(),
-        extraData: extra_data.into(),
-    })
-}
-
 /// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them using EIP-712 for external verification (e.g. in fhevm).
 pub(crate) fn compute_external_pt_signature(
     server_sk: &PrivateSigKey,
@@ -805,10 +750,10 @@ pub enum KeyGenMetadataInnerVersioned {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeyGenMetadataInnerVersioned)]
 pub struct KeyGenMetadataInner {
-    pub(crate) key_id: RequestId,
-    pub(crate) preprocessing_id: RequestId,
-    pub(crate) key_digest_map: HashMap<PubDataType, Vec<u8>>,
-    pub(crate) external_signature: Vec<u8>,
+    pub key_id: RequestId,
+    pub preprocessing_id: RequestId,
+    pub key_digest_map: HashMap<PubDataType, Vec<u8>>,
+    pub external_signature: Vec<u8>,
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
