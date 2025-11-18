@@ -327,18 +327,23 @@ impl RobustOpen for SecureRobustOpen {
         let own_role = session.my_role();
         session.network().increase_round_counter().await;
 
+        let mut my_shares = None;
         // If I have some shares to send, I am a sender
         // NOTE: This is not exclusive with being a receiver as I can be in both sets
         if let Some(all_shares) = all_shares {
             for (output_party, shares) in all_shares.into_iter() {
-                // Send my shares to the receiver
-                session
-                    .network()
-                    .send(
-                        Arc::new(NetworkValue::VecRingValue(shares).to_network()),
-                        &output_party,
-                    )
-                    .await?;
+                if output_party == own_role {
+                    my_shares = Some(shares);
+                } else {
+                    // Send my shares to the receiver
+                    session
+                        .network()
+                        .send(
+                            Arc::new(NetworkValue::VecRingValue(shares).to_network()),
+                            &output_party,
+                        )
+                        .await?;
+                }
             }
         }
 
@@ -415,10 +420,21 @@ impl RobustOpen for SecureRobustOpen {
                 crate::networking::NetworkMode::Async => reconstruct_w_errors_async,
             };
 
-            let sharings = vec![
+            // Use my own share if ever I am in both sets
+            let sharings = if let Some(my_shares) = my_shares {
+                let my_reconstruction_role = role_transform(&own_role, external_opening_info);
+                my_shares
+                    .into_iter()
+                    .map(|share| {
+                        ShamirSharings::create(vec![Share::new(my_reconstruction_role, share)])
+                    })
+                    .collect_vec()
+            } else {
+                vec![
                 ShamirSharings::create(vec![]); //Empty sharings to be filled
                 external_opening_info.expected_num_openings()
-            ];
+            ]
+            };
             // Now need to reconstruct
             return try_reconstruct_from_shares(
                 num_sending_parties,
@@ -826,6 +842,14 @@ pub(crate) mod test {
                     outer_output_role
                 {
                     inner_input_map.insert(*outer_output_role, vec![shares[inner_output_role]]);
+                } else if let crate::execution::runtime::party::TwoSetsRole::Both(
+                    inner_output_role_both,
+                ) = outer_output_role
+                {
+                    inner_input_map.insert(
+                        *outer_output_role,
+                        vec![shares[&(inner_output_role_both.role_set_2)]],
+                    );
                 }
             }
             secrets = Some(inner_secrets);
@@ -934,10 +958,13 @@ pub(crate) mod test {
 
         assert_eq!(pivot.len(), num_parties_set_2);
         for (role, secrets, openings) in result_set_1.into_iter() {
-            assert!(
-                openings.is_none(),
-                "Party {role} in set 1 should not receive any opening"
-            );
+            // If the party is exclusively in set 1, it should not receive any opening
+            if !role.is_set2() {
+                assert!(
+                    openings.is_none(),
+                    "Party {role} in set 1 should not receive any opening"
+                );
+            }
             let secrets = secrets.expect("Party in set 1 missing secrets ");
             assert_eq!(secrets, pivot);
         }
