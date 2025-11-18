@@ -255,7 +255,6 @@ async fn crs_gen<T: DockerComposeManager>(
     crs_id.to_string()
 }
 
-// NOTE: using default context and epoch ID
 async fn real_preproc_and_keygen(
     config_path: &str,
     test_path: &Path,

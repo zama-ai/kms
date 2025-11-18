@@ -1266,7 +1266,6 @@ async fn do_preproc(
     Ok(req_id)
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn do_partial_preproc(
     internal_client: &mut Client,
     core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -1275,8 +1274,6 @@ async fn do_partial_preproc(
     num_parties: usize,
     fhe_params: FheParameter,
     preproc_params: &PartialKeyGenPreprocParameters,
-    context_id: Option<&ContextId>,
-    epoch_id: Option<&EpochId>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -1287,8 +1284,8 @@ async fn do_partial_preproc(
     let pp_req = internal_client.partial_preproc_request(
         &req_id,
         Some(fhe_params),
-        context_id,
-        epoch_id,
+        preproc_params.context_id.as_ref(),
+        preproc_params.epoch_id.as_ref(),
         None,
         &domain,
         Some(kms_grpc::kms::v1::PartialKeyGenPreprocParams {
@@ -2158,8 +2155,6 @@ pub async fn execute_cmd(
                 num_parties,
                 fhe_params,
                 partial_params,
-                partial_params.context_id.as_ref(),
-                partial_params.epoch_id.as_ref(),
             )
             .await?;
             vec![(
