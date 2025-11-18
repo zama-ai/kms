@@ -10,7 +10,7 @@ use crate::{
             party::TwoSetsRole,
             sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
         },
-        sharing::open::{OpeningKind, RobustOpen, SecureRobustOpen},
+        sharing::open::{ExternalOpeningInfo, OpeningKind, RobustOpen, SecureRobustOpen},
     },
     ProtocolDescription,
 };
@@ -38,15 +38,12 @@ impl RobustOpen for MaliciousRobustOpenDrop {
         Ok(None)
     }
 
-    async fn robust_open_list_to_external<
-        Z: ErrorCorrect,
-        B: GenericBaseSessionHandles<TwoSetsRole>,
-    >(
+    async fn robust_open_list_to_set<Z: ErrorCorrect, B: GenericBaseSessionHandles<TwoSetsRole>>(
         &self,
         _session: &B,
         _all_shares: Option<HashMap<TwoSetsRole, Vec<Z>>>,
         _degree: usize,
-        _expected_output_len: usize,
+        _external_opening_info: Option<ExternalOpeningInfo>,
     ) -> anyhow::Result<Option<Vec<Z>>> {
         Ok(None)
     }
@@ -91,15 +88,12 @@ impl RobustOpen for MaliciousRobustOpenLie {
             .await
     }
 
-    async fn robust_open_list_to_external<
-        Z: ErrorCorrect,
-        B: GenericBaseSessionHandles<TwoSetsRole>,
-    >(
+    async fn robust_open_list_to_set<Z: ErrorCorrect, B: GenericBaseSessionHandles<TwoSetsRole>>(
         &self,
         session: &B,
         all_shares: Option<HashMap<TwoSetsRole, Vec<Z>>>,
         degree: usize,
-        expected_output_len: usize,
+        external_opening_info: Option<ExternalOpeningInfo>,
     ) -> anyhow::Result<Option<Vec<Z>>> {
         // Replace all the shares with random values
         let mut rng = AesRng::from_random_seed();
@@ -109,16 +103,16 @@ impl RobustOpen for MaliciousRobustOpenLie {
                 .map(|(role, values)| (role, values.iter().map(|_| Z::sample(&mut rng)).collect()))
                 .collect();
             SecureRobustOpen::default()
-                .robust_open_list_to_external(
+                .robust_open_list_to_set(
                     session,
                     Some(malicious_shares),
                     degree,
-                    expected_output_len,
+                    external_opening_info,
                 )
                 .await
         } else {
             SecureRobustOpen::default()
-                .robust_open_list_to_external(session, None, degree, expected_output_len)
+                .robust_open_list_to_set(session, None, degree, external_opening_info)
                 .await
         }
     }

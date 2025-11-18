@@ -41,22 +41,40 @@ pub enum RoleKind {
     TwoSet(TwoSetsRole),
 }
 
-impl RoleKind {
-    pub fn get_role(&self) -> Role {
-        match self {
-            RoleKind::SingleSet(r) => *r,
-            RoleKind::TwoSet(tr) => match tr {
-                TwoSetsRole::Set1(r) => *r,
-                TwoSetsRole::Set2(r) => *r,
-            },
-        }
-    }
+//impl RoleKind {
+//    pub fn get_role(&self) -> Role {
+//        match self {
+//            RoleKind::SingleSet(r) => *r,
+//            RoleKind::TwoSet(tr) => match tr {
+//                TwoSetsRole::Set1(r) => *r,
+//                TwoSetsRole::Set2(r) => *r,
+//            },
+//        }
+//    }
+//}
+
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[display("Set1: {}, Set2: {}", role_set_1, role_set_2)]
+pub struct RoleBothSets {
+    pub role_set_1: Role,
+    pub role_set_2: Role,
 }
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TwoSetsRole {
     Set1(Role),
     Set2(Role),
+    Both(RoleBothSets),
+}
+
+impl TwoSetsRole {
+    pub fn is_set1(&self) -> bool {
+        matches!(self, TwoSetsRole::Set1(_) | TwoSetsRole::Both(_))
+    }
+
+    pub fn is_set2(&self) -> bool {
+        matches!(self, TwoSetsRole::Set2(_) | TwoSetsRole::Both(_))
+    }
 }
 
 /// Role/party ID of a party (1...N)
@@ -121,9 +139,13 @@ impl RoleTrait for TwoSetsRole {
         parties: &HashSet<Self>,
     ) -> bool {
         let (mut num_parties_in_set_1, mut num_parties_in_set_2) = (0, 0);
-        parties.iter().for_each(|role| match role {
-            TwoSetsRole::Set1(_) => num_parties_in_set_1 += 1,
-            TwoSetsRole::Set2(_) => num_parties_in_set_2 += 1,
+        parties.iter().for_each(|role| {
+            if role.is_set1() {
+                num_parties_in_set_1 += 1;
+            }
+            if role.is_set2() {
+                num_parties_in_set_2 += 1;
+            }
         });
         num_parties_in_set_1 > threshold.threshold_set_1 as usize
             && num_parties_in_set_2 > threshold.threshold_set_2 as usize

@@ -12,7 +12,7 @@ pub mod tests_and_benches {
         algebra::structure_traits::{ErrorCorrect, Invert, Ring},
         execution::{
             runtime::{
-                party::{Role, RoleTrait, TwoSetsRole, TwoSetsThreshold},
+                party::{Role, TwoSetsRole, TwoSetsThreshold},
                 sessions::base_session::GenericBaseSession,
             },
             small_execution::prf::PRSSConversions,
@@ -33,6 +33,19 @@ pub mod tests_and_benches {
         networking::Networking,
         session_id::SessionId,
     };
+
+    pub fn get_seed_for_two_sets_role(role: &TwoSetsRole) -> u64 {
+        match role {
+            TwoSetsRole::Set1(r) => r.one_based() as u64 | (1 << 62),
+            TwoSetsRole::Set2(r) => r.one_based() as u64 | (2 << 62),
+            TwoSetsRole::Both(r) => {
+                r.role_set_1.one_based() as u64
+                    | (1 << 62)
+                    | r.role_set_2.one_based() as u64
+                    | (2 << 63)
+            }
+        }
+    }
 
     pub async fn execute_protocol_two_sets<
         TaskOutputT,
@@ -68,11 +81,7 @@ pub mod tests_and_benches {
         let mut tasks = JoinSet::new();
         for party in roles {
             // Create distinct RNG seed per set
-            let mut rng_seed = party.get_role_kind().get_role().one_based() as u64;
-            match party {
-                TwoSetsRole::Set1(_) => rng_seed |= 1 << 62,
-                TwoSetsRole::Set2(_) => rng_seed |= 2 << 62,
-            }
+            let rng_seed = get_seed_for_two_sets_role(&party);
             let session = test_runtime.base_session_for_party(
                 session_id,
                 party,
@@ -343,7 +352,7 @@ pub mod tests {
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             runtime::{
-                party::{Role, RoleTrait, TwoSetsRole, TwoSetsThreshold},
+                party::{Role, RoleBothSets, TwoSetsRole, TwoSetsThreshold},
                 sessions::{
                     base_session::{BaseSession, GenericBaseSession},
                     large_session::{LargeSession, LargeSessionHandles},
@@ -360,7 +369,10 @@ pub mod tests {
         },
         networking::{local::LocalNetworkingProducer, NetworkMode, Networking},
         session_id::SessionId,
-        tests::test_data_setup::tests::DEFAULT_SEED,
+        tests::{
+            helper::tests_and_benches::get_seed_for_two_sets_role,
+            test_data_setup::tests::DEFAULT_SEED,
+        },
     };
     use crate::{
         execution::constants::{PARAMS_DIR, REAL_KEY_PATH, TEMP_DKG_DIR},
@@ -762,6 +774,7 @@ pub mod tests {
         )
     }
 
+    /// __NOTE: If at least 3 parties in each set, make P1 from set1 and P2 from set2 the same party using the Both variant__
     #[allow(clippy::too_many_arguments)]
     pub async fn execute_protocol_two_sets_w_malicious<
         TaskOutputT,
@@ -792,7 +805,7 @@ pub mod tests {
         TaskOutputM: Send + 'static,
         OutputM: Send + 'static,
     {
-        let roles = (1..=parties_set_1)
+        let mut roles = (1..=parties_set_1)
             .map(Role::indexed_from_one)
             .map(TwoSetsRole::Set1)
             .chain(
@@ -801,6 +814,28 @@ pub mod tests {
                     .map(TwoSetsRole::Set2),
             )
             .collect::<HashSet<_>>();
+
+        // If at least 3 parties, make P1 from set1 and P2 from set2 the same party
+        if parties_set_1 >= 3 && parties_set_2 >= 3 {
+            let role_p1_set_1 = TwoSetsRole::Set1(Role::indexed_from_one(1));
+            let role_p2_set_2 = TwoSetsRole::Set2(Role::indexed_from_one(2));
+            assert!(roles.contains(&role_p1_set_1));
+            assert!(roles.contains(&role_p2_set_2));
+            roles.remove(&role_p1_set_1);
+            roles.remove(&role_p2_set_2);
+            roles.insert(TwoSetsRole::Both(RoleBothSets {
+                role_set_1: Role::indexed_from_one(1),
+                role_set_2: Role::indexed_from_one(2),
+            }));
+        }
+
+        // Assers that all malicious roles are part of the roles set (especially since it'we have the Both variant)
+        for malicious_role in malicious_role.iter() {
+            assert!(
+                roles.contains(malicious_role),
+                "malicious role {malicious_role:?} not part of roles set {roles:?}"
+            );
+        }
         let test_runtime: DistributedTestRuntime<Z, TwoSetsRole, EXTENSION_DEGREE> =
             DistributedTestRuntime::new(roles.clone(), threshold, network_mode, None);
 
@@ -809,9 +844,7 @@ pub mod tests {
             let session = test_runtime.base_session_for_party(
                 sid,
                 *party,
-                Some(AesRng::seed_from_u64(
-                    party.get_role_kind().get_role().one_based() as u64,
-                )),
+                Some(AesRng::seed_from_u64(get_seed_for_two_sets_role(party))),
             );
             (*party, session)
         });
@@ -823,9 +856,7 @@ pub mod tests {
             let session = test_runtime.base_session_for_party(
                 sid,
                 *party,
-                Some(AesRng::seed_from_u64(
-                    party.get_role_kind().get_role().one_based() as u64,
-                )),
+                Some(AesRng::seed_from_u64(get_seed_for_two_sets_role(party))),
             );
             (*party, session)
         });

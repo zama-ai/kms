@@ -3,7 +3,7 @@ use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Ring},
     execution::{
         runtime::{
-            party::{RoleKind, RoleTrait, TwoSetsRole},
+            party::{RoleKind, RoleTrait},
             sessions::{
                 base_session::{BaseSession, GenericBaseSession},
                 large_session::LargeSession,
@@ -23,6 +23,7 @@ use crate::{
         NetworkMode,
     },
     session_id::SessionId,
+    tests::helper::tests_and_benches::get_seed_for_two_sets_role,
 };
 use aes_prng::AesRng;
 use rand::SeedableRng;
@@ -100,14 +101,9 @@ impl<Z: Ring, R: RoleTrait, const EXTENSION_DEGREE: usize>
 
         let rng = rng.unwrap_or_else(|| match party.get_role_kind() {
             RoleKind::SingleSet(role) => AesRng::seed_from_u64(role.one_based() as u64),
-            RoleKind::TwoSet(two_sets_role) => match two_sets_role {
-                TwoSetsRole::Set1(role) => {
-                    AesRng::seed_from_u64(role.one_based() as u64 | (1 << 62))
-                }
-                TwoSetsRole::Set2(role) => {
-                    AesRng::seed_from_u64(role.one_based() as u64 | (2 << 62))
-                }
-            },
+            RoleKind::TwoSet(two_sets_role) => {
+                AesRng::seed_from_u64(get_seed_for_two_sets_role(&two_sets_role))
+            }
         });
 
         GenericBaseSession::new(parameters, net, rng).unwrap()
