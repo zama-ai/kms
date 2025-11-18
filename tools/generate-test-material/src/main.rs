@@ -6,9 +6,9 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kms_lib::util::key_setup::test_material_spec::{MaterialType, TestMaterialSpec};
-use kms_lib::util::key_setup::test_tools::setup::{
-    ensure_default_material_exists, ensure_testing_material_exists,
-};
+use kms_lib::util::key_setup::test_tools::setup::ensure_testing_material_exists;
+#[cfg(feature = "slow_tests")]
+use kms_lib::util::key_setup::test_tools::setup::ensure_default_material_exists;
 use path_absolutize::Absolutize;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
@@ -166,18 +166,14 @@ async fn generate_default_material(output_dir: &Path, force: bool) -> Result<()>
         // The ensure_default_material_exists function generates to default location
         // We may need to copy it to our specified output directory
         copy_default_material_to_output(output_dir).await?;
+
+        info!("Default material generated successfully");
     }
 
     #[cfg(not(feature = "slow_tests"))]
     {
         warn!("Default material generation requires 'slow_tests' feature");
         warn!("Run with: cargo run --features slow_tests");
-        return Ok(());
-    }
-
-    #[cfg(feature = "slow_tests")]
-    {
-        info!("Default material generated successfully");
     }
 
     Ok(())

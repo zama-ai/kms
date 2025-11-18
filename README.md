@@ -141,10 +141,7 @@ For more high-level information about using and deploying the code, check out [t
 ### FHEVM application whitepaper
 - [FHEVM Whitepaper](https://github.com/zama-ai/fhevm/blob/main/fhevm-whitepaper.pdf)
 
-### Docker images and high level usage
-- [Docker images](https://github.com/zama-ai/kms/pkgs/container/kms-service)
-- [FHEVM Integration](https://github.com/zama-ai/fhevm)
-
+#
 ## Working with the KMS
 
 ### Disclaimers
