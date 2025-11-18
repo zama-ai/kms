@@ -405,6 +405,16 @@ pub async fn setup_threshold<
     (server_handles, client_handles)
 }
 
+/// Configuration for optional threshold test setup parameters
+#[cfg(any(test, feature = "testing"))]
+#[derive(Default)]
+pub struct ThresholdTestConfig<'a> {
+    pub run_prss: bool,
+    pub rate_limiter_conf: Option<RateLimiterConfig>,
+    pub decryption_mode: Option<DecryptionMode>,
+    pub test_material_path: Option<&'a std::path::Path>,
+}
+
 /// Setup_threshold that supports isolated test material
 #[cfg(any(test, feature = "testing"))]
 pub async fn setup_threshold_isolated<
@@ -415,10 +425,7 @@ pub async fn setup_threshold_isolated<
     pub_storage: Vec<PubS>,
     priv_storage: Vec<PrivS>,
     vaults: Vec<Option<Vault>>,
-    run_prss: bool,
-    rate_limiter_conf: Option<RateLimiterConfig>,
-    decryption_mode: Option<DecryptionMode>,
-    test_material_path: Option<&std::path::Path>,
+    config: ThresholdTestConfig<'_>,
 ) -> (
     HashMap<u32, ServerHandle>,
     HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -431,7 +438,7 @@ pub async fn setup_threshold_isolated<
     let num_parties = priv_storage.len();
 
     // If test_material_path is provided, set up isolated test material
-    let _temp_dir: Option<TempDir> = if let Some(source_path) = test_material_path {
+    let _temp_dir: Option<TempDir> = if let Some(source_path) = config.test_material_path {
         let manager = TestMaterialManager::new(Some(source_path.to_path_buf()));
         let spec = TestMaterialSpec::threshold_basic(num_parties);
 
@@ -455,9 +462,9 @@ pub async fn setup_threshold_isolated<
         pub_storage,
         priv_storage,
         vaults,
-        run_prss,
-        rate_limiter_conf,
-        decryption_mode,
+        config.run_prss,
+        config.rate_limiter_conf,
+        config.decryption_mode,
     )
     .await;
 
@@ -741,11 +748,24 @@ pub(crate) async fn get_status(
 #[cfg(any(test, feature = "testing"))]
 pub fn domain_to_msg(domain: &alloy_dyn_abi::Eip712Domain) -> kms_grpc::kms::v1::Eip712DomainMsg {
     kms_grpc::kms::v1::Eip712DomainMsg {
-        name: domain.name.as_ref().map(|n| n.to_string()).unwrap_or_default(),
-        version: domain.version.as_ref().map(|v| v.to_string()).unwrap_or_default(),
-        chain_id: domain.chain_id.map(|id| id.to_string().into_bytes()).unwrap_or_default(),
-        verifying_contract: domain.verifying_contract.map(|addr| addr.to_string()).unwrap_or_default(),
+        name: domain
+            .name
+            .as_ref()
+            .map(|n| n.to_string())
+            .unwrap_or_default(),
+        version: domain
+            .version
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        chain_id: domain
+            .chain_id
+            .map(|id| id.to_string().into_bytes())
+            .unwrap_or_default(),
+        verifying_contract: domain
+            .verifying_contract
+            .map(|addr| addr.to_string())
+            .unwrap_or_default(),
         salt: domain.salt.map(|s| s.to_vec()),
     }
 }
-

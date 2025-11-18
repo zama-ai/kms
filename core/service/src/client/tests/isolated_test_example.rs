@@ -3,7 +3,9 @@
 //! This test shows how to use the new test infrastructure that eliminates
 //! Docker dependency and shared test material issues.
 
-use crate::client::test_tools::{setup_centralized_isolated, setup_threshold_isolated};
+use crate::client::test_tools::{
+    setup_centralized_isolated, setup_threshold_isolated, ThresholdTestConfig,
+};
 use crate::util::key_setup::test_material_manager::TestMaterialManager;
 use crate::util::key_setup::test_material_spec::{MaterialType, TestMaterialSpec};
 use crate::vault::storage::{file::FileStorage, StorageType};
@@ -13,15 +15,17 @@ use tempfile::TempDir;
 /// Test using isolated centralized setup
 #[tokio::test]
 async fn test_centralized_isolated_example() -> Result<()> {
-    use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
+    use crate::consts::{OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM};
     use crate::util::key_setup::ensure_central_keys_exist;
-    use crate::consts::{TEST_CENTRAL_KEY_ID, OTHER_CENTRAL_TEST_ID, TEST_PARAM};
-    use kms_grpc::rpc_types::PubDataType;
+    use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
     use crate::vault::storage::Storage;
+    use kms_grpc::rpc_types::PubDataType;
 
     let manager = TestMaterialManager::new(None);
     let spec = TestMaterialSpec::centralized_basic();
-    let material_dir = manager.setup_test_material(&spec, "centralized_example").await?;
+    let material_dir = manager
+        .setup_test_material(&spec, "centralized_example")
+        .await?;
 
     ensure_testing_material_exists(Some(material_dir.path())).await;
 
@@ -29,9 +33,13 @@ async fn test_centralized_isolated_example() -> Result<()> {
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
 
     // Fix public key RequestIds
-    let _ = pub_storage.delete_data(&TEST_CENTRAL_KEY_ID, &PubDataType::PublicKey.to_string()).await;
-    let _ = pub_storage.delete_data(&OTHER_CENTRAL_TEST_ID, &PubDataType::PublicKey.to_string()).await;
-    
+    let _ = pub_storage
+        .delete_data(&TEST_CENTRAL_KEY_ID, &PubDataType::PublicKey.to_string())
+        .await;
+    let _ = pub_storage
+        .delete_data(&OTHER_CENTRAL_TEST_ID, &PubDataType::PublicKey.to_string())
+        .await;
+
     ensure_central_keys_exist(
         &mut pub_storage,
         &mut priv_storage,
@@ -40,7 +48,8 @@ async fn test_centralized_isolated_example() -> Result<()> {
         &OTHER_CENTRAL_TEST_ID,
         true, // deterministic
         true, // write_privkey
-    ).await;
+    )
+    .await;
 
     // Setup centralized KMS with isolated material
     let (_server_handle, _client) = setup_centralized_isolated(
@@ -49,7 +58,8 @@ async fn test_centralized_isolated_example() -> Result<()> {
         None, // No backup vault
         None, // No rate limiter
         Some(material_dir.path()),
-    ).await;
+    )
+    .await;
 
     // TODO: add test operations
 
@@ -93,10 +103,10 @@ async fn test_threshold_isolated_example() -> Result<()> {
         pub_storages,
         priv_storages,
         vaults,
-        false, // run_prss
-        None,  // rate_limiter_conf
-        None,  // decryption_mode
-        Some(material_dir.path()),
+        ThresholdTestConfig {
+            test_material_path: Some(material_dir.path()),
+            ..Default::default()
+        },
     )
     .await;
 

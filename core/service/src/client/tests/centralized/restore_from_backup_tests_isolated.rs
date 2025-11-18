@@ -8,7 +8,9 @@ use crate::util::key_setup::ensure_central_keys_exist;
 use crate::util::key_setup::test_material_manager::TestMaterialManager;
 use crate::util::key_setup::test_material_spec::TestMaterialSpec;
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
-use crate::vault::storage::{delete_all_at_request_id, file::FileStorage, Storage, StorageReader, StorageType};
+use crate::vault::storage::{
+    delete_all_at_request_id, file::FileStorage, Storage, StorageReader, StorageType,
+};
 use anyhow::Result;
 use kms_grpc::kms::v1::{Empty, FheParameter, TypedCiphertext};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -19,23 +21,41 @@ use tempfile::TempDir;
 use tonic::transport::Channel;
 
 /// Helper function to setup isolated centralized test environment for backup tests
-async fn setup_isolated_centralized_backup_test(test_name: &str) -> Result<(TempDir, crate::client::test_tools::ServerHandle, kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient<tonic::transport::Channel>)> {
+async fn setup_isolated_centralized_backup_test(
+    test_name: &str,
+) -> Result<(
+    TempDir,
+    crate::client::test_tools::ServerHandle,
+    kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient<
+        tonic::transport::Channel,
+    >,
+)> {
     use crate::vault::storage::make_storage;
     use crate::vault::Vault;
-    
-    let source_path = std::env::current_dir()?.parent().unwrap().parent().unwrap().join("test-material");
+
+    let source_path = std::env::current_dir()?
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("test-material");
     let manager = TestMaterialManager::new(Some(source_path));
     let mut spec = TestMaterialSpec::centralized_basic();
     // Add server signing keys needed for backup operations
-    spec.required_keys.insert(crate::util::key_setup::test_material_spec::KeyType::ServerSigningKeys);
+    spec.required_keys
+        .insert(crate::util::key_setup::test_material_spec::KeyType::ServerSigningKeys);
     let material_dir = manager.setup_test_material(&spec, test_name).await?;
-    
+
     let mut pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
-    
+
     // Regenerate central keys with correct RequestIds
-    let _ = pub_storage.delete_data(&TEST_CENTRAL_KEY_ID, &PubDataType::PublicKey.to_string()).await;
-    let _ = pub_storage.delete_data(&OTHER_CENTRAL_TEST_ID, &PubDataType::PublicKey.to_string()).await;
+    let _ = pub_storage
+        .delete_data(&TEST_CENTRAL_KEY_ID, &PubDataType::PublicKey.to_string())
+        .await;
+    let _ = pub_storage
+        .delete_data(&OTHER_CENTRAL_TEST_ID, &PubDataType::PublicKey.to_string())
+        .await;
     ensure_central_keys_exist(
         &mut pub_storage,
         &mut priv_storage,
@@ -44,8 +64,9 @@ async fn setup_isolated_centralized_backup_test(test_name: &str) -> Result<(Temp
         &OTHER_CENTRAL_TEST_ID,
         true,
         true,
-    ).await;
-    
+    )
+    .await;
+
     // Create backup vault for backup/restore tests
     let backup_storage = make_storage(
         Some(crate::conf::Storage::File(crate::conf::FileStorage {
@@ -60,14 +81,18 @@ async fn setup_isolated_centralized_backup_test(test_name: &str) -> Result<(Temp
         storage: backup_storage,
         keychain: None,
     });
-    
+
     let (server, client) = setup_centralized_isolated(
-        pub_storage, priv_storage, backup_vault, None, Some(material_dir.path())
-    ).await;
-    
+        pub_storage,
+        priv_storage,
+        backup_vault,
+        None,
+        Some(material_dir.path()),
+    )
+    .await;
+
     Ok((material_dir, server, client))
 }
-
 
 /// Helper to generate key using isolated client (insecure mode - still requires preprocessing)
 async fn key_gen_isolated(
@@ -76,7 +101,7 @@ async fn key_gen_isolated(
     params: FheParameter,
 ) -> Result<()> {
     use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenRequest};
-    
+
     // Preprocessing (required even for insecure mode)
     let preproc_id = derive_request_id(&format!("preproc-for-{:?}", request_id))?;
     let domain_msg = domain_to_msg(&dummy_domain());
@@ -88,18 +113,26 @@ async fn key_gen_isolated(
         context_id: None,
         epoch_id: None,
     };
-    
-    let preproc_resp = client.key_gen_preproc(tonic::Request::new(preproc_req)).await?;
+
+    let preproc_resp = client
+        .key_gen_preproc(tonic::Request::new(preproc_req))
+        .await?;
     assert_eq!(preproc_resp.into_inner(), Empty {});
-    
+
     // Wait for preprocessing to complete
-    let mut preproc_result = client.get_key_gen_preproc_result(tonic::Request::new(preproc_id.into())).await;
-    while preproc_result.is_err() && preproc_result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+    let mut preproc_result = client
+        .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
+        .await;
+    while preproc_result.is_err()
+        && preproc_result.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+    {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        preproc_result = client.get_key_gen_preproc_result(tonic::Request::new(preproc_id.into())).await;
+        preproc_result = client
+            .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
+            .await;
     }
     preproc_result?;
-    
+
     // Key generation
     let keygen_req = KeyGenRequest {
         request_id: Some((*request_id).into()),
@@ -111,19 +144,23 @@ async fn key_gen_isolated(
         context_id: None,
         epoch_id: None,
     };
-    
+
     let keygen_resp = client.key_gen(tonic::Request::new(keygen_req)).await?;
     assert_eq!(keygen_resp.into_inner(), Empty {});
-    
+
     // Wait for key generation to complete
-    let mut result = client.get_key_gen_result(tonic::Request::new((*request_id).into())).await;
+    let mut result = client
+        .get_key_gen_result(tonic::Request::new((*request_id).into()))
+        .await;
     while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        result = client.get_key_gen_result(tonic::Request::new((*request_id).into())).await;
+        result = client
+            .get_key_gen_result(tonic::Request::new((*request_id).into()))
+            .await;
     }
     let inner_resp = result?.into_inner();
     assert_eq!(inner_resp.request_id, Some((*request_id).into()));
-    
+
     Ok(())
 }
 
@@ -134,7 +171,7 @@ async fn decrypt_and_verify_isolated(
     msg: TestingPlaintext,
 ) -> Result<()> {
     use crate::util::key_setup::test_tools::compute_cipher_from_stored_key;
-    
+
     let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
         Some(material_dir),
         msg,
@@ -146,7 +183,7 @@ async fn decrypt_and_verify_isolated(
         },
     )
     .await;
-    
+
     // Verify key restoration via decryption
     let _typed_ct = TypedCiphertext {
         ciphertext: ct,
@@ -154,79 +191,93 @@ async fn decrypt_and_verify_isolated(
         ciphertext_format: ct_format.into(),
         external_handle: vec![],
     };
-    
+
     Ok(())
 }
 
 #[tokio::test]
 async fn test_insecure_central_dkg_backup_isolated() -> Result<()> {
-    let (material_dir, server, mut client) = 
+    let (material_dir, server, mut client) =
         setup_isolated_centralized_backup_test("dkg_backup").await?;
-    
+
     let key_id_1 = derive_request_id("isolated-dkg-backup-1")?;
     let key_id_2 = derive_request_id("isolated-dkg-backup-2")?;
-    
+
     key_gen_isolated(&mut client, &key_id_1, FheParameter::Test).await?;
     key_gen_isolated(&mut client, &key_id_2, FheParameter::Test).await?;
-    
+
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
     delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
     delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
-    
-    assert!(!priv_storage
-        .data_exists(&key_id_1, &PrivDataType::FhePrivateKey.to_string())
-        .await?);
-    
+
+    assert!(
+        !priv_storage
+            .data_exists(&key_id_1, &PrivDataType::FhePrivateKey.to_string())
+            .await?
+    );
+
     let req = Empty {};
     let resp = client.restore_from_backup(tonic::Request::new(req)).await?;
     tracing::info!("Backup restore response: {:?}", resp);
-    
-    decrypt_and_verify_isolated(material_dir.path(), &key_id_1, TestingPlaintext::U8(u8::MAX)).await?;
-    
+
+    decrypt_and_verify_isolated(
+        material_dir.path(),
+        &key_id_1,
+        TestingPlaintext::U8(u8::MAX),
+    )
+    .await?;
+
     drop(client);
     server.assert_shutdown().await;
-    
+
     Ok(())
 }
 
 #[tokio::test]
 async fn test_insecure_central_autobackup_after_deletion_isolated() -> Result<()> {
-    let (material_dir, server, mut client) = 
+    let (material_dir, server, mut client) =
         setup_isolated_centralized_backup_test("autobackup").await?;
-    
+
     let key_id = derive_request_id("isolated-autobackup")?;
-    
+
     key_gen_isolated(&mut client, &key_id, FheParameter::Test).await?;
-    
+
     drop(client);
     server.assert_shutdown().await;
-    
+
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    
+
     // Restart server with same storage
     let pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
     let priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
     let (_new_server, _new_client) = setup_centralized_isolated(
-        pub_storage, priv_storage, None, None, Some(material_dir.path())
-    ).await;
-    
+        pub_storage,
+        priv_storage,
+        None,
+        None,
+        Some(material_dir.path()),
+    )
+    .await;
+
     let backup_storage = FileStorage::new(Some(material_dir.path()), StorageType::BACKUP, None)?;
-    assert!(backup_storage
-        .data_exists(&key_id, &PrivDataType::FhePrivateKey.to_string())
-        .await?);
-    
+    assert!(
+        backup_storage
+            .data_exists(&key_id, &PrivDataType::FhePrivateKey.to_string())
+            .await?
+    );
+
     Ok(())
 }
 
 #[tokio::test]
 async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
     use kms_grpc::kms::v1::CrsGenRequest;
-    
-    let (material_dir, server, mut client) = 
+
+    let (material_dir, server, mut client) =
         setup_isolated_centralized_backup_test("crs_backup").await?;
-    
+
     let req_id = derive_request_id("isolated-crs-backup")?;
-    
+
     let domain_msg = domain_to_msg(&dummy_domain());
     let req = CrsGenRequest {
         request_id: Some(req_id.into()),
@@ -237,38 +288,48 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
     };
     let resp = client.crs_gen(tonic::Request::new(req)).await?;
     assert_eq!(resp.into_inner(), Empty {});
-    
+
     // Wait for CRS generation to complete
-    let mut result = client.get_crs_gen_result(tonic::Request::new(req_id.into())).await;
+    let mut result = client
+        .get_crs_gen_result(tonic::Request::new(req_id.into()))
+        .await;
     while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        result = client.get_crs_gen_result(tonic::Request::new(req_id.into())).await;
+        result = client
+            .get_crs_gen_result(tonic::Request::new(req_id.into()))
+            .await;
     }
     let inner_resp = result?.into_inner();
     assert_eq!(inner_resp.request_id, Some(req_id.into()));
-    
+
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
     delete_all_at_request_id(&mut priv_storage, &req_id).await;
-    
-    assert!(!priv_storage
-        .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
-        .await?);
-    
+
+    assert!(
+        !priv_storage
+            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+            .await?
+    );
+
     let req = Empty {};
     let resp = client.restore_from_backup(tonic::Request::new(req)).await?;
     tracing::info!("Backup restore response: {:?}", resp);
-    
+
     let backup_storage = FileStorage::new(Some(material_dir.path()), StorageType::BACKUP, None)?;
-    assert!(backup_storage
-        .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
-        .await?);
-    
-    assert!(priv_storage
-        .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
-        .await?);
-    
+    assert!(
+        backup_storage
+            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+            .await?
+    );
+
+    assert!(
+        priv_storage
+            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+            .await?
+    );
+
     drop(client);
     server.assert_shutdown().await;
-    
+
     Ok(())
 }

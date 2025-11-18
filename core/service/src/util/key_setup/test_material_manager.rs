@@ -46,15 +46,16 @@ pub struct TestMaterialManager {
     source_path: Option<PathBuf>,
 }
 
+impl Default for TestMaterialManager {
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
+
 impl TestMaterialManager {
     /// Create a new test material manager
     pub fn new(source_path: Option<PathBuf>) -> Self {
         Self { source_path }
-    }
-
-    /// Create a new test material manager using default source path
-    pub fn default() -> Self {
-        Self::new(None)
     }
 
     /// Setup test material in a temporary directory
@@ -141,7 +142,9 @@ impl TestMaterialManager {
         }
 
         // Copy signing keys if required (client or server signing keys)
-        if spec.requires_key_type(KeyType::SigningKeys) || spec.requires_key_type(KeyType::ServerSigningKeys) {
+        if spec.requires_key_type(KeyType::SigningKeys)
+            || spec.requires_key_type(KeyType::ServerSigningKeys)
+        {
             self.copy_signing_keys(source_base, dest_base, spec).await?;
         }
 
@@ -227,7 +230,7 @@ impl TestMaterialManager {
             let source_priv = compute_storage_path(source_base, StorageType::PRIV, None);
             let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, None);
             let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, None);
-            
+
             tracing::debug!("🔍 Copying centralized signing keys:");
             tracing::debug!("  Source PRIV: {}", source_priv.display());
             tracing::debug!("  Dest PRIV: {}", dest_priv.display());
@@ -472,6 +475,7 @@ impl TestMaterialManager {
     }
 
     /// Copy entire directory contents
+    #[allow(clippy::only_used_in_recursion)]
     fn copy_directory_contents<'a>(
         &'a self,
         source: &'a Path,

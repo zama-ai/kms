@@ -108,8 +108,8 @@ impl TestMaterialSpec {
 
     /// Create specification for production-like testing
     pub fn production_like(party_count: Option<usize>) -> Self {
-        let mut spec = if party_count.is_some() {
-            Self::threshold_basic(party_count.unwrap())
+        let mut spec = if let Some(count) = party_count {
+            Self::threshold_basic(count)
         } else {
             Self::centralized_basic()
         };

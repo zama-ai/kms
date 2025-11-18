@@ -17,17 +17,19 @@
 //! - Tests run in parallel (except PRSS which requires sequential execution)
 //! - CLI commands unchanged (testing actual CLI functionality)
 
+use anyhow::Result;
+use futures::future::join_all;
 use kms_core_client::*;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::KeyId;
-use kms_lib::client::test_tools::{setup_centralized_isolated, setup_threshold_isolated, ServerHandle};
-use kms_lib::consts::{ID_LENGTH, TEST_CENTRAL_KEY_ID, OTHER_CENTRAL_TEST_ID, TEST_PARAM};
+use kms_lib::client::test_tools::{
+    setup_centralized_isolated, setup_threshold_isolated, ServerHandle, ThresholdTestConfig,
+};
+use kms_lib::consts::{ID_LENGTH, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM};
 use kms_lib::util::key_setup::ensure_central_keys_exist;
 use kms_lib::util::key_setup::test_material_manager::TestMaterialManager;
 use kms_lib::util::key_setup::test_material_spec::TestMaterialSpec;
 use kms_lib::vault::storage::{file::FileStorage, Storage, StorageType};
-use anyhow::Result;
-use futures::future::join_all;
 use serial_test::serial;
 use std::collections::HashMap;
 use std::fs::write;
@@ -80,17 +82,23 @@ fn create_file_storage(
 }
 
 /// Helper to setup isolated centralized KMS for CLI testing (without backup vault)
-async fn setup_isolated_centralized_cli_test(test_name: &str) -> Result<(TempDir, ServerHandle, PathBuf)> {
+async fn setup_isolated_centralized_cli_test(
+    test_name: &str,
+) -> Result<(TempDir, ServerHandle, PathBuf)> {
     setup_isolated_centralized_cli_test_impl(test_name, false, false).await
 }
 
 /// Helper to setup isolated centralized KMS for CLI testing with backup vault
-async fn setup_isolated_centralized_cli_test_with_backup(test_name: &str) -> Result<(TempDir, ServerHandle, PathBuf)> {
+async fn setup_isolated_centralized_cli_test_with_backup(
+    test_name: &str,
+) -> Result<(TempDir, ServerHandle, PathBuf)> {
     setup_isolated_centralized_cli_test_impl(test_name, true, false).await
 }
 
 /// Helper to setup isolated centralized KMS for CLI testing with custodian backup vault
-async fn setup_isolated_centralized_cli_test_with_custodian_backup(test_name: &str) -> Result<(TempDir, ServerHandle, PathBuf)> {
+async fn setup_isolated_centralized_cli_test_with_custodian_backup(
+    test_name: &str,
+) -> Result<(TempDir, ServerHandle, PathBuf)> {
     setup_isolated_centralized_cli_test_impl(test_name, true, true).await
 }
 
@@ -104,13 +112,17 @@ async fn setup_isolated_centralized_cli_test_impl(
     let mut spec = TestMaterialSpec::centralized_basic();
     spec.required_keys.insert(KeyType::ServerSigningKeys);
     let material_dir = manager.setup_test_material(&spec, test_name).await?;
-    
+
     let mut pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
-    
+
     // Regenerate central keys with correct RequestIds
-    let _ = pub_storage.delete_data(&TEST_CENTRAL_KEY_ID, &PubDataType::PublicKey.to_string()).await;
-    let _ = pub_storage.delete_data(&OTHER_CENTRAL_TEST_ID, &PubDataType::PublicKey.to_string()).await;
+    let _ = pub_storage
+        .delete_data(&TEST_CENTRAL_KEY_ID, &PubDataType::PublicKey.to_string())
+        .await;
+    let _ = pub_storage
+        .delete_data(&OTHER_CENTRAL_TEST_ID, &PubDataType::PublicKey.to_string())
+        .await;
     ensure_central_keys_exist(
         &mut pub_storage,
         &mut priv_storage,
@@ -119,34 +131,42 @@ async fn setup_isolated_centralized_cli_test_impl(
         &OTHER_CENTRAL_TEST_ID,
         true,
         true,
-    ).await;
-    
+    )
+    .await;
+
     let backup_vault = if with_backup_vault {
         let backup_proxy = create_file_storage(material_dir.path(), StorageType::BACKUP, None)?;
         let keychain = if with_custodian_keychain {
             let pub_proxy = create_file_storage(material_dir.path(), StorageType::PUB, None)?;
-            Some(make_keychain_proxy(
-                &Keychain::SecretSharing(SecretSharingKeychain {}),
-                None,
-                None,
-                Some(&pub_proxy),
-            ).await?)
+            Some(
+                make_keychain_proxy(
+                    &Keychain::SecretSharing(SecretSharingKeychain {}),
+                    None,
+                    None,
+                    Some(&pub_proxy),
+                )
+                .await?,
+            )
         } else {
             None
         };
-        Some(Vault { storage: backup_proxy, keychain })
+        Some(Vault {
+            storage: backup_proxy,
+            keychain,
+        })
     } else {
         None
     };
-    
+
     let (server, _client) = setup_centralized_isolated(
         pub_storage,
         priv_storage,
         backup_vault,
         None,
         None, // Don't pass material_dir since we already set it up above
-    ).await;
-    
+    )
+    .await;
+
     // Generate CLI config file pointing to local test material
     let config_path = material_dir.path().join("client_config.toml");
     let config_content = format!(
@@ -173,28 +193,40 @@ object_folder = "PUB"
         material_dir.path().display()
     );
     write(&config_path, config_content)?;
-    
+
     Ok((material_dir, server, config_path))
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing (without PRSS / backup vault)
-async fn setup_isolated_threshold_cli_test(test_name: &str, party_count: usize) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
+async fn setup_isolated_threshold_cli_test(
+    test_name: &str,
+    party_count: usize,
+) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl(test_name, party_count, false, false, false).await
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing with PRSS enabled
 #[cfg(feature = "k8s_tests")]
-async fn setup_isolated_threshold_cli_test_with_prss(test_name: &str, party_count: usize) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
+async fn setup_isolated_threshold_cli_test_with_prss(
+    test_name: &str,
+    party_count: usize,
+) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl(test_name, party_count, true, false, false).await
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing with backup vault
-async fn setup_isolated_threshold_cli_test_with_backup(test_name: &str, party_count: usize) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
+async fn setup_isolated_threshold_cli_test_with_backup(
+    test_name: &str,
+    party_count: usize,
+) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl(test_name, party_count, false, true, false).await
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing with custodian backup vault
-async fn setup_isolated_threshold_cli_test_with_custodian_backup(test_name: &str, party_count: usize) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
+async fn setup_isolated_threshold_cli_test_with_custodian_backup(
+    test_name: &str,
+    party_count: usize,
+) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     setup_isolated_threshold_cli_test_impl(test_name, party_count, false, true, true).await
 }
 
@@ -210,32 +242,48 @@ async fn setup_isolated_threshold_cli_test_impl(
     let mut spec = TestMaterialSpec::threshold_basic(party_count);
     spec.required_keys.insert(KeyType::ServerSigningKeys);
     let material_dir = manager.setup_test_material(&spec, test_name).await?;
-    
+
     let mut pub_storages = Vec::new();
     let mut priv_storages = Vec::new();
     for i in 1..=party_count {
         let role = Role::indexed_from_one(i);
-        pub_storages.push(FileStorage::new(Some(material_dir.path()), StorageType::PUB, Some(role))?);
-        priv_storages.push(FileStorage::new(Some(material_dir.path()), StorageType::PRIV, Some(role))?);
+        pub_storages.push(FileStorage::new(
+            Some(material_dir.path()),
+            StorageType::PUB,
+            Some(role),
+        )?);
+        priv_storages.push(FileStorage::new(
+            Some(material_dir.path()),
+            StorageType::PRIV,
+            Some(role),
+        )?);
     }
-    
+
     let mut vaults: Vec<Option<Vault>> = Vec::new();
     for i in 1..=party_count {
         if with_backup_vault {
             let role = Role::indexed_from_one(i);
-            let backup_proxy = create_file_storage(material_dir.path(), StorageType::BACKUP, Some(role))?;
+            let backup_proxy =
+                create_file_storage(material_dir.path(), StorageType::BACKUP, Some(role))?;
             let keychain = if with_custodian_keychain {
-                let pub_proxy = create_file_storage(material_dir.path(), StorageType::PUB, Some(role))?;
-                Some(make_keychain_proxy(
-                    &Keychain::SecretSharing(SecretSharingKeychain {}),
-                    None,
-                    None,
-                    Some(&pub_proxy),
-                ).await?)
+                let pub_proxy =
+                    create_file_storage(material_dir.path(), StorageType::PUB, Some(role))?;
+                Some(
+                    make_keychain_proxy(
+                        &Keychain::SecretSharing(SecretSharingKeychain {}),
+                        None,
+                        None,
+                        Some(&pub_proxy),
+                    )
+                    .await?,
+                )
             } else {
                 None
             };
-            vaults.push(Some(Vault { storage: backup_proxy, keychain }));
+            vaults.push(Some(Vault {
+                storage: backup_proxy,
+                keychain,
+            }));
         } else {
             vaults.push(None);
         }
@@ -245,17 +293,18 @@ async fn setup_isolated_threshold_cli_test_impl(
         pub_storages,
         priv_storages,
         vaults,
-        run_prss, // PRSS enabled/disabled based on test requirements
-        None, // rate_limiter
-        None, // decryption_mode
-        None, // Don't pass material_dir since we already set it up above
-    ).await;
-    
+        ThresholdTestConfig {
+            run_prss, // PRSS enabled/disabled based on test requirements
+            ..Default::default()
+        },
+    )
+    .await;
+
     // Wait for PRSS initialization if enabled
     if run_prss {
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
     }
-    
+
     // Generate CLI config file pointing to local test material
     let config_path = material_dir.path().join("client_config.toml");
     let mut config_content = format!(
@@ -275,10 +324,12 @@ file_storage_path = "{}"
         (party_count / 2 + 1),
         material_dir.path().display()
     );
-    
+
     // Add all server addresses
     for i in 1..=party_count {
-        let server = servers.get(&(i as u32)).unwrap_or_else(|| panic!("Server {} should exist", i));
+        let server = servers
+            .get(&(i as u32))
+            .unwrap_or_else(|| panic!("Server {} should exist", i));
         config_content.push_str(&format!(
             r#"
 [[cores]]
@@ -293,9 +344,9 @@ object_folder = "PUB-p{}"
             i
         ));
     }
-    
+
     write(&config_path, config_content)?;
-    
+
     Ok((material_dir, servers, config_path))
 }
 
@@ -304,9 +355,7 @@ object_folder = "PUB-p{}"
 // ============================================================================
 
 fn init_testing() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .try_init();
+    let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
 }
 
 /// Helper to run insecure key generation via CLI (isolated version)
@@ -323,7 +372,9 @@ async fn insecure_key_gen_isolated(config_path: &Path, test_path: &Path) -> Resu
     };
 
     println!("Doing insecure key-gen");
-    let key_gen_results = execute_cmd(&config, test_path).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+    let key_gen_results = execute_cmd(&config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("Insecure key-gen done");
 
     assert_eq!(key_gen_results.len(), 1);
@@ -340,7 +391,11 @@ async fn insecure_key_gen_isolated(config_path: &Path, test_path: &Path) -> Resu
 // ============================================================================
 
 /// Helper to run CRS generation via CLI (isolated version)
-async fn crs_gen_isolated(config_path: &Path, test_path: &Path, insecure_crs_gen: bool) -> Result<String> {
+async fn crs_gen_isolated(
+    config_path: &Path,
+    test_path: &Path,
+    insecure_crs_gen: bool,
+) -> Result<String> {
     let command = if insecure_crs_gen {
         CCCommand::InsecureCrsGen(CrsParameters {
             max_num_bits: 16, // Default test value
@@ -361,7 +416,9 @@ async fn crs_gen_isolated(config_path: &Path, test_path: &Path, insecure_crs_gen
     };
 
     println!("Doing CRS generation");
-    let crs_gen_results = execute_cmd(&config, test_path).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+    let crs_gen_results = execute_cmd(&config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("CRS generation done");
 
     assert_eq!(crs_gen_results.len(), 1);
@@ -374,9 +431,13 @@ async fn crs_gen_isolated(config_path: &Path, test_path: &Path, insecure_crs_gen
 }
 
 /// Helper to run integration test commands via CLI (isolated version)
-async fn integration_test_commands_isolated(config_path: &Path, keys_folder: &Path, key_id: String) -> Result<()> {
+async fn integration_test_commands_isolated(
+    config_path: &Path,
+    keys_folder: &Path,
+    key_id: String,
+) -> Result<()> {
     let key_id = KeyId::from_str(&key_id)?;
-    
+
     let commands = vec![
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x1".to_string(),
@@ -409,7 +470,9 @@ async fn integration_test_commands_isolated(config_path: &Path, keys_folder: &Pa
             expect_all_responses: true,
             download_all: false,
         };
-        execute_cmd(&config, keys_folder).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+        execute_cmd(&config, keys_folder)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
     }
 
     Ok(())
@@ -427,13 +490,15 @@ async fn restore_from_backup_isolated(config_path: &Path, test_path: &Path) -> R
     };
 
     println!("Doing restore from backup");
-    let restore_results = execute_cmd(&config, test_path).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+    let restore_results = execute_cmd(&config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("Restore from backup done");
-    
+
     assert_eq!(restore_results.len(), 1);
     // No backup ID is returned since restore_from_backup can also be used without custodians
     assert_eq!(restore_results.first().unwrap().0, None);
-    
+
     Ok("".to_string())
 }
 
@@ -449,9 +514,11 @@ async fn real_preproc_and_keygen_isolated(config_path: &Path, test_path: &Path) 
         expect_all_responses: true,
         download_all: false,
     };
-    
+
     println!("Doing preprocessing");
-    let mut preproc_result = execute_cmd(&preproc_config, test_path).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+    let mut preproc_result = execute_cmd(&preproc_config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
     assert_eq!(preproc_result.len(), 1);
     let (preproc_id, _) = preproc_result.pop().unwrap();
     println!("Preprocessing done with ID {preproc_id:?}");
@@ -468,9 +535,11 @@ async fn real_preproc_and_keygen_isolated(config_path: &Path, test_path: &Path) 
         expect_all_responses: true,
         download_all: false,
     };
-    
+
     println!("Doing key-gen");
-    let key_gen_results = execute_cmd(&keygen_config, test_path).await.map_err(|e| anyhow::anyhow!("{}", e))?;
+    let key_gen_results = execute_cmd(&keygen_config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("Key-gen done");
     assert_eq!(key_gen_results.len(), 1);
 
@@ -526,7 +595,7 @@ async fn generate_custodian_keys_to_file(
 ) -> (Vec<String>, Vec<PathBuf>) {
     let mut seeds = Vec::new();
     let mut setup_msgs_paths = Vec::new();
-    
+
     // Find the kms-custodian binary
     let custodian_bin = std::env::current_exe()
         .unwrap()
@@ -535,22 +604,22 @@ async fn generate_custodian_keys_to_file(
         .parent()
         .unwrap()
         .join("kms-custodian");
-    
+
     assert!(
         custodian_bin.exists(),
         "kms-custodian binary not found at {:?}. Run: cargo build --bin kms-custodian",
         custodian_bin
     );
-    
+
     for cus_idx in 1..=amount_custodians {
         let cur_setup_path = temp_dir
             .join("CUSTODIAN")
             .join("setup-msg")
             .join(format!("setup-{}", cus_idx));
-        
+
         // Ensure the dir exists
         create_dir_all(cur_setup_path.parent().unwrap()).unwrap();
-        
+
         // Call kms-custodian binary directly (no Docker)
         let args = [
             "generate",
@@ -563,23 +632,20 @@ async fn generate_custodian_keys_to_file(
             "--path",
             cur_setup_path.to_str().unwrap(),
         ];
-        
-        let cmd_output = Command::new(&custodian_bin)
-            .args(args)
-            .output()
-            .unwrap();
-        
+
+        let cmd_output = Command::new(&custodian_bin).args(args).output().unwrap();
+
         assert!(
             cmd_output.status.success(),
             "kms-custodian generate failed: {}",
             String::from_utf8_lossy(&cmd_output.stderr)
         );
-        
+
         let seed_phrase = extract_seed_phrase(cmd_output);
         seeds.push(seed_phrase);
         setup_msgs_paths.push(cur_setup_path);
     }
-    
+
     (seeds, setup_msgs_paths)
 }
 
@@ -645,7 +711,7 @@ async fn custodian_reencrypt(
     recovery_paths: &[PathBuf],
 ) -> Vec<PathBuf> {
     let mut response_paths = Vec::new();
-    
+
     // Find the kms-custodian binary
     let custodian_bin = std::env::current_exe()
         .unwrap()
@@ -654,20 +720,20 @@ async fn custodian_reencrypt(
         .parent()
         .unwrap()
         .join("kms-custodian");
-    
+
     assert!(
         custodian_bin.exists(),
         "kms-custodian binary not found at {:?}",
         custodian_bin
     );
-    
+
     for operator_index in 1..=amount_operators {
         let pub_prefix = if amount_operators == 1 {
             "PUB".to_string()
         } else {
             format!("PUB-p{}", operator_index)
         };
-        
+
         let cur_recovery_path = &recovery_paths[operator_index - 1];
 
         for custodian_index in 1..=amount_custodians {
@@ -679,14 +745,14 @@ async fn custodian_reencrypt(
                     "recovery-response-{}-{}",
                     operator_index, custodian_index,
                 ));
-            
+
             create_dir_all(cur_response_path.parent().unwrap()).unwrap();
-            
+
             let verf_path = temp_dir
                 .join(&pub_prefix)
                 .join(PubDataType::VerfKey.to_string())
                 .join(SIGNING_KEY_ID.to_string());
-            
+
             // Call kms-custodian binary directly (no Docker)
             let args = [
                 "decrypt",
@@ -701,18 +767,15 @@ async fn custodian_reencrypt(
                 "-o",
                 cur_response_path.to_str().unwrap(),
             ];
-            
-            let cmd_output = Command::new(&custodian_bin)
-                .args(args)
-                .output()
-                .unwrap();
-            
+
+            let cmd_output = Command::new(&custodian_bin).args(args).output().unwrap();
+
             assert!(
                 cmd_output.status.success(),
                 "kms-custodian decrypt failed: {}",
                 String::from_utf8_lossy(&cmd_output.stderr)
             );
-            
+
             response_paths.push(cur_response_path);
         }
     }
@@ -753,25 +816,22 @@ async fn custodian_backup_recovery_isolated(
 
 // ============================================================================
 // TESTS
-/// 
-/// - Uses native isolated KMS server instead of Docker container
-/// - CLI commands remain unchanged (testing CLI functionality)
-/// - Can now run in parallel with other tests
 // ============================================================================
 
 /// Test centralized insecure key generation via CLI
 #[tokio::test]
 async fn test_centralized_insecure() -> Result<()> {
     init_testing();
-    
+
     // Setup isolated centralized KMS server
-    let (material_dir, _server, config_path) = setup_isolated_centralized_cli_test("centralized_insecure").await?;
-    
+    let (material_dir, _server, config_path) =
+        setup_isolated_centralized_cli_test("centralized_insecure").await?;
+
     // Run CLI commands against native server (use material_dir as keys_folder so CLI can access server keys)
     let keys_folder = material_dir.path();
     let key_id = insecure_key_gen_isolated(&config_path, keys_folder).await?;
     integration_test_commands_isolated(&config_path, keys_folder, key_id).await?;
-    
+
     Ok(())
 }
 
@@ -779,36 +839,38 @@ async fn test_centralized_insecure() -> Result<()> {
 #[tokio::test]
 async fn test_centralized_crsgen_secure() -> Result<()> {
     init_testing();
-    
+
     // Setup isolated centralized KMS server
-    let (material_dir, _server, config_path) = setup_isolated_centralized_cli_test("centralized_crsgen").await?;
-    
+    let (material_dir, _server, config_path) =
+        setup_isolated_centralized_cli_test("centralized_crsgen").await?;
+
     // Run CRS generation via CLI (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
     let crs_id = crs_gen_isolated(&config_path, keys_folder, false).await?;
-    
+
     // Verify CRS ID format (hex string with double the length of ID_LENGTH)
     assert_eq!(crs_id.len(), ID_LENGTH * 2);
-    
+
     Ok(())
 }
 
 /// Test centralized restore from backup via CLI (without custodians)
-/// 
+///
 /// Note: This test mainly validates the CLI endpoints and content returned from KMS.
 /// Full restore validation is done in service/client tests.
 #[tokio::test]
 async fn test_centralized_restore_from_backup() -> Result<()> {
     init_testing();
-    
+
     // Setup isolated centralized KMS server with backup vault
-    let (material_dir, _server, config_path) = setup_isolated_centralized_cli_test_with_backup("centralized_restore").await?;
-    
+    let (material_dir, _server, config_path) =
+        setup_isolated_centralized_cli_test_with_backup("centralized_restore").await?;
+
     // Run insecure CRS generation and backup restore via CLI (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
     let _crs_id = crs_gen_isolated(&config_path, keys_folder, true).await?;
     let _ = restore_from_backup_isolated(&config_path, keys_folder).await?;
-    
+
     Ok(())
 }
 
@@ -816,38 +878,47 @@ async fn test_centralized_restore_from_backup() -> Result<()> {
 #[tokio::test]
 async fn test_centralized_custodian_backup() -> Result<()> {
     init_testing();
-    
+
     let amount_custodians = 5;
     let custodian_threshold = 2;
-    
+
     // Setup isolated centralized KMS server with custodian backup vault (includes SecretSharingKeychain)
-    let (material_dir, _server, config_path) = 
+    let (material_dir, _server, config_path) =
         setup_isolated_centralized_cli_test_with_custodian_backup("centralized_custodian").await?;
-    
+
     let temp_path = material_dir.path();
-    
+
     // Generate custodian keys using native kms-custodian binary
     let (seeds, setup_msg_paths) =
         generate_custodian_keys_to_file(temp_path, amount_custodians, false).await;
-    
+
     // Create custodian context
-    let cus_backup_id =
-        new_custodian_context_isolated(&config_path, temp_path, custodian_threshold, setup_msg_paths).await;
-    
+    let cus_backup_id = new_custodian_context_isolated(
+        &config_path,
+        temp_path,
+        custodian_threshold,
+        setup_msg_paths,
+    )
+    .await;
+
     let operator_recovery_resp_path = temp_path
         .join("CUSTODIAN")
         .join("recovery")
         .join(&cus_backup_id)
         .join("central");
-    
+
     // Ensure the dir exists
     create_dir_all(operator_recovery_resp_path.parent().unwrap())?;
-    
+
     // Initialize custodian backup
-    let init_backup_id =
-        custodian_backup_init_isolated(&config_path, temp_path, vec![operator_recovery_resp_path.clone()]).await;
+    let init_backup_id = custodian_backup_init_isolated(
+        &config_path,
+        temp_path,
+        vec![operator_recovery_resp_path.clone()],
+    )
+    .await;
     assert_eq!(cus_backup_id, init_backup_id);
-    
+
     // Re-encrypt with custodian keys
     let recovery_output_paths = custodian_reencrypt(
         temp_path,
@@ -858,7 +929,7 @@ async fn test_centralized_custodian_backup() -> Result<()> {
         &[operator_recovery_resp_path],
     )
     .await;
-    
+
     // Recover backup using custodian outputs
     let recovery_backup_id = custodian_backup_recovery_isolated(
         &config_path,
@@ -868,13 +939,13 @@ async fn test_centralized_custodian_backup() -> Result<()> {
     )
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
-    
+
     // Restore from backup
     let _ = restore_from_backup_isolated(&config_path, temp_path).await?;
-    
+
     // Note: This test validates the CLI endpoints and content returned from KMS.
     // Full restore validation is done in service/client tests.
-    
+
     Ok(())
 }
 
@@ -884,19 +955,21 @@ async fn test_centralized_custodian_backup() -> Result<()> {
 #[cfg_attr(not(feature = "k8s_tests"), ignore)] // Run only in K8s CI - enable locally with: cargo test --features k8s_tests -- --test-threads=1
 async fn test_threshold_insecure() -> Result<()> {
     init_testing();
-    
+
     // Setup isolated threshold KMS servers (3 parties) with PRSS enabled
     #[cfg(feature = "k8s_tests")]
-    let (material_dir, _servers, config_path) = setup_isolated_threshold_cli_test_with_prss("threshold_insecure", 3).await?;
-    
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test_with_prss("threshold_insecure", 3).await?;
+
     #[cfg(not(feature = "k8s_tests"))]
-    let (material_dir, _servers, config_path) = setup_isolated_threshold_cli_test("threshold_insecure", 3).await?;
-    
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test("threshold_insecure", 3).await?;
+
     // Run CLI commands against native threshold servers (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
     let key_id = insecure_key_gen_isolated(&config_path, keys_folder).await?;
     integration_test_commands_isolated(&config_path, keys_folder, key_id).await?;
-    
+
     Ok(())
 }
 
@@ -906,18 +979,19 @@ async fn test_threshold_insecure() -> Result<()> {
 #[cfg_attr(not(feature = "k8s_tests"), ignore)] // Run only in K8s CI - enable locally with: cargo test --features k8s_tests -- --test-threads=1
 async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
     init_testing();
-    
+
     // Setup isolated threshold KMS servers (4 parties for test context)
-    let (material_dir, _servers, config_path) = setup_isolated_threshold_cli_test("threshold_seq_preproc", 4).await?;
-    
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test("threshold_seq_preproc", 4).await?;
+
     // Run sequential preprocessing and keygen operations (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
     let key_id_1 = real_preproc_and_keygen_isolated(&config_path, keys_folder).await?;
     let key_id_2 = real_preproc_and_keygen_isolated(&config_path, keys_folder).await?;
-    
+
     // Verify different key IDs generated
     assert_ne!(key_id_1, key_id_2);
-    
+
     Ok(())
 }
 
@@ -927,10 +1001,11 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 #[cfg_attr(not(feature = "k8s_tests"), ignore)] // Run only in K8s CI - enable locally with: cargo test --features k8s_tests -- --test-threads=1
 async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
     init_testing();
-    
+
     // Setup isolated threshold KMS servers (4 parties for test context)
-    let (material_dir, _servers, config_path) = setup_isolated_threshold_cli_test("threshold_conc_preproc", 4).await?;
-    
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test("threshold_conc_preproc", 4).await?;
+
     // Run concurrent preprocessing and keygen operations (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
     let _ = join_all([
@@ -938,7 +1013,7 @@ async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
         real_preproc_and_keygen_isolated(&config_path, keys_folder),
     ])
     .await;
-    
+
     Ok(())
 }
 
@@ -946,18 +1021,19 @@ async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
 #[tokio::test]
 async fn nightly_tests_threshold_sequential_crs() -> Result<()> {
     init_testing();
-    
+
     // Setup isolated threshold KMS servers (3 parties)
-    let (material_dir, _servers, config_path) = setup_isolated_threshold_cli_test("threshold_seq_crs", 3).await?;
-    
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test("threshold_seq_crs", 3).await?;
+
     // Run sequential CRS generation operations (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
     let crs_id_1 = crs_gen_isolated(&config_path, keys_folder, false).await?;
     let crs_id_2 = crs_gen_isolated(&config_path, keys_folder, false).await?;
-    
+
     // Verify different CRS IDs generated
     assert_ne!(crs_id_1, crs_id_2);
-    
+
     Ok(())
 }
 
@@ -965,10 +1041,11 @@ async fn nightly_tests_threshold_sequential_crs() -> Result<()> {
 #[tokio::test]
 async fn test_threshold_concurrent_crs() -> Result<()> {
     init_testing();
-    
+
     // Setup isolated threshold KMS servers (3 parties)
-    let (material_dir, _servers, config_path) = setup_isolated_threshold_cli_test("threshold_concurrent_crs", 3).await?;
-    
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test("threshold_concurrent_crs", 3).await?;
+
     // Run concurrent CRS generation via CLI (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
     let res = join_all([
@@ -976,30 +1053,30 @@ async fn test_threshold_concurrent_crs() -> Result<()> {
         crs_gen_isolated(&config_path, keys_folder, false),
     ])
     .await;
-    
+
     // Verify different CRS IDs generated
     assert_ne!(res[0].as_ref().unwrap(), res[1].as_ref().unwrap());
-    
+
     Ok(())
 }
 
 /// Test threshold restore from backup via CLI (without custodians)
-/// 
+///
 /// Note: This test mainly validates the CLI endpoints and content returned from KMS.
 /// Full restore validation is done in service/client tests.
 #[tokio::test]
 async fn test_threshold_restore_from_backup() -> Result<()> {
     init_testing();
-    
+
     // Setup isolated threshold KMS servers (3 parties) with backup vaults
     let (material_dir, _servers, config_path) =
         setup_isolated_threshold_cli_test_with_backup("threshold_restore", 3).await?;
-    
+
     // Run insecure CRS generation and backup restore via CLI (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
     let _crs_id = crs_gen_isolated(&config_path, keys_folder, true).await?;
     let _ = restore_from_backup_isolated(&config_path, keys_folder).await?;
-    
+
     Ok(())
 }
 
@@ -1007,24 +1084,33 @@ async fn test_threshold_restore_from_backup() -> Result<()> {
 #[tokio::test]
 async fn test_threshold_custodian_backup() -> Result<()> {
     init_testing();
-    
+
     let amount_custodians = 5;
     let custodian_threshold = 2;
     let amount_operators = 4;
-    
+
     // Setup isolated threshold KMS servers with custodian backup vaults (includes SecretSharingKeychain)
     let (material_dir, _servers, config_path) =
-        setup_isolated_threshold_cli_test_with_custodian_backup("threshold_custodian", amount_operators).await?;
-    
+        setup_isolated_threshold_cli_test_with_custodian_backup(
+            "threshold_custodian",
+            amount_operators,
+        )
+        .await?;
+
     let temp_path = material_dir.path();
-    
+
     // Generate custodian keys using native kms-custodian binary
     let (seeds, setup_msg_paths) =
         generate_custodian_keys_to_file(temp_path, amount_custodians, true).await;
-    
+
     // Create custodian context
-    let cus_backup_id =
-        new_custodian_context_isolated(&config_path, temp_path, custodian_threshold, setup_msg_paths).await;
+    let cus_backup_id = new_custodian_context_isolated(
+        &config_path,
+        temp_path,
+        custodian_threshold,
+        setup_msg_paths,
+    )
+    .await;
     // Paths to where the results of the backup init will be stored
     let mut operator_recovery_resp_paths = Vec::new();
     for cur_op_idx in 1..=amount_operators {
@@ -1037,12 +1123,16 @@ async fn test_threshold_custodian_backup() -> Result<()> {
         assert!(create_dir_all(cur_resp_path.parent().unwrap()).is_ok());
         operator_recovery_resp_paths.push(cur_resp_path);
     }
-    
+
     // Initialize custodian backup
-    let init_backup_id =
-        custodian_backup_init_isolated(&config_path, temp_path, operator_recovery_resp_paths.clone()).await;
+    let init_backup_id = custodian_backup_init_isolated(
+        &config_path,
+        temp_path,
+        operator_recovery_resp_paths.clone(),
+    )
+    .await;
     assert_eq!(cus_backup_id, init_backup_id);
-    
+
     // Re-encrypt with custodian keys
     let recovery_output_paths = custodian_reencrypt(
         temp_path,
@@ -1053,7 +1143,7 @@ async fn test_threshold_custodian_backup() -> Result<()> {
         &operator_recovery_resp_paths,
     )
     .await;
-    
+
     // Recover backup using custodian outputs
     let recovery_backup_id = custodian_backup_recovery_isolated(
         &config_path,
@@ -1063,13 +1153,13 @@ async fn test_threshold_custodian_backup() -> Result<()> {
     )
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
-    
+
     // Restore from backup
     let _ = restore_from_backup_isolated(&config_path, temp_path).await?;
-    
+
     // Note: This test validates the CLI endpoints and content returned from KMS.
     // Full restore validation is done in service/client tests.
-    
+
     Ok(())
 }
 
@@ -1079,18 +1169,19 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 #[cfg_attr(not(feature = "k8s_tests"), ignore)] // Run only in K8s CI - enable locally with: cargo test --features k8s_tests -- --test-threads=1
 async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
     init_testing();
-    
+
     // Setup isolated threshold KMS servers (3 parties for default context)
-    let (material_dir, _servers, config_path) = setup_isolated_threshold_cli_test("full_gen_preproc", 3).await?;
-    
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test("full_gen_preproc", 3).await?;
+
     // Run sequential preprocessing and keygen operations (use material_dir as keys_folder)
     let keys_folder = material_dir.path();
     let key_id_1 = real_preproc_and_keygen_isolated(&config_path, keys_folder).await?;
     let key_id_2 = real_preproc_and_keygen_isolated(&config_path, keys_folder).await?;
-    
+
     // Verify different key IDs generated
     assert_ne!(key_id_1, key_id_2);
-    
+
     Ok(())
 }
 
@@ -1098,18 +1189,19 @@ async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<
 #[tokio::test]
 async fn full_gen_tests_default_threshold_sequential_crs() -> Result<()> {
     init_testing();
-    
+
     // Setup isolated threshold KMS servers (3 parties for default context)
-    let (_material_dir, _servers, config_path) = setup_isolated_threshold_cli_test("full_gen_crs", 3).await?;
-    
+    let (_material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test("full_gen_crs", 3).await?;
+
     // Run sequential CRS generation operations
     let temp_dir = tempfile::tempdir()?;
     let keys_folder = temp_dir.path();
     let crs_id_1 = crs_gen_isolated(&config_path, keys_folder, false).await?;
     let crs_id_2 = crs_gen_isolated(&config_path, keys_folder, false).await?;
-    
+
     // Verify different CRS IDs generated
     assert_ne!(crs_id_1, crs_id_2);
-    
+
     Ok(())
 }
