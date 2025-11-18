@@ -140,8 +140,8 @@ impl TestMaterialManager {
             self.copy_client_keys(source_base, dest_base).await?;
         }
 
-        // Copy signing keys if required
-        if spec.requires_key_type(KeyType::SigningKeys) {
+        // Copy signing keys if required (client or server signing keys)
+        if spec.requires_key_type(KeyType::SigningKeys) || spec.requires_key_type(KeyType::ServerSigningKeys) {
             self.copy_signing_keys(source_base, dest_base, spec).await?;
         }
 
@@ -203,6 +203,15 @@ impl TestMaterialManager {
                 )
                 .await?;
 
+                // Copy verification addresses
+                self.copy_key_files(
+                    &source_pub,
+                    &dest_pub,
+                    &PubDataType::VerfAddress.to_string(),
+                    &SIGNING_KEY_ID.to_string(),
+                )
+                .await?;
+
                 // Copy signing keys
                 self.copy_key_files(
                     &source_priv,
@@ -218,11 +227,24 @@ impl TestMaterialManager {
             let source_priv = compute_storage_path(source_base, StorageType::PRIV, None);
             let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, None);
             let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, None);
+            
+            tracing::debug!("🔍 Copying centralized signing keys:");
+            tracing::debug!("  Source PRIV: {}", source_priv.display());
+            tracing::debug!("  Dest PRIV: {}", dest_priv.display());
+            tracing::debug!("  Source exists: {}", source_priv.exists());
 
             self.copy_key_files(
                 &source_pub,
                 &dest_pub,
                 &PubDataType::VerfKey.to_string(),
+                &SIGNING_KEY_ID.to_string(),
+            )
+            .await?;
+
+            self.copy_key_files(
+                &source_pub,
+                &dest_pub,
+                &PubDataType::VerfAddress.to_string(),
                 &SIGNING_KEY_ID.to_string(),
             )
             .await?;

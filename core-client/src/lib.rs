@@ -891,6 +891,87 @@ pub async fn encrypt(
     ))
 }
 
+fn join_vars(args: &[&str]) -> String {
+    args.iter()
+        .filter(|&s| !s.is_empty())
+        .copied()
+        .collect::<Vec<&str>>()
+        .join("/")
+}
+
+// TODO: handle auth
+// TODO: add option to either use local key or remote key
+pub async fn fetch_element(
+    endpoint: &str,
+    folder: &str,
+    element_id: &str,
+) -> anyhow::Result<Bytes> {
+    let element_key = element_id.to_string();
+    // Construct the URL
+    let url = join_vars(&[endpoint, folder, element_key.as_str()]);
+    tracing::debug!("Fetching element: {url}");
+
+    // If URL we fetch it
+    if url.starts_with("http") {
+        // Make the request
+        let client = reqwest::Client::new();
+        let response = client.get(&url).send().await?;
+
+        if response.status().is_success() {
+            let bytes = response.bytes().await?;
+            tracing::info!("Successfully downloaded {} bytes for element {element_id} from endpoint {endpoint}/{folder}", bytes.len());
+            // Here you can process the bytes as needed
+            Ok(bytes)
+        } else {
+            let response_status = response.status();
+            let response_content = response.text().await?;
+            tracing::error!("Error: {}", response_status);
+            tracing::error!("Response: {}", response_content);
+            Err(anyhow::anyhow!(format!(
+                "Couldn't fetch element {element_id} from endpoint {endpoint}/{folder}\nStatus: {}\nResponse: {}",
+                response_status, response_content
+            ),))
+        }
+    } else {
+        // read from local file system
+        // Strip file:// prefix if present (for local testing)
+        let endpoint_path = if endpoint.starts_with("file://") {
+            endpoint.strip_prefix("file://").unwrap()
+        } else {
+            endpoint
+        };
+        let key_path = Path::new(endpoint_path).join(folder).join(element_id);
+        let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
+            anyhow!(
+                "Failed to read bytes from file at {:?} with error: {e}",
+                &key_path
+            )
+        })?;
+        let res = Bytes::from(byte_res);
+        tracing::info!("Successfully read {} bytes for element {element_id} from local path {endpoint_path}/{folder}", res.len());
+        Ok(res)
+    }
+}
+
+async fn write_bytes_to_file(
+    folder_path: &Path,
+    filename: &str,
+    data: &[u8],
+) -> anyhow::Result<()> {
+    let path = folder_path.join(filename);
+    // Create the parent directories of the file path if they don't exist
+    if let Some(p) = path.parent() {
+        tokio::fs::create_dir_all(p).await?;
+    }
+    tokio::fs::write(&path, data).await.map_err(|e| {
+        anyhow!(
+            "Failed to write bytes to file at {:?} with error: {e}",
+            &path
+        )
+    })?;
+    Ok(())
+}
+
 static INIT_LOG: Once = Once::new();
 
 pub fn init_testing() {

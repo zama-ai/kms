@@ -274,7 +274,7 @@ jobs:
         id: set-matrix
         run: |
           MATRIX="matrix={\"include\":["
-          MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests --skip nightly --skip centralzd --skip threshld\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests --skip nightly --skip centralzd --skip threshld\"}"
+          MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests --skip nightly --skip centralzd --skip threshld\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests --skip nightly --skip centralzd --skip threshld\"},{\"args-tests\":\"--features k8s_tests integration_test_backup -- --test-threads=1\"}"
           MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "$MATRIX"

@@ -507,6 +507,10 @@ pub async fn setup_centralized_no_client<
         rate_limiter_conf,
     )
     .await
+    .map_err(|e| {
+        eprintln!("Failed to create KMS: {:?}", e);
+        e
+    })
     .expect("Could not create KMS");
     let arc_kms = Arc::new(kms);
     let arc_kms_clone = Arc::clone(&arc_kms);
@@ -728,3 +732,20 @@ pub(crate) async fn get_status(
     let response = health_client.check(request).await?;
     Ok(response.into_inner().status)
 }
+
+// ============================================================================
+// TEST UTILITIES FOR ISOLATED TESTS
+// ============================================================================
+
+/// Convert Eip712Domain to Eip712DomainMsg for gRPC requests
+#[cfg(any(test, feature = "testing"))]
+pub fn domain_to_msg(domain: &alloy_dyn_abi::Eip712Domain) -> kms_grpc::kms::v1::Eip712DomainMsg {
+    kms_grpc::kms::v1::Eip712DomainMsg {
+        name: domain.name.as_ref().map(|n| n.to_string()).unwrap_or_default(),
+        version: domain.version.as_ref().map(|v| v.to_string()).unwrap_or_default(),
+        chain_id: domain.chain_id.map(|id| id.to_string().into_bytes()).unwrap_or_default(),
+        verifying_contract: domain.verifying_contract.map(|addr| addr.to_string()).unwrap_or_default(),
+        salt: domain.salt.map(|s| s.to_vec()),
+    }
+}
+
