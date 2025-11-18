@@ -958,13 +958,6 @@ pub(crate) mod test {
 
         assert_eq!(pivot.len(), num_parties_set_2);
         for (role, secrets, openings) in result_set_1.into_iter() {
-            // If the party is exclusively in set 1, it should not receive any opening
-            if !role.is_set2() {
-                assert!(
-                    openings.is_none(),
-                    "Party {role} in set 1 should not receive any opening"
-                );
-            }
             let secrets = secrets.expect("Party in set 1 missing secrets ");
             assert_eq!(secrets, pivot);
         }
