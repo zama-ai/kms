@@ -24,6 +24,30 @@ use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tonic::transport::Channel;
 
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/// Create storage configuration from optional path
+fn storage_config_from_path(path: Option<&Path>) -> Option<conf::Storage> {
+    path.map(|p| conf::Storage::File(conf::FileStorage {
+        path: p.to_path_buf(),
+    }))
+}
+
+/// Create storage proxy for given type and role
+fn create_storage_proxy(
+    path: Option<&Path>,
+    storage_type: StorageType,
+    role: Option<Role>,
+) -> crate::vault::storage::StorageProxy {
+    make_storage(storage_config_from_path(path), storage_type, role, None, None).unwrap()
+}
+
+// ============================================================================
+// TEST SETUP FUNCTIONS
+// ============================================================================
+
 #[allow(clippy::too_many_arguments)]
 async fn threshold_handles_w_vaults(
     params: DKGParams,
@@ -195,4 +219,86 @@ pub(crate) async fn threshold_handles_custodian_backup(
         test_data_path,
     )
     .await
+}
+
+pub(crate) async fn custodian_backup_vault(role: Role, test_data_path: Option<&Path>) -> Vault {
+    let pub_proxy = create_storage_proxy(test_data_path, StorageType::PUB, Some(role));
+    let backup_proxy = create_storage_proxy(test_data_path, StorageType::BACKUP, Some(role));
+    let keychain = Some(
+        make_keychain_proxy(
+            &Keychain::SecretSharing(SecretSharingKeychain {}),
+            None,
+            None,
+            Some(&pub_proxy),
+        )
+        .await
+        .unwrap(),
+    );
+    Vault {
+        storage: backup_proxy,
+        keychain,
+    }
+}
+
+pub(crate) async fn file_system_vault(role: Role, test_data_path: Option<&Path>) -> Vault {
+    let backup_proxy = create_storage_proxy(test_data_path, StorageType::BACKUP, Some(role));
+    Vault {
+        storage: backup_proxy,
+        keychain: None,
+    }
+}
+
+// ============================================================================
+// ISOLATED TEST HELPERS
+// ============================================================================
+
+/// Helper to generate threshold key using insecure mode (for isolated tests)
+#[cfg(feature = "insecure")]
+pub async fn threshold_key_gen_isolated(
+    clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    request_id: &kms_grpc::RequestId,
+    params: kms_grpc::kms::v1::FheParameter,
+) -> anyhow::Result<()> {
+    use crate::client::test_tools::domain_to_msg;
+    use crate::dummy_domain;
+    use kms_grpc::kms::v1::KeyGenRequest;
+    use tokio::task::JoinSet;
+
+    let domain_msg = domain_to_msg(&dummy_domain());
+
+    // Use insecure_key_gen endpoint which bypasses preprocessing validation
+    let mut keygen_tasks = JoinSet::new();
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let keygen_req = KeyGenRequest {
+            request_id: Some((*request_id).into()),
+            params: Some(params as i32),
+            preproc_id: None,
+            domain: Some(domain_msg.clone()),
+            keyset_config: None,
+            keyset_added_info: None,
+            context_id: None,
+            epoch_id: None,
+        };
+        keygen_tasks.spawn(async move {
+            cur_client.insecure_key_gen(tonic::Request::new(keygen_req)).await
+        });
+    }
+
+    while let Some(res) = keygen_tasks.join_next().await {
+        res??;
+    }
+
+    // Wait for key generation to complete on all parties
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let mut result = cur_client.get_insecure_key_gen_result(tonic::Request::new((*request_id).into())).await;
+        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            result = cur_client.get_insecure_key_gen_result(tonic::Request::new((*request_id).into())).await;
+        }
+        result?;
+    }
+
+    Ok(())
 }

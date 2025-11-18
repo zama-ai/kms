@@ -2071,10 +2071,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cc-tests-utils"
-version = "0.13.0-rc.0"
-
-[[package]]
 name = "cexpr"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4300,8 +4296,8 @@ dependencies = [
  "attestation-doc-validation",
  "bc2wrap",
  "bytes",
- "cc-tests-utils",
  "clap",
+ "futures",
  "hex",
  "kms",
  "kms-core-client",

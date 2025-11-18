@@ -53,14 +53,15 @@ generate-backward-compatibility-v0.13.0:
 	cd backward-compatibility/generate-v0.13.0 && cargo run --release
 
 generate-backward-compatibility-all: clean-backward-compatibility-data generate-backward-compatibility-v0.11.0 generate-backward-compatibility-v0.11.1 generate-backward-compatibility-v0.13.0
-	@echo "✅ Generated backward compatibility data for all versions"
+	@echo "Generated backward compatibility data for all versions"
 
 # Test material generation targets
 generate-test-material-all:
 	cargo run --bin generate-test-material -- all --output ./test-material --verbose
 
 generate-test-material-testing:
-	cargo run --bin generate-test-material -- testing --output ./test-material --verbose
+	@echo "Generating testing material..."
+	cargo run --bin generate-test-material -- --output ./test-material --verbose testing
 
 generate-test-material-default:
 	cargo run --bin generate-test-material -- --features slow_tests default --output ./test-material --verbose
@@ -92,3 +93,38 @@ linting-package:
 		exit 1; \
 	fi
 	cargo clippy --all-targets --all-features --package $(PACKAGE) -- -D warnings
+
+# Legacy targets (kept for compatibility)
+test-migration-validation: validate-migration
+
+# Isolated Test Targets (No Docker Required)
+.PHONY: test-isolated test-isolated-parallel test-isolated-fast validate-migration
+
+test-isolated: generate-test-material-testing
+	@echo "Running isolated tests..."
+	cargo test --features testing -- isolated
+
+test-isolated-parallel: generate-test-material-testing
+	@echo "Running isolated tests in parallel..."
+	cargo test --features testing --jobs 4 -- isolated
+
+test-isolated-fast: generate-test-material-testing
+	@echo "Running fast isolated tests..."
+	cargo test --features testing --lib -- isolated
+
+validate-migration: generate-test-material-testing
+	@echo "Validating migration (running both original and isolated tests)..."
+	cargo test --features testing misc_tests
+	cargo test --features testing misc_tests_isolated
+	@echo "Migration validation complete"
+
+# Clean up test artifacts
+clean-test-artifacts:
+	@echo "🧹 Cleaning test artifacts..."
+	rm -rf target/debug/deps/kms_lib-*
+	rm -rf /tmp/kms-test-*
+	@echo "Test artifacts cleaned"
+
+# Full test suite without Docker
+test-full: generate-test-material-all test-isolated
+	@echo "Full test suite completed successfully"

@@ -13,20 +13,34 @@ use tempfile::TempDir;
 /// Test using isolated centralized setup
 #[tokio::test]
 async fn test_centralized_isolated_example() -> Result<()> {
-    // Create temporary directories for this test
-    let temp_dir = TempDir::new()?;
-    let _test_path = temp_dir.path();
+    use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
+    use crate::util::key_setup::ensure_central_keys_exist;
+    use crate::consts::{TEST_CENTRAL_KEY_ID, OTHER_CENTRAL_TEST_ID, TEST_PARAM};
+    use kms_grpc::rpc_types::PubDataType;
+    use crate::vault::storage::Storage;
 
-    // Setup isolated test material
-    let manager = TestMaterialManager::new(None); // Use default source path
+    let manager = TestMaterialManager::new(None);
     let spec = TestMaterialSpec::centralized_basic();
-    let material_dir = manager
-        .setup_test_material(&spec, "centralized_example")
-        .await?;
+    let material_dir = manager.setup_test_material(&spec, "centralized_example").await?;
 
-    // Create storage instances pointing to the isolated material
-    let pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
-    let priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
+    ensure_testing_material_exists(Some(material_dir.path())).await;
+
+    let mut pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
+    let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
+
+    // Fix public key RequestIds
+    let _ = pub_storage.delete_data(&TEST_CENTRAL_KEY_ID, &PubDataType::PublicKey.to_string()).await;
+    let _ = pub_storage.delete_data(&OTHER_CENTRAL_TEST_ID, &PubDataType::PublicKey.to_string()).await;
+    
+    ensure_central_keys_exist(
+        &mut pub_storage,
+        &mut priv_storage,
+        TEST_PARAM,
+        &TEST_CENTRAL_KEY_ID,
+        &OTHER_CENTRAL_TEST_ID,
+        true, // deterministic
+        true, // write_privkey
+    ).await;
 
     // Setup centralized KMS with isolated material
     let (_server_handle, _client) = setup_centralized_isolated(
@@ -35,8 +49,7 @@ async fn test_centralized_isolated_example() -> Result<()> {
         None, // No backup vault
         None, // No rate limiter
         Some(material_dir.path()),
-    )
-    .await;
+    ).await;
 
     // TODO: add test operations
 

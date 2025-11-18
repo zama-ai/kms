@@ -16,6 +16,11 @@ path = "src/lib.rs"
 name = "kms-core-client"
 path = "src/bin.rs"
 
+[features]
+# Enable PRSS-dependent tests that require sequential execution and stable networking
+# These tests are designed for K8s CI environments
+k8s_tests = []
+
 [dependencies]
 # ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
 # Use .workspace = true to reference workspace dependencies
@@ -57,9 +62,7 @@ validator.workspace = true
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
 assert_cmd.workspace = true
-cc-tests-utils = { path = "./tests-utils" }
-# Self-import for integration tests
-kms-core-client = { workspace = true, features = ["testing"] }
+futures.workspace = true
 serial_test.workspace = true
 test-context.workspace = true
 
