@@ -6,9 +6,9 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kms_lib::util::key_setup::test_material_spec::{MaterialType, TestMaterialSpec};
-use kms_lib::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 #[cfg(feature = "slow_tests")]
 use kms_lib::util::key_setup::test_tools::setup::ensure_default_material_exists;
+use kms_lib::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use path_absolutize::Absolutize;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
@@ -355,7 +355,7 @@ async fn validate_directory_structure(
 
 /// Copy default material to output directory
 #[cfg(feature = "slow_tests")]
-async fn copy_default_material_to_output(output_dir: &Path) -> Result<()> {
+async fn copy_default_material_to_output(_output_dir: &Path) -> Result<()> {
     // The ensure_default_material_exists function generates to a default location
     // We need to copy it to our specified output directory
     // This is a placeholder - the actual implementation would depend on

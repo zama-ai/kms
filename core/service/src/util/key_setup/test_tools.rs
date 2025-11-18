@@ -864,7 +864,6 @@ pub mod setup {
 
         signing_keys_exist && fhe_keys_exist
     }
-
 }
 
 // NOTE: this test stays out of the setup module
