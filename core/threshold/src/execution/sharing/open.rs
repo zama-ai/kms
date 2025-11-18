@@ -957,7 +957,7 @@ pub(crate) mod test {
             .expect("Party in set 1 missing secrets");
 
         assert_eq!(pivot.len(), num_parties_set_2);
-        for (role, secrets, openings) in result_set_1.into_iter() {
+        for (_role, secrets, _openings) in result_set_1.into_iter() {
             let secrets = secrets.expect("Party in set 1 missing secrets ");
             assert_eq!(secrets, pivot);
         }
