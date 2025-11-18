@@ -373,6 +373,7 @@ async fn copy_default_material_to_output(_output_dir: &Path) -> Result<()> {
 }
 
 #[cfg(not(feature = "slow_tests"))]
+#[allow(dead_code)]
 async fn copy_default_material_to_output(_output_dir: &Path) -> Result<()> {
     Ok(())
 }

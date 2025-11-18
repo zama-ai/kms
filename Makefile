@@ -94,37 +94,56 @@ linting-package:
 	fi
 	cargo clippy --all-targets --all-features --package $(PACKAGE) -- -D warnings
 
-# Legacy targets (kept for compatibility)
-test-migration-validation: validate-migration
-
 # Isolated Test Targets (No Docker Required)
-.PHONY: test-isolated test-isolated-parallel test-isolated-fast validate-migration
+.PHONY: test-isolated test-isolated-centralized test-isolated-threshold test-isolated-integration test-isolated-parallel
 
+# Run all isolated tests (centralized + threshold + integration)
 test-isolated: generate-test-material-testing
-	@echo "Running isolated tests..."
-	cargo test --features testing -- isolated
+	@echo "Running all isolated tests..."
+	@echo "Running centralized tests..."
+	cargo test --lib --features insecure,testing centralized::misc_tests_isolated -- --test-threads=1
+	cargo test --lib --features insecure,testing centralized::restore_from_backup_tests_isolated -- --test-threads=1
+	@echo "Running threshold tests..."
+	cargo test --lib --features insecure,testing threshold::key_gen_tests_isolated -- --test-threads=1
+	cargo test --lib --features insecure,testing threshold::misc_tests_isolated -- --test-threads=1
+	cargo test --lib --features insecure,testing threshold::restore_from_backup_tests_isolated -- --test-threads=1
+	@echo "Running integration tests..."
+	cargo test --test integration_test_backup --features insecure -- --test-threads=1
 
+# Run centralized isolated tests only
+test-isolated-centralized: generate-test-material-testing
+	@echo "Running centralized isolated tests..."
+	cargo test --lib --features insecure,testing centralized::misc_tests_isolated -- --test-threads=1
+	cargo test --lib --features insecure,testing centralized::restore_from_backup_tests_isolated -- --test-threads=1
+
+# Run threshold isolated tests only
+test-isolated-threshold: generate-test-material-testing
+	@echo "Running threshold isolated tests..."
+	cargo test --lib --features insecure,testing threshold::key_gen_tests_isolated -- --test-threads=1
+	cargo test --lib --features insecure,testing threshold::misc_tests_isolated -- --test-threads=1
+	cargo test --lib --features insecure,testing threshold::restore_from_backup_tests_isolated -- --test-threads=1
+
+# Run integration tests only
+test-isolated-integration: generate-test-material-testing
+	@echo "Running integration tests..."
+	cargo test --test integration_test_backup --features insecure -- --test-threads=1
+
+# Run isolated tests with parallel execution (where safe - non-PRSS tests)
 test-isolated-parallel: generate-test-material-testing
 	@echo "Running isolated tests in parallel..."
-	cargo test --features testing --jobs 4 -- isolated
-
-test-isolated-fast: generate-test-material-testing
-	@echo "Running fast isolated tests..."
-	cargo test --features testing --lib -- isolated
-
-validate-migration: generate-test-material-testing
-	@echo "Validating migration (running both original and isolated tests)..."
-	cargo test --features testing misc_tests
-	cargo test --features testing misc_tests_isolated
-	@echo "Migration validation complete"
+	cargo test --lib --features insecure,testing misc_tests_isolated -- --test-threads=4
 
 # Clean up test artifacts
 clean-test-artifacts:
-	@echo "🧹 Cleaning test artifacts..."
+	@echo "Cleaning test artifacts..."
 	rm -rf target/debug/deps/kms_lib-*
 	rm -rf /tmp/kms-test-*
 	@echo "Test artifacts cleaned"
 
-# Full test suite without Docker
-test-full: generate-test-material-all test-isolated
+# Full test suite
+test-full: generate-test-material-all test-isolated test-backward-compatibility
 	@echo "Full test suite completed successfully"
+
+# Quick test suite (testing material only, no backward compatibility)
+test-quick: generate-test-material-testing test-isolated
+	@echo "Quick test suite completed successfully"
