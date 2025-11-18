@@ -13,7 +13,10 @@ use crate::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
         config::BatchParams,
         online::preprocessing::BasePreprocessing,
-        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
+        runtime::{
+            party::{Role, TwoSetsRole},
+            sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
+        },
         sharing::{
             open::{RobustOpen, SecureRobustOpen},
             shamir::ShamirSharings,
@@ -299,6 +302,68 @@ where
         glwe_secret_key_share_compression,
         glwe_sns_compression_key_as_lwe,
     })
+}
+
+pub async fn reshare_as_sender<
+    Ses: GenericBaseSessionHandles<TwoSetsRole>,
+    Z: BaseRing + Zeroize,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut Ses,
+    input_shares: &mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>,
+    parameters: DKGParams,
+) -> anyhow::Result<()>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+{
+    // Make sure I belong to Set 1, as that's the sender set by convention
+    if let TwoSetsRole::Set2(_) = session.my_role() {
+        return Err(anyhow_error_and_log(
+            "Only parties in Set 1 can call reshare_as_sender",
+        ));
+    }
+
+    // Get parties from set_2, as we receivre from them
+    let robust_open = SecureRobustOpen::default();
+    let expected_rs_len: usize = input_shares.len();
+    let mut rs_opened = robust_open
+        .robust_open_list_to_external::<ResiduePoly<Z, EXTENSION_DEGREE>, _>(
+            session,
+            None,
+            session.threshold().threshold_set_2 as usize,
+            expected_rs_len,
+        )
+        .await?
+        .ok_or_else(|| {
+            anyhow_error_and_log(format!(
+                "Failed to robust open the r_{{i,j}} on {:?}",
+                session.my_role(),
+            ))
+        })?;
+
+    // Sanity check
+    if rs_opened.len() != expected_rs_len {
+        return Err(anyhow_error_and_log(format!(
+            "Expected the amount of input shares; {}, and openings; {}, to be equal",
+            expected_rs_len,
+            rs_opened.len()
+        )));
+    }
+
+    let vj = rs_opened
+        .iter()
+        .zip_eq(input_shares.clone())
+        .map(|(r, s)| *r + s.value())
+        .collect_vec();
+
+    // erase the memory of sk_share and rj
+    for share in input_shares {
+        share.zeroize();
+    }
+    for r in &mut rs_opened {
+        r.zeroize();
+    }
+    todo!()
 }
 
 pub async fn reshare_same_sets<
