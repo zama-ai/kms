@@ -381,3 +381,90 @@ impl<R: RoleTrait> RoleAssignment<R> {
         self.len() == 0
     }
 }
+
+#[cfg(test)]
+pub mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_threshold_check() {
+        // Simple Role success
+        let threshold = 2;
+        let parties = HashSet::from([
+            Role::indexed_from_one(1),
+            Role::indexed_from_one(2),
+            Role::indexed_from_one(3),
+        ]);
+        assert!(Role::is_threshold_smaller_than_num_parties(
+            threshold, &parties
+        ));
+
+        // Simple Role failure
+        let threshold = 3;
+        let parties = HashSet::from([
+            Role::indexed_from_one(1),
+            Role::indexed_from_one(2),
+            Role::indexed_from_one(3),
+        ]);
+        assert!(!Role::is_threshold_smaller_than_num_parties(
+            threshold, &parties
+        ));
+
+        // TwoSetsRole success
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: 2,
+            threshold_set_2: 1,
+        };
+
+        let parties = HashSet::from([
+            TwoSetsRole::Set1(Role::indexed_from_one(1)),
+            TwoSetsRole::Set1(Role::indexed_from_one(2)),
+            TwoSetsRole::Both(DualRole {
+                role_set_1: Role::indexed_from_one(3),
+                role_set_2: Role::indexed_from_one(1),
+            }),
+            TwoSetsRole::Set2(Role::indexed_from_one(2)),
+        ]);
+        assert!(TwoSetsRole::is_threshold_smaller_than_num_parties(
+            threshold, &parties
+        ));
+
+        // TwoSetsRole failure set 1
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: 3,
+            threshold_set_2: 1,
+        };
+
+        let parties = HashSet::from([
+            TwoSetsRole::Set1(Role::indexed_from_one(1)),
+            TwoSetsRole::Set1(Role::indexed_from_one(2)),
+            TwoSetsRole::Both(DualRole {
+                role_set_1: Role::indexed_from_one(3),
+                role_set_2: Role::indexed_from_one(1),
+            }),
+            TwoSetsRole::Set2(Role::indexed_from_one(2)),
+        ]);
+        assert!(!TwoSetsRole::is_threshold_smaller_than_num_parties(
+            threshold, &parties
+        ));
+
+        // TwoSetsRole failure set 2
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: 2,
+            threshold_set_2: 2,
+        };
+        let parties = HashSet::from([
+            TwoSetsRole::Set1(Role::indexed_from_one(1)),
+            TwoSetsRole::Set1(Role::indexed_from_one(2)),
+            TwoSetsRole::Both(DualRole {
+                role_set_1: Role::indexed_from_one(3),
+                role_set_2: Role::indexed_from_one(1),
+            }),
+            TwoSetsRole::Set2(Role::indexed_from_one(2)),
+        ]);
+        assert!(!TwoSetsRole::is_threshold_smaller_than_num_parties(
+            threshold, &parties
+        ));
+    }
+}
