@@ -76,6 +76,20 @@ where
         Ok((my_role, new_context))
     }
 
+    async fn mpc_context_exists(&self, context_id: &ContextId) -> anyhow::Result<bool> {
+        let contexts = self
+            .crypto_storage
+            .read_all_context_info()
+            .await
+            .inspect_err(|e| tracing::error!("Failed to load all contexts from storage: {}", e))?;
+        for context in contexts {
+            if context.context_id() == context_id {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     async fn parse_mpc_context_for_destruction(
         &self,
         request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
@@ -192,8 +206,13 @@ where
                         )
                         .await?;
                     }
+                    #[expect(deprecated)]
                     PrivDataType::PrssSetup => {
                         // We will not back up PRSS setup data
+                        continue;
+                    }
+                    PrivDataType::PrssSetupCombined => {
+                        // We will not back up Combined PRSS setup data
                         continue;
                     }
                     PrivDataType::ContextInfo => {
@@ -267,7 +286,7 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 {
-    async fn new_kms_context(
+    async fn new_mpc_context(
         &self,
         request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
@@ -299,7 +318,7 @@ where
         Ok(Response::new(Empty {}))
     }
 
-    async fn destroy_kms_context(
+    async fn destroy_mpc_context(
         &self,
         request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
@@ -335,6 +354,13 @@ where
         request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
         self.inner.destroy_custodian_context(request).await
+    }
+
+    async fn mpc_context_exists(&self, context_id: &ContextId) -> Result<bool, Status> {
+        Ok(ok_or_tonic_abort(
+            self.inner.mpc_context_exists(context_id).await,
+            "Failed to check if context exists".to_string(),
+        )?)
     }
 }
 
@@ -437,7 +463,7 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 {
-    async fn new_kms_context(
+    async fn new_mpc_context(
         &self,
         request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
@@ -464,7 +490,7 @@ where
         Ok(Response::new(Empty {}))
     }
 
-    async fn destroy_kms_context(
+    async fn destroy_mpc_context(
         &self,
         request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
@@ -498,6 +524,13 @@ where
         request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
         self.inner.destroy_custodian_context(request).await
+    }
+
+    async fn mpc_context_exists(&self, context_id: &ContextId) -> Result<bool, Status> {
+        Ok(ok_or_tonic_abort(
+            self.inner.mpc_context_exists(context_id).await,
+            "Failed to check if context exists".to_string(),
+        )?)
     }
 }
 
@@ -684,7 +717,7 @@ mod tests {
             session_maker,
         );
 
-        let response = context_manager.new_kms_context(request).await;
+        let response = context_manager.new_mpc_context(request).await;
         response.unwrap();
 
         // check that the context is stored
@@ -709,7 +742,7 @@ mod tests {
             context_id: Some(context_id.into()),
         });
 
-        let response = context_manager.destroy_kms_context(request).await;
+        let response = context_manager.destroy_mpc_context(request).await;
         response.unwrap();
 
         // check that the context is deleted
@@ -763,7 +796,7 @@ mod tests {
                 session_maker,
             );
 
-            let response = context_manager.new_kms_context(request).await;
+            let response = context_manager.new_mpc_context(request).await;
             response.unwrap();
 
             assert_eq!(1, context_manager.session_maker.context_count().await);

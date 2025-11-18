@@ -10,6 +10,7 @@ use kms_grpc::kms::v1::NewKmsContextRequest;
 use kms_grpc::kms::v1::OperatorPublicKey;
 use kms_grpc::kms::v1::RecoveryRequest;
 use kms_grpc::kms::v1::TypedPlaintext;
+use kms_grpc::ContextId;
 use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;
@@ -59,12 +60,12 @@ pub trait Kms: BaseKms {
 
 #[tonic::async_trait]
 pub trait ContextManager {
-    async fn new_kms_context(
+    async fn new_mpc_context(
         &self,
         request: Request<NewKmsContextRequest>,
     ) -> Result<Response<Empty>, Status>;
 
-    async fn destroy_kms_context(
+    async fn destroy_mpc_context(
         &self,
         request: Request<DestroyKmsContextRequest>,
     ) -> Result<Response<Empty>, Status>;
@@ -78,6 +79,8 @@ pub trait ContextManager {
         &self,
         request: Request<DestroyCustodianContextRequest>,
     ) -> Result<Response<Empty>, Status>;
+
+    async fn mpc_context_exists(&self, context_id: &ContextId) -> Result<bool, Status>;
 }
 
 #[tonic::async_trait]

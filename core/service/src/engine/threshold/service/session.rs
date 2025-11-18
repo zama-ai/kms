@@ -5,6 +5,9 @@ use aes_prng::AesRng;
 // === External Crates ===
 use kms_grpc::identifiers::{ContextId, EpochId};
 use rand::{RngCore, SeedableRng};
+use serde::{Deserialize, Serialize};
+use tfhe::Versionize;
+use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
@@ -36,9 +39,23 @@ struct Context {
     threshold: u8,
 }
 
-struct PRSSSetupExtended {
-    prss_setup_z128: PRSSSetup<ResiduePolyF4Z128>,
-    prss_setup_z64: PRSSSetup<ResiduePolyF4Z64>,
+#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum PRSSSetupCombinedVersioned {
+    V0(PRSSSetupCombined),
+}
+
+/// Public because it's used by storage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(PRSSSetupCombinedVersioned)]
+pub struct PRSSSetupCombined {
+    pub prss_setup_z64: PRSSSetup<ResiduePolyF4Z64>,
+    pub prss_setup_z128: PRSSSetup<ResiduePolyF4Z128>,
+    pub num_parties: u8,
+    pub threshold: u8,
+}
+
+impl tfhe::named::Named for PRSSSetupCombined {
+    const NAME: &'static str = "kms::PRSSSetupCombined";
 }
 
 type ContextMap = HashMap<ContextId, Context>;
@@ -47,7 +64,7 @@ type ContextMap = HashMap<ContextId, Context>;
 pub(crate) struct SessionMaker {
     networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
     context_map: Arc<RwLock<ContextMap>>,
-    epoch_map: Arc<RwLock<HashMap<EpochId, PRSSSetupExtended>>>,
+    epoch_map: Arc<RwLock<HashMap<EpochId, PRSSSetupCombined>>>,
     verifier: Option<Arc<AttestedVerifier>>, // optional as it's not used when there's no TLS
     rng: Arc<Mutex<AesRng>>,
 }
@@ -70,6 +87,11 @@ impl SessionMaker {
     #[cfg(test)]
     pub(crate) async fn context_count(&self) -> usize {
         self.context_map.read().await.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn epoch_count(&self) -> usize {
+        self.epoch_map.read().await.len()
     }
 
     #[cfg(test)]
@@ -115,9 +137,11 @@ impl SessionMaker {
 
         let default_epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID).unwrap();
         let default_prss = match (prss_setup_z128, prss_setup_z64) {
-            (Some(z128), Some(z64)) => Some(PRSSSetupExtended {
+            (Some(z128), Some(z64)) => Some(PRSSSetupCombined {
                 prss_setup_z128: z128,
                 prss_setup_z64: z64,
+                num_parties: 4,
+                threshold: 1,
             }),
             _ => None,
         };
@@ -268,20 +292,9 @@ impl SessionMaker {
         context_map.remove(context_id);
     }
 
-    pub(crate) async fn add_epoch(
-        &self,
-        epoch_id: EpochId,
-        prss_setup_z128: PRSSSetup<ResiduePolyF4Z128>,
-        prss_setup_z64: PRSSSetup<ResiduePolyF4Z64>,
-    ) {
+    pub(crate) async fn add_epoch(&self, epoch_id: EpochId, prss: PRSSSetupCombined) {
         let mut epoch_map = self.epoch_map.write().await;
-        epoch_map.insert(
-            epoch_id,
-            PRSSSetupExtended {
-                prss_setup_z128,
-                prss_setup_z64,
-            },
-        );
+        epoch_map.insert(epoch_id, prss);
     }
 
     pub(crate) async fn epoch_exists(&self, epoch_id: &EpochId) -> bool {

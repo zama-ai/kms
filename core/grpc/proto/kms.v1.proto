@@ -517,9 +517,9 @@ message KmsNode {
   repeated bytes extra_verification_keys = 7;
 }
 
-// The context of the KMS, containing the list of KMS nodes and other metadata.
+// The context of the MPC, containing the list of MPC nodes and other metadata.
 message KmsContext {
-  // The list of KMS nodes in the context.
+  // The list of MPC nodes in the context.
   repeated KmsNode kms_nodes = 1;
 
   // A monotonically increasing counter stored on the Gateway

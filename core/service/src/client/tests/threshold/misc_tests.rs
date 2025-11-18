@@ -4,7 +4,6 @@ use crate::client::test_tools::{
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::tests::threshold::common::threshold_handles;
 use crate::consts::{PRSS_INIT_REQ_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID};
-use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::RealThresholdKms;
 use crate::util::key_setup::test_tools::purge;
 use crate::vault::storage::file::FileStorage;
@@ -15,6 +14,7 @@ cfg_if::cfg_if! {
         use crate::dummy_domain;
     }
 }
+use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::InitRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::RequestId;
@@ -35,8 +35,8 @@ use tonic_health::pb::health_check_response::ServingStatus;
 #[serial]
 async fn test_threshold_health_endpoint_availability() {
     // make sure the store does not contain any PRSS info (currently stored under ID PRSS_INIT_REQ_ID)
-    let req_id = &derive_request_id(&format!("PRSSSetup_Z128_ID_{PRSS_INIT_REQ_ID}_4_1")).unwrap();
-    purge(None, None, None, req_id, 4).await;
+    let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID.to_string()).unwrap();
+    purge(None, None, None, &epoch_id.into(), 4).await;
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
 
     // DON'T setup PRSS in order to ensure the server is not ready yet

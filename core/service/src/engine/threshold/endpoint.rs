@@ -288,7 +288,7 @@ impl_endpoint! {
             request: Request<NewKmsContextRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_NEW_KMS_CONTEXT);
-            self.context_manager.new_kms_context(request).await.inspect_err(|err| {
+            self.context_manager.new_mpc_context(request).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
                 let _ = METRICS
                     .increment_error_counter(OP_NEW_KMS_CONTEXT, tag);
@@ -302,7 +302,7 @@ impl_endpoint! {
             request: Request<DestroyKmsContextRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_KMS_CONTEXT);
-            self.context_manager.destroy_kms_context(request).await.inspect_err(|err| {
+            self.context_manager.destroy_mpc_context(request).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
                 let _ = METRICS
                     .increment_error_counter(OP_DESTROY_KMS_CONTEXT, tag);

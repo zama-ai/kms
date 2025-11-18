@@ -278,7 +278,7 @@ impl<
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
         METRICS.increment_request_counter(OP_NEW_KMS_CONTEXT);
         self.context_manager
-            .new_kms_context(request)
+            .new_mpc_context(request)
             .await
             .inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
@@ -293,7 +293,7 @@ impl<
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_DESTROY_KMS_CONTEXT);
         self.context_manager
-            .destroy_kms_context(request)
+            .destroy_mpc_context(request)
             .await
             .inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());

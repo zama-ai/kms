@@ -639,8 +639,14 @@ where
                 restore_data_type::<PrivS, KmsFheKeyHandles>(priv_storage, backup_vault, cur_type)
                     .await?;
             }
+            #[expect(deprecated)]
             PrivDataType::PrssSetup => {
                 tracing::info!("PRSS setup data is not backed up currently. Skipping for now.");
+            }
+            PrivDataType::PrssSetupCombined => {
+                tracing::info!(
+                    "Combined PRSS setup data is not backed up currently. Skipping for now."
+                );
             }
             PrivDataType::ContextInfo => {
                 restore_data_type::<PrivS, ContextInfo>(priv_storage, backup_vault, cur_type)
@@ -742,9 +748,15 @@ where
                             )
                             .await?;
                         }
+                        #[expect(deprecated)]
                         PrivDataType::PrssSetup => {
                             tracing::info!(
                                 "PRSS setup data is not backed up currently. Skipping for now."
+                            );
+                        }
+                        PrivDataType::PrssSetupCombined => {
+                            tracing::info!(
+                                "Combined PRSS setup data is not backed up currently. Skipping for now."
                             );
                         }
                         PrivDataType::ContextInfo => {
