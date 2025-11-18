@@ -43,7 +43,7 @@ pub enum RoleKind {
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[display("Set1: {}, Set2: {}", role_set_1, role_set_2)]
-pub struct RoleBothSets {
+pub struct DualRole {
     pub role_set_1: Role,
     pub role_set_2: Role,
 }
@@ -52,7 +52,7 @@ pub struct RoleBothSets {
 pub enum TwoSetsRole {
     Set1(Role),
     Set2(Role),
-    Both(RoleBothSets),
+    Both(DualRole),
 }
 
 impl TwoSetsRole {

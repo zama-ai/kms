@@ -351,7 +351,7 @@ pub mod tests {
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             runtime::{
-                party::{Role, RoleBothSets, TwoSetsRole, TwoSetsThreshold},
+                party::{DualRole, Role, TwoSetsRole, TwoSetsThreshold},
                 sessions::{
                     base_session::{BaseSession, GenericBaseSession},
                     large_session::{LargeSession, LargeSessionHandles},
@@ -822,7 +822,7 @@ pub mod tests {
             assert!(roles.contains(&role_p2_set_2));
             roles.remove(&role_p1_set_1);
             roles.remove(&role_p2_set_2);
-            roles.insert(TwoSetsRole::Both(RoleBothSets {
+            roles.insert(TwoSetsRole::Both(DualRole {
                 role_set_1: Role::indexed_from_one(1),
                 role_set_2: Role::indexed_from_one(2),
             }));
