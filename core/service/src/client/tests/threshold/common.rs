@@ -30,9 +30,11 @@ use tonic::transport::Channel;
 
 /// Create storage configuration from optional path
 fn storage_config_from_path(path: Option<&Path>) -> Option<conf::Storage> {
-    path.map(|p| conf::Storage::File(conf::FileStorage {
-        path: p.to_path_buf(),
-    }))
+    path.map(|p| {
+        conf::Storage::File(conf::FileStorage {
+            path: p.to_path_buf(),
+        })
+    })
 }
 
 /// Create storage proxy for given type and role
@@ -41,7 +43,14 @@ fn create_storage_proxy(
     storage_type: StorageType,
     role: Option<Role>,
 ) -> crate::vault::storage::StorageProxy {
-    make_storage(storage_config_from_path(path), storage_type, role, None, None).unwrap()
+    make_storage(
+        storage_config_from_path(path),
+        storage_type,
+        role,
+        None,
+        None,
+    )
+    .unwrap()
 }
 
 // ============================================================================
@@ -281,7 +290,9 @@ pub async fn threshold_key_gen_isolated(
             epoch_id: None,
         };
         keygen_tasks.spawn(async move {
-            cur_client.insecure_key_gen(tonic::Request::new(keygen_req)).await
+            cur_client
+                .insecure_key_gen(tonic::Request::new(keygen_req))
+                .await
         });
     }
 
@@ -292,10 +303,14 @@ pub async fn threshold_key_gen_isolated(
     // Wait for key generation to complete on all parties
     for client in clients.values() {
         let mut cur_client = client.clone();
-        let mut result = cur_client.get_insecure_key_gen_result(tonic::Request::new((*request_id).into())).await;
+        let mut result = cur_client
+            .get_insecure_key_gen_result(tonic::Request::new((*request_id).into()))
+            .await;
         while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            result = cur_client.get_insecure_key_gen_result(tonic::Request::new((*request_id).into())).await;
+            result = cur_client
+                .get_insecure_key_gen_result(tonic::Request::new((*request_id).into()))
+                .await;
         }
         result?;
     }
