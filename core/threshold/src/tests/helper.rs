@@ -773,7 +773,8 @@ pub mod tests {
         )
     }
 
-    /// __NOTE: If at least 3 parties in each set, make P1 from set1 and P2 from set2 the same party using the Both variant__
+    /// For each intersection party, remove the P_i from Set1 and P_{i+1} from Set2 roles
+    /// and add the corresponding dual role
     #[allow(clippy::too_many_arguments)]
     pub async fn execute_protocol_two_sets_w_malicious<
         TaskOutputT,
@@ -786,6 +787,7 @@ pub mod tests {
     >(
         parties_set_1: usize,
         parties_set_2: usize,
+        intersection_size: usize,
         threshold: TwoSetsThreshold,
         malicious_role: HashSet<TwoSetsRole>,
         malicious_strategy: P,
@@ -804,6 +806,11 @@ pub mod tests {
         TaskOutputM: Send + 'static,
         OutputM: Send + 'static,
     {
+        assert!(
+            intersection_size <= std::cmp::min(parties_set_1, parties_set_2),
+            "Intersection size cannot be larger than the smallest set size"
+        );
+
         let mut roles = (1..=parties_set_1)
             .map(Role::indexed_from_one)
             .map(TwoSetsRole::Set1)
@@ -814,18 +821,25 @@ pub mod tests {
             )
             .collect::<HashSet<_>>();
 
-        // If at least 3 parties, make P1 from set1 and P2 from set2 the same party
-        if parties_set_1 >= 3 && parties_set_2 >= 3 {
-            let role_p1_set_1 = TwoSetsRole::Set1(Role::indexed_from_one(1));
-            let role_p2_set_2 = TwoSetsRole::Set2(Role::indexed_from_one(2));
-            assert!(roles.contains(&role_p1_set_1));
-            assert!(roles.contains(&role_p2_set_2));
-            roles.remove(&role_p1_set_1);
-            roles.remove(&role_p2_set_2);
-            roles.insert(TwoSetsRole::Both(DualRole {
-                role_set_1: Role::indexed_from_one(1),
-                role_set_2: Role::indexed_from_one(2),
-            }));
+        // For each intersection party, remove the P_i from Set1 and P_{i+1} from Set2 roles
+        // and add the corresponding dual role
+        for i in 0..intersection_size {
+            // index_role_2 is i+1 with wrap around back to 1
+            let role_set1 = TwoSetsRole::Set1(Role::indexed_from_zero(i));
+            let role_set2 = TwoSetsRole::Set2(Role::indexed_from_zero((i + 1) % parties_set_2));
+            assert!(
+                roles.remove(&role_set1),
+                "role {role_set1:?} not found in roles set"
+            );
+            assert!(
+                roles.remove(&role_set2),
+                "role {role_set2:?} not found in roles set"
+            );
+            let role_both = TwoSetsRole::Both(DualRole {
+                role_set_1: Role::indexed_from_zero(i),
+                role_set_2: Role::indexed_from_zero((i + 1) % parties_set_2),
+            });
+            roles.insert(role_both);
         }
 
         // Assers that all malicious roles are part of the roles set (especially since it'we have the Both variant)

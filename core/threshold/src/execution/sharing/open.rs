@@ -838,6 +838,7 @@ pub(crate) mod test {
                     inner_output_role_both,
                 ) = outer_output_role
                 {
+                    println!("Inserting share for both role {:?}", inner_output_role_both);
                     inner_input_map.insert(
                         *outer_output_role,
                         vec![shares[&(inner_output_role_both.role_set_2)]],
@@ -871,6 +872,7 @@ pub(crate) mod test {
     >(
         num_parties_set_1: usize,
         num_parties_set_2: usize,
+        intersection_size: usize,
         threshold: TwoSetsThreshold,
         network_mode: NetworkMode,
         malicious_roles: HashSet<TwoSetsRole>,
@@ -907,6 +909,7 @@ pub(crate) mod test {
             execute_protocol_two_sets_w_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(
                 num_parties_set_1,
                 num_parties_set_2,
+                intersection_size,
                 threshold,
                 malicious_roles,
                 malicious_robust_open,
@@ -972,9 +975,44 @@ pub(crate) mod test {
         test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             4,
             4,
+            1,
             TwoSetsThreshold {
                 threshold_set_1: 1,
                 threshold_set_2: 1,
+            },
+            NetworkMode::Sync,
+            HashSet::new(),
+            SecureRobustOpen::default(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_sync_robust_open_external_full_overlap() {
+        test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            4,
+            4,
+            4,
+            TwoSetsThreshold {
+                threshold_set_1: 1,
+                threshold_set_2: 1,
+            },
+            NetworkMode::Sync,
+            HashSet::new(),
+            SecureRobustOpen::default(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_sync_robust_open_external_different_size() {
+        test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            4,
+            7,
+            2,
+            TwoSetsThreshold {
+                threshold_set_1: 1,
+                threshold_set_2: 2,
             },
             NetworkMode::Sync,
             HashSet::new(),
@@ -988,6 +1026,7 @@ pub(crate) mod test {
         test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             4,
             4,
+            1,
             TwoSetsThreshold {
                 threshold_set_1: 1,
                 threshold_set_2: 1,
@@ -1005,6 +1044,7 @@ pub(crate) mod test {
         test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             4,
             4,
+            1,
             TwoSetsThreshold {
                 threshold_set_1: 1,
                 threshold_set_2: 1,
@@ -1019,13 +1059,14 @@ pub(crate) mod test {
     #[tokio::test]
     async fn test_sync_robust_open_external_lie() {
         let malicious_roles = HashSet::from([
-            TwoSetsRole::Set1(Role::indexed_from_one(3)),
             TwoSetsRole::Set1(Role::indexed_from_one(5)),
             TwoSetsRole::Set1(Role::indexed_from_one(7)),
+            TwoSetsRole::Set1(Role::indexed_from_one(10)),
         ]);
         test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             13,
             7,
+            3,
             TwoSetsThreshold {
                 threshold_set_1: 4,
                 threshold_set_2: 2,
@@ -1047,6 +1088,7 @@ pub(crate) mod test {
         test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             4,
             4,
+            1,
             TwoSetsThreshold {
                 threshold_set_1: 1,
                 threshold_set_2: 1,
