@@ -48,6 +48,7 @@ pub enum BroadcastValue<Z: Eq + Zero + Sized> {
     LocalSingleShare(MapsSharesChallenges<Z>),
     LocalDoubleShare(MapsDoubleSharesChallenges<Z>),
     PartialProof(ceremony::PartialProof),
+    MapRingVector(BTreeMap<Role, Vec<Z>>),
 }
 
 impl<Z: Eq + Zero + Sized> BroadcastValue<Z> {
@@ -63,6 +64,7 @@ impl<Z: Eq + Zero + Sized> BroadcastValue<Z> {
             BroadcastValue::LocalSingleShare(_) => "LocalSingleShare".to_string(),
             BroadcastValue::LocalDoubleShare(_) => "LocalDoubleShare".to_string(),
             BroadcastValue::PartialProof(_) => "PartialProof".to_string(),
+            BroadcastValue::MapRingVector(_) => "MapRingVector".to_string(),
         }
     }
 }
