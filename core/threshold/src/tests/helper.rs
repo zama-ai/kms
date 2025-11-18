@@ -36,13 +36,12 @@ pub mod tests_and_benches {
 
     pub fn get_seed_for_two_sets_role(role: &TwoSetsRole) -> u64 {
         match role {
-            TwoSetsRole::Set1(r) => r.one_based() as u64 | (1 << 62),
-            TwoSetsRole::Set2(r) => r.one_based() as u64 | (2 << 62),
+            TwoSetsRole::Set1(r) => r.one_based() as u64 | (1 << 60),
+            TwoSetsRole::Set2(r) => r.one_based() as u64 | (2 << 60),
             TwoSetsRole::Both(r) => {
                 r.role_set_1.one_based() as u64
-                    | (1 << 62)
-                    | r.role_set_2.one_based() as u64
-                    | (2 << 63)
+                    | ((r.role_set_2.one_based() as u64) << 32)
+                    | (3 << 60)
             }
         }
     }

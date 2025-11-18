@@ -77,19 +77,11 @@ pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
         degree: usize,
     ) -> anyhow::Result<Option<Vec<Z>>>;
 
-    /// As a sender (`all_shares == Some(_)`) in this function I will send to all the external
-    /// parties I am meant to open to.
-    ///
-    /// As a receiver (`all_shares == None`) I will receive from all the parties in the other set
-    /// for the specific share I am meant to open.
-    ///
-    /// This avoids any possible mixup in round number
-    ///
     /// Inputs:
     /// - session
     /// - all_shares: if Some, the shares to send to the external parties
     /// - degree of the sharing
-    /// - external_opening_info: info about from which set we expect to receive openings and how many.
+    /// - external_opening_info: from which set we expect to receive openings and how many.
     ///    Must be set to None if we are not expecting any output
     ///
     /// Output:

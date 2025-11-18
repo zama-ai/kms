@@ -41,18 +41,6 @@ pub enum RoleKind {
     TwoSet(TwoSetsRole),
 }
 
-//impl RoleKind {
-//    pub fn get_role(&self) -> Role {
-//        match self {
-//            RoleKind::SingleSet(r) => *r,
-//            RoleKind::TwoSet(tr) => match tr {
-//                TwoSetsRole::Set1(r) => *r,
-//                TwoSetsRole::Set2(r) => *r,
-//            },
-//        }
-//    }
-//}
-
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[display("Set1: {}, Set2: {}", role_set_1, role_set_2)]
 pub struct RoleBothSets {

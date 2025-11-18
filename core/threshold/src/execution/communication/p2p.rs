@@ -228,7 +228,7 @@ where
     Ok(())
 }
 
-/// Spawns receive tasks and matches the incoming messages according to the match_network_value_fn.
+/// Spawns receive tasks and matches the incoming messages according to the match_network_value_fn,
 /// as well as mapping the role to another type S with some extra data. (e.g. for TwoSetsRole)
 ///
 /// The function makes sure that it process the correct type of message, i.e.
