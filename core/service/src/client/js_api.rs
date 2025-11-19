@@ -80,7 +80,7 @@ use crate::cryptography::encryption::{
 use crate::cryptography::hybrid_ml_kem;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use aes_prng::AesRng;
-use bc2wrap::{deserialize_safe, serialize};
+use bc2wrap::deserialize_safe;
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::kms::v1::UserDecryptionResponse;
 use kms_grpc::kms::v1::{Eip712DomainMsg, TypedPlaintext, UserDecryptionResponsePayload};
