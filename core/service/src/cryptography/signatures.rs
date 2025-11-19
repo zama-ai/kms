@@ -85,7 +85,7 @@ impl Named for PublicSigKey {
 }
 
 impl PublicSigKey {
-    fn new(pk: k256::ecdsa::VerifyingKey) -> Self {
+    pub fn new(pk: k256::ecdsa::VerifyingKey) -> Self {
         Self {
             pk: WrappedVerifyingKey(pk),
         }

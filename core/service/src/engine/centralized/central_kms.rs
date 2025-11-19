@@ -18,6 +18,8 @@ use crate::engine::base::CrsGenMetadata;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 #[cfg(feature = "non-wasm")]
+use crate::engine::compute_external_user_decrypt_signature;
+#[cfg(feature = "non-wasm")]
 use crate::engine::context_manager::CentralizedContextManager;
 #[cfg(feature = "non-wasm")]
 use crate::engine::traits::{BackupOperator, ContextManager};
@@ -457,8 +459,6 @@ pub async fn async_user_decrypt<
         metrics,
         metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
-
-    use crate::engine::base::compute_external_user_decrypt_signature;
 
     let mut all_signcrypted_cts = vec![];
     for typed_ciphertext in typed_ciphertexts {

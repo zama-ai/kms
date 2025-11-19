@@ -18,7 +18,7 @@ use crate::{
             internal_verify_sig, recover_address_from_ext_signature, PublicSigKey, Signature,
         },
     },
-    engine::base::compute_user_decrypt_message,
+    engine::compute_user_decrypt_message,
     some_or_err,
 };
 
@@ -440,7 +440,7 @@ mod tests {
         },
         dummy_domain,
         engine::{
-            base::compute_external_user_decrypt_signature,
+            compute_external_user_decrypt_signature,
             validation_wasm::{
                 ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE,
                 ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND,
