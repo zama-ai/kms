@@ -178,6 +178,9 @@ services:
       - "docker-compose-kms-core.env"
     environment:
       - DOCKER_BUILDKIT=1
+            # Observe there is no field called `enabled` in the SecretSharingKeychain structure,
+      # but it seems it is the only way we can set the SecretSharingKeychain structure through environment variables
+      - KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true
     entrypoint: >
       /bin/sh -c "
       AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
