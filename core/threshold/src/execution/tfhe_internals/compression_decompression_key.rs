@@ -11,7 +11,10 @@ use crate::{
         galois_rings::common::ResiduePoly,
         structure_traits::{BaseRing, ErrorCorrect},
     },
-    execution::{online::preprocessing::BitPreprocessing, runtime::session::BaseSessionHandles},
+    execution::{
+        online::preprocessing::BitPreprocessing,
+        runtime::sessions::base_session::BaseSessionHandles,
+    },
 };
 
 use super::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare};

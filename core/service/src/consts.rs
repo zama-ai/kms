@@ -148,18 +148,6 @@ lazy_static::lazy_static! {
     ]);
 }
 
-#[test]
-fn test_context_derivation() {
-    let context_id = *DEFAULT_MPC_CONTEXT;
-    let sid = context_id.derive_session_id().unwrap();
-    assert_eq!(
-        threshold_fhe::session_id::SessionId::from(
-            threshold_fhe::tls_certs::DEFAULT_SESSION_ID_FROM_CONTEXT
-        ),
-        sid
-    );
-}
-
 #[cfg(feature = "insecure")]
 lazy_static::lazy_static! {
     pub static ref MOCK_NITRO_SIGNING_KEY_BYTES: Vec<u8> = include_bytes!("../certs/mock_nitro_signing_key.der").into();

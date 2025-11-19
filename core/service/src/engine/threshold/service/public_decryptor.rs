@@ -33,7 +33,7 @@ use threshold_fhe::{
             LowLevelCiphertext, OfflineNoiseFloodSession, SecureOnlineNoiseFloodDecryption,
             SmallOfflineNoiseFloodSession,
         },
-        runtime::session::SmallSession,
+        runtime::sessions::small_session::SmallSession,
         tfhe_internals::private_keysets::PrivateKeySet,
     },
     session_id::SessionId,
@@ -95,7 +95,7 @@ pub struct SecureNoiseFloodDecryptor;
 impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
     type Prep = SmallOfflineNoiseFloodSession<
         { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        threshold_fhe::execution::runtime::session::SmallSession<ResiduePolyF4Z128>,
+        threshold_fhe::execution::runtime::sessions::small_session::SmallSession<ResiduePolyF4Z128>,
     >;
 
     async fn decrypt<T>(
@@ -746,8 +746,8 @@ mod tests {
     };
     use rand::SeedableRng;
     use threshold_fhe::execution::{
-        runtime::session::ParameterHandles, small_execution::prss::PRSSSetup,
-        tfhe_internals::utils::expanded_encrypt,
+        runtime::sessions::session_parameters::GenericParameterHandles,
+        small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
     };
 
     use crate::{
@@ -769,7 +769,9 @@ mod tests {
     impl NoiseFloodDecryptor for DummyNoisefloodDecryptor {
         type Prep = SmallOfflineNoiseFloodSession<
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            threshold_fhe::execution::runtime::session::SmallSession<ResiduePolyF4Z128>,
+            threshold_fhe::execution::runtime::sessions::small_session::SmallSession<
+                ResiduePolyF4Z128,
+            >,
         >;
 
         async fn decrypt<T>(

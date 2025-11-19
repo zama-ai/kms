@@ -29,7 +29,6 @@ use crate::choreography::requests::{
 };
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
-use crate::execution::constants::DEFAULT_CHOREOGRAPHY_CONTEXT_ID;
 use crate::execution::endpoints::decryption::{
     combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
     task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, OfflineNoiseFloodSession,
@@ -56,10 +55,12 @@ use crate::execution::online::preprocessing::{
 };
 use crate::execution::online::reshare::{reshare_sk_same_sets, ResharePreprocRequired};
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
-use crate::execution::runtime::session::ParameterHandles;
-use crate::execution::runtime::session::ToBaseSession;
-use crate::execution::runtime::session::{BaseSession, BaseSessionHandles};
-use crate::execution::runtime::session::{LargeSession, SessionParameters};
+use crate::execution::runtime::sessions::base_session::ToBaseSession;
+use crate::execution::runtime::sessions::base_session::{BaseSession, BaseSessionHandles};
+use crate::execution::runtime::sessions::large_session::LargeSession;
+use crate::execution::runtime::sessions::session_parameters::{
+    GenericParameterHandles, SessionParameters,
+};
 use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::execution::small_execution::prf::PRSSConversions;
 use crate::execution::small_execution::prss::{DerivePRSSState, PRSSPrimitives};
@@ -426,16 +427,14 @@ where
     async fn create_base_session(
         &self,
         request_sid: SessionId,
-        context_id: SessionId,
         threshold: u8,
-        role_assignment: Arc<RwLock<RoleAssignment>>,
+        role_assignment: Arc<RwLock<RoleAssignment<Role>>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<BaseSession> {
         Ok(self
             .create_base_sessions(
                 request_sid,
-                context_id,
                 1,
                 threshold,
                 role_assignment,
@@ -459,11 +458,10 @@ where
     async fn create_base_sessions(
         &self,
         request_sid: SessionId,
-        context_id: SessionId,
         num_sessions: usize,
         threshold: u8,
         // TODO does not need to be Arc
-        role_assignment: Arc<RwLock<RoleAssignment>>,
+        role_assignment: Arc<RwLock<RoleAssignment<Role>>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<Vec<BaseSession>> {
@@ -485,7 +483,6 @@ where
                 .networking_manager
                 .make_network_session(
                     session_id,
-                    context_id,
                     &*role_assignment.read().await,
                     self.my_role,
                     network_mode,
@@ -607,7 +604,6 @@ where
         let mut base_session = self
             .create_base_session(
                 session_id,
-                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 threshold,
                 role_assignment,
                 NetworkMode::Sync,
@@ -729,7 +725,6 @@ where
         let base_sessions = self
             .create_base_sessions(
                 start_sid,
-                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 num_sessions as usize,
                 threshold,
                 role_assignment,
@@ -947,7 +942,6 @@ where
         let mut base_session = self
             .create_base_session(
                 session_id,
-                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 threshold,
                 role_assignment,
                 NetworkMode::Async,
@@ -1122,7 +1116,6 @@ where
             let mut base_session = self
                 .create_base_session(
                     session_id,
-                    *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                     0,
                     role_assignment,
                     NetworkMode::Sync,
@@ -1242,7 +1235,6 @@ where
                 let base_sessions = self
                     .create_base_sessions(
                         session_id,
-                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         num_sessions,
                         threshold,
                         role_assignment,
@@ -1312,7 +1304,6 @@ where
                 let base_sessions = self
                     .create_base_sessions(
                         session_id,
-                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         num_sessions,
                         threshold,
                         role_assignment,
@@ -1406,7 +1397,6 @@ where
                 let base_session = self
                     .create_base_session(
                         session_id,
-                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         threshold,
                         role_assignment,
                         NetworkMode::Sync,
@@ -1457,7 +1447,6 @@ where
                 let base_session = self
                     .create_base_session(
                         session_id,
-                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         threshold,
                         role_assignment,
                         NetworkMode::Sync,
@@ -1613,7 +1602,6 @@ where
             let mut bcast_session = self
                 .create_base_session(
                     session_id,
-                    *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                     threshold,
                     role_assignment.clone(),
                     NetworkMode::Sync,
@@ -1633,7 +1621,6 @@ where
                     let base_sessions = self
                         .create_base_sessions(
                             new_session_id,
-                            *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                             num_sessions,
                             threshold,
                             role_assignment.clone(),
@@ -1775,7 +1762,6 @@ where
                     let base_sessions = self
                         .create_base_sessions(
                             new_session_id,
-                            *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                             num_sessions * num_blocks,
                             threshold,
                             role_assignment.clone(),
@@ -1977,7 +1963,6 @@ where
                 .networking_manager
                 .make_network_session(
                     session_id,
-                    *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                     &*role_assignment.read().await,
                     self.my_role,
                     NetworkMode::Async,
@@ -2034,7 +2019,6 @@ where
                     let base_sessions = self
                         .create_base_sessions(
                             session_id,
-                            *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                             num_sessions,
                             threshold,
                             role_assignment.clone(),
@@ -2320,7 +2304,6 @@ where
         let mut base_session = self
             .create_base_session(
                 session_id,
-                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 threshold,
                 role_assignment.clone(),
                 NetworkMode::Sync,
@@ -2484,7 +2467,6 @@ where
         let mut base_sessions = self
             .create_base_sessions(
                 session_id,
-                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 3,
                 threshold,
                 Arc::new(RwLock::new(RoleAssignment::from(role_assignment))),

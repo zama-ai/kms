@@ -11,7 +11,7 @@ use crate::{
             OnlineNoiseFloodDecryption, SnsDecryptionKeyType, SnsRadixOrBoolCiphertext,
         },
         online::preprocessing::NoiseFloodPreprocessing,
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         tfhe_internals::private_keysets::PrivateKeySet,
     },
 };

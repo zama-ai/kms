@@ -14,24 +14,11 @@ pub mod util {
     pub mod rate_limiter;
     pub mod retry;
 }
-pub mod cryptography {
-    #[cfg(feature = "non-wasm")]
-    pub mod attestation;
-    pub mod decompression;
-    pub mod error;
-    pub mod hybrid_ml_kem;
-    pub mod internal_crypto_types;
-    pub mod signatures;
-    // Allow our deprecated modules for now as we need to be backwards compatible
-    #[allow(deprecated)]
-    pub mod encryption;
-    #[allow(deprecated)]
-    pub mod signcryption;
-}
 #[cfg(feature = "non-wasm")]
 pub mod backup;
 #[cfg(feature = "non-wasm")]
 pub mod conf;
+pub mod cryptography;
 pub mod engine;
 #[cfg(feature = "non-wasm")]
 pub mod grpc;

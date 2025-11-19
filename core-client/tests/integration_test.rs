@@ -1,14 +1,19 @@
 use assert_cmd::Command;
 use cc_tests_utils::{DockerCompose, KMSMode};
+use kms_core_client::mpc_context::create_test_context_info_from_core_config;
 use kms_core_client::*;
+use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::PubDataType;
+use kms_grpc::ContextId;
 use kms_grpc::KeyId;
 use kms_grpc::RequestId;
 use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::consts::ID_LENGTH;
+use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
 use kms_lib::consts::SIGNING_KEY_ID;
 use serial_test::serial;
 use std::fs::create_dir_all;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Output;
@@ -16,14 +21,13 @@ use std::str::FromStr;
 use std::string::String;
 use test_context::futures::future::join_all;
 use test_context::{test_context, AsyncTestContext};
+use tfhe::safe_serialization;
 
 // IMPORTANT: These integration tests require Docker running and images build.
 // You can build the images by running the following commands from the root of the repo:
 // ```
 // docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
-// docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold-custodian.yml build
 // docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml build
-// docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized-custodian.yml build
 // ```
 // Any issue might be related to the fact that some obsolete Docker images exist.
 
@@ -33,16 +37,16 @@ use test_context::{test_context, AsyncTestContext};
 // - nightly tests are marked with "nightly_tests" in their name.
 // We use this to filter tests in CI runs.
 
-trait DockerComposeContext {
+trait DockerComposeManager {
     fn root_path(&self) -> PathBuf;
     fn config_path(&self) -> &str;
 }
 
-struct DockerComposeCentralizedContext {
+struct DockerComposeCentralized {
     pub cmd: DockerCompose,
 }
 
-impl DockerComposeContext for DockerComposeCentralizedContext {
+impl DockerComposeManager for DockerComposeCentralized {
     fn root_path(&self) -> PathBuf {
         self.cmd.cmd.root_path.clone()
     }
@@ -52,9 +56,9 @@ impl DockerComposeContext for DockerComposeCentralizedContext {
     }
 }
 
-impl AsyncTestContext for DockerComposeCentralizedContext {
+impl AsyncTestContext for DockerComposeCentralized {
     async fn setup() -> Self {
-        DockerComposeCentralizedContext {
+        DockerComposeCentralized {
             cmd: DockerCompose::new(KMSMode::Centralized),
         }
     }
@@ -64,11 +68,11 @@ impl AsyncTestContext for DockerComposeCentralizedContext {
     }
 }
 
-struct DockerComposeCentralizedCustodianContext {
+struct DockerComposeCentralizedCustodian {
     pub cmd: DockerCompose,
 }
 
-impl DockerComposeContext for DockerComposeCentralizedCustodianContext {
+impl DockerComposeManager for DockerComposeCentralizedCustodian {
     fn root_path(&self) -> PathBuf {
         self.cmd.cmd.root_path.clone()
     }
@@ -78,9 +82,9 @@ impl DockerComposeContext for DockerComposeCentralizedCustodianContext {
     }
 }
 
-impl AsyncTestContext for DockerComposeCentralizedCustodianContext {
+impl AsyncTestContext for DockerComposeCentralizedCustodian {
     async fn setup() -> Self {
-        DockerComposeCentralizedCustodianContext {
+        DockerComposeCentralizedCustodian {
             cmd: DockerCompose::new(KMSMode::CentralizedCustodian),
         }
     }
@@ -90,11 +94,11 @@ impl AsyncTestContext for DockerComposeCentralizedCustodianContext {
     }
 }
 
-struct DockerComposeThresholdContextDefault {
+struct DockerComposeThresholdDefault {
     pub cmd: DockerCompose,
 }
 
-impl DockerComposeContext for DockerComposeThresholdContextDefault {
+impl DockerComposeManager for DockerComposeThresholdDefault {
     fn root_path(&self) -> PathBuf {
         self.cmd.cmd.root_path.clone()
     }
@@ -104,7 +108,7 @@ impl DockerComposeContext for DockerComposeThresholdContextDefault {
     }
 }
 
-impl AsyncTestContext for DockerComposeThresholdContextDefault {
+impl AsyncTestContext for DockerComposeThresholdDefault {
     async fn setup() -> Self {
         Self {
             cmd: DockerCompose::new(KMSMode::ThresholdDefaultParameter),
@@ -116,11 +120,11 @@ impl AsyncTestContext for DockerComposeThresholdContextDefault {
     }
 }
 
-struct DockerComposeThresholdContextTest {
+struct DockerComposeThresholdTest {
     pub cmd: DockerCompose,
 }
 
-impl DockerComposeContext for DockerComposeThresholdContextTest {
+impl DockerComposeManager for DockerComposeThresholdTest {
     fn root_path(&self) -> PathBuf {
         self.cmd.cmd.root_path.clone()
     }
@@ -130,7 +134,7 @@ impl DockerComposeContext for DockerComposeThresholdContextTest {
     }
 }
 
-impl AsyncTestContext for DockerComposeThresholdContextTest {
+impl AsyncTestContext for DockerComposeThresholdTest {
     async fn setup() -> Self {
         Self {
             cmd: DockerCompose::new(KMSMode::ThresholdTestParameter),
@@ -141,11 +145,12 @@ impl AsyncTestContext for DockerComposeThresholdContextTest {
         drop(self.cmd);
     }
 }
-struct DockerComposeThresholdCustodianContextTest {
+
+struct DockerComposeThresholdTestNoInit {
     pub cmd: DockerCompose,
 }
 
-impl DockerComposeContext for DockerComposeThresholdCustodianContextTest {
+impl DockerComposeManager for DockerComposeThresholdTestNoInit {
     fn root_path(&self) -> PathBuf {
         self.cmd.cmd.root_path.clone()
     }
@@ -155,7 +160,33 @@ impl DockerComposeContext for DockerComposeThresholdCustodianContextTest {
     }
 }
 
-impl AsyncTestContext for DockerComposeThresholdCustodianContextTest {
+impl AsyncTestContext for DockerComposeThresholdTestNoInit {
+    async fn setup() -> Self {
+        Self {
+            cmd: DockerCompose::new(KMSMode::ThresholdTestParameterNoInit),
+        }
+    }
+
+    async fn teardown(self) {
+        drop(self.cmd);
+    }
+}
+
+struct DockerComposeThresholdCustodianTest {
+    pub cmd: DockerCompose,
+}
+
+impl DockerComposeManager for DockerComposeThresholdCustodianTest {
+    fn root_path(&self) -> PathBuf {
+        self.cmd.cmd.root_path.clone()
+    }
+
+    fn config_path(&self) -> &str {
+        "core-client/config/client_local_threshold.toml"
+    }
+}
+
+impl AsyncTestContext for DockerComposeThresholdCustodianTest {
     async fn setup() -> Self {
         Self {
             cmd: DockerCompose::new(KMSMode::ThresholdCustodianTestParameter),
@@ -167,7 +198,7 @@ impl AsyncTestContext for DockerComposeThresholdCustodianContextTest {
     }
 }
 
-async fn insecure_key_gen<T: DockerComposeContext>(ctx: &T, test_path: &Path) -> String {
+async fn insecure_key_gen<T: DockerComposeManager>(ctx: &T, test_path: &Path) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
     let config = CmdConfig {
         file_conf: Some(String::from(path_to_config.to_str().unwrap())),
@@ -193,7 +224,7 @@ async fn insecure_key_gen<T: DockerComposeContext>(ctx: &T, test_path: &Path) ->
     key_id.to_string()
 }
 
-async fn crs_gen<T: DockerComposeContext>(
+async fn crs_gen<T: DockerComposeManager>(
     ctx: &T,
     test_path: &Path,
     insecure_crs_gen: bool,
@@ -224,10 +255,18 @@ async fn crs_gen<T: DockerComposeContext>(
     crs_id.to_string()
 }
 
-async fn real_preproc_and_keygen(config_path: &str, test_path: &Path) -> String {
+async fn real_preproc_and_keygen(
+    config_path: &str,
+    test_path: &Path,
+    context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
+) -> String {
     let config = CmdConfig {
         file_conf: Some(config_path.to_string()),
-        command: CCCommand::PreprocKeyGen(NoParameters {}),
+        command: CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
+            context_id,
+            epoch_id,
+        }),
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
@@ -243,7 +282,11 @@ async fn real_preproc_and_keygen(config_path: &str, test_path: &Path) -> String 
         file_conf: Some(config_path.to_string()),
         command: CCCommand::KeyGen(KeyGenParameters {
             preproc_id: preproc_id.unwrap(),
-            shared_args: SharedKeyGenParameters::default(),
+            shared_args: SharedKeyGenParameters {
+                keyset_type: None,
+                context_id,
+                epoch_id,
+            },
         }),
         logs: true,
         max_iter: 200,
@@ -263,7 +306,7 @@ async fn real_preproc_and_keygen(config_path: &str, test_path: &Path) -> String 
     key_id.to_string()
 }
 
-async fn restore_from_backup<T: DockerComposeContext>(ctx: &T, test_path: &Path) -> String {
+async fn restore_from_backup<T: DockerComposeManager>(ctx: &T, test_path: &Path) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
 
     let init_command = CCCommand::BackupRestore(NoParameters {});
@@ -285,8 +328,8 @@ async fn restore_from_backup<T: DockerComposeContext>(ctx: &T, test_path: &Path)
     "".to_string()
 }
 
-async fn test_template<T: DockerComposeContext>(
-    ctx: &mut T,
+async fn test_template<T: DockerComposeManager>(
+    ctx: &T,
     commands: Vec<CCCommand>,
     test_path: &Path,
 ) {
@@ -374,7 +417,7 @@ async fn test_template<T: DockerComposeContext>(
     }
 }
 
-async fn new_custodian_context<T: DockerComposeContext>(
+async fn new_custodian_context<T: DockerComposeManager>(
     ctx: &T,
     test_path: &Path,
     custodian_threshold: u32,
@@ -406,6 +449,77 @@ async fn new_custodian_context<T: DockerComposeContext>(
     res_id.to_string()
 }
 
+async fn store_mpc_context_in_file(context_path: &Path, config_path: &Path, context_id: ContextId) {
+    let cc_conf: CoreClientConfig = observability::conf::Settings::builder()
+        .path(config_path.to_str().unwrap())
+        .env_prefix("CORE_CLIENT")
+        .build()
+        .init_conf()
+        .unwrap();
+
+    let context = create_test_context_info_from_core_config(context_id, &cc_conf)
+        .await
+        .unwrap();
+    println!(
+        "Storing context \n{:?}\nto file {:?}",
+        context, context_path
+    );
+
+    let mut buf = Vec::new();
+    safe_serialization::safe_serialize(&context, &mut buf, SAFE_SER_SIZE_LIMIT).unwrap();
+
+    let mut file = std::fs::File::create(context_path).unwrap();
+    file.write_all(&buf).unwrap();
+}
+
+// expect the context path to already hold some context
+async fn new_mpc_context<T: DockerComposeManager>(ctx: &T, context_path: &Path, test_path: &Path) {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+
+    let command = CCCommand::NewMpcContext(NewMpcContextParameters::SerializedContextPath(
+        ContextPath {
+            input_path: context_path.to_path_buf(),
+        },
+    ));
+    let init_config = CmdConfig {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    let context_switch_result = execute_cmd(&init_config, test_path).await.unwrap();
+    assert_eq!(context_switch_result.len(), 1);
+}
+
+// expect the context to already exist in the KMS servers
+async fn new_prss<T: DockerComposeManager>(
+    ctx: &T,
+    context_id: ContextId,
+    epoch_id: EpochId,
+    test_path: &Path,
+) {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+
+    let command = CCCommand::PrssInit(PrssInitParameters {
+        context_id,
+        epoch_id,
+    });
+    let init_config = CmdConfig {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    let prss_result = execute_cmd(&init_config, test_path).await.unwrap();
+    assert_eq!(prss_result.len(), 1);
+}
+
 async fn generate_custodian_keys_to_file(
     temp_dir: &Path,
     amount_custodians: usize,
@@ -415,9 +529,9 @@ async fn generate_custodian_keys_to_file(
     let mut setup_msgs_paths = Vec::new();
     // Use the first server to just play custodian in the tests
     let container_name = if threshold {
-        "zama-core-threshold-custodian-dev-kms-core-1-1".to_string()
+        "zama-core-threshold-dev-kms-core-1-1".to_string()
     } else {
-        "zama-core-centralized-custodian-dev-kms-core-1".to_string()
+        "zama-core-centralized-dev-kms-core-1".to_string()
     };
     for cus_idx in 1..=amount_custodians {
         let cur_setup_path = temp_dir
@@ -497,7 +611,7 @@ fn extract_seed_phrase(out: Output) -> String {
         .to_string()
 }
 
-async fn custodian_backup_init<T: DockerComposeContext>(
+async fn custodian_backup_init<T: DockerComposeManager>(
     ctx: &T,
     test_path: &Path,
     operator_recovery_resp_paths: Vec<PathBuf>,
@@ -545,9 +659,9 @@ async fn custodian_reencrypt(
             format!("PUB-p{}", operator_index)
         };
         let container_name = if amount_operators > 1 {
-            format!("zama-core-threshold-custodian-dev-kms-core-{operator_index}-1")
+            format!("zama-core-threshold-dev-kms-core-{operator_index}-1")
         } else {
-            "zama-core-centralized-custodian-dev-kms-core-1".to_string()
+            "zama-core-centralized-dev-kms-core-1".to_string()
         };
         let cur_recovery_path = &recovery_paths[operator_index - 1];
         // Ensure the temp dir exists on docker as well. For simplicity we just use the same dir as locally
@@ -660,7 +774,7 @@ async fn custodian_reencrypt(
     response_paths
 }
 
-async fn custodian_backup_recovery<T: DockerComposeContext>(
+async fn custodian_backup_recovery<T: DockerComposeManager>(
     ctx: &T,
     test_path: &Path,
     custodian_recovery_outputs: Vec<PathBuf>,
@@ -692,10 +806,10 @@ async fn custodian_backup_recovery<T: DockerComposeContext>(
     res_id.to_string()
 }
 
-#[test_context(DockerComposeCentralizedContext)]
+#[test_context(DockerComposeCentralized)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centralized_insecure(ctx: &mut DockerComposeCentralizedContext) {
+async fn test_centralized_insecure(ctx: &DockerComposeCentralized) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -703,10 +817,10 @@ async fn test_centralized_insecure(ctx: &mut DockerComposeCentralizedContext) {
     integration_test_commands(ctx, key_id).await;
 }
 
-#[test_context(DockerComposeCentralizedContext)]
+#[test_context(DockerComposeCentralized)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centralized_crsgen_secure(ctx: &mut DockerComposeCentralizedContext) {
+async fn test_centralized_crsgen_secure(ctx: &DockerComposeCentralized) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -716,10 +830,10 @@ async fn test_centralized_crsgen_secure(ctx: &mut DockerComposeCentralizedContex
 }
 
 // Test restore without custodians
-#[test_context(DockerComposeCentralizedContext)]
+#[test_context(DockerComposeCentralized)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centralized_restore_from_backup(ctx: &DockerComposeCentralizedContext) {
+async fn test_centralized_restore_from_backup(ctx: &DockerComposeCentralized) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -730,10 +844,10 @@ async fn test_centralized_restore_from_backup(ctx: &DockerComposeCentralizedCont
     // end points, and content returned from the KMS to the custodians, work as expected.
 }
 
-#[test_context(DockerComposeCentralizedCustodianContext)]
+#[test_context(DockerComposeCentralizedCustodian)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodianContext) {
+async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodian) {
     init_testing();
     let amount_custodians = 5;
     let custodian_threshold = 2;
@@ -776,10 +890,10 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
     // end points, and content returned from the KMS to the custodians, work as expected.
 }
 
-#[test_context(DockerComposeThresholdContextDefault)]
+#[test_context(DockerComposeThresholdDefault)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_insecure(ctx: &mut DockerComposeThresholdContextDefault) {
+async fn test_threshold_insecure(ctx: &DockerComposeThresholdDefault) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -787,7 +901,7 @@ async fn test_threshold_insecure(ctx: &mut DockerComposeThresholdContextDefault)
     integration_test_commands(ctx, key_id).await;
 }
 
-async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id: String) {
+async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: String) {
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let ctxt_path: &Path = Path::new("tests/data/test_encrypt_cipher.txt");
@@ -801,6 +915,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -811,6 +926,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -821,6 +937,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 3,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -831,6 +948,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 3,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -841,6 +959,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -852,6 +971,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -863,6 +983,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -874,6 +995,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: Some(ctxt_path.to_path_buf()),
@@ -897,6 +1019,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: false,
             key_id,
+            context_id: None,
             batch_size: 2,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -907,6 +1030,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: false,
             key_id,
+            context_id: None,
             batch_size: 2,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -917,6 +1041,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: false,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -927,6 +1052,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: false,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -938,6 +1064,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: false,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -949,6 +1076,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: false,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -960,6 +1088,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
             no_compression: true,
             no_precompute_sns: false,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: Some(ctxt_with_sns_path.to_path_buf()),
@@ -984,7 +1113,7 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
     .await
 }
 
-fn config_path_from_context(ctx: &impl DockerComposeContext) -> String {
+fn config_path_from_context(ctx: &impl DockerComposeManager) -> String {
     ctx.root_path()
         .join(ctx.config_path())
         .to_str()
@@ -992,40 +1121,38 @@ fn config_path_from_context(ctx: &impl DockerComposeContext) -> String {
         .to_string()
 }
 
-#[test_context(DockerComposeThresholdContextTest)]
+#[test_context(DockerComposeThresholdTest)]
 #[tokio::test]
 #[serial(docker)]
-async fn nightly_tests_threshold_sequential_preproc_keygen(
-    ctx: &DockerComposeThresholdContextTest,
-) {
+async fn nightly_tests_threshold_sequential_preproc_keygen(ctx: &DockerComposeThresholdTest) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder).await;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder).await;
+    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None).await;
+    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None).await;
     assert_ne!(key_id_1, key_id_2);
 }
 
-#[test_context(DockerComposeThresholdContextTest)]
+#[test_context(DockerComposeThresholdTest)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_concurrent_preproc_keygen(ctx: &DockerComposeThresholdContextTest) {
+async fn test_threshold_concurrent_preproc_keygen(ctx: &DockerComposeThresholdTest) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
     let _ = join_all([
-        real_preproc_and_keygen(&config_path, keys_folder),
-        real_preproc_and_keygen(&config_path, keys_folder),
+        real_preproc_and_keygen(&config_path, keys_folder, None, None),
+        real_preproc_and_keygen(&config_path, keys_folder, None, None),
     ])
     .await;
 }
 
-#[test_context(DockerComposeThresholdContextDefault)]
+#[test_context(DockerComposeThresholdDefault)]
 #[tokio::test]
 #[serial(docker)]
-async fn nightly_tests_threshold_sequential_crs(ctx: &DockerComposeThresholdContextDefault) {
+async fn nightly_tests_threshold_sequential_crs(ctx: &DockerComposeThresholdDefault) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -1034,10 +1161,10 @@ async fn nightly_tests_threshold_sequential_crs(ctx: &DockerComposeThresholdCont
     assert_ne!(crs_id_1, crs_id_2);
 }
 
-#[test_context(DockerComposeThresholdContextDefault)]
+#[test_context(DockerComposeThresholdDefault)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdContextDefault) {
+async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdDefault) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -1050,10 +1177,10 @@ async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdContextDefaul
 }
 
 // Test restore without custodians
-#[test_context(DockerComposeThresholdContextTest)]
+#[test_context(DockerComposeThresholdTest)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_restore_from_backup(ctx: &DockerComposeThresholdContextTest) {
+async fn test_threshold_restore_from_backup(ctx: &DockerComposeThresholdTest) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -1064,10 +1191,10 @@ async fn test_threshold_restore_from_backup(ctx: &DockerComposeThresholdContextT
     // data gets restored. Instead tests in the client within core have tests for validating this
 }
 
-#[test_context(DockerComposeThresholdCustodianContextTest)]
+#[test_context(DockerComposeThresholdCustodianTest)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianContextTest) {
+async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianTest) {
     init_testing();
     let amount_custodians = 5;
     let custodian_threshold = 2;
@@ -1116,30 +1243,100 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianCo
     // end points and content returned from the KMS to the custodians work as expected.
 }
 
+#[test_context(DockerComposeThresholdTest)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_mpc_context_switch(ctx: &DockerComposeThresholdTest) {
+    init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = temp_dir.path();
+    let context_path = temp_dir.path().join("mpc_context.bin");
+    let config_path = ctx.root_path().join(ctx.config_path());
+    // do insecure keygen
+    let key_id = insecure_key_gen(ctx, test_path).await;
+
+    // create and store mpc context
+    let context_id =
+        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222222222")
+            .unwrap();
+    store_mpc_context_in_file(&context_path, &config_path, context_id).await;
+
+    // do the context switch
+    new_mpc_context(ctx, &context_path, test_path).await;
+
+    // try to do ddec in the new context
+    let ddec_command = CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+        to_encrypt: "0x1".to_string(),
+        data_type: FheType::Ebool,
+        no_compression: false,
+        no_precompute_sns: true,
+        key_id: KeyId::from_str(&key_id).unwrap(),
+        context_id: Some(context_id),
+        batch_size: 1,
+        num_requests: 1,
+        ciphertext_output_path: None,
+    }));
+    test_template(ctx, vec![ddec_command], test_path).await;
+}
+
+// Start from mpc parties that are not initialized (no prss or context).
+#[test_context(DockerComposeThresholdTestNoInit)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_mpc_context_init(ctx: &DockerComposeThresholdTestNoInit) {
+    init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = temp_dir.path();
+    let context_path = temp_dir.path().join("mpc_context.bin");
+    let config_path = ctx.root_path().join(ctx.config_path());
+
+    // create and store mpc context
+    let context_id =
+        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222223333")
+            .unwrap();
+    store_mpc_context_in_file(&context_path, &config_path, context_id).await;
+
+    // create the new context
+    new_mpc_context(ctx, &context_path, test_path).await;
+
+    // create PRSS
+    let epoch_id =
+        EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222224444")
+            .unwrap();
+    new_prss(ctx, context_id, epoch_id, test_path).await;
+
+    // do preproc and keygen (which should use the prss)
+    let _ = real_preproc_and_keygen(
+        config_path.to_str().unwrap(),
+        test_path,
+        Some(context_id),
+        Some(epoch_id),
+    )
+    .await;
+}
+
 ///////// FULL GEN TESTS//////////
 //////////////////////////////////
 
-#[test_context(DockerComposeThresholdContextDefault)]
+#[test_context(DockerComposeThresholdDefault)]
 #[tokio::test]
 #[serial(docker)]
 async fn full_gen_tests_default_threshold_sequential_preproc_keygen(
-    ctx: &DockerComposeThresholdContextDefault,
+    ctx: &DockerComposeThresholdDefault,
 ) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder).await;
-    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder).await;
+    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder, None, None).await;
+    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder, None, None).await;
     assert_ne!(key_id_1, key_id_2);
 }
 
-#[test_context(DockerComposeThresholdContextDefault)]
+#[test_context(DockerComposeThresholdDefault)]
 #[tokio::test]
 #[serial(docker)]
-async fn full_gen_tests_default_threshold_sequential_crs(
-    ctx: &DockerComposeThresholdContextDefault,
-) {
+async fn full_gen_tests_default_threshold_sequential_crs(ctx: &DockerComposeThresholdDefault) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();

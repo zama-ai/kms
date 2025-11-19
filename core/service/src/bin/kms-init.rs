@@ -47,6 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let request = InitRequest {
                 request_id: Some(req_id),
+                context_id: None,
             };
             let _ = kms_client.init(request).await.unwrap();
         }));

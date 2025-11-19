@@ -18,14 +18,13 @@ use crate::choreography::grpc::{
     fill_network_memory_info_single_session, gen_random_sid,
 };
 use crate::choreography::requests::Status;
-use crate::execution::constants::DEFAULT_CHOREOGRAPHY_CONTEXT_ID;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::PreprocessorFactory;
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
-use crate::execution::runtime::session::BaseSession;
-use crate::execution::runtime::session::ParameterHandles;
-use crate::execution::runtime::session::SessionParameters;
-use crate::execution::runtime::session::SmallSession;
+use crate::execution::runtime::sessions::base_session::BaseSession;
+use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
+use crate::execution::runtime::sessions::session_parameters::SessionParameters;
+use crate::execution::runtime::sessions::small_session::SmallSession;
 use crate::execution::small_execution::prss::{
     DerivePRSSState, PRSSInit, PRSSSetup, RobustSecurePrssInit,
 };
@@ -162,17 +161,15 @@ impl ExperimentalGrpcChoreography {
     async fn create_base_session(
         &self,
         request_sid: SessionId,
-        context_id: SessionId,
         threshold: u8,
         // TODO does not need to be Arc
-        role_assignment: Arc<RwLock<RoleAssignment>>,
+        role_assignment: Arc<RwLock<RoleAssignment<Role>>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<BaseSession> {
         Ok(self
             .create_base_sessions(
                 request_sid,
-                context_id,
                 1,
                 threshold,
                 role_assignment,
@@ -196,10 +193,9 @@ impl ExperimentalGrpcChoreography {
     async fn create_base_sessions(
         &self,
         request_sid: SessionId,
-        context_id: SessionId,
         num_sessions: usize,
         threshold: u8,
-        role_assignment: Arc<RwLock<RoleAssignment>>,
+        role_assignment: Arc<RwLock<RoleAssignment<Role>>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<Vec<BaseSession>> {
@@ -223,7 +219,6 @@ impl ExperimentalGrpcChoreography {
                 .networking_manager
                 .make_network_session(
                     session_id,
-                    context_id,
                     &*role_assignment.read().await,
                     self.my_role,
                     network_mode,
@@ -298,7 +293,6 @@ impl Choreography for ExperimentalGrpcChoreography {
         let mut base_session = self
             .create_base_session(
                 session_id,
-                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 threshold,
                 role_assignment.clone(),
                 NetworkMode::Sync,
@@ -397,7 +391,6 @@ impl Choreography for ExperimentalGrpcChoreography {
         let base_sessions = self
             .create_base_sessions(
                 start_sid,
-                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 num_sessions as usize,
                 threshold,
                 role_assignment.clone(),
@@ -500,7 +493,6 @@ impl Choreography for ExperimentalGrpcChoreography {
         let mut base_session = self
             .create_base_session(
                 session_id,
-                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 threshold,
                 role_assignment.clone(),
                 NetworkMode::Async,
@@ -615,7 +607,6 @@ impl Choreography for ExperimentalGrpcChoreography {
                 .networking_manager
                 .make_network_session(
                     session_id,
-                    *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                     &RoleAssignment::from(role_assignment),
                     self.my_role,
                     NetworkMode::Async,
@@ -764,7 +755,6 @@ impl Choreography for ExperimentalGrpcChoreography {
         let base_sessions = self
             .create_base_sessions(
                 session_id,
-                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 num_parallel,
                 threshold,
                 role_assignment.clone(),

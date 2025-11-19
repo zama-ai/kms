@@ -13,6 +13,35 @@ pub enum RoleVersioned {
     V0(Role),
 }
 
+pub trait RoleTrait:
+    Default
+    + std::fmt::Debug
+    + std::fmt::Display
+    + Sync
+    + Send
+    + Eq
+    + PartialOrd
+    + Ord
+    + Clone
+    + Copy
+    + std::hash::Hash
+    + 'static
+{
+    fn get_role_kind(&self) -> RoleKind;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RoleKind {
+    SingleSet(Role),
+    TwoSet(TwoSetsRole),
+}
+
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TwoSetsRole {
+    Set1(Role),
+    Set2(Role),
+}
+
 /// Role/party ID of a party (1...N)
 #[derive(
     Copy,
@@ -37,6 +66,24 @@ pub enum RoleVersioned {
 /// And we provide functions [`Role::get_from`] and [`Role::get_mut_from`] to retrieve elements from a vector using the role as 0-based index.
 /// Roles can also be used for direct indexing into a vector using the [`Index`] and [`IndexMut`] traits, in which case the role is automatically converted to a 0-based index.
 pub struct Role(u64);
+
+impl RoleTrait for Role {
+    fn get_role_kind(&self) -> RoleKind {
+        RoleKind::SingleSet(*self)
+    }
+}
+
+impl Default for TwoSetsRole {
+    fn default() -> Self {
+        TwoSetsRole::Set1(Role::default())
+    }
+}
+
+impl RoleTrait for TwoSetsRole {
+    fn get_role_kind(&self) -> RoleKind {
+        RoleKind::TwoSet(*self)
+    }
+}
 
 impl Role {
     /// Create Role from a 1..N indexing (internally roles are _always_ stored as 1-based indices).
@@ -143,11 +190,17 @@ impl<T> IndexMut<&mut Role> for Vec<T> {
 ///
 /// When TLS is used, this must be the subject CN in the x509 certificate.
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
-pub struct MpcIdentity(pub(crate) String);
+pub struct MpcIdentity(pub String);
 
 impl std::fmt::Display for MpcIdentity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+impl AsRef<str> for MpcIdentity {
+    fn as_ref(&self) -> &str {
+        &self.0
     }
 }
 
@@ -228,46 +281,46 @@ impl FromStr for Identity {
 */
 
 #[derive(Debug, Clone, Default)]
-pub struct RoleAssignment {
+pub struct RoleAssignment<R: RoleTrait> {
     // NOTE: the String is the MPC identity
-    pub inner: HashMap<Role, Identity>,
+    pub inner: HashMap<R, Identity>,
 }
 
-impl From<HashMap<Role, Identity>> for RoleAssignment {
-    fn from(map: HashMap<Role, Identity>) -> Self {
+impl<R: RoleTrait> From<HashMap<R, Identity>> for RoleAssignment<R> {
+    fn from(map: HashMap<R, Identity>) -> Self {
         let inner = map.into_iter().collect();
         RoleAssignment { inner }
     }
 }
 
-impl RoleAssignment {
+impl<R: RoleTrait> RoleAssignment<R> {
     pub fn empty() -> Self {
         RoleAssignment {
             inner: HashMap::new(),
         }
     }
 
-    pub fn get(&self, role: &Role) -> Option<&Identity> {
+    pub fn get(&self, role: &R) -> Option<&Identity> {
         self.inner.get(role)
     }
 
-    pub fn contains_key(&self, role: &Role) -> bool {
+    pub fn contains_key(&self, role: &R) -> bool {
         self.inner.contains_key(role)
     }
 
-    pub fn keys(&self) -> impl Iterator<Item = &Role> {
+    pub fn keys(&self) -> impl Iterator<Item = &R> {
         self.inner.keys()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&Role, &Identity)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&R, &Identity)> {
         self.inner.iter()
     }
 
-    pub fn remove(&mut self, role: &Role) -> Option<Identity> {
+    pub fn remove(&mut self, role: &R) -> Option<Identity> {
         self.inner.remove(role)
     }
 
-    pub fn insert(&mut self, role: Role, identity: Identity) -> Option<Identity> {
+    pub fn insert(&mut self, role: R, identity: Identity) -> Option<Identity> {
         self.inner.insert(role, identity)
     }
 

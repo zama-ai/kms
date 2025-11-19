@@ -5,7 +5,7 @@ use crate::{
     },
     execution::{
         online::preprocessing::DKGPreprocessing,
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         tfhe_internals::{
             lwe_key::LweSecretKeyShare,
             lwe_packing_keyswitch_key::LwePackingKeyswitchKeyShares,

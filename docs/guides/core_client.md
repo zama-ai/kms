@@ -263,8 +263,8 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
   Ensure the latest code is compiled and start the custodian-based Docker-setup images:
   ```{bash}
   cargo build
-  docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold-custodian.yml build
-  docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold-custodian.yml up
+  docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
+  KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up
   ```
   Note: In case you have already been running this, old data might be present in MinIO. Hence use the [MinIO web interface](http://localhost:9001/login) to clean all old data and reboot. Use password `admin` and password `superstrongpassword`. If you don't do this, then the process might fail.
 1. Set up custodians:

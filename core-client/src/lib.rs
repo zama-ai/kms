@@ -4,10 +4,9 @@
 /// This library also includes an associated CLI.
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
-use anyhow::anyhow;
-use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
+use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenResult, CustodianContext, CustodianRecoveryInitRequest,
     CustodianRecoveryOutput, CustodianRecoveryRequest, Empty, FheParameter, KeyGenPreprocResult,
@@ -17,7 +16,7 @@ use kms_grpc::kms::v1::{
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::solidity_types::{CrsgenVerification, KeygenVerification};
-use kms_grpc::{KeyId, RequestId};
+use kms_grpc::{ContextId, KeyId, RequestId};
 use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage};
 use kms_lib::backup::operator::InternalRecoveryRequest;
 use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
@@ -43,7 +42,7 @@ use kms_lib::{conf, DecryptionMode};
 use observability::conf::Settings;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Once};
@@ -59,6 +58,13 @@ use tonic::transport::Channel;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use validator::{Validate, ValidationError};
+
+use crate::mpc_context::do_new_mpc_context;
+use crate::prss_init::do_prss_init;
+
+pub mod mpc_context;
+pub mod prss_init;
+mod s3_operations;
 
 const SLEEP_TIME_BETWEEN_REQUESTS_MS: u64 = 500;
 
@@ -110,8 +116,19 @@ pub struct CoreConf {
     /// The S3 endpoint where the public material of the given server can be reached
     #[validate(length(min = 1))]
     pub s3_endpoint: String,
-    /// The folder at the S3 endpoint where the data is stored
+
+    /// The folder at the S3 endpoint where the data is stored.
     pub object_folder: String,
+
+    #[cfg(feature = "testing")]
+    /// The folder at the S3 endpoint where the private data is stored.
+    /// This is only used for testing context switching.
+    pub private_object_folder: Option<String>,
+
+    #[cfg(feature = "testing")]
+    /// The path for the KMS configuration file,
+    /// this is only needed for testing context switching.
+    pub config_path: Option<PathBuf>,
 }
 
 fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationError> {
@@ -251,6 +268,8 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
 }
 
 use tfhe::FheTypes as TfheFheType;
+
+use crate::s3_operations::fetch_elements;
 
 #[derive(Copy, Clone, Default, EnumString, PartialEq, Display, Debug, Serialize, Deserialize)]
 pub enum FheType {
@@ -422,6 +441,12 @@ pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
     Ok(hex::decode(hex_str)?)
 }
 
+#[derive(Debug, Parser, Clone)]
+pub struct PrssInitParameters {
+    pub context_id: ContextId,
+    pub epoch_id: EpochId,
+}
+
 #[derive(Debug, Subcommand, Clone)]
 pub enum CipherArguments {
     FromFile(CipherFile),
@@ -466,6 +491,10 @@ pub struct CipherParameters {
     /// Key identifier to use for public/user decryption.
     #[clap(long, short = 'k')]
     pub key_id: KeyId,
+    /// Optionally specify the context ID to use for the decryption.
+    /// If not specified, the default context will be used.
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
     /// Number of copies of the ciphertext to process in a request.
     /// This is ignored for the encryption command.
     #[serde(skip_serializing, skip_deserializing)]
@@ -526,6 +555,8 @@ pub struct SharedKeyGenParameters {
     // TODO(#2799)
     // #[command(flatten)]
     // pub keyset_added_info: Option<KeySetAddedInfo>,
+    pub context_id: Option<ContextId>,
+    pub epoch_id: Option<EpochId>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -554,6 +585,20 @@ pub struct NewCustodianContextParameters {
     pub threshold: u32,
     #[clap(long, short = 'm')]
     pub setup_msg_paths: Vec<PathBuf>,
+}
+#[derive(Debug, Args, Clone)]
+pub struct ContextPath {
+    /// Input file of the ciphertext.
+    #[clap(long)]
+    pub input_path: PathBuf,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum NewMpcContextParameters {
+    /// Safe Serialized version of the struct ContextInfo
+    /// stored in a file.
+    SerializedContextPath(ContextPath),
+    ContextToml(ContextPath),
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -594,7 +639,19 @@ pub struct ReshareParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct KeyGenPreprocParameters {
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct PartialKeyGenPreprocParameters {
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
     /// Percentage of offline phase to run (0-100)
     #[clap(long, short = 'p')]
     pub percentage_offline: u32,
@@ -602,9 +659,10 @@ pub struct PartialKeyGenPreprocParameters {
     #[clap(long, short = 's')]
     pub store_dummy_preprocessing: bool,
 }
+
 #[derive(Debug, Subcommand, Clone)]
 pub enum CCCommand {
-    PreprocKeyGen(NoParameters),
+    PreprocKeyGen(KeyGenPreprocParameters),
     PartialPreprocKeyGen(PartialKeyGenPreprocParameters),
     PreprocKeyGenResult(ResultParameters),
     KeyGen(KeyGenParameters),
@@ -627,6 +685,9 @@ pub enum CCCommand {
     CustodianBackupRecovery(RecoveryParameters),
     BackupRestore(NoParameters),
     Reshare(ReshareParameters),
+    #[clap(subcommand)]
+    NewMpcContext(NewMpcContextParameters),
+    PrssInit(PrssInitParameters),
     DoNothing(NoParameters),
 }
 
@@ -682,6 +743,7 @@ pub struct EncryptionResult {
     pub ct_format: CiphertextFormat,
     pub plaintext: TypedPlaintext,
     pub key_id: KeyId,
+    pub context_id: Option<ContextId>,
 }
 
 impl EncryptionResult {
@@ -690,12 +752,14 @@ impl EncryptionResult {
         ct_format: CiphertextFormat,
         plaintext: TypedPlaintext,
         key_id: KeyId,
+        context_id: Option<ContextId>,
     ) -> Self {
         Self {
             cipher,
             ct_format,
             plaintext,
             key_id,
+            context_id,
         }
     }
 }
@@ -710,14 +774,16 @@ pub async fn fetch_ctxt_from_file(
     };
 
     let ct_format = CiphertextFormat::from_str_name(&cipher_with_params.ct_format)
-        .ok_or_else(|| anyhow!("Failed to recover ct_format"))?;
+        .ok_or_else(|| anyhow::anyhow!("Failed to recover ct_format"))?;
 
     let key_id = cipher_with_params.params.key_id;
+    let context_id = cipher_with_params.params.context_id;
     Ok(EncryptionResult::new(
         cipher_with_params.cipher,
         ct_format,
         ptxt,
         key_id,
+        context_id,
     ))
 }
 
@@ -779,82 +845,8 @@ pub async fn encrypt(
         ct_format,
         ptxt,
         cipher_params.key_id,
+        cipher_params.context_id,
     ))
-}
-
-fn join_vars(args: &[&str]) -> String {
-    args.iter()
-        .filter(|&s| !s.is_empty())
-        .copied()
-        .collect::<Vec<&str>>()
-        .join("/")
-}
-
-// TODO: handle auth
-// TODO: add option to either use local key or remote key
-pub async fn fetch_element(
-    endpoint: &str,
-    folder: &str,
-    element_id: &str,
-) -> anyhow::Result<Bytes> {
-    let element_key = element_id.to_string();
-    // Construct the URL
-    let url = join_vars(&[endpoint, folder, element_key.as_str()]);
-    tracing::debug!("Fetching element: {url}");
-
-    // If URL we fetch it
-    if url.starts_with("http") {
-        // Make the request
-        let client = reqwest::Client::new();
-        let response = client.get(&url).send().await?;
-
-        if response.status().is_success() {
-            let bytes = response.bytes().await?;
-            tracing::info!("Successfully downloaded {} bytes for element {element_id} from endpoint {endpoint}/{folder}", bytes.len());
-            // Here you can process the bytes as needed
-            Ok(bytes)
-        } else {
-            let response_status = response.status();
-            let response_content = response.text().await?;
-            tracing::error!("Error: {}", response_status);
-            tracing::error!("Response: {}", response_content);
-            Err(anyhow::anyhow!(format!(
-                "Couldn't fetch element {element_id} from endpoint {endpoint}/{folder}\nStatus: {}\nResponse: {}",
-                response_status, response_content
-            ),))
-        }
-    } else {
-        // read from local file system
-        let key_path = Path::new(endpoint).join(folder).join(element_id);
-        let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
-            anyhow!(
-                "Failed to read bytes from file at {:?} with error: {e}",
-                &key_path
-            )
-        })?;
-        let res = Bytes::from(byte_res);
-        tracing::info!("Successfully read {} bytes for element {element_id} from local path {endpoint}/{folder}", res.len());
-        Ok(res)
-    }
-}
-
-async fn write_bytes_to_file(
-    folder_path: &Path,
-    filename: &str,
-    data: &[u8],
-) -> anyhow::Result<()> {
-    let path = folder_path.join(filename);
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = path.parent() {
-        tokio::fs::create_dir_all(p).await?;
-    }
-    tokio::fs::write(&path, data).await.map_err(|e| {
-        anyhow!(
-            "Failed to write bytes to file at {:?} with error: {e}",
-            &path
-        )
-    })?;
-    Ok(())
 }
 
 static INIT_LOG: Once = Once::new();
@@ -880,26 +872,6 @@ pub fn setup_logging() {
         .json()
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("Failed to set logging subscriber");
-}
-
-/// This fetches material which is global
-/// i.e. everything related to CRS and FHE public materials
-async fn fetch_global_pub_element_and_write_to_file(
-    destination_prefix: &Path,
-    s3_endpoint: &str,
-    element_id: &str,
-    element_name: &str,
-    element_folder: &str,
-) -> anyhow::Result<()> {
-    // Fetch pub-key from storage and dump it for later use
-    let folder = destination_prefix.join(element_folder).join(element_name);
-    let content = fetch_element(
-        s3_endpoint,
-        &format!("{element_folder}/{element_name}"),
-        element_id,
-    )
-    .await?;
-    write_bytes_to_file(&folder, element_id, content.as_ref()).await
 }
 
 /// This reads the kms ethereum address from local file system
@@ -948,46 +920,7 @@ async fn read_kms_addresses_local(
     Ok(kms_addrs)
 }
 
-/// This fetches the KMS ethereum address from S3
-#[expect(dead_code)]
-async fn fetch_kms_addresses_remote(
-    sim_conf: &CoreClientConfig,
-) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
-    let key_id = &SIGNING_KEY_ID.to_string();
-    let mut addr_bytes = Vec::with_capacity(sim_conf.cores.len());
-
-    for cur_core in &sim_conf.cores {
-        let content = fetch_element(
-            &cur_core.s3_endpoint.clone(),
-            &format!(
-                "{}/{}",
-                cur_core.object_folder,
-                &PubDataType::VerfAddress.to_string()
-            ),
-            key_id,
-        )
-        .await?;
-        addr_bytes.push(content);
-    }
-
-    // turn bytes read into Address type
-    let kms_addrs: Vec<_> = addr_bytes
-        .iter()
-        .map(|x| {
-            alloy_primitives::Address::parse_checksummed(
-                str::from_utf8(x).unwrap_or_else(|_| {
-                    panic!("cannot convert address bytes into UTF-8 string: {x:?}")
-                }),
-                None,
-            )
-            .unwrap_or_else(|e| panic!("invalid ethereum address: {x:?} - {e}"))
-        })
-        .collect();
-
-    Ok(kms_addrs)
-}
-
-/// check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
+/// Check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
 fn check_standard_keyset_ext_signature(
     public_key: &CompactPublicKey,
     server_key: &ServerKey,
@@ -1007,7 +940,7 @@ fn check_standard_keyset_ext_signature(
     if kms_addrs.contains(&addr) {
         Ok(())
     } else {
-        Err(anyhow!(
+        Err(anyhow::anyhow!(
             "External signature verification failed for keygen as it does not contain the right address!"
         ))
     }
@@ -1031,7 +964,7 @@ fn check_crsgen_ext_signature(
     if kms_addrs.contains(&addr) {
         Ok(())
     } else {
-        Err(anyhow!(
+        Err(anyhow::anyhow!(
             "External signature verification failed for crsgen as it does not contain the right address!"
         ))
     }
@@ -1056,7 +989,9 @@ fn check_ext_pt_signature(
     if kms_addrs.contains(&addr) {
         Ok(())
     } else {
-        Err(anyhow!("External PT signature verification failed!"))
+        Err(anyhow::anyhow!(
+            "External PT signature verification failed!"
+        ))
     }
 }
 
@@ -1098,66 +1033,6 @@ fn check_external_decryption_signature(
     Ok(())
 }
 
-/// Fetch all remote elements and store them locally for the core client
-/// Return the server IDs of all servers that were successfully contacted
-/// or an error if no server could be contacted
-/// element_id: the id of the element to fetch (key id or crs id)
-/// element_types: the types of elements to fetch (e.g. public key, server key, CRS)
-/// sim_conf: the core client configuration
-/// destination_prefix: the local folder to store the fetched elements
-/// download_all: whether to download from all cores or just the first one
-/// returns: the party IDs of the cores that were successfully contacted, unsorted
-async fn fetch_elements(
-    element_id: &str,
-    element_types: &[PubDataType],
-    sim_conf: &CoreClientConfig,
-    destination_prefix: &Path,
-    download_all: bool,
-) -> anyhow::Result<Vec<usize>> {
-    tracing::info!("Fetching {:?} with id {element_id}", element_types);
-
-    // set of core ids, to track which cores we successfully contacted
-    let mut successful_core_ids: HashSet<usize> = HashSet::new();
-
-    // go over list of cores to retrieve the public elements from
-    'cores: for cur_core in &sim_conf.cores {
-        let mut all_elements = true;
-        // try to fetch all elements from this core
-        'elements: for element_name in element_types {
-            if fetch_global_pub_element_and_write_to_file(
-                destination_prefix,
-                cur_core.s3_endpoint.as_str(),
-                element_id,
-                &element_name.to_string(),
-                &cur_core.object_folder,
-            )
-            .await
-            .is_err()
-            {
-                tracing::warn!("Could not fetch element {element_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
-                all_elements = false;
-                break 'elements;
-            }
-        }
-        // if we were able to retrieve all elements, add the core id to the set of successful nodes
-        if all_elements {
-            successful_core_ids.insert(cur_core.party_id);
-            // if we only want to download from one core, break here
-            if !download_all {
-                break 'cores;
-            }
-        }
-    }
-
-    if successful_core_ids.is_empty() {
-        Err(anyhow::anyhow!(
-                "Could not fetch all of [{element_types:?}] with id {element_id} from any core. At least one core is required to proceed."
-            ))
-    } else {
-        Ok(successful_core_ids.into_iter().collect())
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn do_keygen(
     internal_client: &mut Client,
@@ -1195,6 +1070,8 @@ async fn do_keygen(
     let dkg_req = internal_client.key_gen_request(
         &req_id,
         &preproc_id,
+        shared_config.context_id.as_ref(),
+        shared_config.epoch_id.as_ref(),
         Some(param),
         keyset_config,
         None,
@@ -1206,7 +1083,7 @@ async fn do_keygen(
     let domain = if let Some(domain) = &dkg_req.domain {
         protobuf_to_alloy_domain(domain)?
     } else {
-        return Err(anyhow!("No domain provided in crsgen request"));
+        return Err(anyhow::anyhow!("No domain provided in crsgen request"));
     };
 
     // make parallel requests by calling insecure keygen in a thread
@@ -1288,7 +1165,7 @@ async fn do_crsgen(
     let domain = if let Some(domain) = &crs_req.domain {
         protobuf_to_alloy_domain(domain)?
     } else {
-        return Err(anyhow!("No domain provided in crsgen request"));
+        return Err(anyhow::anyhow!("No domain provided in crsgen request"));
     };
 
     // make parallel requests by calling insecure keygen in a thread
@@ -1347,6 +1224,8 @@ async fn do_preproc(
     cmd_conf: &CmdConfig,
     num_parties: usize,
     fhe_params: FheParameter,
+    context_id: Option<&ContextId>,
+    epoch_id: Option<&EpochId>,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
 
@@ -1354,7 +1233,14 @@ async fn do_preproc(
     // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
     // this function is only used for testing.
     let domain = dummy_domain();
-    let pp_req = internal_client.preproc_request(&req_id, Some(fhe_params), None, &domain)?; //TODO keyset config
+    let pp_req = internal_client.preproc_request(
+        &req_id,
+        Some(fhe_params),
+        context_id,
+        epoch_id,
+        None,
+        &domain,
+    )?; //TODO keyset config
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -1377,6 +1263,7 @@ async fn do_preproc(
 
     let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
     for response in responses {
+        // this part also verifies the signature
         internal_client.process_preproc_response(&req_id, &domain, &response)?;
     }
 
@@ -1401,6 +1288,8 @@ async fn do_partial_preproc(
     let pp_req = internal_client.partial_preproc_request(
         &req_id,
         Some(fhe_params),
+        preproc_params.context_id.as_ref(),
+        preproc_params.epoch_id.as_ref(),
         None,
         &domain,
         Some(kms_grpc::kms::v1::PartialKeyGenPreprocParams {
@@ -1949,6 +1838,7 @@ pub async fn execute_cmd(
                 ct_format,
                 plaintext: ptxt,
                 key_id,
+                context_id,
             } = match cipher_args {
                 CipherArguments::FromFile(cipher_file) => {
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
@@ -2006,7 +1896,7 @@ pub async fn execute_cmd(
                         ct_batch,
                         &dummy_domain(),
                         &req_id,
-                        None,
+                        context_id.as_ref(),
                         &key_id.into(),
                     )?;
 
@@ -2081,6 +1971,7 @@ pub async fn execute_cmd(
                 ct_format,
                 plaintext: ptxt,
                 key_id,
+                context_id,
             } = match cipher_args {
                 CipherArguments::FromFile(cipher_file) => {
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
@@ -2121,6 +2012,7 @@ pub async fn execute_cmd(
                 internal_client,
                 ct_batch,
                 key_id,
+                context_id,
                 &core_endpoints_req,
                 &core_endpoints_resp,
                 ptxt,
@@ -2228,7 +2120,10 @@ pub async fn execute_cmd(
             .await?;
             vec![(Some(req_id), "insecure crsgen done".to_string())]
         }
-        CCCommand::PreprocKeyGen(NoParameters {}) => {
+        CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
+            context_id,
+            epoch_id,
+        }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!("Preprocessing with parameter {}.", fhe_params.as_str_name());
 
@@ -2239,6 +2134,8 @@ pub async fn execute_cmd(
                 cmd_config,
                 num_parties,
                 fhe_params,
+                context_id.as_ref(),
+                epoch_id.as_ref(),
             )
             .await?;
             vec![(Some(req_id), "preproc done".to_string())]
@@ -2536,6 +2433,26 @@ pub async fn execute_cmd(
                 (Some(*key_id), "Key ready to be used".to_string()),
             ]
         }
+        CCCommand::NewMpcContext(context_param) => match context_param {
+            NewMpcContextParameters::SerializedContextPath(context_path) => {
+                let ctx_id =
+                    do_new_mpc_context(&core_endpoints_req, &context_path.input_path).await?;
+                vec![(
+                    Some(ctx_id.into()),
+                    "new mpc context created from serialized context".to_string(),
+                )]
+            }
+            NewMpcContextParameters::ContextToml(_context_path) => {
+                unimplemented!("Creating new MPC context from TOML is not yet implemented");
+            }
+        },
+        CCCommand::PrssInit(PrssInitParameters {
+            context_id,
+            epoch_id,
+        }) => {
+            do_prss_init(&core_endpoints_req, context_id, epoch_id).await?;
+            vec![(Some((*epoch_id).into()), "prss init done".to_string())]
+        }
     };
 
     tracing::info!("Core Client terminated successfully.");
@@ -2584,6 +2501,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
     internal_client: Arc<RwLock<Client>>,
     ct_batch: Vec<TypedCiphertext>,
     key_id: KeyId,
+    context_id: Option<ContextId>,
     core_endpoints_req: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     core_endpoints_resp: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     ptxt: TypedPlaintext,
@@ -2614,6 +2532,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                 ct_batch,
                 &req_id,
                 &key_id.into(),
+                context_id.as_ref(),
                 PkeSchemeType::MlKem512,
             )?;
 
@@ -3165,7 +3084,7 @@ async fn fetch_and_check_keygen(
         );
 
         let external_signature = response.external_signature;
-        let prep_id = response.preprocessing_id.ok_or(anyhow!(
+        let prep_id = response.preprocessing_id.ok_or(anyhow::anyhow!(
             "No preprocessing ID in keygen response, cannot verify external signature"
         ))?;
         check_standard_keyset_ext_signature(

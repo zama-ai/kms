@@ -14,7 +14,7 @@ use crate::{
     execution::{
         communication::p2p::{generic_receive_from_all, send_to_all},
         online::preprocessing::constants::BATCH_SIZE_BITS,
-        runtime::{party::Role, session::BaseSessionHandles},
+        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
     },
     networking::value::NetworkValue,
     thread_handles::spawn_compute_bound,
@@ -383,7 +383,8 @@ pub(crate) mod test {
         ErrorCorrect, Invert, Ring, RingWithExceptionalSequence,
     };
     use crate::execution::runtime::party::Role;
-    use crate::execution::runtime::session::SmallSession;
+    use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
+    use crate::execution::runtime::sessions::small_session::SmallSession;
     use crate::execution::sharing::shamir::InputOp;
     use crate::execution::small_execution::prf::PRSSConversions;
     use crate::malicious_execution::open::malicious_open::{
@@ -393,7 +394,7 @@ pub(crate) mod test {
     use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
     use crate::{
         algebra::galois_rings::degree_4::ResiduePolyF4Z128,
-        execution::{runtime::session::ParameterHandles, sharing::shamir::ShamirSharings},
+        execution::sharing::shamir::ShamirSharings,
     };
 
     use super::{RobustOpen, SecureRobustOpen};

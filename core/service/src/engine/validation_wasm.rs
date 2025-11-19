@@ -12,6 +12,7 @@ use crate::{
     anyhow_error_and_log,
     client::user_decryption_wasm::{compute_link, ParsedUserDecryptionRequest},
     cryptography::{
+        compute_user_decrypt_message,
         encryption::UnifiedPublicEncKey,
         internal_crypto_types::LegacySerialization,
         signatures::{
@@ -433,6 +434,7 @@ mod tests {
             compute_link, CiphertextHandle, ParsedUserDecryptionRequest,
         },
         cryptography::{
+            compute_external_user_decrypt_signature,
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{
                 gen_sig_keys, internal_sign, PublicSigKey, ERR_EXT_USER_DECRYPTION_SIG_BAD_LENGTH,

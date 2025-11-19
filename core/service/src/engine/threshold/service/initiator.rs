@@ -7,11 +7,12 @@ use kms_grpc::{
     kms::v1::{self, Empty},
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::PrivDataType,
+    ContextId,
 };
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
-        runtime::session::ParameterHandles,
+        runtime::sessions::session_parameters::GenericParameterHandles,
         small_execution::prss::{PRSSInit, PRSSSetup},
     },
     networking::NetworkMode,
@@ -26,7 +27,9 @@ use crate::{
     engine::{
         base::derive_request_id,
         threshold::{service::session::SessionMaker, traits::Initiator},
-        validation::{parse_optional_proto_request_id, RequestIdParsingErr},
+        validation::{
+            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+        },
     },
     vault::storage::{read_versioned_at_request_id, store_versioned_at_request_id, Storage},
 };
@@ -54,7 +57,7 @@ impl<
     > RealInitiator<PrivS, Init>
 {
     // Note that `req_id` is not the context ID. It is the request ID for the PRSS setup.
-    pub async fn init_prss_from_disk(&self, epoch_id: &EpochId) -> anyhow::Result<()> {
+    pub async fn init_prss_from_storage(&self, epoch_id: &EpochId) -> anyhow::Result<()> {
         // TODO(zama-ai/kms-internal#2530) set the correct context ID here.
         let context_id = *DEFAULT_MPC_CONTEXT;
         let threshold = self.session_maker.threshold(&context_id).await?;
@@ -101,7 +104,10 @@ impl<
             (Err(_e), Err(e)) => return Err(e),
         }
 
-        tracing::info!("Loaded PRSS Setup from disk for request ID {}.", epoch_id);
+        tracing::info!(
+            "Loaded PRSS Setup from storage for request ID {}.",
+            epoch_id
+        );
         {
             // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
             self.health_reporter
@@ -112,20 +118,21 @@ impl<
     }
 
     // NOTE: this function will overwrite the existing PRSS state
-    pub async fn init_prss(&self, epoch_id: &EpochId) -> anyhow::Result<()> {
-        // TODO(zama-ai/kms-internal#2530) set the correct context ID here.
-        let context_id = *DEFAULT_MPC_CONTEXT;
-
+    pub async fn init_prss(
+        &self,
+        context_id: &ContextId,
+        epoch_id: &EpochId,
+    ) -> anyhow::Result<()> {
         // TODO(zama-ai/kms-internal/issues/2721),
         // we never try to store the PRSS in meta_store, so the ID is not guaranteed to be unique
 
-        let own_identity = self.session_maker.my_identity(&context_id).await?;
+        let own_identity = self.session_maker.my_identity(context_id).await?;
         let session_id = epoch_id.derive_session_id()?;
 
         // PRSS robust init requires broadcast, which is implemented with Sync network assumption
         let mut base_session = self
             .session_maker
-            .make_base_session(session_id, context_id, NetworkMode::Sync)
+            .make_base_session(session_id, *context_id, NetworkMode::Sync)
             .await?;
 
         tracing::info!("Starting PRSS for identity {}.", own_identity);
@@ -144,7 +151,7 @@ impl<
         let prss_setup_obj_z64: PRSSSetup<ResiduePolyF4Z64> =
             PRSSInit::<ResiduePolyF4Z64>::init(&Init::default(), &mut base_session).await?;
 
-        // serialize and write PRSS Setup to disk into private storage
+        // serialize and write PRSS Setup to storage into private storage
         let private_storage = Arc::clone(&self.private_storage);
         let mut priv_storage = private_storage.lock().await;
         store_versioned_at_request_id(
@@ -206,13 +213,18 @@ impl<
         // the only way to set the role assignment is through the configuration
         // so we do not attempt to modify `session_preparer_manager` or `networking_manager`
         // until we have a context endpoint that can modify these two fields.
-        // In addition, we need to persist context on disk otherwise they'll be lost on restart
+        // In addition, we need to persist context on storage otherwise they'll be lost on restart
         // See zama-ai/kms-internal/#2741
 
         let inner = request.into_inner();
         // the request ID of the init request is the epoch ID for PRSS and shares
         let epoch_id: EpochId =
             parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::Init)?.into();
+
+        let context_id: ContextId = match inner.context_id {
+            Some(ctx_id) => parse_proto_request_id(&ctx_id, RequestIdParsingErr::Init)?.into(),
+            None => *DEFAULT_MPC_CONTEXT,
+        };
 
         if self.session_maker.epoch_exists(&epoch_id).await {
             return Err(tonic::Status::new(
@@ -221,7 +233,14 @@ impl<
             ));
         }
 
-        self.init_prss(&epoch_id).await.map_err(|e| {
+        if !self.session_maker.context_exists(&context_id).await {
+            return Err(tonic::Status::new(
+                tonic::Code::NotFound,
+                format!("MPC context ID {context_id} does not exist"),
+            ));
+        }
+
+        self.init_prss(&context_id, &epoch_id).await.map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
                 format!("PRSS initialization failed with error: {e}"),
@@ -270,7 +289,7 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     #[tracing_test::traced_test]
-    async fn prss_disk_test() {
+    async fn prss_from_storage_test() {
         // We're starting two sets of servers in this test, both sets of servers will load all the keys
         // but it seems that the when shutting down the first set of servers, the keys are not immediately removed from memory
         // and this leads to OOM. So we reduce the amount of parties to 4 for this test.
@@ -325,11 +344,11 @@ mod tests {
             server_handle.assert_shutdown().await;
         }
 
-        // check that PRSS setups were created (and not read from disk)
-        assert!(!logs_contain("Loaded PRSS Setup from disk"));
+        // check that PRSS setups were created (and not read from storage)
+        assert!(!logs_contain("Loaded PRSS Setup from storage"));
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-        // create parties again without running PrssSetup this time (it should now be read from disk)
+        // create parties again without running PrssSetup this time (it should now be read from storage)
         let server_handles = test_tools::setup_threshold_no_client(
             PRSS_THRESHOLD as u8,
             pub_storage,
@@ -342,8 +361,8 @@ mod tests {
         .await;
         assert_eq!(server_handles.len(), PRSS_AMOUNT_PARTIES);
 
-        // check that PRSS setups were not created, but instead read from disk now
-        assert!(logs_contain("Loaded PRSS Setup from disk"));
+        // check that PRSS setups were not created, but instead read from storage now
+        assert!(logs_contain("Loaded PRSS Setup from storage"));
     }
 
     async fn make_initiator<
@@ -368,6 +387,7 @@ mod tests {
         initiator
             .init(tonic::Request::new(InitRequest {
                 request_id: Some(epoch_id.into()),
+                context_id: None,
             }))
             .await
             .unwrap();
@@ -386,7 +406,8 @@ mod tests {
             assert_eq!(
                 initiator
                     .init(tonic::Request::new(InitRequest {
-                        request_id: Some(bad_req_id)
+                        request_id: Some(bad_req_id),
+                        context_id: None,
                     }))
                     .await
                     .unwrap_err()
@@ -398,13 +419,34 @@ mod tests {
             // missing request ID
             assert_eq!(
                 initiator
-                    .init(tonic::Request::new(InitRequest { request_id: None }))
+                    .init(tonic::Request::new(InitRequest {
+                        request_id: None,
+                        context_id: None,
+                    }))
                     .await
                     .unwrap_err()
                     .code(),
                 tonic::Code::InvalidArgument
             );
         }
+    }
+
+    #[tokio::test]
+    async fn not_found() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let initiator = make_initiator::<EmptyPrss>(&mut rng).await;
+
+        let epoch_id = EpochId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng); // should not exist
+        let err = initiator
+            .init(tonic::Request::new(InitRequest {
+                request_id: Some(epoch_id.into()),
+                context_id: Some(context_id.into()),
+            }))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), tonic::Code::NotFound);
     }
 
     #[tokio::test]
@@ -416,6 +458,7 @@ mod tests {
         initiator
             .init(tonic::Request::new(InitRequest {
                 request_id: Some(epoch_id.into()),
+                context_id: None,
             }))
             .await
             .unwrap();
@@ -425,6 +468,7 @@ mod tests {
             initiator
                 .init(tonic::Request::new(InitRequest {
                     request_id: Some(epoch_id.into()),
+                    context_id: None,
                 }))
                 .await
                 .unwrap_err()
@@ -442,7 +486,8 @@ mod tests {
         assert_eq!(
             initiator
                 .init(tonic::Request::new(InitRequest {
-                    request_id: Some(epoch_id.into())
+                    request_id: Some(epoch_id.into()),
+                    context_id: None,
                 }))
                 .await
                 .unwrap_err()

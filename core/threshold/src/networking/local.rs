@@ -1,5 +1,4 @@
 use crate::error::error_handler::anyhow_error_and_log;
-use crate::execution::runtime::party::Role;
 
 use super::*;
 use constants::{
@@ -24,22 +23,22 @@ use tokio::time::Duration;
 /// only. It simply stores all values in a hashmap without any actual networking.
 //This is using mutexes for everything round related to be able to
 //mutate state without needing self to be mutable in functions' signature
-pub struct LocalNetworking {
+pub struct LocalNetworking<R: RoleTrait> {
     current_network_timeout: Mutex<Duration>,
     next_network_timeout: Mutex<Duration>,
     max_elapsed_time: Mutex<Duration>,
-    pairwise_channels: SimulatedPairwiseChannels,
-    pub owner: Role,
-    pub send_counter: DashMap<Role, usize>,
+    pairwise_channels: SimulatedPairwiseChannels<R>,
+    pub owner: R,
+    pub send_counter: DashMap<R, usize>,
     pub network_round: Arc<Mutex<usize>>,
-    already_sent: Arc<Mutex<HashSet<(Role, usize)>>>,
+    already_sent: Arc<Mutex<HashSet<(R, usize)>>>,
     pub init_time: OnceLock<Instant>,
     network_mode: NetworkMode,
     //If set, the party will sleep for the given duration at the start of each round
     delayed_party: Option<Duration>,
 }
 
-impl Default for LocalNetworking {
+impl<R: RoleTrait> Default for LocalNetworking<R> {
     fn default() -> Self {
         Self {
             current_network_timeout: Mutex::new(*NETWORK_TIMEOUT),
@@ -58,12 +57,12 @@ impl Default for LocalNetworking {
 }
 
 #[derive(Default)]
-pub struct LocalNetworkingProducer {
-    pairwise_channels: SimulatedPairwiseChannels,
+pub struct LocalNetworkingProducer<R: RoleTrait> {
+    pairwise_channels: SimulatedPairwiseChannels<R>,
 }
 
-impl LocalNetworkingProducer {
-    pub fn from_roles(roles: &HashSet<Role>) -> Self {
+impl<R: RoleTrait> LocalNetworkingProducer<R> {
+    pub fn from_roles(roles: &HashSet<R>) -> Self {
         let pairwise_channels = DashMap::new();
         for v1 in roles {
             for v2 in roles {
@@ -82,10 +81,10 @@ impl LocalNetworkingProducer {
     }
     pub fn user_net(
         &self,
-        owner: Role,
+        owner: R,
         network_mode: NetworkMode,
         delayed_party: Option<Duration>,
-    ) -> LocalNetworking {
+    ) -> LocalNetworking<R> {
         // Async network means a timeout of 1 year
         let timeout = match network_mode {
             NetworkMode::Sync => *NETWORK_TIMEOUT,
@@ -104,9 +103,9 @@ impl LocalNetworkingProducer {
     }
 }
 
-type SimulatedPairwiseChannels = Arc<
+type SimulatedPairwiseChannels<R> = Arc<
     DashMap<
-        (Role, Role),
+        (R, R),
         (
             Arc<UnboundedSender<LocalTaggedValue>>,
             Arc<tokio::sync::Mutex<UnboundedReceiver<LocalTaggedValue>>>,
@@ -115,8 +114,8 @@ type SimulatedPairwiseChannels = Arc<
 >;
 
 #[async_trait]
-impl Networking for LocalNetworking {
-    async fn send(&self, val: Arc<Vec<u8>>, receiver: &Role) -> anyhow::Result<(), anyhow::Error> {
+impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
+    async fn send(&self, val: Arc<Vec<u8>>, receiver: &R) -> anyhow::Result<(), anyhow::Error> {
         let (tx, _) = self
             .pairwise_channels
             .get(&(self.owner, *receiver))
@@ -149,7 +148,7 @@ impl Networking for LocalNetworking {
         tx.send(tagged_value).map_err(|e| e.into())
     }
 
-    async fn receive(&self, sender: &Role) -> anyhow::Result<Vec<u8>> {
+    async fn receive(&self, sender: &R) -> anyhow::Result<Vec<u8>> {
         let (_, rx) = self
             .pairwise_channels
             .get(&(*sender, self.owner))
@@ -280,7 +279,10 @@ struct LocalTaggedValue {
 mod tests {
 
     use crate::{
-        execution::runtime::{party::Role, session::DeSerializationRunTime},
+        execution::runtime::{
+            party::{Role, TwoSetsRole},
+            sessions::session_parameters::DeSerializationRunTime,
+        },
         networking::value::NetworkValue,
     };
 
@@ -316,6 +318,43 @@ mod tests {
         let task2 = tokio::spawn(async move {
             let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
             net_alice.send(Arc::new(value.to_network()), &bob).await
+        });
+
+        let _ = tokio::try_join!(task1, task2).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_networking_two_sets() {
+        let role_1_set_1 = TwoSetsRole::Set1(Role::indexed_from_one(1));
+        let role_1_set_2 = TwoSetsRole::Set2(Role::indexed_from_one(1));
+
+        let roles = HashSet::from([role_1_set_1, role_1_set_2]);
+        let net_producer = LocalNetworkingProducer::from_roles(&roles);
+
+        let net_party_1_set_1 = net_producer.user_net(role_1_set_1, NetworkMode::Sync, None);
+        let net_party_1_set_2 = net_producer.user_net(role_1_set_2, NetworkMode::Sync, None);
+
+        let task1 = tokio::spawn(async move {
+            let recv = net_party_1_set_1.receive(&role_1_set_2).await;
+            assert_eq!(
+                bc2wrap::serialize(
+                    &NetworkValue::<Wrapping::<u64>>::from_network(
+                        recv,
+                        DeSerializationRunTime::Tokio
+                    )
+                    .await
+                    .unwrap()
+                )
+                .unwrap(),
+                bc2wrap::serialize(&NetworkValue::RingValue(Wrapping::<u64>(1234))).unwrap()
+            );
+        });
+
+        let task2 = tokio::spawn(async move {
+            let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
+            net_party_1_set_2
+                .send(Arc::new(value.to_network()), &role_1_set_1)
+                .await
         });
 
         let _ = tokio::try_join!(task1, task2).unwrap();

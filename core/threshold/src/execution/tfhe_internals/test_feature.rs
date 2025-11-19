@@ -34,7 +34,9 @@ use crate::{
     execution::{
         runtime::{
             party::Role,
-            session::{BaseSessionHandles, DeSerializationRunTime},
+            sessions::{
+                base_session::BaseSessionHandles, session_parameters::DeSerializationRunTime,
+            },
         },
         sharing::{
             input::robust_input,

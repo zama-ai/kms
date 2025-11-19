@@ -70,6 +70,12 @@ struct KmsArgs {
         help = "path to the configuration file"
     )]
     config_file: String,
+    #[clap(
+        long,
+        default_value_t = false,
+        help = "ignore the peerlist from the configuration file"
+    )]
+    ignore_peerlist: bool,
 }
 
 async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener {
@@ -120,13 +126,13 @@ async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener
 /// documents and that can receive new trust roots on the context change.
 async fn build_tls_config(
     my_id: usize,
-    peers: &[PeerConf],
+    peers: &Option<Vec<PeerConf>>,
     tls_config: &TlsConf,
     security_module: Option<Arc<SecurityModuleProxy>>,
     public_vault: &Vault,
     sk: &PrivateSigKey,
     #[cfg(feature = "insecure")] mock_enclave: bool,
-) -> anyhow::Result<(ServerConfig, ClientConfig)> {
+) -> anyhow::Result<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)> {
     let context_id = *DEFAULT_MPC_CONTEXT;
     aws_lc_rs_default_provider()
         .install_default()
@@ -136,21 +142,36 @@ async fn build_tls_config(
     // Communication between MPC parties can be optionally protected
     // with mTLS which requires a TLS certificate valid both for server
     // and client authentication.
-    let ca_certs_list = peers
-        .iter()
-        .map(|peer| {
-            peer.tls_cert
-                .as_ref()
-                .map(|cert| cert.into_pem(peer.party_id, peers))
-                .unwrap_or_else(|| panic!("No CA certificate present for peer {}", peer.party_id))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    let ca_certs_list = match peers {
+        Some(peers) => peers
+            .iter()
+            .map(|peer| {
+                peer.tls_cert
+                    .as_ref()
+                    .map(|cert| cert.into_pem(peer.party_id, peers))
+                    .unwrap_or_else(|| {
+                        panic!("No CA certificate present for peer {}", peer.party_id)
+                    })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?,
+        None => vec![],
+    };
+
+    // NOTE: ca_certs can be empty if peerlist is not set
     let ca_certs = build_ca_certs_map(ca_certs_list.into_iter())?;
 
     let (cert, key, trusted_releases, pcr8_expected) = match tls_config {
         TlsConf::Manual { ref cert, ref key } => {
             tracing::info!("Using third-party TLS certificate without Nitro remote attestation");
-            let cert = cert.into_pem(my_id, peers)?;
+            let cert = match peers {
+                Some(ref peers) => cert.into_pem(my_id, peers)?,
+                None => {
+                    tracing::info!(
+                        "No peerlist present, skipping TLS certificate validation against peerlist"
+                    );
+                    cert.unchecked_pem()?
+                }
+            };
             let key = key.into_pem()?;
             (cert, key, None, false)
         }
@@ -169,11 +190,24 @@ async fn build_tls_config(
                             panic!("EIF signing certificate present but not security module, unable to construct TLS identity")
                         });
             tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
-            let eif_signing_cert_pem = cert.into_pem(my_id, peers)?;
+            let eif_signing_cert_pem = match peers {
+                Some(ref peers) => cert.into_pem(my_id, peers)?,
+                None => {
+                    tracing::info!(
+                        "No peerlist present, skipping TLS certificate validation against peerlist"
+                    );
+                    cert.unchecked_pem()?
+                }
+            };
             let (cert, key) = security_module
-                .wrap_x509_cert(context_id, eif_signing_cert_pem, true)
+                .wrap_x509_cert(eif_signing_cert_pem, true)
                 .await?;
-            (cert, key, Some(Arc::new(trusted_releases.clone())), true)
+            (
+                cert,
+                key,
+                Some(trusted_releases.iter().cloned().collect()),
+                true,
+            )
         }
         TlsConf::FullAuto {
             ref trusted_releases,
@@ -210,9 +244,7 @@ async fn build_tls_config(
                 panic!("CA certificate public key isn't ECDSA");
             };
 
-            let (cert, key) = security_module
-                .issue_x509_cert(context_id, &ca_cert, sk, true)
-                .await?;
+            let (cert, key) = security_module.issue_x509_cert(&ca_cert, sk, true).await?;
 
             // sanity check
             EndEntityCert::try_from(&cert.contents.as_slice().into())?
@@ -231,7 +263,12 @@ async fn build_tls_config(
                     panic!("TLS certificate signed by enclave CA is invalid, cannot proceed: {e}")
                 });
 
-            (cert, key, Some(Arc::new(trusted_releases.clone())), false)
+            (
+                cert,
+                key,
+                Some(trusted_releases.iter().cloned().collect()),
+                false,
+            )
         }
     };
 
@@ -255,14 +292,17 @@ async fn build_tls_config(
     let client_config = DangerousClientConfigBuilder {
         cfg: ClientConfig::builder_with_protocol_versions(&[&TLS13]),
     }
-    .with_custom_certificate_verifier(verifier)
+    .with_custom_certificate_verifier(verifier.clone())
     .with_client_auth_cert(cert_chain, key_der)?;
-    Ok((server_config, client_config))
+    Ok((server_config, client_config, verifier))
 }
 
 fn main() -> anyhow::Result<()> {
     let args = KmsArgs::parse();
+    // NOTE: this config is only needed to set up the tokio runtime
+    // we read it again in [main_exec] to set up the rest of the server
     let core_config = init_conf::<CoreConfig>(&args.config_file)?;
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .worker_threads(
@@ -282,8 +322,16 @@ fn main() -> anyhow::Result<()> {
 /// Please consult the `kms-gen-keys` binary for details on generating key material.
 async fn main_exec() -> anyhow::Result<()> {
     let args = KmsArgs::parse();
-    let (core_config, tracer_provider, meter_provider) =
+    let (mut core_config, tracer_provider, meter_provider) =
         init_conf_kms_core_telemetry::<CoreConfig>(&args.config_file).await?;
+    if let Some(t) = core_config.threshold.as_mut() {
+        if args.ignore_peerlist {
+            tracing::warn!(
+                "Ignoring peerlist from configuration file as per command line argument"
+            );
+            t.peers = None;
+        }
+    };
 
     // Initialize the rayon pool used inside MPC protocols
     let num_rayon_threads = init_rayon_thread_pool(
@@ -559,27 +607,26 @@ async fn main_exec() -> anyhow::Result<()> {
     match core_config.threshold {
         Some(threshold_config) => {
             let mpc_listener = make_mpc_listener(&threshold_config).await;
-            // Setup TLS if configured and we have a singing key
-            let tls_identity = if let (Some(tls_config), true) =
-                (&threshold_config.tls, base_kms.sig_key().is_ok())
-            {
-                match &threshold_config.peers {
-                    Some(peers) => Some(
-                        build_tls_config(
-                            threshold_config.my_id,
-                            peers,
-                            tls_config,
-                            security_module.clone(),
-                            &public_vault,
-                            base_kms.sig_key()?.as_ref(),
-                            #[cfg(feature = "insecure")]
-                            core_config.mock_enclave.is_some_and(|m| m),
-                        )
-                        .await?,
-                    ),
-                    None => {
-                        panic!("TLS enabled but peer list not provided: reading peer list from the context unsupported yet")
-                    }
+
+            let tls_identity = match &threshold_config.tls {
+                Some(tls_config) => Some({
+                    build_tls_config(
+                        threshold_config.my_id,
+                        &threshold_config.peers,
+                        tls_config,
+                        security_module.clone(),
+                        &public_vault,
+                        base_kms.sig_key()?.as_ref(), 
+                        #[cfg(feature = "insecure")]
+                        core_config.mock_enclave.is_some_and(|m| m),
+                    )
+                    .await?
+                }),
+                None => {
+                    tracing::warn!(
+                        "No TLS identity - using plaintext communication between MPC nodes"
+                    );
+                    None
                 }
             } else {
                 tracing::warn!("No TLS identity - using plaintext communication between MPC nodes");
@@ -613,6 +660,10 @@ async fn main_exec() -> anyhow::Result<()> {
             )
             .await?;
             let meta_store_status_service = Arc::new(metastore_status_service);
+            tracing::info!(
+                "Starting threshold KMS server v{}...",
+                env!("CARGO_PKG_VERSION"),
+            );
             run_server(
                 core_config.service,
                 service_listener,

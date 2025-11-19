@@ -1,6 +1,6 @@
 use crate::{
     error::error_handler::anyhow_error_and_log,
-    execution::runtime::{party::Role, session::BaseSessionHandles},
+    execution::runtime::{party::Role, sessions::base_session::BaseSessionHandles},
     networking::value::NetworkValue,
 };
 use std::{collections::HashMap, sync::Arc};

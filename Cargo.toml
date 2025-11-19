@@ -67,6 +67,7 @@ description = "Key Management System for the Zama Protocol."
 backward-compatibility = { path = "./backward-compatibility" }  # Internal backward compatibility testing
 bc2wrap = { path = "./bc2wrap" }  # Internal bincode wrapper custom implementation
 kms = { path = "./core/service", default-features = false }  # Core KMS service
+kms-core-client = { path = "./core-client" }  # Core KMS client library
 kms-grpc = { path = "./core/grpc", default-features = false }  # KMS gRPC interface
 observability = { path = "./observability" }  # Internal observability module
 threshold-fhe = { path = "./core/threshold/", default-features = false }  # Threshold FHE implementation
@@ -176,7 +177,7 @@ syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - MEDIUM RIS
 sysinfo = "0.36.1"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
 tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency
 test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual maintainers (markhildreth, JasperV), test-only dependency
-tfhe = "=1.4.0-alpha.3"  # Fully Homomorphic Encryption library - LOW RISK: Zama
+tfhe = "=1.4.2"  # Fully Homomorphic Encryption library - LOW RISK: Zama
 tfhe-csprng = "=0.7.0"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
 tfhe-versionable = "=0.6.2"  # TFHE versioning support - LOW RISK: Zama
 tfhe-zk-pok = "=0.7.3"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama

@@ -38,7 +38,11 @@ services:
       echo 'Generating signing keys' &&
       kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys centralized &&
       echo 'Starting kms service' &&
-      kms-server --config-file config/compose_centralized.toml
+      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then
+        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_centralized.toml
+      else
+        kms-server --config-file config/compose_centralized.toml
+      fi
       "
     depends_on:
       dev-s3-mock-setup:

@@ -10,7 +10,9 @@ use crate::{
             preprocessing::{DKGPreprocessing, RandomPreprocessing},
             triple::open_list,
         },
-        runtime::session::{BaseSessionHandles, DeSerializationRunTime},
+        runtime::sessions::{
+            base_session::BaseSessionHandles, session_parameters::DeSerializationRunTime,
+        },
         tfhe_internals::{
             compression_decompression_key::CompressionPrivateKeyShares,
             compression_decompression_key_generation::{
@@ -1105,7 +1107,9 @@ pub mod tests {
         },
         execution::{
             online::preprocessing::dummy::DummyPreprocessing,
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
+            },
             tfhe_internals::{
                 parameters::{DKGParamsBasics, DKGParamsRegular, DKGParamsSnS},
                 public_keysets::FhePubKeySet,
@@ -1154,7 +1158,13 @@ pub mod tests {
         set_server_key,
         shortint::{
             client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
-            noise_squashing::{NoiseSquashingKey, Shortint128BootstrappingKey},
+            noise_squashing::{
+                atomic_pattern::{
+                    standard::StandardAtomicPatternNoiseSquashingKey,
+                    AtomicPatternNoiseSquashingKey,
+                },
+                NoiseSquashingKey, Shortint128BootstrappingKey,
+            },
             parameters::CoreCiphertextModulus,
             PBSParameters,
         },
@@ -1171,8 +1181,9 @@ pub mod tests {
             config::BatchParams,
             keyset_config::KeySetConfig,
             online::preprocessing::{create_memory_factory, DKGPreprocessing},
-            runtime::session::{
-                BaseSessionHandles, SmallSession, SmallSessionHandles, ToBaseSession,
+            runtime::sessions::{
+                base_session::ToBaseSession,
+                small_session::{SmallSession, SmallSessionHandles},
             },
             small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
             tfhe_internals::test_feature::run_decompression_test,
@@ -1940,6 +1951,11 @@ pub mod tests {
             assert_eq!(0, dkg_preproc.randoms_len());
 
             use strum::IntoEnumIterator;
+
+            use crate::execution::runtime::sessions::{
+                base_session::GenericBaseSessionHandles,
+                session_parameters::GenericParameterHandles,
+            };
             for bound in crate::execution::tfhe_internals::parameters::NoiseBounds::iter() {
                 assert_eq!(0, dkg_preproc.noise_len(bound));
             }
@@ -1991,7 +2007,10 @@ pub mod tests {
     {
         let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
                         tag: Option<String>| async move {
-            use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
+            use crate::execution::{
+                runtime::sessions::base_session::GenericBaseSessionHandles,
+                tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares,
+            };
             let tag = tag
                 .map(|s| {
                     let mut tag = tfhe::Tag::default();
@@ -2049,13 +2068,7 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
-                let (mut public_key, mut server_key) =
-                    compressed_pk.decompress().unwrap().into_raw_parts();
-                // TODO(https://github.com/zama-ai/tfhe-rs-internal/issues/1181)
-                // The tags are lost during decompression, we make a workaround to manually set the tag until this is fixed
-                // Once the issue above is resolve, we can remove the calls to tag_mut.
-                *public_key.tag_mut() = tag.clone();
-                *server_key.tag_mut() = tag;
+                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
                 (
                     FhePubKeySet {
                         public_key,
@@ -2150,13 +2163,7 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
-                let (mut public_key, mut server_key) =
-                    compressed_pk.decompress().unwrap().into_raw_parts();
-                // TODO(https://github.com/zama-ai/tfhe-rs-internal/issues/1181)
-                // The tags are lost during decompression, we make a workaround to manually set the tag until this is fixed
-                // Once the issue above is resolve, we can remove the calls to tag_mut.
-                *public_key.tag_mut() = tag.clone();
-                *server_key.tag_mut() = tag;
+                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
                 (
                     FhePubKeySet {
                         public_key,
@@ -2315,23 +2322,34 @@ pub mod tests {
             let (key, pt_modulus, pt_carry, ct_modulus) =
                 ck.clone().into_raw_parts().into_raw_parts();
             let mod_switch = match key {
-                Shortint128BootstrappingKey::Classic {
-                    bsk: _bsk,
-                    modulus_switch_noise_reduction_key,
-                } => modulus_switch_noise_reduction_key,
-                Shortint128BootstrappingKey::MultiBit {
-                    bsk: _bsk,
-                    thread_count: _thread_count,
-                    deterministic_execution: _deterministic_execution,
-                } => panic!("Do not support multibit for now"),
+                AtomicPatternNoiseSquashingKey::Standard(ref standard_sns_key) => {
+                    match standard_sns_key.bootstrapping_key() {
+                        Shortint128BootstrappingKey::Classic {
+                            bsk: _bsk,
+                            modulus_switch_noise_reduction_key,
+                        } => modulus_switch_noise_reduction_key,
+                        Shortint128BootstrappingKey::MultiBit {
+                            bsk: _bsk,
+                            thread_count: _thread_count,
+                            deterministic_execution: _deterministic_execution,
+                        } => panic!("Do not support multibit for now"),
+                    }
+                }
+                AtomicPatternNoiseSquashingKey::KeySwitch32(_) => {
+                    panic!("Do not support KeySwitch32 for now")
+                }
             };
 
             tfhe::integer::noise_squashing::NoiseSquashingKey::from_raw_parts(
                 NoiseSquashingKey::from_raw_parts(
-                    Shortint128BootstrappingKey::Classic {
-                        bsk: fbsk_out,
-                        modulus_switch_noise_reduction_key: mod_switch,
-                    },
+                    AtomicPatternNoiseSquashingKey::Standard(
+                        StandardAtomicPatternNoiseSquashingKey::from_raw_parts(
+                            Shortint128BootstrappingKey::Classic {
+                                bsk: fbsk_out,
+                                modulus_switch_noise_reduction_key: mod_switch.clone(),
+                            },
+                        ),
+                    ),
                     pt_modulus,
                     pt_carry,
                     ct_modulus,

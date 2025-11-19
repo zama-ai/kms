@@ -13,6 +13,7 @@ pub struct DockerComposeCmd {
 pub enum KMSMode {
     ThresholdDefaultParameter,
     ThresholdTestParameter,
+    ThresholdTestParameterNoInit,
     ThresholdCustodianTestParameter,
     Centralized,
     CentralizedCustodian,
@@ -52,12 +53,22 @@ impl DockerComposeCmd {
     pub fn up(&self) {
         self.down(); // Make sure that no container is running
         let build_docker = env::var("DOCKER_BUILD_TEST_CORE_CLIENT").unwrap_or("".to_string());
-        if let KMSMode::ThresholdTestParameter = self.mode {
-            env::set_var("CORE_CLIENT__FHE_PARAMS", "Test");
-        } else {
-            env::set_var("CORE_CLIENT__FHE_PARAMS", "Default");
+
+        // set the FHE params based on mode
+        match self.mode {
+            KMSMode::ThresholdDefaultParameter
+            | KMSMode::Centralized
+            | KMSMode::CentralizedCustodian => {
+                env::set_var("CORE_CLIENT__FHE_PARAMS", "Default");
+            }
+            KMSMode::ThresholdTestParameter
+            | KMSMode::ThresholdTestParameterNoInit
+            | KMSMode::ThresholdCustodianTestParameter => {
+                env::set_var("CORE_CLIENT__FHE_PARAMS", "Test");
+            }
         }
 
+        // build the docker compose command
         let mut build = Command::new("docker");
         build
             .current_dir(self.root_path.clone())
@@ -70,11 +81,23 @@ impl DockerComposeCmd {
             KMSMode::ThresholdDefaultParameter | KMSMode::ThresholdTestParameter => {
                 build.arg("docker-compose-core-threshold.yml");
             }
+            KMSMode::ThresholdTestParameterNoInit => {
+                build.arg("docker-compose-core-threshold.yml");
+                build.env("SET_EMPTY_PEERLIST", "true");
+            }
             KMSMode::ThresholdCustodianTestParameter => {
-                build.arg("docker-compose-core-threshold-custodian.yml");
+                build.arg("docker-compose-core-threshold.yml");
+                build.env(
+                    "KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED",
+                    "true",
+                );
             }
             KMSMode::CentralizedCustodian => {
-                build.arg("docker-compose-core-centralized-custodian.yml");
+                build.arg("docker-compose-core-centralized.yml");
+                build.env(
+                    "KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED",
+                    "true",
+                );
             }
             KMSMode::Centralized => {
                 build.arg("docker-compose-core-centralized.yml");
@@ -124,16 +147,13 @@ impl DockerComposeCmd {
                 .arg("docker-compose-core-base.yml")
                 .arg("-f");
             match self.mode {
-                KMSMode::ThresholdDefaultParameter | KMSMode::ThresholdTestParameter => {
+                KMSMode::ThresholdDefaultParameter
+                | KMSMode::ThresholdTestParameter
+                | KMSMode::ThresholdTestParameterNoInit
+                | KMSMode::ThresholdCustodianTestParameter => {
                     docker_logs.arg("docker-compose-core-threshold.yml");
                 }
-                KMSMode::ThresholdCustodianTestParameter => {
-                    docker_logs.arg("docker-compose-core-threshold-custodian.yml");
-                }
-                KMSMode::CentralizedCustodian => {
-                    docker_logs.arg("docker-compose-core-centralized-custodian.yml");
-                }
-                KMSMode::Centralized => {
+                KMSMode::CentralizedCustodian | KMSMode::Centralized => {
                     docker_logs.arg("docker-compose-core-centralized.yml");
                 }
             }
@@ -156,16 +176,13 @@ impl DockerComposeCmd {
                 .arg("docker-compose-core-base.yml")
                 .arg("-f");
             match self.mode {
-                KMSMode::ThresholdDefaultParameter | KMSMode::ThresholdTestParameter => {
+                KMSMode::ThresholdDefaultParameter
+                | KMSMode::ThresholdTestParameter
+                | KMSMode::ThresholdTestParameterNoInit
+                | KMSMode::ThresholdCustodianTestParameter => {
                     docker_down.arg("docker-compose-core-threshold.yml");
                 }
-                KMSMode::ThresholdCustodianTestParameter => {
-                    docker_down.arg("docker-compose-core-threshold-custodian.yml");
-                }
-                KMSMode::CentralizedCustodian => {
-                    docker_down.arg("docker-compose-core-centralized-custodian.yml");
-                }
-                KMSMode::Centralized => {
+                KMSMode::Centralized | KMSMode::CentralizedCustodian => {
                     docker_down.arg("docker-compose-core-centralized.yml");
                 }
             }

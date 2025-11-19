@@ -1,7 +1,7 @@
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::Role;
-use crate::execution::runtime::session::BaseSessionHandles;
-use crate::execution::runtime::session::DeSerializationRunTime;
+use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
+use crate::execution::runtime::sessions::session_parameters::DeSerializationRunTime;
 use crate::execution::sharing::share::Share;
 use crate::experimental::algebra::levels::LevelEll;
 use crate::experimental::algebra::levels::LevelKsw;

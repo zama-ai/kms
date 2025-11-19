@@ -27,7 +27,7 @@ use crate::{
             preprocessing::{BitPreprocessing, DKGPreprocessing},
             triple::open_list,
         },
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         sharing::share::Share,
         tfhe_internals::{
             parameters::{compute_min_max_hw, DKGParams, NoiseInfo},
@@ -417,7 +417,7 @@ mod tests {
                 misc::divide_round,
             },
             commons::{
-                generators::{EncryptionRandomGenerator, SecretRandomGenerator},
+                generators::EncryptionRandomGenerator,
                 math::random::{DefaultRandomGenerator, RandomGenerator, TUniform},
             },
             entities::{LweCiphertext, LweSecretKeyOwned, Plaintext},
@@ -445,7 +445,9 @@ mod tests {
                 preprocessing::{dummy::DummyPreprocessing, memory::InMemoryBitPreprocessing},
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
+            },
             tfhe_internals::{
                 parameters::TUniformBound,
                 randomness::{
@@ -570,8 +572,6 @@ mod tests {
         let mut seeder = new_seeder();
         let mut encryption_random_generator: EncryptionRandomGenerator<DefaultRandomGenerator> =
             EncryptionRandomGenerator::new(seeder.seed(), seeder.as_mut());
-        let mut secret_random_generator: SecretRandomGenerator<DefaultRandomGenerator> =
-            SecretRandomGenerator::new(seeder.seed());
 
         let noise_distrib =
             DynamicDistribution::TUniform(TUniform::new(t_uniform_bound.try_into().unwrap()));
@@ -581,8 +581,7 @@ mod tests {
             plaintext,
             noise_distrib,
             noise_distrib,
-            &mut secret_random_generator,
-            &mut encryption_random_generator,
+            encryption_random_generator.noise_generator_mut(),
         );
         //Decrypt using secret key
         let decrypted = decrypt_lwe_ciphertext(&lwe_secret_key, &ct);

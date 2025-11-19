@@ -27,7 +27,10 @@ use threshold_fhe::{
         tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
         zk::ceremony::SecureCeremony,
     },
-    networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
+    networking::{
+        grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
+        tls::AttestedVerifier,
+    },
 };
 use tokio::{
     net::TcpListener,
@@ -219,7 +222,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     security_module: Option<Arc<SecurityModuleProxy>>,
     mpc_listener: TcpListener,
     base_kms: BaseKmsStruct,
-    tls_config: Option<(ServerConfig, ClientConfig)>,
+    tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
     peer_tcp_proxy: bool,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
@@ -262,7 +265,7 @@ where
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         tls_config
             .as_ref()
-            .map(|(_, client_config)| client_config.clone()),
+            .map(|(_, client_config, _)| client_config.clone()),
         config.core_to_core_net,
         peer_tcp_proxy,
     )?));
@@ -288,6 +291,8 @@ where
         mpc_socket_addr
     );
 
+    // clone the verifier for later use
+    let verifier = tls_config.as_ref().map(|(_, _, verifier)| verifier.clone());
     let manager_clone = Arc::clone(&networking_manager);
     let abort_handle = tokio::spawn(async move {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -319,7 +324,7 @@ where
         // then this should be changed
         let tcp_incoming = tcp_incoming.with_nodelay(Some(true));
         match tls_config {
-            Some((server_config, _)) => {
+            Some((server_config, _, _)) => {
                 router
                     .serve_with_incoming_shutdown(
                         TlsIncoming::new(tcp_incoming, server_config.into()),
@@ -386,27 +391,48 @@ where
                         Some(_) => "https",
                         None => "http",
                     };
-                    NodeInfo {
-                        mpc_identity: identity.mpc_identity().to_string(),
-                        party_id: role.one_based() as u32,
-                        verification_key: None, // we do not know the verification key of the other parties at startup
-                        external_url: format!(
-                            "{}://{}:{}",
-                            scheme,
-                            identity.hostname(),
-                            identity.port()
-                        ),
-                        tls_cert: vec![], // TODO(zama-ai/kms-internal/issues/2808)
-                        public_storage_url: "".to_string(),
-                        extra_verification_keys: vec![],
+                    match peer
+                        .tls_cert
+                        .as_ref()
+                        .map(|cert| cert.unchecked_cert_string())
+                        .transpose()
+                    {
+                        Ok(pem_string) => {
+                            Ok(NodeInfo {
+                                mpc_identity: identity.mpc_identity().to_string(),
+                                party_id: role.one_based() as u32,
+                                verification_key: None, // we do not know the verification key of the other parties at startup
+                                external_url: format!(
+                                    "{}://{}:{}",
+                                    scheme,
+                                    identity.hostname(),
+                                    identity.port()
+                                ),
+                                ca_cert: pem_string.map(|cert_pem| cert_pem.into_bytes()),
+                                public_storage_url: "".to_string(),
+                                extra_verification_keys: vec![],
+                            })
+                        }
+                        Err(e) => Err(e),
                     }
                 })
-                .collect::<Vec<_>>();
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let pcr_values = config.tls.and_then(|tls_conf| match tls_conf {
+                crate::conf::threshold::TlsConf::Manual { cert: _, key: _ } => None,
+                crate::conf::threshold::TlsConf::SemiAuto {
+                    cert: _,
+                    trusted_releases,
+                } => Some(trusted_releases),
+                crate::conf::threshold::TlsConf::FullAuto { trusted_releases } => {
+                    Some(trusted_releases)
+                }
+            });
             let context_info = ContextInfo {
                 kms_nodes,
                 context_id,
                 software_version: SoftwareVersion::current(),
                 threshold: config.threshold as u32,
+                pcr_values: pcr_values.unwrap_or_default(),
             };
 
             // Note that we have to delete the old context under DEFAULT_MPC_CONTEXT
@@ -447,7 +473,7 @@ where
             .await;
     }
 
-    let session_maker = SessionMaker::new(networking_manager, base_kms.new_rng().await);
+    let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.new_rng());
     let immutable_session_maker = session_maker.make_immutable();
 
     let initiator = RealInitiator {
@@ -467,23 +493,35 @@ where
         Role::indexed_from_one(config.my_id),
         session_maker,
     );
-    context_manager.load_mpc_context_from_disk().await?;
+    context_manager
+        .load_mpc_context_from_storage()
+        .await
+        .inspect_err(|e| {
+            tracing::error!(
+                "Failed to load MPC context from storage during KMS startup for party {}: {}",
+                config.my_id,
+                e
+            )
+        })?;
 
     // TODO eventually this PRSS ID should come from the context request
     // the PRSS should never be run in this function.
     let epoch_id_prss: EpochId = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?.into(); // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
+    let default_context_id = *DEFAULT_MPC_CONTEXT;
     if run_prss {
         tracing::info!(
             "Initializing threshold KMS server and generating a new PRSS Setup for {}",
             config.my_id
         );
-        initiator.init_prss(&epoch_id_prss).await?;
+        initiator
+            .init_prss(&default_context_id, &epoch_id_prss)
+            .await?;
     } else {
         tracing::info!(
             "Trying to initializing threshold KMS server and reading PRSS from storage for {}",
             config.my_id
         );
-        if let Err(e) = initiator.init_prss_from_disk(&epoch_id_prss).await {
+        if let Err(e) = initiator.init_prss_from_storage(&epoch_id_prss).await {
             tracing::warn!(
                 "Could not read PRSS Setup from storage for {}: {}. You will need to call the init end-point later before you can use the KMS server",
                 config.my_id,

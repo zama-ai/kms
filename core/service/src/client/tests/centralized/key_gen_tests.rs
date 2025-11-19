@@ -8,11 +8,12 @@ use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::StorageReader;
 use crate::vault::storage::{file::FileStorage, StorageType};
 use alloy_dyn_abi::Eip712Domain;
+use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::rpc_types::PubDataType;
-use kms_grpc::RequestId;
+use kms_grpc::{ContextId, RequestId};
 use serial_test::serial;
 use std::path::Path;
 use std::str::FromStr;
@@ -101,16 +102,26 @@ async fn default_decompression_key_gen_centralized() {
     .await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn preproc_centralized(
     preproc_id: &RequestId,
     params: FheParameter,
+    context_id: Option<&ContextId>,
+    epoch_id: Option<&EpochId>,
     keyset_config: Option<KeySetConfig>,
     domain: &Eip712Domain,
     kms_client: &mut CoreServiceEndpointClient<Channel>,
     internal_client: &Client,
 ) {
     let preproc_req = internal_client
-        .preproc_request(preproc_id, Some(params), keyset_config, domain)
+        .preproc_request(
+            preproc_id,
+            Some(params),
+            context_id,
+            epoch_id,
+            keyset_config,
+            domain,
+        )
         .unwrap();
     let preproc_response = kms_client
         .key_gen_preproc(tonic::Request::new(preproc_req.clone()))
@@ -179,6 +190,8 @@ pub async fn run_key_gen_centralized(
     preproc_centralized(
         &preproc_id,
         params,
+        None,
+        None,
         keyset_config,
         &domain,
         kms_client,
@@ -190,6 +203,8 @@ pub async fn run_key_gen_centralized(
         .key_gen_request(
             key_req_id,
             &preproc_id,
+            None,
+            None,
             Some(params),
             keyset_config,
             keyset_added_info.clone(),

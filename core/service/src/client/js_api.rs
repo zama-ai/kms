@@ -126,7 +126,7 @@ pub fn u8vec_to_public_sig_key(v: &[u8]) -> Result<PublicSigKey, JsError> {
 
 #[wasm_bindgen]
 pub fn private_sig_key_to_u8vec(sk: &PrivateSigKey) -> Result<Vec<u8>, JsError> {
-    serialize(sk).map_err(|e| JsError::new(&e.to_string()))
+    bc2wrap::serialize(sk).map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
@@ -351,7 +351,7 @@ pub fn ml_kem_pke_pk_to_u8vec(pk: &PublicEncKeyMlKem512) -> Result<Vec<u8>, JsEr
 
 #[wasm_bindgen]
 pub fn ml_kem_pke_sk_to_u8vec(sk: &PrivateEncKeyMlKem512) -> Result<Vec<u8>, JsError> {
-    serialize(&sk.0).map_err(|e| JsError::new(&e.to_string()))
+    bc2wrap::serialize(&sk.0).map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
@@ -376,8 +376,10 @@ pub fn u8vec_to_ml_kem_pke_sk(v: &[u8]) -> Result<PrivateEncKeyMlKem512, JsError
 #[wasm_bindgen]
 pub fn ml_kem_pke_encrypt(msg: &[u8], their_pk: &PublicEncKeyMlKem512) -> Vec<u8> {
     let mut rng = AesRng::from_entropy();
-    serialize(&hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(&mut rng, msg, &their_pk.0 .0).unwrap())
-        .unwrap()
+    bc2wrap::serialize(
+        &hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(&mut rng, msg, &their_pk.0 .0).unwrap(),
+    )
+    .unwrap()
 }
 
 /// This function is *not* used by relayer-sdk because the decryption
@@ -404,7 +406,7 @@ fn resp_to_js(agg_resp: Vec<UserDecryptionResponse>) -> JsValue {
         let r = UserDecryptionResponseHex {
             signature: hex::encode(&resp.external_signature),
             payload: match resp.payload {
-                Some(inner) => Some(hex::encode(serialize(&inner).unwrap())),
+                Some(inner) => Some(hex::encode(bc2wrap::serialize(&inner).unwrap())),
                 None => None,
             },
             extra_data: Some(hex::encode(&resp.extra_data)),
