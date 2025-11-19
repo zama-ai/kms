@@ -473,7 +473,7 @@ where
             .await;
     }
 
-    let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.new_rng());
+    let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.new_rng().await);
     let immutable_session_maker = session_maker.make_immutable();
 
     let initiator = RealInitiator {

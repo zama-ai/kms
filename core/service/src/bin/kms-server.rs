@@ -616,7 +616,7 @@ async fn main_exec() -> anyhow::Result<()> {
                         tls_config,
                         security_module.clone(),
                         &public_vault,
-                        base_kms.sig_key()?.as_ref(), 
+                        base_kms.sig_key()?.as_ref(),
                         #[cfg(feature = "insecure")]
                         core_config.mock_enclave.is_some_and(|m| m),
                     )
@@ -628,10 +628,8 @@ async fn main_exec() -> anyhow::Result<()> {
                     );
                     None
                 }
-            } else {
-                tracing::warn!("No TLS identity - using plaintext communication between MPC nodes");
-                None
             };
+
             #[cfg(not(feature = "insecure"))]
             let need_peer_tcp_proxy = need_security_module;
             #[cfg(feature = "insecure")]

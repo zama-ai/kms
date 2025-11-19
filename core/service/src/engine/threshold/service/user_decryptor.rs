@@ -62,7 +62,6 @@ use crate::{
     },
     engine::{
         base::{deserialize_to_low_level, BaseKmsStruct, UserDecryptCallValues},
-        compute_external_user_decrypt_signature,
         threshold::{service::session::ImmutableSessionMaker, traits::UserDecryptor},
         traits::BaseKms,
         validation::{

@@ -5,6 +5,8 @@ use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::attestation::SecurityModuleProxy;
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::compute_external_user_decrypt_signature;
 use crate::cryptography::decompression;
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::encryption::UnifiedPublicEncKey;
@@ -17,8 +19,6 @@ use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
-#[cfg(feature = "non-wasm")]
-use crate::engine::compute_external_user_decrypt_signature;
 #[cfg(feature = "non-wasm")]
 use crate::engine::context_manager::CentralizedContextManager;
 #[cfg(feature = "non-wasm")]
