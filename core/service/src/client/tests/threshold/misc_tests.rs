@@ -102,6 +102,7 @@ async fn test_threshold_health_endpoint_availability() {
             cur_client
                 .init(tonic::Request::new(InitRequest {
                     request_id: Some(req_id.into()),
+                    context_id: None,
                 }))
                 .await
         });

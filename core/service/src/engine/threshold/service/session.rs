@@ -289,6 +289,11 @@ impl SessionMaker {
         epoch_map.contains_key(epoch_id)
     }
 
+    pub(crate) async fn context_exists(&self, context_id: &ContextId) -> bool {
+        let context_map = self.context_map.read().await;
+        context_map.contains_key(context_id)
+    }
+
     async fn new_rng(&self) -> AesRng {
         let mut seed = [0u8; crate::consts::RND_SIZE];
         // Make a seperate scope for the rng so that it is dropped before the lock is released

@@ -515,12 +515,15 @@ where
     // TODO eventually this PRSS ID should come from the context request
     // the PRSS should never be run in this function.
     let epoch_id_prss: EpochId = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?.into(); // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
+    let default_context_id = *DEFAULT_MPC_CONTEXT;
     if run_prss {
         tracing::info!(
             "Initializing threshold KMS server and generating a new PRSS Setup for {}",
             config.my_id
         );
-        initiator.init_prss(&epoch_id_prss).await?;
+        initiator
+            .init_prss(&default_context_id, &epoch_id_prss)
+            .await?;
     } else {
         tracing::info!(
             "Trying to initializing threshold KMS server and reading PRSS from storage for {}",

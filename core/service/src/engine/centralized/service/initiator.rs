@@ -84,6 +84,7 @@ mod tests {
         let req_id = derive_request_id("test_init_sunshine").unwrap();
         let preproc_req = InitRequest {
             request_id: Some((req_id).into()),
+            context_id: None,
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         assert!(result.is_ok());
@@ -99,6 +100,7 @@ mod tests {
         // First initialization should succeed
         let preproc_req1 = InitRequest {
             request_id: Some(req_id1.into()),
+            context_id: None,
         };
         let result1 = init_impl(&kms, Request::new(preproc_req1)).await;
         assert!(result1.is_ok());
@@ -106,6 +108,7 @@ mod tests {
         // Second initialization should fail with AlreadyExists
         let preproc_req2 = InitRequest {
             request_id: Some(req_id2.into()),
+            context_id: None,
         };
         let result2 = init_impl(&kms, Request::new(preproc_req2)).await;
         assert!(result2.is_err());
@@ -117,7 +120,10 @@ mod tests {
     async fn test_init_missing_request_id() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
-        let preproc_req = InitRequest { request_id: None };
+        let preproc_req = InitRequest {
+            request_id: None,
+            context_id: None,
+        };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         assert!(result.is_err());
         let status = result.unwrap_err();

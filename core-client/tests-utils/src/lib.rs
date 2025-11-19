@@ -13,6 +13,7 @@ pub struct DockerComposeCmd {
 pub enum KMSMode {
     ThresholdDefaultParameter,
     ThresholdTestParameter,
+    ThresholdTestParameterNoInit,
     ThresholdCustodianTestParameter,
     Centralized,
     CentralizedCustodian,
@@ -60,7 +61,9 @@ impl DockerComposeCmd {
             | KMSMode::CentralizedCustodian => {
                 env::set_var("CORE_CLIENT__FHE_PARAMS", "Default");
             }
-            KMSMode::ThresholdTestParameter | KMSMode::ThresholdCustodianTestParameter => {
+            KMSMode::ThresholdTestParameter
+            | KMSMode::ThresholdTestParameterNoInit
+            | KMSMode::ThresholdCustodianTestParameter => {
                 env::set_var("CORE_CLIENT__FHE_PARAMS", "Test");
             }
         }
@@ -77,6 +80,10 @@ impl DockerComposeCmd {
         match self.mode {
             KMSMode::ThresholdDefaultParameter | KMSMode::ThresholdTestParameter => {
                 build.arg("docker-compose-core-threshold.yml");
+            }
+            KMSMode::ThresholdTestParameterNoInit => {
+                build.arg("docker-compose-core-threshold.yml");
+                build.env("SET_EMPTY_PEERLIST", "true");
             }
             KMSMode::ThresholdCustodianTestParameter => {
                 build.arg("docker-compose-core-threshold.yml");
@@ -142,6 +149,7 @@ impl DockerComposeCmd {
             match self.mode {
                 KMSMode::ThresholdDefaultParameter
                 | KMSMode::ThresholdTestParameter
+                | KMSMode::ThresholdTestParameterNoInit
                 | KMSMode::ThresholdCustodianTestParameter => {
                     docker_logs.arg("docker-compose-core-threshold.yml");
                 }
@@ -170,6 +178,7 @@ impl DockerComposeCmd {
             match self.mode {
                 KMSMode::ThresholdDefaultParameter
                 | KMSMode::ThresholdTestParameter
+                | KMSMode::ThresholdTestParameterNoInit
                 | KMSMode::ThresholdCustodianTestParameter => {
                     docker_down.arg("docker-compose-core-threshold.yml");
                 }
