@@ -1,4 +1,8 @@
-use crate::{anyhow_tracked, cryptography::error::CryptographyError, impl_generic_versionize};
+use crate::{
+    anyhow_tracked,
+    cryptography::{error::CryptographyError, internal_crypto_types::LegacySerialization},
+    impl_generic_versionize,
+};
 use ::signature::{Signer, Verifier};
 use aes_prng::AesRng;
 use alloy_primitives::B256;
@@ -87,27 +91,17 @@ impl PublicSigKey {
         }
     }
 
-    /// Return a concise identifier for this verification key. For ECDSA keys, this is the Ethereum address.
-    pub fn verf_key_id(&self) -> Vec<u8> {
-        // Let the ID of both a normal ecdsa256k1 key and an eip712 key be the Ethereum address
-        self.address().to_vec()
-    }
-
-    /// DEPRECATED LEGACY code since this is not the right way to serialize as it is not versioned
-    #[deprecated(
-        note = "This is legacy code and should not be used for new development. Will be handled in #2781"
-    )]
-    pub fn get_serialized_verf_key(&self) -> anyhow::Result<Vec<u8>> {
-        // TODO check if this is the same as hex::encode(pk.pk().to_encoded_point(false).to_bytes()) same with verf id
-        let serialized_verf_key = bc2wrap::serialize(&PublicSigKey::new(self.pk.0.to_owned()))?;
-        Ok(serialized_verf_key)
-    }
-
     pub fn from_sk(sk: &PrivateSigKey) -> Self {
         let pk = SigningKey::verifying_key(&sk.sk.0).to_owned();
         PublicSigKey {
             pk: WrappedVerifyingKey(pk),
         }
+    }
+
+    /// Return a concise identifier for this verification key. For ECDSA keys, this is the Ethereum address.
+    pub fn verf_key_id(&self) -> Vec<u8> {
+        // Let the ID of both a normal ecdsa256k1 key and an eip712 key be the Ethereum address
+        self.address().to_vec()
     }
 
     pub fn address(&self) -> alloy_primitives::Address {
@@ -126,6 +120,23 @@ impl HasSigningScheme for PublicSigKey {
     fn signing_scheme_type(&self) -> SigningSchemeType {
         // Only one scheme for now
         SigningSchemeType::Ecdsa256k1
+    }
+}
+
+impl LegacySerialization for PublicSigKey {
+    fn to_legacy_bytes(&self) -> Result<Vec<u8>, CryptographyError> {
+        bc2wrap::serialize(self).map_err(|e| {
+            CryptographyError::SerializationError(format!("Could not serialize key {}", e))
+        })
+    }
+
+    fn from_legacy_bytes(bytes: &[u8]) -> Result<Self, CryptographyError>
+    where
+        Self: Sized,
+    {
+        bc2wrap::deserialize_safe(bytes).map_err(|e| {
+            CryptographyError::DeserializationError(format!("Could not deserialize key {}", e))
+        })
     }
 }
 
@@ -568,5 +579,14 @@ mod tests {
         let verf_id = verf_key.verf_key_id();
         let signing_id = sig_key.signing_key_id();
         assert!(verf_id == signing_id);
+    }
+
+    #[test]
+    fn sunshine_verf_key_legacy_serialization() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+        let serialized_key = verf_key.to_legacy_bytes().unwrap();
+        let deserialized_key = PublicSigKey::from_legacy_bytes(&serialized_key).unwrap();
+        assert_eq!(verf_key, deserialized_key);
     }
 }

@@ -154,7 +154,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         let crypto_storage = self.crypto_storage.clone();
 
         // Do the resharing
-        let sk = Arc::clone(&self.base_kms.sig_key);
+        let sk = self.base_kms.sig_key().map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::FailedPrecondition,
+                format!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+            )
+        })?;
         let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
 
         // Update status

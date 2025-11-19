@@ -80,6 +80,7 @@ use crate::cryptography::encryption::{
 use crate::cryptography::hybrid_ml_kem;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use aes_prng::AesRng;
+use bc2wrap::deserialize_safe;
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::kms::v1::UserDecryptionResponse;
 use kms_grpc::kms::v1::{Eip712DomainMsg, TypedPlaintext, UserDecryptionResponsePayload};
@@ -130,7 +131,7 @@ pub fn private_sig_key_to_u8vec(sk: &PrivateSigKey) -> Result<Vec<u8>, JsError> 
 
 #[wasm_bindgen]
 pub fn u8vec_to_private_sig_key(v: &[u8]) -> Result<PrivateSigKey, JsError> {
-    bc2wrap::deserialize_safe(v).map_err(|e| JsError::new(&e.to_string()))
+    deserialize_safe(v).map_err(|e| JsError::new(&e.to_string()))
 }
 
 // We cannot use a hashmap so use this struct as an alternative
@@ -365,7 +366,7 @@ pub fn u8vec_to_ml_kem_pke_pk(v: &[u8]) -> Result<PublicEncKeyMlKem512, JsError>
 
 #[wasm_bindgen]
 pub fn u8vec_to_ml_kem_pke_sk(v: &[u8]) -> Result<PrivateEncKeyMlKem512, JsError> {
-    bc2wrap::deserialize_safe::<PrivateEncKey<ml_kem::MlKem512>>(v)
+    deserialize_safe::<PrivateEncKey<ml_kem::MlKem512>>(v)
         .map(PrivateEncKeyMlKem512)
         .map_err(|e| JsError::new(&e.to_string()))
 }
@@ -386,7 +387,7 @@ pub fn ml_kem_pke_encrypt(msg: &[u8], their_pk: &PublicEncKeyMlKem512) -> Vec<u8
 /// It's just here for completeness and tests.
 #[wasm_bindgen]
 pub fn ml_kem_pke_decrypt(ct: &[u8], my_sk: &PrivateEncKeyMlKem512) -> Vec<u8> {
-    let ct: hybrid_ml_kem::HybridKemCt = bc2wrap::deserialize_safe(ct).unwrap();
+    let ct: hybrid_ml_kem::HybridKemCt = deserialize_safe(ct).unwrap();
     hybrid_ml_kem::dec::<ml_kem::MlKem512>(ct, &my_sk.0 .0).unwrap()
 }
 
@@ -434,9 +435,7 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
             payload: match hex_resp.payload {
                 Some(inner) => {
                     let buf = hex::decode(&inner)?;
-                    Some(bc2wrap::deserialize_safe::<UserDecryptionResponsePayload>(
-                        &buf,
-                    )?)
+                    Some(deserialize_safe::<UserDecryptionResponsePayload>(&buf)?)
                 }
                 None => None,
             },

@@ -609,8 +609,12 @@ pub struct ResultParameters {
 
 #[derive(Debug, Parser, Clone)]
 pub struct RecoveryInitParameters {
+    /// Indicator as to whether the KMS should overwrite a possible existing ephemeral key
+    /// If false, the call will be indempotent, if true, this will not be the case
     #[clap(long, short = 'o', default_value_t = false)]
     pub overwrite_ephemeral_key: bool,
+    /// Paths to write the operator responses
+    /// They may be unordered
     #[clap(long, short = 'r')]
     pub operator_recovery_resp_paths: Vec<PathBuf>,
 }
@@ -1373,7 +1377,6 @@ async fn do_new_custodian_context(
     let new_context = CustodianContext {
         custodian_nodes,
         context_id: Some(context_id.into()),
-        previous_context_id: None, // TODO(#2748) not really used now, should be refactored
         threshold,
     };
     for (_party_id, ce) in core_endpoints.iter() {
@@ -1382,7 +1385,6 @@ async fn do_new_custodian_context(
         req_tasks.spawn(async move {
             cur_client
                 .new_custodian_context(tonic::Request::new(NewCustodianContextRequest {
-                    active_context: None, // TODO(#2748) not really used now, should be refactored
                     new_context: Some(new_context_cloned),
                 }))
                 .await
@@ -2365,6 +2367,11 @@ pub async fn execute_cmd(
             overwrite_ephemeral_key,
             operator_recovery_resp_paths,
         }) => {
+            assert_eq!(
+                operator_recovery_resp_paths.len(),
+                num_parties,
+                "Number of operator recovery response paths must match number of operators in the configuration files"
+            );
             let res =
                 do_custodian_recovery_init(&core_endpoints_req, *overwrite_ephemeral_key).await?;
             assert_eq!(res.len(), operator_recovery_resp_paths.len());

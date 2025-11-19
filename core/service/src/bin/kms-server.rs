@@ -1,7 +1,7 @@
 use anyhow::ensure;
 use clap::Parser;
 use futures_util::future::OptionFuture;
-use kms_grpc::rpc_types::PubDataType;
+use kms_grpc::rpc_types::{KMSType, PubDataType};
 use kms_lib::{
     conf::{
         init_conf, init_conf_kms_core_telemetry,
@@ -14,7 +14,7 @@ use kms_lib::{
         signatures::PrivateSigKey,
     },
     engine::{
-        centralized::central_kms::RealCentralizedKms, run_server,
+        base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms, run_server,
         threshold::service::new_real_threshold_kms,
     },
     grpc::MetaStoreStatusServiceImpl,
@@ -23,7 +23,7 @@ use kms_lib::{
         keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
         storage::{
             crypto_material::get_core_signing_key, make_storage, read_text_at_request_id,
-            s3::build_s3_client, StorageCache, StorageType,
+            s3::build_s3_client, StorageCache, StorageReader, StorageType,
         },
         Vault,
     },
@@ -468,7 +468,7 @@ async fn main_exec() -> anyhow::Result<()> {
     )
     .inspect_err(|e| tracing::warn!("Could not initialize public storage: {e}"))?;
     let public_vault = Vault {
-        storage: public_storage,
+        storage: public_storage.clone(),
         keychain: None,
     };
 
@@ -507,16 +507,6 @@ async fn main_exec() -> anyhow::Result<()> {
         storage: private_storage,
         keychain: private_keychain,
     };
-
-    // load signing key
-    let sk = get_core_signing_key(&private_vault).await?;
-
-    // compute corresponding public key and derive address from private sig key
-    #[allow(deprecated)]
-    let pk_bytes = sk.verf_key().pk().to_encoded_point(false).to_bytes();
-
-    tracing::info!("KMS verifying key is {}", hex::encode(pk_bytes));
-    tracing::info!("Public ethereum address is {}", sk.address());
 
     // backup vault (unlike for private/public storage, there cannot be a
     // default location for backup storage, so there has to be
@@ -585,6 +575,35 @@ async fn main_exec() -> anyhow::Result<()> {
         .await
         .unwrap_or_else(|e| panic!("Could not bind to {service_socket_addr} \n {e:?}"));
 
+    let mode = match core_config.threshold {
+        Some(_) => KMSType::Threshold,
+        None => KMSType::Centralized,
+    };
+    // load key
+    let base_kms = match get_core_signing_key(&private_vault).await {
+        Ok(sk) => BaseKmsStruct::new(mode, sk)?,
+        Err(e) => {
+            tracing::warn!("Error loading signing key: {e:?}");
+            tracing::warn!(
+                "SIGNING KEY NOT AVAILABLE, ENTERING RECOVERY MODE!!!!\nOnly backup recovery operations should be done as TLS is not available!\n
+                Make sure to validate that the current verification key in public storage is EXACTLY equal to the one on the gateway before proceeding!"
+            );
+            let verf_key = public_storage
+                .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
+                .await?;
+            BaseKmsStruct::new_no_signing_key(mode, verf_key)
+        }
+    };
+
+    // compute corresponding public key and derive address from private sig key
+    #[allow(deprecated)]
+    let pk_bytes = base_kms.verf_key().pk().to_encoded_point(false).to_bytes();
+    tracing::info!("KMS verifying key is {}", hex::encode(pk_bytes));
+    tracing::info!(
+        "Public ethereum address is {}",
+        base_kms.verf_key().address()
+    );
+
     match core_config.threshold {
         Some(threshold_config) => {
             let mpc_listener = make_mpc_listener(&threshold_config).await;
@@ -597,7 +616,7 @@ async fn main_exec() -> anyhow::Result<()> {
                         tls_config,
                         security_module.clone(),
                         &public_vault,
-                        &sk,
+                        base_kms.sig_key()?.as_ref(),
                         #[cfg(feature = "insecure")]
                         core_config.mock_enclave.is_some_and(|m| m),
                     )
@@ -630,7 +649,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 backup_vault,
                 security_module,
                 mpc_listener,
-                sk,
+                base_kms,
                 tls_identity,
                 need_peer_tcp_proxy,
                 false,
@@ -663,7 +682,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 private_vault,
                 backup_vault,
                 security_module,
-                sk,
+                (*base_kms.sig_key()?).clone(),
                 core_config.rate_limiter_conf,
             )
             .await?;

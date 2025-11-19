@@ -20,17 +20,11 @@ use tonic::Response;
 use tonic::Status;
 
 use crate::cryptography::encryption::UnifiedPublicEncKey;
-use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
+use crate::cryptography::signatures::{PrivateSigKey, Signature};
 
 use super::base::KmsFheKeyHandles;
 
 pub trait BaseKms {
-    fn verify_sig<T: Serialize + AsRef<[u8]>>(
-        dsep: &DomainSep,
-        payload: &T,
-        signature: &Signature,
-        verification_key: &PublicSigKey,
-    ) -> anyhow::Result<()>;
     fn sign<T: Serialize + AsRef<[u8]>>(
         &self,
         dsep: &DomainSep,

@@ -56,14 +56,14 @@ impl SessionMaker {
     pub(crate) fn new(
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         verifier: Option<Arc<AttestedVerifier>>,
-        rng: Arc<Mutex<AesRng>>,
+        rng: AesRng,
     ) -> Self {
         Self {
             networking_manager,
             context_map: Arc::new(RwLock::new(HashMap::new())),
             epoch_map: Arc::new(RwLock::new(HashMap::new())),
             verifier,
-            rng,
+            rng: Arc::new(Mutex::new(rng)),
         }
     }
 
@@ -73,7 +73,7 @@ impl SessionMaker {
     }
 
     #[cfg(test)]
-    pub(crate) fn empty_dummy_session(rng: Arc<Mutex<AesRng>>) -> Self {
+    pub(crate) fn empty_dummy_session(rng: AesRng) -> Self {
         let networking_manager = Arc::new(RwLock::new(
             GrpcNetworkingManager::new(None, None, false).unwrap(),
         ));
@@ -82,7 +82,7 @@ impl SessionMaker {
             context_map: Arc::new(RwLock::new(HashMap::new())),
             epoch_map: Arc::new(RwLock::new(HashMap::new())),
             verifier: None,
-            rng,
+            rng: Arc::new(Mutex::new(rng)),
         }
     }
 
@@ -90,7 +90,7 @@ impl SessionMaker {
     pub(crate) fn four_party_dummy_session(
         prss_setup_z128: Option<PRSSSetup<ResiduePolyF4Z128>>,
         prss_setup_z64: Option<PRSSSetup<ResiduePolyF4Z64>>,
-        rng: Arc<Mutex<AesRng>>,
+        rng: AesRng,
     ) -> Self {
         use crate::consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID};
 
@@ -133,7 +133,7 @@ impl SessionMaker {
                 None => HashMap::new(),
             })),
             verifier: None,
-            rng,
+            rng: Arc::new(Mutex::new(rng)),
         }
     }
 

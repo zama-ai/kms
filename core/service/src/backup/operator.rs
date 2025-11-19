@@ -49,28 +49,6 @@ pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRECO";
 const TIMESTAMP_VALIDATION_WINDOW_SECS: u64 = 24 * 3600; // 1 day
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum RecoveryRequestPayloadVersioned {
-    V0(RecoveryRequestPayload),
-}
-
-/// The backup data constructed whenever a new custodian context is created.
-///
-/// It is meant to be stored in the public storage as it is self-trusted via the signcryption in `InnerOperatorBackupOutput`.
-/// Note that this data is different from what is returned to the custodians (`InternalRecoveryRequest`) during recovery
-/// since during recovery it gets augmented with an ephemeral encryption key and operator information and the actual backup key is not used at that point.
-#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
-#[versionize(RecoveryRequestPayloadVersioned)]
-pub struct RecoveryRequestPayload {
-    /// The ciphertexts that are the backup. Indexed by the custodian role.
-    pub cts: BTreeMap<Role, InnerOperatorBackupOutput>,
-    pub backup_enc_key: UnifiedPublicEncKey,
-}
-
-impl Named for RecoveryRequestPayload {
-    const NAME: &'static str = "backup::RecoveryRequestPayload";
-}
-
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum InternalRecoveryRequestVersioned {
     V0(InternalRecoveryRequest),
 }
@@ -203,7 +181,7 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
 pub struct Operator {
     my_role: Role,
     custodian_keys: HashMap<Role, (UnifiedPublicEncKey, PublicSigKey)>,
-    signing_key: PrivateSigKey,
+    signing_key: Option<PrivateSigKey>,
     // the public component of [signing_key] above
     verification_key: PublicSigKey,
     threshold: usize,
@@ -284,6 +262,11 @@ pub enum RecoveryValidationMaterialVersioned {
     V0(RecoveryValidationMaterial),
 }
 
+/// The data stored by an operator after a custodian context switch.
+/// The data contains the contains the signcrypted shares for each custodian
+/// along with information about the custodians.
+/// Furthermore, the data is signed by the operator to allow it to verify the
+/// data upon load.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(RecoveryValidationMaterialVersioned)]
 pub struct RecoveryValidationMaterial {
@@ -297,11 +280,29 @@ impl Named for RecoveryValidationMaterial {
 
 impl RecoveryValidationMaterial {
     pub fn new(
+        cts: BTreeMap<Role, InnerOperatorBackupOutput>,
         commitments: BTreeMap<Role, Vec<u8>>,
         custodian_context: InternalCustodianContext,
         sk: &PrivateSigKey,
     ) -> anyhow::Result<Self> {
+        if custodian_context.custodian_nodes.len() != cts.len() {
+            return Err(anyhow::anyhow!(
+                "Mismatch between number of custodian nodes ({}) and number of backup signcrypted shares ({})",
+                custodian_context.custodian_nodes.len(),
+                cts.len()
+            ));
+        }
+        for role in 1..=custodian_context.custodian_nodes.len() {
+            let r = Role::indexed_from_one(role);
+            if !cts.contains_key(&r) {
+                return Err(anyhow::anyhow!(
+                    "Missing backup signcrypted share for custodian role {}",
+                    role
+                ));
+            }
+        }
         let payload = RecoveryValidationMaterialPayload {
+            cts,
             commitments,
             custodian_context,
         };
@@ -380,7 +381,12 @@ pub enum RecoveryValidationMaterialPayloadVersioned {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(RecoveryValidationMaterialPayloadVersioned)]
 pub struct RecoveryValidationMaterialPayload {
+    /// The signcrypted shares of the operators' private backup decryption key towards each custodian.
+    /// I.e. the key to the map is the role of the custodian.
+    pub cts: BTreeMap<Role, InnerOperatorBackupOutput>,
+    /// The commitments to each operator's share, secret shared to each custodian. Hence custodian indexed
     pub commitments: BTreeMap<Role, Vec<u8>>,
+    /// The custodian context used during backup
     pub custodian_context: InternalCustodianContext,
 }
 impl Named for RecoveryValidationMaterialPayload {
@@ -497,92 +503,47 @@ impl Named for BackupMaterial {
 }
 
 impl Operator {
-    pub fn new(
+    /// Construct a new Operator for creating backups.
+    /// This requires a signing key.
+    /// Futhermore, this will also require validating the timestamps of the custodian setup messages.
+    /// This is done in this method.
+    /// If you want to create an operator for recovery/restore operations (which does not require a signing key), use [Self::new_for_validating]
+    /// as this method does not require a signing key, nor will it validate (the likely expired) timestamps.
+    pub fn new_for_sharing(
         my_role: Role,
         custodian_messages: Vec<InternalCustodianSetupMessage>,
         signing_key: PrivateSigKey,
         threshold: usize,
         amount_custodians: usize,
     ) -> Result<Self, BackupError> {
-        verify_n_t(amount_custodians, threshold)?;
-        if custodian_messages.len() != amount_custodians {
-            tracing::warn!(
-                "An incorrect amount of custodian messages were received: expected at least {} but got {}",
-                amount_custodians,
-                custodian_messages.len()
-            );
-            if custodian_messages.len() < threshold + 1 {
-                let msg = format!(
-                    "Not enough custodian setup messages: expected at least {} but got {}",
-                    threshold + 1,
-                    custodian_messages.len()
-                );
-                tracing::error!("{msg}");
-                return Err(BackupError::SetupError(msg));
-            }
-        }
-
-        let mut custodian_keys = HashMap::new();
-        for msg in custodian_messages.into_iter() {
-            let InternalCustodianSetupMessage {
-                header,
-                custodian_role,
-                random_value: _,
-                timestamp,
-                name: _,
-                public_enc_key,
-                public_verf_key,
-            } = msg;
-
-            if header != HEADER {
-                tracing::warn!("Invalid header in custodian setup message from custodian {custodian_role}. Expected header {HEADER} but got {header}");
-                continue;
-            }
-
-            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-            if !(now - TIMESTAMP_VALIDATION_WINDOW_SECS < timestamp
-                && timestamp < now + TIMESTAMP_VALIDATION_WINDOW_SECS)
-            {
-                tracing::warn!(
-                    "Invalid timestamp in custodian setup message from custodian {}: expected within {} seconds of now, but got {}",
-                    custodian_role,
-                    TIMESTAMP_VALIDATION_WINDOW_SECS,
-                    timestamp
-                );
-                continue;
-            }
-
-            if custodian_role.one_based() > amount_custodians {
-                tracing::warn!(
-                    "Invalid custodian role in custodian setup message: {custodian_role}. Expected role between 1 and {amount_custodians}"
-                );
-                continue;
-            }
-
-            if let Some(old_val) =
-                custodian_keys.insert(custodian_role, (public_enc_key, public_verf_key))
-            {
-                tracing::warn!(
-                        "Duplicate custodian role in custodian setup message: {custodian_role}. Will use first value for this role"
-                    );
-                let _ = custodian_keys.insert(custodian_role, old_val);
-                continue;
-            }
-        }
-        if custodian_keys.len() < threshold + 1 {
-            let msg = format!(
-                "Not enough valid custodian setup messages: expected at least {} but got {}",
-                threshold + 1,
-                custodian_keys.len()
-            );
-            tracing::error!("{msg}");
-            return Err(BackupError::SetupError(msg));
-        }
-        let verf_key = signing_key.clone().into();
+        let verf_key = signing_key.verf_key();
+        let custodian_keys =
+            validate_custodian_messages(custodian_messages, threshold, amount_custodians, true)?;
         Ok(Self {
             my_role,
             custodian_keys,
-            signing_key,
+            signing_key: Some(signing_key),
+            verification_key: verf_key,
+            threshold,
+        })
+    }
+
+    /// Construct a new Operator for validating backups.
+    /// This does not require a signing key.
+    /// Furthermore, this will not validate the timestamps of the custodian setup messages.
+    pub fn new_for_validating(
+        my_role: Role,
+        custodian_messages: Vec<InternalCustodianSetupMessage>,
+        verf_key: PublicSigKey,
+        threshold: usize,
+        amount_custodians: usize,
+    ) -> Result<Self, BackupError> {
+        let custodian_keys =
+            validate_custodian_messages(custodian_messages, threshold, amount_custodians, false)?;
+        Ok(Self {
+            my_role,
+            custodian_keys,
+            signing_key: None,
             verification_key: verf_key,
             threshold,
         })
@@ -617,6 +578,14 @@ impl Operator {
         ),
         BackupError,
     > {
+        let sk = match &self.signing_key {
+            None => {
+                return Err(BackupError::OperatorError(
+                    "Operator has no signing key".to_string(),
+                ))
+            }
+            Some(sk) => sk,
+        };
         let n = self.custodian_keys.len();
         let t = self.threshold;
 
@@ -685,8 +654,7 @@ impl Operator {
                 shares,
             };
             let custodian_verf_id = custodian_verf_key.verf_key_id();
-            let signcryption_key =
-                UnifiedSigncryptionKey::new(&self.signing_key, cus_enc_key, &custodian_verf_id);
+            let signcryption_key = UnifiedSigncryptionKey::new(sk, cus_enc_key, &custodian_verf_id);
             let signcryption = signcryption_key
                 .signcrypt(rng, &DSEP_BACKUP_CUSTODIAN, &backup_material)
                 .map_err(BackupError::InternalCryptographyError)?;
@@ -791,14 +759,104 @@ impl Operator {
     }
 }
 
+/// Helper function to validate custodian setup messages and parameters.
+/// The function returns a HashMap mapping the valid custodian roles to their encryption and verification keys.
+/// That is, the method precludes any invalid custodian messages, and returns an error if not enough valid.
+fn validate_custodian_messages(
+    custodian_messages: Vec<InternalCustodianSetupMessage>,
+    threshold: usize,
+    amount_custodians: usize,
+    validate_timestamps: bool,
+) -> Result<HashMap<Role, (UnifiedPublicEncKey, PublicSigKey)>, BackupError> {
+    verify_n_t(amount_custodians, threshold)?;
+    if custodian_messages.len() != amount_custodians {
+        tracing::warn!(
+                "An incorrect amount of custodian messages were received: expected at least {} but got {}",
+                amount_custodians,
+                custodian_messages.len()
+            );
+        if custodian_messages.len() < threshold + 1 {
+            let msg = format!(
+                "Not enough custodian setup messages: expected at least {} but got {}",
+                threshold + 1,
+                custodian_messages.len()
+            );
+            tracing::error!("{msg}");
+            return Err(BackupError::SetupError(msg));
+        }
+    }
+    let mut custodian_keys = HashMap::new();
+    for msg in custodian_messages.into_iter() {
+        let InternalCustodianSetupMessage {
+            header,
+            custodian_role,
+            random_value: _,
+            timestamp,
+            name: _,
+            public_enc_key,
+            public_verf_key,
+        } = msg;
+
+        if validate_timestamps {
+            tracing::debug!(
+                "Validating timestamp {} in custodian setup message from custodian {}",
+                timestamp,
+                custodian_role
+            );
+            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+            if !(now - TIMESTAMP_VALIDATION_WINDOW_SECS < timestamp
+                && timestamp < now + TIMESTAMP_VALIDATION_WINDOW_SECS)
+            {
+                tracing::warn!(
+                    "Invalid timestamp in custodian setup message from custodian {}: expected within {} seconds of now, but got {}",
+                    custodian_role,
+                    TIMESTAMP_VALIDATION_WINDOW_SECS,
+                    timestamp
+                );
+                continue;
+            }
+        }
+        if header != HEADER {
+            tracing::warn!("Invalid header in custodian setup message from custodian {custodian_role}. Expected header {HEADER} but got {header}");
+            continue;
+        }
+
+        if custodian_role.one_based() > amount_custodians {
+            tracing::warn!(
+                    "Invalid custodian role in custodian setup message: {custodian_role}. Expected role between 1 and {amount_custodians}"
+                );
+            continue;
+        }
+
+        if let Some(old_val) =
+            custodian_keys.insert(custodian_role, (public_enc_key, public_verf_key))
+        {
+            tracing::warn!(
+                        "Duplicate custodian role in custodian setup message: {custodian_role}. Will use first value for this role"
+                    );
+            let _ = custodian_keys.insert(custodian_role, old_val);
+            continue;
+        }
+    }
+    if custodian_keys.len() < threshold + 1 {
+        let msg = format!(
+            "Not enough valid custodian setup messages: expected at least {} but got {}",
+            threshold + 1,
+            custodian_keys.len()
+        );
+        tracing::error!("{msg}");
+        return Err(BackupError::SetupError(msg));
+    }
+    Ok(custodian_keys)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        backup::custodian::CustodianSetupMessagePayload,
+        backup::{custodian::CustodianSetupMessagePayload, operator::RecoveryValidationMaterial},
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
-            signatures::gen_sig_keys,
+            signatures::{gen_sig_keys, SigningSchemeType},
         },
         engine::base::derive_request_id,
     };
@@ -839,17 +897,30 @@ mod tests {
             name: "Custodian-3".to_string(),
             payload: payload_serial.clone(),
         };
-        let commitments = BTreeMap::new();
+        let mut commitments = BTreeMap::new();
+        commitments.insert(Role::indexed_from_one(1), vec![1_u8; 32]);
+        commitments.insert(Role::indexed_from_one(2), vec![2_u8; 32]);
+        commitments.insert(Role::indexed_from_one(3), vec![3_u8; 32]);
+        let mut cts = BTreeMap::new();
+        let cts_out = InnerOperatorBackupOutput {
+            signcryption: UnifiedSigncryption {
+                payload: vec![1, 2, 3],
+                pke_type: PkeSchemeType::MlKem512,
+                signing_type: SigningSchemeType::Ecdsa256k1,
+            },
+        };
+        cts.insert(Role::indexed_from_one(1), cts_out.clone());
+        cts.insert(Role::indexed_from_one(2), cts_out.clone());
+        cts.insert(Role::indexed_from_one(3), cts_out.clone());
         let custodian_context = CustodianContext {
             custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
             context_id: Some(backup_id.into()),
-            previous_context_id: None,
             threshold: 1,
         };
         let internal_custodian_context =
             InternalCustodianContext::new(custodian_context, enc_key).unwrap();
         let rvm =
-            RecoveryValidationMaterial::new(commitments, internal_custodian_context, &sig_key)
+            RecoveryValidationMaterial::new(cts, commitments, internal_custodian_context, &sig_key)
                 .unwrap();
         assert!(rvm.validate(&verf_key));
     }
@@ -875,10 +946,8 @@ mod tests {
 
     #[test]
     fn operator_new_fails_with_bad_n_t() {
-        let mut rng = AesRng::seed_from_u64(1);
-        let (_, sig_key) = gen_sig_keys(&mut rng);
         // 1 is not less than 2/2
-        let result = Operator::new(Role::indexed_from_one(1), vec![], sig_key, 1, 2);
+        let result = validate_custodian_messages(vec![], 1, 2, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
         assert!(result
             .err()
@@ -889,18 +958,14 @@ mod tests {
 
     #[test]
     fn operator_new_fails_with_zero_t() {
-        let mut rng = AesRng::seed_from_u64(2);
-        let (_, sig_key) = gen_sig_keys(&mut rng);
-        let result = Operator::new(Role::indexed_from_one(1), vec![], sig_key, 0, 2);
+        let result = validate_custodian_messages(vec![], 0, 2, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
         assert!(result.err().unwrap().to_string().contains("t cannot be 0"));
     }
 
     #[test]
     fn operator_new_fails_with_zero_n() {
-        let mut rng = AesRng::seed_from_u64(3);
-        let (_, sig_key) = gen_sig_keys(&mut rng);
-        let result = Operator::new(Role::indexed_from_one(1), vec![], sig_key, 1, 0);
+        let result = validate_custodian_messages(vec![], 1, 0, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
         assert!(result.err().unwrap().to_string().contains("n cannot be 0"));
     }
@@ -912,8 +977,7 @@ mod tests {
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let msg = valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
-        let (_, sig_key) = gen_sig_keys(&mut rng);
-        let result = Operator::new(Role::indexed_from_one(1), vec![msg], sig_key, 1, 3);
+        let result = validate_custodian_messages(vec![msg], 1, 3, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
         assert!(result
             .err()
@@ -936,14 +1000,7 @@ mod tests {
         let msg3 =
             valid_custodian_msg(Role::indexed_from_one(3), enc_key.clone(), verf_key.clone());
         msg1.header = "wrong header".to_string();
-        let (_, sig_key) = gen_sig_keys(&mut rng);
-        let result = Operator::new(
-            Role::indexed_from_one(1),
-            vec![msg1, msg2, msg3],
-            sig_key,
-            1,
-            3,
-        );
+        let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, true);
         // The result is ok since we only fail in one message
         assert!(result.is_ok());
         assert!(logs_contain("Invalid header in custodian setup message"));
@@ -963,14 +1020,7 @@ mod tests {
             valid_custodian_msg(Role::indexed_from_one(2), enc_key.clone(), verf_key.clone());
         let msg3 =
             valid_custodian_msg(Role::indexed_from_one(3), enc_key.clone(), verf_key.clone());
-        let (_, sig_key) = gen_sig_keys(&mut rng);
-        let result = Operator::new(
-            Role::indexed_from_one(1),
-            vec![msg1.clone(), msg2.clone(), msg3.clone()],
-            sig_key,
-            1,
-            3,
-        );
+        let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, true);
         // The result is ok since we only fail in one message
         assert!(result.is_ok());
         assert!(logs_contain("Invalid timestamp in custodian setup message"));
@@ -994,17 +1044,39 @@ mod tests {
             valid_custodian_msg(Role::indexed_from_one(2), enc_key.clone(), verf_key.clone());
         let msg3 =
             valid_custodian_msg(Role::indexed_from_one(3), enc_key.clone(), verf_key.clone());
-        let (_, sig_key) = gen_sig_keys(&mut rng);
-        let result = Operator::new(
-            Role::indexed_from_one(1),
-            vec![msg1.clone(), msg2.clone(), msg3.clone()],
-            sig_key,
-            1,
-            3,
-        );
+        let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, true);
         // The result is ok since we only fail in one message
         assert!(result.is_ok());
         assert!(logs_contain("Invalid timestamp in custodian setup message"));
+    }
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn operator_timestamp_validation() {
+        let mut rng = AesRng::seed_from_u64(5);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_dec_key, enc_key) = encryption.keygen().unwrap();
+        let (verf_key, _) = gen_sig_keys(&mut rng);
+        let present = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut msg1 =
+            valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
+        msg1.timestamp = present + 24 * 3600 + 2; // too far in the future by 2 seconds
+        let mut msg2 =
+            valid_custodian_msg(Role::indexed_from_one(2), enc_key.clone(), verf_key.clone());
+        msg2.timestamp = present + 24 * 3600 + 2; // too far in the future by 2 seconds
+        let mut msg3 =
+            valid_custodian_msg(Role::indexed_from_one(3), enc_key.clone(), verf_key.clone());
+        msg3.timestamp = present + 24 * 3600 + 2; // too far in the future by 2 seconds
+        let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, false);
+        // The result is ok since we do not validate the timestamp
+        assert!(result.is_ok());
+        // Check that no logs about timestamp is present
+        assert!(!logs_contain(
+            "Invalid timestamp in custodian setup message"
+        ));
     }
 
     #[tracing_test::traced_test]
@@ -1029,14 +1101,7 @@ mod tests {
             enc_key.clone(),
             verf_key.clone(),
         );
-        let (_, sig_key) = gen_sig_keys(&mut rng);
-        let result = Operator::new(
-            Role::indexed_from_one(1),
-            vec![msg1.clone(), msg2.clone(), msg3.clone()],
-            sig_key,
-            1,
-            3,
-        );
+        let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
         assert!(result
             .err()
@@ -1061,14 +1126,7 @@ mod tests {
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
         let msg3 =
             valid_custodian_msg(Role::indexed_from_one(3), enc_key.clone(), verf_key.clone());
-        let (_, sig_key) = gen_sig_keys(&mut rng);
-        let result = Operator::new(
-            Role::indexed_from_one(1),
-            vec![msg1, msg2, msg3],
-            sig_key,
-            1,
-            3,
-        );
+        let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, true);
         assert!(logs_contain(
             "Duplicate custodian role in custodian setup message"
         ));
@@ -1089,14 +1147,7 @@ mod tests {
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
         let msg3 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
-        let (_, sig_key) = gen_sig_keys(&mut rng);
-        let result = Operator::new(
-            Role::indexed_from_one(1),
-            vec![msg1, msg2, msg3],
-            sig_key,
-            1,
-            3,
-        );
+        let result = validate_custodian_messages(vec![msg1, msg2, msg3], 1, 3, true);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
         assert!(logs_contain(
             "Duplicate custodian role in custodian setup message"

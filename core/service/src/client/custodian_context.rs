@@ -23,11 +23,9 @@ impl Client {
             custodian_setup_msgs(&mut self.rng, amount_custodians)?;
         Ok((
             NewCustodianContextRequest {
-                active_context: None, // TODO(#2748) not used now
                 new_context: Some(CustodianContext {
                     custodian_nodes: custodian_setup_msgs,
                     context_id: Some((*request_id).into()),
-                    previous_context_id: None, // TODO(#2748) not used now
                     threshold,
                 }),
             },

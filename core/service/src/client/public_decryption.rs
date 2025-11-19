@@ -1,7 +1,5 @@
 use crate::client::client_wasm::Client;
-use crate::cryptography::signatures::{PublicSigKey, Signature};
-use crate::engine::base::BaseKmsStruct;
-use crate::engine::traits::BaseKms;
+use crate::cryptography::signatures::{internal_verify_sig, PublicSigKey, Signature};
 use crate::engine::validation::validate_public_decrypt_responses_against_request;
 use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
 use crate::{anyhow_error_and_log, some_or_err};
@@ -85,7 +83,7 @@ impl Client {
             // verification key is in the set of permissible keys
             let cur_verf_key: PublicSigKey =
                 bc2wrap::deserialize_safe(&cur_payload.verification_key)?;
-            BaseKmsStruct::verify_sig(
+            internal_verify_sig(
                 &DSEP_PUBLIC_DECRYPTION,
                 &bc2wrap::serialize(&cur_payload)?,
                 &sig,

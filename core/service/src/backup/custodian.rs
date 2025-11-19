@@ -181,7 +181,7 @@ impl TryFrom<InternalCustodianSetupMessage> for CustodianSetupMessage {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum InternalCustodianContextVersioned {
     V0(InternalCustodianContext),
 }
@@ -190,15 +190,18 @@ pub enum InternalCustodianContextVersioned {
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(InternalCustodianContextVersioned)]
 pub struct InternalCustodianContext {
+    /// The custodian threshold for recovery
     pub threshold: u32,
+    /// The custodian context ID that will identify this custodian context
     pub context_id: RequestId,
-    pub previous_context_id: Option<RequestId>,
+    /// The information received by the custodians during custodian context setup
     pub custodian_nodes: BTreeMap<Role, InternalCustodianSetupMessage>,
+    /// The backup encryption key used to encrypt the backup shares
     pub backup_enc_key: UnifiedPublicEncKey,
 }
 
 impl Named for InternalCustodianContext {
-    const NAME: &'static str = "backup::CustodianContext";
+    const NAME: &'static str = "backup::InternalCustodianContext";
 }
 
 impl InternalCustodianContext {
@@ -217,8 +220,6 @@ impl InternalCustodianContext {
         }
         let mut node_map = BTreeMap::new();
         for setup_message in custodian_context.custodian_nodes.iter() {
-            let internal_msg: InternalCustodianSetupMessage =
-                setup_message.to_owned().try_into()?;
             if setup_message.custodian_role == 0 {
                 return Err(anyhow::anyhow!(
                     "Custodian role cannot be zero in custodian context"
@@ -229,6 +230,8 @@ impl InternalCustodianContext {
                         "Custodian role {} is greater than the number of custodians in custodian context", setup_message.custodian_role
                     ));
             }
+            let internal_msg: InternalCustodianSetupMessage =
+                setup_message.to_owned().try_into()?;
             let old_msg = node_map.insert(
                 Role::indexed_from_one(setup_message.custodian_role as usize),
                 internal_msg,
@@ -243,15 +246,9 @@ impl InternalCustodianContext {
             &custodian_context.context_id,
             RequestIdParsingErr::CustodianContext,
         )?;
-        let prev_context_id = custodian_context
-            .previous_context_id
-            .as_ref()
-            .map(|id| id.clone().try_into())
-            .transpose()?;
         Ok(InternalCustodianContext {
             context_id,
             threshold: custodian_context.threshold,
-            previous_context_id: prev_context_id,
             custodian_nodes: node_map,
             backup_enc_key,
         })
@@ -401,7 +398,10 @@ impl Custodian {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType};
+    use crate::cryptography::{
+        encryption::{Encryption, PkeScheme, PkeSchemeType},
+        signatures::gen_sig_keys,
+    };
     use aes_prng::AesRng;
     use rand::SeedableRng;
 
@@ -410,19 +410,32 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(40);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_, backup_pk) = enc.keygen().unwrap();
-        let setup_msg = CustodianSetupMessage {
+        let setup_msg1 = CustodianSetupMessage {
             custodian_role: 0, // Invalid role
             name: "Custodian-1".to_string(),
             payload: vec![],
         };
+        let setup_msg2 = CustodianSetupMessage {
+            custodian_role: 2,
+            name: "Custodian-2".to_string(),
+            payload: vec![],
+        };
+        let setup_msg3 = CustodianSetupMessage {
+            custodian_role: 3,
+            name: "Custodian-3".to_string(),
+            payload: vec![],
+        };
         let context = CustodianContext {
-            custodian_nodes: vec![setup_msg],
+            custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
             context_id: None,
-            previous_context_id: None,
             threshold: 1,
         };
-        let result = InternalCustodianContext::new(context, backup_pk.clone());
+        let result = InternalCustodianContext::new(context, backup_pk);
         assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Custodian role cannot be zero"));
     }
 
     #[test]
@@ -443,7 +456,6 @@ mod tests {
         let context = CustodianContext {
             custodian_nodes: vec![setup_msg1, setup_msg2],
             context_id: None,
-            previous_context_id: None,
             threshold: 1, // Invalid threshold, since 1 is not less than 2/2
         };
         let result = InternalCustodianContext::new(context, backup_pk.clone());
@@ -460,25 +472,44 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(40);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_, backup_pk) = enc.keygen().unwrap();
-        let payload = vec![];
+        let (_, payload_pk) = enc.keygen().unwrap();
+        let (payload_verf_key, _) = gen_sig_keys(&mut rng);
+        let payload = CustodianSetupMessagePayload {
+            header: HEADER.to_string(),
+            random_value: [0u8; 32],
+            timestamp: 0,
+            public_enc_key: payload_pk,
+            verification_key: payload_verf_key,
+        };
+        let mut ser_payload = Vec::new();
+        safe_serialize(&payload, &mut ser_payload, SAFE_SER_SIZE_LIMIT).unwrap();
         let setup_msg1 = CustodianSetupMessage {
             custodian_role: 1,
             name: "Custodian-1".to_string(),
-            payload: payload.clone(),
+            payload: ser_payload.clone(),
         };
         let setup_msg2 = CustodianSetupMessage {
             custodian_role: 1, // Duplicate role
             name: "Custodian-2".to_string(),
-            payload,
+            payload: ser_payload.clone(),
+        };
+        let setup_msg3 = CustodianSetupMessage {
+            custodian_role: 3,
+            name: "Custodian-3".to_string(),
+            payload: ser_payload,
         };
         let context = CustodianContext {
-            custodian_nodes: vec![setup_msg1, setup_msg2],
+            custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
             context_id: None,
-            previous_context_id: None,
-            threshold: 2,
+            threshold: 1,
         };
         let result = InternalCustodianContext::new(context, backup_pk.clone());
         assert!(result.is_err());
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("Duplicate custodian role found"));
     }
 
     #[test]
@@ -486,18 +517,30 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(40);
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_, backup_pk) = enc.keygen().unwrap();
-        let setup_msg = CustodianSetupMessage {
+        let setup_msg1 = CustodianSetupMessage {
             custodian_role: 5, // Greater than number of nodes
             name: "Custodian-1".to_string(),
             payload: vec![],
         };
+        let setup_msg2 = CustodianSetupMessage {
+            custodian_role: 2,
+            name: "Custodian-2".to_string(),
+            payload: vec![],
+        };
+        let setup_msg3 = CustodianSetupMessage {
+            custodian_role: 3,
+            name: "Custodian-3".to_string(),
+            payload: vec![],
+        };
         let context = CustodianContext {
-            custodian_nodes: vec![setup_msg],
+            custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
             context_id: None,
-            previous_context_id: None,
             threshold: 1,
         };
         let result = InternalCustodianContext::new(context, backup_pk.clone());
         assert!(result.is_err());
+        assert!(result.err().unwrap().to_string().contains(
+            "Custodian role 5 is greater than the number of custodians in custodian context"
+        ));
     }
 }

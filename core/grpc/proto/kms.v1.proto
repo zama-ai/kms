@@ -568,15 +568,11 @@ message CustodianContext {
   // that is increased by 1 every time a new context of a specific type is generated.
   RequestId context_id = 2;
 
-  // The previous context ID which might be empty if this is the first context.
-  // Contexts are linked together in a chain, but they are not allowed to fork or cycle.
-  RequestId previous_context_id = 3;
-
   // The corruption threshold for this context.
   // It does not need to match the KMS context threshold
   // and we only need to ensure a majority of custodian nodes are honest
   // since the backup and recovery steps are synchronous.
-  uint32 threshold = 4;
+  uint32 threshold = 3;
 }
 
 // Request to create a new KMS context.
@@ -593,10 +589,8 @@ message DestroyKmsContextRequest {
 }
 
 message NewCustodianContextRequest {
-  // The active custodian context, may be empty if this is the first context.
-  CustodianContext active_context = 1;
   // The new custodian context to create.
-  CustodianContext new_context = 2;
+  CustodianContext new_context = 1;
 }
 
 message DestroyCustodianContextRequest {
@@ -607,7 +601,6 @@ message DestroyCustodianContextRequest {
 message OperatorPublicKey {
   // The public key that a custodian can use to encrypt a backup share
   bytes public_key = 1;
-  // TODO(#2748) should also contain the verification key
   // The attestation document that proves the public key is generated within an
   // enclave initialized from a trusted software build
   bytes attestation_document = 2;

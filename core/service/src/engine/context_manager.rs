@@ -1,10 +1,8 @@
 use crate::anyhow_error_and_log;
 use crate::backup::custodian::InternalCustodianContext;
-use crate::backup::operator::{Operator, RecoveryRequestPayload, RecoveryValidationMaterial};
+use crate::backup::operator::{Operator, RecoveryValidationMaterial};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::encryption::{
-    Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey,
-};
+use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey};
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::ContextInfo;
@@ -100,10 +98,9 @@ where
             tonic::Status::invalid_argument("new_context is required in NewCustodianContextRequest")
         })?;
         tracing::info!(
-            "Custodian context addition starting with context_id={:?}, threshold={}, previous_context_id={:?}, from {} custodians",
+            "Custodian context addition starting with context_id={:?}, threshold={} from {} custodians",
             inner.context_id,
             inner.threshold,
-            inner.previous_context_id,
             inner.custodian_nodes.len()
         );
         ok_or_tonic_abort(
@@ -133,11 +130,11 @@ where
         // Generate asymmetric keys for the operator to use to encrypt the backup
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (backup_dec_key, backup_enc_key) = enc.keygen()?;
-        let inner_context = InternalCustodianContext::new(context, backup_enc_key.clone())?;
-        let (recovery_request_payload, commitments) = gen_recovery_request_payload(
+        let inner_context: InternalCustodianContext =
+            InternalCustodianContext::new(context, backup_enc_key.clone())?;
+        let recovery_validation = gen_recovery_validation(
             &mut rng,
-            &self.base_kms.sig_key,
-            backup_enc_key.clone(),
+            self.base_kms.sig_key()?.as_ref(),
             backup_dec_key,
             &inner_context,
             self.my_role,
@@ -221,8 +218,7 @@ where
         // Then store the results
         self.crypto_storage
             .write_backup_keys_with_meta_store(
-                &recovery_request_payload,
-                &commitments,
+                &recovery_validation,
                 Arc::clone(&self.custodian_meta_store),
             )
             .await;
@@ -540,15 +536,14 @@ where
 }
 
 /// Generate a recovery request to the backup vault.
-async fn gen_recovery_request_payload(
+async fn gen_recovery_validation(
     rng: &mut AesRng,
     sig_key: &PrivateSigKey,
-    backup_enc_key: UnifiedPublicEncKey,
     backup_priv_key: UnifiedPrivateEncKey,
     custodian_context: &InternalCustodianContext,
     my_role: Role,
-) -> anyhow::Result<(RecoveryRequestPayload, RecoveryValidationMaterial)> {
-    let operator = Operator::new(
+) -> anyhow::Result<RecoveryValidationMaterial> {
+    let operator = Operator::new_for_sharing(
         my_role,
         custodian_context
             .custodian_nodes
@@ -571,17 +566,17 @@ async fn gen_recovery_request_payload(
         &serialized_priv_key,
         custodian_context.context_id,
     )?;
-    let recovery_request = RecoveryRequestPayload {
-        cts: ct_map,
-        backup_enc_key,
-    };
-    let validation_material =
-        RecoveryValidationMaterial::new(commitments, custodian_context.to_owned(), sig_key)?;
+    let validation_material = RecoveryValidationMaterial::new(
+        ct_map,
+        commitments,
+        custodian_context.to_owned(),
+        sig_key,
+    )?;
     tracing::info!(
         "Generated inner recovery request for backup_id/context_id={}",
         custodian_context.context_id
     );
-    Ok((recovery_request, validation_material))
+    Ok(validation_material)
 }
 
 #[cfg(test)]
@@ -680,7 +675,7 @@ mod tests {
             new_context: Some(new_context.try_into().unwrap()),
         });
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, base_kms.rng.clone());
+            SessionMaker::four_party_dummy_session(None, None, base_kms.new_rng().await);
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage.clone(),
@@ -759,7 +754,7 @@ mod tests {
         // create the context manager and store the new context
         {
             let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key.clone()).unwrap();
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.rng.clone());
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
@@ -795,7 +790,7 @@ mod tests {
         // and then we should have nothing in the session maker.
         {
             let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key.clone()).unwrap();
-            let session_maker = SessionMaker::empty_dummy_session(base_kms.rng.clone());
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),
@@ -848,15 +843,13 @@ mod tests {
                 setup_msg_3.try_into().unwrap(),
             ],
             context_id: Some(backup_id.into()),
-            previous_context_id: None,
             threshold: 1,
         };
         let internal_context =
             InternalCustodianContext::new(context, backup_enc_key.clone()).unwrap();
-        let (recovery_request_payload, _commitments) = gen_recovery_request_payload(
+        let recovery_material = gen_recovery_validation(
             &mut rng,
             &server_sig_key,
-            backup_enc_key.clone(),
             backup_dec_key.clone(),
             &internal_context,
             Role::indexed_from_one(1),
@@ -864,8 +857,8 @@ mod tests {
         .await
         .unwrap();
         let internal_rec_req = InternalRecoveryRequest::new(
-            recovery_request_payload.backup_enc_key,
-            recovery_request_payload.cts,
+            recovery_material.payload.custodian_context.backup_enc_key,
+            recovery_material.payload.cts,
             backup_id,
             Role::indexed_from_one(1),
         )

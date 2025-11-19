@@ -1,6 +1,7 @@
 use crate::client::client_wasm::Client;
 use crate::conf::{self, Keychain, SecretSharingKeychain};
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
+use crate::engine::base::BaseKmsStruct;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::threshold::service::new_real_threshold_kms;
 use crate::engine::{run_server, Shutdown};
@@ -23,6 +24,7 @@ use futures_util::FutureExt;
 use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
+use kms_grpc::rpc_types::KMSType;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
@@ -133,6 +135,7 @@ pub async fn setup_threshold_no_client<
                 decryption_mode,
             };
             let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
 
             // TODO pass in cert_paths for testing TLS
             let server = new_real_threshold_kms(
@@ -142,7 +145,7 @@ pub async fn setup_threshold_no_client<
                 cur_vault,
                 None,
                 mpc_listener,
-                sk,
+                base_kms,
                 None,
                 false,
                 run_prss,

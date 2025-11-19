@@ -374,7 +374,7 @@ mod tests {
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, base_kms.rng.clone());
+            SessionMaker::four_party_dummy_session(None, None, base_kms.new_rng().await);
 
         RealInitiator::<ram::RamStorage, I>::init_test(base_kms, session_maker)
     }

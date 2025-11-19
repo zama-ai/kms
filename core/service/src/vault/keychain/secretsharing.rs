@@ -1,8 +1,7 @@
 use super::{EnvelopeLoad, EnvelopeStore, Keychain};
 use crate::{
     anyhow_error_and_log,
-    backup::operator::RecoveryRequestPayload,
-    backup::BackupCiphertext,
+    backup::{operator::RecoveryValidationMaterial, BackupCiphertext},
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::encryption::{Decrypt, Encrypt, UnifiedPrivateEncKey, UnifiedPublicEncKey},
     vault::storage::{read_versioned_at_request_id, StorageReader},
@@ -40,18 +39,29 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
             Some(pub_storage) => {
                 // Try to see if there is already a backup key set
                 let all_backup_ids = pub_storage
-                    .all_data_ids(&PubDataType::RecoveryRequest.to_string())
+                    .all_data_ids(&PubDataType::RecoveryMaterial.to_string())
                     .await?;
                 // Get the latest context ID which should be the most recent one
+                // TODO validate signature using SECRET KEY (since public storage cannot be trusted!)
                 match all_backup_ids.iter().sorted().last() {
                     Some(id) => {
-                        let rec_req: RecoveryRequestPayload = read_versioned_at_request_id(
-                            pub_storage,
-                            id,
-                            &PubDataType::RecoveryRequest.to_string(),
+                        let rec_material: RecoveryValidationMaterial =
+                            read_versioned_at_request_id(
+                                pub_storage,
+                                id,
+                                &PubDataType::RecoveryMaterial.to_string(),
+                            )
+                            .await?;
+                        (
+                            Some(
+                                rec_material
+                                    .payload
+                                    .custodian_context
+                                    .backup_enc_key
+                                    .clone(),
+                            ),
+                            Some(id.to_owned()),
                         )
-                        .await?;
-                        (Some(rec_req.backup_enc_key), Some(id.to_owned()))
                     }
                     None => {
                         tracing::warn!(
