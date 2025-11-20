@@ -865,6 +865,11 @@ pub(crate) mod test {
         (session.my_role(), secrets, result)
     }
 
+    /// Does a robust open from set 1 to set 2
+    /// with an intersection of size between the two sets
+    /// configured by `intersection_size`.
+    /// See [`execute_protocol_two_sets_w_malicious`] for details on how the
+    /// intersection is taken.
     async fn test_robust_open_external<
         Z: ErrorCorrect,
         const EXTENSION_DEGREE: usize,
