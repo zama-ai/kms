@@ -12,9 +12,15 @@ use crate::{
     algebra::structure_traits::ErrorCorrect,
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::p2p::{generic_receive_from_all, send_to_all},
+        communication::p2p::{
+            generic_receive_from_all, generic_receive_from_all_senders_with_role_transform,
+            send_to_all,
+        },
         online::preprocessing::constants::BATCH_SIZE_BITS,
-        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
+        runtime::{
+            party::{Role, TwoSetsRole},
+            sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
+        },
     },
     networking::value::NetworkValue,
     thread_handles::spawn_compute_bound,
@@ -36,6 +42,25 @@ pub enum OpeningKind<Z> {
     ToAll(Vec<Z>),
 }
 
+/// Enum to state from which set
+/// we are expecting to receive openings
+/// as well as how many
+#[derive(Clone, Copy)]
+pub enum ExternalOpeningInfo {
+    FromSet1(usize),
+    FromSet2(usize),
+}
+
+impl ExternalOpeningInfo {
+    /// Returns the expected number of openings
+    pub fn expected_num_openings(&self) -> usize {
+        match self {
+            ExternalOpeningInfo::FromSet1(n) => *n,
+            ExternalOpeningInfo::FromSet2(n) => *n,
+        }
+    }
+}
+
 #[async_trait]
 pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
     /// Inputs:
@@ -50,6 +75,24 @@ pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
         session: &B,
         shares: OpeningKind<Z>,
         degree: usize,
+    ) -> anyhow::Result<Option<Vec<Z>>>;
+
+    /// Inputs:
+    /// - session
+    /// - all_shares: if Some, the shares to send to the external parties
+    /// - degree of the sharing
+    /// - external_opening_info: from which set we expect to receive openings and how many.
+    ///    Must be set to None if we are not expecting any output
+    ///
+    /// Output:
+    /// - The reconstructed secrets if reconstruction for all was possible for receivers,
+    ///  `None`` for senders
+    async fn robust_open_list_to_set<Z: ErrorCorrect, B: GenericBaseSessionHandles<TwoSetsRole>>(
+        &self,
+        session: &B,
+        all_shares: Option<HashMap<TwoSetsRole, Vec<Z>>>,
+        degree: usize,
+        external_opening_info: Option<ExternalOpeningInfo>,
     ) -> anyhow::Result<Option<Vec<Z>>>;
 
     /// Blanket implementation that relies on [`Self::execute`]
@@ -247,15 +290,160 @@ impl RobustOpen for SecureRobustOpen {
                 crate::networking::NetworkMode::Async => reconstruct_w_errors_async,
             };
 
-            try_reconstruct_from_shares(session, sharings, degree, jobs, reconstruct_fn).await?
+            let num_parties = session.num_parties();
+            let threshold = session.threshold();
+            let num_bots = session.corrupt_roles().len();
+            try_reconstruct_from_shares(
+                num_parties,
+                threshold,
+                num_bots,
+                sharings,
+                degree,
+                jobs,
+                reconstruct_fn,
+            )
+            .await?
         } else {
             None
         };
         Ok(result)
     }
+
+    async fn robust_open_list_to_set<Z: ErrorCorrect, B: GenericBaseSessionHandles<TwoSetsRole>>(
+        &self,
+        session: &B,
+        all_shares: Option<HashMap<TwoSetsRole, Vec<Z>>>,
+        degree: usize,
+        external_opening_info: Option<ExternalOpeningInfo>,
+    ) -> anyhow::Result<Option<Vec<Z>>> {
+        let own_role = session.my_role();
+        session.network().increase_round_counter().await;
+
+        let mut my_shares = None;
+        // If I have some shares to send, I am a sender
+        // NOTE: This is not exclusive with being a receiver as I can be in both sets
+        if let Some(all_shares) = all_shares {
+            for (output_party, shares) in all_shares.into_iter() {
+                if output_party == own_role {
+                    my_shares = Some(shares);
+                } else {
+                    // Send my shares to the receiver
+                    session
+                        .network()
+                        .send(
+                            Arc::new(NetworkValue::VecRingValue(shares).to_network()),
+                            &output_party,
+                        )
+                        .await?;
+                }
+            }
+        }
+
+        // If I expect some output, I am a receiver
+        // NOTE: This is not exclusive with being a sender as I can be in both sets
+        if let Some(external_opening_info) = external_opening_info {
+            // If I am an output party I just receive from all parties
+            // in the other set
+            let mut parties_to_receive_from = session.roles().clone();
+            // Retain only the parties from the other set
+            parties_to_receive_from.retain(|role| match external_opening_info {
+                ExternalOpeningInfo::FromSet1(_) => role.is_set1(),
+                ExternalOpeningInfo::FromSet2(_) => role.is_set2(),
+            });
+            let num_sending_parties = parties_to_receive_from.len();
+            let mut jobs = JoinSet::<Result<(Role, anyhow::Result<Vec<Z>>), Elapsed>>::new();
+            //Note: we give the set of corrupt parties as the non_answering_parties argument
+            //Thus generic_receive_from_all will not receive from corrupt parties.
+            let role_transform =
+                |sender: &TwoSetsRole, external_opening_info: ExternalOpeningInfo| match (
+                    sender,
+                    external_opening_info,
+                ) {
+                    // Note that we only receive from the opposite set
+                    // but it doesnt hurt to map the Roles this way
+                    (TwoSetsRole::Set1(role), ExternalOpeningInfo::FromSet1(_)) => *role,
+                    (TwoSetsRole::Set2(role), ExternalOpeningInfo::FromSet2(_)) => *role,
+                    (TwoSetsRole::Both(role), ExternalOpeningInfo::FromSet1(_)) => role.role_set_1,
+                    (TwoSetsRole::Both(role), ExternalOpeningInfo::FromSet2(_)) => role.role_set_2,
+                    _ => panic!("Mismatched role and external opening info"),
+                };
+            generic_receive_from_all_senders_with_role_transform(
+                &mut jobs,
+                session,
+                &own_role,
+                &parties_to_receive_from,
+                Some(session.corrupt_roles()),
+                |msg, _id| match msg {
+                    NetworkValue::VecRingValue(v) => Ok(v),
+                    _ => Err(anyhow_error_and_log(format!(
+                        "Received {}, expected a Ring value in robust open to all",
+                        msg.network_type_name()
+                    ))),
+                },
+                role_transform,
+                external_opening_info,
+            )
+            .await;
+
+            // Get the threshold for the sending set
+            // as well as the number of corrupt parties
+            // from the sending set
+            let (threshold, num_bots) = match external_opening_info {
+                ExternalOpeningInfo::FromSet1(_) => (
+                    session.threshold().threshold_set_1,
+                    session
+                        .corrupt_roles()
+                        .iter()
+                        .filter(|r| r.is_set1())
+                        .count(),
+                ),
+                ExternalOpeningInfo::FromSet2(_) => (
+                    session.threshold().threshold_set_2,
+                    session
+                        .corrupt_roles()
+                        .iter()
+                        .filter(|r| r.is_set2())
+                        .count(),
+                ),
+            };
+
+            let reconstruct_fn = match session.network().get_network_mode() {
+                crate::networking::NetworkMode::Sync => reconstruct_w_errors_sync,
+                crate::networking::NetworkMode::Async => reconstruct_w_errors_async,
+            };
+
+            // Use my own share if ever I am in both sets
+            let sharings = if let Some(my_shares) = my_shares {
+                let my_reconstruction_role = role_transform(&own_role, external_opening_info);
+                my_shares
+                    .into_iter()
+                    .map(|share| {
+                        ShamirSharings::create(vec![Share::new(my_reconstruction_role, share)])
+                    })
+                    .collect_vec()
+            } else {
+                vec![
+                ShamirSharings::create(vec![]); //Empty sharings to be filled
+                external_opening_info.expected_num_openings()
+            ]
+            };
+            // Now need to reconstruct
+            return try_reconstruct_from_shares(
+                num_sending_parties,
+                threshold,
+                num_bots,
+                sharings,
+                degree,
+                jobs,
+                reconstruct_fn,
+            )
+            .await;
+        }
+        Ok(None)
+    }
 }
 
-type JobResultType<Z> = (Role, anyhow::Result<Vec<Z>>);
+type JobResultType<R, Z> = (R, anyhow::Result<Vec<Z>>);
 type ReconsFunc<Z> = fn(
     num_parties: usize,
     degree: usize,
@@ -272,16 +460,15 @@ type ReconsFunc<Z> = fn(
 /// - degree as the degree of the secret sharing
 /// - max_num_errors as the max. number of errors we allow (this is session.threshold)
 /// - a set of jobs to receive the shares from the other parties
-async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
-    session: &B,
+async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
+    num_parties: usize,
+    threshold: u8,
+    mut num_bots: usize,
     sharings: Vec<ShamirSharings<Z>>,
     degree: usize,
-    mut jobs: JoinSet<Result<JobResultType<Z>, Elapsed>>,
+    mut jobs: JoinSet<Result<JobResultType<Role, Z>, Elapsed>>,
     reconstruct_fn: ReconsFunc<Z>,
 ) -> anyhow::Result<Option<Vec<Z>>> {
-    let num_parties = session.num_parties();
-    let threshold = session.threshold();
-    let mut num_bots = session.corrupt_roles().len();
     let num_secrets = sharings.len();
 
     // OPTIMIZATION: Collect shares concurrently with batched reconstruction
@@ -375,6 +562,8 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
 #[cfg(test)]
 pub(crate) mod test {
 
+    use std::collections::{HashMap, HashSet};
+
     use aes_prng::AesRng;
     use itertools::Itertools;
     use rand::SeedableRng;
@@ -382,16 +571,21 @@ pub(crate) mod test {
     use crate::algebra::structure_traits::{
         ErrorCorrect, Invert, Ring, RingWithExceptionalSequence,
     };
-    use crate::execution::runtime::party::Role;
+    use crate::execution::runtime::party::{Role, TwoSetsRole, TwoSetsThreshold};
+    use crate::execution::runtime::sessions::base_session::TwoSetsBaseSession;
     use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::execution::runtime::sessions::small_session::SmallSession;
+    use crate::execution::sharing::open::ExternalOpeningInfo;
     use crate::execution::sharing::shamir::InputOp;
     use crate::execution::small_execution::prf::PRSSConversions;
     use crate::malicious_execution::open::malicious_open::{
         MaliciousRobustOpenDrop, MaliciousRobustOpenLie,
     };
     use crate::networking::NetworkMode;
-    use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
+    use crate::tests::helper::tests::{
+        execute_protocol_small_w_malicious, execute_protocol_two_sets_w_malicious,
+        TestingParameters,
+    };
     use crate::{
         algebra::galois_rings::degree_4::ResiduePolyF4Z128,
         execution::sharing::shamir::ShamirSharings,
@@ -605,5 +799,326 @@ pub(crate) mod test {
             10,
             NetworkMode::Async,
         ).await;
+    }
+
+    async fn test_robust_open_external_task<RO: RobustOpen, Z: ErrorCorrect>(
+        num_secrets: usize,
+        num_parties_set_1: usize,
+        robust_open: RO,
+        session: TwoSetsBaseSession,
+    ) -> (
+        crate::execution::runtime::party::TwoSetsRole,
+        Option<Vec<Z>>,
+        Option<Vec<Z>>,
+    ) {
+        let mut secrets = None;
+        let mut input_map = None;
+        let mut external_opening_info = None;
+        if session.my_role().is_set1() {
+            let my_role = match session.my_role() {
+                TwoSetsRole::Set1(r) => r,
+                TwoSetsRole::Both(r) => r.role_set_1,
+                _ => panic!("Expected role in set 1"),
+            };
+            let (inner_secrets, shares) = deterministically_compute_my_shares::<Z>(
+                num_secrets,
+                my_role,
+                num_parties_set_1,
+                session.threshold().threshold_set_1 as usize,
+                42,
+            );
+
+            let mut inner_input_map = HashMap::new();
+            for outer_output_role in session.roles().iter() {
+                if let crate::execution::runtime::party::TwoSetsRole::Set2(inner_output_role) =
+                    outer_output_role
+                {
+                    inner_input_map.insert(*outer_output_role, vec![shares[inner_output_role]]);
+                } else if let crate::execution::runtime::party::TwoSetsRole::Both(
+                    inner_output_role_both,
+                ) = outer_output_role
+                {
+                    println!("Inserting share for both role {:?}", inner_output_role_both);
+                    inner_input_map.insert(
+                        *outer_output_role,
+                        vec![shares[&(inner_output_role_both.role_set_2)]],
+                    );
+                }
+            }
+            secrets = Some(inner_secrets);
+            input_map = Some(inner_input_map);
+        }
+
+        if session.my_role().is_set2() {
+            external_opening_info = Some(ExternalOpeningInfo::FromSet1(1));
+        }
+
+        let result = robust_open
+            .robust_open_list_to_set(
+                &session,
+                input_map,
+                session.threshold().threshold_set_1 as usize,
+                external_opening_info,
+            )
+            .await
+            .unwrap();
+        (session.my_role(), secrets, result)
+    }
+
+    /// Does a robust open from set 1 to set 2
+    /// with an intersection of size between the two sets
+    /// configured by `intersection_size`.
+    /// See [`execute_protocol_two_sets_w_malicious`] for details on how the
+    /// intersection is taken.
+    async fn test_robust_open_external<
+        Z: ErrorCorrect,
+        const EXTENSION_DEGREE: usize,
+        RO: RobustOpen + 'static,
+    >(
+        num_parties_set_1: usize,
+        num_parties_set_2: usize,
+        intersection_size: usize,
+        threshold: TwoSetsThreshold,
+        network_mode: NetworkMode,
+        malicious_roles: HashSet<TwoSetsRole>,
+        malicious_robust_open: RO,
+    ) {
+        let num_honest_set_1 =
+            num_parties_set_1 - malicious_roles.iter().filter(|r| r.is_set1()).count();
+        let num_honest_set_2 =
+            num_parties_set_2 - malicious_roles.iter().filter(|r| r.is_set2()).count();
+        // Set 1 will open one secret to each of the parties in set 2
+        let num_secrets = num_parties_set_2;
+
+        let mut task_honest = |session: TwoSetsBaseSession| async move {
+            test_robust_open_external_task::<_, Z>(
+                num_secrets,
+                num_parties_set_1,
+                SecureRobustOpen::default(),
+                session,
+            )
+            .await
+        };
+
+        let mut task_malicious = |session: TwoSetsBaseSession, malicious_robust_open: RO| async move {
+            test_robust_open_external_task::<_, Z>(
+                num_secrets,
+                num_parties_set_1,
+                malicious_robust_open,
+                session,
+            )
+            .await
+        };
+
+        let (results_honests, _results_malicious) =
+            execute_protocol_two_sets_w_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(
+                num_parties_set_1,
+                num_parties_set_2,
+                intersection_size,
+                threshold,
+                malicious_roles,
+                malicious_robust_open,
+                network_mode,
+                &mut task_honest,
+                &mut task_malicious,
+            )
+            .await;
+
+        // Sort the output per set
+        let mut result_set_1 = Vec::new();
+        let mut result_set_2 = Vec::new();
+        for (role, (_, secrets, openings)) in results_honests.into_iter() {
+            match role {
+                TwoSetsRole::Set1(role) => {
+                    result_set_1.push((role, secrets, openings));
+                }
+                TwoSetsRole::Set2(role) => {
+                    result_set_2.push((role, secrets, openings));
+                }
+                TwoSetsRole::Both(role_both_sets) => {
+                    result_set_1.push((
+                        role_both_sets.role_set_1,
+                        secrets.clone(),
+                        openings.clone(),
+                    ));
+                    result_set_2.push((role_both_sets.role_set_2, secrets, openings));
+                }
+            }
+        }
+
+        assert_eq!(result_set_1.len(), num_honest_set_1);
+        assert_eq!(result_set_2.len(), num_honest_set_2);
+
+        // Assert parties in set 1
+        let pivot = result_set_1
+            .pop()
+            .expect("Missing party in set 1")
+            .1
+            .expect("Party in set 1 missing secrets");
+
+        assert_eq!(pivot.len(), num_parties_set_2);
+        for (_role, secrets, _openings) in result_set_1.into_iter() {
+            let secrets = secrets.expect("Party in set 1 missing secrets ");
+            assert_eq!(secrets, pivot);
+        }
+
+        // Assert parties in set 2
+        for (role, _, openings) in result_set_2.into_iter() {
+            assert!(
+                openings.is_some(),
+                "Party {role} in set 2 should receive an opening"
+            );
+            let openings = openings.expect("Party in set 2 missing openings");
+            assert_eq!(openings.len(), 1);
+            let expected_secret = pivot[&role];
+            assert_eq!(openings[0], expected_secret);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sync_robust_open_external_no_overlap() {
+        test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            4,
+            4,
+            0,
+            TwoSetsThreshold {
+                threshold_set_1: 1,
+                threshold_set_2: 1,
+            },
+            NetworkMode::Sync,
+            HashSet::new(),
+            SecureRobustOpen::default(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_sync_robust_open_external_some_overlap() {
+        test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            4,
+            4,
+            1,
+            TwoSetsThreshold {
+                threshold_set_1: 1,
+                threshold_set_2: 1,
+            },
+            NetworkMode::Sync,
+            HashSet::new(),
+            SecureRobustOpen::default(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_sync_robust_open_external_full_overlap() {
+        test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            4,
+            4,
+            4,
+            TwoSetsThreshold {
+                threshold_set_1: 1,
+                threshold_set_2: 1,
+            },
+            NetworkMode::Sync,
+            HashSet::new(),
+            SecureRobustOpen::default(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_sync_robust_open_external_different_size() {
+        test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            4,
+            7,
+            2,
+            TwoSetsThreshold {
+                threshold_set_1: 1,
+                threshold_set_2: 2,
+            },
+            NetworkMode::Sync,
+            HashSet::new(),
+            SecureRobustOpen::default(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_async_robust_open_external() {
+        test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            4,
+            4,
+            1,
+            TwoSetsThreshold {
+                threshold_set_1: 1,
+                threshold_set_2: 1,
+            },
+            NetworkMode::Async,
+            HashSet::new(),
+            SecureRobustOpen::default(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_sync_robust_open_external_drop() {
+        let malicious_roles = HashSet::from([TwoSetsRole::Set1(Role::indexed_from_one(2))]);
+        test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            4,
+            4,
+            1,
+            TwoSetsThreshold {
+                threshold_set_1: 1,
+                threshold_set_2: 1,
+            },
+            NetworkMode::Sync,
+            malicious_roles,
+            MaliciousRobustOpenDrop::default(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_sync_robust_open_external_lie() {
+        let malicious_roles = HashSet::from([
+            TwoSetsRole::Set1(Role::indexed_from_one(5)),
+            TwoSetsRole::Set1(Role::indexed_from_one(7)),
+            TwoSetsRole::Set1(Role::indexed_from_one(10)),
+        ]);
+        test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            13,
+            7,
+            3,
+            TwoSetsThreshold {
+                threshold_set_1: 4,
+                threshold_set_2: 2,
+            },
+            NetworkMode::Sync,
+            malicious_roles,
+            MaliciousRobustOpenLie::default(),
+        )
+        .await;
+    }
+
+    #[should_panic]
+    #[tokio::test]
+    async fn test_sync_robust_open_external_lie_too_many() {
+        let malicious_roles = HashSet::from([
+            TwoSetsRole::Set1(Role::indexed_from_one(3)),
+            TwoSetsRole::Set1(Role::indexed_from_one(2)),
+        ]);
+        test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            4,
+            4,
+            1,
+            TwoSetsThreshold {
+                threshold_set_1: 1,
+                threshold_set_2: 1,
+            },
+            NetworkMode::Sync,
+            malicious_roles,
+            MaliciousRobustOpenLie::default(),
+        )
+        .await;
     }
 }

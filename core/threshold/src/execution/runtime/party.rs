@@ -1,7 +1,7 @@
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ops::{Index, IndexMut},
 };
 use tfhe::Versionize;
@@ -27,7 +27,12 @@ pub trait RoleTrait:
     + std::hash::Hash
     + 'static
 {
+    type ThresholdType: std::fmt::Debug + Copy + Sync + Send;
     fn get_role_kind(&self) -> RoleKind;
+    fn is_threshold_smaller_than_num_parties(
+        threshold: Self::ThresholdType,
+        parties: &HashSet<Self>,
+    ) -> bool;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,9 +42,27 @@ pub enum RoleKind {
 }
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[display("Set1: {}, Set2: {}", role_set_1, role_set_2)]
+pub struct DualRole {
+    pub role_set_1: Role,
+    pub role_set_2: Role,
+}
+
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TwoSetsRole {
     Set1(Role),
     Set2(Role),
+    Both(DualRole),
+}
+
+impl TwoSetsRole {
+    pub fn is_set1(&self) -> bool {
+        matches!(self, TwoSetsRole::Set1(_) | TwoSetsRole::Both(_))
+    }
+
+    pub fn is_set2(&self) -> bool {
+        matches!(self, TwoSetsRole::Set2(_) | TwoSetsRole::Both(_))
+    }
 }
 
 /// Role/party ID of a party (1...N)
@@ -68,8 +91,16 @@ pub enum TwoSetsRole {
 pub struct Role(u64);
 
 impl RoleTrait for Role {
+    type ThresholdType = u8;
     fn get_role_kind(&self) -> RoleKind {
         RoleKind::SingleSet(*self)
+    }
+
+    fn is_threshold_smaller_than_num_parties(
+        threshold: Self::ThresholdType,
+        parties: &HashSet<Self>,
+    ) -> bool {
+        parties.len() > threshold as usize
     }
 }
 
@@ -79,9 +110,33 @@ impl Default for TwoSetsRole {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TwoSetsThreshold {
+    pub threshold_set_1: u8,
+    pub threshold_set_2: u8,
+}
+
 impl RoleTrait for TwoSetsRole {
+    type ThresholdType = TwoSetsThreshold;
     fn get_role_kind(&self) -> RoleKind {
         RoleKind::TwoSet(*self)
+    }
+
+    fn is_threshold_smaller_than_num_parties(
+        threshold: Self::ThresholdType,
+        parties: &HashSet<Self>,
+    ) -> bool {
+        let (mut num_parties_in_set_1, mut num_parties_in_set_2) = (0, 0);
+        parties.iter().for_each(|role| {
+            if role.is_set1() {
+                num_parties_in_set_1 += 1;
+            }
+            if role.is_set2() {
+                num_parties_in_set_2 += 1;
+            }
+        });
+        num_parties_in_set_1 > threshold.threshold_set_1 as usize
+            && num_parties_in_set_2 > threshold.threshold_set_2 as usize
     }
 }
 
@@ -330,5 +385,92 @@ impl<R: RoleTrait> RoleAssignment<R> {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_threshold_check() {
+        // Simple Role success
+        let threshold = 2;
+        let parties = HashSet::from([
+            Role::indexed_from_one(1),
+            Role::indexed_from_one(2),
+            Role::indexed_from_one(3),
+        ]);
+        assert!(Role::is_threshold_smaller_than_num_parties(
+            threshold, &parties
+        ));
+
+        // Simple Role failure
+        let threshold = 3;
+        let parties = HashSet::from([
+            Role::indexed_from_one(1),
+            Role::indexed_from_one(2),
+            Role::indexed_from_one(3),
+        ]);
+        assert!(!Role::is_threshold_smaller_than_num_parties(
+            threshold, &parties
+        ));
+
+        // TwoSetsRole success
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: 2,
+            threshold_set_2: 1,
+        };
+
+        let parties = HashSet::from([
+            TwoSetsRole::Set1(Role::indexed_from_one(1)),
+            TwoSetsRole::Set1(Role::indexed_from_one(2)),
+            TwoSetsRole::Both(DualRole {
+                role_set_1: Role::indexed_from_one(3),
+                role_set_2: Role::indexed_from_one(1),
+            }),
+            TwoSetsRole::Set2(Role::indexed_from_one(2)),
+        ]);
+        assert!(TwoSetsRole::is_threshold_smaller_than_num_parties(
+            threshold, &parties
+        ));
+
+        // TwoSetsRole failure set 1
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: 3,
+            threshold_set_2: 1,
+        };
+
+        let parties = HashSet::from([
+            TwoSetsRole::Set1(Role::indexed_from_one(1)),
+            TwoSetsRole::Set1(Role::indexed_from_one(2)),
+            TwoSetsRole::Both(DualRole {
+                role_set_1: Role::indexed_from_one(3),
+                role_set_2: Role::indexed_from_one(1),
+            }),
+            TwoSetsRole::Set2(Role::indexed_from_one(2)),
+        ]);
+        assert!(!TwoSetsRole::is_threshold_smaller_than_num_parties(
+            threshold, &parties
+        ));
+
+        // TwoSetsRole failure set 2
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: 2,
+            threshold_set_2: 2,
+        };
+        let parties = HashSet::from([
+            TwoSetsRole::Set1(Role::indexed_from_one(1)),
+            TwoSetsRole::Set1(Role::indexed_from_one(2)),
+            TwoSetsRole::Both(DualRole {
+                role_set_1: Role::indexed_from_one(3),
+                role_set_2: Role::indexed_from_one(1),
+            }),
+            TwoSetsRole::Set2(Role::indexed_from_one(2)),
+        ]);
+        assert!(!TwoSetsRole::is_threshold_smaller_than_num_parties(
+            threshold, &parties
+        ));
     }
 }

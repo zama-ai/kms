@@ -18,7 +18,7 @@ pub enum DeSerializationRunTime {
 }
 
 pub trait GenericParameterHandles<R: RoleTrait>: Sync + Send {
-    fn threshold(&self) -> u8;
+    fn threshold(&self) -> R::ThresholdType;
     fn session_id(&self) -> SessionId;
     fn my_role(&self) -> R;
     fn num_parties(&self) -> usize;
@@ -35,7 +35,7 @@ pub trait ParameterHandles: GenericParameterHandles<Role> {}
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct GenericSessionParameters<R: RoleTrait> {
-    threshold: u8,
+    threshold: R::ThresholdType,
     session_id: SessionId,
     my_role: R,
     roles: HashSet<R>,
@@ -47,15 +47,15 @@ pub type SessionParameters = GenericSessionParameters<Role>;
 
 impl<R: RoleTrait> GenericSessionParameters<R> {
     pub fn new(
-        threshold: u8,
+        threshold: R::ThresholdType,
         session_id: SessionId,
         my_role: R,
         roles: HashSet<R>,
     ) -> anyhow::Result<Self> {
-        if roles.len() <= threshold as usize {
+        if !R::is_threshold_smaller_than_num_parties(threshold, &roles) {
             return Err(anyhow_error_and_log(format!(
-                "Threshold {threshold} cannot be less than the amount of parties, {:?}",
-                roles.len()
+                "Threshold {threshold:?} cannot be bigger than the amount of parties (for all sets), {:?}",
+                roles
             )));
         }
         if !roles.contains(&my_role) {
@@ -87,7 +87,7 @@ impl<R: RoleTrait> GenericParameterHandles<R> for GenericSessionParameters<R> {
         self.roles.len()
     }
 
-    fn threshold(&self) -> u8 {
+    fn threshold(&self) -> R::ThresholdType {
         self.threshold
     }
 

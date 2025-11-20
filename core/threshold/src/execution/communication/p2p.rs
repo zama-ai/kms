@@ -12,8 +12,11 @@ use crate::{
     algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
     execution::runtime::{
-        party::Role,
-        sessions::{base_session::BaseSessionHandles, large_session::LargeSessionHandles},
+        party::{Role, RoleTrait},
+        sessions::{
+            base_session::{BaseSessionHandles, GenericBaseSessionHandles},
+            large_session::LargeSessionHandles,
+        },
     },
     networking::value::NetworkValue,
 };
@@ -225,7 +228,8 @@ where
     Ok(())
 }
 
-/// Spawns receive tasks and matches the incoming messages according to the match_network_value_fn.
+/// Spawns receive tasks and matches the incoming messages according to the match_network_value_fn,
+/// as well as mapping the role to another type S with some extra data. (e.g. for TwoSetsRole)
 ///
 /// The function makes sure that it process the correct type of message, i.e.
 /// On the receiving end, a party processes a message of a single variant of the [NetworkValue] enum
@@ -233,15 +237,27 @@ where
 /// from the inside enum.
 ///
 /// **NOTE: We do not try to receive any value from the non_answering_parties set.**
-pub async fn generic_receive_from_all_senders<V, Z: Ring, B: BaseSessionHandles>(
-    jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn generic_receive_from_all_senders_with_role_transform<
+    E,
+    V,
+    S,
+    Z: Ring,
+    R: RoleTrait,
+    B: GenericBaseSessionHandles<R>,
+>(
+    jobs: &mut JoinSet<Result<(S, anyhow::Result<V>), Elapsed>>,
     session: &B,
-    receiver: &Role,
-    senders: &HashSet<Role>,
-    non_answering_parties: Option<&HashSet<Role>>,
-    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &Role) -> anyhow::Result<V>,
+    receiver: &R,
+    senders: &HashSet<R>,
+    non_answering_parties: Option<&HashSet<R>>,
+    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &R) -> anyhow::Result<V>,
+    role_mapping: fn(id: &R, extra_data: E) -> S,
+    extra_data: E,
 ) where
     V: std::marker::Send + 'static,
+    S: std::marker::Send + 'static,
+    E: Copy + std::marker::Send + 'static,
 {
     let deserialization_runtime = session.get_deserialization_runtime();
     let binding = HashSet::new();
@@ -265,7 +281,7 @@ pub async fn generic_receive_from_all_senders<V, Z: Ring, B: BaseSessionHandles>
                             Ok(x) => match_network_value_fn(x, &my_role),
                             Err(e) => Err(e),
                         };
-                        Ok((sender, stripped_message))
+                        Ok((role_mapping(&sender, extra_data), stripped_message))
                     }
                     Err(e) => {
                         tracing::warn!("Sender {sender} timed out when sending to {my_role}");
@@ -277,6 +293,42 @@ pub async fn generic_receive_from_all_senders<V, Z: Ring, B: BaseSessionHandles>
             jobs.spawn(task);
         }
     }
+}
+
+/// Spawns receive tasks and matches the incoming messages according to the match_network_value_fn.
+///
+/// The function makes sure that it process the correct type of message, i.e.
+/// On the receiving end, a party processes a message of a single variant of the [NetworkValue] enum
+/// and errors out if message is of a different form. This is helpful so that we can peel the message
+/// from the inside enum.
+///
+/// **NOTE: We do not try to receive any value from the non_answering_parties set.**
+pub async fn generic_receive_from_all_senders<
+    V,
+    Z: Ring,
+    R: RoleTrait,
+    B: GenericBaseSessionHandles<R>,
+>(
+    jobs: &mut JoinSet<Result<(R, anyhow::Result<V>), Elapsed>>,
+    session: &B,
+    receiver: &R,
+    senders: &HashSet<R>,
+    non_answering_parties: Option<&HashSet<R>>,
+    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &R) -> anyhow::Result<V>,
+) where
+    V: std::marker::Send + 'static,
+{
+    generic_receive_from_all_senders_with_role_transform::<(), _, _, _, _, _>(
+        jobs,
+        session,
+        receiver,
+        senders,
+        non_answering_parties,
+        match_network_value_fn,
+        |role, _| *role,
+        (),
+    )
+    .await
 }
 
 /// Wrapper around [generic_receive_from_all_senders] where the sender list is all the parties.
