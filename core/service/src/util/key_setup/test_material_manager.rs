@@ -197,8 +197,12 @@ impl TestMaterialManager {
                 let dest_priv =
                     compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
 
+                // Create destination directories once
+                fs::create_dir_all(&dest_pub).await?;
+                fs::create_dir_all(&dest_priv).await?;
+
                 // Copy verification keys
-                self.copy_key_files(
+                self.copy_key_files_no_mkdir(
                     &source_pub,
                     &dest_pub,
                     &PubDataType::VerfKey.to_string(),
@@ -207,7 +211,7 @@ impl TestMaterialManager {
                 .await?;
 
                 // Copy verification addresses
-                self.copy_key_files(
+                self.copy_key_files_no_mkdir(
                     &source_pub,
                     &dest_pub,
                     &PubDataType::VerfAddress.to_string(),
@@ -216,7 +220,7 @@ impl TestMaterialManager {
                 .await?;
 
                 // Copy signing keys
-                self.copy_key_files(
+                self.copy_key_files_no_mkdir(
                     &source_priv,
                     &dest_priv,
                     &PrivDataType::SigningKey.to_string(),
@@ -231,12 +235,11 @@ impl TestMaterialManager {
             let dest_pub = compute_storage_path(Some(dest_base), StorageType::PUB, None);
             let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, None);
 
-            tracing::debug!("🔍 Copying centralized signing keys:");
-            tracing::debug!("  Source PRIV: {}", source_priv.display());
-            tracing::debug!("  Dest PRIV: {}", dest_priv.display());
-            tracing::debug!("  Source exists: {}", source_priv.exists());
+            // Create destination directories once
+            fs::create_dir_all(&dest_pub).await?;
+            fs::create_dir_all(&dest_priv).await?;
 
-            self.copy_key_files(
+            self.copy_key_files_no_mkdir(
                 &source_pub,
                 &dest_pub,
                 &PubDataType::VerfKey.to_string(),
@@ -244,7 +247,7 @@ impl TestMaterialManager {
             )
             .await?;
 
-            self.copy_key_files(
+            self.copy_key_files_no_mkdir(
                 &source_pub,
                 &dest_pub,
                 &PubDataType::VerfAddress.to_string(),
@@ -252,7 +255,7 @@ impl TestMaterialManager {
             )
             .await?;
 
-            self.copy_key_files(
+            self.copy_key_files_no_mkdir(
                 &source_priv,
                 &dest_priv,
                 &PrivDataType::SigningKey.to_string(),
@@ -440,7 +443,7 @@ impl TestMaterialManager {
         Ok(())
     }
 
-    /// Copy specific key files
+    /// Copy specific key files (creates directories if needed)
     async fn copy_key_files(
         &self,
         source_dir: &Path,
@@ -455,6 +458,41 @@ impl TestMaterialManager {
             return Ok(()); // Skip if source doesn't exist
         }
 
+        fs::create_dir_all(&dest_type_dir).await?;
+
+        let source_file = source_type_dir.join(key_id);
+        let dest_file = dest_type_dir.join(key_id);
+
+        if source_file.exists() {
+            fs::copy(&source_file, &dest_file).await.with_context(|| {
+                format!(
+                    "Failed to copy {} from {} to {}",
+                    key_type,
+                    source_file.display(),
+                    dest_file.display()
+                )
+            })?;
+        }
+
+        Ok(())
+    }
+
+    /// Copy specific key files (assumes directories already exist)
+    async fn copy_key_files_no_mkdir(
+        &self,
+        source_dir: &Path,
+        dest_dir: &Path,
+        key_type: &str,
+        key_id: &str,
+    ) -> Result<()> {
+        let source_type_dir = source_dir.join(key_type);
+        let dest_type_dir = dest_dir.join(key_type);
+
+        if !source_type_dir.exists() {
+            return Ok(()); // Skip if source doesn't exist
+        }
+
+        // Create only the key_type subdirectory
         fs::create_dir_all(&dest_type_dir).await?;
 
         let source_file = source_type_dir.join(key_id);
