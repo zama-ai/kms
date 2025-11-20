@@ -177,57 +177,66 @@ impl<
 
         let mut guarded_prss_setup = self.prss_setup_z128.write().await;
         *guarded_prss_setup = Some(prss_setup_obj_z128.clone());
-
         let mut guarded_prss_setup = self.prss_setup_z64.write().await;
         *guarded_prss_setup = Some(prss_setup_obj_z64.clone());
 
-        // serialize and write PRSS Setup to disk into private storage
-        let private_storage = Arc::clone(&self.private_storage);
-        let mut priv_storage = private_storage.lock().await;
+        let prss_tag = PrivDataType::PrssSetup.to_string();
 
-        let z128_req_id = &derive_request_id(&format!(
-            "PRSSSetup_Z128_ID_{}_{}_{}",
-            req_id,
-            base_session.parameters.num_parties(),
-            base_session.parameters.threshold(),
-        ))?;
+        fn derive_prss_req_id(
+            bits: u32,
+            base_req: &RequestId,
+            parties: usize,
+            threshold: u8,
+        ) -> anyhow::Result<RequestId> {
+            derive_request_id(&format!(
+                "PRSSSetup_Z{bits}_ID_{}_{}_{}",
+                base_req, parties, threshold
+            ))
+        }
 
-        let z64_req_id = &derive_request_id(&format!(
-            "PRSSSetup_Z64_ID_{}_{}_{}",
-            req_id,
-            base_session.parameters.num_parties(),
-            base_session.parameters.threshold(),
-        ))?;
+        async fn overwrite_if_prss_exists<S: Storage>(
+            storage: &mut S,
+            req_id: &RequestId,
+            tag: &str,
+            bits_label: &str,
+        ) -> anyhow::Result<()> {
+            if storage.data_exists(req_id, tag).await? {
+                tracing::warn!(
+                    "Overwriting existing PRSS Setup {bits_label} at request ID {req_id}"
+                );
+                delete_at_request_id(storage, req_id, tag).await?;
+            }
+            Ok(())
+        }
 
-        // detele existing entries, if any
-        delete_at_request_id(
-            &mut (*priv_storage),
-            z128_req_id,
-            &PrivDataType::PrssSetup.to_string(),
-        )
-        .await?;
-        delete_at_request_id(
-            &mut (*priv_storage),
-            z64_req_id,
-            &PrivDataType::PrssSetup.to_string(),
-        )
-        .await?;
+        let parties = base_session.parameters.num_parties();
+        let threshold_val = base_session.parameters.threshold();
 
-        // store PRSS setup to disk
-        store_versioned_at_request_id(
-            &mut (*priv_storage),
-            z128_req_id,
-            &prss_setup_obj_z128,
-            &PrivDataType::PrssSetup.to_string(),
-        )
-        .await?;
-        store_versioned_at_request_id(
-            &mut (*priv_storage),
-            z64_req_id,
-            &prss_setup_obj_z64,
-            &PrivDataType::PrssSetup.to_string(),
-        )
-        .await?;
+        let z128_req_id = derive_prss_req_id(128, req_id, parties, threshold_val)?;
+        let z64_req_id = derive_prss_req_id(64, req_id, parties, threshold_val)?;
+
+        {
+            // lock only while touching storage
+            let mut priv_storage = self.private_storage.lock().await;
+
+            overwrite_if_prss_exists(&mut *priv_storage, &z128_req_id, &prss_tag, "Z128").await?;
+            overwrite_if_prss_exists(&mut *priv_storage, &z64_req_id, &prss_tag, "Z64").await?;
+
+            store_versioned_at_request_id(
+                &mut *priv_storage,
+                &z128_req_id,
+                &prss_setup_obj_z128,
+                &prss_tag,
+            )
+            .await?;
+            store_versioned_at_request_id(
+                &mut *priv_storage,
+                &z64_req_id,
+                &prss_setup_obj_z64,
+                &prss_tag,
+            )
+            .await?;
+        }
         {
             // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
             self.health_reporter
