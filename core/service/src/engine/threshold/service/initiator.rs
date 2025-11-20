@@ -29,7 +29,9 @@ use crate::{
         threshold::traits::Initiator,
         validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
-    vault::storage::{read_versioned_at_request_id, store_versioned_at_request_id, Storage},
+    vault::storage::{
+        delete_at_request_id, read_versioned_at_request_id, store_versioned_at_request_id, Storage,
+    },
 };
 
 // === Current Module Imports ===
@@ -182,27 +184,46 @@ impl<
         // serialize and write PRSS Setup to disk into private storage
         let private_storage = Arc::clone(&self.private_storage);
         let mut priv_storage = private_storage.lock().await;
-        store_versioned_at_request_id(
+
+        let z128_req_id = &derive_request_id(&format!(
+            "PRSSSetup_Z128_ID_{}_{}_{}",
+            req_id,
+            base_session.parameters.num_parties(),
+            base_session.parameters.threshold(),
+        ))?;
+
+        let z64_req_id = &derive_request_id(&format!(
+            "PRSSSetup_Z64_ID_{}_{}_{}",
+            req_id,
+            base_session.parameters.num_parties(),
+            base_session.parameters.threshold(),
+        ))?;
+
+        // detele existing entries, if any
+        delete_at_request_id(
             &mut (*priv_storage),
-            &derive_request_id(&format!(
-                "PRSSSetup_Z128_ID_{}_{}_{}",
-                req_id,
-                base_session.parameters.num_parties(),
-                base_session.parameters.threshold(),
-            ))?,
-            &prss_setup_obj_z128,
+            z128_req_id,
+            &PrivDataType::PrssSetup.to_string(),
+        )
+        .await?;
+        delete_at_request_id(
+            &mut (*priv_storage),
+            z64_req_id,
             &PrivDataType::PrssSetup.to_string(),
         )
         .await?;
 
+        // store PRSS setup to disk
         store_versioned_at_request_id(
             &mut (*priv_storage),
-            &derive_request_id(&format!(
-                "PRSSSetup_Z64_ID_{}_{}_{}",
-                req_id,
-                base_session.parameters.num_parties(),
-                base_session.parameters.threshold(),
-            ))?,
+            z128_req_id,
+            &prss_setup_obj_z128,
+            &PrivDataType::PrssSetup.to_string(),
+        )
+        .await?;
+        store_versioned_at_request_id(
+            &mut (*priv_storage),
+            z64_req_id,
             &prss_setup_obj_z64,
             &PrivDataType::PrssSetup.to_string(),
         )
