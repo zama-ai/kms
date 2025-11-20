@@ -245,10 +245,7 @@ impl<
 
         if self.prss_setup_z128.read().await.is_some() || self.prss_setup_z64.read().await.is_some()
         {
-            return Err(tonic::Status::new(
-                tonic::Code::AlreadyExists,
-                "PRSS state already exists".to_string(),
-            ));
+            tracing::warn!("PRSS state already exists. Overwriting old state now!");
         }
 
         self.init_prss(&request_id).await.map_err(|e| {
