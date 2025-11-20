@@ -74,6 +74,7 @@ services:
       - keys:/app/kms/core/service/keys
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
+      - ./docker-compose-core-threshold-entrypoint.sh:/app/kms/core/service/docker-compose-core-threshold-entrypoint.sh
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
@@ -83,24 +84,15 @@ services:
       - "docker-compose-kms-core.env"
     environment:
       - DOCKER_BUILDKIT=1
+      # Pass the flag to entrypoint script
+      - KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}
+      - SET_EMPTY_PEERLIST=${SET_EMPTY_PEERLIST}
+      - KMS_CONFIG_FILE=config/compose_1.toml
     # We do a key-gen first because otherwise the service won't start
     # NOTE: currently debugging the upload to s3
     # Credentials are set with both credentials file and env-var
-    entrypoint: >
-      /bin/sh -c "
-      AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
-      export AWS_ACCESS_KEY_ID &&
-      AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
-      export AWS_SECRET_ACCESS_KEY &&
-      echo 'Starting kms service' &&
-      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then \
-        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_1.toml; \
-      elif [[ "${SET_EMPTY_PEERLIST}" = "true" ]]; then \
-        kms-server --ignore-peerlist --config-file config/compose_1.toml; \
-      else \
-        kms-server --config-file config/compose_1.toml; \
-      fi
-      "
+    entrypoint:
+      - ./docker-compose-core-threshold-entrypoint.sh
 
   dev-kms-core-2:
     hostname: abcd.dev-kms-core-2.com
@@ -128,25 +120,17 @@ services:
       - keys:/app/kms/core/service/keys
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
+      - ./docker-compose-core-threshold-entrypoint.sh:/app/kms/core/service/docker-compose-core-threshold-entrypoint.sh
     env_file:
       - "docker-compose-kms-core.env"
     environment:
       - DOCKER_BUILDKIT=1
-    entrypoint: >
-      /bin/sh -c "
-      AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
-      export AWS_ACCESS_KEY_ID &&
-      AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
-      export AWS_SECRET_ACCESS_KEY &&
-      echo 'Starting kms service' &&
-      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then \
-        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_2.toml; \
-      elif [[ "${SET_EMPTY_PEERLIST}" = "true" ]]; then \
-        kms-server --ignore-peerlist --config-file config/compose_2.toml; \
-      else \
-        kms-server --config-file config/compose_2.toml; \
-      fi
-      "
+      # Pass the flag to entrypoint script
+      - KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}
+      - SET_EMPTY_PEERLIST=${SET_EMPTY_PEERLIST}
+      - KMS_CONFIG_FILE=config/compose_2.toml
+    entrypoint:
+      - ./docker-compose-core-threshold-entrypoint.sh
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
@@ -179,25 +163,17 @@ services:
       - keys:/app/kms/core/service/keys
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
+      - ./docker-compose-core-threshold-entrypoint.sh:/app/kms/core/service/docker-compose-core-threshold-entrypoint.sh
     env_file:
       - "docker-compose-kms-core.env"
     environment:
       - DOCKER_BUILDKIT=1
-    entrypoint: >
-      /bin/sh -c "
-      AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
-      export AWS_ACCESS_KEY_ID &&
-      AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
-      export AWS_SECRET_ACCESS_KEY &&
-      echo 'Starting kms service' &&
-      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then \
-        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_3.toml; \
-      elif [[ "${SET_EMPTY_PEERLIST}" = "true" ]]; then \
-        kms-server --ignore-peerlist --config-file config/compose_3.toml; \
-      else \
-        kms-server --config-file config/compose_3.toml; \
-      fi
-      "
+      # Pass the flag to entrypoint script
+      - KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}
+      - SET_EMPTY_PEERLIST=${SET_EMPTY_PEERLIST}
+      - KMS_CONFIG_FILE=config/compose_3.toml
+    entrypoint:
+      - ./docker-compose-core-threshold-entrypoint.sh
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
@@ -230,25 +206,17 @@ services:
       - keys:/app/kms/core/service/keys
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
+      - ./docker-compose-core-threshold-entrypoint.sh:/app/kms/core/service/docker-compose-core-threshold-entrypoint.sh
     env_file:
       - "docker-compose-kms-core.env"
     environment:
       - DOCKER_BUILDKIT=1
-    entrypoint: >
-      /bin/sh -c "
-      AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
-      export AWS_ACCESS_KEY_ID &&
-      AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
-      export AWS_SECRET_ACCESS_KEY &&
-      echo 'Starting kms service' &&
-      if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then \
-        KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file config/compose_4.toml; \
-      elif [[ "${SET_EMPTY_PEERLIST}" = "true" ]]; then \
-        kms-server --ignore-peerlist --config-file config/compose_4.toml; \
-      else \
-        kms-server --config-file config/compose_4.toml; \
-      fi
-      "
+      # Pass the flag to entrypoint script
+      - KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}
+      - SET_EMPTY_PEERLIST=${SET_EMPTY_PEERLIST}
+      - KMS_CONFIG_FILE=config/compose_4.toml
+    entrypoint:
+      - ./docker-compose-core-threshold-entrypoint.sh
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
