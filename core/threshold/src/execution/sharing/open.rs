@@ -976,7 +976,24 @@ pub(crate) mod test {
     }
 
     #[tokio::test]
-    async fn test_sync_robust_open_external() {
+    async fn test_sync_robust_open_external_no_overlap() {
+        test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            4,
+            4,
+            0,
+            TwoSetsThreshold {
+                threshold_set_1: 1,
+                threshold_set_2: 1,
+            },
+            NetworkMode::Sync,
+            HashSet::new(),
+            SecureRobustOpen::default(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_sync_robust_open_external_some_overlap() {
         test_robust_open_external::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             4,
             4,
