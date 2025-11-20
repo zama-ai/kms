@@ -422,10 +422,12 @@ where
                 crate::conf::threshold::TlsConf::SemiAuto {
                     cert: _,
                     trusted_releases,
+                    attest_private_vault_root_key: _,
                 } => Some(trusted_releases),
-                crate::conf::threshold::TlsConf::FullAuto { trusted_releases } => {
-                    Some(trusted_releases)
-                }
+                crate::conf::threshold::TlsConf::FullAuto {
+                    trusted_releases,
+                    attest_private_vault_root_key: _,
+                } => Some(trusted_releases),
             });
             let context_info = ContextInfo {
                 mpc_nodes,

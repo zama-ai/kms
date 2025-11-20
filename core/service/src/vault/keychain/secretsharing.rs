@@ -1,4 +1,4 @@
-use super::{EnvelopeLoad, EnvelopeStore, Keychain};
+use super::{EnvelopeLoad, EnvelopeStore, Keychain, RootKeyMeasurements};
 use crate::{
     anyhow_error_and_log,
     backup::{operator::RecoveryValidationMaterial, BackupCiphertext},
@@ -204,6 +204,10 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
                     })
             }
         }
+    }
+
+    fn root_key_measurements(&self) -> &RootKeyMeasurements {
+        &RootKeyMeasurements::SecretSharing {}
     }
 }
 
