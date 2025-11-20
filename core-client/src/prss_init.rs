@@ -5,6 +5,7 @@ use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpoint
 use kms_grpc::{identifiers::EpochId, ContextId};
 use tonic::transport::Channel;
 
+/// Send the PRSS init request to the core endpoints for a given context and epoch.
 pub async fn do_prss_init(
     core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     context_id: &ContextId,

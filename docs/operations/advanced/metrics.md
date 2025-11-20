@@ -63,8 +63,8 @@ KMS exposes metrics via Prometheus format on the configured metrics endpoint (de
 
 *System Operations*:
 - `init` - PRSS initialization operations
-- `new_kms_context` - KMS context creation
-- `destroy_kms_context` - KMS context destruction
+- `new_mpc_context` - MPC context creation
+- `destroy_mpc_context` - MPC context destruction
 
 *Custodian Operations*:
 - `new_custodian_context` - Custodian context creation

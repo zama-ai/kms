@@ -2,14 +2,15 @@ use kms_grpc::kms::v1::CiphertextFormat;
 use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
 use kms_grpc::kms::v1::CustodianRecoveryRequest;
 use kms_grpc::kms::v1::DestroyCustodianContextRequest;
-use kms_grpc::kms::v1::DestroyKmsContextRequest;
+use kms_grpc::kms::v1::DestroyMpcContextRequest;
 use kms_grpc::kms::v1::Empty;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::kms::v1::NewCustodianContextRequest;
-use kms_grpc::kms::v1::NewKmsContextRequest;
+use kms_grpc::kms::v1::NewMpcContextRequest;
 use kms_grpc::kms::v1::OperatorPublicKey;
 use kms_grpc::kms::v1::RecoveryRequest;
 use kms_grpc::kms::v1::TypedPlaintext;
+use kms_grpc::ContextId;
 use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;
@@ -59,14 +60,14 @@ pub trait Kms: BaseKms {
 
 #[tonic::async_trait]
 pub trait ContextManager {
-    async fn new_kms_context(
+    async fn new_mpc_context(
         &self,
-        request: Request<NewKmsContextRequest>,
+        request: Request<NewMpcContextRequest>,
     ) -> Result<Response<Empty>, Status>;
 
-    async fn destroy_kms_context(
+    async fn destroy_mpc_context(
         &self,
-        request: Request<DestroyKmsContextRequest>,
+        request: Request<DestroyMpcContextRequest>,
     ) -> Result<Response<Empty>, Status>;
 
     async fn new_custodian_context(
@@ -78,6 +79,8 @@ pub trait ContextManager {
         &self,
         request: Request<DestroyCustodianContextRequest>,
     ) -> Result<Response<Empty>, Status>;
+
+    async fn mpc_context_exists(&self, context_id: &ContextId) -> Result<bool, Status>;
 }
 
 #[tonic::async_trait]

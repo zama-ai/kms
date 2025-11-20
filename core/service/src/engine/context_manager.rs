@@ -51,10 +51,10 @@ where
 {
     async fn verify_and_extract_new_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
+        request: tonic::Request<kms_grpc::kms::v1::NewMpcContextRequest>,
     ) -> Result<(Role, ContextInfo), tonic::Status> {
         // first verify that the context is valid
-        let kms_grpc::kms::v1::NewKmsContextRequest { new_context } = request.into_inner();
+        let kms_grpc::kms::v1::NewMpcContextRequest { new_context } = request.into_inner();
 
         let new_context =
             new_context.ok_or_else(|| Status::invalid_argument("new_context is required"))?;
@@ -76,9 +76,23 @@ where
         Ok((my_role, new_context))
     }
 
+    async fn mpc_context_exists(&self, context_id: &ContextId) -> anyhow::Result<bool> {
+        let contexts = self
+            .crypto_storage
+            .read_all_context_info()
+            .await
+            .inspect_err(|e| tracing::error!("Failed to load all contexts from storage: {}", e))?;
+        for context in contexts {
+            if context.context_id() == context_id {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     async fn parse_mpc_context_for_destruction(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
     ) -> Result<ContextId, tonic::Status> {
         let proto_context_id = request
             .into_inner()
@@ -192,8 +206,13 @@ where
                         )
                         .await?;
                     }
+                    #[expect(deprecated)]
                     PrivDataType::PrssSetup => {
                         // We will not back up PRSS setup data
+                        continue;
+                    }
+                    PrivDataType::PrssSetupCombined => {
+                        // We will not back up Combined PRSS setup data
                         continue;
                     }
                     PrivDataType::ContextInfo => {
@@ -267,9 +286,9 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 {
-    async fn new_kms_context(
+    async fn new_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
+        request: tonic::Request<kms_grpc::kms::v1::NewMpcContextRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
         let (_my_role, new_context) = self
             .inner
@@ -299,9 +318,9 @@ where
         Ok(Response::new(Empty {}))
     }
 
-    async fn destroy_kms_context(
+    async fn destroy_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
         let context_id = self
             .inner
@@ -335,6 +354,13 @@ where
         request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
         self.inner.destroy_custodian_context(request).await
+    }
+
+    async fn mpc_context_exists(&self, context_id: &ContextId) -> Result<bool, Status> {
+        Ok(ok_or_tonic_abort(
+            self.inner.mpc_context_exists(context_id).await,
+            "Failed to check if context exists".to_string(),
+        )?)
     }
 }
 
@@ -437,9 +463,9 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 {
-    async fn new_kms_context(
+    async fn new_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
+        request: tonic::Request<kms_grpc::kms::v1::NewMpcContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
         let (my_role, new_context) = self
             .inner
@@ -464,9 +490,9 @@ where
         Ok(Response::new(Empty {}))
     }
 
-    async fn destroy_kms_context(
+    async fn destroy_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
         let context_id = self
             .inner
@@ -498,6 +524,13 @@ where
         request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
         self.inner.destroy_custodian_context(request).await
+    }
+
+    async fn mpc_context_exists(&self, context_id: &ContextId) -> Result<bool, Status> {
+        Ok(ok_or_tonic_abort(
+            self.inner.mpc_context_exists(context_id).await,
+            "Failed to check if context exists".to_string(),
+        )?)
     }
 }
 
@@ -602,7 +635,7 @@ mod tests {
     };
     use kms_grpc::{
         identifiers::ContextId,
-        kms::v1::{DestroyKmsContextRequest, NewKmsContextRequest},
+        kms::v1::{DestroyMpcContextRequest, NewMpcContextRequest},
         rpc_types::{KMSType, PrivDataType},
         RequestId,
     };
@@ -651,7 +684,7 @@ mod tests {
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
         let context_id = ContextId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
-            kms_nodes: vec![NodeInfo {
+            mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
                 verification_key: Some(verification_key.clone()),
@@ -671,7 +704,7 @@ mod tests {
             pcr_values: vec![],
         };
 
-        let request = Request::new(NewKmsContextRequest {
+        let request = Request::new(NewMpcContextRequest {
             new_context: Some(new_context.try_into().unwrap()),
         });
         let session_maker =
@@ -684,7 +717,7 @@ mod tests {
             session_maker,
         );
 
-        let response = context_manager.new_kms_context(request).await;
+        let response = context_manager.new_mpc_context(request).await;
         response.unwrap();
 
         // check that the context is stored
@@ -696,20 +729,20 @@ mod tests {
                 .unwrap();
 
             assert_eq!(*stored_context.context_id(), context_id);
-            assert_eq!(stored_context.kms_nodes.len(), 1);
-            assert_eq!(stored_context.kms_nodes[0].party_id, 1);
+            assert_eq!(stored_context.mpc_nodes.len(), 1);
+            assert_eq!(stored_context.mpc_nodes[0].party_id, 1);
             assert_eq!(
-                stored_context.kms_nodes[0].verification_key,
+                stored_context.mpc_nodes[0].verification_key,
                 Some(verification_key)
             );
         }
 
         // now that it is stored, we try to delete it
-        let request = Request::new(DestroyKmsContextRequest {
+        let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
         });
 
-        let response = context_manager.destroy_kms_context(request).await;
+        let response = context_manager.destroy_mpc_context(request).await;
         response.unwrap();
 
         // check that the context is deleted
@@ -727,7 +760,7 @@ mod tests {
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
         let context_id = ContextId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
-            kms_nodes: vec![NodeInfo {
+            mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
                 verification_key: Some(verification_key.clone()),
@@ -747,7 +780,7 @@ mod tests {
             pcr_values: vec![],
         };
 
-        let request = Request::new(NewKmsContextRequest {
+        let request = Request::new(NewMpcContextRequest {
             new_context: Some(new_context.try_into().unwrap()),
         });
 
@@ -763,7 +796,7 @@ mod tests {
                 session_maker,
             );
 
-            let response = context_manager.new_kms_context(request).await;
+            let response = context_manager.new_mpc_context(request).await;
             response.unwrap();
 
             assert_eq!(1, context_manager.session_maker.context_count().await);
@@ -778,10 +811,10 @@ mod tests {
                 .unwrap();
 
             assert_eq!(*stored_context.context_id(), context_id);
-            assert_eq!(stored_context.kms_nodes.len(), 1);
-            assert_eq!(stored_context.kms_nodes[0].party_id, 1);
+            assert_eq!(stored_context.mpc_nodes.len(), 1);
+            assert_eq!(stored_context.mpc_nodes[0].party_id, 1);
             assert_eq!(
-                stored_context.kms_nodes[0].verification_key,
+                stored_context.mpc_nodes[0].verification_key,
                 Some(verification_key)
             );
         }

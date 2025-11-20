@@ -367,7 +367,7 @@ pub struct CentralizedKms<
     pub(crate) base_kms: BaseKmsStruct,
     pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     // NOT USED - only here to ensure we can keep track of calls similar to the threshold KMS
-    pub(crate) init_ids: Arc<RwLock<MetaStore<()>>>,
+    pub(crate) epoch_ids: Arc<RwLock<MetaStore<()>>>,
     // Ensures we can sign responses in the same manner as the threshold KMS
     // and keeps track of the parameters sent during a PreprocRequest
     // to use them in the corresponding KeyGenRequest
@@ -889,7 +889,7 @@ impl<
             CentralizedKms {
                 base_kms,
                 crypto_storage,
-                init_ids: Arc::new(RwLock::new(MetaStore::new_from_map(HashMap::new()))),
+                epoch_ids: Arc::new(RwLock::new(MetaStore::new_from_map(HashMap::new()))),
                 preprocessing_meta_store: Arc::new(RwLock::new(MetaStore::new_from_map(
                     HashMap::new(),
                 ))),

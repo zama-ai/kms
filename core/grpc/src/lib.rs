@@ -25,6 +25,8 @@ pub mod metastore_status {
 }
 
 pub mod identifiers;
+// PRSSSetup variant of PrivDataType is deprecated.
+#[expect(deprecated)]
 pub mod rpc_types;
 pub mod solidity_types;
 pub mod utils;

@@ -126,10 +126,10 @@ pub struct NodeInfo {
     pub extra_verification_keys: Vec<PublicSigKey>,
 }
 
-impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
+impl TryFrom<kms_grpc::kms::v1::MpcNode> for NodeInfo {
     type Error = anyhow::Error;
 
-    fn try_from(value: kms_grpc::kms::v1::KmsNode) -> anyhow::Result<Self> {
+    fn try_from(value: kms_grpc::kms::v1::MpcNode) -> anyhow::Result<Self> {
         // check the ca_cert is valid PEM if present
         let ca_cert = match &value.ca_cert {
             Some(cert_bytes) => {
@@ -162,11 +162,11 @@ impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
     }
 }
 
-impl TryFrom<NodeInfo> for kms_grpc::kms::v1::KmsNode {
+impl TryFrom<NodeInfo> for kms_grpc::kms::v1::MpcNode {
     type Error = anyhow::Error;
     fn try_from(value: NodeInfo) -> anyhow::Result<Self> {
         // Observe that legacy formats have never been used here, so it is safe to use safe_serialize
-        Ok(kms_grpc::kms::v1::KmsNode {
+        Ok(kms_grpc::kms::v1::MpcNode {
             mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
             verification_key: match value.verification_key {
@@ -197,7 +197,7 @@ pub enum ContextInfoVersioned {
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(ContextInfoVersioned)]
 pub struct ContextInfo {
-    pub kms_nodes: Vec<NodeInfo>,
+    pub mpc_nodes: Vec<NodeInfo>,
     pub context_id: ContextId,
     pub software_version: SoftwareVersion,
     pub threshold: u32,
@@ -217,7 +217,7 @@ impl ContextInfo {
         let verification_key = signing_key.verf_key();
 
         let my_node = self
-            .kms_nodes
+            .mpc_nodes
             .iter()
             .find(|node| {
                 node.verification_key
@@ -233,10 +233,10 @@ impl ContextInfo {
                 )
             })?;
 
-        // check kms_nodes have unique party_ids
+        // check mpc_nodes have unique party_ids
         let party_ids: std::collections::HashSet<_> =
-            self.kms_nodes.iter().map(|node| node.party_id).collect();
-        if party_ids.len() != self.kms_nodes.len() {
+            self.mpc_nodes.iter().map(|node| node.party_id).collect();
+        if party_ids.len() != self.mpc_nodes.len() {
             return Err(anyhow::anyhow!(
                 "{} {}",
                 ERR_DUPLICATE_PARTY_IDS,
@@ -244,9 +244,9 @@ impl ContextInfo {
             ));
         }
 
-        // check that the party IDs are in the range [1, kms_nodes.len()]
-        for node in &self.kms_nodes {
-            (1..=self.kms_nodes.len() as u32)
+        // check that the party IDs are in the range [1, mpc_nodes.len()]
+        for node in &self.mpc_nodes {
+            (1..=self.mpc_nodes.len() as u32)
                 .contains(&node.party_id)
                 .then_some(())
                 .ok_or_else(|| {
@@ -258,7 +258,7 @@ impl ContextInfo {
                 })?;
         }
 
-        if self.kms_nodes.len() == 1 {
+        if self.mpc_nodes.len() == 1 {
             // threshold must be 0 for single node context
             if self.threshold != 0 {
                 return Err(anyhow::anyhow!(
@@ -268,25 +268,25 @@ impl ContextInfo {
                 ));
             }
         } else {
-            // check that threshold is valid such that 3*threshold + 1 == kms_nodes.len()
-            if self.kms_nodes.len() != 3 * self.threshold as usize + 1 {
+            // check that threshold is valid such that 3*threshold + 1 == mpc_nodes.len()
+            if self.mpc_nodes.len() != 3 * self.threshold as usize + 1 {
                 return Err(anyhow::anyhow!(
                     "{} (context={}, threshold={}, nodes={})",
                     ERR_INVALID_THRESHOLD_MULTI_NODE,
                     self.context_id(),
                     self.threshold,
-                    self.kms_nodes.len()
+                    self.mpc_nodes.len()
                 ));
             }
         }
 
-        // the kms_nodes must have unique names
+        // the mpc_nodes must have unique names
         let names: std::collections::HashSet<_> = self
-            .kms_nodes
+            .mpc_nodes
             .iter()
             .map(|node| node.mpc_identity.clone())
             .collect();
-        if names.len() != self.kms_nodes.len() {
+        if names.len() != self.mpc_nodes.len() {
             return Err(anyhow::anyhow!(
                 "{} {}",
                 ERR_DUPLICATE_NAMES,
@@ -295,7 +295,7 @@ impl ContextInfo {
         }
 
         // check that the urls are valid
-        for node in &self.kms_nodes {
+        for node in &self.mpc_nodes {
             let mpc_url = url::Url::parse(&node.external_url)
                 .map_err(|e| anyhow::anyhow!("url parsing failed {:?}", e))?;
             let _hostname = mpc_url
@@ -314,14 +314,14 @@ impl Named for ContextInfo {
     const NAME: &'static str = "kms::ContextInfo";
 }
 
-impl TryFrom<kms_grpc::kms::v1::KmsContext> for ContextInfo {
+impl TryFrom<kms_grpc::kms::v1::MpcContext> for ContextInfo {
     type Error = anyhow::Error;
 
-    fn try_from(value: kms_grpc::kms::v1::KmsContext) -> anyhow::Result<Self> {
+    fn try_from(value: kms_grpc::kms::v1::MpcContext) -> anyhow::Result<Self> {
         let software_version = bc2wrap::deserialize_safe(&value.software_version)?;
         Ok(ContextInfo {
-            kms_nodes: value
-                .kms_nodes
+            mpc_nodes: value
+                .mpc_nodes
                 .into_iter()
                 .map(NodeInfo::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
@@ -345,15 +345,15 @@ impl TryFrom<kms_grpc::kms::v1::KmsContext> for ContextInfo {
     }
 }
 
-impl TryFrom<ContextInfo> for kms_grpc::kms::v1::KmsContext {
+impl TryFrom<ContextInfo> for kms_grpc::kms::v1::MpcContext {
     type Error = anyhow::Error;
 
     fn try_from(value: ContextInfo) -> anyhow::Result<Self> {
-        Ok(kms_grpc::kms::v1::KmsContext {
-            kms_nodes: value
-                .kms_nodes
+        Ok(kms_grpc::kms::v1::MpcContext {
+            mpc_nodes: value
+                .mpc_nodes
                 .into_iter()
-                .map(kms_grpc::kms::v1::KmsNode::try_from)
+                .map(kms_grpc::kms::v1::MpcNode::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
             context_id: Some(value.context_id.into()),
             software_version: bc2wrap::serialize(&value.software_version)?,
@@ -501,7 +501,7 @@ mod tests {
         let (verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
 
         let context = ContextInfo {
-            kms_nodes: vec![
+            mpc_nodes: vec![
                 NodeInfo {
                     mpc_identity: "Node1".to_string(),
                     party_id: 1,

@@ -441,9 +441,19 @@ pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
     Ok(hex::decode(hex_str)?)
 }
 
+/// Initialize the PRSS for a given context and epoch.
+///
+/// This command will be deprecated and be combined with the resharing command.
 #[derive(Debug, Parser, Clone)]
 pub struct PrssInitParameters {
+    /// Optionally specify the context ID to use for the PRSS initialization.
+    /// Defaults to the default epoch if not specified.
+    #[clap(long)]
     pub context_id: ContextId,
+    /// Optionally specify the epoch ID to use for the PRSS initialization.
+    /// Defaults to the default epoch if not specified.
+    /// The PRSS will be stored under the epoch ID.
+    #[clap(long)]
     pub epoch_id: EpochId,
 }
 
@@ -640,8 +650,12 @@ pub struct ReshareParameters {
 
 #[derive(Debug, Parser, Clone)]
 pub struct KeyGenPreprocParameters {
+    /// Optionally specify the context ID to use for the preprocessing.
+    /// Defaults to the default context if not specified.
     #[clap(long)]
     pub context_id: Option<ContextId>,
+    /// Optionally specify the epoch ID to use for the preprocessing.
+    /// Defaults to the default epoch if not specified.
     #[clap(long)]
     pub epoch_id: Option<EpochId>,
 }

@@ -382,7 +382,7 @@ where
     let _ = match config.peers {
         Some(ref peers) => {
             let context_id = *DEFAULT_MPC_CONTEXT;
-            let kms_nodes = peers
+            let mpc_nodes = peers
                 .iter()
                 .map(|peer| {
                     let (role, identity) = peer.into_role_identity();
@@ -428,7 +428,7 @@ where
                 }
             });
             let context_info = ContextInfo {
-                kms_nodes,
+                mpc_nodes,
                 context_id,
                 software_version: SoftwareVersion::current(),
                 threshold: config.threshold as u32,
@@ -504,11 +504,25 @@ where
             )
         })?;
 
-    // TODO eventually this PRSS ID should come from the context request
-    // the PRSS should never be run in this function.
-    let epoch_id_prss: EpochId = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?.into(); // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
-    let default_context_id = *DEFAULT_MPC_CONTEXT;
+    // Load existing PRSS from storage and optionally run a new setup with default IDs.
+    if let Err(e) = initiator.init_legacy_prss_from_storage().await {
+        tracing::warn!(
+            "Could not read legacy PRSS Setup from storage for {}: {}.",
+            config.my_id,
+            e
+        );
+    }
+    if let Err(e) = initiator.init_all_prss_from_storage().await {
+        tracing::warn!(
+            "Could not read all PRSS Setup from storage for {}: {}. You may need to call the init end-point later before you can use the KMS server",
+            config.my_id,
+            e
+        );
+    }
+
     if run_prss {
+        let epoch_id_prss: EpochId = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?.into(); // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
+        let default_context_id = *DEFAULT_MPC_CONTEXT;
         tracing::info!(
             "Initializing threshold KMS server and generating a new PRSS Setup for {}",
             config.my_id
@@ -516,18 +530,6 @@ where
         initiator
             .init_prss(&default_context_id, &epoch_id_prss)
             .await?;
-    } else {
-        tracing::info!(
-            "Trying to initializing threshold KMS server and reading PRSS from storage for {}",
-            config.my_id
-        );
-        if let Err(e) = initiator.init_prss_from_storage(&epoch_id_prss).await {
-            tracing::warn!(
-                "Could not read PRSS Setup from storage for {}: {}. You will need to call the init end-point later before you can use the KMS server",
-                config.my_id,
-                e
-            );
-        }
     }
 
     let tracker = Arc::new(TaskTracker::new());
