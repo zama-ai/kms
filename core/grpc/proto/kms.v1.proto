@@ -2,7 +2,7 @@ syntax = "proto3";
 package kms.v1;
 
 // Initialization request for bootstrapping the threshold KMS.
-// This request will be removed in favor of NewKmsContextRequest.
+// This request will be removed in favor of NewMpcContextRequest.
 //
 // In the future this endpoint will be combined with resharing.
 message InitRequest {
@@ -479,7 +479,7 @@ message TypedSigncryptedCiphertext {
 }
 
 // The public information for a single KMS node.
-message KmsNode {
+message MpcNode {
   // The field `mpc_identity` is used to identify the core in the MPC protocol.
   // It must match the subject common name (CN) in the TLS certificate.
   // This is how cores authenticate each other in the MPC protocol,
@@ -518,9 +518,9 @@ message KmsNode {
 }
 
 // The context of the MPC, containing the list of MPC nodes and other metadata.
-message KmsContext {
+message MpcContext {
   // The list of MPC nodes in the context.
-  repeated KmsNode kms_nodes = 1;
+  repeated MpcNode mpc_nodes = 1;
 
   // A monotonically increasing counter stored on the Gateway
   // that is increased by 1 every time a new context of a specific type is generated.
@@ -532,7 +532,7 @@ message KmsContext {
 
   // The corruption threshold for this context.
   // In the optimal case, n = 3 * threshold + 1, where n is the number of KMS nodes.
-  // The threshold must be set to 0 if the kms_nodes list contains only one node.
+  // The threshold must be set to 0 if the mpc_nodes list contains only one node.
   int32 threshold = 4;
 
   // The expected PCR values of the KMS nodes in this context.
@@ -578,13 +578,13 @@ message CustodianContext {
 // Request to create a new KMS context.
 // If the active_context may be empty, then the new_context must be the first context
 // in the chain of contexts.
-message NewKmsContextRequest {
-  KmsContext new_context = 2;
+message NewMpcContextRequest {
+  MpcContext new_context = 2;
 }
 
 // Response to destroy the key materials associated with a KMS context.
 // Note that the context information itself is not removed, only the key materials.
-message DestroyKmsContextRequest {
+message DestroyMpcContextRequest {
   RequestId context_id = 1;
 }
 

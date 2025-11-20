@@ -90,8 +90,8 @@ async fn do_context_switch(
 
         // note that there's no verification key during initialization of the default context
         // so the new context must use the correct verification keys
-        assert_eq!(new_context.kms_nodes.len(), 4);
-        for node in new_context.kms_nodes.iter_mut() {
+        assert_eq!(new_context.mpc_nodes.len(), 4);
+        for node in new_context.mpc_nodes.iter_mut() {
             let pk: PublicSigKey = read_versioned_at_request_id(
                 &all_public_storage[node.party_id as usize - 1],
                 &SIGNING_KEY_ID,
@@ -108,14 +108,14 @@ async fn do_context_switch(
 
     {
         let req = internal_client
-            .new_kms_context_request(new_context)
+            .new_mpc_context_request(new_context)
             .unwrap();
 
         let mut req_tasks = JoinSet::new();
         for (_, client) in kms_clients.iter() {
             let req_clone = req.clone();
             let mut client = client.clone();
-            req_tasks.spawn(async move { client.new_kms_context(req_clone).await });
+            req_tasks.spawn(async move { client.new_mpc_context(req_clone).await });
         }
 
         let mut req_response_vec = Vec::new();
@@ -149,14 +149,14 @@ async fn do_context_switch(
     // delete the new context
     {
         let req = internal_client
-            .destroy_kms_context_request(&new_context_id)
+            .destroy_mpc_context_request(&new_context_id)
             .unwrap();
 
         let mut req_tasks = JoinSet::new();
         for (_, client) in kms_clients.iter() {
             let req_clone = req.clone();
             let mut client = client.clone();
-            req_tasks.spawn(async move { client.destroy_kms_context(req_clone).await });
+            req_tasks.spawn(async move { client.destroy_mpc_context(req_clone).await });
         }
 
         let mut req_response_vec = Vec::new();

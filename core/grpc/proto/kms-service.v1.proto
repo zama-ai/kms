@@ -289,7 +289,7 @@ service CoreServiceEndpoint {
   // # Conditions
   // ## Pre-condition:  -
   // ## Post-condition: -
-  rpc NewKmsContext(kms.v1.NewKmsContextRequest) returns (kms.v1.Empty);
+  rpc NewMpcContext(kms.v1.NewMpcContextRequest) returns (kms.v1.Empty);
 
   // Destroyes a new KMS context.
   //
@@ -303,7 +303,7 @@ service CoreServiceEndpoint {
   // # Conditions
   // ## Pre-condition:  -
   // ## Post-condition: -
-  rpc DestroyKmsContext(kms.v1.DestroyKmsContextRequest) returns (kms.v1.Empty);
+  rpc DestroyMpcContext(kms.v1.DestroyMpcContextRequest) returns (kms.v1.Empty);
 
 
   rpc InitiateResharing(kms.v1.InitiateResharingRequest) returns (kms.v1.InitiateResharingResponse);

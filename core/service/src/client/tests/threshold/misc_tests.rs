@@ -10,8 +10,9 @@ use crate::vault::storage::file::FileStorage;
 cfg_if::cfg_if! {
     if #[cfg(feature = "slow_tests")] {
         use kms_grpc::kms::v1::FheParameter;
-        use crate::util::rate_limiter::RateLimiterConfig;
         use crate::dummy_domain;
+        use crate::engine::base::derive_request_id;
+        use crate::util::rate_limiter::RateLimiterConfig;
     }
 }
 use kms_grpc::identifiers::EpochId;

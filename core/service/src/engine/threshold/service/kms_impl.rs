@@ -382,7 +382,7 @@ where
     let _ = match config.peers {
         Some(ref peers) => {
             let context_id = *DEFAULT_MPC_CONTEXT;
-            let kms_nodes = peers
+            let mpc_nodes = peers
                 .iter()
                 .map(|peer| {
                     let (role, identity) = peer.into_role_identity();
@@ -428,7 +428,7 @@ where
                 }
             });
             let context_info = ContextInfo {
-                kms_nodes,
+                mpc_nodes,
                 context_id,
                 software_version: SoftwareVersion::current(),
                 threshold: config.threshold as u32,

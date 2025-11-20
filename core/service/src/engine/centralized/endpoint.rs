@@ -26,9 +26,9 @@ use observability::{
     metrics_names::{
         map_tonic_code_to_metric_tag, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
         OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_DESTROY_CUSTODIAN_CONTEXT,
-        OP_DESTROY_KMS_CONTEXT, OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST,
+        OP_DESTROY_MPC_CONTEXT, OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST,
         OP_KEYGEN_PREPROC_RESULT, OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT,
-        OP_NEW_KMS_CONTEXT, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
+        OP_NEW_MPC_CONTEXT, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
         OP_RESTORE_FROM_BACKUP, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
     },
 };
@@ -272,32 +272,32 @@ impl<
     }
 
     #[tracing::instrument(skip(self, request))]
-    async fn new_kms_context(
+    async fn new_mpc_context(
         &self,
-        request: Request<kms_grpc::kms::v1::NewKmsContextRequest>,
+        request: Request<kms_grpc::kms::v1::NewMpcContextRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
-        METRICS.increment_request_counter(OP_NEW_KMS_CONTEXT);
+        METRICS.increment_request_counter(OP_NEW_MPC_CONTEXT);
         self.context_manager
             .new_mpc_context(request)
             .await
             .inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_NEW_KMS_CONTEXT, tag);
+                let _ = METRICS.increment_error_counter(OP_NEW_MPC_CONTEXT, tag);
             })
     }
 
     #[tracing::instrument(skip(self, request))]
-    async fn destroy_kms_context(
+    async fn destroy_mpc_context(
         &self,
-        request: Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
+        request: Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
     ) -> Result<Response<Empty>, Status> {
-        METRICS.increment_request_counter(OP_DESTROY_KMS_CONTEXT);
+        METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
         self.context_manager
             .destroy_mpc_context(request)
             .await
             .inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_DESTROY_KMS_CONTEXT, tag);
+                let _ = METRICS.increment_error_counter(OP_DESTROY_MPC_CONTEXT, tag);
             })
     }
 

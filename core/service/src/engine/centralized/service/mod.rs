@@ -32,7 +32,7 @@ mod tests {
         vault::storage::ram::RamStorage,
     };
     use aes_prng::AesRng;
-    use kms_grpc::kms::v1::{KmsContext, NewKmsContextRequest};
+    use kms_grpc::kms::v1::{MpcContext, NewMpcContextRequest};
     use kms_grpc::rpc_types::PrivDataType;
 
     /// This also adds a dummy context
@@ -68,9 +68,9 @@ mod tests {
             extra_verification_keys: vec![],
         };
         kms.context_manager
-            .new_mpc_context(tonic::Request::new(NewKmsContextRequest {
-                new_context: Some(KmsContext {
-                    kms_nodes: vec![kms_node.try_into().unwrap()],
+            .new_mpc_context(tonic::Request::new(NewMpcContextRequest {
+                new_context: Some(MpcContext {
+                    mpc_nodes: vec![kms_node.try_into().unwrap()],
                     context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                     software_version: bc2wrap::serialize(&SoftwareVersion::current()).unwrap(),
                     threshold: 0,

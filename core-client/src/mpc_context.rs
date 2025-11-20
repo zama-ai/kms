@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use kms_grpc::{
-    identifiers::ContextId, kms::v1::NewKmsContextRequest,
+    identifiers::ContextId, kms::v1::NewMpcContextRequest,
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
 };
 #[cfg(feature = "testing")]
@@ -31,7 +31,7 @@ pub async fn create_test_context_info_from_core_config(
 
     // load the compose_x.toml files, because we need the MPC identities and dummy pcr values
     let mut pcr_values = HashMap::new();
-    let mut kms_nodes = vec![];
+    let mut mpc_nodes = vec![];
     let mut thresholds = vec![];
     for c in sim_conf.cores.iter() {
         let config_path = c
@@ -78,7 +78,7 @@ pub async fn create_test_context_info_from_core_config(
             sk.sk(),
         )?;
 
-        kms_nodes.push(NodeInfo {
+        mpc_nodes.push(NodeInfo {
             mpc_identity: mpc_identity.to_string(),
             party_id: role.one_based() as u32,
             verification_key: Some(verification_key.clone()),
@@ -118,7 +118,7 @@ pub async fn create_test_context_info_from_core_config(
     }
 
     let new_context = ContextInfo {
-        kms_nodes,
+        mpc_nodes,
         context_id,
         software_version: SoftwareVersion::current(),
         threshold: *threshold as u32,
@@ -146,7 +146,7 @@ pub(crate) async fn do_new_mpc_context(
         let new_context_cloned = new_context.clone();
         req_tasks.spawn(async move {
             cur_client
-                .new_kms_context(tonic::Request::new(NewKmsContextRequest {
+                .new_mpc_context(tonic::Request::new(NewMpcContextRequest {
                     new_context: Some(new_context_cloned.try_into().unwrap()),
                 }))
                 .await

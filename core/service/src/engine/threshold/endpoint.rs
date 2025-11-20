@@ -7,9 +7,9 @@ use crate::engine::threshold::traits::{
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::traits::{BackupOperator, ContextManager};
 use kms_grpc::kms::v1::{
-    CrsGenRequest, CrsGenResult, DestroyKmsContextRequest, Empty, HealthStatus, InitRequest,
+    CrsGenRequest, CrsGenResult, DestroyMpcContextRequest, Empty, HealthStatus, InitRequest,
     InitiateResharingRequest, InitiateResharingResponse, KeyGenPreprocRequest, KeyGenPreprocResult,
-    KeyGenRequest, KeyGenResult, KeyMaterialAvailabilityResponse, NewKmsContextRequest, NodeType,
+    KeyGenRequest, KeyGenResult, KeyMaterialAvailabilityResponse, NewMpcContextRequest, NodeType,
     PeersFromContext, PublicDecryptionRequest, PublicDecryptionResponse, RequestId,
     ResharingResultResponse, UserDecryptionRequest, UserDecryptionResponse,
 };
@@ -20,9 +20,9 @@ use observability::{
     metrics_names::{
         map_tonic_code_to_metric_tag, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
         OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_DESTROY_CUSTODIAN_CONTEXT,
-        OP_DESTROY_KMS_CONTEXT, OP_FETCH_PK, OP_GET_INITIATE_RESHARING_RESULT, OP_INIT,
+        OP_DESTROY_MPC_CONTEXT, OP_FETCH_PK, OP_GET_INITIATE_RESHARING_RESULT, OP_INIT,
         OP_INITIATE_RESHARING, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT,
-        OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_KMS_CONTEXT,
+        OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_MPC_CONTEXT,
         OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_RESTORE_FROM_BACKUP,
         OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
     },
@@ -283,29 +283,29 @@ impl_endpoint! {
         }
 
         #[tracing::instrument(skip(self, request))]
-        async fn new_kms_context(
+        async fn new_mpc_context(
             &self,
-            request: Request<NewKmsContextRequest>,
+            request: Request<NewMpcContextRequest>,
         ) -> Result<Response<Empty>, Status> {
-            METRICS.increment_request_counter(OP_NEW_KMS_CONTEXT);
+            METRICS.increment_request_counter(OP_NEW_MPC_CONTEXT);
             self.context_manager.new_mpc_context(request).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
                 let _ = METRICS
-                    .increment_error_counter(OP_NEW_KMS_CONTEXT, tag);
+                    .increment_error_counter(OP_NEW_MPC_CONTEXT, tag);
             })
 
         }
 
         #[tracing::instrument(skip(self, request))]
-        async fn destroy_kms_context(
+        async fn destroy_mpc_context(
             &self,
-            request: Request<DestroyKmsContextRequest>,
+            request: Request<DestroyMpcContextRequest>,
         ) -> Result<Response<Empty>, Status> {
-            METRICS.increment_request_counter(OP_DESTROY_KMS_CONTEXT);
+            METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
             self.context_manager.destroy_mpc_context(request).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
                 let _ = METRICS
-                    .increment_error_counter(OP_DESTROY_KMS_CONTEXT, tag);
+                    .increment_error_counter(OP_DESTROY_MPC_CONTEXT, tag);
             })
 
         }

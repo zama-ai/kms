@@ -51,10 +51,10 @@ where
 {
     async fn verify_and_extract_new_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
+        request: tonic::Request<kms_grpc::kms::v1::NewMpcContextRequest>,
     ) -> Result<(Role, ContextInfo), tonic::Status> {
         // first verify that the context is valid
-        let kms_grpc::kms::v1::NewKmsContextRequest { new_context } = request.into_inner();
+        let kms_grpc::kms::v1::NewMpcContextRequest { new_context } = request.into_inner();
 
         let new_context =
             new_context.ok_or_else(|| Status::invalid_argument("new_context is required"))?;
@@ -92,7 +92,7 @@ where
 
     async fn parse_mpc_context_for_destruction(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
     ) -> Result<ContextId, tonic::Status> {
         let proto_context_id = request
             .into_inner()
@@ -288,7 +288,7 @@ where
 {
     async fn new_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
+        request: tonic::Request<kms_grpc::kms::v1::NewMpcContextRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
         let (_my_role, new_context) = self
             .inner
@@ -320,7 +320,7 @@ where
 
     async fn destroy_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
         let context_id = self
             .inner
@@ -465,7 +465,7 @@ where
 {
     async fn new_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
+        request: tonic::Request<kms_grpc::kms::v1::NewMpcContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
         let (my_role, new_context) = self
             .inner
@@ -492,7 +492,7 @@ where
 
     async fn destroy_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
         let context_id = self
             .inner
@@ -635,7 +635,7 @@ mod tests {
     };
     use kms_grpc::{
         identifiers::ContextId,
-        kms::v1::{DestroyKmsContextRequest, NewKmsContextRequest},
+        kms::v1::{DestroyMpcContextRequest, NewMpcContextRequest},
         rpc_types::{KMSType, PrivDataType},
         RequestId,
     };
@@ -684,7 +684,7 @@ mod tests {
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
         let context_id = ContextId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
-            kms_nodes: vec![NodeInfo {
+            mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
                 verification_key: Some(verification_key.clone()),
@@ -704,7 +704,7 @@ mod tests {
             pcr_values: vec![],
         };
 
-        let request = Request::new(NewKmsContextRequest {
+        let request = Request::new(NewMpcContextRequest {
             new_context: Some(new_context.try_into().unwrap()),
         });
         let session_maker =
@@ -729,16 +729,16 @@ mod tests {
                 .unwrap();
 
             assert_eq!(*stored_context.context_id(), context_id);
-            assert_eq!(stored_context.kms_nodes.len(), 1);
-            assert_eq!(stored_context.kms_nodes[0].party_id, 1);
+            assert_eq!(stored_context.mpc_nodes.len(), 1);
+            assert_eq!(stored_context.mpc_nodes[0].party_id, 1);
             assert_eq!(
-                stored_context.kms_nodes[0].verification_key,
+                stored_context.mpc_nodes[0].verification_key,
                 Some(verification_key)
             );
         }
 
         // now that it is stored, we try to delete it
-        let request = Request::new(DestroyKmsContextRequest {
+        let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
         });
 
@@ -760,7 +760,7 @@ mod tests {
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
         let context_id = ContextId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
-            kms_nodes: vec![NodeInfo {
+            mpc_nodes: vec![NodeInfo {
                 mpc_identity: "Node1".to_string(),
                 party_id: 1,
                 verification_key: Some(verification_key.clone()),
@@ -780,7 +780,7 @@ mod tests {
             pcr_values: vec![],
         };
 
-        let request = Request::new(NewKmsContextRequest {
+        let request = Request::new(NewMpcContextRequest {
             new_context: Some(new_context.try_into().unwrap()),
         });
 
@@ -811,10 +811,10 @@ mod tests {
                 .unwrap();
 
             assert_eq!(*stored_context.context_id(), context_id);
-            assert_eq!(stored_context.kms_nodes.len(), 1);
-            assert_eq!(stored_context.kms_nodes[0].party_id, 1);
+            assert_eq!(stored_context.mpc_nodes.len(), 1);
+            assert_eq!(stored_context.mpc_nodes[0].party_id, 1);
             assert_eq!(
-                stored_context.kms_nodes[0].verification_key,
+                stored_context.mpc_nodes[0].verification_key,
                 Some(verification_key)
             );
         }

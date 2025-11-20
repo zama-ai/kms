@@ -2,11 +2,11 @@ use kms_grpc::kms::v1::CiphertextFormat;
 use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
 use kms_grpc::kms::v1::CustodianRecoveryRequest;
 use kms_grpc::kms::v1::DestroyCustodianContextRequest;
-use kms_grpc::kms::v1::DestroyKmsContextRequest;
+use kms_grpc::kms::v1::DestroyMpcContextRequest;
 use kms_grpc::kms::v1::Empty;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::kms::v1::NewCustodianContextRequest;
-use kms_grpc::kms::v1::NewKmsContextRequest;
+use kms_grpc::kms::v1::NewMpcContextRequest;
 use kms_grpc::kms::v1::OperatorPublicKey;
 use kms_grpc::kms::v1::RecoveryRequest;
 use kms_grpc::kms::v1::TypedPlaintext;
@@ -62,12 +62,12 @@ pub trait Kms: BaseKms {
 pub trait ContextManager {
     async fn new_mpc_context(
         &self,
-        request: Request<NewKmsContextRequest>,
+        request: Request<NewMpcContextRequest>,
     ) -> Result<Response<Empty>, Status>;
 
     async fn destroy_mpc_context(
         &self,
-        request: Request<DestroyKmsContextRequest>,
+        request: Request<DestroyMpcContextRequest>,
     ) -> Result<Response<Empty>, Status>;
 
     async fn new_custodian_context(

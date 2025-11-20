@@ -231,7 +231,7 @@ impl SessionMaker {
         let mut role_assignment_map = HashMap::new();
         let mut ca_certs_map = HashMap::new();
 
-        for node in &info.kms_nodes {
+        for node in &info.mpc_nodes {
             let mpc_url = url::Url::parse(&node.external_url)
                 .map_err(|e| anyhow::anyhow!("url parsing error for party: {}", e))?;
             let hostname = mpc_url
