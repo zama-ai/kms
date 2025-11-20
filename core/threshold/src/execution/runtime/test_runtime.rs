@@ -3,7 +3,7 @@ use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Ring},
     execution::{
         runtime::{
-            party::{RoleKind, RoleTrait},
+            party::{DualRole, RoleKind, RoleTrait, TwoSetsRole},
             sessions::{
                 base_session::{BaseSession, GenericBaseSession},
                 large_session::LargeSession,
@@ -52,6 +52,50 @@ pub struct DistributedTestRuntime<Z: Ring, R: RoleTrait, const EXTENSION_DEGREE:
 /// Generates a list of parties
 pub fn generate_fixed_roles(parties: usize) -> HashSet<Role> {
     (1..=parties).map(Role::indexed_from_one).collect()
+}
+
+pub fn generate_fixed_roles_two_sets_with_intersection(
+    parties_set_1: usize,
+    parties_set_2: usize,
+    intersection_size: usize,
+) -> HashSet<TwoSetsRole> {
+    assert!(
+        intersection_size <= std::cmp::min(parties_set_1, parties_set_2),
+        "Intersection size cannot be larger than the smallest set size"
+    );
+
+    let mut roles = (1..=parties_set_1)
+        .map(Role::indexed_from_one)
+        .map(TwoSetsRole::Set1)
+        .chain(
+            (1..=parties_set_2)
+                .map(Role::indexed_from_one)
+                .map(TwoSetsRole::Set2),
+        )
+        .collect::<HashSet<_>>();
+
+    // For each intersection party, remove the P_i from Set1 and P_{i+1} from Set2 roles
+    // and add the corresponding dual role
+    for i in 0..intersection_size {
+        // index_role_2 is i+1 with wrap around back to 1
+        let role_set1 = TwoSetsRole::Set1(Role::indexed_from_zero(i));
+        let role_set2 = TwoSetsRole::Set2(Role::indexed_from_zero((i + 1) % parties_set_2));
+        assert!(
+            roles.remove(&role_set1),
+            "role {role_set1:?} not found in roles set"
+        );
+        assert!(
+            roles.remove(&role_set2),
+            "role {role_set2:?} not found in roles set"
+        );
+        let role_both = TwoSetsRole::Both(DualRole {
+            role_set_1: Role::indexed_from_zero(i),
+            role_set_2: Role::indexed_from_zero((i + 1) % parties_set_2),
+        });
+        roles.insert(role_both);
+    }
+
+    roles
 }
 
 impl<Z: Ring, R: RoleTrait, const EXTENSION_DEGREE: usize>
