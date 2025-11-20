@@ -287,6 +287,7 @@ async fn test_largecipher_isolated() -> Result<()> {
             typed_ciphertexts,
             &request_id,
             &DEFAULT_CENTRAL_KEY_ID,
+            None, // context_id
             PkeSchemeType::MlKem512,
         )
         .unwrap();

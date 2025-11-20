@@ -28,6 +28,9 @@ use crate::mpc_context::do_new_mpc_context;
 use crate::prss_init::do_prss_init;
 use crate::reshare::do_reshare;
 use aes_prng::AesRng;
+use alloy_sol_types::Eip712Domain;
+use anyhow::anyhow;
+use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
 use kms_grpc::identifiers::EpochId;
@@ -951,25 +954,6 @@ pub async fn fetch_element(
         tracing::info!("Successfully read {} bytes for element {element_id} from local path {endpoint_path}/{folder}", res.len());
         Ok(res)
     }
-}
-
-async fn write_bytes_to_file(
-    folder_path: &Path,
-    filename: &str,
-    data: &[u8],
-) -> anyhow::Result<()> {
-    let path = folder_path.join(filename);
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = path.parent() {
-        tokio::fs::create_dir_all(p).await?;
-    }
-    tokio::fs::write(&path, data).await.map_err(|e| {
-        anyhow!(
-            "Failed to write bytes to file at {:?} with error: {e}",
-            &path
-        )
-    })?;
-    Ok(())
 }
 
 static INIT_LOG: Once = Once::new();

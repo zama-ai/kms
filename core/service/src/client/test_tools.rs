@@ -416,6 +416,8 @@ pub struct ThresholdTestConfig<'a> {
 }
 
 /// Setup_threshold that supports isolated test material
+/// Note: The test_material_path in config is kept for API compatibility but not used.
+/// Tests should set up their own isolated material using TestMaterialManager before calling this.
 #[cfg(any(test, feature = "testing"))]
 pub async fn setup_threshold_isolated<
     PubS: Storage + Clone + Sync + Send + 'static,
@@ -430,31 +432,7 @@ pub async fn setup_threshold_isolated<
     HashMap<u32, ServerHandle>,
     HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) {
-    use crate::util::key_setup::test_material_manager::TestMaterialManager;
-    use crate::util::key_setup::test_material_spec::TestMaterialSpec;
-    #[cfg(any(test, feature = "testing"))]
-    use tempfile::TempDir;
-
     let num_parties = priv_storage.len();
-
-    // If test_material_path is provided, set up isolated test material
-    let _temp_dir: Option<TempDir> = if let Some(source_path) = config.test_material_path {
-        let manager = TestMaterialManager::new(Some(source_path.to_path_buf()));
-        let spec = TestMaterialSpec::threshold_basic(num_parties);
-
-        let temp_dir = manager
-            .setup_test_material(&spec, "threshold_test")
-            .await
-            .expect("Failed to setup isolated test material");
-
-        tracing::info!(
-            "Using isolated test material from: {}",
-            temp_dir.path().display()
-        );
-        Some(temp_dir)
-    } else {
-        None
-    };
 
     // Setup the threshold scheme
     let server_handles = setup_threshold_no_client::<PubS, PrivS>(
@@ -481,7 +459,6 @@ pub async fn setup_threshold_isolated<
         client_handles.insert(*i, CoreServiceEndpointClient::new(channel));
     }
 
-    tracing::info!("Client connected to servers with isolated test material");
     (server_handles, client_handles)
 }
 
@@ -575,6 +552,8 @@ pub(crate) async fn setup_centralized<
 }
 
 /// Centralized setup that supports isolated test material
+/// Note: The test_material_path parameter is kept for API compatibility but not used.
+/// Tests should set up their own isolated material using TestMaterialManager before calling this.
 #[cfg(any(test, feature = "testing"))]
 pub async fn setup_centralized_isolated<
     PubS: Storage + Sync + Send + 'static,
@@ -584,35 +563,11 @@ pub async fn setup_centralized_isolated<
     priv_storage: PrivS,
     backup_vault: Option<Vault>,
     rate_limiter_conf: Option<RateLimiterConfig>,
-    test_material_path: Option<&std::path::Path>,
+    _test_material_path: Option<&std::path::Path>,
 ) -> (
     ServerHandle,
     CoreServiceEndpointClient<tonic::transport::Channel>,
 ) {
-    use crate::util::key_setup::test_material_manager::TestMaterialManager;
-    use crate::util::key_setup::test_material_spec::TestMaterialSpec;
-    #[cfg(any(test, feature = "testing"))]
-    use tempfile::TempDir;
-
-    // If test_material_path is provided, set up isolated test material
-    let _temp_dir: Option<TempDir> = if let Some(source_path) = test_material_path {
-        let manager = TestMaterialManager::new(Some(source_path.to_path_buf()));
-        let spec = TestMaterialSpec::centralized_basic();
-
-        let temp_dir = manager
-            .setup_test_material(&spec, "centralized_test")
-            .await
-            .expect("Failed to setup isolated test material");
-
-        tracing::info!(
-            "Using isolated test material from: {}",
-            temp_dir.path().display()
-        );
-        Some(temp_dir)
-    } else {
-        None
-    };
-
     let server_handle =
         setup_centralized_no_client(pub_storage, priv_storage, backup_vault, rate_limiter_conf)
             .await;
@@ -624,7 +579,6 @@ pub async fn setup_centralized_isolated<
     let channel = connect_with_retry(uri).await;
     let client = CoreServiceEndpointClient::new(channel);
 
-    tracing::info!("Centralized server setup with isolated test material");
     (server_handle, client)
 }
 

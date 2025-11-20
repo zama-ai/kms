@@ -26,10 +26,12 @@ use kms_lib::client::test_tools::{
     setup_centralized_isolated, setup_threshold_isolated, ServerHandle, ThresholdTestConfig,
 };
 use kms_lib::consts::{ID_LENGTH, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM};
-use kms_lib::util::key_setup::ensure_central_keys_exist;
 use kms_lib::util::key_setup::test_material_manager::TestMaterialManager;
-use kms_lib::util::key_setup::test_material_spec::TestMaterialSpec;
-use kms_lib::vault::storage::{file::FileStorage, Storage, StorageType};
+use kms_lib::util::key_setup::test_material_spec::{MaterialType, TestMaterialSpec};
+use kms_lib::util::key_setup::{
+    ensure_central_keys_exist, ensure_central_server_signing_keys_exist,
+};
+use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use serial_test::serial;
 use std::collections::HashMap;
 use std::fs::write;
@@ -43,7 +45,6 @@ use kms_grpc::RequestId;
 use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::conf::{Keychain, SecretSharingKeychain};
 use kms_lib::consts::SIGNING_KEY_ID;
-use kms_lib::util::key_setup::test_material_spec::KeyType;
 use kms_lib::vault::keychain::make_keychain_proxy;
 use kms_lib::vault::storage::make_storage;
 use kms_lib::vault::Vault;
@@ -109,20 +110,20 @@ async fn setup_isolated_centralized_cli_test_impl(
     with_custodian_keychain: bool,
 ) -> Result<(TempDir, ServerHandle, PathBuf)> {
     let manager = create_test_material_manager();
-    let mut spec = TestMaterialSpec::centralized_basic();
-    spec.required_keys.insert(KeyType::ServerSigningKeys);
+    // Create minimal test material - just directory structure
+    // All keys will be generated fresh with test-specific RequestIds
+    let spec = TestMaterialSpec {
+        material_type: MaterialType::Testing,
+        required_keys: std::collections::HashSet::new(),
+        party_count: None,
+        include_slow_material: false,
+    };
     let material_dir = manager.setup_test_material(&spec, test_name).await?;
 
     let mut pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
 
-    // Regenerate central keys with correct RequestIds
-    let _ = pub_storage
-        .delete_data(&TEST_CENTRAL_KEY_ID, &PubDataType::PublicKey.to_string())
-        .await;
-    let _ = pub_storage
-        .delete_data(&OTHER_CENTRAL_TEST_ID, &PubDataType::PublicKey.to_string())
-        .await;
+    // Generate all keys fresh with test-specific RequestIds
     ensure_central_keys_exist(
         &mut pub_storage,
         &mut priv_storage,
@@ -134,7 +135,19 @@ async fn setup_isolated_centralized_cli_test_impl(
     )
     .await;
 
+    ensure_central_server_signing_keys_exist(
+        &mut pub_storage,
+        &mut priv_storage,
+        &SIGNING_KEY_ID,
+        true,
+    )
+    .await;
+
     let backup_vault = if with_backup_vault {
+        // Create BACKUP directory if needed
+        let backup_dir = material_dir.path().join("BACKUP");
+        std::fs::create_dir_all(&backup_dir)?;
+
         let backup_proxy = create_file_storage(material_dir.path(), StorageType::BACKUP, None)?;
         let keychain = if with_custodian_keychain {
             let pub_proxy = create_file_storage(material_dir.path(), StorageType::PUB, None)?;
@@ -239,8 +252,22 @@ async fn setup_isolated_threshold_cli_test_impl(
     with_custodian_keychain: bool,
 ) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
     let manager = create_test_material_manager();
-    let mut spec = TestMaterialSpec::threshold_basic(party_count);
-    spec.required_keys.insert(KeyType::ServerSigningKeys);
+    // Create minimal test material - threshold tests generate their own FHE keys
+    // via insecure_key_gen or real_preproc_and_keygen, and PRSS is initialized dynamically
+    let spec = TestMaterialSpec {
+        material_type: MaterialType::Testing,
+        required_keys: {
+            let mut keys = std::collections::HashSet::new();
+            keys.insert(kms_lib::util::key_setup::test_material_spec::KeyType::ClientKeys);
+            keys.insert(kms_lib::util::key_setup::test_material_spec::KeyType::SigningKeys);
+            keys.insert(kms_lib::util::key_setup::test_material_spec::KeyType::ServerSigningKeys);
+            // Don't copy FheKeys - tests generate them via CLI
+            // Don't copy PrssSetup - initialized dynamically when run_prss=true
+            keys
+        },
+        party_count: Some(party_count),
+        include_slow_material: false,
+    };
     let material_dir = manager.setup_test_material(&spec, test_name).await?;
 
     let mut pub_storages = Vec::new();
@@ -263,6 +290,10 @@ async fn setup_isolated_threshold_cli_test_impl(
     for i in 1..=party_count {
         if with_backup_vault {
             let role = Role::indexed_from_one(i);
+            // Create BACKUP directory for this party
+            let backup_dir = material_dir.path().join(format!("BACKUP-p{}", i));
+            std::fs::create_dir_all(&backup_dir)?;
+            
             let backup_proxy =
                 create_file_storage(material_dir.path(), StorageType::BACKUP, Some(role))?;
             let keychain = if with_custodian_keychain {
@@ -445,6 +476,7 @@ async fn integration_test_commands_isolated(
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -455,6 +487,7 @@ async fn integration_test_commands_isolated(
             no_compression: false,
             no_precompute_sns: true,
             key_id,
+            context_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -1191,12 +1224,11 @@ async fn full_gen_tests_default_threshold_sequential_crs() -> Result<()> {
     init_testing();
 
     // Setup isolated threshold KMS servers (3 parties for default context)
-    let (_material_dir, _servers, config_path) =
+    let (material_dir, _servers, config_path) =
         setup_isolated_threshold_cli_test("full_gen_crs", 3).await?;
 
-    // Run sequential CRS generation operations
-    let temp_dir = tempfile::tempdir()?;
-    let keys_folder = temp_dir.path();
+    // Run sequential CRS generation operations (reuse material_dir)
+    let keys_folder = material_dir.path();
     let crs_id_1 = crs_gen_isolated(&config_path, keys_folder, false).await?;
     let crs_id_2 = crs_gen_isolated(&config_path, keys_folder, false).await?;
 

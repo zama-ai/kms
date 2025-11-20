@@ -20,6 +20,7 @@ path = "src/bin.rs"
 # Enable PRSS-dependent tests that require sequential execution and stable networking
 # These tests are designed for K8s CI environments
 k8s_tests = []
+testing = []
 
 [dependencies]
 # ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
@@ -71,6 +72,3 @@ tonic-build.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["kms", "strum"]
-
-[features]
-testing = []

@@ -170,7 +170,7 @@ where
     PubS: Storage,
     PrivS: Storage,
 {
-    // Check if keys already exist with error handling
+    // Check if the specific signing key already exists
     let temp: HashMap<RequestId, PrivateSigKey> =
         match read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string()).await {
             Ok(keys) => keys,
@@ -180,13 +180,13 @@ where
             }
         };
 
-    if !temp.is_empty() {
-        // If signing keys already exist, then do nothing
+    if temp.contains_key(req_id) {
+        // If this specific signing key already exists, then do nothing
         log_data_exists(
             priv_storage.info(),
-            None::<String>,
+            Some(req_id.to_string()),
             "",
-            "Server signing keys",
+            "Server signing key",
         );
         return false;
     }
