@@ -1,6 +1,5 @@
-use dashmap::DashMap;
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     net::IpAddr,
     str::FromStr,
     sync::{Arc, OnceLock},
@@ -76,6 +75,9 @@ pub trait SendingService: Send + Sync {
     ) -> anyhow::Result<HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>>;
 }
 
+type ChannelMap =
+    HashMap<Identity, GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>;
+
 #[derive(Debug, Clone)]
 pub struct GrpcSendingService {
     /// Contains all the information needed by the sync network
@@ -85,8 +87,7 @@ pub struct GrpcSendingService {
     /// Whether to use TCP proxies on localhost to access peers
     peer_tcp_proxy: bool,
     /// Keep in memory channels we already have available
-    channel_map:
-        DashMap<Identity, GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>,
+    channel_map: Arc<RwLock<ChannelMap>>,
     /// Network task threads
     thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
@@ -98,9 +99,22 @@ impl GrpcSendingService {
         &self,
         receiver: Identity,
     ) -> anyhow::Result<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>> {
-        if let Some(channel) = self.channel_map.get(&receiver) {
+        if let Some(channel) = self.channel_map.read().await.get(&receiver) {
             tracing::debug!("Channel to {:?} already existed, retrieving it.", receiver);
             return Ok(channel.clone());
+        }
+
+        // Hold a write lock on the entry to avoid duplicate connections
+        let mut channel_map_write_lock = self.channel_map.write().await;
+        let entry = channel_map_write_lock.entry(receiver.clone());
+
+        // First thing we do is re-check whether connection has been established while waiting for the lock
+        if let Entry::Occupied(channel) = entry {
+            tracing::debug!(
+                "Channel to {:?} was created while waiting for the lock, retrieving it.",
+                receiver
+            );
+            return Ok(channel.get().clone());
         }
 
         let proto = match self.tls_config {
@@ -188,7 +202,7 @@ impl GrpcSendingService {
         let client = GnetworkingClient::with_interceptor(channel, ContextPropagator)
             .max_decoding_message_size(self.config.get_max_en_decode_message_size())
             .max_encoding_message_size(self.config.get_max_en_decode_message_size());
-        self.channel_map.insert(receiver, client.clone());
+        entry.insert_entry(client.clone());
         Ok(client)
     }
 
@@ -287,7 +301,7 @@ impl SendingService for GrpcSendingService {
             tls_config,
             peer_tcp_proxy,
             thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
-            channel_map: DashMap::new(),
+            channel_map: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
