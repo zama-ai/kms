@@ -322,8 +322,8 @@ pub async fn reshare_two_sets<
     const EXTENSION_DEGREE: usize,
 >(
     two_sets_session: &mut TwoSetsSession,
-    my_set_session: &mut Option<OneSetSession>,
-    preproc: Option<&mut P>,
+    set_2_session: &mut Option<OneSetSession>,
+    preproc: &mut Option<P>,
     input_shares: &mut Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
     expected_input_len: usize,
 ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
@@ -402,9 +402,10 @@ where
             }
 
             // Send the masked shares to parties in set 2
+            // except myself if I am in both sets
             let values_to_send = Arc::new(NetworkValue::VecRingValue(vj.clone()).to_network());
             for party in two_sets_session.get_all_sorted_roles() {
-                if party.is_set2() {
+                if party.is_set2() && party != &two_sets_session.my_role() {
                     two_sets_session
                         .network()
                         .send(Arc::clone(&values_to_send), party)
@@ -424,7 +425,7 @@ where
     // Parties in set 2 receive the masked shares from parties in set 1
     // and finish the resharing
     if two_sets_session.my_role().is_set2() {
-        let my_set_session = if let Some(s) = my_set_session {
+        let my_set_session = if let Some(s) = set_2_session {
             s
         } else {
             return Err(anyhow_error_and_log(
@@ -939,14 +940,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::RandomPreprocessing;
+    use crate::execution::online::triple::open_list;
+    use crate::execution::runtime::party::TwoSetsThreshold;
+    use crate::execution::runtime::sessions::base_session::{BaseSession, TwoSetsBaseSession};
+    use crate::execution::sharing::open::test::deterministically_compute_my_shares;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS};
     use crate::execution::tfhe_internals::test_feature::{
         keygen_all_party_shares_from_keyset, KeySet,
     };
     use crate::networking::NetworkMode;
+    use crate::tests::helper::tests_and_benches::execute_protocol_two_sets;
     use crate::{
         algebra::structure_traits::Sample,
         error::error_handler::anyhow_error_and_log,
@@ -1545,5 +1552,93 @@ mod tests {
             sns_params: new_sns_params,
             sns_compression_params: None,
         })
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_reshare_two_sets() {
+        let num_parties_s1 = 4;
+        let num_parties_s2 = 7;
+        let intersection_size = 3;
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: 1,
+            threshold_set_2: 2,
+        };
+
+        let num_secrets = 10;
+
+        let mut task = |mut two_sets_session: TwoSetsBaseSession,
+                        set_1_session: Option<BaseSession>,
+                        mut set_2_session: Option<BaseSession>| async move {
+            let (mut my_shares, inner_secrets) = if let Some(set_1_session) = set_1_session {
+                let (inner_secrets, shares) =
+                    deterministically_compute_my_shares::<ResiduePolyF4Z128>(
+                        num_secrets,
+                        set_1_session.my_role(),
+                        set_1_session.num_parties(),
+                        set_1_session.threshold() as usize,
+                        42,
+                    );
+                let my_shares = shares
+                    .into_iter()
+                    .map(|v| Share::new(set_1_session.my_role(), v))
+                    .collect_vec();
+                (Some(my_shares), Some(inner_secrets))
+            } else {
+                (None, None)
+            };
+
+            let mut preproc = if let Some(set_2_session) = set_2_session.as_ref() {
+                let preproc = DummyPreprocessing::<ResiduePolyF4Z128>::new(42, set_2_session);
+                Some(preproc)
+            } else {
+                None
+            };
+
+            let reshare_result = reshare_two_sets(
+                &mut two_sets_session,
+                &mut set_2_session,
+                &mut preproc,
+                &mut my_shares,
+                num_secrets,
+            )
+            .await;
+
+            if let Some(set_2_session) = set_2_session {
+                let reshare_result = reshare_result.unwrap().unwrap();
+                let opened_reshared = open_list(&reshare_result, &set_2_session).await.unwrap();
+                (two_sets_session.my_role(), opened_reshared)
+            } else {
+                assert!(reshare_result.unwrap().is_none());
+                (two_sets_session.my_role(), inner_secrets.unwrap())
+            }
+        };
+
+        let mut results = execute_protocol_two_sets::<
+            _,
+            _,
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+        >(
+            num_parties_s1,
+            num_parties_s2,
+            intersection_size,
+            threshold,
+            NetworkMode::Sync,
+            &mut task,
+        )
+        .await;
+
+        assert_eq!(
+            results.len(),
+            num_parties_s2 + num_parties_s1 - intersection_size
+        );
+        let pivot = results.pop().unwrap();
+        for (role, inner_secrets) in results {
+            assert_eq!(
+                inner_secrets, pivot.1,
+                "mismatch between pivot role {} and role {}",
+                pivot.0, role
+            );
+        }
     }
 }
