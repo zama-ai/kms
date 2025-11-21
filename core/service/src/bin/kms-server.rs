@@ -149,12 +149,12 @@ async fn build_tls_config(
         .collect::<anyhow::Result<Vec<_>>>()?;
     let ca_certs = build_ca_certs_map(ca_certs_list.into_iter())?;
 
-    let (cert, key, trusted_releases, pcr8_expected) = match tls_config {
+    let (cert, key, trusted_releases, pcr8_expected, ignore_aws_ca_chain) = match tls_config {
         TlsConf::Manual { ref cert, ref key } => {
             tracing::info!("Using third-party TLS certificate without Nitro remote attestation");
             let cert = cert.into_pem(my_id, peers)?;
             let key = key.into_pem()?;
-            (cert, key, None, false)
+            (cert, key, None, false, false)
         }
         // When remote attestation is used, the enclave generates a
         // self-signed TLS certificate for a private key that never
@@ -166,6 +166,7 @@ async fn build_tls_config(
         TlsConf::SemiAuto {
             ref cert,
             ref trusted_releases,
+            ref ignore_aws_ca_chain,
         } => {
             let security_module = security_module.as_ref().unwrap_or_else(|| {
                             panic!("EIF signing certificate present but not security module, unable to construct TLS identity")
@@ -175,10 +176,17 @@ async fn build_tls_config(
             let (cert, key) = security_module
                 .wrap_x509_cert(context_id, eif_signing_cert_pem, true)
                 .await?;
-            (cert, key, Some(Arc::new(trusted_releases.clone())), true)
+            (
+                cert,
+                key,
+                Some(Arc::new(trusted_releases.clone())),
+                true,
+                ignore_aws_ca_chain.is_some_and(|m| m),
+            )
         }
         TlsConf::FullAuto {
             ref trusted_releases,
+            ref ignore_aws_ca_chain,
         } => {
             let security_module = security_module
                 .as_ref()
@@ -232,7 +240,13 @@ async fn build_tls_config(
                     panic!("TLS certificate signed by enclave CA is invalid, cannot proceed: {e}")
                 });
 
-            (cert, key, Some(Arc::new(trusted_releases.clone())), false)
+            (
+                cert,
+                key,
+                Some(Arc::new(trusted_releases.clone())),
+                false,
+                ignore_aws_ca_chain.is_some_and(|m| m),
+            )
         }
     };
 
@@ -244,6 +258,7 @@ async fn build_tls_config(
         pcr8_expected,
         #[cfg(feature = "insecure")]
         mock_enclave,
+        ignore_aws_ca_chain,
     )?);
     // Adding a context to the verifier is optional at this point and
     // can be done at any point of the application lifecycle, for
