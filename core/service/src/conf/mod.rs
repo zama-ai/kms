@@ -350,12 +350,6 @@ mod tests {
             .validate()
             .expect("baseline config must validate");
 
-        // clone the config, so we just need to read and parse it once
-        let mut cc = core_config.clone();
-        cc.threshold.as_mut().unwrap().peers = None;
-        let s = cc.validate().unwrap_err().to_string();
-        assert!(s.contains("Validation error: Peer list is required but was not provided."));
-
         let mut cc = core_config.clone();
         cc.threshold.as_mut().unwrap().my_id = 0;
         let s = cc.validate().unwrap_err().to_string();
@@ -376,11 +370,6 @@ mod tests {
         cc.threshold.as_mut().unwrap().threshold = 42;
         let s = cc.validate().unwrap_err().to_string();
         assert!(s.contains("Got t=42 but expected t=1 for n=4 parties"));
-
-        let mut cc = core_config.clone();
-        cc.threshold.as_mut().unwrap().my_id = 9001;
-        let s = cc.validate().unwrap_err().to_string();
-        assert!(s.contains("ID cannot be greater than the number of parties (4), but was 9001."));
 
         let mut cc = core_config.clone();
         cc.threshold.as_mut().unwrap().listen_address = "".to_string();

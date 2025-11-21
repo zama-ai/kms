@@ -1,0 +1,63 @@
+# Config for a threshold deployment of n=4 cores with threshold t=1
+
+# The type of the KMS ("centralized" or "threshold")
+kms_type = "threshold"
+
+# The minimum number of matching responses required to have an honest majority
+num_majority = 2
+
+# The minimum number of responses required to reconstruct a value (e.g. in user decryption)
+num_reconstruct = 3
+
+# Decryption mode used in user decryption reconstruction.
+# Options are NoiseFloodSmall and BitDecSmall.
+# Must match the deployed core/service setting!
+# Only relevant for threshold.
+decryption_mode = "NoiseFloodSmall"
+
+# fhe_params = "Test" # Small, insecure parameters for testing
+fhe_params = "Default" # Large, secure parameters
+
+# List of connection info to each of the cores
+[[cores]]
+# The ID of the given KMS server (monotonically increasing positive integer starting at 1)
+party_id = 1
+# The address of the given KMS server, including the port
+address = "localhost:50500"
+# The S3 endpoint where the public material of the given server can be reached
+s3_endpoint = "http://localhost:9000/kms"
+# The public folder at the S3 endpoint where the data is stored
+object_folder = "PUB-p5"
+# The folder at the S3 endpoint where the private data is stored.
+# This is only used for testing context switching.
+# Only available when core-client is built with the "testing" feature.
+private_object_folder = "PRIV-p5"
+# The KMS core configuration path.
+# This is another optional parameter and is only used for certain operations
+# that require full knowledge of the KMS core configuration, e.g., context switch.
+# Only available when core-client is built with the "testing" feature.
+config_path = "../core/service/config/compose_5.toml"
+
+[[cores]]
+party_id = 2
+address = "localhost:50600"
+s3_endpoint = "http://localhost:9000/kms"
+object_folder = "PUB-p6"
+private_object_folder = "PRIV-p6"
+config_path = "../core/service/config/compose_6.toml"
+
+[[cores]]
+party_id = 3
+address = "localhost:50300"
+s3_endpoint = "http://localhost:9000/kms"
+object_folder = "PUB-p3"
+private_object_folder = "PRIV-p3"
+config_path = "../core/service/config/compose_3.toml"
+
+[[cores]]
+party_id = 4
+address = "localhost:50400"
+s3_endpoint = "http://localhost:9000/kms"
+object_folder = "PUB-p4"
+private_object_folder = "PRIV-p4"
+config_path = "../core/service/config/compose_4.toml"
