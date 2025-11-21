@@ -606,7 +606,7 @@ mod tests {
         MessageQueueStore, NetworkRoundValue, OptionConfigWrapper, TlsExtensionGetter,
     };
     use crate::networking::sending_service::NetworkSession;
-    use crate::thread_handles::OsThreadGroup;
+    use crate::networking::NetworkMode;
     use crate::{
         execution::runtime::party::{Identity, Role, RoleAssignment},
         networking::{grpc::GrpcNetworkingManager, Networking},
@@ -628,124 +628,169 @@ mod tests {
         role_assignment.insert(role_1, id_1.clone());
         role_assignment.insert(role_2, id_2.clone());
 
-        // Keep a Vec for collecting results
-        let mut handles = OsThreadGroup::new();
-        for (role, id) in role_assignment.iter() {
-            // Wait a little while to make sure retry works fine
-            std::thread::sleep(Duration::from_secs(5));
-            let role = *role;
-            let my_port = id.port();
-            let id = id.clone();
-
-            let networking_1 = GrpcNetworkingManager::new(None, None, false).unwrap();
-
-            let network_session_1 = networking_1
-                .make_network_session(
-                    sid,
-                    &role_assignment,
-                    role,
-                    crate::networking::NetworkMode::Sync,
-                )
-                .await
-                .unwrap();
-
-            handles.add(std::thread::spawn(move || {
-                let runtime = tokio::runtime::Runtime::new().unwrap();
-                let _guard = runtime.enter();
-
-                let (send, recv) = tokio::sync::oneshot::channel();
-                if role.one_based() == 1 {
-                    tokio::spawn(async move {
-                        let msg = Arc::new(vec![1u8; 10]);
-                        println!("Sending ONCE");
-                        network_session_1.send(msg.clone(), &role_2).await.unwrap();
-                        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-                        println!("Sending TWICE");
-                        network_session_1.send(msg.clone(), &role_2).await.unwrap();
-                        send.send(msg).unwrap();
-                    });
-                    //Keep this std thread alive for a while
-                    std::thread::sleep(Duration::from_secs(20));
-                } else {
-                    let networking_server_1 =
-                        networking_1.new_server(TlsExtensionGetter::default());
-                    let core_grpc_layer =
-                        tower::ServiceBuilder::new().timeout(Duration::from_secs(3));
-
-                    let core_router = tonic::transport::Server::builder()
-                        .timeout(Duration::from_secs(3))
-                        .layer(core_grpc_layer)
-                        .add_service(networking_server_1);
-
-                    let core_future =
-                        core_router.serve(format!("127.0.0.1:{my_port}").parse().unwrap());
-                    tokio::spawn(async move {
-                        println!("Spinning up server on {id:?}");
-                        let _res = futures::join!(core_future);
-                    });
-                    tokio::spawn(async move {
-                        println!("Trying to receive");
-                        let msg = Arc::new(network_session_1.receive(&role_1).await.unwrap());
-                        println!("Received ONCE {msg:?}");
-                        send.send(msg).unwrap();
-                    });
-                }
-                recv.blocking_recv().unwrap();
-                println!("Thread for {role} exiting");
-            }));
-        }
-
-        let networking_2 = GrpcNetworkingManager::new(None, None, false).unwrap();
-        let networking_server_2 = networking_2.new_server(TlsExtensionGetter::default());
-        let network_session_2 = networking_2
-            .make_network_session(
-                sid,
-                &role_assignment,
-                role_2,
-                crate::networking::NetworkMode::Sync,
-            )
-            .await
-            .unwrap();
-
-        let port_p2 = id_2.port();
-        handles.add(std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs(5));
-            let runtime = tokio::runtime::Runtime::new().unwrap();
-            let _guard = runtime.enter();
-
-            let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(3));
-
+        // Helper function to create and run a server
+        async fn create_server(
+            networking: &GrpcNetworkingManager,
+            port: u16,
+            role: Role,
+        ) -> (
+            tokio::sync::oneshot::Sender<()>,
+            tokio::task::JoinHandle<()>,
+        ) {
+            let (server_terminate_tx, server_terminate_rx) = tokio::sync::oneshot::channel::<()>();
+            let networking_server = networking.new_server(TlsExtensionGetter::default());
+            let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(300));
             let core_router = tonic::transport::Server::builder()
-                .timeout(Duration::from_secs(3))
+                .timeout(Duration::from_secs(300))
                 .layer(core_grpc_layer)
-                .add_service(networking_server_2);
+                .add_service(networking_server);
 
-            let core_future = core_router.serve(format!("127.0.0.1:{port_p2}").parse().unwrap());
+            let core_future = core_router.serve_with_shutdown(
+                format!("127.0.0.1:{port}").parse().unwrap(),
+                async move {
+                    let _ = server_terminate_rx.await;
+                },
+            );
 
-            tokio::spawn(async move {
-                println!("Spinning up second server");
-                let _res = futures::join!(core_future);
-            });
-
-            let (send, recv) = tokio::sync::oneshot::channel();
-            tokio::spawn(async move {
-                println!("Ready to receive");
-                let msg = network_session_2.receive(&role_1).await.unwrap();
-                println!("Received TWICE {msg:?}");
-                send.send(Arc::new(msg)).unwrap();
-            });
-            recv.blocking_recv().unwrap();
-            println!("Second thread exiting");
-        }));
-
-        // Join all threads and collect results
-        let results = handles.join_all_with_results().unwrap();
-
-        // Check results
-        let ref_res = results.first().unwrap();
-        for res in results.iter() {
-            assert_eq!(res, ref_res);
+            (
+                server_terminate_tx,
+                tokio::spawn(async move {
+                    tracing::info!("Starting server on {role:?}");
+                    core_future.await.unwrap();
+                    tracing::info!("Server on {role:?} shut down");
+                }),
+            )
         }
+
+        // Create channels for coordination
+        let (terminate_sender_1, mut terminate_receiver_1) = tokio::sync::mpsc::channel::<()>(100);
+
+        // Spawn sender (role_1)
+        let sender_handle = {
+            let role_assignment = role_assignment.clone();
+            tokio::spawn(async move {
+                let networking = GrpcNetworkingManager::new(None, None, false).unwrap();
+                let network_session = networking
+                    .make_network_session(sid, &role_assignment, role_1, NetworkMode::Sync)
+                    .await
+                    .unwrap();
+
+                let msg = vec![1u8; 10];
+                let arc_msg = Arc::new(msg.clone());
+
+                // First send
+                tracing::info!("Sending ONCE");
+                network_session
+                    .send(arc_msg.clone(), &role_2)
+                    .await
+                    .unwrap();
+
+                // Wait for signal to send second message
+                terminate_receiver_1.recv().await.unwrap();
+                network_session.increase_round_counter().await;
+
+                // Second send
+                tracing::info!("Sending TWICE");
+                network_session
+                    .send(arc_msg.clone(), &role_2)
+                    .await
+                    .unwrap();
+
+                // Wait for final termination signal
+                terminate_receiver_1.recv().await.unwrap();
+                (role_1, msg)
+            })
+        };
+
+        // First receiver (role_2) - starts after delay, receives first message, then shuts down
+        let first_receiver_handle = {
+            let networking = GrpcNetworkingManager::new(None, None, false).unwrap();
+            let role_assignment = role_assignment.clone();
+            let id_2 = id_2.clone();
+            tokio::spawn(async move {
+                // Wait before starting server to make sure sender retries
+                tokio::time::sleep(Duration::from_secs(3)).await;
+
+                let network_session = networking
+                    .make_network_session(sid, &role_assignment, role_2, NetworkMode::Sync)
+                    .await
+                    .unwrap();
+
+                let (server_terminate_tx, server_handle) =
+                    create_server(&networking, id_2.port(), role_2).await;
+
+                tracing::info!("Trying to receive");
+                let msg = network_session.receive(&role_1).await.unwrap();
+                tracing::info!("Received ONCE {msg:?}");
+
+                // Signal server to shutdown
+                server_terminate_tx.send(()).unwrap();
+                server_handle.await.unwrap();
+
+                (role_2, msg)
+            })
+        };
+
+        // Wait for first receiver to complete
+        let (role, msg) = tokio::time::timeout(Duration::from_secs(300), first_receiver_handle)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(role, role_2);
+        assert_eq!(msg, vec![1u8; 10]);
+
+        // Signal sender to send second message
+        terminate_sender_1.send(()).await.unwrap();
+
+        // Second receiver (role_2) - starts after longer delay, receives second message
+        let second_receiver_handle = {
+            let networking = GrpcNetworkingManager::new(None, None, false).unwrap();
+            let role_assignment = role_assignment.clone();
+            tokio::spawn(async move {
+                // Wait before starting server to make sure sender retries
+                tokio::time::sleep(Duration::from_secs(3)).await;
+
+                let network_session = networking
+                    .make_network_session(sid, &role_assignment, role_2, NetworkMode::Sync)
+                    .await
+                    .unwrap();
+
+                let (server_terminate_tx, server_handle) =
+                    create_server(&networking, id_2.port(), role_2).await;
+
+                // Increase round counter to receive second message
+                network_session.increase_round_counter().await;
+
+                tracing::info!("Trying to receive");
+                let msg = network_session.receive(&role_1).await.unwrap();
+                tracing::info!("Received TWICE {msg:?}");
+
+                // Signal server to shutdown
+                server_terminate_tx.send(()).unwrap();
+                server_handle.await.unwrap();
+
+                (role_2, msg)
+            })
+        };
+
+        // Wait for second receiver to complete
+        let (role, msg) = tokio::time::timeout(Duration::from_secs(300), second_receiver_handle)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(role, role_2);
+        assert_eq!(msg, vec![1u8; 10]);
+
+        // Signal sender to terminate
+        terminate_sender_1.send(()).await.unwrap();
+
+        // Wait for sender to complete
+        let (role, msg) = tokio::time::timeout(Duration::from_secs(300), sender_handle)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(role, role_1);
+        assert_eq!(msg, vec![1u8; 10]);
     }
 
     #[tokio::test()]
