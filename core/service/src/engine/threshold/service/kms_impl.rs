@@ -422,10 +422,12 @@ where
                 crate::conf::threshold::TlsConf::SemiAuto {
                     cert: _,
                     trusted_releases,
+                    ignore_aws_ca_chain: _,
                 } => Some(trusted_releases),
-                crate::conf::threshold::TlsConf::FullAuto { trusted_releases } => {
-                    Some(trusted_releases)
-                }
+                crate::conf::threshold::TlsConf::FullAuto {
+                    trusted_releases,
+                    ignore_aws_ca_chain: _,
+                } => Some(trusted_releases),
             });
             let context_info = ContextInfo {
                 mpc_nodes,

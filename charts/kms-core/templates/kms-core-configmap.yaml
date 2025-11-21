@@ -126,6 +126,10 @@ data:
 
       {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
         {{- if $.Values.kmsCore.nitroEnclave.enabled }}
+           {{- if .Values.kmsCore.thresholdMode.tls.ignoreAwsCaChain }}
+    [threshold.tls.full_auto]
+    ignore_aws_ca_chain = true
+           {{- end }}
            {{- if .Values.kmsCore.thresholdMode.tls.trustedReleases }}
              {{ range .Values.kmsCore.thresholdMode.tls.trustedReleases }}
     [[threshold.tls.full_auto.trusted_releases]]
