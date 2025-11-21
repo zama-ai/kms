@@ -239,11 +239,15 @@ impl<
         }
 
         // In case we want to re-init, we delete the existing session
-        // after waiting for 30 seconds (to be resonably sure others have finished sending).
+        // after waiting for 30 seconds (to be reasonably sure others have finished sending).
         // This is needed as the networking manager keeps track of sessions that have been initialized
         // and we're currently using a fixed session ID for PRSS init.
-        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-        session_preparer.delete_session(session_id).await?;
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+            if let Err(e) = session_preparer.delete_session(session_id).await {
+                tracing::warn!("Failed to delete session {}: {}", session_id, e);
+            }
+        });
 
         {
             // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
@@ -538,6 +542,9 @@ mod tests {
             }))
             .await
             .unwrap();
+
+        // we cleanup PRSS init sessions after 30 seconds, so we have to wait here before making the 2nd request
+        tokio::time::sleep(tokio::time::Duration::from_secs(31)).await;
 
         // try the same again and we should see no error
         initiator
