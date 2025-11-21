@@ -237,6 +237,14 @@ impl<
             )
             .await?;
         }
+
+        // In case we want to re-init, we delete the existing session
+        // This is needed as the networking manager keeps track of sessions that have been initialized
+        // and we're currently using a fixed session ID for PRSS init.
+        {
+            session_preparer.delete_session(session_id).await?;
+        }
+
         {
             // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
             self.health_reporter
