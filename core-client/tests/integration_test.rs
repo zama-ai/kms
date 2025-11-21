@@ -40,6 +40,12 @@ use tfhe::safe_serialization;
 trait DockerComposeManager {
     fn root_path(&self) -> PathBuf;
     fn config_path(&self) -> &str;
+
+    #[cfg(test)]
+    /// Defaults to the same as config_path, can be overridden if needed.
+    fn alternative_config_path(&self) -> &str {
+        self.config_path()
+    }
 }
 
 struct DockerComposeCentralized {
@@ -164,6 +170,37 @@ impl AsyncTestContext for DockerComposeThresholdTestNoInit {
     async fn setup() -> Self {
         Self {
             cmd: DockerCompose::new(KMSMode::ThresholdTestParameterNoInit),
+        }
+    }
+
+    async fn teardown(self) {
+        drop(self.cmd);
+    }
+}
+
+struct DockerComposeThresholdTestNoInitSixParty {
+    pub cmd: DockerCompose,
+}
+
+impl DockerComposeManager for DockerComposeThresholdTestNoInitSixParty {
+    fn root_path(&self) -> PathBuf {
+        self.cmd.cmd.root_path.clone()
+    }
+
+    fn config_path(&self) -> &str {
+        "core-client/config/client_local_threshold.toml"
+    }
+
+    #[cfg(test)]
+    fn alternative_config_path(&self) -> &str {
+        "core-client/config/client_local_threshold_alternative.toml"
+    }
+}
+
+impl AsyncTestContext for DockerComposeThresholdTestNoInitSixParty {
+    async fn setup() -> Self {
+        Self {
+            cmd: DockerCompose::new(KMSMode::ThresholdTestParameterNoInitSixParty),
         }
     }
 
@@ -473,16 +510,14 @@ async fn store_mpc_context_in_file(context_path: &Path, config_path: &Path, cont
 }
 
 // expect the context path to already hold some context
-async fn new_mpc_context<T: DockerComposeManager>(ctx: &T, context_path: &Path, test_path: &Path) {
-    let path_to_config = ctx.root_path().join(ctx.config_path());
-
+async fn new_mpc_context(context_path: &Path, config_path: &Path, test_path: &Path) {
     let command = CCCommand::NewMpcContext(NewMpcContextParameters::SerializedContextPath(
         ContextPath {
             input_path: context_path.to_path_buf(),
         },
     ));
     let init_config = CmdConfig {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        file_conf: Some(String::from(config_path.to_str().unwrap())),
         command,
         logs: true,
         max_iter: 200,
@@ -495,20 +530,13 @@ async fn new_mpc_context<T: DockerComposeManager>(ctx: &T, context_path: &Path, 
 }
 
 // expect the context to already exist in the KMS servers
-async fn new_prss<T: DockerComposeManager>(
-    ctx: &T,
-    context_id: ContextId,
-    epoch_id: EpochId,
-    test_path: &Path,
-) {
-    let path_to_config = ctx.root_path().join(ctx.config_path());
-
+async fn new_prss(context_id: ContextId, epoch_id: EpochId, config_path: &Path, test_path: &Path) {
     let command = CCCommand::PrssInit(PrssInitParameters {
         context_id,
         epoch_id,
     });
     let init_config = CmdConfig {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        file_conf: Some(String::from(config_path.to_str().unwrap())),
         command,
         logs: true,
         max_iter: 200,
@@ -1262,7 +1290,7 @@ async fn test_threshold_mpc_context_switch(ctx: &DockerComposeThresholdTest) {
     store_mpc_context_in_file(&context_path, &config_path, context_id).await;
 
     // do the context switch
-    new_mpc_context(ctx, &context_path, test_path).await;
+    new_mpc_context(&context_path, &config_path, test_path).await;
 
     // try to do ddec in the new context
     let ddec_command = CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
@@ -1297,13 +1325,13 @@ async fn test_threshold_mpc_context_init(ctx: &DockerComposeThresholdTestNoInit)
     store_mpc_context_in_file(&context_path, &config_path, context_id).await;
 
     // create the new context
-    new_mpc_context(ctx, &context_path, test_path).await;
+    new_mpc_context(&context_path, &config_path, test_path).await;
 
     // create PRSS
     let epoch_id =
         EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222224444")
             .unwrap();
-    new_prss(ctx, context_id, epoch_id, test_path).await;
+    new_prss(context_id, epoch_id, &config_path, test_path).await;
 
     // do preproc and keygen (which should use the prss)
     let _ = real_preproc_and_keygen(
@@ -1313,6 +1341,64 @@ async fn test_threshold_mpc_context_init(ctx: &DockerComposeThresholdTestNoInit)
         Some(epoch_id),
     )
     .await;
+}
+
+#[test_context(DockerComposeThresholdTestNoInitSixParty)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoInitSixParty) {
+    init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = temp_dir.path();
+    let context_path = temp_dir.path().join("mpc_context.bin");
+    let config_path = ctx.root_path().join(ctx.config_path());
+    let alternative_config_path = ctx.root_path().join(ctx.alternative_config_path());
+
+    // first mpc context with parties 1, 2, 3, 4
+    // note that this is defined by the normal config path
+    {
+        // create and store mpc context
+        let context_id =
+            ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222223333")
+                .unwrap();
+        store_mpc_context_in_file(&context_path, &config_path, context_id).await;
+
+        // create the new context
+        new_mpc_context(&context_path, &config_path, test_path).await;
+
+        // create PRSS
+        let epoch_id =
+            EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222224444")
+                .unwrap();
+        new_prss(context_id, epoch_id, &config_path, test_path).await;
+    }
+
+    // first mpc context with parties 5, 6, 3, 4
+    {
+        // create and store mpc context
+        let context_id =
+            ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222225555")
+                .unwrap();
+        store_mpc_context_in_file(&context_path, &alternative_config_path, context_id).await;
+
+        // create the new context
+        new_mpc_context(&context_path, &alternative_config_path, test_path).await;
+
+        // create PRSS
+        let epoch_id =
+            EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222226666")
+                .unwrap();
+        new_prss(context_id, epoch_id, &alternative_config_path, test_path).await;
+
+        // do preproc and keygen (which should use the prss)
+        let _ = real_preproc_and_keygen(
+            alternative_config_path.to_str().unwrap(),
+            test_path,
+            Some(context_id),
+            Some(epoch_id),
+        )
+        .await;
+    }
 }
 
 ///////// FULL GEN TESTS//////////

@@ -14,6 +14,7 @@ pub enum KMSMode {
     ThresholdDefaultParameter,
     ThresholdTestParameter,
     ThresholdTestParameterNoInit,
+    ThresholdTestParameterNoInitSixParty,
     ThresholdCustodianTestParameter,
     Centralized,
     CentralizedCustodian,
@@ -63,6 +64,7 @@ impl DockerComposeCmd {
             }
             KMSMode::ThresholdTestParameter
             | KMSMode::ThresholdTestParameterNoInit
+            | KMSMode::ThresholdTestParameterNoInitSixParty
             | KMSMode::ThresholdCustodianTestParameter => {
                 env::set_var("CORE_CLIENT__FHE_PARAMS", "Test");
             }
@@ -83,6 +85,10 @@ impl DockerComposeCmd {
             }
             KMSMode::ThresholdTestParameterNoInit => {
                 build.arg("docker-compose-core-threshold.yml");
+                build.env("SET_EMPTY_PEERLIST", "true");
+            }
+            KMSMode::ThresholdTestParameterNoInitSixParty => {
+                build.arg("docker-compose-core-threshold-6.yml");
                 build.env("SET_EMPTY_PEERLIST", "true");
             }
             KMSMode::ThresholdCustodianTestParameter => {
@@ -153,6 +159,9 @@ impl DockerComposeCmd {
                 | KMSMode::ThresholdCustodianTestParameter => {
                     docker_logs.arg("docker-compose-core-threshold.yml");
                 }
+                KMSMode::ThresholdTestParameterNoInitSixParty => {
+                    docker_logs.arg("docker-compose-core-threshold-6.yml");
+                }
                 KMSMode::CentralizedCustodian | KMSMode::Centralized => {
                     docker_logs.arg("docker-compose-core-centralized.yml");
                 }
@@ -181,6 +190,9 @@ impl DockerComposeCmd {
                 | KMSMode::ThresholdTestParameterNoInit
                 | KMSMode::ThresholdCustodianTestParameter => {
                     docker_down.arg("docker-compose-core-threshold.yml");
+                }
+                KMSMode::ThresholdTestParameterNoInitSixParty => {
+                    docker_down.arg("docker-compose-core-threshold-6.yml");
                 }
                 KMSMode::Centralized | KMSMode::CentralizedCustodian => {
                     docker_down.arg("docker-compose-core-centralized.yml");

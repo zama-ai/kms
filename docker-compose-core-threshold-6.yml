@@ -32,7 +32,7 @@ services:
             --private-storage s3 --private-s3-bucket kms \
             --cmd signing-keys \
             threshold \
-            --signing-key-party-id $$((($$i - 1) % 4 + 1)) --tls-subject dev-kms-core-$$i.com \
+            --signing-key-party-id $$i --tls-subject dev-kms-core-$$i.com --num-parties 6 \
             --tls-wildcard && \
             wget -O ./certs/cert_dev-kms-core-$$i.com.pem ftp://$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY@dev-s3-mock:8021/kms/PUB-p$$i/CACert/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee && \
             cat ./certs/cert_dev-kms-core-$$i.com.pem; \

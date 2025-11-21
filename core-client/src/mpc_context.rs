@@ -58,7 +58,14 @@ pub async fn create_test_context_info_from_core_config(
         // this assumes that the peer list is ordered by party ID
         let peer = &threshold_config.peers.unwrap()[c.party_id - 1];
         let (role, identity) = peer.into_role_identity();
-        assert_eq!(role.one_based(), threshold_config.my_id);
+        if role.one_based() != threshold_config.my_id {
+            tracing::warn!(
+                "Mismatched party ID in core config for core {}: role ID {}, my_id {}",
+                c.party_id,
+                role.one_based(),
+                threshold_config.my_id
+            );
+        }
 
         let verification_key = verification_keys.get(&role.one_based()).ok_or_else(|| {
             anyhow::anyhow!(

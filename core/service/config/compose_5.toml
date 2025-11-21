@@ -29,8 +29,7 @@ path = "./backup_vault"
 listen_address = "0.0.0.0"
 listen_port = 50005
 
-# intended to replace an original party 1
-my_id = 1
+my_id = 5
 
 threshold = 1
 dec_capacity = 10000
