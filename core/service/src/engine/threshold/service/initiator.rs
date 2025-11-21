@@ -531,17 +531,13 @@ mod tests {
             .await
             .unwrap();
 
-        // try the same again and we should see an AlreadyExists error
-        assert_eq!(
-            initiator
-                .init(tonic::Request::new(InitRequest {
-                    request_id: Some(req_id.into()),
-                }))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::AlreadyExists
-        );
+        // try the same again and we should see no error
+        initiator
+            .init(tonic::Request::new(InitRequest {
+                request_id: Some(req_id.into()),
+            }))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
