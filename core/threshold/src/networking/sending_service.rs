@@ -632,7 +632,6 @@ mod tests {
         async fn create_server(
             networking: &GrpcNetworkingManager,
             port: u16,
-            role: Role,
         ) -> (
             tokio::sync::oneshot::Sender<()>,
             tokio::task::JoinHandle<()>,
@@ -655,9 +654,9 @@ mod tests {
             (
                 server_terminate_tx,
                 tokio::spawn(async move {
-                    tracing::info!("Starting server on {role:?}");
+                    tracing::info!("Starting server on port {port}");
                     core_future.await.unwrap();
-                    tracing::info!("Server on {role:?} shut down");
+                    tracing::info!("Server on port {port} shut down");
                 }),
             )
         }
@@ -717,7 +716,7 @@ mod tests {
                     .unwrap();
 
                 let (server_terminate_tx, server_handle) =
-                    create_server(&networking, id_2.port(), role_2).await;
+                    create_server(&networking, id_2.port()).await;
 
                 tracing::info!("Trying to receive");
                 let msg = network_session.receive(&role_1).await.unwrap();
@@ -756,7 +755,7 @@ mod tests {
                     .unwrap();
 
                 let (server_terminate_tx, server_handle) =
-                    create_server(&networking, id_2.port(), role_2).await;
+                    create_server(&networking, id_2.port()).await;
 
                 // Increase round counter to receive second message
                 network_session.increase_round_counter().await;
