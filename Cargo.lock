@@ -881,46 +881,18 @@ dependencies = [
 
 [[package]]
 name = "asn1-rs"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f6fd5ddaf0351dff5b8da21b2fb4ff8e08ddd02857f0bf69c47639106c0fff0"
-dependencies = [
- "asn1-rs-derive 0.4.0",
- "asn1-rs-impl 0.1.0",
- "displaydoc",
- "nom 7.1.3",
- "num-traits",
- "rusticata-macros",
- "thiserror 1.0.69",
- "time",
-]
-
-[[package]]
-name = "asn1-rs"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56624a96882bb8c26d61312ae18cb45868e5a9992ea73c58e45c3101e56a1e60"
 dependencies = [
- "asn1-rs-derive 0.6.0",
- "asn1-rs-impl 0.2.0",
+ "asn1-rs-derive",
+ "asn1-rs-impl",
  "displaydoc",
  "nom 7.1.3",
  "num-traits",
  "rusticata-macros",
  "thiserror 2.0.12",
  "time",
-]
-
-[[package]]
-name = "asn1-rs-derive"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "726535892e8eae7e70657b4c8ea93d26b8553afb1ce617caee529ef96d7dee6c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
- "synstructure 0.12.6",
 ]
 
 [[package]]
@@ -932,18 +904,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
- "synstructure 0.13.2",
-]
-
-[[package]]
-name = "asn1-rs-impl"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2777730b2039ac0f95f093556e61b6d26cebed5393ca6f152717777cec3a42ed"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
+ "synstructure",
 ]
 
 [[package]]
@@ -1149,8 +1110,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "attestation-doc-validation"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73d09f8ce9c08df11cc4626c2b1ad1c58c52e9470b086622ae3ab7c05cb68500"
+source = "git+https://github.com/mkmks/attestation-doc-validation.git?branch=timestamps#764b6814e6536eb8fa5c9cfa60c27b0e84176214"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1174,7 +1134,7 @@ dependencies = [
  "time",
  "wasm-bindgen",
  "webpki",
- "x509-parser 0.14.0",
+ "x509-parser 0.18.0",
 ]
 
 [[package]]
@@ -2710,25 +2670,11 @@ dependencies = [
 
 [[package]]
 name = "der-parser"
-version = "8.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbd676fbbab537128ef0278adb5576cf363cff6aa22a7b24effe97347cfab61e"
-dependencies = [
- "asn1-rs 0.5.2",
- "displaydoc",
- "nom 7.1.3",
- "num-bigint",
- "num-traits",
- "rusticata-macros",
-]
-
-[[package]]
-name = "der-parser"
 version = "10.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07da5016415d5a3c4dd39b11ed26f915f52fc4e0dc197d87908bc916e51bc1a6"
 dependencies = [
- "asn1-rs 0.7.1",
+ "asn1-rs",
  "displaydoc",
  "nom 7.1.3",
  "num-bigint",
@@ -3842,7 +3788,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.0",
+ "windows-core",
 ]
 
 [[package]]
@@ -4959,20 +4905,11 @@ dependencies = [
 
 [[package]]
 name = "oid-registry"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bedf36ffb6ba96c2eb7144ef6270557b52e54b20c0a8e1eb2ff99a6c6959bff"
-dependencies = [
- "asn1-rs 0.5.2",
-]
-
-[[package]]
-name = "oid-registry"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12f40cff3dde1b6087cc5d5f5d4d65712f34016a03ed60e9c08dcc392736b5b7"
 dependencies = [
- "asn1-rs 0.7.1",
+ "asn1-rs",
 ]
 
 [[package]]
@@ -7319,18 +7256,6 @@ dependencies = [
 
 [[package]]
 name = "synstructure"
-version = "0.12.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f36bdaa60a83aca3921b5259d5400cbf5e90fc51931376a9bd4a0eb79aa7210f"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
- "unicode-xid",
-]
-
-[[package]]
-name = "synstructure"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "728a70f3dbaf5bab7f0c4b1ac8d7ae5ea60a4b5549c8a5914361c99147a709d2"
@@ -7611,7 +7536,7 @@ dependencies = [
  "num-integer",
  "num-traits",
  "observability",
- "oid-registry 0.8.1",
+ "oid-registry",
  "opentelemetry",
  "paste",
  "peak_alloc",
@@ -8638,7 +8563,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9babd3a767a4c1aef6900409f85f5d53ce2544ccdfaa86dad48c91782c6d6893"
 dependencies = [
  "windows-collections",
- "windows-core 0.61.2",
+ "windows-core",
  "windows-future",
  "windows-link 0.1.3",
  "windows-numerics",
@@ -8650,7 +8575,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3beeceb5e5cfd9eb1d76b381630e82c4241ccd0d27f1a39ed41b2760b255c5e8"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
 ]
 
 [[package]]
@@ -8662,21 +8587,8 @@ dependencies = [
  "windows-implement",
  "windows-interface",
  "windows-link 0.1.3",
- "windows-result 0.3.4",
- "windows-strings 0.4.2",
-]
-
-[[package]]
-name = "windows-core"
-version = "0.62.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57fe7168f7de578d2d8a05b07fd61870d2e73b4020e9f49aa00da8471723497c"
-dependencies = [
- "windows-implement",
- "windows-interface",
- "windows-link 0.2.0",
- "windows-result 0.4.0",
- "windows-strings 0.5.0",
+ "windows-result",
+ "windows-strings",
 ]
 
 [[package]]
@@ -8685,7 +8597,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc6a41e98427b19fe4b73c550f060b59fa592d7d686537eebf9385621bfbad8e"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
  "windows-link 0.1.3",
  "windows-threading",
 ]
@@ -8730,7 +8642,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9150af68066c4c5c07ddc0ce30421554771e528bde427614c61038bc2c92c2b1"
 dependencies = [
- "windows-core 0.61.2",
+ "windows-core",
  "windows-link 0.1.3",
 ]
 
@@ -8744,30 +8656,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "windows-result"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7084dcc306f89883455a206237404d3eaf961e5bd7e0f312f7c91f57eb44167f"
-dependencies = [
- "windows-link 0.2.0",
-]
-
-[[package]]
 name = "windows-strings"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56e6c93f3a0c3b36176cb1327a4958a0353d5d166c2a35cb268ace15e91d3b57"
 dependencies = [
  "windows-link 0.1.3",
-]
-
-[[package]]
-name = "windows-strings"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7218c655a553b0bed4426cf54b20d7ba363ef543b52d515b3e48d7fd55318dda"
-dependencies = [
- "windows-link 0.2.0",
 ]
 
 [[package]]
@@ -8976,34 +8870,16 @@ dependencies = [
 
 [[package]]
 name = "x509-parser"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0ecbeb7b67ce215e40e3cc7f2ff902f94a223acf44995934763467e7b1febc8"
-dependencies = [
- "asn1-rs 0.5.2",
- "base64 0.13.1",
- "data-encoding",
- "der-parser 8.2.0",
- "lazy_static",
- "nom 7.1.3",
- "oid-registry 0.6.1",
- "rusticata-macros",
- "thiserror 1.0.69",
- "time",
-]
-
-[[package]]
-name = "x509-parser"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4569f339c0c402346d4a75a9e39cf8dad310e287eef1ff56d4c68e5067f53460"
 dependencies = [
- "asn1-rs 0.7.1",
+ "asn1-rs",
  "data-encoding",
- "der-parser 10.0.0",
+ "der-parser",
  "lazy_static",
  "nom 7.1.3",
- "oid-registry 0.8.1",
+ "oid-registry",
  "ring",
  "rusticata-macros",
  "thiserror 2.0.12",
@@ -9016,13 +8892,13 @@ version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb3e137310115a65136898d2079f003ce33331a6c4b0d51f1531d1be082b6425"
 dependencies = [
- "asn1-rs 0.7.1",
+ "asn1-rs",
  "aws-lc-rs",
  "data-encoding",
- "der-parser 10.0.0",
+ "der-parser",
  "lazy_static",
  "nom 7.1.3",
- "oid-registry 0.8.1",
+ "oid-registry",
  "rusticata-macros",
  "thiserror 2.0.12",
  "time",
@@ -9075,7 +8951,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
- "synstructure 0.13.2",
+ "synstructure",
 ]
 
 [[package]]
@@ -9116,7 +8992,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
- "synstructure 0.13.2",
+ "synstructure",
 ]
 
 [[package]]
