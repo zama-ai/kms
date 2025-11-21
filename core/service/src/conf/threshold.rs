@@ -97,6 +97,7 @@ pub enum TlsConf {
     SemiAuto {
         cert: TlsCert,
         trusted_releases: Vec<ReleasePCRValues>,
+        ignore_aws_ca_chain: Option<bool>,
     },
     // The party will use its core signing key to sign an emphemeral TLS
     // certificate on boot that that bundles the attestation document, acting as
@@ -104,6 +105,7 @@ pub enum TlsConf {
     // key and included in the peer list.
     FullAuto {
         trusted_releases: Vec<ReleasePCRValues>,
+        ignore_aws_ca_chain: Option<bool>,
     },
 }
 

@@ -242,6 +242,7 @@ lto = "off"
 
 [patch.crates-io]
 # MEDIUM RISK: Using fork instead of upstream - verify changes, consider upstreaming
+attestation-doc-validation = { git = 'https://github.com/mkmks/attestation-doc-validation.git', branch = 'timestamps' }
 rcgen = { git = 'https://github.com/mkmks/rcgen.git', branch = 'k256' }
 rustls = { git = 'https://github.com/mkmks/rustls.git', branch = 'k256' }
 rustls-pki-types = { git = 'https://github.com/mkmks/pki-types.git', branch = 'k256' }

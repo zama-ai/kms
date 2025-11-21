@@ -1,6 +1,11 @@
 use crate::{execution::runtime::party::MpcIdentity, session_id::SessionId};
 
 use anyhow::{anyhow, bail, ensure};
+use attestation_doc_validation::{
+    attestation_doc::{decode_attestation_document, validate_cose_signature},
+    cert::validate_cert_trust_chain,
+    nsm::{CryptoClient as NsmCryptoClient, PublicKey as NsmPublicKey},
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha384};
 use std::{
@@ -88,12 +93,14 @@ pub struct AttestedVerifier {
     pcr8_expected: bool,
     #[cfg(feature = "testing")]
     mock_enclave: bool,
+    ignore_aws_ca_chain: bool,
 }
 
 impl AttestedVerifier {
     pub fn new(
         pcr8_expected: bool,
         #[cfg(feature = "testing")] mock_enclave: bool,
+        ignore_aws_ca_chain: bool,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             root_hint_subjects: Vec::new(),
@@ -108,6 +115,7 @@ Crypto provider should exist at this point"
             pcr8_expected,
             #[cfg(feature = "testing")]
             mock_enclave,
+            ignore_aws_ca_chain,
         })
     }
 
@@ -249,6 +257,8 @@ impl ServerCertVerifier for AttestedVerifier {
             .map_err(|e| Error::General(e.to_string()))?;
         let (_, server_verifier, release_pcrs) =
             self.get_verifiers_and_pcrs_for_x509_cert(&cert)?;
+        let subject =
+            extract_subject_from_cert(&cert).map_err(|e| Error::General(e.to_string()))?;
         // check the enclave-generated certificate used for the TLS session as
         // usual (however, we expect it to be self-signed)
         tracing::debug!("Verifying certificate for server {:?}", server_name,);
@@ -271,9 +281,12 @@ impl ServerCertVerifier for AttestedVerifier {
                 CertVerifier::Server(server_verifier.clone(), server_name, ocsp_response),
                 intermediates,
                 now,
+                self.ignore_aws_ca_chain,
             )
             .map_err(|e| {
-                tracing::error!("bundled attestation document validation error: {e}");
+                tracing::error!(
+                    "bundled attestation document validation error for party {subject}: {e}"
+                );
                 Error::General(e.to_string())
             })?;
         }
@@ -339,7 +352,8 @@ impl ClientCertVerifier for AttestedVerifier {
         // subject name, verification will fail
         let (client_verifier, _, release_pcrs) =
             self.get_verifiers_and_pcrs_for_x509_cert(&cert)?;
-
+        let subject =
+            extract_subject_from_cert(&cert).map_err(|e| Error::General(e.to_string()))?;
         // check the enclave-generated certificate used for the TLS session as
         // usual
         client_verifier
@@ -362,9 +376,12 @@ impl ClientCertVerifier for AttestedVerifier {
                 CertVerifier::Client(client_verifier.clone()),
                 intermediates,
                 now,
+                self.ignore_aws_ca_chain,
             )
             .map_err(|e| {
-                tracing::error!("bundled attestation document validation error: {e}");
+                tracing::error!(
+                    "bundled attestation document validation error for party {subject}: {e}"
+                );
                 Error::General(e.to_string())
             })?;
         } else {
@@ -418,6 +435,7 @@ fn validate_wrapped_cert(
     verifier: CertVerifier,
     intermediates: &[CertificateDer<'_>],
     now: UnixTime,
+    ignore_aws_ca_chain: bool,
 ) -> anyhow::Result<()> {
     // Self-signed certificates do not actually include AWS Nitro
     // attestation documents as a PKCS7 structure. We only reused
@@ -429,14 +447,61 @@ fn validate_wrapped_cert(
     else {
         bail!("Bad certificate: attestation document not present")
     };
-    let attestation_doc =
-        attestation_doc_validation::validate_and_parse_attestation_doc(attestation_doc.value)
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    format!("AWS Nitro attestation failed: {e}"),
-                )
-            })?;
+
+    // Parse attestation doc from cose signature and validate structure
+    let (cose_sign_1_decoded, attestation_doc) = decode_attestation_document(attestation_doc.value)
+        .map_err(|e| anyhow!("Could not decode attestation document: {e}"))?;
+    let (_, attestation_doc_signing_cert) =
+        x509_parser::parse_x509_certificate(&attestation_doc.certificate).map_err(|e| {
+            anyhow!("Could not parse attestation document signing certificate: {e}")
+        })?;
+    // Validate Cose signature over attestation doc
+    let pub_key =
+        NsmPublicKey::try_from(attestation_doc_signing_cert.public_key()).map_err(|e| {
+            anyhow!("Could not parse attestation document signing certificate public key: {e}")
+        })?;
+    validate_cose_signature::<NsmCryptoClient>(&pub_key, &cose_sign_1_decoded)
+        .map_err(|e| anyhow!("Could not verify attestation document signature: {e}"))?;
+    // Validate that the attestation doc's signature can be tied back to the AWS Nitro CA
+    let intermediate_certs: Vec<&[u8]> = attestation_doc
+        .cabundle
+        .iter()
+        .map(|cert| cert.as_slice())
+        .collect();
+    let aws_cert_chain_valid_res = validate_cert_trust_chain(
+        &attestation_doc.certificate,
+        &intermediate_certs,
+        Some(now.as_secs()),
+    );
+    if let Err(e) = aws_cert_chain_valid_res {
+        if ignore_aws_ca_chain {
+            let subject = extract_subject_from_cert(cert)?;
+            tracing::warn!(
+                "Cannot validate CA chain for party {subject} attestation document at timestamp {}: {}", now.as_secs(), e
+            );
+            tracing::warn!(
+                "Party {} attestation document signing certificate: {:#?}",
+                subject,
+                attestation_doc_signing_cert
+            );
+            for cert in attestation_doc.cabundle {
+                let (_, intermediate_cert) =
+                    x509_parser::parse_x509_certificate(&cert).map_err(|e| {
+                        anyhow!(
+                            "Could not parse attestation document intermediate certificate: {e}"
+                        )
+                    })?;
+                tracing::warn!(
+                    "Party {} attestation document intermediate certificate: {:#?}",
+                    subject,
+                    intermediate_cert
+                );
+            }
+        } else {
+            bail!("{e}")
+        }
+    }
+
     let Some(attested_pk) = attestation_doc.public_key else {
         bail!("Bad certificate: public key not present in attestation document")
     };
