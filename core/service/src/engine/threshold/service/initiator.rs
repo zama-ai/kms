@@ -239,11 +239,11 @@ impl<
         }
 
         // In case we want to re-init, we delete the existing session
+        // after waiting for 30 seconds (to be resonably sure others have finished sending).
         // This is needed as the networking manager keeps track of sessions that have been initialized
         // and we're currently using a fixed session ID for PRSS init.
-        {
-            session_preparer.delete_session(session_id).await?;
-        }
+        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+        session_preparer.delete_session(session_id).await?;
 
         {
             // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
