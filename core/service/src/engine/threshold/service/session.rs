@@ -236,6 +236,19 @@ impl SessionPreparer {
             .await
     }
 
+    // Deletes the session with the given session ID from the networking manager.
+    pub async fn delete_session(&self, session_id: SessionId) -> anyhow::Result<()> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .networking_manager
+            .as_ref()
+            .write()
+            .await
+            .delete_session(session_id);
+        Ok(())
+    }
+
     /// Make a small session with Z128 PRSS for the Async network mode.
     pub async fn make_small_async_session_z128(
         &self,

@@ -275,6 +275,11 @@ impl GrpcNetworkingManager {
         });
     }
 
+    pub fn delete_session(&self, sid: SessionId) {
+        tracing::warn!("Deleting session {sid}.");
+        self.session_store.remove(&sid);
+    }
+
     /// Owner should be the external address
     pub fn new(
         tls_conf: Option<tokio_rustls::rustls::client::ClientConfig>,

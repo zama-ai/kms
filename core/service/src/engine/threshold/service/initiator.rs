@@ -29,7 +29,9 @@ use crate::{
         threshold::traits::Initiator,
         validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
-    vault::storage::{read_versioned_at_request_id, store_versioned_at_request_id, Storage},
+    vault::storage::{
+        delete_at_request_id, read_versioned_at_request_id, store_versioned_at_request_id, Storage,
+    },
 };
 
 // === Current Module Imports ===
@@ -175,38 +177,78 @@ impl<
 
         let mut guarded_prss_setup = self.prss_setup_z128.write().await;
         *guarded_prss_setup = Some(prss_setup_obj_z128.clone());
-
         let mut guarded_prss_setup = self.prss_setup_z64.write().await;
         *guarded_prss_setup = Some(prss_setup_obj_z64.clone());
 
-        // serialize and write PRSS Setup to disk into private storage
-        let private_storage = Arc::clone(&self.private_storage);
-        let mut priv_storage = private_storage.lock().await;
-        store_versioned_at_request_id(
-            &mut (*priv_storage),
-            &derive_request_id(&format!(
-                "PRSSSetup_Z128_ID_{}_{}_{}",
-                req_id,
-                base_session.parameters.num_parties(),
-                base_session.parameters.threshold(),
-            ))?,
-            &prss_setup_obj_z128,
-            &PrivDataType::PrssSetup.to_string(),
-        )
-        .await?;
+        let prss_tag = PrivDataType::PrssSetup.to_string();
 
-        store_versioned_at_request_id(
-            &mut (*priv_storage),
-            &derive_request_id(&format!(
-                "PRSSSetup_Z64_ID_{}_{}_{}",
-                req_id,
-                base_session.parameters.num_parties(),
-                base_session.parameters.threshold(),
-            ))?,
-            &prss_setup_obj_z64,
-            &PrivDataType::PrssSetup.to_string(),
-        )
-        .await?;
+        fn derive_prss_req_id(
+            bits: u32,
+            base_req: &RequestId,
+            parties: usize,
+            threshold: u8,
+        ) -> anyhow::Result<RequestId> {
+            derive_request_id(&format!(
+                "PRSSSetup_Z{bits}_ID_{}_{}_{}",
+                base_req, parties, threshold
+            ))
+        }
+
+        async fn overwrite_if_prss_exists<S: Storage>(
+            storage: &mut S,
+            req_id: &RequestId,
+            tag: &str,
+            bits_label: &str,
+        ) -> anyhow::Result<()> {
+            if storage.data_exists(req_id, tag).await? {
+                tracing::warn!(
+                    "Overwriting existing PRSS Setup {bits_label} at request ID {req_id}"
+                );
+                delete_at_request_id(storage, req_id, tag).await?;
+            }
+            Ok(())
+        }
+
+        let parties = base_session.parameters.num_parties();
+        let threshold_val = base_session.parameters.threshold();
+
+        let z128_req_id = derive_prss_req_id(128, req_id, parties, threshold_val)?;
+        let z64_req_id = derive_prss_req_id(64, req_id, parties, threshold_val)?;
+
+        {
+            // lock only while touching storage
+            let mut priv_storage = self.private_storage.lock().await;
+
+            overwrite_if_prss_exists(&mut *priv_storage, &z128_req_id, &prss_tag, "Z128").await?;
+            overwrite_if_prss_exists(&mut *priv_storage, &z64_req_id, &prss_tag, "Z64").await?;
+
+            store_versioned_at_request_id(
+                &mut *priv_storage,
+                &z128_req_id,
+                &prss_setup_obj_z128,
+                &prss_tag,
+            )
+            .await?;
+            store_versioned_at_request_id(
+                &mut *priv_storage,
+                &z64_req_id,
+                &prss_setup_obj_z64,
+                &prss_tag,
+            )
+            .await?;
+        }
+
+        // In case we want to re-init, we delete the existing session
+        // after waiting for 30 seconds (to be reasonably sure others have finished sending).
+        // This is needed as the networking manager keeps track of sessions that have been initialized
+        // and we're currently using a fixed session ID for PRSS init.
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+            if let Err(e) = session_preparer.delete_session(session_id).await {
+                tracing::warn!("Failed to delete session {}: {}", session_id, e);
+            }
+        });
+
         {
             // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
             self.health_reporter
@@ -245,10 +287,7 @@ impl<
 
         if self.prss_setup_z128.read().await.is_some() || self.prss_setup_z64.read().await.is_some()
         {
-            return Err(tonic::Status::new(
-                tonic::Code::AlreadyExists,
-                "PRSS state already exists".to_string(),
-            ));
+            tracing::warn!("PRSS state already exists. Overwriting old state now!");
         }
 
         self.init_prss(&request_id).await.map_err(|e| {
@@ -504,17 +543,16 @@ mod tests {
             .await
             .unwrap();
 
-        // try the same again and we should see an AlreadyExists error
-        assert_eq!(
-            initiator
-                .init(tonic::Request::new(InitRequest {
-                    request_id: Some(req_id.into()),
-                }))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::AlreadyExists
-        );
+        // we cleanup PRSS init sessions after 30 seconds, so we have to wait here before making the 2nd request
+        tokio::time::sleep(tokio::time::Duration::from_secs(31)).await;
+
+        // try the same again and we should see no error
+        initiator
+            .init(tonic::Request::new(InitRequest {
+                request_id: Some(req_id.into()),
+            }))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
