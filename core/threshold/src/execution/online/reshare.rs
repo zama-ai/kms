@@ -15,10 +15,10 @@ use crate::{
             p2p::generic_receive_from_all_senders_with_role_transform,
         },
         config::BatchParams,
-        online::preprocessing::BasePreprocessing,
+        online::preprocessing::{memory::InMemoryBasePreprocessing, BasePreprocessing},
         runtime::{
             party::{Role, TwoSetsRole},
-            sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
+            sessions::base_session::{BaseSession, BaseSessionHandles, GenericBaseSessionHandles},
         },
         sharing::{
             open::{ExternalOpeningInfo, RobustOpen, SecureRobustOpen},
@@ -36,6 +36,7 @@ use crate::{
         },
     },
     networking::value::{BroadcastValue, NetworkValue},
+    ProtocolDescription,
 };
 use itertools::{izip, Itertools};
 use std::{
@@ -43,6 +44,7 @@ use std::{
     sync::Arc,
 };
 use tokio::task::JoinSet;
+use tonic::async_trait;
 use tracing::instrument;
 use zeroize::Zeroize;
 
@@ -130,15 +132,15 @@ where
     skip(preproc128, preproc64, session, input_share)
     fields(sid=?session.session_id(),my_role=?session.my_role())
 )]
-pub async fn reshare_sk_same_sets<
-    Ses: BaseSessionHandles,
+pub async fn secure_reshare_same_sets<
+    S: BaseSessionHandles,
     P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
     P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
     const EXTENSION_DEGREE: usize,
 >(
-    preproc128: &mut P128,
-    preproc64: &mut P64,
-    session: &mut Ses,
+    session: &mut S,
+    preproc128: P128,
+    preproc64: P64,
     input_share: &mut Option<PrivateKeySet<EXTENSION_DEGREE>>,
     parameters: DKGParams,
 ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
@@ -146,6 +148,138 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
 {
+    reshare_sk::<SameSetsReshare<S>, _, _, _>(
+        &mut Expected(preproc128),
+        &mut Expected(preproc64),
+        session,
+        Optional(input_share.as_mut()),
+        parameters,
+    )
+    .await?
+    .ok_or_else(|| anyhow_error_and_log("Expected an output in same set reshare"))
+}
+
+#[instrument(
+    name = "ReShare (as set 1)",
+    skip(two_sets_session, input_share)
+    fields(sid=?two_sets_session.session_id(),my_role=?two_sets_session.my_role())
+)]
+pub async fn secure_reshare_two_sets_as_s1<
+    S: GenericBaseSessionHandles<TwoSetsRole>,
+    const EXTENSION_DEGREE: usize,
+>(
+    two_sets_session: &mut S,
+    input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
+    parameters: DKGParams,
+) -> anyhow::Result<()>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+{
+    let _ = reshare_sk::<TwoSetsReshareAsSet1<S>, _, _, _>(
+        &mut NotExpected::<InMemoryBasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>::default(
+        ),
+        &mut NotExpected::<InMemoryBasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>::default(
+        ),
+        two_sets_session,
+        Expected(input_share),
+        parameters,
+    )
+    .await?;
+    Ok(())
+}
+
+#[instrument(
+    name = "ReShare (as set 2)",
+    skip(sessions, preproc128, preproc64)
+    fields(sid,my_role)
+)]
+pub async fn secure_reshare_two_sets_as_s2<
+    S: GenericBaseSessionHandles<TwoSetsRole>,
+    Sess: BaseSessionHandles,
+    P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
+    P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
+    const EXTENSION_DEGREE: usize,
+>(
+    sessions: &mut (S, Sess),
+    preproc128: P128,
+    preproc64: P64,
+    parameters: DKGParams,
+) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+{
+    let span = tracing::Span::current();
+    span.record("sid", format!("{:?}", &sessions.0.session_id()));
+    span.record("my_role", format!("{:?}", &sessions.0.my_role()));
+    reshare_sk::<TwoSetsReshareAsSet2<S, Sess>, _, _, _>(
+        &mut Expected(preproc128),
+        &mut Expected(preproc64),
+        sessions,
+        NotExpected {
+            _marker: std::marker::PhantomData,
+        },
+        parameters,
+    )
+    .await?
+    .ok_or_else(|| anyhow_error_and_log("Expected an output in two sets reshare"))
+}
+
+#[instrument(
+    name = "ReShare (as both sets)",
+    skip(sessions, preproc128, preproc64)
+    fields(sid,my_role)
+)]
+pub async fn secure_reshare_two_sets_as_both_sets<
+    S: GenericBaseSessionHandles<TwoSetsRole>,
+    Sess: BaseSessionHandles,
+    P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
+    P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
+    const EXTENSION_DEGREE: usize,
+>(
+    sessions: &mut (S, Sess),
+    preproc128: P128,
+    preproc64: P64,
+    input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
+    parameters: DKGParams,
+) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+{
+    let span = tracing::Span::current();
+    span.record("sid", format!("{:?}", &sessions.0.session_id()));
+    span.record("my_role", format!("{:?}", &sessions.0.my_role()));
+    reshare_sk::<TwoSetsReshareAsBothSets<S, Sess>, _, _, _>(
+        &mut Expected(preproc128),
+        &mut Expected(preproc64),
+        sessions,
+        Expected(input_share),
+        parameters,
+    )
+    .await?
+    .ok_or_else(|| anyhow_error_and_log("Expected an output in two sets reshare"))
+}
+
+pub(crate) async fn reshare_sk<
+    R: Reshare,
+    P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
+    P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
+    const EXTENSION_DEGREE: usize,
+>(
+    preproc128: &mut R::MaybeExpectedPreprocessing<P128>,
+    preproc64: &mut R::MaybeExpectedPreprocessing<P64>,
+    sessions: &mut R::ReshareSessions,
+    input_share: R::MaybeExpectedInputShares<&mut PrivateKeySet<EXTENSION_DEGREE>>,
+    parameters: DKGParams,
+) -> anyhow::Result<Option<PrivateKeySet<EXTENSION_DEGREE>>>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+{
+    let reshare = R::default();
+    let mut input_share = input_share.into();
     // Reshare the GLWE sns key
     let glwe_secret_key_share_sns_as_lwe = if let DKGParams::WithSnS(sns_params) = parameters {
         let expected_key_size = sns_params.glwe_sk_num_bits_sns();
@@ -154,9 +288,21 @@ where
                 .as_mut()
                 .map(|key| key.data.as_mut())
         });
-        Some(LweSecretKeyShare {
-            data: reshare_same_sets(preproc128, session, maybe_key, expected_key_size).await?,
-        })
+        let data = reshare
+            .execute(
+                sessions,
+                preproc128,
+                R::MaybeExpectedInputShares::from(maybe_key),
+                expected_key_size,
+            )
+            .await?;
+        if R::is_output_expected() {
+            Some(Some(LweSecretKeyShare {
+                data: data.expect("Output is expected"),
+            }))
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -168,8 +314,20 @@ where
     let maybe_key = input_share
         .as_mut()
         .map(|s| s.lwe_compute_secret_key_share.data.as_mut());
-    let lwe_compute_secret_key_share = LweSecretKeyShare {
-        data: reshare_same_sets(preproc64, session, maybe_key, expected_key_size).await?,
+    let data = reshare
+        .execute(
+            sessions,
+            preproc64,
+            R::MaybeExpectedInputShares::from(maybe_key),
+            expected_key_size,
+        )
+        .await?;
+    let lwe_compute_secret_key_share = if R::is_output_expected() {
+        Some(LweSecretKeyShare {
+            data: data.expect("Output is expected"),
+        })
+    } else {
+        None
     };
 
     // Reshare the LWE PKe key
@@ -178,8 +336,21 @@ where
     let maybe_key = input_share
         .as_mut()
         .map(|s| s.lwe_encryption_secret_key_share.data.as_mut());
-    let lwe_encryption_secret_key_share = LweSecretKeyShare {
-        data: reshare_same_sets(preproc64, session, maybe_key, expected_key_size).await?,
+    let data = reshare
+        .execute(
+            sessions,
+            preproc64,
+            R::MaybeExpectedInputShares::from(maybe_key),
+            expected_key_size,
+        )
+        .await?;
+
+    let lwe_encryption_secret_key_share = if R::is_output_expected() {
+        Some(LweSecretKeyShare {
+            data: data.expect("Output is expected"),
+        })
+    } else {
+        None
     };
 
     // Reshare the GLWE compute key
@@ -195,10 +366,22 @@ where
                 })
                 .transpose()
                 .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-            GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
-                data: reshare_same_sets(preproc64, session, maybe_key, expected_key_size).await?,
-                polynomial_size,
-            })
+            let data = reshare
+                .execute(
+                    sessions,
+                    preproc64,
+                    R::MaybeExpectedInputShares::from(maybe_key),
+                    expected_key_size,
+                )
+                .await?;
+            if R::is_output_expected() {
+                Some(GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
+                    data: data.expect("Output is expected"),
+                    polynomial_size,
+                }))
+            } else {
+                None
+            }
         }
         DkgMode::Z128 => {
             let maybe_key = input_share
@@ -210,10 +393,22 @@ where
                 })
                 .transpose()
                 .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-            GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
-                data: reshare_same_sets(preproc128, session, maybe_key, expected_key_size).await?,
-                polynomial_size,
-            })
+            let data = reshare
+                .execute(
+                    sessions,
+                    preproc128,
+                    R::MaybeExpectedInputShares::from(maybe_key),
+                    expected_key_size,
+                )
+                .await?;
+            if R::is_output_expected() {
+                Some(GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
+                    data: data.expect("Output is expected"),
+                    polynomial_size,
+                }))
+            } else {
+                None
+            }
         }
     };
 
@@ -241,14 +436,27 @@ where
                     })
                     .transpose()
                     .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-                CompressionPrivateKeySharesEnum::Z64(CompressionPrivateKeyShares {
-                    post_packing_ks_key: GlweSecretKeyShare {
-                        data: reshare_same_sets(preproc64, session, maybe_key, expected_key_size)
-                            .await?,
-                        polynomial_size,
-                    },
-                    params: compression_params.raw_compression_parameters,
-                })
+                let data = reshare
+                    .execute(
+                        sessions,
+                        preproc64,
+                        R::MaybeExpectedInputShares::from(maybe_key),
+                        expected_key_size,
+                    )
+                    .await?;
+                if R::is_output_expected() {
+                    Some(CompressionPrivateKeySharesEnum::Z64(
+                        CompressionPrivateKeyShares {
+                            post_packing_ks_key: GlweSecretKeyShare {
+                                data: data.expect("Output is expected"),
+                                polynomial_size,
+                            },
+                            params: compression_params.raw_compression_parameters,
+                        },
+                    ))
+                } else {
+                    None
+                }
             }
             DkgMode::Z128 => {
                 // Extract the GLWE secret key share for the compression scheme if any
@@ -265,14 +473,27 @@ where
                     })
                     .transpose()
                     .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-                CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
-                    post_packing_ks_key: GlweSecretKeyShare {
-                        data: reshare_same_sets(preproc128, session, maybe_key, expected_key_size)
-                            .await?,
-                        polynomial_size,
-                    },
-                    params: compression_params.raw_compression_parameters,
-                })
+                let data = reshare
+                    .execute(
+                        sessions,
+                        preproc128,
+                        R::MaybeExpectedInputShares::from(maybe_key),
+                        expected_key_size,
+                    )
+                    .await?;
+                if R::is_output_expected() {
+                    Some(CompressionPrivateKeySharesEnum::Z128(
+                        CompressionPrivateKeyShares {
+                            post_packing_ks_key: GlweSecretKeyShare {
+                                data: data.expect("Output is expected"),
+                                polynomial_size,
+                            },
+                            params: compression_params.raw_compression_parameters,
+                        },
+                    ))
+                } else {
+                    None
+                }
             }
         })
     } else {
@@ -290,25 +511,424 @@ where
                         .as_mut()
                         .map(|key| key.data.as_mut())
                 });
-                Some(LweSecretKeyShare {
-                    data: reshare_same_sets(preproc128, session, maybe_key, expected_key_size)
-                        .await?,
-                })
+                let data = reshare
+                    .execute(
+                        sessions,
+                        preproc128,
+                        R::MaybeExpectedInputShares::from(maybe_key),
+                        expected_key_size,
+                    )
+                    .await?;
+                if R::is_output_expected() {
+                    Some(Some(LweSecretKeyShare {
+                        data: data.expect("Output is expected"),
+                    }))
+                } else {
+                    None
+                }
             } else {
                 None
             }
         }
     };
 
-    Ok(PrivateKeySet {
-        lwe_encryption_secret_key_share,
-        lwe_compute_secret_key_share,
-        glwe_secret_key_share,
-        glwe_secret_key_share_sns_as_lwe,
-        parameters: basic_params_handle.to_classic_pbs_parameters(),
-        glwe_secret_key_share_compression,
-        glwe_sns_compression_key_as_lwe,
-    })
+    if R::is_output_expected() {
+        tracing::info!("Resharing completed, output is expected.");
+        Ok(Some(PrivateKeySet {
+            lwe_encryption_secret_key_share: lwe_encryption_secret_key_share
+                .expect("Output is expected"),
+            lwe_compute_secret_key_share: lwe_compute_secret_key_share.expect("Output is expected"),
+            glwe_secret_key_share: glwe_secret_key_share.expect("Output is expected"),
+            glwe_secret_key_share_sns_as_lwe: glwe_secret_key_share_sns_as_lwe
+                .expect("Output is expected"),
+            parameters: basic_params_handle.to_classic_pbs_parameters(),
+            glwe_secret_key_share_compression: glwe_secret_key_share_compression
+                .expect("Output is expected"),
+            glwe_sns_compression_key_as_lwe: glwe_sns_compression_key_as_lwe
+                .expect("Output is expected"),
+        }))
+    } else {
+        tracing::info!("Resharing completed, no output is expected.");
+        Ok(None)
+    }
+}
+
+#[derive(Default)]
+pub struct NotExpected<T> {
+    _marker: std::marker::PhantomData<T>,
+}
+
+pub struct Expected<T>(T);
+
+pub struct Optional<T>(Option<T>);
+
+pub trait MaybeExpected<T>: From<Option<T>> + Into<Option<T>> {}
+
+impl<T> From<Option<T>> for NotExpected<T> {
+    fn from(value: Option<T>) -> Self {
+        assert!(value.is_none(), "Expected no value, but got Some");
+        NotExpected {
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T> From<NotExpected<T>> for Option<T> {
+    fn from(_: NotExpected<T>) -> Self {
+        None
+    }
+}
+
+impl<T> From<Option<T>> for Expected<T> {
+    fn from(value: Option<T>) -> Self {
+        assert!(value.is_some(), "Expected Some value, but got None");
+        Expected(value.unwrap())
+    }
+}
+
+impl<T> From<Expected<T>> for Option<T> {
+    fn from(value: Expected<T>) -> Self {
+        Some(value.0)
+    }
+}
+
+impl<T> From<Option<T>> for Optional<T> {
+    fn from(value: Option<T>) -> Self {
+        Optional(value)
+    }
+}
+
+impl<T> From<Optional<T>> for Option<T> {
+    fn from(value: Optional<T>) -> Self {
+        value.0
+    }
+}
+
+impl<T> MaybeExpected<T> for NotExpected<T> {}
+impl<T> MaybeExpected<T> for Expected<T> {}
+impl<T> MaybeExpected<T> for Optional<T> {}
+
+#[async_trait]
+pub trait Reshare: ProtocolDescription + Send + Sync + Default + Clone {
+    type ReshareSessions;
+    // This associated type allows us to have optional preprocessing
+    // that is compiler enforced.
+    type MaybeExpectedPreprocessing<Z>: MaybeExpected<Z>;
+    // This associated type allows us to have optional input shares
+    // that is compiler enforced
+    type MaybeExpectedInputShares<Z>: MaybeExpected<Z>;
+
+    async fn execute<
+        Prep: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
+        Z: BaseRing + Zeroize,
+        const EXTENSION_DEGREE: usize,
+    >(
+        &self,
+        sessions: &mut Self::ReshareSessions,
+        preproc: &mut Self::MaybeExpectedPreprocessing<Prep>,
+        input_shares: Self::MaybeExpectedInputShares<
+            &mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>,
+        >,
+        expected_input_len: usize,
+    ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
+    where
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
+
+    fn is_output_expected() -> bool;
+}
+
+pub struct SameSetsReshare<Ses: BaseSessionHandles> {
+    session_marker: std::marker::PhantomData<Ses>,
+}
+
+impl<Ses: BaseSessionHandles> Clone for SameSetsReshare<Ses> {
+    fn clone(&self) -> Self {
+        SameSetsReshare {
+            session_marker: std::marker::PhantomData::<Ses>,
+        }
+    }
+}
+
+impl<Ses: BaseSessionHandles> Default for SameSetsReshare<Ses> {
+    fn default() -> Self {
+        SameSetsReshare {
+            session_marker: std::marker::PhantomData::<Ses>,
+        }
+    }
+}
+
+impl<Ses: BaseSessionHandles> ProtocolDescription for SameSetsReshare<Ses> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{indent}-SameSetsReshare")
+    }
+}
+
+#[async_trait]
+impl<Ses: BaseSessionHandles> Reshare for SameSetsReshare<Ses> {
+    type ReshareSessions = Ses;
+    // For same set resharing, preprocessing is always required
+    type MaybeExpectedPreprocessing<T> = Expected<T>;
+    // This is optional as a legacy use of this protocol
+    // was to reshare after a failed DKG where all parties
+    // might not have input to share.
+    type MaybeExpectedInputShares<T> = Optional<T>;
+
+    async fn execute<
+        Prep: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
+        Z: BaseRing + Zeroize,
+        const EXTENSION_DEGREE: usize,
+    >(
+        &self,
+        sessions: &mut Self::ReshareSessions,
+        preproc: &mut Expected<Prep>,
+        input_shares: Optional<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+        expected_input_len: usize,
+    ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
+    where
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    {
+        Ok(Some(
+            reshare_same_sets(&mut preproc.0, sessions, input_shares.0, expected_input_len).await?,
+        ))
+    }
+
+    fn is_output_expected() -> bool {
+        true
+    }
+}
+
+pub struct TwoSetsReshareAsSet1<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>> {
+    two_sets_session_marker: std::marker::PhantomData<TwoSetsSes>,
+}
+
+impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>> Clone
+    for TwoSetsReshareAsSet1<TwoSetsSes>
+{
+    fn clone(&self) -> Self {
+        TwoSetsReshareAsSet1 {
+            two_sets_session_marker: std::marker::PhantomData::<TwoSetsSes>,
+        }
+    }
+}
+
+impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>> Default
+    for TwoSetsReshareAsSet1<TwoSetsSes>
+{
+    fn default() -> Self {
+        TwoSetsReshareAsSet1 {
+            two_sets_session_marker: std::marker::PhantomData::<TwoSetsSes>,
+        }
+    }
+}
+
+impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>> ProtocolDescription
+    for TwoSetsReshareAsSet1<TwoSetsSes>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{indent}-SameSetsReshareAsSet1")
+    }
+}
+
+#[async_trait]
+impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>> Reshare
+    for TwoSetsReshareAsSet1<TwoSetsSes>
+{
+    type ReshareSessions = TwoSetsSes;
+    // As set 1 preprocessing is not needed
+    type MaybeExpectedPreprocessing<T> = NotExpected<T>;
+    // As set 1 I have an input to reshare
+    type MaybeExpectedInputShares<T> = Expected<T>;
+
+    async fn execute<
+        Prep: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
+        Z: BaseRing + Zeroize,
+        const EXTENSION_DEGREE: usize,
+    >(
+        &self,
+        sessions: &mut Self::ReshareSessions,
+        _preproc: &mut Self::MaybeExpectedPreprocessing<Prep>,
+        input_shares: Expected<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+        expected_input_len: usize,
+    ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
+    where
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    {
+        assert!(sessions.my_role().is_set1() && !sessions.my_role().is_set2());
+        Ok(reshare_two_sets::<_, BaseSession, Prep, _, _>(
+            sessions,
+            None,
+            None,
+            Some(input_shares.0),
+            expected_input_len,
+        )
+        .await?)
+    }
+
+    fn is_output_expected() -> bool {
+        false
+    }
+}
+
+pub struct TwoSetsReshareAsSet2<
+    TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
+    OneSetSes: BaseSessionHandles,
+> {
+    two_sets_session_marker: std::marker::PhantomData<TwoSetsSes>,
+    one_set_session_marker: std::marker::PhantomData<OneSetSes>,
+}
+
+impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>, OneSetSes: BaseSessionHandles> Clone
+    for TwoSetsReshareAsSet2<TwoSetsSes, OneSetSes>
+{
+    fn clone(&self) -> Self {
+        TwoSetsReshareAsSet2 {
+            two_sets_session_marker: std::marker::PhantomData::<TwoSetsSes>,
+            one_set_session_marker: std::marker::PhantomData::<OneSetSes>,
+        }
+    }
+}
+
+impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>, OneSetSes: BaseSessionHandles> Default
+    for TwoSetsReshareAsSet2<TwoSetsSes, OneSetSes>
+{
+    fn default() -> Self {
+        TwoSetsReshareAsSet2 {
+            two_sets_session_marker: std::marker::PhantomData::<TwoSetsSes>,
+            one_set_session_marker: std::marker::PhantomData::<OneSetSes>,
+        }
+    }
+}
+
+impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>, OneSetSes: BaseSessionHandles>
+    ProtocolDescription for TwoSetsReshareAsSet2<TwoSetsSes, OneSetSes>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{indent}-SameSetsReshareAsSet2")
+    }
+}
+
+#[async_trait]
+impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>, OneSetSes: BaseSessionHandles> Reshare
+    for TwoSetsReshareAsSet2<TwoSetsSes, OneSetSes>
+{
+    type ReshareSessions = (TwoSetsSes, OneSetSes);
+    // As set 2 preprocessing is required
+    type MaybeExpectedPreprocessing<T> = Expected<T>;
+    // As set 2 I don't have an input to reshare
+    type MaybeExpectedInputShares<T> = NotExpected<T>;
+
+    async fn execute<
+        Prep: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
+        Z: BaseRing + Zeroize,
+        const EXTENSION_DEGREE: usize,
+    >(
+        &self,
+        sessions: &mut Self::ReshareSessions,
+        preproc: &mut Expected<Prep>,
+        _input_shares: NotExpected<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+        expected_input_len: usize,
+    ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
+    where
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    {
+        let (two_set_session, my_set_session) = sessions;
+        assert!(two_set_session.my_role().is_set2() && !two_set_session.my_role().is_set1());
+        Ok(reshare_two_sets(
+            two_set_session,
+            Some(my_set_session),
+            Some(&mut preproc.0),
+            None,
+            expected_input_len,
+        )
+        .await?)
+    }
+
+    fn is_output_expected() -> bool {
+        true
+    }
+}
+
+pub struct TwoSetsReshareAsBothSets<
+    TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>,
+    OneSetSes: BaseSessionHandles,
+> {
+    two_sets_session_marker: std::marker::PhantomData<TwoSetsSes>,
+    one_set_session_marker: std::marker::PhantomData<OneSetSes>,
+}
+
+impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>, OneSetSes: BaseSessionHandles> Clone
+    for TwoSetsReshareAsBothSets<TwoSetsSes, OneSetSes>
+{
+    fn clone(&self) -> Self {
+        TwoSetsReshareAsBothSets {
+            two_sets_session_marker: std::marker::PhantomData::<TwoSetsSes>,
+            one_set_session_marker: std::marker::PhantomData::<OneSetSes>,
+        }
+    }
+}
+
+impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>, OneSetSes: BaseSessionHandles> Default
+    for TwoSetsReshareAsBothSets<TwoSetsSes, OneSetSes>
+{
+    fn default() -> Self {
+        TwoSetsReshareAsBothSets {
+            two_sets_session_marker: std::marker::PhantomData::<TwoSetsSes>,
+            one_set_session_marker: std::marker::PhantomData::<OneSetSes>,
+        }
+    }
+}
+
+impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>, OneSetSes: BaseSessionHandles>
+    ProtocolDescription for TwoSetsReshareAsBothSets<TwoSetsSes, OneSetSes>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{indent}-SameSetsReshareAsBothSets")
+    }
+}
+
+#[async_trait]
+impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>, OneSetSes: BaseSessionHandles> Reshare
+    for TwoSetsReshareAsBothSets<TwoSetsSes, OneSetSes>
+{
+    type ReshareSessions = (TwoSetsSes, OneSetSes);
+    // As both sets preprocessing is always required
+    type MaybeExpectedPreprocessing<T> = Expected<T>;
+    // As both sets I have an input to reshare
+    type MaybeExpectedInputShares<T> = Expected<T>;
+
+    async fn execute<
+        Prep: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
+        Z: BaseRing + Zeroize,
+        const EXTENSION_DEGREE: usize,
+    >(
+        &self,
+        sessions: &mut Self::ReshareSessions,
+        preproc: &mut Expected<Prep>,
+        input_shares: Expected<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+        expected_input_len: usize,
+    ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
+    where
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    {
+        let (two_set_session, my_set_session) = sessions;
+        assert!(two_set_session.my_role().is_set1() && two_set_session.my_role().is_set2());
+        Ok(reshare_two_sets(
+            two_set_session,
+            Some(my_set_session),
+            Some(&mut preproc.0),
+            Some(input_shares.0),
+            expected_input_len,
+        )
+        .await?)
+    }
+
+    fn is_output_expected() -> bool {
+        true
+    }
 }
 
 // Note: Can't really split into 2 functions one for sender one for receiver
@@ -322,9 +942,9 @@ pub async fn reshare_two_sets<
     const EXTENSION_DEGREE: usize,
 >(
     two_sets_session: &mut TwoSetsSession,
-    set_2_session: &mut Option<OneSetSession>,
-    preproc: &mut Option<P>,
-    input_shares: &mut Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+    set_2_session: Option<&mut OneSetSession>,
+    preproc: Option<&mut P>,
+    input_shares: Option<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
     expected_input_len: usize,
 ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
 where
@@ -1312,14 +1932,14 @@ mod tests {
                 let preproc_required =
                     ResharePreprocRequired::new_same_set(session.num_parties(), new_params);
 
-                let mut new_preproc_64 = InMemoryBasePreprocessing {
+                let new_preproc_64 = InMemoryBasePreprocessing {
                     available_triples: Vec::new(),
                     available_randoms: preproc64
                         .next_random_vec(preproc_required.batch_params_64.randoms)
                         .unwrap(),
                 };
 
-                let mut new_preproc_128 = InMemoryBasePreprocessing {
+                let new_preproc_128 = InMemoryBasePreprocessing {
                     available_triples: Vec::new(),
                     available_randoms: preproc128
                         .next_random_vec(preproc_required.batch_params_128.randoms)
@@ -1334,19 +1954,20 @@ mod tests {
                         Some(party_keyshare)
                     };
 
-                let out = reshare_sk_same_sets(
-                    &mut new_preproc_128,
-                    &mut new_preproc_64,
+                let out = secure_reshare_same_sets(
                     &mut session,
+                    new_preproc_128,
+                    new_preproc_64,
                     &mut my_contribution,
                     new_params,
                 )
                 .await
                 .unwrap();
 
+                // Can't do this check anymore as we take onwership of the preprocessing
                 //Making sure ResharPreprocRequired doesn't ask for too much preprocessing
-                assert_eq!(new_preproc_64.available_randoms.len(), 0);
-                assert_eq!(new_preproc_128.available_randoms.len(), 0);
+                //assert_eq!(new_preproc_64.available_randoms.len(), 0);
+                //assert_eq!(new_preproc_128.available_randoms.len(), 0);
                 (session.my_role(), out, my_contribution)
             });
         }
@@ -1573,9 +2194,9 @@ mod tests {
 
             let reshare_result = reshare_two_sets(
                 &mut two_sets_session,
-                &mut set_2_session,
-                &mut preproc,
-                &mut my_shares,
+                set_2_session.as_mut(),
+                preproc.as_mut(),
+                my_shares.as_mut(),
                 num_secrets,
             )
             .await;

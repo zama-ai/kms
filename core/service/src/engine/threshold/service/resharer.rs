@@ -11,7 +11,7 @@ use kms_grpc::{
 };
 use threshold_fhe::{
     execution::{
-        online::reshare::{reshare_sk_same_sets, ResharePreprocRequired},
+        online::reshare::{secure_reshare_same_sets, ResharePreprocRequired},
         runtime::sessions::session_parameters::GenericParameterHandles,
         small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
         tfhe_internals::public_keysets::FhePubKeySet,
@@ -234,10 +234,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     .map(|r| r.private_keys.as_ref().clone())
             };
 
-            let new_private_key_set = reshare_sk_same_sets(
-                &mut correlated_randomness_z128,
-                &mut correlated_randomness_z64,
+            let new_private_key_set = secure_reshare_same_sets(
                 &mut base_session,
+                correlated_randomness_z128,
+                correlated_randomness_z64,
                 &mut mutable_keys,
                 dkg_params,
             )
