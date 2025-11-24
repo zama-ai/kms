@@ -9,11 +9,11 @@ export AWS_SECRET_ACCESS_KEY
 
 echo 'Starting kms service'
 
-if [[ "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}" = "true" ]]; then
-	KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file "${KMS_CONFIG_FILE}"
-elif [[ "${SET_EMPTY_PEERLIST}" = "true" ]]; then
-	kms-server --ignore-peerlist --config-file "${KMS_CONFIG_FILE}"
+if [[ "${KMS_DOCKER_BACKUP_SECRET_SHARING}" = "true" ]]; then
+	KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true kms-server --config-file "${KMS_DOCKER_CONFIG_FILE}"
+elif [[ "${KMS_DOCKER_EMPTY_PEERLIST}" = "true" ]]; then
+	kms-server --ignore-peerlist --config-file "${KMS_DOCKER_CONFIG_FILE}"
 else
-	kms-server --config-file "${KMS_CONFIG_FILE}"
+	kms-server --config-file "${KMS_DOCKER_CONFIG_FILE}"
 fi
 

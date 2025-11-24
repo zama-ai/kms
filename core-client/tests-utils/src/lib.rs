@@ -85,25 +85,19 @@ impl DockerComposeCmd {
             }
             KMSMode::ThresholdTestParameterNoInit => {
                 build.arg("docker-compose-core-threshold.yml");
-                build.env("SET_EMPTY_PEERLIST", "true");
+                build.env("KMS_DOCKER_EMPTY_PEERLIST", "true");
             }
             KMSMode::ThresholdTestParameterNoInitSixParty => {
                 build.arg("docker-compose-core-threshold-6.yml");
-                build.env("SET_EMPTY_PEERLIST", "true");
+                build.env("KMS_DOCKER_EMPTY_PEERLIST", "true");
             }
             KMSMode::ThresholdCustodianTestParameter => {
                 build.arg("docker-compose-core-threshold.yml");
-                build.env(
-                    "KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED",
-                    "true",
-                );
+                build.env("KMS_DOCKER_BACKUP_SECRET_SHARING", "true");
             }
             KMSMode::CentralizedCustodian => {
                 build.arg("docker-compose-core-centralized.yml");
-                build.env(
-                    "KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED",
-                    "true",
-                );
+                build.env("KMS_DOCKER_BACKUP_SECRET_SHARING", "true");
             }
             KMSMode::Centralized => {
                 build.arg("docker-compose-core-centralized.yml");

@@ -85,9 +85,9 @@ services:
     environment:
       - DOCKER_BUILDKIT=1
       # Pass the flag to entrypoint script
-      - KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}
-      - SET_EMPTY_PEERLIST=${SET_EMPTY_PEERLIST}
-      - KMS_CONFIG_FILE=config/compose_1.toml
+      - KMS_DOCKER_BACKUP_SECRET_SHARING=${KMS_DOCKER_BACKUP_SECRET_SHARING}
+      - KMS_DOCKER_EMPTY_PEERLIST=${KMS_DOCKER_EMPTY_PEERLIST}
+      - KMS_DOCKER_CONFIG_FILE=config/compose_1.toml
     # We do a key-gen first because otherwise the service won't start
     # NOTE: currently debugging the upload to s3
     # Credentials are set with both credentials file and env-var
@@ -126,9 +126,9 @@ services:
     environment:
       - DOCKER_BUILDKIT=1
       # Pass the flag to entrypoint script
-      - KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}
-      - SET_EMPTY_PEERLIST=${SET_EMPTY_PEERLIST}
-      - KMS_CONFIG_FILE=config/compose_2.toml
+      - KMS_DOCKER_BACKUP_SECRET_SHARING=${KMS_DOCKER_BACKUP_SECRET_SHARING}
+      - KMS_DOCKER_EMPTY_PEERLIST=${KMS_DOCKER_EMPTY_PEERLIST}
+      - KMS_DOCKER_CONFIG_FILE=config/compose_2.toml
     entrypoint:
       - ./docker-compose-core-threshold-entrypoint.sh
     depends_on:
@@ -169,9 +169,9 @@ services:
     environment:
       - DOCKER_BUILDKIT=1
       # Pass the flag to entrypoint script
-      - KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}
-      - SET_EMPTY_PEERLIST=${SET_EMPTY_PEERLIST}
-      - KMS_CONFIG_FILE=config/compose_3.toml
+      - KMS_DOCKER_BACKUP_SECRET_SHARING=${KMS_DOCKER_BACKUP_SECRET_SHARING}
+      - KMS_DOCKER_EMPTY_PEERLIST=${KMS_DOCKER_EMPTY_PEERLIST}
+      - KMS_DOCKER_CONFIG_FILE=config/compose_3.toml
     entrypoint:
       - ./docker-compose-core-threshold-entrypoint.sh
     depends_on:
@@ -212,9 +212,9 @@ services:
     environment:
       - DOCKER_BUILDKIT=1
       # Pass the flag to entrypoint script
-      - KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=${KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED}
-      - SET_EMPTY_PEERLIST=${SET_EMPTY_PEERLIST}
-      - KMS_CONFIG_FILE=config/compose_4.toml
+      - KMS_DOCKER_BACKUP_SECRET_SHARING=${KMS_DOCKER_BACKUP_SECRET_SHARING}
+      - KMS_DOCKER_EMPTY_PEERLIST=${KMS_DOCKER_EMPTY_PEERLIST}
+      - KMS_DOCKER_CONFIG_FILE=config/compose_4.toml
     entrypoint:
       - ./docker-compose-core-threshold-entrypoint.sh
     depends_on:
@@ -250,7 +250,7 @@ services:
       - RUN_MODE=dev
     entrypoint: >
       /bin/sh -c "
-      if [[ "${SET_EMPTY_PEERLIST}" = "true" ]]; then \
+      if [[ "${KMS_DOCKER_EMPTY_PEERLIST}" = "true" ]]; then \
         echo \"Skipping initialization procedure since peerlist is empty\" &&
         sleep 1 &&
         exit 0; \
