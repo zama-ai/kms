@@ -527,66 +527,12 @@ where
             .await?;
 
         // For each of the received values, take the majority vote
-
-        let mut votes = HashMap::with_capacity(parties_in_s1.len());
-        for (sender_in_s2, broadcast_result) in broadcast_results.into_iter() {
-            if let BroadcastValue::MapRingVector(mut map_ring_vector) = broadcast_result {
-                // We are exploring the purported `multicast_results` receive from `sender_in_s2`
-                // and we register its votes
-                for role_in_s1 in parties_in_s1.iter() {
-                    if let Some(values) = map_ring_vector.remove(role_in_s1) {
-                        let candidates_for_role_in_s1 =
-                            votes.entry(*role_in_s1).or_insert_with(|| {
-                                vec![HashMap::<_, usize>::with_capacity(my_set_session.num_parties()); expected_input_len]
-                            });
-                        let mut values_iter = values.into_iter();
-                        for candidate_for_role_in_s1 in candidates_for_role_in_s1.iter_mut() {
-                            if let Some(value) = values_iter.next() {
-                                // Using the raw coefs here to be able to use a BinaryHeap later on
-                                // so we have a deterministic ordering even if we have equal number of votes
-                                *candidate_for_role_in_s1.entry(value.coefs).or_default() +=
-                                    1_usize;
-                            }
-                        }
-                    }
-                }
-            } else {
-                tracing::warn!(
-                    "During resharing, unexpected broadcast. Adding party {sender_in_s2:?} to corrupt parties"
-                );
-                my_set_session.add_corrupt(sender_in_s2);
-            }
-        }
-
-        // Now we take the majority vote for each party in set 1
-        let mut agreed_contributions_from_s1 = HashMap::with_capacity(parties_in_s1.len());
-        for (role_in_s1, candidates_for_role_in_s1) in votes.into_iter() {
-            let mut agreed_values = Vec::with_capacity(expected_input_len);
-            for (idx, candidate_for_role_in_s1) in candidates_for_role_in_s1.into_iter().enumerate()
-            {
-                // Take the max with a deterministic ordering even if there's a tie in votes
-                // because it's then ordered on the raw coefficients
-                // Note: Heap might be overkill since we only need to track the max...
-                let mut heap = BinaryHeap::new();
-                for (value, count) in candidate_for_role_in_s1.into_iter() {
-                    heap.push((count, value));
-                }
-                if let Some((count, value)) = heap.pop() {
-                    tracing::info!(
-                        "During resharing, party {:?} got {} votes for its {idx}th value ",
-                        role_in_s1,
-                        count,
-                    );
-                    agreed_values.push(ResiduePoly::from_array(value));
-                } else {
-                    return Err(anyhow_error_and_log(format!(
-                        "During resharing, no majority vote could be found for party {:?}",
-                        role_in_s1
-                    )));
-                }
-            }
-            agreed_contributions_from_s1.insert(role_in_s1, agreed_values);
-        }
+        let agreed_contributions_from_s1 = take_majority_vote_on_broadcasts(
+            my_set_session,
+            broadcast_results,
+            &parties_in_s1,
+            expected_input_len,
+        )?;
 
         // Compute my share of the unmasked secret
         if let Some(rs_shares) = masks_to_resharers {
@@ -799,6 +745,79 @@ where
 
     Ok(s_share_vec)
 }
+
+fn take_majority_vote_on_broadcasts<
+    Z: BaseRing,
+    const EXTENSION_DEGREE: usize,
+    Ses: BaseSessionHandles,
+>(
+    my_set_session: &mut Ses,
+    broadcast_results: HashMap<Role, BroadcastValue<ResiduePoly<Z, EXTENSION_DEGREE>>>,
+    parties_in_s1: &HashSet<Role>,
+    expected_input_len: usize,
+) -> anyhow::Result<HashMap<Role, Vec<ResiduePoly<Z, EXTENSION_DEGREE>>>> {
+    let mut votes = HashMap::with_capacity(parties_in_s1.len());
+    for (sender_in_s2, broadcast_result) in broadcast_results.into_iter() {
+        if let BroadcastValue::MapRingVector(mut map_ring_vector) = broadcast_result {
+            // We are exploring the purported `multicast_results` receive from `sender_in_s2`
+            // and we register its votes
+            for role_in_s1 in parties_in_s1.iter() {
+                if let Some(values) = map_ring_vector.remove(role_in_s1) {
+                    let candidates_for_role_in_s1 = votes.entry(*role_in_s1).or_insert_with(|| {
+                        vec![
+                            HashMap::<_, usize>::with_capacity(my_set_session.num_parties());
+                            expected_input_len
+                        ]
+                    });
+                    let mut values_iter = values.into_iter();
+                    for candidate_for_role_in_s1 in candidates_for_role_in_s1.iter_mut() {
+                        if let Some(value) = values_iter.next() {
+                            // Using the raw coefs here to be able to use a BinaryHeap later on
+                            // so we have a deterministic ordering even if we have equal number of votes
+                            *candidate_for_role_in_s1.entry(value.coefs).or_default() += 1_usize;
+                        }
+                    }
+                }
+            }
+        } else {
+            tracing::warn!(
+                    "During resharing, unexpected broadcast. Adding party {sender_in_s2:?} to corrupt parties"
+                );
+            my_set_session.add_corrupt(sender_in_s2);
+        }
+    }
+
+    // Now we take the majority vote for each party in set 1
+    let mut agreed_contributions_from_s1 = HashMap::with_capacity(parties_in_s1.len());
+    for (role_in_s1, candidates_for_role_in_s1) in votes.into_iter() {
+        let mut agreed_values = Vec::with_capacity(expected_input_len);
+        for (idx, candidate_for_role_in_s1) in candidates_for_role_in_s1.into_iter().enumerate() {
+            // Take the max with a deterministic ordering even if there's a tie in votes
+            // because it's then ordered on the raw coefficients
+            // Note: Heap might be overkill since we only need to track the max...
+            let mut heap = BinaryHeap::new();
+            for (value, count) in candidate_for_role_in_s1.into_iter() {
+                heap.push((count, value));
+            }
+            if let Some((count, value)) = heap.pop() {
+                tracing::info!(
+                    "During resharing, party {:?} got {} votes for its {idx}th value ",
+                    role_in_s1,
+                    count,
+                );
+                agreed_values.push(ResiduePoly::from_array(value));
+            } else {
+                return Err(anyhow_error_and_log(format!(
+                    "During resharing, no majority vote could be found for party {:?}",
+                    role_in_s1
+                )));
+            }
+        }
+        agreed_contributions_from_s1.insert(role_in_s1, agreed_values);
+    }
+    Ok(agreed_contributions_from_s1)
+}
+
 async fn open_syndromes_and_correct_errors<
     Z: BaseRing,
     Ses: BaseSessionHandles,
@@ -887,6 +906,7 @@ where
 mod tests {
     use super::*;
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
+    use crate::algebra::structure_traits::FromU128;
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::RandomPreprocessing;
     use crate::execution::online::triple::open_list;
@@ -1595,5 +1615,129 @@ mod tests {
                 pivot.0, role
             );
         }
+    }
+
+    #[test]
+    fn test_majority_vote_reshare() {
+        // Generate inputs to test take_majority_vote_on_broadcast
+        let expected_input_len = 2;
+
+        // P1 in S2 has received [1,2],[3,4] from parties 1,2 in S1
+        let broadcast_from_p1 = BTreeMap::from([
+            (
+                Role::indexed_from_one(1),
+                vec![
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(1)),
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(2)),
+                ],
+            ),
+            (
+                Role::indexed_from_one(2),
+                vec![
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(3)),
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(4)),
+                ],
+            ),
+        ]);
+        // P2 in S2 has received [2,3],[4,5] from parties 1,2,3,4 in S1
+        let broadcast_from_p2 = BTreeMap::from([
+            (
+                Role::indexed_from_one(1),
+                vec![
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(2)),
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(3)),
+                ],
+            ),
+            (
+                Role::indexed_from_one(2),
+                vec![
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(4)),
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(5)),
+                ],
+            ),
+        ]);
+
+        // P3 in S2 has received [1,3],[3,5] from parties 1,2,3,4 in S1
+        let broadcast_from_p3 = BTreeMap::from([
+            (
+                Role::indexed_from_one(1),
+                vec![
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(1)),
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(3)),
+                ],
+            ),
+            (
+                Role::indexed_from_one(2),
+                vec![
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(3)),
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(6)),
+                ],
+            ),
+        ]);
+
+        // P4 in S2 has received [1,2], [_] from parties 1,2,3,4 in S1
+        let broadcast_from_p4 = BTreeMap::from([
+            (
+                Role::indexed_from_one(1),
+                vec![
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(1)),
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(2)),
+                ],
+            ),
+            (Role::indexed_from_one(2), vec![]),
+        ]);
+
+        // Winners are :
+        // - [1,3] for P1, 1 with 3 votes and 3 with tie of 2 votes but 3>2
+        // - [3,6] for P2 with 2 votes but tie break because 6 is bigger
+        let broadcast_results = HashMap::from([
+            (
+                Role::indexed_from_one(1),
+                BroadcastValue::MapRingVector(broadcast_from_p1),
+            ),
+            (
+                Role::indexed_from_one(2),
+                BroadcastValue::MapRingVector(broadcast_from_p2),
+            ),
+            (
+                Role::indexed_from_one(3),
+                BroadcastValue::MapRingVector(broadcast_from_p3),
+            ),
+            (
+                Role::indexed_from_one(4),
+                BroadcastValue::MapRingVector(broadcast_from_p4),
+            ),
+        ]);
+
+        let mut session = crate::tests::helper::testing::get_networkless_base_session_for_parties(
+            4,
+            1,
+            Role::indexed_from_one(1),
+        );
+
+        let parties_in_s1 = HashSet::from([Role::indexed_from_one(1), Role::indexed_from_one(2)]);
+
+        let majority_results = take_majority_vote_on_broadcasts(
+            &mut session,
+            broadcast_results,
+            &parties_in_s1,
+            expected_input_len,
+        )
+        .unwrap();
+
+        assert_eq!(
+            majority_results[&Role::indexed_from_one(1)],
+            vec![
+                ResiduePolyF4Z128::from_scalar(Z128::from_u128(1)),
+                ResiduePolyF4Z128::from_scalar(Z128::from_u128(3))
+            ]
+        );
+        assert_eq!(
+            majority_results[&Role::indexed_from_one(2)],
+            vec![
+                ResiduePolyF4Z128::from_scalar(Z128::from_u128(3)),
+                ResiduePolyF4Z128::from_scalar(Z128::from_u128(6))
+            ]
+        );
     }
 }
