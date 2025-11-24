@@ -444,7 +444,7 @@ where
             BTreeMap::new()
         };
         // Receive the masked shares from parties in set 1
-        let parties_to_receive_from = two_sets_session
+        let parties_in_s1 = two_sets_session
             .get_all_sorted_roles()
             .clone()
             .into_iter()
@@ -452,9 +452,10 @@ where
             .collect();
 
         let mut jobs = JoinSet::new();
-        let role_transform = |sender: &TwoSetsRole, _external_opening_info: ()| match sender {
+        let transform_s1_to_role = |sender: &TwoSetsRole, _external_opening_info: ()| match sender {
             TwoSetsRole::Set1(role) => *role,
             TwoSetsRole::Both(dual_role) => dual_role.role_set_1,
+            // Here it is OK to panic because this function is only called for parties in set 1
             TwoSetsRole::Set2(role) => {
                 panic!("Expected to receive from set 1 parties, got {:?}", role)
             }
@@ -464,7 +465,7 @@ where
             &mut jobs,
             two_sets_session,
             &two_sets_session.my_role(),
-            &parties_to_receive_from,
+            &parties_in_s1,
             Some(two_sets_session.corrupt_roles()),
             |msg, _id| match msg {
                 NetworkValue::VecRingValue(v) => Ok(v),
@@ -473,7 +474,7 @@ where
                     msg.network_type_name()
                 ))),
             },
-            role_transform,
+            transform_s1_to_role,
             (),
         )
         .await;
@@ -506,10 +507,15 @@ where
             }
         }
 
+        let parties_in_s1 = parties_in_s1
+            .iter()
+            .map(|role| transform_s1_to_role(role, ()))
+            .collect::<HashSet<_>>();
         // Make sure I have something to say for all roles in s1, even if it's an empty vec
-        for role_in_s1 in parties_to_receive_from.iter() {
-            let role_in_s1 = role_transform(role_in_s1, ());
-            multicast_results.entry(role_in_s1).or_insert_with(Vec::new);
+        for role_in_s1 in parties_in_s1.iter() {
+            multicast_results
+                .entry(*role_in_s1)
+                .or_insert_with(Vec::new);
         }
 
         // Broadcast those received values within set 2
@@ -521,10 +527,6 @@ where
             .await?;
 
         // For each of the received values, take the majority vote
-        let parties_in_s1 = parties_to_receive_from
-            .iter()
-            .map(|role| role_transform(role, ()))
-            .collect::<HashSet<_>>();
 
         let mut votes = HashMap::with_capacity(parties_in_s1.len());
         for (sender_in_s2, broadcast_result) in broadcast_results.into_iter() {
@@ -590,7 +592,7 @@ where
         if let Some(rs_shares) = masks_to_resharers {
             let rs_shares = rs_shares
                 .into_iter()
-                .map(|(role, value)| (role_transform(&role, ()), value))
+                .map(|(role, value)| (transform_s1_to_role(&role, ()), value))
                 .collect::<HashMap<_, _>>();
 
             let unmasked_reshared_shares = unmask_reshared_shares(
