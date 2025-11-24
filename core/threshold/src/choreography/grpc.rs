@@ -53,7 +53,7 @@ use crate::execution::online::preprocessing::{
     BitDecPreprocessing, DKGPreprocessing, InMemoryBitDecPreprocessing, NoiseFloodPreprocessing,
     PreprocessorFactory,
 };
-use crate::execution::online::reshare::{reshare_sk_same_sets, ResharePreprocRequired};
+use crate::execution::online::reshare::{secure_reshare_same_sets, ResharePreprocRequired};
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
 use crate::execution::runtime::sessions::base_session::ToBaseSession;
 use crate::execution::runtime::sessions::base_session::{BaseSession, BaseSessionHandles};
@@ -2517,7 +2517,7 @@ where
             //Perform preprocessing
             let num_needed_preproc = ResharePreprocRequired::new_same_set(num_parties, params);
 
-            let (mut preprocessing_64, mut preprocessing_128, sessions) = match session_type {
+            let (preprocessing_64, preprocessing_128, sessions) = match session_type {
                 SessionType::Small => {
                     let prss_setup_z128 = prss_setup
                         .get(&SupportedRing::ResiduePolyZ128)
@@ -2592,10 +2592,10 @@ where
             };
 
             //Perform online
-            let new_private_key_set = reshare_sk_same_sets(
-                &mut preprocessing_128,
-                &mut preprocessing_64,
+            let new_private_key_set = secure_reshare_same_sets(
                 &mut reshare_base_session,
+                preprocessing_128,
+                preprocessing_64,
                 &mut Some(old_private_key_set),
                 params,
             )
