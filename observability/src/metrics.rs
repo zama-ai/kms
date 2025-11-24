@@ -84,6 +84,14 @@ impl CoreMetrics {
     pub fn with_config(config: MetricsConfig) -> Self {
         let meter = global::meter("kms");
 
+        // Start by recording the version
+        meter
+            .u64_gauge("kms_version")
+            .with_description("KMS version information")
+            .with_unit("version")
+            .build()
+            .record(1, &[KeyValue::new("version", env!("CARGO_PKG_VERSION"))]);
+
         // Store metric names as static strings
         let operations: Cow<'static, str> = format!("{}_operations", config.prefix).into();
         let operation_errors: Cow<'static, str> =
