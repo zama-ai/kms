@@ -126,7 +126,7 @@ test-isolated-threshold: generate-test-material-testing
 # Run integration tests only
 test-isolated-integration: generate-test-material-testing
 	@echo "Running integration tests..."
-	cargo test --test integration_test_backup --features insecure -- --test-threads=1
+	cargo test --test integration_test_backup --all-features -- --test-threads=1
 
 # Run isolated tests with parallel execution (where safe - non-PRSS tests)
 test-isolated-parallel: generate-test-material-testing
