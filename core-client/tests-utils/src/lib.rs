@@ -87,6 +87,9 @@ impl DockerComposeCmd {
                 build.arg("docker-compose-core-threshold.yml");
                 build.env("KMS_DOCKER_EMPTY_PEERLIST", "true");
             }
+            // six party variant used for testing context switching and resharing
+            // basically it will support two sets of 4 party threshold networks
+            // where there is an overlap of two partyes (parties 3 and 4) that are in both networks
             KMSMode::ThresholdTestParameterNoInitSixParty => {
                 build.arg("docker-compose-core-threshold-6.yml");
                 build.env("KMS_DOCKER_EMPTY_PEERLIST", "true");

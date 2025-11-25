@@ -1374,7 +1374,7 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
         new_prss(context_id, epoch_id, &config_path, test_path).await;
     }
 
-    // first mpc context with parties 5, 6, 3, 4
+    // second mpc context with parties 5, 6, 3, 4
     {
         let temp_dir = tempfile::tempdir().unwrap();
         let test_path = temp_dir.path();

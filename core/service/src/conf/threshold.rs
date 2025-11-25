@@ -57,13 +57,6 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
                 conf.my_id,
                 num_parties
             );
-            // return Err(ValidationError::new("Incorrect party ID").with_message(
-            //     format!(
-            //         "Party ID cannot be greater than the number of parties ({}), but was {}.",
-            //         num_parties, conf.my_id
-            //     )
-            //     .into(),
-            // ));
         }
         for peer in peers {
             if peer.party_id > num_parties {

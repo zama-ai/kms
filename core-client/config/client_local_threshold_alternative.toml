@@ -1,4 +1,6 @@
 # Config for a threshold deployment of n=4 cores with threshold t=1
+# It is just like client_local_threshold.toml but with different core addresses and S3 folders
+# for parties 1 and 2. This is to help us with integration testing of context switching and resharing.
 
 # The type of the KMS ("centralized" or "threshold")
 kms_type = "threshold"

@@ -896,15 +896,20 @@ async fn read_kms_addresses_local(
     let mut addr_strings = Vec::with_capacity(sim_conf.cores.len());
 
     for cur_core in &sim_conf.cores {
-        // NOTE: cur_role might not match the storage path, as a workaround,
+        // NOTE: [cur_core.party_id] might not match the storage path, as a workaround,
         // if the kms config exists, then use the my_id field from there.
         let storage_role = {
             #[cfg(feature = "testing")]
             match cur_core.config_path {
                 Some(ref p) => {
                     let core_config: conf::CoreConfig =
-                        conf::init_conf(p.to_str().unwrap()).unwrap();
-                    Role::indexed_from_one(core_config.threshold.unwrap().my_id)
+                        conf::init_conf(p.to_str().expect("expect core config path")).unwrap();
+                    Role::indexed_from_one(
+                        core_config
+                            .threshold
+                            .expect("expect threshold config")
+                            .my_id,
+                    )
                 }
                 None => Role::indexed_from_one(cur_core.party_id),
             }
@@ -1820,15 +1825,21 @@ pub async fn execute_cmd(
                     )?;
                     core_endpoints_resp.insert(cur_core.party_id as u32, core_endpoint_resp);
 
-                    // NOTE: cur_role might not match the storage path, as a workaround,
+                    // NOTE: [cur_core.party_id] might not match the storage path, as a workaround,
                     // if the kms config exists, then use the my_id field from there.
                     let storage_role = {
                         #[cfg(feature = "testing")]
                         match cur_core.config_path {
                             Some(ref p) => {
                                 let core_config: conf::CoreConfig =
-                                    conf::init_conf(p.to_str().unwrap()).unwrap();
-                                Role::indexed_from_one(core_config.threshold.unwrap().my_id)
+                                    conf::init_conf(p.to_str().expect("expect core config path"))
+                                        .unwrap();
+                                Role::indexed_from_one(
+                                    core_config
+                                        .threshold
+                                        .expect("expect threshold config")
+                                        .my_id,
+                                )
                             }
                             None => Role::indexed_from_one(cur_core.party_id),
                         }

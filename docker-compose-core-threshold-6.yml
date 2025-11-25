@@ -1,3 +1,7 @@
+# Docker Compose file to run a 6 threshold KMS nodes.
+# This is used for integration testing of threshold features such as context switching and resharing.
+# For example, we can switch a 4-node MPC network consisting of parties 1,2,3,4
+# into another 4-node MPC network consisting of parties 5,6,3,4.
 name: zama-core-threshold
 # TODO: proper networking between nodes
 

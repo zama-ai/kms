@@ -59,6 +59,9 @@ pub async fn create_test_context_info_from_core_config(
         let peer = &threshold_config.peers.unwrap()[c.party_id - 1];
         let (role, identity) = peer.into_role_identity();
         if role.one_based() != threshold_config.my_id {
+            // this might be a misconfiguration, but useful for testing
+            // because threshold_config.my_id may be used as a storage prefix that
+            // must be different from the party ID in the peerlist to avoid collision
             tracing::warn!(
                 "Mismatched party ID in core config for core {}: role ID {}, my_id {}",
                 c.party_id,
