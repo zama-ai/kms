@@ -271,12 +271,6 @@ jobs:
         if: matrix.cargo-check == true
         run: cargo fmt --all -- --check
 
-      - name: Linting default features
-        if: matrix.cargo-check == true
-        env:
-          PACKAGE_NAME: 'kms-core-client'
-        run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
-
       - name: Linting All features
         if: matrix.cargo-check == true
         env:
