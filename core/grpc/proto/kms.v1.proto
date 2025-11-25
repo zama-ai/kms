@@ -616,7 +616,7 @@ message CustodianRecoveryOutput {
   OperatorBackupOutput backup_output = 1;
   // The 1-indexed role of the custodian
   uint64 custodian_role = 2;
-  uint64 operator_role = 3;
+  bytes operator_verification_key = 3;
 }
 
 // The recovery request which contains the needed recovery data from all the custodians,
@@ -650,8 +650,8 @@ message RecoveryRequest {
   map<uint64, OperatorBackupOutput> cts = 2;
   /// The request ID under which the backup was created.
   RequestId backup_id = 3;
-  /// The role of the operator
-  uint64 operator_role = 4;
+  /// Verification key of the operator.
+  bytes operator_verification_key = 4;
 }
 
 // Response containing available key material information

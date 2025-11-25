@@ -870,7 +870,6 @@ impl<
                 Role::indexed_from_one(1), // Centralized KMS is always party 1
             );
         let backup_operator = RealBackupOperator::new(
-            Role::indexed_from_one(1), // Centralized KMS is always party 1
             base_kms.new_instance().await,
             crypto_storage.inner.clone(),
             security_module,

@@ -510,7 +510,6 @@ fn test_recovery_material(
             custodian_pk,
             custodian_role: cus_role,
             operator_pk: operator_pk.clone(),
-            operator_role: Role::indexed_from_one(1),
             shares: Vec::new(),
         };
         let msg_digest =
@@ -606,11 +605,12 @@ fn test_internal_custodian_recovery_output(
         pke_type: PkeSchemeType::MlKem512,
         signing_type: SigningSchemeType::Ecdsa256k1,
     };
+    let (pk, _sk) = gen_sig_keys(&mut rng);
 
     let new_versionized = InternalCustodianRecoveryOutput {
         signcryption,
         custodian_role: Role::indexed_from_one(2),
-        operator_role: Role::indexed_from_one(3),
+        operator_verification_key: pk,
     };
 
     if original_versionized != new_versionized {
@@ -814,7 +814,6 @@ fn test_operator_backup_output(
     let operator = {
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         Operator::new_for_sharing(
-            Role::indexed_from_one(1),
             custodian_messages.clone(),
             signing_key,
             test.custodian_threshold,
@@ -829,7 +828,9 @@ fn test_operator_backup_output(
             RequestId::from_bytes(test.backup_id),
         )
         .unwrap();
-    let new_operator_backup_output = &cts[&operator.role()];
+
+    // in this test we fix the custodian role to 1
+    let new_operator_backup_output = &cts[&Role::indexed_from_one(1)];
     if original_operator_backup_output != *new_operator_backup_output {
         Err(test.failure(
             format!(

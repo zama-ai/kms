@@ -180,7 +180,6 @@ async fn main() -> Result<(), anyhow::Error> {
                 &operator_verf_key,
                 recovery_request.backup_enc_key(),
                 recovery_request.backup_id(),
-                recovery_request.operator_role(),
             )?;
             tracing::info!("Verified reencryption successfully");
             safe_write_element_versioned(&params.output_path, &res).await?;

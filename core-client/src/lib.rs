@@ -269,7 +269,7 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
 
 use tfhe::FheTypes as TfheFheType;
 
-use crate::s3_operations::fetch_elements;
+use crate::s3_operations::{fetch_elements, fetch_kms_verification_keys};
 
 #[derive(Copy, Clone, Default, EnumString, PartialEq, Display, Debug, Serialize, Deserialize)]
 pub enum FheType {
@@ -623,8 +623,7 @@ pub struct RecoveryInitParameters {
     /// If false, the call will be indempotent, if true, this will not be the case
     #[clap(long, short = 'o', default_value_t = false)]
     pub overwrite_ephemeral_key: bool,
-    /// Paths to write the operator responses
-    /// They may be unordered
+    /// Paths to write the operator responses, the responses stored in these paths are not ordered.
     #[clap(long, short = 'r')]
     pub operator_recovery_resp_paths: Vec<PathBuf>,
 }
@@ -1465,18 +1464,25 @@ async fn do_custodian_recovery_init(
 
 async fn do_custodian_backup_recovery(
     core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    sim_conf: &CoreClientConfig,
     custodian_context_id: RequestId,
     custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
 ) -> anyhow::Result<()> {
+    // fetch the public keys of operators
+    // order of the verf keys should match the order of the core endpoints
+    let verf_keys = fetch_kms_verification_keys(sim_conf).await?;
+
     let mut req_tasks = JoinSet::new();
-    for (core_idx, ce) in core_endpoints.iter() {
+    for (endpoint_idx, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
-        let core_idx = *core_idx as usize;
+        let endpoint_id = *endpoint_idx as usize + 1;
         // We assume the core client endpoints are ordered by the server identity
         let mut cur_recoveries = Vec::new();
         for cur_recover in custodian_recovery_outputs.iter() {
             // Find the recoveries designated for the correct server
-            if cur_recover.operator_role == Role::indexed_from_one(core_idx) {
+            let verf_key = &verf_keys[&endpoint_id];
+
+            if &cur_recover.operator_verification_key == verf_key {
                 cur_recoveries.push(CustodianRecoveryOutput {
                     backup_output: Some(OperatorBackupOutput {
                         signcryption: cur_recover.signcryption.payload.clone(),
@@ -1484,7 +1490,9 @@ async fn do_custodian_backup_recovery(
                         signing_type: cur_recover.signcryption.signing_type as i32,
                     }),
                     custodian_role: cur_recover.custodian_role.one_based() as u64,
-                    operator_role: cur_recover.operator_role.one_based() as u64,
+                    operator_verification_key: bc2wrap::serialize(
+                        &cur_recover.operator_verification_key,
+                    )?,
                 });
             }
         }
@@ -2436,15 +2444,21 @@ pub async fn execute_cmd(
             let res =
                 do_custodian_recovery_init(&core_endpoints_req, *overwrite_ephemeral_key).await?;
             assert_eq!(res.len(), operator_recovery_resp_paths.len());
-            for (op_zero_idx, cur_path) in operator_recovery_resp_paths.iter().enumerate() {
-                let cur_res = res
-                    .iter()
-                    .find(|&x| x.operator_role() == Role::indexed_from_zero(op_zero_idx))
-                    .unwrap();
-                safe_write_element_versioned(cur_path, cur_res).await?;
+
+            let backup_id = res[0].backup_id();
+
+            // no ordering of results and paths here
+            for (cur_res, cur_path) in res.into_iter().zip(operator_recovery_resp_paths) {
+                assert_eq!(
+                    backup_id,
+                    cur_res.backup_id(),
+                    "All recovery responses must belong to the same backup ID"
+                );
+                safe_write_element_versioned(cur_path, &cur_res).await?;
             }
+
             vec![(
-                Some(res[0].backup_id()),
+                Some(backup_id),
                 "custodian recovery init queried and recovery request stored".to_string(),
             )]
         }
@@ -2452,6 +2466,7 @@ pub async fn execute_cmd(
             custodian_context_id,
             custodian_recovery_outputs,
         }) => {
+            // We assume the output files are ordered the same way as the operators in the configuration file.
             let mut custodian_outputs = Vec::new();
             for recovery_path in custodian_recovery_outputs {
                 let read_recovery: InternalCustodianRecoveryOutput =
@@ -2460,6 +2475,7 @@ pub async fn execute_cmd(
             }
             do_custodian_backup_recovery(
                 &core_endpoints_req,
+                &cc_conf,
                 *custodian_context_id,
                 custodian_outputs,
             )

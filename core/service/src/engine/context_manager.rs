@@ -153,7 +153,6 @@ where
             self.base_kms.sig_key()?.as_ref(),
             backup_dec_key,
             &inner_context,
-            self.my_role,
         )
         .await?;
 
@@ -576,10 +575,8 @@ async fn gen_recovery_validation(
     sig_key: &PrivateSigKey,
     backup_priv_key: UnifiedPrivateEncKey,
     custodian_context: &InternalCustodianContext,
-    my_role: Role,
 ) -> anyhow::Result<RecoveryValidationMaterial> {
     let operator = Operator::new_for_sharing(
-        my_role,
         custodian_context
             .custodian_nodes
             .values()
@@ -887,7 +884,6 @@ mod tests {
             &server_sig_key,
             backup_dec_key.clone(),
             &internal_context,
-            Role::indexed_from_one(1),
         )
         .await
         .unwrap();
@@ -895,7 +891,7 @@ mod tests {
             recovery_material.payload.custodian_context.backup_enc_key,
             recovery_material.payload.cts,
             backup_id,
-            Role::indexed_from_one(1),
+            server_verf_key.clone(),
         )
         .unwrap();
         let custodian_id = custodian1.verification_key().verf_key_id();
