@@ -303,6 +303,8 @@ where
         } else {
             None
         }
+    } else if R::is_output_expected() {
+        Some(None)
     } else {
         None
     };
@@ -496,6 +498,8 @@ where
                 }
             }
         })
+    } else if R::is_output_expected() {
+        Some(None)
     } else {
         None
     };
@@ -526,6 +530,8 @@ where
                 } else {
                     None
                 }
+            } else if R::is_output_expected() {
+                Some(None)
             } else {
                 None
             }
@@ -536,16 +542,17 @@ where
         tracing::info!("Resharing completed, output is expected.");
         Ok(Some(PrivateKeySet {
             lwe_encryption_secret_key_share: lwe_encryption_secret_key_share
-                .expect("Output is expected"),
-            lwe_compute_secret_key_share: lwe_compute_secret_key_share.expect("Output is expected"),
-            glwe_secret_key_share: glwe_secret_key_share.expect("Output is expected"),
+                .expect("Output is expected 1"),
+            lwe_compute_secret_key_share: lwe_compute_secret_key_share
+                .expect("Output is expected 2"),
+            glwe_secret_key_share: glwe_secret_key_share.expect("Output is expected 3"),
             glwe_secret_key_share_sns_as_lwe: glwe_secret_key_share_sns_as_lwe
-                .expect("Output is expected"),
+                .expect("Output is expected 4 "),
             parameters: basic_params_handle.to_classic_pbs_parameters(),
             glwe_secret_key_share_compression: glwe_secret_key_share_compression
-                .expect("Output is expected"),
+                .expect("Output is expected 5"),
             glwe_sns_compression_key_as_lwe: glwe_sns_compression_key_as_lwe
-                .expect("Output is expected"),
+                .expect("Output is expected 6"),
         }))
     } else {
         tracing::info!("Resharing completed, no output is expected.");

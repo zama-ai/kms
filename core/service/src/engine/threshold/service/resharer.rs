@@ -208,11 +208,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             let num_needed_preproc =
                 ResharePreprocRequired::new_same_set(session_z64.num_parties(), dkg_params);
 
-            let mut correlated_randomness_z64 = SecureSmallPreprocessing::default()
+            let correlated_randomness_z64 = SecureSmallPreprocessing::default()
                 .execute(&mut session_z64, num_needed_preproc.batch_params_64)
                 .await?;
 
-            let mut correlated_randomness_z128 = SecureSmallPreprocessing::default()
+            let correlated_randomness_z128 = SecureSmallPreprocessing::default()
                 .execute(&mut session_z128, num_needed_preproc.batch_params_128)
                 .await?;
 
