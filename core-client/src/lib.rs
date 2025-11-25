@@ -896,17 +896,38 @@ async fn read_kms_addresses_local(
     let mut addr_strings = Vec::with_capacity(sim_conf.cores.len());
 
     for cur_core in &sim_conf.cores {
-        let cur_role = Role::indexed_from_one(cur_core.party_id);
+        // NOTE: cur_role might not match the storage path, as a workaround,
+        // if the kms config exists, then use the my_id field from there.
+        let storage_role = {
+            #[cfg(feature = "testing")]
+            match cur_core.config_path {
+                Some(ref p) => {
+                    let core_config: conf::CoreConfig =
+                        conf::init_conf(p.to_str().unwrap()).unwrap();
+                    Role::indexed_from_one(core_config.threshold.unwrap().my_id)
+                }
+                None => Role::indexed_from_one(cur_core.party_id),
+            }
+            #[cfg(not(feature = "testing"))]
+            Role::indexed_from_one(cur_core.party_id)
+        };
+
         let vault = {
             let store_path = Some(conf::Storage::File(conf::FileStorage {
                 path: path.to_path_buf(),
             }));
-            let party_role = match sim_conf.kms_type {
+            let optional_storage_role = match sim_conf.kms_type {
                 KmsType::Centralized => None, // in centralized mode, there is only one party, so no need to specify role to access the right storage
-                KmsType::Threshold => Some(cur_role),
+                KmsType::Threshold => Some(storage_role),
             };
-            let storage =
-                make_storage(store_path, StorageType::PUB, party_role, None, None).unwrap();
+            let storage = make_storage(
+                store_path,
+                StorageType::PUB,
+                optional_storage_role,
+                None,
+                None,
+            )
+            .unwrap();
             Vault {
                 storage,
                 keychain: None,
@@ -1799,12 +1820,27 @@ pub async fn execute_cmd(
                     )?;
                     core_endpoints_resp.insert(cur_core.party_id as u32, core_endpoint_resp);
 
+                    // NOTE: cur_role might not match the storage path, as a workaround,
+                    // if the kms config exists, then use the my_id field from there.
+                    let storage_role = {
+                        #[cfg(feature = "testing")]
+                        match cur_core.config_path {
+                            Some(ref p) => {
+                                let core_config: conf::CoreConfig =
+                                    conf::init_conf(p.to_str().unwrap()).unwrap();
+                                Role::indexed_from_one(core_config.threshold.unwrap().my_id)
+                            }
+                            None => Role::indexed_from_one(cur_core.party_id),
+                        }
+                        #[cfg(not(feature = "testing"))]
+                        Role::indexed_from_one(cur_core.party_id)
+                    };
                     pub_storage.insert(
                         cur_core.party_id as u32,
                         FileStorage::new(
                             Some(destination_prefix),
                             StorageType::PUB,
-                            Some(Role::indexed_from_one(cur_core.party_id)),
+                            Some(storage_role),
                         )
                         .unwrap(),
                     );
@@ -3062,6 +3098,7 @@ async fn fetch_and_check_keygen(
         PubDataType::PublicKeyMetadata,
         PubDataType::ServerKey,
     ];
+
     let party_ids = fetch_elements(
         &request_id.to_string(),
         &key_types,
@@ -3070,21 +3107,33 @@ async fn fetch_and_check_keygen(
         download_all,
     )
     .await?;
+    let first_party_id = *party_ids.first().unwrap() as usize;
+
+    // [party_ids] are the logical party IDs, not the party IDs that define storage locations.
+    // Here we convert it to the storage party ID if the kms config is provided.
+    let storage_party_id = {
+        #[cfg(feature = "testing")]
+        match cc_conf.cores[first_party_id - 1].config_path {
+            Some(ref p) => {
+                let core_config: conf::CoreConfig = conf::init_conf(p.to_str().unwrap()).unwrap();
+                core_config.threshold.unwrap().my_id
+            }
+            None => first_party_id,
+        }
+        #[cfg(not(feature = "testing"))]
+        first_party_id
+    };
 
     // Even if we did not download all keys, we still check that they are identical
     // by checking all signatures against the first downloaded keyset.
     // If all signatures match, then all keys must be identical.
-    let public_key = load_pk_from_storage(
-        Some(destination_prefix),
-        &request_id,
-        *party_ids.first().expect("no party IDs found"),
-    )
-    .await;
+    let public_key =
+        load_pk_from_storage(Some(destination_prefix), &request_id, storage_party_id).await;
     let server_key: ServerKey = load_material_from_storage(
         Some(destination_prefix),
         &request_id,
         PubDataType::ServerKey,
-        *party_ids.first().expect("no party IDs found"),
+        storage_party_id,
     )
     .await;
 

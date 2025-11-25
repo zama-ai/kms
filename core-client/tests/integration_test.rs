@@ -1348,15 +1348,16 @@ async fn test_threshold_mpc_context_init(ctx: &DockerComposeThresholdTestNoInit)
 #[serial(docker)]
 async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoInitSixParty) {
     init_testing();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let test_path = temp_dir.path();
-    let context_path = temp_dir.path().join("mpc_context.bin");
     let config_path = ctx.root_path().join(ctx.config_path());
     let alternative_config_path = ctx.root_path().join(ctx.alternative_config_path());
 
     // first mpc context with parties 1, 2, 3, 4
     // note that this is defined by the normal config path
     {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let test_path = temp_dir.path();
+        let context_path = temp_dir.path().join("mpc_context.bin");
+
         // create and store mpc context
         let context_id =
             ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222223333")
@@ -1375,6 +1376,10 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
 
     // first mpc context with parties 5, 6, 3, 4
     {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let test_path = temp_dir.path();
+        let context_path = temp_dir.path().join("mpc_context.bin");
+
         // create and store mpc context
         let context_id =
             ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222225555")
