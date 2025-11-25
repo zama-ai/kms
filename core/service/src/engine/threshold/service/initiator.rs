@@ -238,17 +238,6 @@ impl<
             .await?;
         }
 
-        // In case we want to re-init, we delete the existing session
-        // after waiting for 30 seconds (to be reasonably sure others have finished sending).
-        // This is needed as the networking manager keeps track of sessions that have been initialized
-        // and we're currently using a fixed session ID for PRSS init.
-        tokio::spawn(async move {
-            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-            if let Err(e) = session_preparer.delete_session(session_id).await {
-                tracing::warn!("Failed to delete session {}: {}", session_id, e);
-            }
-        });
-
         {
             // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
             self.health_reporter
@@ -257,6 +246,33 @@ impl<
         }
         tracing::info!("PRSS completed successfully for identity {}.", own_identity);
         Ok(())
+    }
+
+    /// Best‑effort delayed cleanup of a PRSS session to free up internal session-id,
+    /// after waiting for 30 seconds (to be reasonably sure others have finished sending).
+    pub async fn delete_prss_init_session(&self, request_id: &RequestId) {
+        match self
+            .session_preparer_manager
+            .get(&DEFAULT_MPC_CONTEXT)
+            .await
+        {
+            Ok(session_preparer) => match request_id.derive_session_id() {
+                Ok(session_id) => {
+                    tokio::spawn(async move {
+                        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                        if let Err(e) = session_preparer.delete_session(session_id).await {
+                            tracing::warn!("Failed to delete session {session_id}: {e}");
+                        }
+                    });
+                }
+                Err(_) => {
+                    tracing::warn!("Failed to derive session id for cleanup after PRSS error");
+                }
+            },
+            Err(_) => {
+                tracing::warn!("Failed to acquire session preparer for cleanup after PRSS error");
+            }
+        }
     }
 }
 
@@ -290,12 +306,18 @@ impl<
             tracing::warn!("PRSS state already exists. Overwriting old state now!");
         }
 
-        self.init_prss(&request_id).await.map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                format!("PRSS initialization failed with error: {e}"),
-            )
-        })?;
+        let res = self.init_prss(&request_id).await;
+        // In case we want to re-init, we delete the existing session (both after success and failure)
+        // This is needed as the networking manager keeps track of sessions that have been initialized
+        // and we're currently using a fixed session ID for PRSS init.
+        self.delete_prss_init_session(&request_id).await;
+
+        if let Err(e) = res {
+            return Err(Status::internal(format!(
+                "PRSS initialization failed with error: {e}"
+            )));
+        }
+
         Ok(Response::new(Empty {}))
     }
 }
