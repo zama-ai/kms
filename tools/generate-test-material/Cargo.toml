@@ -17,6 +17,7 @@ path = "src/main.rs"
 # Core KMS dependencies
 kms = { path = "../../core/service", features = ["testing", "non-wasm"] }
 kms-grpc = { path = "../../core/grpc" }
+threshold-fhe = { workspace = true, features = ["testing"] }
 
 # Async runtime
 tokio = { workspace = true, features = ["full"] }

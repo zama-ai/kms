@@ -57,20 +57,20 @@ generate-backward-compatibility-all: clean-backward-compatibility-data generate-
 
 # Test material generation targets
 generate-test-material-all:
-	cargo run --bin generate-test-material -- all --output ./test-material --verbose
+	cargo run -p generate-test-material -- all --output ./test-material --verbose
 
 generate-test-material-testing:
 	@echo "Generating testing material..."
-	cargo run --bin generate-test-material -- --output ./test-material --verbose testing
+	cargo run -p generate-test-material -- --output ./test-material --verbose testing
 
 generate-test-material-default:
-	cargo run --bin generate-test-material -- --features slow_tests default --output ./test-material --verbose
+	cargo run -p generate-test-material --features slow_tests -- default --output ./test-material --verbose
 
 validate-test-material:
-	cargo run --bin generate-test-material -- validate --output ./test-material --verbose
+	cargo run -p generate-test-material -- validate --output ./test-material --verbose
 
 clean-test-material:
-	cargo run --bin generate-test-material -- clean --output ./test-material --verbose
+	cargo run -p generate-test-material -- clean --output ./test-material --verbose
 
 # Check if Git LFS is installed and enabled
 check-git-lfs:

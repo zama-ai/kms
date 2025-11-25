@@ -3353,6 +3353,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "threshold-fhe",
  "tokio",
  "tracing",
  "tracing-subscriber",
