@@ -247,6 +247,10 @@ jobs:
       - name: Linting dylint
         run: cargo dylint --all
 
+      # Generate test material required by isolated tests
+      - name: Generate Test Material
+        run: cargo run -p generate-test-material -- --output ./test-material --verbose testing
+
       # Test execution
       - name: Run Tests
         id: tests
