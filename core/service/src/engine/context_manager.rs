@@ -13,7 +13,8 @@ use crate::engine::validation::{parse_proto_context_id, RequestIdParsingErr};
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::{
-    delete_at_request_id, delete_context_at_id, store_versioned_at_request_id,
+    delete_at_request_id, delete_context_at_id, delete_custodian_context_at_id,
+    store_versioned_at_request_id,
 };
 use crate::vault::Vault;
 use crate::{
@@ -126,11 +127,57 @@ where
         Ok(Response::new(Empty {}))
     }
 
+    /// Removed a custodian context from disc storage and RAM (the meta-store).
     async fn destroy_custodian_context(
         &self,
-        _request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
-        todo!()
+        let context_id = request
+            .into_inner()
+            .context_id
+            .ok_or_else(|| Status::invalid_argument("context_id is required"))?
+            .try_into()
+            .map_err(|e| Status::invalid_argument(format!("Invalid request ID: {e}")))?;
+        // Note that care must be taken in the order of getting locks here
+        // Use meta store as sync point
+        let mut cus_meta_store = self.custodian_meta_store.write().await;
+        match cus_meta_store.delete(&context_id) {
+            Some(cell) => {
+                if cell.get().await.as_ref().is_err() {
+                    return Err(Status::internal(format!(
+                        "Custodian context with id {:?} could not be removed from meta store",
+                        context_id
+                    )));
+                }
+            }
+            None => {
+                // It might already have been automatically removed from the RAM, so we just log this and continue
+                tracing::warn!(
+                    "Custodian context with id {:?} does not exist in meta store",
+                    context_id
+                );
+            }
+        }
+        let mut guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
+        let guarded_backup_storage_ref =
+            self.crypto_storage.backup_vault.as_ref().ok_or_else(|| {
+                Status::new(
+                    tonic::Code::FailedPrecondition,
+                    "Backup vault is not configured",
+                )
+            })?;
+        let mut guarded_backup_storage = guarded_backup_storage_ref.lock().await;
+
+        // There is nothing we can do if deletion fails here.
+        // Note that it cannot fail if the context does not exist.
+        delete_custodian_context_at_id(
+            &mut *guarded_pub_storage,
+            &mut guarded_backup_storage,
+            &context_id,
+        )
+        .await
+        .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
+        Ok(Response::new(Empty {}))
     }
 
     /// Observe that in case a custodian is missing or something bad is detected in the data then the function will fail

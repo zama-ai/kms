@@ -7,6 +7,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self};
+use std::path::MAIN_SEPARATOR;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::integer::bigint::StaticUnsignedBigInt;
@@ -288,7 +289,7 @@ pub enum PrivDataTypeV0 {
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,
-    ContextInfo,
+    ContextInfo, // MPC context information
 }
 
 impl Upgrade<PrivDataType> for PrivDataTypeV0 {
@@ -344,12 +345,18 @@ impl TryFrom<&str> for PrivDataType {
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
 pub enum BackupDataType {
-    PrivData(PrivDataType), // Backup of a piece of private data
+    CustodianBackupData(RequestId, PrivDataType), // Backup of a piece of private data under a given backup id (RequestId) for custodian-based backup
+    ExportData(PrivDataType), // Backup a piece of private data for the import/export based backup
 }
 impl fmt::Display for BackupDataType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            BackupDataType::PrivData(data_type) => write!(f, "PrivData({data_type})"),
+            BackupDataType::CustodianBackupData(backup_id, data_type) => {
+                write!(f, "{backup_id}{MAIN_SEPARATOR}{data_type}")
+            }
+            BackupDataType::ExportData(priv_data_type) => {
+                write!(f, "{priv_data_type}")
+            }
         }
     }
 }

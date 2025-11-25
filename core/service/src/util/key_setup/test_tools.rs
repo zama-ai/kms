@@ -550,8 +550,10 @@ pub async fn read_backup_files(
         let storage = FileStorage::new(test_path, StorageType::BACKUP, None).unwrap();
         let coerced_path = storage
             .root_dir()
-            .join(backup_id.to_string())
-            .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
+            .join(
+                BackupDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
+                    .to_string(),
+            )
             .join(file_req.to_string());
         // Attempt to read the file
         if let Ok(file) = safe_read_element_versioned(coerced_path).await {
@@ -567,8 +569,10 @@ pub async fn read_backup_files(
             .unwrap();
             let coerced_path = storage
                 .root_dir()
-                .join(backup_id.to_string())
-                .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
+                .join(
+                    BackupDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
+                        .to_string(),
+                )
                 .join(file_req.to_string());
             // Attempt to read the file
             if let Ok(file) = safe_read_element_versioned(coerced_path).await {

@@ -2,6 +2,7 @@ use crate::{
     anyhow_error_and_log,
     conf::{FileStorage, RamStorage, S3Storage, Storage as StorageConf},
     engine::context,
+    vault::Vault,
 };
 use anyhow::anyhow;
 use aws_sdk_s3::Client as S3Client;
@@ -33,6 +34,7 @@ pub mod s3;
 #[enum_dispatch]
 #[trait_variant::make(Send)]
 pub trait StorageReader {
+    // TODO types should be changed to strong types instead of strings
     /// Validate if data exists at a given `url`.
     async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool>;
 
@@ -167,9 +169,9 @@ pub async fn delete_all_at_request_id<S: Storage>(storage: &mut S, request_id: &
     }
 }
 
-// Helper method to remove data based on a data type and request ID.
-// An error will be returned if the data exists but could not be deleted.
-// In case the data does not exist, an info log is made but no error returned.
+/// Helper method to remove data based on a data type and request ID.
+/// An error will be returned if the data exists but could not be deleted.
+/// In case the data does not exist, an info log is made but no error returned.
 pub async fn delete_at_request_id<S: Storage>(
     storage: &mut S,
     request_id: &RequestId,
@@ -195,7 +197,7 @@ pub async fn delete_at_request_id<S: Storage>(
     }
 }
 
-// Helper method to remove data based on a data type and request ID.
+/// Helper method to remove data based on a data type and request ID.
 pub async fn delete_pk_at_request_id<S: Storage>(
     storage: &mut S,
     request_id: &RequestId,
@@ -208,6 +210,24 @@ pub async fn delete_pk_at_request_id<S: Storage>(
     )
     .await;
     // Don't report errors
+    Ok(())
+}
+
+/// Helper method to remove data that has been backed up for the _current_ backup_id
+/// This is based on the id of the backup, and remove all the content in the folder
+/// identified with this id.
+/// An error will be returned if the backup exists but could not be deleted.
+/// In case the backup does not exist, an info log is made but no error returned.
+pub async fn delete_backup(storage: &mut Vault) -> anyhow::Result<()> {
+    // TODO check that a backup storage is used
+    for cur_type in PrivDataType::iter() {
+        let ids = storage.all_data_ids(&cur_type.to_string()).await?;
+        for cur_id in ids {
+            // Ignore an error as it is likely because the data does not exist
+            //TODO this and other places should pass on the error as there is no error in case the data does not exist
+            let _ = delete_at_request_id(storage, &cur_id, &cur_type.to_string()).await;
+        }
+    }
     Ok(())
 }
 
@@ -316,6 +336,23 @@ pub async fn delete_context_at_id<S: Storage>(
         &PrivDataType::ContextInfo.to_string(),
     )
     .await
+}
+
+pub async fn delete_custodian_context_at_id<PubS: Storage>(
+    pub_storage: &mut PubS,
+    _backup_storage: &mut Vault,
+    request_id: &RequestId, // TODO should be changed to a BackupId
+) -> anyhow::Result<()> {
+    delete_at_request_id(
+        pub_storage,
+        request_id,
+        &PubDataType::RecoveryMaterial.to_string(),
+    )
+    .await
+
+    // Delete everything that is backed up in relation to a specific request ID
+    // TODO storage needs to be updated since everything is stored in a subfolder under request ID
+    // Hence we cannot just delete by request ID and data type right now
 }
 
 /// Helper method for reading all data of a specific type.
