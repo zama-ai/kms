@@ -121,7 +121,7 @@ impl<R: RoleTrait> Networking<R> for LocalNetworking<R> {
             .get(&(self.owner, *receiver))
             .ok_or_else(|| {
                 anyhow_error_and_log(format!(
-                "Could not retrieve pairwise channels in receive call, owner: {:?}, receiver: {:?}.",
+                "Could not retrieve pairwise channels in send call, owner: {:?}, receiver: {:?}.",
                 self.owner, receiver
             ))
             })?

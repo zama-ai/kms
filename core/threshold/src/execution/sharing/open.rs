@@ -483,7 +483,13 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect>(
     //Start awaiting on receive jobs to retrieve the shares
     while let Some(v) = jobs.join_next().await {
         let sharings = sharings.clone();
-        let joined_result = v?;
+        let joined_result = if let Ok(v) = v {
+            v
+        } else {
+            tracing::warn!("(Share reconstruction) A receive job failed during reconstruction.");
+            num_bots += 1;
+            continue;
+        };
         match joined_result {
             Ok((party_id, data)) => {
                 if let Ok(values) = data {
