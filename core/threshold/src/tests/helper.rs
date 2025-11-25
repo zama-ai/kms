@@ -45,6 +45,12 @@ pub mod tests_and_benches {
         }
     }
 
+    pub struct TwoSetsExpectedRounds {
+        pub num_rounds_within_s1: usize,
+        pub num_rounds_within_s2: usize,
+        pub num_rounds_across_sets: usize,
+    }
+
     pub async fn execute_protocol_two_sets<
         TaskOutputT,
         OutputT,
@@ -55,6 +61,7 @@ pub mod tests_and_benches {
         parties_set_2: usize,
         intersection_size: usize,
         threshold: TwoSetsThreshold,
+        expected_rounds: Option<TwoSetsExpectedRounds>,
         network_mode: NetworkMode,
         task: &mut dyn FnMut(
             GenericBaseSession<TwoSetsRole>,
@@ -130,6 +137,32 @@ pub mod tests_and_benches {
         let mut results = Vec::with_capacity(tasks.len());
         while let Some(v) = tasks.join_next().await {
             results.push(v.unwrap());
+        }
+
+        if let Some(expected_rounds) = expected_rounds {
+            for two_sets_net in test_runtime_two_sets.user_nets.values() {
+                let rounds = two_sets_net.get_current_round().await;
+                assert_eq!(
+                    rounds, expected_rounds.num_rounds_across_sets,
+                    "incorrect number of expected communication rounds in TwoSets network"
+                );
+            }
+
+            for set_1_net in test_runtime_set_1.user_nets.values() {
+                let rounds = set_1_net.get_current_round().await;
+                assert_eq!(
+                    rounds, expected_rounds.num_rounds_within_s1,
+                    "incorrect number of expected communication rounds in Set 1 network"
+                );
+            }
+
+            for set_2_net in test_runtime_set_2.user_nets.values() {
+                let rounds = set_2_net.get_current_round().await;
+                assert_eq!(
+                    rounds, expected_rounds.num_rounds_within_s2,
+                    "incorrect number of expected communication rounds in Set 2 network"
+                );
+            }
         }
 
         results

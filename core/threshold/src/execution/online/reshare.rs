@@ -919,7 +919,9 @@ mod tests {
         keygen_all_party_shares_from_keyset, KeySet,
     };
     use crate::networking::NetworkMode;
-    use crate::tests::helper::tests_and_benches::execute_protocol_two_sets;
+    use crate::tests::helper::tests_and_benches::{
+        execute_protocol_two_sets, TwoSetsExpectedRounds,
+    };
     use crate::{
         algebra::structure_traits::Sample,
         error::error_handler::anyhow_error_and_log,
@@ -1598,6 +1600,11 @@ mod tests {
             num_parties_s2,
             intersection_size,
             threshold,
+            Some(TwoSetsExpectedRounds {
+                num_rounds_within_s1: 0,
+                num_rounds_within_s2: (threshold.threshold_set_2 as usize + 3) + 1 + 1, // Broadcast + Open syndrome + Open inside the test
+                num_rounds_across_sets: 2, // Multicast from S2 to S1 and back
+            }),
             NetworkMode::Sync,
             &mut task,
         )
