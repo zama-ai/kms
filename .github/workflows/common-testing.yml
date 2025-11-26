@@ -248,12 +248,14 @@ jobs:
         run: cargo dylint --all
 
       # Generate test material required by isolated tests
+      # Must run from workspace root, not working-directory
       - name: Generate Test Material
+        working-directory: .
         run: cargo run -p generate-test-material -- --output ./test-material --verbose testing
 
       # Build kms-custodian binary required by integration tests
       - name: Build kms-custodian binary
-        run: cargo build --bin kms-custodian
+        run: cargo build --package kms --bin kms-custodian
 
       # Test execution
       - name: Run Tests
