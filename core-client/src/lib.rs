@@ -3126,8 +3126,12 @@ async fn fetch_and_check_keygen(
         #[cfg(feature = "testing")]
         match cc_conf.cores[first_party_id - 1].config_path {
             Some(ref p) => {
-                let core_config: conf::CoreConfig = conf::init_conf(p.to_str().unwrap()).unwrap();
-                core_config.threshold.unwrap().my_id
+                let core_config: conf::CoreConfig =
+                    conf::init_conf(p.to_str().expect("expect core config path")).unwrap();
+                core_config
+                    .threshold
+                    .expect("expect threshold config")
+                    .my_id
             }
             None => first_party_id,
         }
