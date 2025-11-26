@@ -38,7 +38,7 @@ impl fmt::Display for VaultDataType {
 //     PrivData,
 //     PubData,
 // }
-
+// todo make helper method to create this from config
 pub struct Vault {
     pub storage: StorageProxy,
     pub keychain: Option<KeychainProxy>,

@@ -351,8 +351,6 @@ pub async fn delete_custodian_context_at_id<PubS: Storage>(
 
     // Delete everything that is backed up in relation to a specific request ID
     delete_backup(backup_storage).await
-    // TODO storage needs to be updated since everything is stored in a subfolder under request ID
-    // Hence we cannot just delete by request ID and data type right now
 }
 
 /// Helper method for reading all data of a specific type.

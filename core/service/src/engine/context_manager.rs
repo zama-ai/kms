@@ -661,10 +661,12 @@ async fn gen_recovery_validation(
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::*;
     use crate::{
         backup::{
-            custodian::Custodian,
+            custodian::{Custodian, InternalCustodianSetupMessage, HEADER},
             operator::InternalRecoveryRequest,
             seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
         },
@@ -675,15 +677,23 @@ mod tests {
         },
         engine::context::{NodeInfo, SoftwareVersion},
         util::meta_store::MetaStore,
-        vault::storage::{
-            crypto_material::get_core_signing_key, ram::RamStorage, read_context_at_id,
-            store_versioned_at_request_id,
+        vault::{
+            keychain::secretsharing,
+            storage::{
+                crypto_material::get_core_signing_key,
+                ram::{self, RamStorage},
+                read_context_at_id, read_versioned_at_request_id, store_versioned_at_request_id,
+                StorageProxy,
+            },
         },
     };
     use kms_grpc::{
         identifiers::ContextId,
-        kms::v1::{DestroyMpcContextRequest, NewMpcContextRequest},
-        rpc_types::{KMSType, PrivDataType},
+        kms::v1::{
+            DestroyCustodianContextRequest, DestroyMpcContextRequest, NewCustodianContextRequest,
+            NewMpcContextRequest,
+        },
+        rpc_types::{KMSType, PrivDataType, PubDataType},
         RequestId,
     };
     use rand::{rngs::OsRng, SeedableRng};
@@ -699,9 +709,23 @@ mod tests {
     ) {
         let priv_storage = Arc::new(Mutex::new(RamStorage::new()));
         let pub_storage = Arc::new(Mutex::new(RamStorage::new()));
+        let guarded_pub_storage = pub_storage.lock().await;
+        let backup_proxy = StorageProxy::from(ram::RamStorage::new());
+        let ssk = secretsharing::SecretShareKeychain::new(
+            AesRng::seed_from_u64(1244),
+            Some(&*guarded_pub_storage),
+        )
+        .await
+        .unwrap();
+        let keychain_proxy = KeychainProxy::from(ssk);
+        let backup_vault = Arc::new(Mutex::new(Vault {
+            storage: backup_proxy,
+            keychain: Some(keychain_proxy),
+        }));
+        drop(guarded_pub_storage);
 
         let crypto_storage =
-            CryptoMaterialStorage::<_, _>::new(priv_storage, pub_storage, None, None);
+            CryptoMaterialStorage::<_, _>::new(priv_storage, pub_storage, Some(backup_vault), None);
 
         // store private signing key
         let (pk, sk) = gen_sig_keys(&mut OsRng);
@@ -888,6 +912,121 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(1, context_manager.session_maker.context_count().await);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_custodian_context() {
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
+        // Generate custodian keys
+        let threshold = 1;
+        let amount_custodians = 2 * threshold + 1; // Minimum amount of custodians is 2 * threshold + 1
+        let mut setup_msgs = Vec::new();
+        let mut rng = AesRng::seed_from_u64(42);
+        for custodian_index in 1..=amount_custodians {
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
+            let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+            let cur_msg = InternalCustodianSetupMessage {
+                header: HEADER.to_string(),
+                custodian_role: Role::indexed_from_one(custodian_index),
+                name: format!("Custodian-{}", custodian_index),
+                random_value: [2u8; 32],
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                public_enc_key: pk_enc_key,
+                public_verf_key: verf_key,
+            };
+            setup_msgs.push(cur_msg.try_into().unwrap());
+        }
+
+        let context_id = RequestId::from_bytes([4u8; 32]);
+        let new_context = CustodianContext {
+            custodian_nodes: setup_msgs.clone(),
+            context_id: Some(context_id.into()),
+            threshold: threshold as u32,
+        };
+
+        let request = Request::new(NewCustodianContextRequest {
+            new_context: Some(new_context),
+        });
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, base_kms.new_rng().await);
+        let context_manager = ThresholdContextManager::new(
+            base_kms,
+            crypto_storage.clone(),
+            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            Role::indexed_from_one(1),
+            session_maker,
+        );
+
+        let response = context_manager.new_custodian_context(request).await;
+        response.unwrap();
+
+        // check that the context is stored
+        {
+            let pub_storage = Arc::clone(&crypto_storage.public_storage);
+            let guarded_pub_storage = pub_storage.lock().await;
+            let stored_context: RecoveryValidationMaterial = read_versioned_at_request_id(
+                &*guarded_pub_storage,
+                &context_id,
+                &PubDataType::RecoveryMaterial.to_string(),
+            )
+            .await
+            .unwrap();
+
+            assert!(stored_context.validate(&verification_key));
+            assert_eq!(stored_context.custodian_context().context_id, context_id);
+            assert_eq!(
+                stored_context.custodian_context().threshold,
+                threshold as u32
+            );
+            assert_eq!(
+                stored_context.custodian_context().custodian_nodes.len(),
+                amount_custodians
+            );
+            for cur_cus_id in 0..amount_custodians {
+                assert_eq!(
+                    stored_context
+                        .custodian_context()
+                        .custodian_nodes
+                        .get(&Role::indexed_from_zero(cur_cus_id))
+                        .unwrap(),
+                    &setup_msgs
+                        .get(cur_cus_id)
+                        .unwrap()
+                        .clone()
+                        .try_into()
+                        .unwrap()
+                );
+            }
+        }
+
+        // now that it is stored, we try to delete it
+        let request = Request::new(DestroyCustodianContextRequest {
+            context_id: Some(context_id.into()),
+        });
+
+        let response = context_manager.destroy_custodian_context(request).await;
+        response.unwrap();
+
+        // check that the context is deleted
+        {
+            let pub_storage = Arc::clone(&crypto_storage.public_storage);
+            let guarded_pub_storage = pub_storage.lock().await;
+            assert!(
+                read_versioned_at_request_id::<RamStorage, RecoveryValidationMaterial>(
+                    &*guarded_pub_storage,
+                    &context_id,
+                    &PubDataType::RecoveryMaterial.to_string(),
+                )
+                .await
+                .is_err(),
+                "Custodian context was not deleted"
+            );
         }
     }
 
