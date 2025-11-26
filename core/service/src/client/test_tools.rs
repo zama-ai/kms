@@ -88,6 +88,7 @@ pub async fn setup_threshold_no_client<
             mpc_identity: None,
             port,
             tls_cert: None,
+            verification_address: None,
         })
         .collect_vec();
 
@@ -124,7 +125,10 @@ pub async fn setup_threshold_no_client<
                 threshold,
                 dec_capacity: DEC_CAPACITY,
                 min_dec_cache: MIN_DEC_CACHE,
-                my_id: i,
+                public_storage_prefix: Some(format!("PUB-p{}", i)),
+                private_storage_prefix: Some(format!("PRIV-p{}", i)),
+                backup_storage_prefix: Some(format!("BACKUP-p{}", i)),
+                initial_party_id: Some(i),
                 preproc_redis: None,
                 // Add some parallelism so CI runs a bit faster
                 // since it uses large machines
@@ -535,12 +539,15 @@ pub async fn centralized_custodian_handles(
     param: &DKGParams,
     rate_limiter_conf: Option<RateLimiterConfig>,
     test_data_path: Option<&Path>,
+    pub_storage_prefix: Option<&str>,
+    backup_storage_prefix: Option<&str>,
 ) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
     let backup_vault = file_backup_vault(
-        None,
         Some(&Keychain::SecretSharing(SecretSharingKeychain {})),
         test_data_path,
         test_data_path,
+        pub_storage_prefix,
+        backup_storage_prefix,
     )
     .await;
     central_handle_w_vault(param, rate_limiter_conf, Some(backup_vault), test_data_path).await

@@ -14,11 +14,11 @@ cfg_if::cfg_if! {
     use serial_test::serial;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use threshold_fhe::execution::runtime::party::Role;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
     use tokio::task::JoinSet;
     use tonic::transport::Channel;
     use crate::client::tests::{common::TIME_TO_SLEEP_MS, threshold::common::threshold_handles};
+    use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
 }}
 
 #[cfg(feature = "insecure")]
@@ -59,12 +59,21 @@ pub(crate) async fn crs_gen(
     iterations: usize,
     concurrent: bool,
 ) {
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     for i in 0..iterations {
         let req_crs: RequestId = derive_request_id(&format!(
             "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}_{insecure}"
         ))
         .unwrap();
-        purge(None, None, &req_crs, amount_parties).await;
+        purge(
+            None,
+            None,
+            &req_crs,
+            pub_storage_prefixes,
+            priv_storage_prefixes,
+        )
+        .await;
     }
     let dkg_param: WrappedDKGParams = parameter.into();
 
@@ -221,12 +230,8 @@ pub async fn wait_for_crsgen_result(
             .into_iter()
             .map(|(i, res)| {
                 (res, {
-                    FileStorage::new(
-                        None,
-                        StorageType::PUB,
-                        Some(Role::indexed_from_one(i as usize)),
-                    )
-                    .unwrap()
+                    let prefix = PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[i as usize - 1].as_deref();
+                    FileStorage::new(None, StorageType::PUB, prefix).unwrap()
                 })
             })
             .collect_vec();

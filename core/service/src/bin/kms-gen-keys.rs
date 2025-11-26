@@ -34,7 +34,6 @@ use observability::telemetry::init_tracing;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use strum::EnumIs;
-use threshold_fhe::execution::runtime::party::Role;
 use url::Url;
 
 #[derive(Parser)]
@@ -185,6 +184,7 @@ struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
     overwrite: bool,
     show_existing: bool,
     signing_key_party_id: Option<usize>,
+    // TODO: change this to the storage prefixes
     num_parties: usize,
     tls_subject: String,
     tls_wildcard: bool,
@@ -304,14 +304,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut pub_storages = Vec::with_capacity(amount_storages);
     let mut priv_vaults = Vec::with_capacity(amount_storages);
     for i in 1..=amount_storages {
-        let party_role = match args.mode {
+        // to be compatible as before
+        let pub_storage_prefix = match args.mode {
             Mode::Centralized { write_privkey: _ } => None,
             Mode::Threshold {
                 signing_key_party_id: _,
                 num_parties: _,
                 tls_subject: _,
                 tls_wildcard: _,
-            } => Some(Role::indexed_from_one(i)),
+            } => Some(format!("PUB-p{}", i)),
+        };
+        let priv_storage_prefix = match args.mode {
+            Mode::Centralized { write_privkey: _ } => None,
+            Mode::Threshold {
+                signing_key_party_id: _,
+                num_parties: _,
+                tls_subject: _,
+                tls_wildcard: _,
+            } => Some(format!("PRIV-p{}", i)),
         };
         let pub_proxy_storage = make_storage(
             match args.public_storage {
@@ -330,7 +340,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })),
             },
             StorageType::PUB,
-            party_role,
+            pub_storage_prefix.as_deref(),
             None,
             s3_client.clone(),
         )
@@ -376,7 +386,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     })),
                 },
                 StorageType::PRIV,
-                party_role,
+                priv_storage_prefix.as_deref(),
                 None,
                 s3_client.clone(),
             )

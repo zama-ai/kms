@@ -77,7 +77,7 @@ listen_port = 50001
 #
 # WARNING: this is deprecated and will be removed in future versions.
 # It is only used to determine the storage path and nothing else.
-my_id = 1
+initial_party_id = 1
 
 # Threshold is the number of corruptions that the protocol handles. Currently
 # it must be an integer value smaller than parties/3.

@@ -30,7 +30,9 @@ cfg_if::cfg_if! {
 }
 use crate::backup::BackupCiphertext;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
-use crate::consts::SIGNING_KEY_ID;
+use crate::consts::{
+    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
+};
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::util::key_setup::test_tools::{purge_backup, read_custodian_backup_files};
 use crate::{
@@ -55,6 +57,8 @@ async fn test_auto_update_backups_threshold(#[case] custodians: usize, #[case] t
 
 async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     let amount_parties = 4;
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+
     let req_new_cus: RequestId = derive_request_id(&format!(
         "test_auto_update_backups_threshold_{amount_parties}_{amount_custodians}_{threshold}"
     ))
@@ -82,11 +86,11 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     .await;
     // Check that signing key was backed up, since it will always be there
     let initial_backup: Vec<BackupCiphertext> = read_custodian_backup_files(
-        amount_parties,
         test_path,
         &req_new_cus,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
+        backup_storage_prefixes,
     )
     .await;
     assert_eq!(initial_backup.len(), amount_parties); // exactly one per party
@@ -99,7 +103,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     drop(internal_client);
 
     // Purge backup
-    purge_backup(test_path, amount_parties).await;
+    purge_backup(test_path, backup_storage_prefixes).await;
     // Check that the backup is still there an unmodified
     let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
@@ -112,11 +116,11 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     )
     .await;
     let _reread_backup: Vec<BackupCiphertext> = read_custodian_backup_files(
-        amount_parties,
         test_path,
         &req_new_cus,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
+        backup_storage_prefixes,
     )
     .await;
 }
@@ -126,6 +130,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
 #[rstest::rstest]
 #[case(7, 3)]
 #[case(3, 1)]
+#[tracing_test::traced_test]
 #[serial]
 async fn test_backup_after_crs_threshold(#[case] custodians: usize, #[case] threshold: u32) {
     backup_after_crs(custodians, threshold).await;
@@ -134,6 +139,7 @@ async fn test_backup_after_crs_threshold(#[case] custodians: usize, #[case] thre
 #[cfg(feature = "insecure")]
 async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     let amount_parties = 4;
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let req_new_cus: RequestId = derive_request_id(&format!(
         "test_backup_after_crs_threshold_{amount_parties}_{amount_custodians}_{threshold}"
     ))
@@ -179,11 +185,11 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     .await;
     // Check that the new CRS was backed up
     let crss: Vec<BackupCiphertext> = read_custodian_backup_files(
-        amount_parties,
         test_path,
         &req_new_cus,
         &crs_req,
         &PrivDataType::CrsInfo.to_string(),
+        backup_storage_prefixes,
     )
     .await;
     // Validate each backup
@@ -196,6 +202,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     }
     assert!(crss[crss.len() - 1].priv_data_type == PrivDataType::CrsInfo);
 
+    println!("Shutting down servers");
     // Shut down the servers
     for (_, kms_server) in kms_servers {
         kms_server.assert_shutdown().await;
@@ -204,6 +211,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     drop(internal_client);
 
     // Check that the backup is still there an unmodified
+    println!("Starting new servers");
     let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
@@ -215,11 +223,11 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     )
     .await;
     let reread_crss: Vec<BackupCiphertext> = read_custodian_backup_files(
-        amount_parties,
         test_path,
         &req_new_cus,
         &crs_req,
         &PrivDataType::CrsInfo.to_string(),
+        backup_storage_prefixes,
     )
     .await;
     assert_eq!(crss.len(), amount_parties);
@@ -242,6 +250,7 @@ async fn test_decrypt_after_recovery_threshold(#[case] custodians: usize, #[case
 #[cfg(feature = "insecure")]
 async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let amount_parties = 4;
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     let req_new_cus: RequestId = derive_request_id(&format!(
         "test_decrypt_after_recovery_threshold_cus_{amount_parties}"
@@ -296,10 +305,9 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 
     let mut sig_keys = Vec::new();
     // Read the private signing keys for reference
-    for i in 1..=amount_parties {
-        let cur_role = Role::indexed_from_one(i);
+    for storage_prefix in priv_storage_prefixes.iter() {
         let cur_priv_store =
-            FileStorage::new(test_path, StorageType::PRIV, Some(cur_role)).unwrap();
+            FileStorage::new(test_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
         let cur_sk: PrivateSigKey = read_versioned_at_request_id(
             &cur_priv_store,
             &SIGNING_KEY_ID,
@@ -310,7 +318,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         sig_keys.push(cur_sk);
     }
     // Purge the private storage to tests the backup
-    purge_priv(test_path).await;
+    purge_priv(test_path, priv_storage_prefixes).await;
 
     // Reboot the servers
     let (kms_servers, kms_clients, internal_client) = threshold_handles_custodian_backup(
@@ -324,7 +332,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     )
     .await;
     // Purge the private storage again to delete the signing key
-    purge_priv(test_path).await;
+    purge_priv(test_path, priv_storage_prefixes).await;
 
     // Execute the backup restoring
     let mut rng = AesRng::seed_from_u64(13);
@@ -337,10 +345,9 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     assert_eq!(res.len(), amount_parties);
 
     // Check that the key material is back
-    for i in 1..=amount_parties {
-        let cur_role = Role::indexed_from_one(i);
+    for (i, storage_prefix) in priv_storage_prefixes.iter().enumerate() {
         let cur_priv_store =
-            FileStorage::new(test_path, StorageType::PRIV, Some(cur_role)).unwrap();
+            FileStorage::new(test_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
         let cur_sk: PrivateSigKey = read_versioned_at_request_id(
             &cur_priv_store,
             &SIGNING_KEY_ID,
@@ -349,7 +356,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         .await
         .unwrap();
         // Check the data is correctly recovered
-        assert_eq!(cur_sk, sig_keys[i - 1]);
+        assert_eq!(cur_sk, sig_keys[i]);
     }
 
     // Reboot the servers and try to decrypt
@@ -405,6 +412,7 @@ async fn test_decrypt_after_recovery_threshold_negative() {
 #[cfg(feature = "insecure")]
 async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u32) {
     let amount_parties = 4;
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     let req_new_cus: RequestId = derive_request_id(&format!(
         "test_decrypt_after_recovery_threshold_negative_{amount_parties}"
@@ -441,10 +449,9 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
 
     let mut sig_keys = Vec::new();
     // Read the private signing keys for reference
-    for i in 1..=amount_parties {
-        let cur_role = Role::indexed_from_one(i);
+    for storage_prefix in priv_storage_prefixes.iter() {
         let cur_priv_store =
-            FileStorage::new(test_path, StorageType::PRIV, Some(cur_role)).unwrap();
+            FileStorage::new(test_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
         let cur_sk: PrivateSigKey = read_versioned_at_request_id(
             &cur_priv_store,
             &SIGNING_KEY_ID,
@@ -455,7 +462,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
         sig_keys.push(cur_sk);
     }
     // Purge the private storage to tests the backup
-    purge_priv(test_path).await;
+    purge_priv(test_path, priv_storage_prefixes).await;
 
     // Reboot the servers
     let (_kms_servers, kms_clients, _internal_client) = threshold_handles_custodian_backup(
@@ -469,7 +476,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     )
     .await;
     // Purge the private storage again to delete the signing key
-    purge_priv(test_path).await;
+    purge_priv(test_path, priv_storage_prefixes).await;
 
     // Execute the backup restoring
     let mut rng = AesRng::seed_from_u64(13);
@@ -509,10 +516,9 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     assert_eq!(res.len(), amount_parties);
 
     // Check that the key material is back
-    for i in 1..=amount_parties {
-        let cur_role = Role::indexed_from_one(i);
+    for (i, storage_prefix) in priv_storage_prefixes.iter().enumerate() {
         let cur_priv_store =
-            FileStorage::new(test_path, StorageType::PRIV, Some(cur_role)).unwrap();
+            FileStorage::new(test_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
         let cur_sk: PrivateSigKey = read_versioned_at_request_id(
             &cur_priv_store,
             &SIGNING_KEY_ID,
@@ -521,7 +527,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
         .await
         .unwrap();
         // Check the data is correctly recovered
-        assert_eq!(cur_sk, sig_keys[i - 1]);
+        assert_eq!(cur_sk, sig_keys[i]);
     }
 }
 

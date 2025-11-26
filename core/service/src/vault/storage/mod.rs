@@ -20,7 +20,6 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{self};
 use strum::{EnumIter, IntoEnumIterator};
 use tfhe::{named::Named, Unversionize, Versionize};
-use threshold_fhe::execution::runtime::party::Role;
 use tracing;
 
 pub mod crypto_material;
@@ -393,7 +392,7 @@ pub enum StorageProxy {
 pub fn make_storage(
     storage_conf: Option<StorageConf>,
     storage_type: StorageType,
-    party_role: Option<Role>,
+    storage_prefix: Option<&str>,
     storage_cache: Option<StorageCache>,
     s3_client: Option<S3Client>,
 ) -> anyhow::Result<StorageProxy> {
@@ -407,16 +406,16 @@ pub fn make_storage(
                         bucket,
                         prefix,
                         storage_type,
-                        party_role,
+                        storage_prefix,
                         storage_cache,
                     )?)
                 }
                 StorageConf::File(FileStorage { path }) => StorageProxy::from(
-                    file::FileStorage::new(Some(&path), storage_type, party_role)?,
+                    file::FileStorage::new(Some(&path), storage_type, storage_prefix)?,
                 ),
                 StorageConf::Ram(RamStorage {}) => StorageProxy::from(ram::RamStorage::new()),
             },
-            None => StorageProxy::from(file::FileStorage::new(None, storage_type, party_role)?),
+            None => StorageProxy::from(file::FileStorage::new(None, storage_type, storage_prefix)?),
         };
     Ok(storage)
 }

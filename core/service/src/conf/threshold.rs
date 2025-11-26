@@ -1,4 +1,5 @@
 use crate::engine::base::derive_request_id;
+use alloy_primitives::Address;
 use kms_grpc::RequestId;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -27,9 +28,16 @@ pub struct ThresholdPartyConf {
     pub tls: Option<TlsConf>,
 
     #[validate(range(min = 1))]
+    // TODO: remove this
     pub threshold: u8,
+
+    pub public_storage_prefix: Option<String>,
+    pub private_storage_prefix: Option<String>,
+    pub backup_storage_prefix: Option<String>,
+
     #[validate(range(min = 1))]
-    pub my_id: usize,
+    pub initial_party_id: Option<usize>,
+
     pub dec_capacity: usize,
     pub min_dec_cache: usize,
     pub preproc_redis: Option<RedisConf>,
@@ -50,13 +58,6 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
             return Err(ValidationError::new("Incorrect threshold").with_message(format!("3*t+1 must be equal to number of parties. Got t={} but expected t={} for n={} parties", conf.threshold,                     (num_parties - 1) / 3,
                     num_parties
         ).into() ));
-        }
-        if conf.my_id > num_parties {
-            tracing::warn!(
-                "my_id {} is greater than number of parties {}, in some situations this may be a misconfiguration",
-                conf.my_id,
-                num_parties
-            );
         }
         for peer in peers {
             if peer.party_id > num_parties {
@@ -127,17 +128,9 @@ impl TlsCert {
         Ok(parse_x509_pem(cert_bytes.as_ref())?.1)
     }
 
-    pub fn into_pem(&self, my_id: usize, peers: &[PeerConf]) -> anyhow::Result<Pem> {
+    pub fn into_pem2(&self, peer: &PeerConf) -> anyhow::Result<Pem> {
         let cert_pem = self.unchecked_pem()?;
         let x509_cert = cert_pem.parse_x509()?;
-        // sanity check: peerlist needs to have an entry for the
-        // current party
-        let peer = &peers
-            .iter()
-            .find(|peer| peer.party_id == my_id)
-            .ok_or_else(|| {
-                anyhow::anyhow!("Peer list {peers:?} does not have an entry for my id {my_id}")
-            })?;
         let mpc_identity = peer
             .mpc_identity
             .as_ref()
@@ -150,6 +143,18 @@ impl TlsCert {
             "Certificate subject {subject} does not match mpc_identity {mpc_identity}"
         );
         Ok(cert_pem)
+    }
+
+    pub fn into_pem(&self, my_id: usize, peers: &[PeerConf]) -> anyhow::Result<Pem> {
+        // sanity check: peerlist needs to have an entry for the
+        // current party
+        let peer = &peers
+            .iter()
+            .find(|peer| peer.party_id == my_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!("Peer list {peers:?} does not have an entry for my id {my_id}")
+            })?;
+        self.into_pem2(peer)
     }
 }
 
@@ -192,6 +197,7 @@ pub struct PeerConf {
     #[validate(range(min = 1, max = 65535))]
     pub port: u16,
     pub tls_cert: Option<TlsCert>,
+    pub verification_address: Option<Address>,
 }
 
 impl PeerConf {
@@ -227,6 +233,7 @@ MEUCIEfh23uIR76K+tv+s5pi0uksEeleDonWm+tqStxeRFR5AiEAs4mw/Yi6aoDg
         mpc_identity: Some("dev-kms-core-1.com".to_string()),
         port: 1234,
         tls_cert: Some(tls_cert.clone()),
+        verification_address: None,
     }];
 
     // `into_pem` will deserialize the string inside `tls_cert`

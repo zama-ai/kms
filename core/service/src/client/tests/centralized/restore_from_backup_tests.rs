@@ -27,9 +27,9 @@ async fn test_insecure_central_dkg_backup() {
     let key_id_1 = derive_request_id("test_insecure_central_dkg_backup-1").unwrap();
     let key_id_2 = derive_request_id("test_insecure_central_dkg_backup-2").unwrap();
     // Delete potentially old data
-    purge(None, None, &key_id_1, 1).await;
-    purge(None, None, &key_id_2, 1).await;
-    purge_backup(None, 1).await;
+    purge(None, None, &key_id_1, &[None], &[None]).await;
+    purge(None, None, &key_id_2, &[None], &[None]).await;
+    purge_backup(None, &[None]).await;
     key_gen_centralized(&key_id_1, param, None, None).await;
     key_gen_centralized(&key_id_2, param, None, None).await;
     // Generated key, delete private storage
@@ -73,8 +73,8 @@ async fn test_insecure_central_dkg_backup() {
         1,
     )
     .await;
-    purge_priv(None).await;
-    purge_pub(None).await;
+    purge_priv(None, &[None]).await;
+    purge_pub(None, &[None]).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -84,8 +84,8 @@ async fn test_insecure_central_autobackup_after_deletion() {
     let dkg_param: WrappedDKGParams = param.into();
     let key_id = derive_request_id("test_insecure_central_autobackup_after_deletion").unwrap();
     // Delete potentially old data
-    purge(None, None, &key_id, 1).await;
-    purge_backup(None, 1).await;
+    purge(None, None, &key_id, &[None], &[None]).await;
+    purge_backup(None, &[None]).await;
     key_gen_centralized(&key_id, param, None, None).await;
     // Sleep to ensure the servers are properly shut down
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -99,8 +99,8 @@ async fn test_insecure_central_autobackup_after_deletion() {
         .data_exists(&key_id, &PrivDataType::FhePrivateKey.to_string())
         .await
         .unwrap());
-    purge_priv(None).await;
-    purge_pub(None).await;
+    purge_priv(None, &[None]).await;
+    purge_pub(None, &[None]).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -110,8 +110,8 @@ async fn nightly_test_insecure_central_crs_backup() {
     let dkg_param: WrappedDKGParams = param.into();
     let req_id: RequestId =
         derive_request_id(&format!("test_insecure_central_crs_backup_{param:?}",)).unwrap();
-    purge(None, None, &req_id, 1).await;
-    purge_backup(None, 1).await;
+    purge(None, None, &req_id, &[None], &[None]).await;
+    purge_backup(None, &[None]).await;
     crs_gen_centralized(&req_id, param, true, None).await;
 
     // Generated crs, delete it from private storage
@@ -156,6 +156,6 @@ async fn nightly_test_insecure_central_crs_backup() {
         .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
         .await
         .unwrap());
-    purge_priv(None).await;
-    purge_pub(None).await;
+    purge_priv(None, &[None]).await;
+    purge_pub(None, &[None]).await;
 }

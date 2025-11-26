@@ -1,5 +1,7 @@
 use assert_cmd::{assert::OutputAssertExt, Command};
-use kms_lib::consts::KEY_PATH_PREFIX;
+use kms_lib::consts::{
+    KEY_PATH_PREFIX, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
+};
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -8,7 +10,7 @@ use std::{fs, thread, time::Duration};
 use sysinfo::System;
 use tests_utils::integration_test;
 use tests_utils::persistent_traces;
-use threshold_fhe::{conf::party::CertificatePaths, execution::runtime::party::Role};
+use threshold_fhe::conf::party::CertificatePaths;
 
 const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";
@@ -52,9 +54,18 @@ fn purge_all() {
     purge_file_storage(&priv_storage);
     purge_file_storage(&pub_storage);
 
-    let role = Some(Role::indexed_from_one(1));
-    let priv_storage = FileStorage::new(None, StorageType::PRIV, role).unwrap();
-    let pub_storage = FileStorage::new(None, StorageType::PUB, role).unwrap();
+    let priv_storage = FileStorage::new(
+        None,
+        StorageType::PRIV,
+        PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
+    )
+    .unwrap();
+    let pub_storage = FileStorage::new(
+        None,
+        StorageType::PUB,
+        PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
+    )
+    .unwrap();
     purge_file_storage(&priv_storage);
     purge_file_storage(&pub_storage);
 
