@@ -41,6 +41,8 @@ struct SharedContextManager<
     base_kms: BaseKmsStruct,
     crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
+    // NOTE: this should be removed since a context manager should not have a role
+    // as it manages multiple context with different roles.
     my_role: Role,
 }
 

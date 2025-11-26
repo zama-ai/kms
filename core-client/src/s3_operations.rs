@@ -29,8 +29,6 @@ pub(crate) async fn fetch_elements(
     destination_prefix: &Path,
     download_all: bool,
 ) -> anyhow::Result<Vec<usize>> {
-    tracing::info!("Fetching {:?} with id {element_id}", element_types);
-
     // set of core ids, to track which cores we successfully contacted
     let mut successful_core_ids: HashSet<usize> = HashSet::new();
 
@@ -39,6 +37,12 @@ pub(crate) async fn fetch_elements(
         let mut all_elements = true;
         // try to fetch all elements from this core
         'elements: for element_name in element_types {
+            tracing::info!(
+                "Fetching {element_name:?} with id {element_id} from {}/{}",
+                cur_core.s3_endpoint.as_str(),
+                &cur_core.object_folder,
+            );
+
             if fetch_global_pub_element_and_write_to_file(
                 destination_prefix,
                 cur_core.s3_endpoint.as_str(),
@@ -160,6 +164,7 @@ async fn fetch_global_pub_element_and_write_to_file(
         element_id,
     )
     .await?;
+    tracing::info!("writing element to folder {:?}", folder);
     write_bytes_to_file(&folder, element_id, content.as_ref()).await
 }
 

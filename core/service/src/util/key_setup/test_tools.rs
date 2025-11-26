@@ -329,6 +329,7 @@ pub async fn load_pk_from_storage(
         party_id,
     )
     .await;
+    tracing::info!("loading pk from storage root dir: {:?}", storage.root_dir());
     let wrapped_pk = read_pk_at_request_id(&storage, key_id)
         .await
         .expect("load_pk_from_storage failed");

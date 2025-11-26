@@ -52,13 +52,11 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
         ).into() ));
         }
         if conf.my_id > num_parties {
-            return Err(ValidationError::new("Incorrect party ID").with_message(
-                format!(
-                    "Party ID cannot be greater than the number of parties ({}), but was {}.",
-                    num_parties, conf.my_id
-                )
-                .into(),
-            ));
+            tracing::warn!(
+                "my_id {} is greater than number of parties {}, in some situations this may be a misconfiguration",
+                conf.my_id,
+                num_parties
+            );
         }
         for peer in peers {
             if peer.party_id > num_parties {
@@ -73,10 +71,7 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
             }
         }
     } else {
-        // TODO we might want to allow running without a peer list in some cases (e.g. when starting from a context)
-        return Err(ValidationError::new(
-            "Peer list is required but was not provided.",
-        ));
+        tracing::info!("No peer list provided; skipping threshold and party ID validation");
     }
     Ok(())
 }
