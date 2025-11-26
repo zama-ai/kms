@@ -61,6 +61,7 @@ bincode.workspace = true
 bip39.workspace = true
 cbc.workspace = true
 cfg-if.workspace = true
+ciborium.workspace = true
 clap = { workspace = true, features = ["derive"] }
 console_error_panic_hook.workspace = true
 enum_dispatch.workspace = true

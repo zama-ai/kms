@@ -83,6 +83,12 @@ pub struct AttestedVerifier {
     trust_roots: RwLock<HashMap<MpcIdentity, TrustRootValue>>,
     // Each context can specify a list of valid PCR values
     release_pcrs: RwLock<HashMap<SessionId, HashSet<ReleasePCRValues>>>,
+    // In addition to the PCR values, the verifier can also check the user data
+    // section in the attestation document using a custom function of the type
+    // `UserDataVerifier`. For example, If the node is configured to attest
+    // private vault root key policies, the user data section will contain its
+    // canonicalized key policy, and it'll check other parties' key policies
+    // using `user_data_verifier`.
     user_data_verifier: Option<Arc<UserDataVerifier>>,
     // If the "semi-auto" TLS scheme is used, where the party TLS identity is
     // linked to some certificate issued and managed by some traditional PKI,
@@ -106,7 +112,12 @@ impl std::fmt::Debug for AttestedVerifier {
         let f = f
             .field("root_hint_subjects", &self.root_hint_subjects)
             .field("supported_algs", &self.supported_algs)
-            .field("pcr8_expected", &self.pcr8_expected);
+            .field(
+                "user_data_verifier_present",
+                &self.user_data_verifier.is_some(),
+            )
+            .field("pcr8_expected", &self.pcr8_expected)
+            .field("ignore_aws_ca_chain", &self.ignore_aws_ca_chain);
         #[cfg(feature = "testing")]
         let f = f.field("mock_enclave", &self.mock_enclave);
         f.finish()
@@ -597,11 +608,12 @@ fn validate_wrapped_cert(
         }
     }
 
-    let Some(user_data) = attestation_doc.user_data else {
-        bail!("Bad certificate: additional measurements not present in attestation document")
-    };
-
+    // If the node wasn't configured to attest key policies, it shouldn't check
+    // for the presence of user data carrying key policy attestation at all.
     if let Some(user_data_verifier) = user_data_verifier {
+        let Some(user_data) = attestation_doc.user_data else {
+            bail!("Bad certificate: additional measurements not present in attestation document")
+        };
         ensure!(
             user_data_verifier(pcr_values, user_data.into_vec())?,
             "Bad certificate: additional measurements verification failed"

@@ -148,11 +148,14 @@ pub trait SecurityModule {
 
         let private_vault_root_key_measurements_bytes = match private_vault_root_key_measurements {
             Some(private_vault_root_key_measurements) => {
-                let private_vault_root_key_measurements_bytes = bincode::serde::encode_to_vec(
+                // user data section in the AWS Nitro attestation document
+                // should not exceed 1024 bytes
+                let mut private_vault_root_key_measurements_bytes = Vec::with_capacity(1024);
+                ciborium::into_writer(
                     private_vault_root_key_measurements,
-                    bincode::config::standard(),
+                    &mut private_vault_root_key_measurements_bytes,
                 )?;
-                ensure!(private_vault_root_key_measurements_bytes.len() > 1024, "Private vault root key measurements length too long for inclusion into attestation document, impossible to continue");
+                ensure!(private_vault_root_key_measurements_bytes.len() <= 1024, "Private vault root key measurements length too long for inclusion into attestation document, impossible to continue");
                 Some(private_vault_root_key_measurements_bytes)
             }
             None => {

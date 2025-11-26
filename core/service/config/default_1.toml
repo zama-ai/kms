@@ -108,6 +108,25 @@ decryption_mode = "NoiseFloodSmall"
 cert.path = "certs/cert_p1.pem"
 key.path = "certs/key_p1.pem"
 
+# When running in an AWS Nitro enclave, it's recommended to rely on the
+# "full-auto" TLS scheme that derives party CA certificates from party signing
+# keys and uses remote attestation between parties.
+
+# Experimental. If enabled, the party will include will include information
+# about the key policy used for the private vault root key into the attestation
+# document and will expect the same from other parties.
+# [threshold.tls.full_auto]
+# attest_private_vault_root_key = false
+
+# Obligatory if "full-auto" TLS is used. The PCR values are the expected
+# measurements of the enclave image. If "full-auto" TLS is enabled, the party
+# will only connect to other parties that can attest to a set of PCR values on
+# this list.
+# [[threshold.tls.full_auto.trusted_releases]]
+# pcr0 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+# pcr1 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+# pcr2 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+
 # Every core needs to be aware of all other cores. In the
 # future there should be an option to load this configuration from a blockchain
 # smart contract. At the moment they need to be loaded from the same

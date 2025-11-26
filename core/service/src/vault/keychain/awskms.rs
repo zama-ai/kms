@@ -566,31 +566,48 @@ async fn get_key_origin_and_policy(
     Ok((key_origin, key_policy))
 }
 
-fn canonicalize_iam_policy(policy: &mut IAMPolicy) {
+/// We're interested in comparing the policy structure only, not the identifiers
+/// specific to each separate deployments, which is why we have to erase them
+/// before comparison.
+pub(crate) fn canonicalize_iam_policy(policy: &mut IAMPolicy) {
     policy.id = None;
     for st in &mut policy.statement {
         st.principal = None
     }
 }
 
+/// Given the PCR values, produces a key policy for the private vault root key
+/// in the canonical form (that is, without principal names that would be
+/// different between deployments). This policy makes the key use (Decrypt and
+/// GenerateDataKey) contingent on AWS Nitro attestation but also allows the
+/// administrators to update the policy, for example, when a new software build
+/// with new PCR values is deployed. It also permits some operations that the
+/// nodes need to perform but that do not require attestation.
 pub fn make_root_key_policy(pcr_values: ReleasePCRValues) -> IAMPolicy {
     IAMPolicy::with_version(IAMVersion::V20121017)
         .with_id("storage_root_key")
         .add_statement(
+            // Intended to be granted to "everyone"
             IAMStatement::new(IAMEffect::Allow)
                 .with_sid("public")
                 .with_action(IAMAction::Multiple(vec![
+                    // Used for key policy attestation
                     "kms:DescribeKey".to_string(),
                     "kms:GetKeyPolicy".to_string(),
+                    // Used for private material encryption with asymmetric keys
                     "kms:GetPublicKey".to_string(),
                 ]))
                 .with_resource(IAMResource::Single("*".to_string())),
         )
         .add_statement(
+            // Intented to be granted to the node IAM roles or service accounts
             IAMStatement::new(IAMEffect::Allow)
                 .with_sid("enclave")
                 .with_action(IAMAction::Multiple(vec![
+                    // Used for private material decryption with both symmetric
+                    // and asymmetric keys
                     "kms:Decrypt".to_string(),
+                    // Used for private material encryption with symmetric keys
                     "kms:GenerateDataKey".to_string(),
                 ]))
                 .with_resource(IAMResource::Single("*".to_string()))
@@ -616,6 +633,7 @@ pub fn make_root_key_policy(pcr_values: ReleasePCRValues) -> IAMPolicy {
                 ),
         )
         .add_statement(
+            // Intended to be granted to infra admins only
             IAMStatement::new(IAMEffect::Allow)
                 .with_sid("infra")
                 .with_action(IAMAction::Multiple(vec![

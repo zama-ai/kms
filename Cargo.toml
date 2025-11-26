@@ -104,6 +104,7 @@ bytes = "=1.10.1"  # Byte buffer utilities - LOW RISK: tokio team, 100M+ downloa
 cbc = { version = "=0.1.2", features = ["alloc"] }  # CBC block cipher mode - LOW RISK: RustCrypto org, standard cipher mode
 cfg-if = "=1.0.3"  # Conditional compilation - LOW RISK: Rust-lang org owned
 clap = { version = "=4.5.47", features = ["derive"] }  # CLI argument parsing - LOW RISK: clap-rs team
+ciborium = "0.2.2" # CBOR support for serde - LOW RISK: Enarx team, 100M+ downloads
 config = "=0.15.15"  # Configuration management - LOW RISK: rust-cli org (team maintained)
 const_format = "=0.2.34"  # Compile-time string formatting - HIGH RISK: Individual maintainer (rodrimati1992), despite 55M+ downloads
 console_error_panic_hook = { version = "=0.1.7" }  # WASM panic hook for better error messages - LOW RISK: rustwasm team
