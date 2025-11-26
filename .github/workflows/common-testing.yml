@@ -101,7 +101,7 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     timeout-minutes: 500
-    runs-on: ${{ inputs.runs-on }}
+    runs-on: ${{ github.run_id }}/runner=${{ inputs.runs-on }}/extras=s3-cache
     services:
       redis:
         image: ${{ inputs.run-redis && 'redis/redis-stack:7.4.0-v3@sha256:c2019e98fd5abce4dd11feec004de44d1709d2366a6efa5ffb2bd0daf8f9c6a4' || '' }}
@@ -113,6 +113,13 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
 
     steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+        with:
+          sccache: s3
+      - name: Setup SCCache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
@@ -192,21 +199,21 @@ jobs:
       ############################################################################
       # Setup cache for dockerfile and inject in docker
       #
-      - name: Setup Cache
-        uses: runs-on/cache@a10d0f887093e2bc9de875be9edf8ab98c94a154 # v4.3.0
-        id: cache
-        env:
-          RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
-          RUNS_ON_AWS_REGION: eu-west-3
-        with:
-          path: |
-            /home/ubuntu/.cargo/bin/
-            /home/ubuntu/.cargo/registry/index/
-            /home/ubuntu/.cargo/registry/cache/
-            /home/ubuntu/.cargo/git/db/
-            ${{ github.workspace }}/target
-          key: |
-            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      # - name: Setup Cache
+      #   uses: runs-on/cache@a10d0f887093e2bc9de875be9edf8ab98c94a154 # v4.3.0
+      #   id: cache
+      #   env:
+      #     RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
+      #     RUNS_ON_AWS_REGION: eu-west-3
+      #   with:
+      #     path: |
+      #       /home/ubuntu/.cargo/bin/
+      #       /home/ubuntu/.cargo/registry/index/
+      #       /home/ubuntu/.cargo/registry/cache/
+      #       /home/ubuntu/.cargo/git/db/
+      #       ${{ github.workspace }}/target
+      #     key: |
+      #       ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install Protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
