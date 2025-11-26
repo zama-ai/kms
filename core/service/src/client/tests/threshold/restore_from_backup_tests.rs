@@ -6,9 +6,7 @@ use crate::{
     util::key_setup::test_tools::{
         purge, purge_backup, purge_priv, purge_pub, EncryptionConfig, TestingPlaintext,
     },
-    vault::storage::{
-        delete_all_at_request_id, file::FileStorage, make_storage, StorageReader, StorageType,
-    },
+    vault::storage::{delete_all_at_request_id, file::FileStorage, StorageReader, StorageType},
 };
 use kms_grpc::{
     kms::v1::{Empty, FheParameter},
@@ -143,9 +141,6 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
     // NOTE: amount_parties must not be too high when changing the param to FheParameter::Default
     // because every party will load all the keys and each ServerKey is 1.5 GB
     // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
-    use crate::conf::FileStorage as FileStorageConf;
-    use crate::conf::Storage as StorageConf;
-
     let amount_parties = 4;
     let param = FheParameter::Test;
     let dkg_param: WrappedDKGParams = param.into();
@@ -186,21 +181,14 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
     let (_kms_servers, _kms_clients, _internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
     // Check the storage
-    let vault_storage_option = test_path.map(|path| {
-        StorageConf::File(FileStorageConf {
-            path: path.to_path_buf(),
-        })
-    });
     for cur_party in 1..=amount_parties {
-        let backup_storage = make_storage(
-            vault_storage_option.clone(),
+        let backup_storage = FileStorage::new(
+            test_path,
             StorageType::BACKUP,
             Some(Role::indexed_from_one(cur_party)),
-            None,
-            None,
         )
-        .unwrap();
-        // Validate that the backup is constructed again
+        .unwrap(); // TODO vault should be used to also work with custodian shares
+                   // Validate that the backup is constructed again
         assert!(backup_storage
             .data_exists(&key_id, &PrivDataType::FheKeyInfo.to_string())
             .await

@@ -1,11 +1,9 @@
 use crate::backup::BackupCiphertext;
-use crate::conf::FileStorage as FileStorageConf;
-use crate::conf::Storage as StorageConf;
 use crate::util::file_handling::safe_read_element_versioned;
 use crate::util::key_setup::FhePublicKey;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
-    delete_all_at_request_id, make_storage, read_versioned_at_request_id, StorageReader,
+    delete_all_at_request_id, read_versioned_at_request_id, StorageReader,
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
 use crate::vault::VaultDataType;
@@ -367,25 +365,14 @@ pub async fn purge(
     id: &RequestId,
     amount_parties: usize,
 ) {
-    let vault_storage_option = backup_path.map(|path| {
-        StorageConf::File(FileStorageConf {
-            path: path.to_path_buf(),
-        })
-    });
     if amount_parties == 1 {
         let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
         delete_all_at_request_id(&mut pub_storage, id).await;
         let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
         delete_all_at_request_id(&mut priv_storage, id).await;
         // Delete backups
-        let mut backup_storage = make_storage(
-            vault_storage_option.clone(),
-            StorageType::BACKUP,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        // TODO this should actually be done with a vault, idem below
+        let mut backup_storage = FileStorage::new(backup_path, StorageType::BACKUP, None).unwrap();
         delete_all_at_request_id(&mut backup_storage, id).await;
     } else {
         for i in 1..=amount_parties {
@@ -401,15 +388,9 @@ pub async fn purge(
             delete_all_at_request_id(&mut threshold_pub, id).await;
             delete_all_at_request_id(&mut threshold_priv, id).await;
             // Delete backups
-            let mut backup_storage = make_storage(
-                vault_storage_option.clone(),
-                StorageType::BACKUP,
-                Some(Role::indexed_from_one(i)),
-                None,
-                None,
-            )
-            .unwrap();
-            delete_all_at_request_id(&mut backup_storage, id).await;
+            let mut threshold_backup_storage =
+                FileStorage::new(backup_path, StorageType::BACKUP, None).unwrap();
+            delete_all_at_request_id(&mut threshold_backup_storage, id).await;
         }
     }
 }
@@ -474,7 +455,8 @@ pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
         }
     }
 }
-// todo refactor these awya
+
+/// Validate that a exists
 pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) -> bool {
     let mut backup_exists = false;
     if amount_parties == 1 {
@@ -502,7 +484,8 @@ pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) ->
     backup_exists
 }
 
-pub async fn read_backup_files(
+/// Helpter method for tests to read teh plain custodian backup files without going through the Vault API, and hence decryption.
+pub async fn read_custodian_backup_files(
     amount_parties: usize,
     test_path: Option<&Path>,
     backup_id: &RequestId,
