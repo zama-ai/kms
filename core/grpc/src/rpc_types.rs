@@ -7,7 +7,6 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self};
-use std::path::MAIN_SEPARATOR;
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::integer::bigint::StaticUnsignedBigInt;
@@ -250,6 +249,14 @@ impl fmt::Display for PubDataType {
     }
 }
 
+/// The default type is not important, but we need to have one for `EnumIter` derive.
+#[allow(clippy::derivable_impls)]
+impl Default for PubDataType {
+    fn default() -> Self {
+        PubDataType::PublicKey // Default is public FHE encryption key.
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum PrivDataTypeVersioned {
     V0(PrivDataTypeV0),
@@ -340,24 +347,6 @@ impl TryFrom<&str> for PrivDataType {
             }
         }
         Err(anyhow::anyhow!("Unknown PrivDataType: {}", value))
-    }
-}
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
-pub enum BackupDataType {
-    CustodianBackupData(RequestId, PrivDataType), // Backup of a piece of private data under a given backup id (RequestId) for custodian-based backup
-    ExportData(PrivDataType), // Backup a piece of private data for the import/export based backup
-}
-impl fmt::Display for BackupDataType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            BackupDataType::CustodianBackupData(backup_id, data_type) => {
-                write!(f, "{backup_id}{MAIN_SEPARATOR}{data_type}")
-            }
-            BackupDataType::ExportData(priv_data_type) => {
-                write!(f, "{priv_data_type}")
-            }
-        }
     }
 }
 

@@ -8,8 +8,9 @@ use crate::vault::storage::{
     delete_all_at_request_id, make_storage, read_versioned_at_request_id, StorageReader,
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
+use crate::vault::VaultDataType;
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
-use kms_grpc::rpc_types::{BackupDataType, PubDataType, WrappedPublicKeyOwned};
+use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
 use kms_grpc::RequestId;
 use serde::de::DeserializeOwned;
 use std::path::Path;
@@ -24,7 +25,6 @@ use tfhe::{
     Unversionize, Versionize,
 };
 use threshold_fhe::execution::{runtime::party::Role, tfhe_internals::utils::expanded_encrypt};
-use tokio::fs::read_dir;
 
 fn enc_and_serialize_ctxt<M, T>(
     msg: M,
@@ -377,25 +377,7 @@ pub async fn purge(
         delete_all_at_request_id(&mut pub_storage, id).await;
         let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
         delete_all_at_request_id(&mut priv_storage, id).await;
-        // Delete custodian based backups which are stored in folders with each custodian context id
-        if let Some(inner_backup_path) = backup_path {
-            let mut backup_dirs = read_dir(inner_backup_path).await.unwrap();
-            while let Some(cur_dir) = backup_dirs.next_entry().await.unwrap() {
-                let inner_vault_storage_option = StorageConf::File(FileStorageConf {
-                    path: cur_dir.path(),
-                });
-                let mut cus_backup_storage = make_storage(
-                    Some(inner_vault_storage_option),
-                    StorageType::BACKUP,
-                    None,
-                    None,
-                    None,
-                )
-                .unwrap();
-                delete_all_at_request_id(&mut cus_backup_storage, id).await;
-            }
-        }
-        // Delete import/export based backups
+        // Delete backups
         let mut backup_storage = make_storage(
             vault_storage_option.clone(),
             StorageType::BACKUP,
@@ -418,25 +400,7 @@ pub async fn purge(
             .unwrap();
             delete_all_at_request_id(&mut threshold_pub, id).await;
             delete_all_at_request_id(&mut threshold_priv, id).await;
-            // Delete custodian based backups which are stored in folders with each custodian context id
-            if let Some(inner_backup_path) = backup_path {
-                let mut backup_dirs = read_dir(inner_backup_path).await.unwrap();
-                while let Some(cur_dir) = backup_dirs.next_entry().await.unwrap() {
-                    let inner_vault_storage_option = StorageConf::File(FileStorageConf {
-                        path: cur_dir.path(),
-                    });
-                    let mut cus_backup_storage = make_storage(
-                        Some(inner_vault_storage_option),
-                        StorageType::BACKUP,
-                        Some(Role::indexed_from_one(i)),
-                        None,
-                        None,
-                    )
-                    .unwrap();
-                    delete_all_at_request_id(&mut cus_backup_storage, id).await;
-                }
-            }
-            // Delete import/export based backups
+            // Delete backups
             let mut backup_storage = make_storage(
                 vault_storage_option.clone(),
                 StorageType::BACKUP,
@@ -510,7 +474,7 @@ pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
         }
     }
 }
-
+// todo refactor these awya
 pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) -> bool {
     let mut backup_exists = false;
     if amount_parties == 1 {
@@ -551,7 +515,7 @@ pub async fn read_backup_files(
         let coerced_path = storage
             .root_dir()
             .join(
-                BackupDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
+                VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
                     .to_string(),
             )
             .join(file_req.to_string());
@@ -570,7 +534,7 @@ pub async fn read_backup_files(
             let coerced_path = storage
                 .root_dir()
                 .join(
-                    BackupDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
+                    VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
                         .to_string(),
                 )
                 .join(file_req.to_string());

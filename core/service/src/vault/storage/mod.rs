@@ -219,7 +219,6 @@ pub async fn delete_pk_at_request_id<S: Storage>(
 /// An error will be returned if the backup exists but could not be deleted.
 /// In case the backup does not exist, an info log is made but no error returned.
 pub async fn delete_backup(storage: &mut Vault) -> anyhow::Result<()> {
-    // TODO check that a backup storage is used
     for cur_type in PrivDataType::iter() {
         let ids = storage.all_data_ids(&cur_type.to_string()).await?;
         for cur_id in ids {
@@ -340,17 +339,18 @@ pub async fn delete_context_at_id<S: Storage>(
 
 pub async fn delete_custodian_context_at_id<PubS: Storage>(
     pub_storage: &mut PubS,
-    _backup_storage: &mut Vault,
-    request_id: &RequestId, // TODO should be changed to a BackupId
+    backup_storage: &mut Vault,
+    backup_id: &RequestId, // TODO should be changed to a BackupId
 ) -> anyhow::Result<()> {
     delete_at_request_id(
         pub_storage,
-        request_id,
+        backup_id,
         &PubDataType::RecoveryMaterial.to_string(),
     )
-    .await
+    .await?;
 
     // Delete everything that is backed up in relation to a specific request ID
+    delete_backup(backup_storage).await
     // TODO storage needs to be updated since everything is stored in a subfolder under request ID
     // Hence we cannot just delete by request ID and data type right now
 }
