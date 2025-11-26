@@ -220,7 +220,7 @@ jobs:
       working-directory: './core/service'
       args-tests: 'backward_compatibility'
       package-name: 'kms'
-      slab-backend: 'big-instance-service'
+      # slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
@@ -499,7 +499,7 @@ jobs:
       args-tests: ${{ matrix.args-tests }}
       run-minio: true
       package-name: 'kms'
-      slab-backend: 'big-instance-service'
+      # slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
