@@ -1,12 +1,14 @@
 use crate::backup::BackupCiphertext;
+use crate::conf::{self, Keychain, SecretSharingKeychain};
 use crate::util::file_handling::safe_read_element_versioned;
 use crate::util::key_setup::FhePublicKey;
+use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
-    delete_all_at_request_id, read_versioned_at_request_id, StorageReader,
+    delete_all_at_request_id, make_storage, read_versioned_at_request_id, StorageReader,
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
-use crate::vault::VaultDataType;
+use crate::vault::{Vault, VaultDataType};
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
 use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
 use kms_grpc::RequestId;
@@ -371,9 +373,18 @@ pub async fn purge(
         let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
         delete_all_at_request_id(&mut priv_storage, id).await;
         // Delete backups
-        // TODO this should actually be done with a vault, idem below
-        let mut backup_storage = FileStorage::new(backup_path, StorageType::BACKUP, None).unwrap();
-        delete_all_at_request_id(&mut backup_storage, id).await;
+        // First custodian backups
+        let mut custodian_vault = file_backup_vault(
+            None,
+            Some(&Keychain::SecretSharing(SecretSharingKeychain {})),
+            pub_path,
+            backup_path,
+        )
+        .await;
+        delete_all_at_request_id(&mut custodian_vault, id).await;
+        // Then non-custodian backups
+        let mut plain_vault = file_backup_vault(None, None, pub_path, backup_path).await;
+        delete_all_at_request_id(&mut plain_vault, id).await;
     } else {
         for i in 1..=amount_parties {
             let mut threshold_pub =
@@ -388,9 +399,19 @@ pub async fn purge(
             delete_all_at_request_id(&mut threshold_pub, id).await;
             delete_all_at_request_id(&mut threshold_priv, id).await;
             // Delete backups
-            let mut threshold_backup_storage =
-                FileStorage::new(backup_path, StorageType::BACKUP, None).unwrap();
-            delete_all_at_request_id(&mut threshold_backup_storage, id).await;
+            // First custodian backups
+            let mut threshold_custodian_vault = file_backup_vault(
+                None,
+                Some(&Keychain::SecretSharing(SecretSharingKeychain {})),
+                pub_path,
+                backup_path,
+            )
+            .await;
+            delete_all_at_request_id(&mut threshold_custodian_vault, id).await;
+            // Then non-custodian backups
+            let mut threshold_plain_vault =
+                file_backup_vault(None, None, pub_path, backup_path).await;
+            delete_all_at_request_id(&mut threshold_plain_vault, id).await;
         }
     }
 }
@@ -482,6 +503,41 @@ pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) ->
         }
     }
     backup_exists
+}
+
+/// Helper method to construct a backup vault for testing. That is either without encryption (no `Keychain`) or using custodians.
+pub async fn file_backup_vault(
+    role: Option<Role>,
+    keychain_conf: Option<&Keychain>,
+    pub_path: Option<&Path>,
+    backup_path: Option<&Path>,
+) -> Vault {
+    let backup_store_path = backup_path.map(|p| {
+        conf::Storage::File(conf::FileStorage {
+            path: p.to_path_buf(),
+        })
+    });
+    let pub_store_path = pub_path.map(|p| {
+        conf::Storage::File(conf::FileStorage {
+            path: p.to_path_buf(),
+        })
+    });
+    let pub_proxy_storage =
+        make_storage(pub_store_path.clone(), StorageType::PUB, role, None, None).unwrap();
+    let backup_proxy_storage =
+        make_storage(backup_store_path, StorageType::BACKUP, role, None, None).unwrap();
+    let keychain = match keychain_conf {
+        Some(conf) => Some(
+            make_keychain_proxy(conf, None, None, Some(&pub_proxy_storage))
+                .await
+                .unwrap(),
+        ),
+        None => None,
+    };
+    Vault {
+        storage: backup_proxy_storage,
+        keychain,
+    }
 }
 
 /// Helpter method for tests to read teh plain custodian backup files without going through the Vault API, and hence decryption.
