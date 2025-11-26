@@ -274,7 +274,7 @@ jobs:
         id: set-matrix
         run: |
           MATRIX="matrix={\"include\":["
-          MATRIX="${MATRIX}{\"args-tests\":\"--features k8s_tests,testing -- threshold isolated_test_example --skip full_gen_tests --skip nightly --skip centralzd --skip threshld --skip centralized\"},{\"args-tests\":\"--features k8s_tests,testing -- centralized --skip full_gen_tests --skip nightly --skip centralzd --skip threshld --skip threshold\"}"
+          MATRIX="${MATRIX}{\"args-tests\":\"--features k8s_tests,testing -- threshold isolated_test_example --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized\"},{\"args-tests\":\"--features k8s_tests,testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold\"}"
           MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "$MATRIX"
@@ -350,7 +350,7 @@ jobs:
       # Explicitly skip integration tests since they are all named something with centralized or threshold or full_gen_tests
       # Also skip isolated_test_example which requires pre-generated test material
       # Must include features to compile test code that uses feature-gated functions
-      args-tests: '--features k8s_tests,testing -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip centralzd --skip threshld --skip isolated_test_example'
+      args-tests: '--features k8s_tests,testing -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
       app-cache-dir: 'kms-core-client'
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
