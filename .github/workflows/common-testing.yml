@@ -251,6 +251,10 @@ jobs:
       - name: Generate Test Material
         run: cargo run -p generate-test-material -- --output ./test-material --verbose testing
 
+      # Build kms-custodian binary required by integration tests
+      - name: Build kms-custodian binary
+        run: cargo build --bin kms-custodian
+
       # Test execution
       - name: Run Tests
         id: tests
