@@ -231,7 +231,7 @@ jobs:
       #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
-      runs-on: '16cpu-linux-x64'
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -360,7 +360,7 @@ jobs:
       #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
-      runs-on: '16cpu-linux-x64'
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -409,7 +409,7 @@ jobs:
       #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
-      runs-on: '16cpu-linux-x64'
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -571,7 +571,7 @@ jobs:
       #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
-      runs-on: '16cpu-linux-x64'
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -621,7 +621,7 @@ jobs:
       #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
-      runs-on: '16cpu-linux-x64'
+      runs-on: '32cpu-linux-x64'
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
