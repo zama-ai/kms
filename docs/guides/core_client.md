@@ -190,6 +190,9 @@ Note: since this structure is empty, it is tricky to set this with an environmen
 KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true
 ```
 
+This environment variable must be given to the `kms-server` executable,
+if the KMS is running with docker, another environment variable `KMS_DOCKER_BACKUP_SECRET_SHARING=true` must be used instead.
+
 Here is an example configuration:
 ```{toml}
 [backup_vault.storage.file]
@@ -264,7 +267,7 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
   ```{bash}
   cargo build
   docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
-  KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up
+  KMS_DOCKER_BACKUP_SECRET_SHARING=true docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up
   ```
   Note: In case you have already been running this, old data might be present in MinIO. Hence use the [MinIO web interface](http://localhost:9001/login) to clean all old data and reboot. Use password `admin` and password `superstrongpassword`. If you don't do this, then the process might fail.
 1. Set up custodians:

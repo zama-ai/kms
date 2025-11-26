@@ -1,3 +1,7 @@
+# Docker Compose file to run a 6 threshold KMS nodes.
+# This is used for integration testing of threshold features such as context switching and resharing.
+# For example, we can switch a 4-node MPC network consisting of parties 1,2,3,4
+# into another 4-node MPC network consisting of parties 5,6,3,4.
 name: zama-core-threshold
 # TODO: proper networking between nodes
 
@@ -25,14 +29,14 @@ services:
         AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
         export AWS_SECRET_ACCESS_KEY &&
         echo 'Starting signing key and CA certificates generation for all cores' &&
-        for i in 1 2 3 4; do \
+        for i in 1 2 3 4 5 6; do \
           kms-gen-keys --mock-enclave --aws-region us-east-1 \
             --public-storage s3 --public-s3-bucket kms \
             --aws-s3-endpoint http://dev-s3-mock:9000 \
             --private-storage s3 --private-s3-bucket kms \
             --cmd signing-keys \
             threshold \
-            --signing-key-party-id $$i --tls-subject dev-kms-core-$$i.com \
+            --signing-key-party-id $$i --tls-subject dev-kms-core-$$i.com --num-parties 6 \
             --tls-wildcard && \
             wget -O ./certs/cert_dev-kms-core-$$i.com.pem ftp://$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY@dev-s3-mock:8021/kms/PUB-p$$i/CACert/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee && \
             cat ./certs/cert_dev-kms-core-$$i.com.pem; \
@@ -223,6 +227,92 @@ services:
       dev-kms-core-gen-signing-keys-ca-certs:
         condition: service_completed_successfully
 
+  dev-kms-core-5:
+    hostname: abcd.dev-kms-core-5.com
+    image: ghcr.io/zama-ai/kms/core-service:latest-dev
+    build:
+      context: .
+      target: dev
+      dockerfile: ./docker/core/service/Dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms/core-service:latest-dev
+      args:
+        LTO_RELEASE: ${LTO_RELEASE}
+        RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
+    ports:
+      - "50005:50005"
+      - "50500:50500"
+    healthcheck:
+      test: "grpc_health_probe --addr=localhost:50500"
+      interval: 1s
+      timeout: 1s
+      retries: 5
+      start_period: 1s
+    volumes:
+      - ./core/service/config/:/app/kms/core/service/config
+      - keys:/app/kms/core/service/keys
+      - certs:/app/kms/core/service/certs
+      - minio_secrets:/minio_secrets
+      - ./docker-compose-core-threshold-entrypoint.sh:/app/kms/core/service/docker-compose-core-threshold-entrypoint.sh
+    env_file:
+      - "docker-compose-kms-core.env"
+    environment:
+      - DOCKER_BUILDKIT=1
+      # Pass the flag to entrypoint script
+      - KMS_DOCKER_BACKUP_SECRET_SHARING=${KMS_DOCKER_BACKUP_SECRET_SHARING}
+      - KMS_DOCKER_EMPTY_PEERLIST=${KMS_DOCKER_EMPTY_PEERLIST}
+      - KMS_DOCKER_CONFIG_FILE=config/compose_5.toml
+    entrypoint:
+      - ./docker-compose-core-threshold-entrypoint.sh
+    depends_on:
+      dev-s3-mock-setup:
+        condition: service_completed_successfully
+      dev-kms-core-gen-signing-keys-ca-certs:
+        condition: service_completed_successfully
+
+  dev-kms-core-6:
+    hostname: abcd.dev-kms-core-6.com
+    image: ghcr.io/zama-ai/kms/core-service:latest-dev
+    build:
+      context: .
+      target: dev
+      dockerfile: ./docker/core/service/Dockerfile
+      cache_from:
+        - ghcr.io/zama-ai/kms/core-service:latest-dev
+      args:
+        LTO_RELEASE: ${LTO_RELEASE}
+        RUST_IMAGE_VERSION: ${RUST_IMAGE_VERSION}
+    ports:
+      - "50006:50006"
+      - "50600:50600"
+    healthcheck:
+      test: "grpc_health_probe --addr=localhost:50600"
+      interval: 1s
+      timeout: 1s
+      retries: 5
+      start_period: 1s
+    volumes:
+      - ./core/service/config/:/app/kms/core/service/config
+      - keys:/app/kms/core/service/keys
+      - certs:/app/kms/core/service/certs
+      - minio_secrets:/minio_secrets
+      - ./docker-compose-core-threshold-entrypoint.sh:/app/kms/core/service/docker-compose-core-threshold-entrypoint.sh
+    env_file:
+      - "docker-compose-kms-core.env"
+    environment:
+      - DOCKER_BUILDKIT=1
+      # Pass the flag to entrypoint script
+      - KMS_DOCKER_BACKUP_SECRET_SHARING=${KMS_DOCKER_BACKUP_SECRET_SHARING}
+      - KMS_DOCKER_EMPTY_PEERLIST=${KMS_DOCKER_EMPTY_PEERLIST}
+      - KMS_DOCKER_CONFIG_FILE=config/compose_6.toml
+    entrypoint:
+      - ./docker-compose-core-threshold-entrypoint.sh
+    depends_on:
+      dev-s3-mock-setup:
+        condition: service_completed_successfully
+      dev-kms-core-gen-signing-keys-ca-certs:
+        condition: service_completed_successfully
+
   # 3. Initialize the different cores
   dev-kms-core-init:
     image: ghcr.io/zama-ai/kms/core-service:latest-dev
@@ -243,6 +333,10 @@ services:
       dev-kms-core-3:
         condition: service_healthy
       dev-kms-core-4:
+        condition: service_healthy
+      dev-kms-core-5:
+        condition: service_healthy
+      dev-kms-core-6:
         condition: service_healthy
     env_file:
       - "docker-compose-kms-core.env"
