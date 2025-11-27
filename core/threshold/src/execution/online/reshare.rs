@@ -139,8 +139,8 @@ pub async fn secure_reshare_same_sets<
     const EXTENSION_DEGREE: usize,
 >(
     session: &mut S,
-    preproc128: P128,
-    preproc64: P64,
+    preproc128: &mut P128,
+    preproc64: &mut P64,
     input_share: &mut Option<PrivateKeySet<EXTENSION_DEGREE>>,
     parameters: DKGParams,
 ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
@@ -149,8 +149,8 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
 {
     reshare_sk::<SameSetsReshare<S>, _, _, _>(
-        &mut Expected(preproc128),
-        &mut Expected(preproc64),
+        Expected(preproc128),
+        Expected(preproc64),
         session,
         Optional(input_share.as_mut()),
         parameters,
@@ -177,10 +177,12 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
 {
     let _ = reshare_sk::<TwoSetsReshareAsSet1<S>, _, _, _>(
-        &mut NotExpected::<InMemoryBasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>::default(
-        ),
-        &mut NotExpected::<InMemoryBasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>::default(
-        ),
+        NotExpected::<&mut InMemoryBasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>> {
+            _marker: std::marker::PhantomData,
+        },
+        NotExpected::<&mut InMemoryBasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>> {
+            _marker: std::marker::PhantomData,
+        },
         two_sets_session,
         Expected(input_share),
         parameters,
@@ -202,8 +204,8 @@ pub async fn secure_reshare_two_sets_as_s2<
     const EXTENSION_DEGREE: usize,
 >(
     sessions: &mut (S, Sess),
-    preproc128: P128,
-    preproc64: P64,
+    preproc128: &mut P128,
+    preproc64: &mut P64,
     parameters: DKGParams,
 ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
 where
@@ -214,8 +216,8 @@ where
     span.record("sid", format!("{:?}", &sessions.0.session_id()));
     span.record("my_role", format!("{:?}", &sessions.0.my_role()));
     reshare_sk::<TwoSetsReshareAsSet2<S, Sess>, _, _, _>(
-        &mut Expected(preproc128),
-        &mut Expected(preproc64),
+        Expected(preproc128),
+        Expected(preproc64),
         sessions,
         NotExpected {
             _marker: std::marker::PhantomData,
@@ -239,8 +241,8 @@ pub async fn secure_reshare_two_sets_as_both_sets<
     const EXTENSION_DEGREE: usize,
 >(
     sessions: &mut (S, Sess),
-    preproc128: P128,
-    preproc64: P64,
+    preproc128: &mut P128,
+    preproc64: &mut P64,
     input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
     parameters: DKGParams,
 ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
@@ -252,8 +254,8 @@ where
     span.record("sid", format!("{:?}", &sessions.0.session_id()));
     span.record("my_role", format!("{:?}", &sessions.0.my_role()));
     reshare_sk::<TwoSetsReshareAsBothSets<S, Sess>, _, _, _>(
-        &mut Expected(preproc128),
-        &mut Expected(preproc64),
+        Expected(preproc128),
+        Expected(preproc64),
         sessions,
         Expected(input_share),
         parameters,
@@ -268,8 +270,8 @@ pub(crate) async fn reshare_sk<
     P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
     const EXTENSION_DEGREE: usize,
 >(
-    preproc128: &mut R::MaybeExpectedPreprocessing<P128>,
-    preproc64: &mut R::MaybeExpectedPreprocessing<P64>,
+    mut preproc128: R::MaybeExpectedPreprocessing<&mut P128>,
+    mut preproc64: R::MaybeExpectedPreprocessing<&mut P64>,
     sessions: &mut R::ReshareSessions,
     input_share: R::MaybeExpectedInputShares<&mut PrivateKeySet<EXTENSION_DEGREE>>,
     parameters: DKGParams,
@@ -291,8 +293,8 @@ where
         let data = reshare
             .execute(
                 sessions,
-                preproc128,
-                R::MaybeExpectedInputShares::from(maybe_key),
+                &mut preproc128,
+                &mut R::MaybeExpectedInputShares::from(maybe_key),
                 expected_key_size,
             )
             .await?;
@@ -319,8 +321,8 @@ where
     let data = reshare
         .execute(
             sessions,
-            preproc64,
-            R::MaybeExpectedInputShares::from(maybe_key),
+            &mut preproc64,
+            &mut R::MaybeExpectedInputShares::from(maybe_key),
             expected_key_size,
         )
         .await?;
@@ -341,8 +343,8 @@ where
     let data = reshare
         .execute(
             sessions,
-            preproc64,
-            R::MaybeExpectedInputShares::from(maybe_key),
+            &mut preproc64,
+            &mut R::MaybeExpectedInputShares::from(maybe_key),
             expected_key_size,
         )
         .await?;
@@ -371,8 +373,8 @@ where
             let data = reshare
                 .execute(
                     sessions,
-                    preproc64,
-                    R::MaybeExpectedInputShares::from(maybe_key),
+                    &mut preproc64,
+                    &mut R::MaybeExpectedInputShares::from(maybe_key),
                     expected_key_size,
                 )
                 .await?;
@@ -398,8 +400,8 @@ where
             let data = reshare
                 .execute(
                     sessions,
-                    preproc128,
-                    R::MaybeExpectedInputShares::from(maybe_key),
+                    &mut preproc128,
+                    &mut R::MaybeExpectedInputShares::from(maybe_key),
                     expected_key_size,
                 )
                 .await?;
@@ -441,8 +443,8 @@ where
                 let data = reshare
                     .execute(
                         sessions,
-                        preproc64,
-                        R::MaybeExpectedInputShares::from(maybe_key),
+                        &mut preproc64,
+                        &mut R::MaybeExpectedInputShares::from(maybe_key),
                         expected_key_size,
                     )
                     .await?;
@@ -478,8 +480,8 @@ where
                 let data = reshare
                     .execute(
                         sessions,
-                        preproc128,
-                        R::MaybeExpectedInputShares::from(maybe_key),
+                        &mut preproc128,
+                        &mut R::MaybeExpectedInputShares::from(maybe_key),
                         expected_key_size,
                     )
                     .await?;
@@ -518,8 +520,8 @@ where
                 let data = reshare
                     .execute(
                         sessions,
-                        preproc128,
-                        R::MaybeExpectedInputShares::from(maybe_key),
+                        &mut preproc128,
+                        &mut R::MaybeExpectedInputShares::from(maybe_key),
                         expected_key_size,
                     )
                     .await?;
@@ -612,8 +614,8 @@ impl<T> From<Optional<T>> for Option<T> {
 }
 
 impl<T> MaybeExpected<T> for NotExpected<T> {}
-impl<T> MaybeExpected<T> for Expected<T> {}
 impl<T> MaybeExpected<T> for Optional<T> {}
+impl<T> MaybeExpected<T> for Expected<T> {}
 
 #[async_trait]
 pub trait Reshare: ProtocolDescription + Send + Sync + Default + Clone {
@@ -632,8 +634,8 @@ pub trait Reshare: ProtocolDescription + Send + Sync + Default + Clone {
     >(
         &self,
         sessions: &mut Self::ReshareSessions,
-        preproc: &mut Self::MaybeExpectedPreprocessing<Prep>,
-        input_shares: Self::MaybeExpectedInputShares<
+        preproc: &mut Self::MaybeExpectedPreprocessing<&mut Prep>,
+        input_shares: &mut Self::MaybeExpectedInputShares<
             &mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>,
         >,
         expected_input_len: usize,
@@ -688,15 +690,15 @@ impl<Ses: BaseSessionHandles> Reshare for SameSetsReshare<Ses> {
     >(
         &self,
         sessions: &mut Self::ReshareSessions,
-        preproc: &mut Expected<Prep>,
-        input_shares: Optional<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+        preproc: &mut Expected<&mut Prep>,
+        input_shares: &mut Optional<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
         expected_input_len: usize,
     ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
         Ok(Some(
-            reshare_same_sets(&mut preproc.0, sessions, input_shares.0, expected_input_len).await?,
+            reshare_same_sets(preproc.0, sessions, &mut input_shares.0, expected_input_len).await?,
         ))
     }
 
@@ -755,8 +757,8 @@ impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>> Reshare
     >(
         &self,
         sessions: &mut Self::ReshareSessions,
-        _preproc: &mut Self::MaybeExpectedPreprocessing<Prep>,
-        input_shares: Expected<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+        _preproc: &mut NotExpected<&mut Prep>,
+        input_shares: &mut Expected<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
         expected_input_len: usize,
     ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
@@ -834,8 +836,8 @@ impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>, OneSetSes: BaseSessionH
     >(
         &self,
         sessions: &mut Self::ReshareSessions,
-        preproc: &mut Expected<Prep>,
-        _input_shares: NotExpected<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+        preproc: &mut Expected<&mut Prep>,
+        _input_shares: &mut NotExpected<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
         expected_input_len: usize,
     ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
@@ -846,7 +848,7 @@ impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>, OneSetSes: BaseSessionH
         Ok(reshare_two_sets(
             two_set_session,
             Some(my_set_session),
-            Some(&mut preproc.0),
+            Some(preproc.0),
             None,
             expected_input_len,
         )
@@ -914,8 +916,8 @@ impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>, OneSetSes: BaseSessionH
     >(
         &self,
         sessions: &mut Self::ReshareSessions,
-        preproc: &mut Expected<Prep>,
-        input_shares: Expected<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+        preproc: &mut Expected<&mut Prep>,
+        input_shares: &mut Expected<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
         expected_input_len: usize,
     ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
@@ -926,7 +928,7 @@ impl<TwoSetsSes: GenericBaseSessionHandles<TwoSetsRole>, OneSetSes: BaseSessionH
         Ok(reshare_two_sets(
             two_set_session,
             Some(my_set_session),
-            Some(&mut preproc.0),
+            Some(preproc.0),
             Some(input_shares.0),
             expected_input_len,
         )
@@ -1203,7 +1205,7 @@ pub async fn reshare_same_sets<
 >(
     preproc: &mut P,
     session: &mut Ses,
-    input_shares: Option<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+    input_shares: &mut Option<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
     expected_input_len: usize,
 ) -> anyhow::Result<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>
 where
@@ -1265,7 +1267,7 @@ where
             .collect_vec();
 
         // erase the memory of sk_share and rj
-        for share in input_shares {
+        for share in &mut **input_shares {
             share.zeroize();
         }
         for r in &mut masks_opened {
@@ -1939,14 +1941,14 @@ mod tests {
                 let preproc_required =
                     ResharePreprocRequired::new_same_set(session.num_parties(), new_params);
 
-                let new_preproc_64 = InMemoryBasePreprocessing {
+                let mut new_preproc_64 = InMemoryBasePreprocessing {
                     available_triples: Vec::new(),
                     available_randoms: preproc64
                         .next_random_vec(preproc_required.batch_params_64.randoms)
                         .unwrap(),
                 };
 
-                let new_preproc_128 = InMemoryBasePreprocessing {
+                let mut new_preproc_128 = InMemoryBasePreprocessing {
                     available_triples: Vec::new(),
                     available_randoms: preproc128
                         .next_random_vec(preproc_required.batch_params_128.randoms)
@@ -1963,8 +1965,8 @@ mod tests {
 
                 let out = secure_reshare_same_sets(
                     &mut session,
-                    new_preproc_128,
-                    new_preproc_64,
+                    &mut new_preproc_128,
+                    &mut new_preproc_64,
                     &mut my_contribution,
                     new_params,
                 )
@@ -1973,8 +1975,8 @@ mod tests {
 
                 // Can't do this check anymore as we take onwership of the preprocessing
                 //Making sure ResharPreprocRequired doesn't ask for too much preprocessing
-                //assert_eq!(new_preproc_64.available_randoms.len(), 0);
-                //assert_eq!(new_preproc_128.available_randoms.len(), 0);
+                assert_eq!(new_preproc_64.available_randoms.len(), 0);
+                assert_eq!(new_preproc_128.available_randoms.len(), 0);
                 (session.my_role(), out, my_contribution)
             });
         }

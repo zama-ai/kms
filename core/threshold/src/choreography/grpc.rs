@@ -2517,7 +2517,7 @@ where
             //Perform preprocessing
             let num_needed_preproc = ResharePreprocRequired::new_same_set(num_parties, params);
 
-            let (preprocessing_64, preprocessing_128, sessions) = match session_type {
+            let (mut preprocessing_64, mut preprocessing_128, sessions) = match session_type {
                 SessionType::Small => {
                     let prss_setup_z128 = prss_setup
                         .get(&SupportedRing::ResiduePolyZ128)
@@ -2594,8 +2594,8 @@ where
             //Perform online
             let new_private_key_set = secure_reshare_same_sets(
                 &mut reshare_base_session,
-                preprocessing_128,
-                preprocessing_64,
+                &mut preprocessing_128,
+                &mut preprocessing_64,
                 &mut Some(old_private_key_set),
                 params,
             )
