@@ -355,9 +355,9 @@ where
                 expected_key_size,
             )
             .await?;
-        Some(data.map(|data| LweSecretKeyShare { data }))
+        (true, data.map(|data| LweSecretKeyShare { data }))
     } else {
-        None
+        (false, None)
     };
 
     let basic_params_handle = parameters.get_params_basics_handle();
@@ -457,81 +457,84 @@ where
             .raw_compression_parameters
             .packing_ks_polynomial_size;
         let expected_key_size = basic_params_handle.compression_sk_num_bits();
-        Some(match parameters.get_params_basics_handle().get_dkg_mode() {
-            DkgMode::Z64 => {
-                // Extract the GLWE secret key share for the compression scheme if any
-                let maybe_key = input_share
-                    .as_mut()
-                    .and_then(|s| {
-                        s.glwe_secret_key_share_compression
-                            .as_mut()
-                            .map(|compression_sk_share| {
-                                compression_sk_share
-                                    .try_cast_mut_to_z64()
-                                    .map(|key| key.post_packing_ks_key.data.as_mut())
-                            })
+        (
+            true,
+            match parameters.get_params_basics_handle().get_dkg_mode() {
+                DkgMode::Z64 => {
+                    // Extract the GLWE secret key share for the compression scheme if any
+                    let maybe_key = input_share
+                        .as_mut()
+                        .and_then(|s| {
+                            s.glwe_secret_key_share_compression.as_mut().map(
+                                |compression_sk_share| {
+                                    compression_sk_share
+                                        .try_cast_mut_to_z64()
+                                        .map(|key| key.post_packing_ks_key.data.as_mut())
+                                },
+                            )
+                        })
+                        .transpose()
+                        .map_err(|e| anyhow_error_and_log(e.to_string()))?;
+                    let data = reshare
+                        .execute(
+                            sessions,
+                            &mut preproc64,
+                            &mut R::MaybeExpectedInputShares::from(maybe_key),
+                            expected_key_size,
+                        )
+                        .await?;
+                    data.map(|data| {
+                        CompressionPrivateKeySharesEnum::Z64(CompressionPrivateKeyShares {
+                            post_packing_ks_key: GlweSecretKeyShare {
+                                data,
+                                polynomial_size,
+                            },
+                            params: compression_params.raw_compression_parameters,
+                        })
                     })
-                    .transpose()
-                    .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-                let data = reshare
-                    .execute(
-                        sessions,
-                        &mut preproc64,
-                        &mut R::MaybeExpectedInputShares::from(maybe_key),
-                        expected_key_size,
-                    )
-                    .await?;
-                data.map(|data| {
-                    CompressionPrivateKeySharesEnum::Z64(CompressionPrivateKeyShares {
-                        post_packing_ks_key: GlweSecretKeyShare {
-                            data,
-                            polynomial_size,
-                        },
-                        params: compression_params.raw_compression_parameters,
+                }
+                DkgMode::Z128 => {
+                    // Extract the GLWE secret key share for the compression scheme if any
+                    let maybe_key = input_share
+                        .as_mut()
+                        .and_then(|s| {
+                            s.glwe_secret_key_share_compression.as_mut().map(
+                                |compression_sk_share| {
+                                    compression_sk_share
+                                        .try_cast_mut_to_z128()
+                                        .map(|key| key.post_packing_ks_key.data.as_mut())
+                                },
+                            )
+                        })
+                        .transpose()
+                        .map_err(|e| anyhow_error_and_log(e.to_string()))?;
+                    let data = reshare
+                        .execute(
+                            sessions,
+                            &mut preproc128,
+                            &mut R::MaybeExpectedInputShares::from(maybe_key),
+                            expected_key_size,
+                        )
+                        .await?;
+                    data.map(|data| {
+                        CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
+                            post_packing_ks_key: GlweSecretKeyShare {
+                                data,
+                                polynomial_size,
+                            },
+                            params: compression_params.raw_compression_parameters,
+                        })
                     })
-                })
-            }
-            DkgMode::Z128 => {
-                // Extract the GLWE secret key share for the compression scheme if any
-                let maybe_key = input_share
-                    .as_mut()
-                    .and_then(|s| {
-                        s.glwe_secret_key_share_compression
-                            .as_mut()
-                            .map(|compression_sk_share| {
-                                compression_sk_share
-                                    .try_cast_mut_to_z128()
-                                    .map(|key| key.post_packing_ks_key.data.as_mut())
-                            })
-                    })
-                    .transpose()
-                    .map_err(|e| anyhow_error_and_log(e.to_string()))?;
-                let data = reshare
-                    .execute(
-                        sessions,
-                        &mut preproc128,
-                        &mut R::MaybeExpectedInputShares::from(maybe_key),
-                        expected_key_size,
-                    )
-                    .await?;
-                data.map(|data| {
-                    CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
-                        post_packing_ks_key: GlweSecretKeyShare {
-                            data,
-                            polynomial_size,
-                        },
-                        params: compression_params.raw_compression_parameters,
-                    })
-                })
-            }
-        })
+                }
+            },
+        )
     } else {
-        None
+        (false, None)
     };
 
     // Reshare the GLWE sns compression key
     let glwe_sns_compression_key_as_lwe = match parameters {
-        DKGParams::WithoutSnS(_) => None,
+        DKGParams::WithoutSnS(_) => (false, None),
         DKGParams::WithSnS(params_sns) => {
             if params_sns.sns_compression_params.is_some() {
                 let expected_key_size = params_sns.compression_sk_num_bits();
@@ -548,9 +551,9 @@ where
                         expected_key_size,
                     )
                     .await?;
-                Some(data.map(|data| LweSecretKeyShare { data }))
+                (true, data.map(|data| LweSecretKeyShare { data }))
             } else {
-                None
+                (false, None)
             }
         }
     };
@@ -559,18 +562,41 @@ where
         lwe_encryption_secret_key_share,
         lwe_compute_secret_key_share,
         glwe_secret_key_share,
-        glwe_secret_key_share_sns_as_lwe,
-        glwe_secret_key_share_compression,
-        glwe_sns_compression_key_as_lwe,
     ) {
         (
             Some(lwe_encryption_secret_key_share),
             Some(lwe_compute_secret_key_share),
             Some(glwe_secret_key_share),
-            Some(glwe_secret_key_share_sns_as_lwe),
-            Some(glwe_secret_key_share_compression),
-            Some(glwe_sns_compression_key_as_lwe),
         ) => {
+            let glwe_secret_key_share_sns_as_lwe = if glwe_secret_key_share_sns_as_lwe.0
+                && glwe_secret_key_share_sns_as_lwe.1.is_none()
+            {
+                return Err(anyhow_error_and_log(
+                    "Expected GLWE SNS secret key share to be present",
+                ));
+            } else {
+                glwe_secret_key_share_sns_as_lwe.1
+            };
+
+            let glwe_secret_key_share_compression = if glwe_secret_key_share_compression.0
+                && glwe_secret_key_share_compression.1.is_none()
+            {
+                return Err(anyhow_error_and_log(
+                    "Expected GLWE compression secret key share to be present",
+                ));
+            } else {
+                glwe_secret_key_share_compression.1
+            };
+
+            let glwe_sns_compression_key_as_lwe = if glwe_sns_compression_key_as_lwe.0
+                && glwe_sns_compression_key_as_lwe.1.is_none()
+            {
+                return Err(anyhow_error_and_log(
+                    "Expected GLWE SNS compression secret key share to be present",
+                ));
+            } else {
+                glwe_sns_compression_key_as_lwe.1
+            };
             tracing::info!("Resharing completed, output is expected.");
             Ok(Some(PrivateKeySet {
                 lwe_encryption_secret_key_share,
@@ -582,13 +608,16 @@ where
                 glwe_sns_compression_key_as_lwe,
             }))
         }
-        (None, None, None, None, None, None) => {
+        (None, None, None) => {
             tracing::info!("Resharing completed, no output is expected.");
             Ok(None)
         }
-        _ => Err(anyhow_error_and_log(
-            "Either all output shares must be present or none",
-        )),
+        (a, b, c) => Err(anyhow_error_and_log(format!(
+            "Either all output shares must be present or none: {}, {}, {}",
+            a.is_some(),
+            b.is_some(),
+            c.is_some(),
+        ))),
     }
 }
 
