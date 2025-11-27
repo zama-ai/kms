@@ -283,10 +283,18 @@ jobs:
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_RETRIES: 3
-          NEXTEST_TEST_THREADS: ${{inputs.nextest-test-threads || ''}}
+          NEXTEST_TEST_THREADS_INPUT: ${{ inputs.nextest-test-threads }}
           EVENT_NAME: ${{ github.event_name }}
           RUNNER_TEMP: ${{ runner.temp }}
         run: |
+          # Set NEXTEST_TEST_THREADS only if a value was provided
+          if [ -n "${NEXTEST_TEST_THREADS_INPUT}" ]; then
+            export NEXTEST_TEST_THREADS="${NEXTEST_TEST_THREADS_INPUT}"
+            echo "NEXTEST_TEST_THREADS set to: ${NEXTEST_TEST_THREADS}"
+          else
+            echo "NEXTEST_TEST_THREADS not set (using nextest default)"
+          fi
+          
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
           echo "aws_access_key_id = ${AWS_ACCESS_KEY_ID}" >> ~/.aws/credentials &&
