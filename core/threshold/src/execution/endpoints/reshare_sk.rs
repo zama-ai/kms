@@ -81,6 +81,14 @@ impl ResharePreprocRequired {
 
 #[async_trait::async_trait]
 pub trait ReshareSecretKeys {
+    /// Reshare a secret key share within the same set of parties such that if a party failed during DKG,
+    ///  it can catch up.
+    /// - `session` is the regular session handle for the parties involved in the resharing
+    /// - `input_share` is `Some` for parties holding an input share, and `None` otherwise (e.g. if DKG failed)
+    /// - `preproc128` and `preproc64` are the preprocessing instances for Z128 and Z64 operations respectively. See [`ResharePreprocRequired`] to know how much preprocessing is needed.
+    /// - `parameters` are the DKG parameters
+    ///
+    /// Returns the party's new secret key share
     async fn reshare_sk_same_set<
         S: BaseSessionHandles,
         P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
@@ -97,6 +105,15 @@ pub trait ReshareSecretKeys {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
 
+    /// __THIS FUNCTION IS FOR PARTIES IN S1 ONLY__
+    /// i.e. with Role [`TwoSetsRole::Set1`]
+    ///
+    /// Reshare a secret key share from parties in Set1 to parties in Set2
+    /// - `two_sets_session` is the session handle that contains parties in both Set1 and Set2
+    /// - `input_share` is the input share held by the party in Set1 that will be reshared
+    /// - `parameters` are the DKG parameters
+    ///
+    /// Returns `()` since parties in Set1 do not receive any new share
     async fn reshare_sk_two_sets_as_s1<
         S: GenericBaseSessionHandles<TwoSetsRole>,
         const EXTENSION_DEGREE: usize,
@@ -109,6 +126,15 @@ pub trait ReshareSecretKeys {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
 
+    /// __THIS FUNCTION IS FOR PARTIES IN S2 ONLY__
+    /// i.e. with Role [`TwoSetsRole::Set2`]
+    ///
+    /// Reshare a secret key share from parties in Set1 to parties in Set2
+    /// - `sessions` is a tuple containing the session handle that contains parties in both Set1 and Set2 as well as the regular session handle for parties in Set2
+    /// - `preproc128` and `preproc64` are the preprocessing instances for Z128 and Z64 operations respectively. See [`ResharePreprocRequired`] to know how much preprocessing is needed.
+    /// - `parameters` are the DKG parameters
+    ///
+    /// Returns the party's new secret key share
     async fn reshare_sk_two_sets_as_s2<
         S: GenericBaseSessionHandles<TwoSetsRole>,
         Sess: BaseSessionHandles,
@@ -125,6 +151,16 @@ pub trait ReshareSecretKeys {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
 
+    /// __THIS FUNCTION IS FOR PARTIES IN BOTH S1 AND S2__
+    /// i.e. with Role [`TwoSetsRole::Both`]
+    ///
+    /// Reshare a secret key share from parties in Set1 to parties in Set2
+    /// - `sessions` is a tuple containing the session handle that contains parties in both Set1 and Set2 as well as the regular session handle for parties in Set2
+    /// - `preproc128` and `preproc64` are the preprocessing instances for Z128 and Z64 operations respectively. See [`ResharePreprocRequired`] to know how much preprocessing is needed.
+    /// - `input_share` is the input share held by the party in Set1 that will be reshared
+    /// - `parameters` are the DKG parameters
+    ///
+    /// Returns the party's new secret key share
     async fn reshare_sk_two_sets_as_both_sets<
         S: GenericBaseSessionHandles<TwoSetsRole>,
         Sess: BaseSessionHandles,
