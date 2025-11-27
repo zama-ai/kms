@@ -2594,7 +2594,7 @@ where
             };
 
             //Perform online
-            let new_private_key_set = SecureReshareSecretKeys::secure_reshare_same_sets(
+            let new_private_key_set = SecureReshareSecretKeys::reshare_sk_same_set(
                 &mut reshare_base_session,
                 &mut preprocessing_128,
                 &mut preprocessing_64,

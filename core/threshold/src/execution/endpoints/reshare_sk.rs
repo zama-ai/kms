@@ -81,7 +81,7 @@ impl ResharePreprocRequired {
 
 #[async_trait::async_trait]
 pub trait ReshareSecretKeys {
-    async fn secure_reshare_same_sets<
+    async fn reshare_sk_same_set<
         S: BaseSessionHandles,
         P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
         P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
@@ -97,7 +97,7 @@ pub trait ReshareSecretKeys {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
 
-    async fn secure_reshare_two_sets_as_s1<
+    async fn reshare_sk_two_sets_as_s1<
         S: GenericBaseSessionHandles<TwoSetsRole>,
         const EXTENSION_DEGREE: usize,
     >(
@@ -109,7 +109,7 @@ pub trait ReshareSecretKeys {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
 
-    async fn secure_reshare_two_sets_as_s2<
+    async fn reshare_sk_two_sets_as_s2<
         S: GenericBaseSessionHandles<TwoSetsRole>,
         Sess: BaseSessionHandles,
         P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
@@ -125,7 +125,7 @@ pub trait ReshareSecretKeys {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
 
-    async fn secure_reshare_two_sets_as_both_sets<
+    async fn reshare_sk_two_sets_as_both_sets<
         S: GenericBaseSessionHandles<TwoSetsRole>,
         Sess: BaseSessionHandles,
         P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
@@ -152,7 +152,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
     skip(preproc128, preproc64, session, input_share)
     fields(sid=?session.session_id(),my_role=?session.my_role())
 )]
-    async fn secure_reshare_same_sets<
+    async fn reshare_sk_same_set<
         S: BaseSessionHandles,
         P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
         P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
@@ -184,7 +184,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
     skip(two_sets_session, input_share)
     fields(sid=?two_sets_session.session_id(),my_role=?two_sets_session.my_role())
 )]
-    async fn secure_reshare_two_sets_as_s1<
+    async fn reshare_sk_two_sets_as_s1<
         S: GenericBaseSessionHandles<TwoSetsRole>,
         const EXTENSION_DEGREE: usize,
     >(
@@ -216,7 +216,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
     skip(sessions, preproc128, preproc64)
     fields(sid,my_role)
 )]
-    async fn secure_reshare_two_sets_as_s2<
+    async fn reshare_sk_two_sets_as_s2<
         S: GenericBaseSessionHandles<TwoSetsRole>,
         Sess: BaseSessionHandles,
         P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
@@ -253,7 +253,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
     skip(sessions, preproc128, preproc64)
     fields(sid,my_role)
 )]
-    async fn secure_reshare_two_sets_as_both_sets<
+    async fn reshare_sk_two_sets_as_both_sets<
         S: GenericBaseSessionHandles<TwoSetsRole>,
         Sess: BaseSessionHandles,
         P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
@@ -1010,7 +1010,7 @@ mod tests {
                         Some(party_keyshare)
                     };
 
-                let out = SecureReshareSecretKeys::secure_reshare_same_sets(
+                let out = SecureReshareSecretKeys::reshare_sk_same_set(
                     &mut session,
                     &mut new_preproc_128,
                     &mut new_preproc_64,
