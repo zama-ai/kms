@@ -55,7 +55,7 @@ on:
       nextest-test-threads:
         type: string
         required: false
-        default: '1'
+        default: ''  # Empty = let nextest decide (respects #[serial] attribute)
     secrets:
       CODECOV_TOKEN:
         required: false
@@ -283,7 +283,7 @@ jobs:
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_RETRIES: 3
-          NEXTEST_TEST_THREADS: ${{inputs.nextest-test-threads}}
+          NEXTEST_TEST_THREADS: ${{inputs.nextest-test-threads || ''}}
           EVENT_NAME: ${{ github.event_name }}
           RUNNER_TEMP: ${{ runner.temp }}
         run: |
