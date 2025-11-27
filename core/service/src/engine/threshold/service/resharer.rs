@@ -236,7 +236,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     .map(|r| r.private_keys.as_ref().clone())
             };
 
-            let new_private_key_set = SecureReshareSecretKeys::secure_reshare_same_sets(
+            let new_private_key_set = SecureReshareSecretKeys::reshare_sk_same_set(
                 &mut base_session,
                 &mut correlated_randomness_z128,
                 &mut correlated_randomness_z64,
