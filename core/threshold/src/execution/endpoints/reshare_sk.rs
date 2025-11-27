@@ -10,8 +10,9 @@ use crate::{
         online::{
             preprocessing::{memory::InMemoryBasePreprocessing, BasePreprocessing},
             reshare::{
-                Expected, NotExpected, Optional, Reshare, SameSetsReshare,
-                TwoSetsReshareAsBothSets, TwoSetsReshareAsSet1, TwoSetsReshareAsSet2,
+                Expected, NotExpected, Optional, Reshare, SecureSameSetReshare,
+                SecureTwoSetsReshareAsBothSets, SecureTwoSetsReshareAsSet1,
+                SecureTwoSetsReshareAsSet2,
             },
         },
         runtime::{
@@ -78,145 +79,214 @@ impl ResharePreprocRequired {
     }
 }
 
-#[instrument(
+#[async_trait::async_trait]
+pub trait ReshareSecretKeys {
+    async fn secure_reshare_same_sets<
+        S: BaseSessionHandles,
+        P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
+        P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
+        const EXTENSION_DEGREE: usize,
+    >(
+        session: &mut S,
+        preproc128: &mut P128,
+        preproc64: &mut P64,
+        input_share: &mut Option<PrivateKeySet<EXTENSION_DEGREE>>,
+        parameters: DKGParams,
+    ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
+
+    async fn secure_reshare_two_sets_as_s1<
+        S: GenericBaseSessionHandles<TwoSetsRole>,
+        const EXTENSION_DEGREE: usize,
+    >(
+        two_sets_session: &mut S,
+        input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
+        parameters: DKGParams,
+    ) -> anyhow::Result<()>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
+
+    async fn secure_reshare_two_sets_as_s2<
+        S: GenericBaseSessionHandles<TwoSetsRole>,
+        Sess: BaseSessionHandles,
+        P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
+        P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
+        const EXTENSION_DEGREE: usize,
+    >(
+        sessions: &mut (S, Sess),
+        preproc128: &mut P128,
+        preproc64: &mut P64,
+        parameters: DKGParams,
+    ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
+
+    async fn secure_reshare_two_sets_as_both_sets<
+        S: GenericBaseSessionHandles<TwoSetsRole>,
+        Sess: BaseSessionHandles,
+        P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
+        P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
+        const EXTENSION_DEGREE: usize,
+    >(
+        sessions: &mut (S, Sess),
+        preproc128: &mut P128,
+        preproc64: &mut P64,
+        input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
+        parameters: DKGParams,
+    ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
+}
+
+pub struct SecureReshareSecretKeys;
+
+#[async_trait::async_trait]
+impl ReshareSecretKeys for SecureReshareSecretKeys {
+    #[instrument(
     name = "ReShare (same sets)",
     skip(preproc128, preproc64, session, input_share)
     fields(sid=?session.session_id(),my_role=?session.my_role())
 )]
-pub async fn secure_reshare_same_sets<
-    S: BaseSessionHandles,
-    P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
-    P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
-    const EXTENSION_DEGREE: usize,
->(
-    session: &mut S,
-    preproc128: &mut P128,
-    preproc64: &mut P64,
-    input_share: &mut Option<PrivateKeySet<EXTENSION_DEGREE>>,
-    parameters: DKGParams,
-) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
-where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-{
-    reshare_sk::<SameSetsReshare<S>, _, _, _>(
-        Expected(preproc128),
-        Expected(preproc64),
-        session,
-        Optional(input_share.as_mut()),
-        parameters,
-    )
-    .await?
-    .ok_or_else(|| anyhow_error_and_log("Expected an output in same set reshare"))
-}
+    async fn secure_reshare_same_sets<
+        S: BaseSessionHandles,
+        P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
+        P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
+        const EXTENSION_DEGREE: usize,
+    >(
+        session: &mut S,
+        preproc128: &mut P128,
+        preproc64: &mut P64,
+        input_share: &mut Option<PrivateKeySet<EXTENSION_DEGREE>>,
+        parameters: DKGParams,
+    ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    {
+        reshare_sk::<SecureSameSetReshare<S>, _, _, _>(
+            Expected(preproc128),
+            Expected(preproc64),
+            session,
+            Optional(input_share.as_mut()),
+            parameters,
+        )
+        .await?
+        .ok_or_else(|| anyhow_error_and_log("Expected an output in same set reshare"))
+    }
 
-#[instrument(
+    #[instrument(
     name = "ReShare (as set 1)",
     skip(two_sets_session, input_share)
     fields(sid=?two_sets_session.session_id(),my_role=?two_sets_session.my_role())
 )]
-pub async fn secure_reshare_two_sets_as_s1<
-    S: GenericBaseSessionHandles<TwoSetsRole>,
-    const EXTENSION_DEGREE: usize,
->(
-    two_sets_session: &mut S,
-    input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
-    parameters: DKGParams,
-) -> anyhow::Result<()>
-where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-{
-    let _ = reshare_sk::<TwoSetsReshareAsSet1<S>, _, _, _>(
-        NotExpected::<&mut InMemoryBasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>> {
-            _marker: std::marker::PhantomData,
-        },
-        NotExpected::<&mut InMemoryBasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>> {
-            _marker: std::marker::PhantomData,
-        },
-        two_sets_session,
-        Expected(input_share),
-        parameters,
-    )
-    .await?;
-    Ok(())
-}
+    async fn secure_reshare_two_sets_as_s1<
+        S: GenericBaseSessionHandles<TwoSetsRole>,
+        const EXTENSION_DEGREE: usize,
+    >(
+        two_sets_session: &mut S,
+        input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
+        parameters: DKGParams,
+    ) -> anyhow::Result<()>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    {
+        let _ = reshare_sk::<SecureTwoSetsReshareAsSet1<S>, _, _, _>(
+            NotExpected::<&mut InMemoryBasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>> {
+                _marker: std::marker::PhantomData,
+            },
+            NotExpected::<&mut InMemoryBasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>> {
+                _marker: std::marker::PhantomData,
+            },
+            two_sets_session,
+            Expected(input_share),
+            parameters,
+        )
+        .await?;
+        Ok(())
+    }
 
-#[instrument(
+    #[instrument(
     name = "ReShare (as set 2)",
     skip(sessions, preproc128, preproc64)
     fields(sid,my_role)
 )]
-pub async fn secure_reshare_two_sets_as_s2<
-    S: GenericBaseSessionHandles<TwoSetsRole>,
-    Sess: BaseSessionHandles,
-    P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
-    P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
-    const EXTENSION_DEGREE: usize,
->(
-    sessions: &mut (S, Sess),
-    preproc128: &mut P128,
-    preproc64: &mut P64,
-    parameters: DKGParams,
-) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
-where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-{
-    let span = tracing::Span::current();
-    span.record("sid", format!("{:?}", &sessions.0.session_id()));
-    span.record("my_role", format!("{:?}", &sessions.0.my_role()));
-    reshare_sk::<TwoSetsReshareAsSet2<S, Sess>, _, _, _>(
-        Expected(preproc128),
-        Expected(preproc64),
-        sessions,
-        NotExpected {
-            _marker: std::marker::PhantomData,
-        },
-        parameters,
-    )
-    .await?
-    .ok_or_else(|| anyhow_error_and_log("Expected an output in two sets reshare"))
-}
+    async fn secure_reshare_two_sets_as_s2<
+        S: GenericBaseSessionHandles<TwoSetsRole>,
+        Sess: BaseSessionHandles,
+        P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
+        P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
+        const EXTENSION_DEGREE: usize,
+    >(
+        sessions: &mut (S, Sess),
+        preproc128: &mut P128,
+        preproc64: &mut P64,
+        parameters: DKGParams,
+    ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    {
+        let span = tracing::Span::current();
+        span.record("sid", format!("{:?}", &sessions.0.session_id()));
+        span.record("my_role", format!("{:?}", &sessions.0.my_role()));
+        reshare_sk::<SecureTwoSetsReshareAsSet2<S, Sess>, _, _, _>(
+            Expected(preproc128),
+            Expected(preproc64),
+            sessions,
+            NotExpected {
+                _marker: std::marker::PhantomData,
+            },
+            parameters,
+        )
+        .await?
+        .ok_or_else(|| anyhow_error_and_log("Expected an output in two sets reshare"))
+    }
 
-#[instrument(
+    #[instrument(
     name = "ReShare (as both sets)",
     skip(sessions, preproc128, preproc64)
     fields(sid,my_role)
 )]
-pub async fn secure_reshare_two_sets_as_both_sets<
-    S: GenericBaseSessionHandles<TwoSetsRole>,
-    Sess: BaseSessionHandles,
-    P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
-    P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
-    const EXTENSION_DEGREE: usize,
->(
-    sessions: &mut (S, Sess),
-    preproc128: &mut P128,
-    preproc64: &mut P64,
-    input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
-    parameters: DKGParams,
-) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
-where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
-{
-    let span = tracing::Span::current();
-    span.record("sid", format!("{:?}", &sessions.0.session_id()));
-    span.record("my_role", format!("{:?}", &sessions.0.my_role()));
-    reshare_sk::<TwoSetsReshareAsBothSets<S, Sess>, _, _, _>(
-        Expected(preproc128),
-        Expected(preproc64),
-        sessions,
-        Expected(input_share),
-        parameters,
-    )
-    .await?
-    .ok_or_else(|| anyhow_error_and_log("Expected an output in two sets reshare"))
+    async fn secure_reshare_two_sets_as_both_sets<
+        S: GenericBaseSessionHandles<TwoSetsRole>,
+        Sess: BaseSessionHandles,
+        P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
+        P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
+        const EXTENSION_DEGREE: usize,
+    >(
+        sessions: &mut (S, Sess),
+        preproc128: &mut P128,
+        preproc64: &mut P64,
+        input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
+        parameters: DKGParams,
+    ) -> anyhow::Result<PrivateKeySet<EXTENSION_DEGREE>>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    {
+        let span = tracing::Span::current();
+        span.record("sid", format!("{:?}", &sessions.0.session_id()));
+        span.record("my_role", format!("{:?}", &sessions.0.my_role()));
+        reshare_sk::<SecureTwoSetsReshareAsBothSets<S, Sess>, _, _, _>(
+            Expected(preproc128),
+            Expected(preproc64),
+            sessions,
+            Expected(input_share),
+            parameters,
+        )
+        .await?
+        .ok_or_else(|| anyhow_error_and_log("Expected an output in two sets reshare"))
+    }
 }
 
 pub(crate) async fn reshare_sk<
-    R: Reshare,
+    R: Reshare + Default,
     P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
     P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
     const EXTENSION_DEGREE: usize,
@@ -940,7 +1010,7 @@ mod tests {
                         Some(party_keyshare)
                     };
 
-                let out = secure_reshare_same_sets(
+                let out = SecureReshareSecretKeys::secure_reshare_same_sets(
                     &mut session,
                     &mut new_preproc_128,
                     &mut new_preproc_64,
