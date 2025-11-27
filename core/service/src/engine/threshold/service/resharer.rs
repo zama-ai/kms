@@ -206,7 +206,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // (Note that it's the parties in S2 that need to know how much preprocessing they need,
             // so this will be an issue also when resharing to a different set of parties)
             let num_needed_preproc =
-                ResharePreprocRequired::new_same_set(session_z64.num_parties(), dkg_params);
+                ResharePreprocRequired::new(session_z64.num_parties(), dkg_params);
 
             let mut correlated_randomness_z64 = SecureSmallPreprocessing::default()
                 .execute(&mut session_z64, num_needed_preproc.batch_params_64)

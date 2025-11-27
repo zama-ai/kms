@@ -54,7 +54,10 @@ pub struct ResharePreprocRequired {
 }
 
 impl ResharePreprocRequired {
-    pub fn new_same_set(num_parties: usize, parameters: DKGParams) -> Self {
+    /// Computes the number of randoms needed to reshare a private key set
+    /// where `num_parties_reshare_from` is the number of parties holding the input shares
+    /// (i.e. everyone in same set resharing, or the first set in two sets resharing)
+    pub fn new(num_parties_reshare_from: usize, parameters: DKGParams) -> Self {
         let params = parameters.get_params_basics_handle();
         let mut num_randoms_128 = 0;
         let mut num_randoms_64 = 0;
@@ -75,8 +78,8 @@ impl ResharePreprocRequired {
             }
         }
 
-        num_randoms_128 *= num_parties;
-        num_randoms_64 *= num_parties;
+        num_randoms_128 *= num_parties_reshare_from;
+        num_randoms_64 *= num_parties_reshare_from;
 
         ResharePreprocRequired {
             batch_params_128: BatchParams {
@@ -1939,7 +1942,7 @@ mod tests {
 
                 //Testing ResharePreprocRequired
                 let preproc_required =
-                    ResharePreprocRequired::new_same_set(session.num_parties(), new_params);
+                    ResharePreprocRequired::new(session.num_parties(), new_params);
 
                 let mut new_preproc_64 = InMemoryBasePreprocessing {
                     available_triples: Vec::new(),
@@ -1973,7 +1976,6 @@ mod tests {
                 .await
                 .unwrap();
 
-                // Can't do this check anymore as we take onwership of the preprocessing
                 //Making sure ResharPreprocRequired doesn't ask for too much preprocessing
                 assert_eq!(new_preproc_64.available_randoms.len(), 0);
                 assert_eq!(new_preproc_128.available_randoms.len(), 0);
