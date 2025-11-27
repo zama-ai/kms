@@ -101,7 +101,7 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     timeout-minutes: 500
-    runs-on: runs-on=${{ github.run_id }}/runner=${{ inputs.runs-on }}/spot=false/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}/runner=${{ inputs.runs-on }}/spot=false/volume=100gb/extras=s3-cache
     services:
       redis:
         image: ${{ inputs.run-redis && 'redis/redis-stack:7.4.0-v3@sha256:c2019e98fd5abce4dd11feec004de44d1709d2366a6efa5ffb2bd0daf8f9c6a4' || '' }}
@@ -312,7 +312,7 @@ jobs:
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_RETRIES: 3
-          NEXTEST_TEST_THREADS: ${{inputs.nextest-test-threads}}
+          # NEXTEST_TEST_THREADS: ${{inputs.nextest-test-threads}}
           EVENT_NAME: ${{ github.event_name }}
           RUNNER_TEMP: ${{ runner.temp }}
         run: |
@@ -326,7 +326,7 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
-          RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+          RUST_BACKTRACE=full cargo nextest run --profile test --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
