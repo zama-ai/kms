@@ -11,7 +11,7 @@ use kms_grpc::{
 };
 use threshold_fhe::{
     execution::{
-        online::reshare::{secure_reshare_same_sets, ResharePreprocRequired},
+        endpoints::reshare_sk::{secure_reshare_same_sets, ResharePreprocRequired},
         runtime::sessions::session_parameters::GenericParameterHandles,
         small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
         tfhe_internals::public_keysets::FhePubKeySet,

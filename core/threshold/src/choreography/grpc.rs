@@ -39,6 +39,7 @@ use crate::execution::endpoints::decryption::{
     LargeOfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
 };
 use crate::execution::endpoints::keygen::{OnlineDistributedKeyGen, SecureOnlineDistributedKeyGen};
+use crate::execution::endpoints::reshare_sk::{secure_reshare_same_sets, ResharePreprocRequired};
 use crate::execution::keyset_config::KeySetConfig;
 use crate::execution::large_execution::offline::SecureLargePreprocessing;
 use crate::execution::online::gen_bits::SecureBitGenEven;
@@ -53,7 +54,6 @@ use crate::execution::online::preprocessing::{
     BitDecPreprocessing, DKGPreprocessing, InMemoryBitDecPreprocessing, NoiseFloodPreprocessing,
     PreprocessorFactory,
 };
-use crate::execution::online::reshare::{secure_reshare_same_sets, ResharePreprocRequired};
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
 use crate::execution::runtime::sessions::base_session::ToBaseSession;
 use crate::execution::runtime::sessions::base_session::{BaseSession, BaseSessionHandles};
