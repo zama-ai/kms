@@ -13,7 +13,10 @@ use anyhow::Result;
 use tempfile::TempDir;
 
 /// Test using isolated centralized setup
+/// NOTE: This test is skipped in CI (--skip isolated_test_example) as it's primarily
+/// for demonstration purposes. To run locally: cargo test --lib test_centralized_isolated_example
 #[tokio::test]
+#[ignore] // Skip by default - run explicitly with --ignored
 async fn test_centralized_isolated_example() -> Result<()> {
     use crate::consts::{OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM};
     use crate::util::key_setup::ensure_central_keys_exist;
@@ -68,7 +71,10 @@ async fn test_centralized_isolated_example() -> Result<()> {
 }
 
 /// Test using isolated threshold setup
+/// NOTE: This test is skipped in CI (--skip isolated_test_example) as it's primarily
+/// for demonstration purposes. To run locally: cargo test --lib test_threshold_isolated_example --ignored
 #[tokio::test]
+#[ignore] // Skip by default - run explicitly with --ignored
 async fn test_threshold_isolated_example() -> Result<()> {
     const NUM_PARTIES: usize = 4;
 

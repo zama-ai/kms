@@ -54,7 +54,7 @@ on:
       nextest-test-threads:
         type: string
         required: false
-        default: "1"
+        default: ""  # Empty = let nextest decide (respects #[serial] attribute)
     secrets:
       CODECOV_TOKEN:
         required: false
