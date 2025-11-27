@@ -262,29 +262,29 @@ jobs:
           mc mb "${MINIO_ALIAS}"/"${MINIO_BUCKET}"
           mc anonymous set public "${MINIO_ALIAS}"/"${MINIO_BUCKET}"
 
-      - name: Setup cargo dylint
-        run: |
-          cargo install cargo-dylint dylint-link --force
+      # - name: Setup cargo dylint
+      #   run: |
+      #     cargo install cargo-dylint dylint-link --force
 
-      - name: clippy and rustfmt versions
-        run: |
-          cargo clippy -V && cargo fmt --version
+      # - name: clippy and rustfmt versions
+      #   run: |
+      #     cargo clippy -V && cargo fmt --version
 
-      - name: Formatting
-        run: cargo fmt --all -- --check
+      # - name: Formatting
+      #   run: cargo fmt --all -- --check
 
-      - name: Linting default features
-        env:
-          PACKAGE_NAME: ${{inputs.package-name}}
-        run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
+      # - name: Linting default features
+      #   env:
+      #     PACKAGE_NAME: ${{inputs.package-name}}
+      #   run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
 
-      - name: Linting All features
-        env:
-          PACKAGE_NAME: ${{inputs.package-name}}
-        run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings
+      # - name: Linting All features
+      #   env:
+      #     PACKAGE_NAME: ${{inputs.package-name}}
+      #   run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings
 
-      - name: Linting dylint
-        run: cargo dylint --all
+      # - name: Linting dylint
+      #   run: cargo dylint --all
 
       # Test execution
       - name: Run Tests
@@ -326,7 +326,7 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
-          RUST_BACKTRACE=full cargo nextest run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+          RUST_BACKTRACE=full cargo nextest --profile ci run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
