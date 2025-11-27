@@ -427,6 +427,7 @@ where
                 crate::conf::threshold::TlsConf::FullAuto {
                     trusted_releases,
                     ignore_aws_ca_chain: _,
+                    attest_private_vault_root_key: _,
                 } => Some(trusted_releases),
             });
             let context_info = ContextInfo {
