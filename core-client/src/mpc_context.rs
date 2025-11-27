@@ -47,6 +47,7 @@ pub async fn create_test_context_info_from_core_config(
             kms_lib::conf::threshold::TlsConf::FullAuto {
                 trusted_releases,
                 ignore_aws_ca_chain: _,
+                attest_private_vault_root_key: _,
             } => {
                 pcr_values.insert(c.party_id, trusted_releases);
             }

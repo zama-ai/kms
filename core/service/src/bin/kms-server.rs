@@ -20,7 +20,9 @@ use kms_lib::{
     grpc::MetaStoreStatusServiceImpl,
     vault::{
         aws::build_aws_sdk_config,
-        keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
+        keychain::{
+            awskms::build_aws_kms_client, make_keychain_proxy, Keychain, RootKeyMeasurements,
+        },
         storage::{
             crypto_material::get_core_signing_key, make_storage, read_text_at_request_id,
             s3::build_s3_client, StorageCache, StorageReader, StorageType,
@@ -124,11 +126,13 @@ async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener
 /// instead of using the wrapper from tonic::transport because we need to
 /// provide our own certificate verifier that can validate bundled attestation
 /// documents and that can receive new trust roots on the context change.
+#[allow(clippy::too_many_arguments)]
 async fn build_tls_config(
     my_id: usize,
     peers: &Option<Vec<PeerConf>>,
     tls_config: &TlsConf,
     security_module: Option<Arc<SecurityModuleProxy>>,
+    private_vault_root_key_measurements: Option<&RootKeyMeasurements>,
     public_vault: &Vault,
     sk: &PrivateSigKey,
     #[cfg(feature = "insecure")] mock_enclave: bool,
@@ -160,7 +164,14 @@ async fn build_tls_config(
     // NOTE: ca_certs can be empty if peerlist is not set
     let ca_certs = build_ca_certs_map(ca_certs_list.into_iter())?;
 
-    let (cert, key, trusted_releases, pcr8_expected, ignore_aws_ca_chain) = match tls_config {
+    let (
+        cert,
+        key,
+        trusted_releases,
+        pcr8_expected,
+        ignore_aws_ca_chain,
+        attest_private_vault_root_key,
+    ) = match tls_config {
         TlsConf::Manual { ref cert, ref key } => {
             tracing::info!("Using third-party TLS certificate without Nitro remote attestation");
             let cert = match peers {
@@ -173,7 +184,7 @@ async fn build_tls_config(
                 }
             };
             let key = key.into_pem()?;
-            (cert, key, None, false, false)
+            (cert, key, None, false, false, false)
         }
         // When remote attestation is used, the enclave generates a
         // self-signed TLS certificate for a private key that never
@@ -209,11 +220,13 @@ async fn build_tls_config(
                 Some(trusted_releases.iter().cloned().collect()),
                 true,
                 ignore_aws_ca_chain.is_some_and(|m| m),
+                false,
             )
         }
         TlsConf::FullAuto {
             ref trusted_releases,
             ref ignore_aws_ca_chain,
+            ref attest_private_vault_root_key,
         } => {
             let security_module = security_module
                 .as_ref()
@@ -247,7 +260,9 @@ async fn build_tls_config(
                 panic!("CA certificate public key isn't ECDSA");
             };
 
-            let (cert, key) = security_module.issue_x509_cert(&ca_cert, sk, true).await?;
+            let (cert, key) = security_module
+                .issue_x509_cert(&ca_cert, sk, true, private_vault_root_key_measurements)
+                .await?;
 
             // sanity check
             EndEntityCert::try_from(&cert.contents.as_slice().into())?
@@ -272,6 +287,7 @@ async fn build_tls_config(
                 Some(trusted_releases.iter().cloned().collect()),
                 false,
                 ignore_aws_ca_chain.is_some_and(|m| m),
+                attest_private_vault_root_key.is_some_and(|m| m),
             )
         }
     };
@@ -281,6 +297,13 @@ async fn build_tls_config(
         .unwrap_or_else(|e| panic!("Could not read TLS private key: {e}"))
         .clone_key();
     let verifier = Arc::new(AttestedVerifier::new(
+        if attest_private_vault_root_key {
+            Some(Arc::new(
+                kms_lib::vault::keychain::verify_root_key_measurements,
+            ))
+        } else {
+            None
+        },
         pcr8_expected,
         #[cfg(feature = "insecure")]
         mock_enclave,
@@ -620,6 +643,10 @@ async fn main_exec() -> anyhow::Result<()> {
                         &threshold_config.peers,
                         tls_config,
                         security_module.clone(),
+                        private_vault
+                            .keychain
+                            .as_ref()
+                            .map(|x| x.root_key_measurements()),
                         &public_vault,
                         base_kms.sig_key()?.as_ref(),
                         #[cfg(feature = "insecure")]
