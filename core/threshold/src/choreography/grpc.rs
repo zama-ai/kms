@@ -2515,7 +2515,7 @@ where
             let params = key_ref.as_ref().params;
 
             //Perform preprocessing
-            let num_needed_preproc = ResharePreprocRequired::new_same_set(num_parties, params);
+            let num_needed_preproc = ResharePreprocRequired::new(num_parties, params);
 
             let (mut preprocessing_64, mut preprocessing_128, sessions) = match session_type {
                 SessionType::Small => {
