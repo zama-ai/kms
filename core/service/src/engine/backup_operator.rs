@@ -912,13 +912,19 @@ mod tests {
     #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_operator_role() {
-        // TODO fix this test
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
         let outputs = vec![dummy_output_for_operator(1, verf_key.clone())];
-        let result =
-            filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
+        let (bad_verf_key, _bad_sig_key) = gen_sig_keys(&mut AesRng::seed_from_u64(42));
+        let result = filter_custodian_data(
+            outputs,
+            &recovery_material,
+            &bad_verf_key,
+            &dec_key,
+            &enc_key,
+        )
+        .await;
         assert!(result.is_err());
-        assert!(logs_contain("Received recovery output for operator role"));
+        assert!(logs_contain("Cannot recover the backup decryption key"));
     }
 
     #[tracing_test::traced_test]
