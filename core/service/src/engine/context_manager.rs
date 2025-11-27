@@ -394,19 +394,6 @@ where
             .inner
             .parse_mpc_context_for_destruction(request)
             .await?;
-        // // Check if the context exists
-        // if self
-        //     .inner
-        //     .crypto_storage
-        //     .read_context_info(&context_id)
-        //     .await
-        //     .is_err()
-        // {
-        //     return Err(Status::not_found(format!(
-        //         "Context with ID {} does not exist",
-        //         context_id
-        //     )));
-        // }
 
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
@@ -1117,7 +1104,6 @@ mod tests {
             });
 
             let response = context_manager.destroy_custodian_context(request).await;
-            // println!("{:?}", response.err());
             assert!(response.is_ok());
         }
         // check that the context is deleted

@@ -376,32 +376,6 @@ pub async fn purge(
         delete_all_at_request_id(&mut priv_storage, id)
             .await
             .unwrap();
-        // // Delete backups
-        // // First custodian backups
-        // let mut backup_storage = FileStorage::new(pub_path, StorageType::BACKUP, None).unwrap();
-        // let mut files = tokio::fs::read_dir(backup_storage.root_dir())
-        //     .await
-        //     .unwrap();
-        // // Iterate though all custodian backups and delete at request id within each of these
-        // loop {
-        //     match files.next_entry().await.unwrap() {
-        //         Some(dir) => {
-        //             if dir.file_type().await.unwrap().is_dir() {
-        //                 // We have a custodian backup
-
-        //                 delete_all_at_request_id(&mut backup_storage, id)
-        //                     .await
-        //                     .unwrap();
-        //             }
-        //         }
-        //         None => break,
-        //     }
-        // }
-        // // Then non-custodian backups
-        // let mut plain_vault = file_backup_vault(None, None, pub_path, backup_path).await;
-        // delete_all_at_request_id(&mut plain_vault, id)
-        //     .await
-        //     .unwrap();
     } else {
         for i in 1..=amount_parties {
             let mut threshold_pub =
@@ -419,25 +393,6 @@ pub async fn purge(
             delete_all_at_request_id(&mut threshold_priv, id)
                 .await
                 .unwrap();
-            //     // Delete backups
-            //     // First custodian backups
-            //     let mut threshold_custodian_vault = file_backup_vault(
-            //         None,
-            //         Some(&Keychain::SecretSharing(SecretSharingKeychain {})),
-            //         pub_path,
-            //         backup_path,
-            //     )
-            //     .await;
-            //     delete_all_at_request_id(&mut threshold_custodian_vault, id)
-            //         .await
-            //         .unwrap();
-            //     // Then non-custodian backups
-            //     let mut threshold_plain_vault =
-            //         file_backup_vault(None, None, pub_path, backup_path).await;
-            //     delete_all_at_request_id(&mut threshold_plain_vault, id)
-            //         .await
-            //         .unwrap();
-            // }
         }
     }
 }
@@ -505,13 +460,13 @@ pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
 
 /// Validate that a exists
 pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) -> bool {
-    let mut backup_exists = false;
+    let mut backup_exists = true;
     if amount_parties == 1 {
         let storage = FileStorage::new(backup_path, StorageType::BACKUP, None).unwrap();
         let base_path = storage.root_dir();
         let mut files = tokio::fs::read_dir(base_path).await.unwrap();
-        if files.next_entry().await.unwrap().is_some() {
-            backup_exists = true;
+        if files.next_entry().await.unwrap().is_none() {
+            backup_exists = false;
         }
     } else {
         for cur_party in 1..=amount_parties {
@@ -523,8 +478,8 @@ pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) ->
             .unwrap();
             let base_path = storage.root_dir();
             let mut files = tokio::fs::read_dir(base_path).await.unwrap();
-            if files.next_entry().await.unwrap().is_some() {
-                backup_exists = true;
+            if files.next_entry().await.unwrap().is_none() {
+                backup_exists = false;
             }
         }
     }
