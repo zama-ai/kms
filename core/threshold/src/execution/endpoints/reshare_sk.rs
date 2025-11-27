@@ -151,7 +151,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
     name = "ReShare (same sets)",
     skip(preproc128, preproc64, session, input_share)
     fields(sid=?session.session_id(),my_role=?session.my_role())
-)]
+    )]
     async fn reshare_sk_same_set<
         S: BaseSessionHandles,
         P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
@@ -183,7 +183,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
     name = "ReShare (as set 1)",
     skip(two_sets_session, input_share)
     fields(sid=?two_sets_session.session_id(),my_role=?two_sets_session.my_role())
-)]
+    )]
     async fn reshare_sk_two_sets_as_s1<
         S: GenericBaseSessionHandles<TwoSetsRole>,
         const EXTENSION_DEGREE: usize,
@@ -215,7 +215,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
     name = "ReShare (as set 2)",
     skip(sessions, preproc128, preproc64)
     fields(sid,my_role)
-)]
+    )]
     async fn reshare_sk_two_sets_as_s2<
         S: GenericBaseSessionHandles<TwoSetsRole>,
         Sess: BaseSessionHandles,
@@ -252,7 +252,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
     name = "ReShare (as both sets)",
     skip(sessions, preproc128, preproc64)
     fields(sid,my_role)
-)]
+    )]
     async fn reshare_sk_two_sets_as_both_sets<
         S: GenericBaseSessionHandles<TwoSetsRole>,
         Sess: BaseSessionHandles,
