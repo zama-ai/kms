@@ -11,7 +11,9 @@ use kms_grpc::{
 };
 use threshold_fhe::{
     execution::{
-        online::reshare::{reshare_sk_same_sets, ResharePreprocRequired},
+        endpoints::reshare_sk::{
+            ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
+        },
         runtime::sessions::session_parameters::GenericParameterHandles,
         small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
         tfhe_internals::public_keysets::FhePubKeySet,
@@ -206,7 +208,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // (Note that it's the parties in S2 that need to know how much preprocessing they need,
             // so this will be an issue also when resharing to a different set of parties)
             let num_needed_preproc =
-                ResharePreprocRequired::new_same_set(session_z64.num_parties(), dkg_params);
+                ResharePreprocRequired::new(session_z64.num_parties(), dkg_params);
 
             let mut correlated_randomness_z64 = SecureSmallPreprocessing::default()
                 .execute(&mut session_z64, num_needed_preproc.batch_params_64)
@@ -234,10 +236,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     .map(|r| r.private_keys.as_ref().clone())
             };
 
-            let new_private_key_set = reshare_sk_same_sets(
+            let new_private_key_set = SecureReshareSecretKeys::reshare_sk_same_set(
+                &mut base_session,
                 &mut correlated_randomness_z128,
                 &mut correlated_randomness_z64,
-                &mut base_session,
                 &mut mutable_keys,
                 dkg_params,
             )
