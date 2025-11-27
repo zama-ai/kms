@@ -4,7 +4,8 @@ use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams,
     engine::base::{derive_request_id, INSECURE_PREPROCESSING_ID},
     util::key_setup::test_tools::{
-        purge, purge_backup, purge_priv, purge_pub, EncryptionConfig, TestingPlaintext,
+        file_backup_vault, purge, purge_backup, purge_priv, purge_pub, EncryptionConfig,
+        TestingPlaintext,
     },
     vault::storage::{delete_all_at_request_id, file::FileStorage, StorageReader, StorageType},
 };
@@ -39,8 +40,8 @@ async fn nightly_test_insecure_threshold_dkg_backup() {
     let test_path = None;
     // Purge private to make the test run faster since there will be less data to back up.
     purge_priv(test_path).await;
-    purge(test_path, test_path, test_path, &key_id_1, amount_parties).await;
-    purge(test_path, test_path, test_path, &key_id_2, amount_parties).await;
+    purge(test_path, test_path, &key_id_1, amount_parties).await;
+    purge(test_path, test_path, &key_id_2, amount_parties).await;
     purge_backup(test_path, amount_parties).await;
     let (kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
@@ -79,8 +80,12 @@ async fn nightly_test_insecure_threshold_dkg_backup() {
             Some(Role::indexed_from_one(i)),
         )
         .unwrap();
-        delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
-        delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
+        delete_all_at_request_id(&mut priv_storage, &key_id_1)
+            .await
+            .unwrap();
+        delete_all_at_request_id(&mut priv_storage, &key_id_2)
+            .await
+            .unwrap();
     }
 
     // Now try to restore both keys
@@ -152,7 +157,7 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
     let test_path = None;
     // Purge private to make the test run faster since there will be less data to back up.
     purge_priv(test_path).await;
-    purge(test_path, test_path, test_path, &key_id, amount_parties).await;
+    purge(test_path, test_path, &key_id, amount_parties).await;
     purge_backup(test_path, amount_parties).await;
     let (kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
@@ -182,13 +187,13 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
     // Check the storage
     for cur_party in 1..=amount_parties {
-        let backup_storage = FileStorage::new(
-            test_path,
-            StorageType::BACKUP,
+        let backup_storage = file_backup_vault(
             Some(Role::indexed_from_one(cur_party)),
+            None,
+            test_path,
+            test_path,
         )
-        .unwrap(); // TODO vault should be used to also work with custodian shares
-                   // Validate that the backup is constructed again
+        .await;
         assert!(backup_storage
             .data_exists(&key_id, &PrivDataType::FheKeyInfo.to_string())
             .await
@@ -210,7 +215,7 @@ async fn test_insecure_threshold_crs_backup() {
     ))
     .unwrap();
     let test_path = None;
-    purge(test_path, test_path, test_path, &req_id, amount_parties).await;
+    purge(test_path, test_path, &req_id, amount_parties).await;
     purge_backup(test_path, amount_parties).await;
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
@@ -231,7 +236,9 @@ async fn test_insecure_threshold_crs_backup() {
             Some(Role::indexed_from_one(i)),
         )
         .unwrap();
-        delete_all_at_request_id(&mut priv_storage, &req_id).await;
+        delete_all_at_request_id(&mut priv_storage, &req_id)
+            .await
+            .unwrap();
         // Check that is has been removed
         assert!(!priv_storage
             .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())

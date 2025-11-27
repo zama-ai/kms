@@ -27,15 +27,19 @@ async fn test_insecure_central_dkg_backup() {
     let key_id_1 = derive_request_id("test_insecure_central_dkg_backup-1").unwrap();
     let key_id_2 = derive_request_id("test_insecure_central_dkg_backup-2").unwrap();
     // Delete potentially old data
-    purge(None, None, None, &key_id_1, 1).await;
-    purge(None, None, None, &key_id_2, 1).await;
+    purge(None, None, &key_id_1, 1).await;
+    purge(None, None, &key_id_2, 1).await;
     purge_backup(None, 1).await;
     key_gen_centralized(&key_id_1, param, None, None).await;
     key_gen_centralized(&key_id_2, param, None, None).await;
     // Generated key, delete private storage
     let mut priv_storage: FileStorage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
-    delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
-    delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
+    delete_all_at_request_id(&mut priv_storage, &key_id_1)
+        .await
+        .unwrap();
+    delete_all_at_request_id(&mut priv_storage, &key_id_2)
+        .await
+        .unwrap();
 
     // Now try to restore both keys
     let (kms_server, mut kms_client, internal_client) =
@@ -80,7 +84,7 @@ async fn test_insecure_central_autobackup_after_deletion() {
     let dkg_param: WrappedDKGParams = param.into();
     let key_id = derive_request_id("test_insecure_central_autobackup_after_deletion").unwrap();
     // Delete potentially old data
-    purge(None, None, None, &key_id, 1).await;
+    purge(None, None, &key_id, 1).await;
     purge_backup(None, 1).await;
     key_gen_centralized(&key_id, param, None, None).await;
     // Sleep to ensure the servers are properly shut down
@@ -106,13 +110,15 @@ async fn nightly_test_insecure_central_crs_backup() {
     let dkg_param: WrappedDKGParams = param.into();
     let req_id: RequestId =
         derive_request_id(&format!("test_insecure_central_crs_backup_{param:?}",)).unwrap();
-    purge(None, None, None, &req_id, 1).await;
+    purge(None, None, &req_id, 1).await;
     purge_backup(None, 1).await;
     crs_gen_centralized(&req_id, param, true, None).await;
 
     // Generated crs, delete it from private storage
     let mut priv_storage: FileStorage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
-    delete_all_at_request_id(&mut priv_storage, &req_id).await;
+    delete_all_at_request_id(&mut priv_storage, &req_id)
+        .await
+        .unwrap();
     // Check that is has been removed
     assert!(!priv_storage
         .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())

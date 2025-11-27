@@ -4,6 +4,7 @@ use kms_grpc::{rpc_types::PrivDataType, RequestId};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{collections::HashSet, fmt, path::MAIN_SEPARATOR};
 use storage::{Storage, StorageForBytes, StorageProxy, StorageReader};
+use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::{named::Named, Unversionize, Versionize};
 
@@ -33,37 +34,12 @@ impl fmt::Display for VaultDataType {
     }
 }
 
-// #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-// enum VaultType {
-//     PrivData,
-//     PubData,
-// }
-// todo make helper method to create this from config
 pub struct Vault {
     pub storage: StorageProxy,
     pub keychain: Option<KeychainProxy>,
-    // vault_type: VaultType,
 }
 
 impl Vault {
-    // fn new(
-    //     storage: StorageProxy,
-    //     // vault_type: VaultType,
-    //     keychain: Option<KeychainProxy>,
-    // ) -> Self {
-    //     // if vault_type == VaultType::PubData && keychain.is_some() {
-    //     //     anyhow::bail!(
-    //     //         "A public data vault is being created with a keychain! THis is not supported."
-    //     //     );
-    //     // }
-    //     // if vault_type == VaultType::PrivData && keychain.is_none() {
-    //     //     tracing::warn!(
-    //     //         "A private data vault is being created without a keychain! Data will be stored unencrypted!"
-    //     //     );
-    //     // }
-    //     Self { storage, keychain }
-    // }
-
     /// Determine the vault data based on the `outer_data_type`` by considering the vault configuration.
     fn get_vault_data_type(&self, outer_data_type: &str) -> anyhow::Result<VaultDataType> {
         match self.keychain.as_ref() {
@@ -82,6 +58,43 @@ impl Vault {
                 }
             },
             None => Ok(VaultDataType::UnencryptedData(outer_data_type.to_string())),
+        }
+    }
+
+    /// Method for removing an old custodian backup identified by `backup_id`.
+    /// This is based on the id of the backup, and remove all the backed up information under `backup_id`.
+    /// An error will be returned if the backup exists but could not be deleted or if `backup_id` is the _current_ backup id.
+    /// An info log is procuced for each data type that is not found in the backup.
+    async fn remove_old_backup(&mut self, backup_id: &RequestId) -> anyhow::Result<()> {
+        match self.keychain.as_ref() {
+            Some(KeychainProxy::SecretSharing(secret_share_keychain)) => {
+                if secret_share_keychain.get_current_backup_id()? == *backup_id {
+                    return Err(anyhow!(
+                        "remove_old_backup cannot be called on the current backup id"
+                    ));
+                }
+                for cur_type in PrivDataType::iter() {
+                    let vault_data_type = VaultDataType::CustodianBackupData(*backup_id, cur_type);
+                    let ids = self
+                        .storage
+                        .all_data_ids(&vault_data_type.to_string())
+                        .await?;
+                    if ids.is_empty() {
+                        tracing::info!(
+                            "No data found for backup id {backup_id} and data type {cur_type}"
+                        );
+                    }
+                    for cur_id in ids {
+                        self.storage
+                            .delete_data(&cur_id, &vault_data_type.to_string())
+                            .await?;
+                    }
+                }
+                Ok(())
+            }
+            _ => Err(anyhow!(
+                "remove_old_backup can only be called on custodian backup vaults"
+            )),
         }
     }
 }
@@ -228,5 +241,32 @@ impl StorageForBytes for Vault {
             .load_bytes(data_id, &backup_type)
             .await
             .map_err(|e| anyhow!("Byte load failed: {e}"))
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::VaultDataType;
+    use kms_grpc::{rpc_types::PrivDataType, RequestId};
+
+    #[test]
+    fn regression_test_vault_data_type_serialization() {
+        let backup_id = RequestId::from_bytes([0u8; 32]);
+        let vdt1 = VaultDataType::CustodianBackupData(backup_id, PrivDataType::FheKeyInfo);
+        let vdt1_str = vdt1.to_string();
+        assert_eq!(
+            vdt1_str,
+            format!(
+                "{backup_id}{}{}",
+                std::path::MAIN_SEPARATOR,
+                PrivDataType::FheKeyInfo
+            )
+        );
+        // Check encrypted and unencrypted data have the same string representation
+        let vdt2 = VaultDataType::EncryptedPrivData(PrivDataType::FheKeyInfo);
+        assert_eq!(vdt2.to_string(), PrivDataType::FheKeyInfo.to_string());
+        let vdt3 = VaultDataType::UnencryptedData(PrivDataType::FheKeyInfo.to_string());
+        assert_eq!(vdt3.to_string(), PrivDataType::FheKeyInfo.to_string());
+        assert_eq!(vdt2.to_string(), vdt3.to_string());
     }
 }

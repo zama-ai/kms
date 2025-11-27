@@ -1,5 +1,5 @@
 use crate::backup::BackupCiphertext;
-use crate::conf::{self, Keychain, SecretSharingKeychain};
+use crate::conf::{self, Keychain};
 use crate::util::file_handling::safe_read_element_versioned;
 use crate::util::key_setup::FhePublicKey;
 use crate::vault::keychain::make_keychain_proxy;
@@ -358,34 +358,50 @@ pub async fn compute_cipher_from_stored_key(
     recv.await.unwrap()
 }
 
-/// Purge any kind of data, regardless of type, for a specific request ID.
+/// Purge any kind of public or private data, regardless of type, for a specific request ID.
 ///
 /// This function should be used for testing only and it can panic.
 pub async fn purge(
     pub_path: Option<&Path>,
     priv_path: Option<&Path>,
-    backup_path: Option<&Path>,
     id: &RequestId,
     amount_parties: usize,
 ) {
     if amount_parties == 1 {
         let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-        delete_all_at_request_id(&mut pub_storage, id).await;
+        delete_all_at_request_id(&mut pub_storage, id)
+            .await
+            .unwrap();
         let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
-        delete_all_at_request_id(&mut priv_storage, id).await;
-        // Delete backups
-        // First custodian backups
-        let mut custodian_vault = file_backup_vault(
-            None,
-            Some(&Keychain::SecretSharing(SecretSharingKeychain {})),
-            pub_path,
-            backup_path,
-        )
-        .await;
-        delete_all_at_request_id(&mut custodian_vault, id).await;
-        // Then non-custodian backups
-        let mut plain_vault = file_backup_vault(None, None, pub_path, backup_path).await;
-        delete_all_at_request_id(&mut plain_vault, id).await;
+        delete_all_at_request_id(&mut priv_storage, id)
+            .await
+            .unwrap();
+        // // Delete backups
+        // // First custodian backups
+        // let mut backup_storage = FileStorage::new(pub_path, StorageType::BACKUP, None).unwrap();
+        // let mut files = tokio::fs::read_dir(backup_storage.root_dir())
+        //     .await
+        //     .unwrap();
+        // // Iterate though all custodian backups and delete at request id within each of these
+        // loop {
+        //     match files.next_entry().await.unwrap() {
+        //         Some(dir) => {
+        //             if dir.file_type().await.unwrap().is_dir() {
+        //                 // We have a custodian backup
+
+        //                 delete_all_at_request_id(&mut backup_storage, id)
+        //                     .await
+        //                     .unwrap();
+        //             }
+        //         }
+        //         None => break,
+        //     }
+        // }
+        // // Then non-custodian backups
+        // let mut plain_vault = file_backup_vault(None, None, pub_path, backup_path).await;
+        // delete_all_at_request_id(&mut plain_vault, id)
+        //     .await
+        //     .unwrap();
     } else {
         for i in 1..=amount_parties {
             let mut threshold_pub =
@@ -397,22 +413,31 @@ pub async fn purge(
                 Some(Role::indexed_from_one(i)),
             )
             .unwrap();
-            delete_all_at_request_id(&mut threshold_pub, id).await;
-            delete_all_at_request_id(&mut threshold_priv, id).await;
-            // Delete backups
-            // First custodian backups
-            let mut threshold_custodian_vault = file_backup_vault(
-                None,
-                Some(&Keychain::SecretSharing(SecretSharingKeychain {})),
-                pub_path,
-                backup_path,
-            )
-            .await;
-            delete_all_at_request_id(&mut threshold_custodian_vault, id).await;
-            // Then non-custodian backups
-            let mut threshold_plain_vault =
-                file_backup_vault(None, None, pub_path, backup_path).await;
-            delete_all_at_request_id(&mut threshold_plain_vault, id).await;
+            delete_all_at_request_id(&mut threshold_pub, id)
+                .await
+                .unwrap();
+            delete_all_at_request_id(&mut threshold_priv, id)
+                .await
+                .unwrap();
+            //     // Delete backups
+            //     // First custodian backups
+            //     let mut threshold_custodian_vault = file_backup_vault(
+            //         None,
+            //         Some(&Keychain::SecretSharing(SecretSharingKeychain {})),
+            //         pub_path,
+            //         backup_path,
+            //     )
+            //     .await;
+            //     delete_all_at_request_id(&mut threshold_custodian_vault, id)
+            //         .await
+            //         .unwrap();
+            //     // Then non-custodian backups
+            //     let mut threshold_plain_vault =
+            //         file_backup_vault(None, None, pub_path, backup_path).await;
+            //     delete_all_at_request_id(&mut threshold_plain_vault, id)
+            //         .await
+            //         .unwrap();
+            // }
         }
     }
 }
@@ -885,7 +910,6 @@ async fn test_purge() {
         .unwrap();
     assert_eq!(priv_ids.len(), 1);
     purge(
-        test_prefix,
         test_prefix,
         test_prefix,
         &pub_ids.into_iter().next().unwrap(),

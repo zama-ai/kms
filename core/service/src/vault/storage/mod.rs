@@ -34,7 +34,7 @@ pub mod s3;
 #[enum_dispatch]
 #[trait_variant::make(Send)]
 pub trait StorageReader {
-    // TODO types should be changed to strong types instead of strings
+    // TODO(#2829) types should be changed to strong types instead of strings
     /// Validate if data exists at a given `url`.
     async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool>;
 
@@ -158,15 +158,17 @@ pub async fn read_text_at_request_id<S: StorageForBytes>(
 
 /// Delete ALL data under a given `request_id`.
 /// Observe that this method does not produce any error regardless of any whether data is deleted or not.
-pub async fn delete_all_at_request_id<S: Storage>(storage: &mut S, request_id: &RequestId) {
+pub async fn delete_all_at_request_id<S: Storage>(
+    storage: &mut S,
+    request_id: &RequestId,
+) -> anyhow::Result<()> {
     for cur_type in PrivDataType::iter() {
-        // Ignore an error as it is likely because the data does not exist
-        let _ = delete_at_request_id(storage, request_id, &cur_type.to_string()).await;
+        delete_at_request_id(storage, request_id, &cur_type.to_string()).await?;
     }
     for cur_type in PubDataType::iter() {
-        // Ignore an error as it is likely because the data does not exist
-        let _ = delete_at_request_id(storage, request_id, &cur_type.to_string()).await;
+        delete_at_request_id(storage, request_id, &cur_type.to_string()).await?;
     }
+    Ok(())
 }
 
 /// Helper method to remove data based on a data type and request ID.
@@ -202,31 +204,13 @@ pub async fn delete_pk_at_request_id<S: Storage>(
     storage: &mut S,
     request_id: &RequestId,
 ) -> anyhow::Result<()> {
-    let _ = delete_at_request_id(storage, request_id, &PubDataType::PublicKey.to_string()).await;
-    let _ = delete_at_request_id(
+    delete_at_request_id(storage, request_id, &PubDataType::PublicKey.to_string()).await?;
+    delete_at_request_id(
         storage,
         request_id,
         &PubDataType::PublicKeyMetadata.to_string(),
     )
-    .await;
-    // Don't report errors
-    Ok(())
-}
-
-/// Helper method to remove data that has been backed up for the _current_ backup_id
-/// This is based on the id of the backup, and remove all the content in the folder
-/// identified with this id.
-/// An error will be returned if the backup exists but could not be deleted.
-/// In case the backup does not exist, an info log is made but no error returned.
-pub async fn delete_backup(storage: &mut Vault) -> anyhow::Result<()> {
-    for cur_type in PrivDataType::iter() {
-        let ids = storage.all_data_ids(&cur_type.to_string()).await?;
-        for cur_id in ids {
-            // Ignore an error as it is likely because the data does not exist
-            //TODO this and other places should pass on the error as there is no error in case the data does not exist
-            let _ = delete_at_request_id(storage, &cur_id, &cur_type.to_string()).await;
-        }
-    }
+    .await?;
     Ok(())
 }
 
@@ -340,17 +324,19 @@ pub async fn delete_context_at_id<S: Storage>(
 pub async fn delete_custodian_context_at_id<PubS: Storage>(
     pub_storage: &mut PubS,
     backup_storage: &mut Vault,
-    backup_id: &RequestId, // TODO should be changed to a BackupId
+    backup_id: &RequestId, // TODO(#2830) should be changed to a BackupId
 ) -> anyhow::Result<()> {
+    // Delete everything that is backed up in relation to a specific request ID
+    // Note that this method will fail if backup_id is the current backup id
+    backup_storage.remove_old_backup(backup_id).await?;
+
+    // If the vault allows the backup deletion, then also delete the public data
     delete_at_request_id(
         pub_storage,
         backup_id,
         &PubDataType::RecoveryMaterial.to_string(),
     )
-    .await?;
-
-    // Delete everything that is backed up in relation to a specific request ID
-    delete_backup(backup_storage).await
+    .await
 }
 
 /// Helper method for reading all data of a specific type.
@@ -505,7 +491,9 @@ pub mod tests {
         let req_id = derive_request_id("123").unwrap();
 
         // Ensure no old data is present
-        let _ = delete_at_request_id(storage, &req_id, data_type).await;
+        delete_at_request_id(storage, &req_id, data_type)
+            .await
+            .unwrap();
         store_versioned_at_request_id(storage, &req_id, &data, data_type)
             .await
             .unwrap();
@@ -531,8 +519,8 @@ pub mod tests {
 
         // Ensure no old test data is present
         println!("deleting..");
-        delete_all_at_request_id(storage, &req_id_1).await;
-        delete_all_at_request_id(storage, &req_id_2).await;
+        delete_all_at_request_id(storage, &req_id_1).await.unwrap();
+        delete_all_at_request_id(storage, &req_id_2).await.unwrap();
 
         // Store data
         println!("storing..");
@@ -570,7 +558,7 @@ pub mod tests {
         assert_eq!(verfs.get(&req_id_1).unwrap(), &data_1_vk);
 
         // Delete data
-        delete_all_at_request_id(storage, &req_id_1).await;
+        delete_all_at_request_id(storage, &req_id_1).await.unwrap();
 
         // Check data retrieval again
         let pks: HashMap<RequestId, TestType> =
@@ -592,7 +580,7 @@ pub mod tests {
         assert!(verfs.is_empty());
 
         // Delete last data
-        delete_all_at_request_id(storage, &req_id_2).await;
+        delete_all_at_request_id(storage, &req_id_2).await.unwrap();
 
         // Check data retrieval again
         let pks: HashMap<RequestId, TestType> =
