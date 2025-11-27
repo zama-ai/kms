@@ -355,15 +355,7 @@ where
                 expected_key_size,
             )
             .await?;
-        if R::is_output_expected() {
-            Some(Some(LweSecretKeyShare {
-                data: data.expect("Output is expected"),
-            }))
-        } else {
-            None
-        }
-    } else if R::is_output_expected() {
-        Some(None)
+        Some(data.map(|data| LweSecretKeyShare { data }))
     } else {
         None
     };
@@ -383,13 +375,7 @@ where
             expected_key_size,
         )
         .await?;
-    let lwe_compute_secret_key_share = if R::is_output_expected() {
-        Some(LweSecretKeyShare {
-            data: data.expect("Output is expected"),
-        })
-    } else {
-        None
-    };
+    let lwe_compute_secret_key_share = data.map(|data| LweSecretKeyShare { data });
 
     // Reshare the LWE PKe key
     let expected_key_size = basic_params_handle.lwe_hat_dimension().0;
@@ -406,13 +392,7 @@ where
         )
         .await?;
 
-    let lwe_encryption_secret_key_share = if R::is_output_expected() {
-        Some(LweSecretKeyShare {
-            data: data.expect("Output is expected"),
-        })
-    } else {
-        None
-    };
+    let lwe_encryption_secret_key_share = data.map(|data| LweSecretKeyShare { data });
 
     // Reshare the GLWE compute key
     let expected_key_size = basic_params_handle.glwe_sk_num_bits();
@@ -435,14 +415,12 @@ where
                     expected_key_size,
                 )
                 .await?;
-            if R::is_output_expected() {
-                Some(GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
-                    data: data.expect("Output is expected"),
+            data.map(|data| {
+                GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
+                    data,
                     polynomial_size,
-                }))
-            } else {
-                None
-            }
+                })
+            })
         }
         DkgMode::Z128 => {
             let maybe_key = input_share
@@ -462,14 +440,12 @@ where
                     expected_key_size,
                 )
                 .await?;
-            if R::is_output_expected() {
-                Some(GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
-                    data: data.expect("Output is expected"),
+            data.map(|data| {
+                GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
+                    data,
                     polynomial_size,
-                }))
-            } else {
-                None
-            }
+                })
+            })
         }
     };
 
@@ -505,19 +481,15 @@ where
                         expected_key_size,
                     )
                     .await?;
-                if R::is_output_expected() {
-                    Some(CompressionPrivateKeySharesEnum::Z64(
-                        CompressionPrivateKeyShares {
-                            post_packing_ks_key: GlweSecretKeyShare {
-                                data: data.expect("Output is expected"),
-                                polynomial_size,
-                            },
-                            params: compression_params.raw_compression_parameters,
+                data.map(|data| {
+                    CompressionPrivateKeySharesEnum::Z64(CompressionPrivateKeyShares {
+                        post_packing_ks_key: GlweSecretKeyShare {
+                            data,
+                            polynomial_size,
                         },
-                    ))
-                } else {
-                    None
-                }
+                        params: compression_params.raw_compression_parameters,
+                    })
+                })
             }
             DkgMode::Z128 => {
                 // Extract the GLWE secret key share for the compression scheme if any
@@ -542,23 +514,17 @@ where
                         expected_key_size,
                     )
                     .await?;
-                if R::is_output_expected() {
-                    Some(CompressionPrivateKeySharesEnum::Z128(
-                        CompressionPrivateKeyShares {
-                            post_packing_ks_key: GlweSecretKeyShare {
-                                data: data.expect("Output is expected"),
-                                polynomial_size,
-                            },
-                            params: compression_params.raw_compression_parameters,
+                data.map(|data| {
+                    CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
+                        post_packing_ks_key: GlweSecretKeyShare {
+                            data,
+                            polynomial_size,
                         },
-                    ))
-                } else {
-                    None
-                }
+                        params: compression_params.raw_compression_parameters,
+                    })
+                })
             }
         })
-    } else if R::is_output_expected() {
-        Some(None)
     } else {
         None
     };
@@ -582,40 +548,47 @@ where
                         expected_key_size,
                     )
                     .await?;
-                if R::is_output_expected() {
-                    Some(Some(LweSecretKeyShare {
-                        data: data.expect("Output is expected"),
-                    }))
-                } else {
-                    None
-                }
-            } else if R::is_output_expected() {
-                Some(None)
+                Some(data.map(|data| LweSecretKeyShare { data }))
             } else {
                 None
             }
         }
     };
 
-    if R::is_output_expected() {
-        tracing::info!("Resharing completed, output is expected.");
-        Ok(Some(PrivateKeySet {
-            lwe_encryption_secret_key_share: lwe_encryption_secret_key_share
-                .expect("Output is expected 1"),
-            lwe_compute_secret_key_share: lwe_compute_secret_key_share
-                .expect("Output is expected 2"),
-            glwe_secret_key_share: glwe_secret_key_share.expect("Output is expected 3"),
-            glwe_secret_key_share_sns_as_lwe: glwe_secret_key_share_sns_as_lwe
-                .expect("Output is expected 4 "),
-            parameters: basic_params_handle.to_classic_pbs_parameters(),
-            glwe_secret_key_share_compression: glwe_secret_key_share_compression
-                .expect("Output is expected 5"),
-            glwe_sns_compression_key_as_lwe: glwe_sns_compression_key_as_lwe
-                .expect("Output is expected 6"),
-        }))
-    } else {
-        tracing::info!("Resharing completed, no output is expected.");
-        Ok(None)
+    match (
+        lwe_encryption_secret_key_share,
+        lwe_compute_secret_key_share,
+        glwe_secret_key_share,
+        glwe_secret_key_share_sns_as_lwe,
+        glwe_secret_key_share_compression,
+        glwe_sns_compression_key_as_lwe,
+    ) {
+        (
+            Some(lwe_encryption_secret_key_share),
+            Some(lwe_compute_secret_key_share),
+            Some(glwe_secret_key_share),
+            Some(glwe_secret_key_share_sns_as_lwe),
+            Some(glwe_secret_key_share_compression),
+            Some(glwe_sns_compression_key_as_lwe),
+        ) => {
+            tracing::info!("Resharing completed, output is expected.");
+            Ok(Some(PrivateKeySet {
+                lwe_encryption_secret_key_share,
+                lwe_compute_secret_key_share,
+                glwe_secret_key_share,
+                glwe_secret_key_share_sns_as_lwe,
+                parameters: basic_params_handle.to_classic_pbs_parameters(),
+                glwe_secret_key_share_compression,
+                glwe_sns_compression_key_as_lwe,
+            }))
+        }
+        (None, None, None, None, None, None) => {
+            tracing::info!("Resharing completed, no output is expected.");
+            Ok(None)
+        }
+        _ => Err(anyhow_error_and_log(
+            "Either all output shares must be present or none",
+        )),
     }
 }
 

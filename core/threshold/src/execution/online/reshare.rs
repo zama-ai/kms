@@ -116,8 +116,6 @@ pub trait Reshare: ProtocolDescription + Send + Sync + Clone {
     ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
-
-    fn is_output_expected() -> bool;
 }
 
 pub type SecureSameSetReshare<Ses> =
@@ -210,10 +208,6 @@ impl<Ses: BaseSessionHandles, OpenProtocol: RobustOpen, BroadcastProtocol: Broad
             )
             .await?,
         ))
-    }
-
-    fn is_output_expected() -> bool {
-        true
     }
 }
 
@@ -315,10 +309,6 @@ impl<
             &self.broadcast_protocol,
         )
         .await?)
-    }
-
-    fn is_output_expected() -> bool {
-        false
     }
 }
 
@@ -433,10 +423,6 @@ impl<
         )
         .await?)
     }
-
-    fn is_output_expected() -> bool {
-        true
-    }
 }
 
 pub type SecureTwoSetsReshareAsBothSets<TwoSetsSes, OneSetSes> =
@@ -549,10 +535,6 @@ impl<
             &self.broadcast_protocol,
         )
         .await?)
-    }
-
-    fn is_output_expected() -> bool {
-        true
     }
 }
 
