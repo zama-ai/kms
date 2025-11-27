@@ -450,9 +450,8 @@ async fn filter_custodian_data(
     my_verf_key: &PublicSigKey,
     ephemeral_dec_key: &UnifiedPrivateEncKey,
     ephemeral_enc_key: &UnifiedPublicEncKey,
-) -> anyhow::Result<HashMap<PublicSigKey, InternalCustodianRecoveryOutput>> {
-    let mut parsed_custodian_rec: HashMap<PublicSigKey, InternalCustodianRecoveryOutput> =
-        HashMap::new();
+) -> anyhow::Result<HashMap<Role, InternalCustodianRecoveryOutput>> {
+    let mut parsed_custodian_rec: HashMap<Role, InternalCustodianRecoveryOutput> = HashMap::new();
     for cur_recovery_output in &custodian_recovery_outputs {
         let current_verf_key: PublicSigKey =
             bc2wrap::deserialize_safe(&cur_recovery_output.operator_verification_key)?;
@@ -517,13 +516,17 @@ async fn filter_custodian_data(
             cur_recovery_output.to_owned(),
         ) {
             Ok(output) => {
-                if let Some(old_val) = parsed_custodian_rec.insert(current_verf_key.clone(), output)
-                {
-                    tracing::warn!(
-                                "Received multiple recovery outputs for custodian {}. Only the first one will be used.",
-                                current_verf_key.address(),
-                            );
-                    parsed_custodian_rec.insert(current_verf_key, old_val);
+                match parsed_custodian_rec.entry(output.custodian_role) {
+                    std::collections::hash_map::Entry::Occupied(_) => {
+                        /* do nothing if occupied */
+                        tracing::warn!(
+                                    "Received multiple recovery outputs for custodian {}. Only the first one will be used.",
+                                    current_verf_key.address(),
+                                );
+                    }
+                    std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                        vacant_entry.insert(output);
+                    }
                 }
             }
             Err(e) => {
