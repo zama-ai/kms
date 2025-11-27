@@ -139,13 +139,13 @@ test-isolated-parallel: generate-test-material-testing
 # Run nightly tests (ALL integration tests including nightly_* and full_gen_tests_*)
 # These are slower, comprehensive tests that run in CI nightly
 test-isolated-nightly: generate-test-material-testing
-	@echo "Running ALL integration tests (15 tests total, no skips)..."
+	@echo "Running ALL integration tests (no skips)..."
 	@echo "Includes nightly tests:"
 	@echo "  - nightly_tests_threshold_sequential_crs"
 	@echo "  - nightly_tests_threshold_sequential_preproc_keygen"
 	@echo "  - full_gen_tests_default_threshold_sequential_crs"
 	@echo "  - full_gen_tests_default_threshold_sequential_preproc_keygen"
-	@echo "Plus all 11 regular tests"
+	@echo "Plus all regular tests"
 	cargo test --test integration_test_backup --features k8s_tests -- --skip k8s_ --skip isolated_test_example
 
 # Clean up test artifacts
