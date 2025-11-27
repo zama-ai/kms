@@ -39,7 +39,9 @@ use crate::execution::endpoints::decryption::{
     LargeOfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
 };
 use crate::execution::endpoints::keygen::{OnlineDistributedKeyGen, SecureOnlineDistributedKeyGen};
-use crate::execution::endpoints::reshare_sk::{secure_reshare_same_sets, ResharePreprocRequired};
+use crate::execution::endpoints::reshare_sk::{
+    ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
+};
 use crate::execution::keyset_config::KeySetConfig;
 use crate::execution::large_execution::offline::SecureLargePreprocessing;
 use crate::execution::online::gen_bits::SecureBitGenEven;
@@ -2592,7 +2594,7 @@ where
             };
 
             //Perform online
-            let new_private_key_set = secure_reshare_same_sets(
+            let new_private_key_set = SecureReshareSecretKeys::secure_reshare_same_sets(
                 &mut reshare_base_session,
                 &mut preprocessing_128,
                 &mut preprocessing_64,
