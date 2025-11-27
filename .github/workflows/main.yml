@@ -499,6 +499,7 @@ jobs:
       package-name: 'kms'
       slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
+      nextest-test-threads: "1"  # Required for #[serial] tests (slow_tests with shared state)
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
