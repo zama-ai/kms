@@ -63,7 +63,6 @@ where
             new_context.ok_or_else(|| Status::invalid_argument("new_context is required"))?;
         let new_context = ContextInfo::try_from(new_context)
             .map_err(|e| Status::invalid_argument(format!("Invalid context info: {e}")))?;
-        // TODO should we check if it already exists?
         // verify new context
         let my_role = {
             let storage_ref = self.crypto_storage.private_storage.clone();
@@ -140,6 +139,7 @@ where
             .ok_or_else(|| Status::invalid_argument("context_id is required"))?
             .try_into()
             .map_err(|e| Status::invalid_argument(format!("Invalid request ID: {e}")))?;
+
         // Note that care must be taken in the order of getting locks here
         // Use meta store as sync point
         let mut cus_meta_store = self.custodian_meta_store.write().await;
@@ -160,6 +160,7 @@ where
                 );
             }
         }
+
         let mut guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
         let guarded_backup_storage_ref =
             self.crypto_storage.backup_vault.as_ref().ok_or_else(|| {
@@ -348,6 +349,19 @@ where
             .inner
             .verify_and_extract_new_mpc_context(request)
             .await?;
+        // Check if the context already exists
+        if self
+            .inner
+            .crypto_storage
+            .read_context_info(new_context.context_id())
+            .await
+            .is_ok()
+        {
+            return Err(Status::already_exists(format!(
+                "Context with ID {} already exists",
+                new_context.context_id()
+            )));
+        }
 
         // store the new context
         let res = self
@@ -380,6 +394,19 @@ where
             .inner
             .parse_mpc_context_for_destruction(request)
             .await?;
+        // // Check if the context exists
+        // if self
+        //     .inner
+        //     .crypto_storage
+        //     .read_context_info(&context_id)
+        //     .await
+        //     .is_err()
+        // {
+        //     return Err(Status::not_found(format!(
+        //         "Context with ID {} does not exist",
+        //         context_id
+        //     )));
+        // }
 
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
@@ -526,6 +553,23 @@ where
             .verify_and_extract_new_mpc_context(request)
             .await?;
 
+        // First check if the context already exists
+        if self
+            .inner
+            .crypto_storage
+            .read_context_info(new_context.context_id())
+            .await
+            .is_ok()
+            || self
+                .session_maker
+                .context_exists(new_context.context_id())
+                .await
+        {
+            return Err(Status::already_exists(format!(
+                "Context with ID {} already exists",
+                new_context.context_id()
+            )));
+        }
         let res = atomic_update_context(
             &self.session_maker,
             &self.inner.crypto_storage,
@@ -555,7 +599,6 @@ where
 
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
-        // TODO should this be allowed for the active context?
         self.session_maker.remove_context(&context_id).await;
 
         // There is nothing we can do if deletion fails here.
@@ -783,7 +826,7 @@ mod tests {
         };
 
         let request = Request::new(NewMpcContextRequest {
-            new_context: Some(new_context.try_into().unwrap()),
+            new_context: Some(new_context.clone().try_into().unwrap()),
         });
         let session_maker =
             SessionMaker::four_party_dummy_session(None, None, base_kms.new_rng().await);
@@ -814,8 +857,17 @@ mod tests {
                 Some(verification_key)
             );
         }
+        // Try to make a context with the same context ID (should fail)
+        {
+            let request = Request::new(NewMpcContextRequest {
+                new_context: Some(new_context.try_into().unwrap()),
+            });
+            let response = context_manager.new_mpc_context(request).await;
+            // Should fail since the same ID is used
+            assert!(response.is_err());
+        }
 
-        // now that it is stored, we try to delete it
+        // now we try to delete the stored context
         let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
         });
@@ -1032,6 +1084,19 @@ mod tests {
 
         // Make a new context so we can delete the old one
         {
+            // First try to do it with the same context ID (should fail)
+            let request = Request::new(NewCustodianContextRequest {
+                new_context: Some(CustodianContext {
+                    custodian_nodes: setup_msgs.clone(),
+                    context_id: Some(first_context_id.into()),
+                    threshold: threshold as u32,
+                }),
+            });
+            let response = context_manager.new_custodian_context(request).await;
+            // Should fail since the same ID is used
+            assert!(response.is_err());
+
+            // Now try with a different context ID (should succeed)
             let second_context_id = RequestId::from_bytes([42u8; 32]);
             let second_context = CustodianContext {
                 custodian_nodes: setup_msgs.clone(),
@@ -1052,8 +1117,8 @@ mod tests {
             });
 
             let response = context_manager.destroy_custodian_context(request).await;
-            println!("{:?}", response.err());
-            // assert!(response.is_ok());
+            // println!("{:?}", response.err());
+            assert!(response.is_ok());
         }
         // check that the context is deleted
         {
