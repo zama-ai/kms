@@ -40,7 +40,7 @@ pub struct Vault {
 }
 
 impl Vault {
-    /// Determine the vault data based on the `outer_data_type`` by considering the vault configuration.
+    /// Determine the vault data based on the `outer_data_type` by considering the vault configuration.
     fn get_vault_data_type(&self, outer_data_type: &str) -> anyhow::Result<VaultDataType> {
         match self.keychain.as_ref() {
             Some(keychain_proxy) => match keychain_proxy {
