@@ -142,7 +142,8 @@ pub trait ReshareSecretKeys {
         P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
         const EXTENSION_DEGREE: usize,
     >(
-        sessions: &mut (S, Sess),
+        two_sets_session: &mut S,
+        set_2_session: &mut Sess,
         preproc128: &mut P128,
         preproc64: &mut P64,
         parameters: DKGParams,
@@ -168,7 +169,8 @@ pub trait ReshareSecretKeys {
         P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
         const EXTENSION_DEGREE: usize,
     >(
-        sessions: &mut (S, Sess),
+        two_sets_session: &mut S,
+        set_2_session: &mut Sess,
         preproc128: &mut P128,
         preproc64: &mut P64,
         input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
@@ -217,7 +219,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
 
     #[instrument(
     name = "ReShare (as set 1)",
-    skip(two_sets_session, input_share)
+    skip_all,
     fields(sid=?two_sets_session.session_id(),my_role=?two_sets_session.my_role())
     )]
     async fn reshare_sk_two_sets_as_s1<
@@ -249,8 +251,8 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
 
     #[instrument(
     name = "ReShare (as set 2)",
-    skip(sessions, preproc128, preproc64)
-    fields(sid,my_role)
+    skip_all,
+    fields(sid=?two_sets_session.session_id(),my_role=?two_sets_session.my_role())
     )]
     async fn reshare_sk_two_sets_as_s2<
         S: GenericBaseSessionHandles<TwoSetsRole>,
@@ -259,7 +261,8 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
         const EXTENSION_DEGREE: usize,
     >(
-        sessions: &mut (S, Sess),
+        two_sets_session: &mut S,
+        set_2_session: &mut Sess,
         preproc128: &mut P128,
         preproc64: &mut P64,
         parameters: DKGParams,
@@ -268,13 +271,10 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
-        let span = tracing::Span::current();
-        span.record("sid", format!("{:?}", &sessions.0.session_id()));
-        span.record("my_role", format!("{:?}", &sessions.0.my_role()));
         reshare_sk::<SecureTwoSetsReshareAsSet2<S, Sess>, _, _, _>(
             Expected(preproc128),
             Expected(preproc64),
-            sessions,
+            &mut (two_sets_session, set_2_session),
             NotExpected {
                 _marker: std::marker::PhantomData,
             },
@@ -286,8 +286,8 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
 
     #[instrument(
     name = "ReShare (as both sets)",
-    skip(sessions, preproc128, preproc64)
-    fields(sid,my_role)
+    skip_all,
+    fields(sid=?two_sets_session.session_id(),my_role=?two_sets_session.my_role())
     )]
     async fn reshare_sk_two_sets_as_both_sets<
         S: GenericBaseSessionHandles<TwoSetsRole>,
@@ -296,7 +296,8 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
         const EXTENSION_DEGREE: usize,
     >(
-        sessions: &mut (S, Sess),
+        two_sets_session: &mut S,
+        set_2_session: &mut Sess,
         preproc128: &mut P128,
         preproc64: &mut P64,
         input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
@@ -306,13 +307,10 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
-        let span = tracing::Span::current();
-        span.record("sid", format!("{:?}", &sessions.0.session_id()));
-        span.record("my_role", format!("{:?}", &sessions.0.my_role()));
         reshare_sk::<SecureTwoSetsReshareAsBothSets<S, Sess>, _, _, _>(
             Expected(preproc128),
             Expected(preproc64),
-            sessions,
+            &mut (two_sets_session, set_2_session),
             Expected(input_share),
             parameters,
         )
