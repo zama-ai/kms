@@ -258,14 +258,11 @@ jobs:
         run: cargo build --package kms --bin kms-custodian
 
       # Test execution
+      # Integration tests use pre-generated test material and native KMS servers (no Docker)
       - name: Run Tests
         id: tests
         if: ${{ ! inputs.test-coverage || !contains(github.event.pull_request.labels.*.name, 'coverage') }}
         env:
-          # some integration tests run docker compose
-          # which builds images which need git access
-          # building images in every integration test run is bad
-          #
           # If we want to enable the coverage again we can use the snippets below:
           # COVERAGE
           # if [[ "${EVENT_NAME}" == 'schedule' ]]; then
