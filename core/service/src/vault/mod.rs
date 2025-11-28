@@ -16,7 +16,7 @@ pub mod storage;
 pub enum VaultDataType {
     CustodianBackupData(RequestId, PrivDataType), // Backup of a piece of private data under a given backup id (RequestId) for custodian-based backup
     EncryptedPrivData(PrivDataType), // Backup a piece of private data for the import/export based backup
-    UnencryptedData(String),         // Unencrypted data. Maybe be either private or public data.
+    UnencryptedData(String),         // Unencrypted data. May be either private or public data.
 }
 impl fmt::Display for VaultDataType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
