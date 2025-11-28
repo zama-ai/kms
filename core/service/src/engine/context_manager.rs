@@ -9,7 +9,9 @@ use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
-use crate::engine::validation::{parse_proto_context_id, RequestIdParsingErr};
+use crate::engine::validation::{
+    parse_optional_proto_request_id, parse_proto_context_id, RequestIdParsingErr,
+};
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::{
@@ -133,12 +135,10 @@ where
         &self,
         request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
-        let context_id = request
-            .into_inner()
-            .context_id
-            .ok_or_else(|| Status::invalid_argument("context_id is required"))?
-            .try_into()
-            .map_err(|e| Status::invalid_argument(format!("Invalid request ID: {e}")))?;
+        let context_id = parse_optional_proto_request_id(
+            &request.into_inner().context_id,
+            RequestIdParsingErr::CustodianContextDestruction,
+        )?;
 
         // Note that care must be taken in the order of getting locks here
         // Use meta store as sync point
