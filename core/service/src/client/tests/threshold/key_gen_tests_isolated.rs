@@ -120,20 +120,64 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
 /// (larger keys, production-size) across 4 parties. Verifies key generation
 /// succeeded on all parties.
 ///
-/// **Note:** Default parameters generate significantly larger keys than Test parameters.
+/// **IMPORTANT:** Uses MaterialType::Default (production-like key sizes).
+/// **Requires:**
+/// - `insecure` feature flag
+/// - Pre-generated default material: `make generate-test-material-all`
 ///
-/// **Requires:** `insecure` feature flag
 /// **Run with:** `cargo test --lib --features insecure,testing default_insecure_dkg_isolated`
 #[tokio::test]
 #[cfg(feature = "insecure")]
 async fn default_insecure_dkg_isolated() -> Result<()> {
     let party_count = 4;
-    let (_material_dir, servers, clients) =
-        setup_isolated_threshold_keygen_test("default_insecure_dkg", party_count).await?;
+
+    // Use Default material spec (NOT Testing!)
+    let spec = TestMaterialSpec::threshold_default(party_count);
+
+    let source_path = std::env::current_dir()?
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("test-material");
+    let manager = TestMaterialManager::new(Some(source_path));
+    let material_dir = manager
+        .setup_test_material(&spec, "default_insecure_dkg")
+        .await?;
+
+    // Setup threshold servers with Default material
+    let mut pub_storages = Vec::new();
+    let mut priv_storages = Vec::new();
+    for i in 1..=party_count {
+        let role = Role::indexed_from_one(i);
+        pub_storages.push(FileStorage::new(
+            Some(material_dir.path()),
+            StorageType::PUB,
+            Some(role),
+        )?);
+        priv_storages.push(FileStorage::new(
+            Some(material_dir.path()),
+            StorageType::PRIV,
+            Some(role),
+        )?);
+    }
+
+    let threshold = ((party_count - 1) / 3).max(1);
+    let (servers, clients) = setup_threshold_isolated(
+        threshold as u8,
+        pub_storages,
+        priv_storages,
+        (0..party_count).map(|_| None).collect(),
+        ThresholdTestConfig {
+            test_material_path: Some(material_dir.path()),
+            ..Default::default()
+        },
+    )
+    .await;
 
     let key_id = derive_request_id("default_insecure_dkg_isolated")?;
 
-    // Generate key using Default parameter (larger keys)
+    // Now FheParameter::Default matches MaterialType::Default
     threshold_key_gen_isolated(&clients, &key_id, FheParameter::Default).await?;
 
     // Verify key was generated

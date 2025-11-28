@@ -10,7 +10,6 @@ use crate::util::key_setup::test_material_manager::TestMaterialManager;
 use crate::util::key_setup::test_material_spec::{MaterialType, TestMaterialSpec};
 use crate::vault::storage::{file::FileStorage, StorageType};
 use anyhow::Result;
-use tempfile::TempDir;
 
 /// Test using isolated centralized setup
 /// NOTE: This test is skipped in CI (--skip isolated_test_example) as it's primarily
@@ -167,28 +166,34 @@ async fn test_different_material_types() -> Result<()> {
     Ok(())
 }
 
-/// Test validating test material existance
+/// Test validating test material existence
+///
+/// Material validation is now handled automatically by TestMaterialManager::verify_material_exists
+/// which is called during setup_test_material. This test demonstrates that setup fails gracefully
+/// when material is missing.
 #[tokio::test]
 async fn test_material_validation() -> Result<()> {
-    use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists_check_only;
+    use std::path::PathBuf;
 
-    // Setup test material
-    let manager = TestMaterialManager::new(None);
+    // Test that setup fails when material doesn't exist
+    let nonexistent_path = PathBuf::from("/nonexistent/test-material");
+    let manager = TestMaterialManager::new(Some(nonexistent_path));
     let spec = TestMaterialSpec::centralized_basic();
-    let material_dir = manager
-        .setup_test_material(&spec, "validation_test")
-        .await?;
 
-    // Validate that material exists
-    let material_exists =
-        ensure_testing_material_exists_check_only(Some(material_dir.path())).await;
-    assert!(material_exists, "Test material should exist after setup");
+    let result = manager.setup_test_material(&spec, "validation_test").await;
+    assert!(
+        result.is_err(),
+        "Setup should fail when material doesn't exist"
+    );
 
-    // Test with non-existent path
-    let temp_dir = TempDir::new()?;
-    let empty_path = temp_dir.path().join("nonexistent");
-    let no_material = ensure_testing_material_exists_check_only(Some(&empty_path)).await;
-    assert!(!no_material, "Material should not exist in empty directory");
+    if let Err(e) = result {
+        let error_msg = e.to_string();
+        assert!(
+            error_msg.contains("Material not found"),
+            "Error should mention missing material, got: {}",
+            error_msg
+        );
+    }
 
     tracing::info!("✅ Material validation test completed successfully");
     Ok(())

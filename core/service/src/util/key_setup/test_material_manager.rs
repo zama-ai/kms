@@ -13,7 +13,7 @@ use crate::consts::{
     TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
 };
 use crate::vault::storage::StorageType;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use std::path::{Path, PathBuf};
 #[cfg(any(test, feature = "testing"))]
@@ -65,6 +65,9 @@ impl TestMaterialManager {
         spec: &TestMaterialSpec,
         test_name: &str,
     ) -> Result<TempDir> {
+        // Verify source material exists for the requested material type
+        self.verify_material_exists(spec)?;
+
         let temp_dir = tempfile::tempdir().with_context(|| {
             format!(
                 "Failed to create temporary directory for test: {}",
@@ -79,12 +82,57 @@ impl TestMaterialManager {
         self.copy_material(&temp_dir, spec).await?;
 
         tracing::debug!(
-            "Setup test material for '{}' in: {}",
+            "Setup test material for '{}' (type: {:?}) in: {}",
             test_name,
+            spec.material_type,
             temp_dir.path().display()
         );
 
         Ok(temp_dir)
+    }
+
+    /// Verify that source material exists for the requested material type
+    #[cfg(any(test, feature = "testing"))]
+    fn verify_material_exists(&self, spec: &TestMaterialSpec) -> Result<()> {
+        use crate::util::key_setup::test_material_spec::MaterialType;
+
+        let source_path = match &self.source_path {
+            Some(path) => path.clone(),
+            None => {
+                return Err(anyhow!(
+                    "No source path configured. Set source_path in TestMaterialManager."
+                ));
+            }
+        };
+
+        // Determine subdirectory based on material type
+        let material_subdir = match spec.material_type {
+            MaterialType::Testing => "testing",
+            MaterialType::Default => "default",
+        };
+
+        let material_path = source_path.join(material_subdir);
+
+        if !material_path.exists() {
+            return Err(anyhow!(
+                "Material not found for {:?} at: {}\n\
+                 Run: make generate-test-material-{}",
+                spec.material_type,
+                material_path.display(),
+                match spec.material_type {
+                    MaterialType::Testing => "testing",
+                    MaterialType::Default => "all",
+                }
+            ));
+        }
+
+        tracing::debug!(
+            "Verified material exists for {:?} at: {}",
+            spec.material_type,
+            material_path.display()
+        );
+
+        Ok(())
     }
 
     /// Create the required directory structure
@@ -133,34 +181,43 @@ impl TestMaterialManager {
     /// Copy required material to the temporary directory
     #[cfg(any(test, feature = "testing"))]
     async fn copy_material(&self, temp_dir: &TempDir, spec: &TestMaterialSpec) -> Result<()> {
-        let source_base = self.source_path.as_deref();
+        // Determine source subdirectory based on material type
+        let material_subdir = match spec.material_type {
+            MaterialType::Testing => "testing",
+            MaterialType::Default => "default",
+        };
+
+        let source_base = self.source_path.as_ref().map(|p| p.join(material_subdir));
+        let source_base_ref = source_base.as_deref();
         let dest_base = temp_dir.path();
 
         // Copy client keys if required
         if spec.requires_key_type(KeyType::ClientKeys) {
-            self.copy_client_keys(source_base, dest_base).await?;
+            self.copy_client_keys(source_base_ref, dest_base).await?;
         }
 
         // Copy signing keys if required (client or server signing keys)
         if spec.requires_key_type(KeyType::SigningKeys)
             || spec.requires_key_type(KeyType::ServerSigningKeys)
         {
-            self.copy_signing_keys(source_base, dest_base, spec).await?;
+            self.copy_signing_keys(source_base_ref, dest_base, spec)
+                .await?;
         }
 
         // Copy FHE keys if required
         if spec.requires_key_type(KeyType::FheKeys) {
-            self.copy_fhe_keys(source_base, dest_base, spec).await?;
+            self.copy_fhe_keys(source_base_ref, dest_base, spec).await?;
         }
 
         // Copy CRS keys if required
         if spec.requires_key_type(KeyType::CrsKeys) && spec.include_slow_material {
-            self.copy_crs_keys(source_base, dest_base, spec).await?;
+            self.copy_crs_keys(source_base_ref, dest_base, spec).await?;
         }
 
         // Copy PRSS setup for threshold tests
         if spec.requires_key_type(KeyType::PrssSetup) && spec.is_threshold() {
-            self.copy_prss_setup(source_base, dest_base, spec).await?;
+            self.copy_prss_setup(source_base_ref, dest_base, spec)
+                .await?;
         }
 
         Ok(())
