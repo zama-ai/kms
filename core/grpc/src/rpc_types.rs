@@ -249,6 +249,14 @@ impl fmt::Display for PubDataType {
     }
 }
 
+/// The default type is not important, but we need to have one for `EnumIter` derive.
+#[allow(clippy::derivable_impls)]
+impl Default for PubDataType {
+    fn default() -> Self {
+        PubDataType::PublicKey // Default is public FHE encryption key.
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum PrivDataTypeVersioned {
     V0(PrivDataTypeV0),
@@ -288,7 +296,7 @@ pub enum PrivDataTypeV0 {
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,
-    ContextInfo,
+    ContextInfo, // MPC context information
 }
 
 impl Upgrade<PrivDataType> for PrivDataTypeV0 {
@@ -339,18 +347,6 @@ impl TryFrom<&str> for PrivDataType {
             }
         }
         Err(anyhow::anyhow!("Unknown PrivDataType: {}", value))
-    }
-}
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
-pub enum BackupDataType {
-    PrivData(PrivDataType), // Backup of a piece of private data
-}
-impl fmt::Display for BackupDataType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            BackupDataType::PrivData(data_type) => write!(f, "PrivData({data_type})"),
-        }
     }
 }
 

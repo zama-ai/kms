@@ -44,6 +44,8 @@ impl Named for AppKeyBlob {
 #[allow(async_fn_in_trait)]
 #[enum_dispatch]
 pub trait Keychain {
+    /// Encrypt some data. The `data_type` is used to identify the type of data being encrypted must be of the `PrivDataType` type.
+    /// I.e. _Not_ the full `BackupDataType`.
     async fn encrypt<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,

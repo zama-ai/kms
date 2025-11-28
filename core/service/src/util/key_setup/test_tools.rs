@@ -1,15 +1,16 @@
 use crate::backup::BackupCiphertext;
-use crate::conf::FileStorage as FileStorageConf;
-use crate::conf::Storage as StorageConf;
+use crate::conf::{self, Keychain};
 use crate::util::file_handling::safe_read_element_versioned;
 use crate::util::key_setup::FhePublicKey;
+use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
     delete_all_at_request_id, make_storage, read_versioned_at_request_id, StorageReader,
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
+use crate::vault::{Vault, VaultDataType};
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
-use kms_grpc::rpc_types::{BackupDataType, PubDataType, WrappedPublicKeyOwned};
+use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
 use kms_grpc::RequestId;
 use serde::de::DeserializeOwned;
 use std::path::Path;
@@ -24,7 +25,6 @@ use tfhe::{
     Unversionize, Versionize,
 };
 use threshold_fhe::execution::{runtime::party::Role, tfhe_internals::utils::expanded_encrypt};
-use tokio::fs::read_dir;
 
 fn enc_and_serialize_ctxt<M, T>(
     msg: M,
@@ -358,54 +358,24 @@ pub async fn compute_cipher_from_stored_key(
     recv.await.unwrap()
 }
 
-/// Purge any kind of data, regardless of type, for a specific request ID.
+/// Purge any kind of public or private data, regardless of type, for a specific request ID.
 ///
 /// This function should be used for testing only and it can panic.
 pub async fn purge(
     pub_path: Option<&Path>,
     priv_path: Option<&Path>,
-    backup_path: Option<&Path>,
     id: &RequestId,
     amount_parties: usize,
 ) {
-    let vault_storage_option = backup_path.map(|path| {
-        StorageConf::File(FileStorageConf {
-            path: path.to_path_buf(),
-        })
-    });
     if amount_parties == 1 {
         let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-        delete_all_at_request_id(&mut pub_storage, id).await;
+        delete_all_at_request_id(&mut pub_storage, id)
+            .await
+            .unwrap();
         let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
-        delete_all_at_request_id(&mut priv_storage, id).await;
-        // Delete custodian based backups which are stored in folders with each custodian context id
-        if let Some(inner_backup_path) = backup_path {
-            let mut backup_dirs = read_dir(inner_backup_path).await.unwrap();
-            while let Some(cur_dir) = backup_dirs.next_entry().await.unwrap() {
-                let inner_vault_storage_option = StorageConf::File(FileStorageConf {
-                    path: cur_dir.path(),
-                });
-                let mut cus_backup_storage = make_storage(
-                    Some(inner_vault_storage_option),
-                    StorageType::BACKUP,
-                    None,
-                    None,
-                    None,
-                )
-                .unwrap();
-                delete_all_at_request_id(&mut cus_backup_storage, id).await;
-            }
-        }
-        // Delete import/export based backups
-        let mut backup_storage = make_storage(
-            vault_storage_option.clone(),
-            StorageType::BACKUP,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-        delete_all_at_request_id(&mut backup_storage, id).await;
+        delete_all_at_request_id(&mut priv_storage, id)
+            .await
+            .unwrap();
     } else {
         for i in 1..=amount_parties {
             let mut threshold_pub =
@@ -417,36 +387,12 @@ pub async fn purge(
                 Some(Role::indexed_from_one(i)),
             )
             .unwrap();
-            delete_all_at_request_id(&mut threshold_pub, id).await;
-            delete_all_at_request_id(&mut threshold_priv, id).await;
-            // Delete custodian based backups which are stored in folders with each custodian context id
-            if let Some(inner_backup_path) = backup_path {
-                let mut backup_dirs = read_dir(inner_backup_path).await.unwrap();
-                while let Some(cur_dir) = backup_dirs.next_entry().await.unwrap() {
-                    let inner_vault_storage_option = StorageConf::File(FileStorageConf {
-                        path: cur_dir.path(),
-                    });
-                    let mut cus_backup_storage = make_storage(
-                        Some(inner_vault_storage_option),
-                        StorageType::BACKUP,
-                        Some(Role::indexed_from_one(i)),
-                        None,
-                        None,
-                    )
-                    .unwrap();
-                    delete_all_at_request_id(&mut cus_backup_storage, id).await;
-                }
-            }
-            // Delete import/export based backups
-            let mut backup_storage = make_storage(
-                vault_storage_option.clone(),
-                StorageType::BACKUP,
-                Some(Role::indexed_from_one(i)),
-                None,
-                None,
-            )
-            .unwrap();
-            delete_all_at_request_id(&mut backup_storage, id).await;
+            delete_all_at_request_id(&mut threshold_pub, id)
+                .await
+                .unwrap();
+            delete_all_at_request_id(&mut threshold_priv, id)
+                .await
+                .unwrap();
         }
     }
 }
@@ -512,14 +458,15 @@ pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
     }
 }
 
+/// Validate that a backup exists
 pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) -> bool {
-    let mut backup_exists = false;
+    let mut backup_exists = true;
     if amount_parties == 1 {
         let storage = FileStorage::new(backup_path, StorageType::BACKUP, None).unwrap();
         let base_path = storage.root_dir();
         let mut files = tokio::fs::read_dir(base_path).await.unwrap();
-        if files.next_entry().await.unwrap().is_some() {
-            backup_exists = true;
+        if files.next_entry().await.unwrap().is_none() {
+            backup_exists = false;
         }
     } else {
         for cur_party in 1..=amount_parties {
@@ -531,15 +478,51 @@ pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) ->
             .unwrap();
             let base_path = storage.root_dir();
             let mut files = tokio::fs::read_dir(base_path).await.unwrap();
-            if files.next_entry().await.unwrap().is_some() {
-                backup_exists = true;
+            if files.next_entry().await.unwrap().is_none() {
+                backup_exists = false;
             }
         }
     }
     backup_exists
 }
 
-pub async fn read_backup_files(
+/// Helper method to construct a backup vault for testing. That is either without encryption (no `Keychain`) or using custodians.
+pub async fn file_backup_vault(
+    role: Option<Role>,
+    keychain_conf: Option<&Keychain>,
+    pub_path: Option<&Path>,
+    backup_path: Option<&Path>,
+) -> Vault {
+    let backup_store_path = backup_path.map(|p| {
+        conf::Storage::File(conf::FileStorage {
+            path: p.to_path_buf(),
+        })
+    });
+    let pub_store_path = pub_path.map(|p| {
+        conf::Storage::File(conf::FileStorage {
+            path: p.to_path_buf(),
+        })
+    });
+    let pub_proxy_storage =
+        make_storage(pub_store_path.clone(), StorageType::PUB, role, None, None).unwrap();
+    let backup_proxy_storage =
+        make_storage(backup_store_path, StorageType::BACKUP, role, None, None).unwrap();
+    let keychain = match keychain_conf {
+        Some(conf) => Some(
+            make_keychain_proxy(conf, None, None, Some(&pub_proxy_storage))
+                .await
+                .unwrap(),
+        ),
+        None => None,
+    };
+    Vault {
+        storage: backup_proxy_storage,
+        keychain,
+    }
+}
+
+/// Helper method for tests to read the plain custodian backup files without going through the Vault API, and hence decryption.
+pub async fn read_custodian_backup_files(
     amount_parties: usize,
     test_path: Option<&Path>,
     backup_id: &RequestId,
@@ -551,8 +534,10 @@ pub async fn read_backup_files(
         let storage = FileStorage::new(test_path, StorageType::BACKUP, None).unwrap();
         let coerced_path = storage
             .root_dir()
-            .join(backup_id.to_string())
-            .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
+            .join(
+                VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
+                    .to_string(),
+            )
             .join(file_req.to_string());
         // Attempt to read the file
         if let Ok(file) = safe_read_element_versioned(coerced_path).await {
@@ -568,8 +553,10 @@ pub async fn read_backup_files(
             .unwrap();
             let coerced_path = storage
                 .root_dir()
-                .join(backup_id.to_string())
-                .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
+                .join(
+                    VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
+                        .to_string(),
+                )
                 .join(file_req.to_string());
             // Attempt to read the file
             if let Ok(file) = safe_read_element_versioned(coerced_path).await {
@@ -878,7 +865,6 @@ async fn test_purge() {
         .unwrap();
     assert_eq!(priv_ids.len(), 1);
     purge(
-        test_prefix,
         test_prefix,
         test_prefix,
         &pub_ids.into_iter().next().unwrap(),

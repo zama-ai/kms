@@ -27,7 +27,7 @@ use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_te
 async fn test_key_gen_centralized() {
     let request_id = derive_request_id("test_key_gen_centralized").unwrap();
     // Delete potentially old data
-    purge(None, None, None, &request_id, 1).await;
+    purge(None, None, &request_id, 1).await;
     key_gen_centralized(&request_id, FheParameter::Test, None, None).await;
 }
 
@@ -38,9 +38,9 @@ async fn test_decompression_key_gen_centralized() {
     let request_id_2 = derive_request_id("test_key_gen_centralized-2").unwrap();
     let request_id_3 = derive_request_id("test_decompression_key_gen_centralized").unwrap();
     // Delete potentially old data
-    purge(None, None, None, &request_id_1, 1).await;
-    purge(None, None, None, &request_id_2, 1).await;
-    purge(None, None, None, &request_id_3, 1).await;
+    purge(None, None, &request_id_1, 1).await;
+    purge(None, None, &request_id_2, 1).await;
+    purge(None, None, &request_id_3, 1).await;
 
     key_gen_centralized(&request_id_1, FheParameter::Default, None, None).await;
     key_gen_centralized(&request_id_2, FheParameter::Default, None, None).await;
@@ -67,7 +67,7 @@ async fn test_decompression_key_gen_centralized() {
 async fn default_key_gen_centralized() {
     let request_id = derive_request_id("default_key_gen_centralized").unwrap();
     // Delete potentially old data
-    purge(None, None, None, &request_id, 1).await;
+    purge(None, None, &request_id, 1).await;
     key_gen_centralized(&request_id, FheParameter::Default, None, None).await;
 }
 
@@ -79,9 +79,9 @@ async fn default_decompression_key_gen_centralized() {
     let request_id_2 = derive_request_id("default_key_gen_centralized-2").unwrap();
     let request_id_3 = derive_request_id("default_decompression_key_gen_centralized").unwrap();
     // Delete potentially old data
-    purge(None, None, None, &request_id_1, 1).await;
-    purge(None, None, None, &request_id_2, 1).await;
-    purge(None, None, None, &request_id_3, 1).await;
+    purge(None, None, &request_id_1, 1).await;
+    purge(None, None, &request_id_2, 1).await;
+    purge(None, None, &request_id_3, 1).await;
 
     key_gen_centralized(&request_id_1, FheParameter::Default, None, None).await;
     key_gen_centralized(&request_id_2, FheParameter::Default, None, None).await;

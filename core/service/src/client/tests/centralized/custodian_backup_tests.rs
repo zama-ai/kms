@@ -8,7 +8,7 @@ use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized;
 use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
 use crate::cryptography::signatures::PrivateSigKey;
-use crate::util::key_setup::test_tools::{purge_backup, read_backup_files};
+use crate::util::key_setup::test_tools::{purge_backup, read_custodian_backup_files};
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
@@ -54,7 +54,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     )
     .await;
     // Check that signing key was backed up, since it will always be there
-    let _non_custodian_backup = read_backup_files(
+    let _non_custodian_backup = read_custodian_backup_files(
         1,
         test_path,
         &req_new_cus,
@@ -74,7 +74,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     // Check that the backup is still there
     let (_kms_server, _kms_client, _internal_client) =
         centralized_custodian_handles(&dkg_param, None, test_path).await;
-    let _reread_backup = read_backup_files(
+    let _reread_backup = read_custodian_backup_files(
         1,
         test_path,
         &req_new_cus,
@@ -127,7 +127,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     )
     .await;
     // Check that the new CRS was backed up
-    let crss = read_backup_files(
+    let crss = read_custodian_backup_files(
         1,
         test_path,
         &req_new_cus,
@@ -145,7 +145,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     // Check that the backup is still there and unmodified
     let (_kms_server, _kms_client, _internal_client) =
         centralized_custodian_handles(&dkg_param, None, test_path).await;
-    let reread_crss = read_backup_files(
+    let reread_crss = read_custodian_backup_files(
         1,
         test_path,
         &req_new_cus,

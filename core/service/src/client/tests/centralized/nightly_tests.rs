@@ -160,7 +160,7 @@ async fn default_user_decryption_centralized_precompute_sns(
 async fn default_insecure_crs_gen_centralized() {
     let crs_req_id = derive_request_id("default_insecure_crs_gen_centralized").unwrap();
     // Delete potentially old data
-    purge(None, None, None, &crs_req_id, 1).await;
+    purge(None, None, &crs_req_id, 1).await;
 
     crs_gen_centralized(&crs_req_id, FheParameter::Default, true, None).await;
 }
@@ -170,7 +170,7 @@ async fn default_insecure_crs_gen_centralized() {
 async fn default_crs_gen_centralized() {
     let crs_req_id = derive_request_id("default_crs_gen_centralized").unwrap();
     // Delete potentially old data
-    purge(None, None, None, &crs_req_id, 1).await;
+    purge(None, None, &crs_req_id, 1).await;
     // We test for both insecure and secure since these are distinct endpoints, although inner computation is the same
     crs_gen_centralized(&crs_req_id, FheParameter::Default, false, None).await;
 }

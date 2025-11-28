@@ -277,66 +277,72 @@ service CoreServiceEndpoint {
   // * The `request_id` in `request` can be used to retrieve the result of the CRS generation again in the future. However there is no guarantee on how long the result will be stored.
   rpc GetCrsGenResult(kms.v1.RequestId) returns (kms.v1.CrsGenResult);
 
-  // Contructs a new KMS context.
+  // Constructs a new MPC context.
   //
-  // That is, updates the internal state and configuration files to support a new KMS context.
-  //
-  // WARNING: currently this method _always_ returns an error (`Unimplemented`), as the feature is not yet implemented.
+  // That is, updates the internal state and configuration files to support a new MPC context.
   //
   // # Parameters
-  // * `_request` - Struct containing all the data of the request.
+  // * `new_context` - Struct containing all the data of the request.
   //
   // # Conditions
-  // ## Pre-condition:  -
-  // ## Post-condition: -
+  // ## Pre-condition:  
+  // * `context_id` in `new_context` must be present, valid, fresh and unique [`RequestId`].
+  // ## Post-condition: 
+  // * The `context_id` in `request` now represents a new MPC context.
   rpc NewMpcContext(kms.v1.NewMpcContextRequest) returns (kms.v1.Empty);
 
-  // Destroyes a new KMS context.
-  //
-  // That is, switches from one context to another, or removes the old one.
-  //
-  // WARNING: currently this method _always_ returns an error (`Unimplemented`), as the feature is not yet implemented.
+  // Destroys an MPC context by removing it from memory and storage.
+  // Care must be taken to ensure that the currently active MPC context is not destroyed as the KMS is agnostic to which context is active and which is not.
   //
   // # Parameters
-  // * `_request` - Struct containing all the data of the request.
+  // * `context_id` - Context ID of the MPC context to destroy.
   //
   // # Conditions
-  // ## Pre-condition:  -
-  // ## Post-condition: -
+  // ## Pre-condition:  
+  // * `context_id` in `request` must be present, valid, and unique [`RequestId`] of an MPC context that has been constructed with `NewMpcContext`.
+  // ## Post-condition: 
+  // * The `context_id` in `request` can no longer be used. Any MPC context data associated with it, that may have existed, has been purged from both memory and disc.
   rpc DestroyMpcContext(kms.v1.DestroyMpcContextRequest) returns (kms.v1.Empty);
-
 
   rpc InitiateResharing(kms.v1.InitiateResharingRequest) returns (kms.v1.InitiateResharingResponse);
 
   rpc GetResharingResult(kms.v1.RequestId) returns (kms.v1.ResharingResultResponse);
 
-  // Contructs a new custodian context.
+  // Constructs a new custodian context.
+  //
+  // That is, updates the internal state and configuration files to start using a new custodian context.
+  // Internally the KMS will sample a backup key pair and immediately construct a backup based on this.
+  // A new context will automatically be set as the active one. The backups of the old one will not be removed 
+  // until explicitly requested through a call to `DestroyCustodianContext`. 
+  // Still, recovery is currently only possible using the current context. 
   //
   // # Parameters
-  // That is, updates the internal state of custodians used for backup.
-  //
-  // WARNING: currently this method _always_ returns an error (`Unimplemented`), as the feature is not yet implemented.
-  //
-  // # Parameters
-  // * `_request` - Struct containing all the data of the request.
+  // * `new_context` - Struct containing all the data of the request.
   //
   // # Conditions
-  // ## Pre-condition:  -
-  // ## Post-condition: -
+  // ## Pre-condition:  
+  // * The KMS _must_ be setup to use the custodian-based backup mechanism.
+  // * `context_id` in `new_context` must be present, valid, fresh and unique [`RequestId`].
+  // * `custodian_nodes` in `new_context` must be present and contain at least 2*`threshold` valid `CustodianSetupMessage`s.
+  // * `threshold` in `new_context` must be a positive integer less than the amount of entries in `custodian_nodes`
+  // ## Post-condition: 
+  // * The `context_id` in `request` now represents a new custodian context.
+  // * A backup of all private data has been constructed, and secret shared recovery information is persisted in the public storage. 
+  // * The previous backup is still present but cannot be used directly.
   rpc NewCustodianContext(kms.v1.NewCustodianContextRequest) returns (kms.v1.Empty);
 
-  // Destroyes a custodian context.
-  //
-  // That is, updates the internal state and configuration files to start used a new custodian context and removes the old one.
-  //
-  // WARNING: currently this method _always_ returns an error (`Unimplemented`), as the feature is not yet implemented.
+  // Destroys a custodian context (and its associated backup) by removing it from memory and storage.
+  // This is only possible for a context which is not the currently active one. 
   //
   // # Parameters
-  // * `_request` - Struct containing all the data of the request.
+  // * `context_id` - Context ID of the MPC context to destroy.
   //
   // # Conditions
-  // ## Pre-condition:  -
-  // ## Post-condition: -
+  // ## Pre-condition:  
+  // * `context_id` in `request` must be present, valid, and unique [`RequestId`] of a custodian context that has been constructed with `NewCustodianContext`.
+  // * `context_id` in `request` must not represent the currently active custodian context. 
+  // ## Post-condition: 
+  // * The `context_id` in `request` can no longer be used. Any context data associated with it, that may have existed, including _all backups_ has been purged from both memory and disc.
   rpc DestroyCustodianContext(kms.v1.DestroyCustodianContextRequest) returns (kms.v1.Empty);
 
   // Retrieves the encryption public key of this KMS.

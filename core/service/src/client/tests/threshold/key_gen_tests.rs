@@ -82,7 +82,7 @@ async fn test_insecure_dkg(#[case] amount_parties: usize) {
         "test_insecure_dkg_key_{amount_parties}_{TEST_PARAM:?}"
     ))
     .unwrap();
-    purge(None, None, None, &key_id, amount_parties).await;
+    purge(None, None, &key_id, amount_parties).await;
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
     let keys = run_threshold_keygen(
@@ -121,7 +121,7 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
         "default_insecure_dkg_key_{amount_parties}_{param:?}",
     ))
     .unwrap();
-    purge(None, None, None, &key_id, amount_parties).await;
+    purge(None, None, &key_id, amount_parties).await;
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
     let keys = run_threshold_keygen(
@@ -447,7 +447,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
     };
     let key_id_1: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_1")).unwrap();
-    purge(None, None, None, &key_id_1, amount_parties).await;
+    purge(None, None, &key_id_1, amount_parties).await;
 
     let preproc_id_2 = if insecure {
         *INSECURE_PREPROCESSING_ID
@@ -459,7 +459,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
     };
     let key_id_2: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_2")).unwrap();
-    purge(None, None, None, &key_id_2, amount_parties).await;
+    purge(None, None, &key_id_2, amount_parties).await;
 
     let preproc_id_3 = derive_request_id(&format!(
         "decom_dkg_preproc_{amount_parties}_{parameter:?}_3"
@@ -467,7 +467,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
     .unwrap();
     let key_id_3: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_3")).unwrap();
-    purge(None, None, None, &key_id_3, amount_parties).await;
+    purge(None, None, &key_id_3, amount_parties).await;
 
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let dkg_param: WrappedDKGParams = parameter.into();
@@ -591,10 +591,10 @@ pub(crate) async fn preproc_and_keygen(
             "full_dkg_preproc_{amount_parties}_{parameter:?}_{i}"
         ))
         .unwrap();
-        purge(None, None, None, &req_preproc, amount_parties).await;
+        purge(None, None, &req_preproc, amount_parties).await;
         let req_key: RequestId =
             derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameter:?}_{i}")).unwrap();
-        purge(None, None, None, &req_key, amount_parties).await;
+        purge(None, None, &req_key, amount_parties).await;
     }
 
     let dkg_param: WrappedDKGParams = parameter.into();
