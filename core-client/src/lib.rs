@@ -2,45 +2,46 @@
 ///
 /// This library implements most functionalities to interact with deployed KMS cores.
 /// This library also includes an associated CLI.
-pub mod crsgen;
-pub mod decrypt;
-pub mod keygen;
+mod backup;
+mod crsgen;
+mod decrypt;
+mod keygen;
 pub mod mpc_context;
-pub mod prss_init;
+mod prss_init;
+mod reshare;
 mod s3_operations;
 
+use crate::backup::{
+    do_custodian_backup_recovery, do_custodian_recovery_init, do_get_operator_pub_keys,
+    do_new_custodian_context, do_restore_from_backup,
+};
 use crate::crsgen::{do_crsgen, fetch_and_check_crsgen, get_crsgen_responses};
 use crate::decrypt::{do_public_decrypt, do_user_decrypt, get_public_decrypt_responses};
 use crate::keygen::{
-    check_standard_keyset_ext_signature, do_keygen, do_partial_preproc, do_preproc,
-    fetch_and_check_keygen, get_keygen_responses, get_preproc_keygen_responses,
+    do_keygen, do_partial_preproc, do_preproc, fetch_and_check_keygen, get_keygen_responses,
+    get_preproc_keygen_responses,
 };
 use crate::mpc_context::do_new_mpc_context;
 use crate::prss_init::do_prss_init;
+use crate::reshare::do_reshare;
 use crate::s3_operations::fetch_elements;
 use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
 use kms_grpc::identifiers::EpochId;
-use kms_grpc::kms::v1::{
-    CiphertextFormat, CustodianContext, CustodianRecoveryInitRequest, CustodianRecoveryOutput,
-    CustodianRecoveryRequest, Empty, FheParameter, NewCustodianContextRequest,
-    OperatorBackupOutput, TypedCiphertext, TypedPlaintext,
-};
+use kms_grpc::kms::v1::{CiphertextFormat, FheParameter, TypedCiphertext, TypedPlaintext};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{ContextId, KeyId, RequestId};
 use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage};
-use kms_lib::backup::operator::InternalRecoveryRequest;
 use kms_lib::client::client_wasm::Client;
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
 use kms_lib::util::file_handling::{
     read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
 };
-use kms_lib::util::key_setup::ensure_client_keys_exist;
-use kms_lib::util::key_setup::test_tools::{
-    compute_cipher_from_stored_key, load_material_from_storage, load_pk_from_storage,
-    EncryptionConfig, TestingPlaintext,
+use kms_lib::util::key_setup::{
+    ensure_client_keys_exist,
+    test_tools::{compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext},
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use kms_lib::vault::storage::{make_storage, read_text_at_request_id};
@@ -55,12 +56,8 @@ use std::str::FromStr;
 use std::sync::{Arc, Once};
 use strum_macros::{Display, EnumString};
 use tfhe::FheTypes as TfheFheType;
-use tfhe::ServerKey;
 use threshold_fhe::execution::runtime::party::Role;
-use threshold_fhe::hashing::{hash_element, DomainSep};
 use tokio::sync::RwLock;
-use tokio::task::JoinSet;
-use tonic::transport::Channel;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use validator::{Validate, ValidationError};
@@ -954,317 +951,6 @@ async fn read_kms_addresses_local(
         .collect();
 
     Ok(kms_addrs)
-}
-
-async fn do_get_operator_pub_keys(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-) -> anyhow::Result<Vec<String>> {
-    let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
-        req_tasks.spawn(async move {
-            cur_client
-                .get_operator_public_key(tonic::Request::new(kms_grpc::kms::v1::Empty {}))
-                .await
-        });
-    }
-
-    let mut backup_pks = Vec::with_capacity(core_endpoints.len());
-
-    while let Some(inner) = req_tasks.join_next().await {
-        let pk = inner??.into_inner();
-        let attestation_doc = attestation_doc_validation::validate_and_parse_attestation_doc(
-            &pk.attestation_document,
-        )?;
-        let Some(attested_pk) = attestation_doc.public_key else {
-            anyhow::bail!("Bad response: public key not present in attestation document")
-        };
-
-        if pk.public_key.as_slice() != attested_pk.as_slice() {
-            let dsep: DomainSep = *b"EQUALITY";
-            let pk_hash = hex::encode(hash_element(&dsep, pk.public_key.as_slice()));
-            let att_pk_hash = hex::encode(hash_element(&dsep, attested_pk.as_slice()));
-            anyhow::bail!("Bad response: public key with hash {} does not match attestation document public key with hash {}", pk_hash, att_pk_hash)
-        };
-
-        backup_pks.push(hex::encode(pk.public_key.as_slice()));
-    }
-
-    Ok(backup_pks)
-}
-
-async fn do_new_custodian_context(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    rng: &mut AesRng,
-    threshold: u32,
-    custodian_setup_msg: Vec<InternalCustodianSetupMessage>,
-) -> anyhow::Result<RequestId> {
-    let context_id = RequestId::new_random(rng);
-    let mut req_tasks = JoinSet::new();
-    let mut custodian_nodes = Vec::new();
-    for cur_setup in custodian_setup_msg {
-        custodian_nodes.push(cur_setup.try_into()?);
-    }
-    let new_context = CustodianContext {
-        custodian_nodes,
-        context_id: Some(context_id.into()),
-        threshold,
-    };
-    for (_party_id, ce) in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
-        let new_context_cloned = new_context.clone();
-        req_tasks.spawn(async move {
-            cur_client
-                .new_custodian_context(tonic::Request::new(NewCustodianContextRequest {
-                    new_context: Some(new_context_cloned),
-                }))
-                .await
-        });
-    }
-    while let Some(inner) = req_tasks.join_next().await {
-        let _ = inner??;
-    }
-
-    Ok(context_id)
-}
-
-async fn do_custodian_recovery_init(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    overwrite_ephemeral_key: bool,
-) -> anyhow::Result<Vec<InternalRecoveryRequest>> {
-    let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
-        req_tasks.spawn(async move {
-            cur_client
-                .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
-                    overwrite_ephemeral_key,
-                }))
-                .await
-        });
-    }
-
-    let mut res = Vec::new();
-    while let Some(inner) = req_tasks.join_next().await {
-        let cur_rec_req = inner??;
-        let cur_inner_rec = cur_rec_req.into_inner();
-        res.push(cur_inner_rec.try_into()?);
-    }
-
-    Ok(res)
-}
-
-async fn do_custodian_backup_recovery(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    custodian_context_id: RequestId,
-    custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
-) -> anyhow::Result<()> {
-    let mut req_tasks = JoinSet::new();
-    for (core_idx, ce) in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
-        let core_idx = *core_idx as usize;
-        // We assume the core client endpoints are ordered by the server identity
-        let mut cur_recoveries = Vec::new();
-        for cur_recover in custodian_recovery_outputs.iter() {
-            // Find the recoveries designated for the correct server
-            if cur_recover.operator_role == Role::indexed_from_one(core_idx) {
-                cur_recoveries.push(CustodianRecoveryOutput {
-                    backup_output: Some(OperatorBackupOutput {
-                        signcryption: cur_recover.signcryption.payload.clone(),
-                        pke_type: cur_recover.signcryption.pke_type as i32,
-                        signing_type: cur_recover.signcryption.signing_type as i32,
-                    }),
-                    custodian_role: cur_recover.custodian_role.one_based() as u64,
-                    operator_role: cur_recover.operator_role.one_based() as u64,
-                });
-            }
-        }
-        req_tasks.spawn(async move {
-            cur_client
-                .custodian_backup_recovery(tonic::Request::new(CustodianRecoveryRequest {
-                    custodian_context_id: Some(custodian_context_id.into()),
-                    custodian_recovery_outputs: cur_recoveries,
-                }))
-                .await
-        });
-    }
-
-    while let Some(inner) = req_tasks.join_next().await {
-        let _ = inner??;
-    }
-
-    Ok(())
-}
-
-async fn do_restore_from_backup(
-    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
-) -> anyhow::Result<()> {
-    let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter_mut() {
-        let mut cur_client = ce.clone();
-        req_tasks.spawn(async move {
-            cur_client
-                .restore_from_backup(tonic::Request::new(Empty {}))
-                .await
-        });
-    }
-
-    while let Some(inner) = req_tasks.join_next().await {
-        let _ = inner??;
-    }
-
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn do_reshare(
-    internal_client: &mut Client,
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    rng: &mut AesRng,
-    cmd_conf: &CmdConfig,
-    cc_conf: &CoreClientConfig,
-    destination_prefix: &Path,
-    kms_addrs: &[alloy_primitives::Address],
-    num_parties: usize,
-    param: FheParameter,
-    key_id: RequestId,
-    preproc_id: RequestId,
-) -> anyhow::Result<RequestId> {
-    let max_iter = cmd_conf.max_iter;
-    let request_id = RequestId::new_random(rng);
-    // Create the request
-    let request = internal_client.reshare_request(
-        &request_id,
-        &key_id,
-        &preproc_id,
-        Some(param),
-        &dummy_domain(),
-    )?;
-
-    // Send the request
-    let mut req_tasks = JoinSet::new();
-    for (party_id, ce) in core_endpoints.iter() {
-        let req_cloned = request.clone();
-        let mut cur_client = ce.clone();
-        let party_id = *party_id;
-        req_tasks.spawn(async move {
-            (
-                party_id,
-                cur_client
-                    .initiate_resharing(tonic::Request::new(req_cloned))
-                    .await,
-            )
-        });
-    }
-
-    let mut results = Vec::new();
-    while let Some(inner) = req_tasks.join_next().await {
-        let (party_id, result) = inner?;
-        let result = result?.into_inner();
-        assert_eq!(result.request_id, Some(request_id.into()));
-        results.push((party_id, result));
-    }
-
-    // We need to wait for all responses since a resharing is only successful if _all_ parties respond.
-    assert_eq!(results.len(), num_parties);
-
-    // Poll the result endpoint
-
-    let mut response_tasks = JoinSet::new();
-    for (party_id, ce) in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
-
-        let party_id = *party_id;
-        response_tasks.spawn(async move {
-            let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
-                tonic::Request::new(request_id.into());
-            tokio::time::sleep(tokio::time::Duration::from_millis(
-                SLEEP_TIME_BETWEEN_REQUESTS_MS,
-            ))
-            .await;
-            let mut response = cur_client.get_resharing_result(response_request).await;
-
-            let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(
-                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                ))
-                .await;
-                let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
-                    tonic::Request::new(request_id.into());
-                response = cur_client.get_resharing_result(response_request).await;
-                ctr += 1;
-                if ctr >= max_iter {
-                    break;
-                }
-            }
-
-            (party_id, response)
-        });
-    }
-
-    let mut response_vec = Vec::new();
-    while let Some(response) = response_tasks.join_next().await {
-        let (party_id, resp) = response?;
-        let resp = resp?.into_inner();
-        assert_eq!(resp.request_id, Some(request_id.into()));
-        assert_eq!(resp.key_id, Some(key_id.into()));
-        assert_eq!(resp.preprocessing_id, Some(preproc_id.into()));
-        response_vec.push((party_id, resp));
-    }
-
-    // Process and verify the responses
-    assert_eq!(response_vec.len(), num_parties); // check that we have responses from all parties
-
-    let key_types = vec![
-        PubDataType::PublicKey,
-        PubDataType::PublicKeyMetadata,
-        PubDataType::ServerKey,
-    ];
-    // We try to download all because all parties needed to respond for a successful resharing
-    let party_ids = fetch_elements(
-        &key_id.to_string(),
-        &key_types,
-        cc_conf,
-        destination_prefix,
-        true,
-    )
-    .await?;
-
-    assert_eq!(
-        party_ids.len(),
-        num_parties,
-        "Did not fetch keys from all parties after resharing!"
-    );
-
-    let public_key = load_pk_from_storage(
-        Some(destination_prefix),
-        &key_id,
-        *party_ids.first().expect("no party IDs found"),
-    )
-    .await;
-    let server_key: ServerKey = load_material_from_storage(
-        Some(destination_prefix),
-        &key_id,
-        PubDataType::ServerKey,
-        *party_ids.first().expect("no party IDs found"),
-    )
-    .await;
-
-    for response in response_vec {
-        check_standard_keyset_ext_signature(
-            &public_key,
-            &server_key,
-            &preproc_id,
-            &key_id,
-            &response.1.external_signature,
-            &dummy_domain(),
-            kms_addrs,
-        )?;
-    }
-    Ok(request_id)
 }
 
 /// execute a command based on the provided configuration
