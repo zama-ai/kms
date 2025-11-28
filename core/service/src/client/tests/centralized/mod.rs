@@ -9,6 +9,4 @@ mod nightly_tests;
 mod public_decryption_tests;
 #[cfg(any(test, feature = "testing"))]
 mod restore_from_backup_tests_isolated;
-#[cfg(any(test, feature = "testing"))]
-mod test_material_debug;
 mod user_decryption_tests;
