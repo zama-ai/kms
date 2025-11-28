@@ -276,6 +276,29 @@ impl TestType for KeyGenMetadataTest {
 
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CrsGenMetadataTest {
+    pub test_filename: Cow<'static, str>,
+    pub legacy_filename: Cow<'static, str>,
+    pub state: u64,
+    pub max_num_bits: u32,
+}
+
+impl TestType for CrsGenMetadataTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "CrsGenMetadata".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppKeyBlobTest {
     pub test_filename: Cow<'static, str>,
     pub root_key_id: Cow<'static, str>,
@@ -654,6 +677,7 @@ pub enum TestMetadataKMS {
     KmsFheKeyHandles(KmsFheKeyHandlesTest),
     ThresholdFheKeys(ThresholdFheKeysTest),
     AppKeyBlob(AppKeyBlobTest),
+    CrsGenMetadata(CrsGenMetadataTest),
     KeyGenMetadata(KeyGenMetadataTest),
     SigncryptionPayload(SigncryptionPayloadTest),
     UnifiedSigncryptionKeyOwned(UnifiedSigncryptionKeyTest),

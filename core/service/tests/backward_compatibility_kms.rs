@@ -12,17 +12,18 @@ use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
-    AppKeyBlobTest, BackupCiphertextTest, HybridKemCtTest, InternalCustodianContextTest,
-    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest, KeyGenMetadataTest,
-    KmsFheKeyHandlesTest, OperatorBackupOutputTest, PrivateSigKeyTest, PublicSigKeyTest,
-    RecoveryValidationMaterialTest, SigncryptionPayloadTest, TestMetadataKMS, TestType, Testcase,
-    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
+    AppKeyBlobTest, BackupCiphertextTest, CrsGenMetadataTest, HybridKemCtTest,
+    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
+    InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest,
+    OperatorBackupOutputTest, PrivateSigKeyTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    SigncryptionPayloadTest, TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
+    TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
+    UnifiedUnsigncryptionKeyTest,
 };
 use kms_grpc::{
     kms::v1::TypedPlaintext,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
-    solidity_types::KeygenVerification,
+    solidity_types::{CrsgenVerification, KeygenVerification},
     RequestId,
 };
 use kms_lib::{
@@ -50,8 +51,8 @@ use kms_lib::{
     },
     engine::{
         base::{
-            safe_serialize_hash_element_versioned, KeyGenMetadata, KeyGenMetadataInner,
-            KmsFheKeyHandles,
+            safe_serialize_hash_element_versioned, CrsGenMetadata, CrsGenMetadataInner,
+            KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
         },
         threshold::service::ThresholdFheKeys,
     },
@@ -243,6 +244,70 @@ fn test_key_gen_metadata(
         Err(test.failure(
             format!(
                 "Invalid key gen metadata:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_crs_gen_metadata(
+    dir: &Path,
+    test: &CrsGenMetadataTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_current: CrsGenMetadataInner = load_and_unversionize(dir, test, format)?;
+
+    let original_legacy: SignedPubDataHandleInternal =
+        load_and_unversionize_auxiliary(dir, test, &test.legacy_filename, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+    let crs_id: RequestId = RequestId::new_random(&mut rng);
+    let digest = [12u8; 32].to_vec();
+    let max_num_bits = test.max_num_bits;
+    let sol_type = CrsgenVerification::new(&crs_id, max_num_bits as usize, digest.clone());
+    let external_signature = compute_eip712_signature(&sig_key, &sol_type, &dummy_domain())
+        .map_err(|e| {
+            test.failure(
+                format!("Failed to compute external signature: {}", e),
+                format,
+            )
+        })?;
+    let new_current =
+        match CrsGenMetadata::new(crs_id, digest, max_num_bits, external_signature.clone()) {
+            CrsGenMetadata::Current(crs_gen_metadata_inner) => crs_gen_metadata_inner,
+            CrsGenMetadata::LegacyV0(signed_pub_data_handle_internal) => {
+                return Err(test.failure(
+                    format!(
+                        "Expected current CrsGenMetadata, got legacy: {:?}",
+                        signed_pub_data_handle_internal
+                    ),
+                    format,
+                ))
+            }
+        };
+
+    let new_legacy = SignedPubDataHandleInternal::new(
+        crs_id.to_string(),
+        [3u8; 65].to_vec(),
+        external_signature.clone(),
+    );
+
+    if original_legacy != new_legacy {
+        return Err(test.failure(
+            format!(
+                "Invalid legacy key gen metadata:\n Expected :\n{original_legacy:?}\nGot:\n{new_legacy:?}"
+            ),
+            format,
+        ));
+    }
+
+    if original_current != new_current {
+        Err(test.failure(
+            format!(
+                "Invalid key gen metadata:\n Expected :\n{original_current:?}\nGot:\n{new_current:?}"
             ),
             format,
         ))
@@ -874,6 +939,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::KeyGenMetadata(test) => {
                 test_key_gen_metadata(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::CrsGenMetadata(test) => {
+                test_crs_gen_metadata(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::SigncryptionPayload(test) => {
                 test_signcryption_payload(test_dir.as_ref(), test, format).into()

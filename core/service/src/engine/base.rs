@@ -832,7 +832,7 @@ pub enum CrsGenMetadataInnerVersioned {
 }
 
 #[cfg(feature = "non-wasm")]
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(CrsGenMetadataInnerVersioned)]
 pub struct CrsGenMetadataInner {
     pub(crate) crs_id: RequestId,

@@ -526,6 +526,38 @@ impl KmsV0_13 {
         TestMetadataKMS::KeyGenMetadata(KEY_GEN_METADATA_TEST)
     }
 
+    fn gen_crs_metadata(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(CRS_GEN_METADATA_TEST.state);
+        let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let crs_id: RequestId = RequestId::new_random(&mut rng);
+        let digest = [12u8; 32].to_vec();
+        let max_num_bits = CRS_GEN_METADATA_TEST.max_num_bits;
+        let sol_type = CrsgenVerification::new(crs_id, max_num_bits, digest.clone());
+        let external_signature = compute_eip712_signature(&sig_key, &sol_type, &dummy_domain())?;
+        let current_crs_meta_data =
+            CrsGenMetadata::new(crs_id, digest, max_num_bits, external_signature.clone());
+
+        let legacy_crs_meta_data = SignedPubDataHandleInternal::new(
+            crs_id.to_string(),
+            [3u8; 65].to_vec(),
+            external_signature.clone(),
+        );
+
+        store_versioned_auxiliary!(
+            &legacy_crs_meta_data,
+            dir,
+            &CRS_GEN_METADATA_TEST.test_filename,
+            &CRS_GEN_METADATA_TEST.legacy_filename,
+        );
+        store_versioned_test!(
+            &current_crs_meta_data,
+            dir,
+            &CRS_GEN_METADATA_TEST.test_filename
+        );
+
+        TestMetadataKMS::CrsGenMetadata(CRS_GEN_METADATA_TEST)
+    }
+
     #[allow(clippy::ptr_arg)]
     fn gen_signcryption_payload(dir: &PathBuf) -> TestMetadataKMS {
         let test = signcryption_payload_test();
