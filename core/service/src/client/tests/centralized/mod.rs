@@ -2,7 +2,6 @@ mod crs_gen_tests;
 mod custodian_backup_tests;
 mod custodian_context_tests;
 mod key_gen_tests;
-mod misc_tests;
 #[cfg(any(test, feature = "testing"))]
 mod misc_tests_isolated;
 #[cfg(feature = "slow_tests")]

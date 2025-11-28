@@ -14,8 +14,6 @@ mod nightly_tests;
 mod public_decryption_tests;
 #[cfg(feature = "slow_tests")]
 mod reshare_tests;
-#[cfg(feature = "slow_tests")]
-mod restore_from_backup_tests;
 #[cfg(any(test, feature = "testing"))]
 mod restore_from_backup_tests_isolated;
 mod user_decryption_tests;
