@@ -142,8 +142,7 @@ pub trait ReshareSecretKeys {
         P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
         const EXTENSION_DEGREE: usize,
     >(
-        two_sets_session: &mut S,
-        set_2_session: &mut Sess,
+        sessions: &mut (S, Sess),
         preproc128: &mut P128,
         preproc64: &mut P64,
         parameters: DKGParams,
@@ -169,8 +168,7 @@ pub trait ReshareSecretKeys {
         P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
         const EXTENSION_DEGREE: usize,
     >(
-        two_sets_session: &mut S,
-        set_2_session: &mut Sess,
+        sessions: &mut (S, Sess),
         preproc128: &mut P128,
         preproc64: &mut P64,
         input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
@@ -249,11 +247,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         Ok(())
     }
 
-    #[instrument(
-    name = "ReShare (as set 2)",
-    skip_all,
-    fields(sid=?two_sets_session.session_id(),my_role=?two_sets_session.my_role())
-    )]
+    #[instrument(name = "ReShare (as set 2)", skip_all, fields(sid, my_role))]
     async fn reshare_sk_two_sets_as_s2<
         S: GenericBaseSessionHandles<TwoSetsRole>,
         Sess: BaseSessionHandles,
@@ -261,8 +255,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
         const EXTENSION_DEGREE: usize,
     >(
-        two_sets_session: &mut S,
-        set_2_session: &mut Sess,
+        sessions: &mut (S, Sess),
         preproc128: &mut P128,
         preproc64: &mut P64,
         parameters: DKGParams,
@@ -271,10 +264,13 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
+        let span = tracing::Span::current();
+        span.record("sid", format!("{:?}", &sessions.0.session_id()));
+        span.record("my_role", format!("{:?}", &sessions.0.my_role()));
         reshare_sk::<SecureTwoSetsReshareAsSet2<S, Sess>, _, _, _>(
             Expected(preproc128),
             Expected(preproc64),
-            &mut (two_sets_session, set_2_session),
+            sessions,
             NotExpected {
                 _marker: std::marker::PhantomData,
             },
@@ -284,11 +280,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         .ok_or_else(|| anyhow_error_and_log("Expected an output in two sets reshare"))
     }
 
-    #[instrument(
-    name = "ReShare (as both sets)",
-    skip_all,
-    fields(sid=?two_sets_session.session_id(),my_role=?two_sets_session.my_role())
-    )]
+    #[instrument(name = "ReShare (as both sets)", skip_all, fields(sid, my_role))]
     async fn reshare_sk_two_sets_as_both_sets<
         S: GenericBaseSessionHandles<TwoSetsRole>,
         Sess: BaseSessionHandles,
@@ -296,8 +288,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
         const EXTENSION_DEGREE: usize,
     >(
-        two_sets_session: &mut S,
-        set_2_session: &mut Sess,
+        sessions: &mut (S, Sess),
         preproc128: &mut P128,
         preproc64: &mut P64,
         input_share: &mut PrivateKeySet<EXTENSION_DEGREE>,
@@ -307,10 +298,13 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
+        let span = tracing::Span::current();
+        span.record("sid", format!("{:?}", &sessions.0.session_id()));
+        span.record("my_role", format!("{:?}", &sessions.0.my_role()));
         reshare_sk::<SecureTwoSetsReshareAsBothSets<S, Sess>, _, _, _>(
             Expected(preproc128),
             Expected(preproc64),
-            &mut (two_sets_session, set_2_session),
+            sessions,
             Expected(input_share),
             parameters,
         )
