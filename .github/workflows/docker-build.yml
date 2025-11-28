@@ -65,30 +65,30 @@ concurrency:
 permissions: {}
 
 jobs:
-  start-amd64-runner:
-    name: docker-build/start-amd64-runner
-    runs-on: ubuntu-latest
-    outputs:
-      label: ${{ steps.start-ec2-runner-amd64.outputs.label }}
-    steps:
-      - name: Start EC2 runner AMD64
-        id: start-ec2-runner-amd64
-        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
-        with:
-          mode: start
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          backend: aws
-          profile: docker-big-instance
+  # start-amd64-runner:
+  #   name: docker-build/start-amd64-runner
+  #   runs-on: ubuntu-latest
+  #   outputs:
+  #     label: ${{ steps.start-ec2-runner-amd64.outputs.label }}
+  #   steps:
+  #     - name: Start EC2 runner AMD64
+  #       id: start-ec2-runner-amd64
+  #       uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
+  #       with:
+  #         mode: start
+  #         github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+  #         slab-url: ${{ secrets.SLAB_BASE_URL }}
+  #         job-secret: ${{ secrets.JOB_SECRET }}
+  #         backend: aws
+  #         profile: docker-big-instance
 
   ############################################################################
   # Builds Docker image for base Rust Golden Image
   #
   golden-image:
     name: docker-build/golden-image (bpr)
-    needs:
-      - start-amd64-runner
+    # needs:
+    #   - start-amd64-runner
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6c72e3dbc894744c1e228fb165f4c4d657e475b6 # v1.0.1
     permissions:
       actions: read # Required to read workflow run information
@@ -104,7 +104,9 @@ jobs:
       image-name: 'kms/rust-golden-image'
       app-cache-dir: 'kms-base'
       use-cgr-secrets: true
-      runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
+      # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
+      runs-on-amd: ${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+      runs-on-arm: ${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
@@ -118,7 +120,7 @@ jobs:
   core-client:
     name: docker-build/core-client (bpr)
     needs:
-      - start-amd64-runner
+      # - start-amd64-runner
       - golden-image
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6c72e3dbc894744c1e228fb165f4c4d657e475b6 # v1.0.1
     permissions:
@@ -135,7 +137,9 @@ jobs:
       image-name: 'kms/core-client'
       app-cache-dir: 'kms-core-client'
       use-cgr-secrets: true
-      runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
+      # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
+      runs-on-amd: ${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+      runs-on-arm: ${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
@@ -149,7 +153,7 @@ jobs:
   core-service:
     name: docker-build/core-service (bpr)
     needs:
-      - start-amd64-runner
+      # - start-amd64-runner
       - golden-image
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6c72e3dbc894744c1e228fb165f4c4d657e475b6 # v1.0.1
     permissions:
@@ -166,7 +170,9 @@ jobs:
       image-name: 'kms/core-service'
       app-cache-dir: 'kms'
       use-cgr-secrets: true
-      runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
+      # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
+      runs-on-amd: ${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
+      runs-on-arm: ${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
@@ -180,7 +186,7 @@ jobs:
   enclave:
     name: docker-build/core-service-enclave (bpr)
     needs:
-      - start-amd64-runner
+      # - start-amd64-runner
       - core-service
     uses: ./.github/workflows/common-nitro-enclave.yml
     permissions:
@@ -207,7 +213,7 @@ jobs:
   performance-testing:
     name: docker-build/performance-testing
     needs:
-      - start-amd64-runner
+      # - start-amd64-runner
       - golden-image
       - core-client
       - core-service
@@ -264,22 +270,22 @@ jobs:
   ############################################################################
   # Stop EC2 runner
   ############################################################################
-  stop-runners-amd64:
-    name: docker-build/stop-runners-amd64
-    needs:
-      - start-amd64-runner
-      - golden-image
-      - core-client
-      - core-service
-      - enclave
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Stop AMD64 runner
-        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
-        with:
-          mode: stop
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          label: ${{ needs.start-amd64-runner.outputs.label }}
+  # stop-runners-amd64:
+  #   name: docker-build/stop-runners-amd64
+  #   needs:
+  #     - start-amd64-runner
+  #     - golden-image
+  #     - core-client
+  #     - core-service
+  #     - enclave
+  #   runs-on: ubuntu-latest
+  #   if: always()
+  #   steps:
+  #     - name: Stop AMD64 runner
+  #       uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
+  #       with:
+  #         mode: stop
+  #         github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+  #         slab-url: ${{ secrets.SLAB_BASE_URL }}
+  #         job-secret: ${{ secrets.JOB_SECRET }}
+  #         label: ${{ needs.start-amd64-runner.outputs.label }}
