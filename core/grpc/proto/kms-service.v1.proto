@@ -313,7 +313,7 @@ service CoreServiceEndpoint {
   // That is, updates the internal state and configuration files to start using a new custodian context.
   // Internally the KMS will sample a backup key pair and immediately construct a backup based on this.
   // A new context will automatically be set as the active one. The backups of the old one will not be removed 
-  // until explicitely requested through a call to `DestroyCustodianContext`. 
+  // until explicitly requested through a call to `DestroyCustodianContext`. 
   // Still, recovery is currently only possible using the current context. 
   //
   // # Parameters
