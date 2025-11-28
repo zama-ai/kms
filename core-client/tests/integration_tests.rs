@@ -31,6 +31,51 @@
 //! - `k8s_tests`: Enables PRSS tests (requires stable network environment)
 //! - `testing`: Enables test helper functions (required for compilation)
 //!
+//! ## How Tests Execute
+//!
+//! Native isolated tests run KMS servers as in-process Rust processes (no Docker):
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │ Test Function Execution                                      │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │                                                              │
+//! │  1. Setup Phase                                              │
+//! │     setup_isolated_centralized_cli_test("my_test")          │
+//! │     ├─ Creates TempDir with isolated material               │
+//! │     ├─ Spawns KMS server (native Rust process)              │
+//! │     │  └─ Server listens on 127.0.0.1:54321 (dynamic port)  │
+//! │     └─ Generates config file pointing to server             │
+//! │                                                              │
+//! │  2. CLI Command Execution                                    │
+//! │     ├─ kms-core-client --config client_config.toml          │
+//! │     ├─ Reads config → connects to 127.0.0.1:54321           │
+//! │     └─ Sends gRPC request to running server                 │
+//! │                                                              │
+//! │  3. Server Processing                                        │
+//! │     ├─ Receives gRPC request                                │
+//! │     ├─ Performs operation (keygen, decrypt, etc.)           │
+//! │     └─ Returns gRPC response                                │
+//! │                                                              │
+//! │  4. Test Validation                                          │
+//! │     └─ assert!(output.status.success())                     │
+//! │                                                              │
+//! │  5. Automatic Cleanup (RAII)                                │
+//! │     ├─ _server dropped → server.assert_shutdown()           │
+//! │     ├─ Sends shutdown signal → server stops                 │
+//! │     ├─ Verifies ports closed                                │
+//! │     └─ material_dir dropped → temp directory deleted        │
+//! │                                                              │
+//! └─────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! **Key Points:**
+//! - **Native Process:** Server runs as Rust process (not Docker container)
+//! - **Dynamic Ports:** Each test gets unique port (no conflicts)
+//! - **RAII Cleanup:** Server and temp dir auto-cleanup via Drop trait
+//! - **Real gRPC:** CLI sends actual gRPC requests to running server
+//! - **Full Isolation:** Each test completely isolated (own server, material, temp dir)
+//!
 //! ## Writing New Tests
 //!
 //! ### Centralized Test Example
@@ -67,6 +112,35 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! **Threshold Test Execution Model:**
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────────┐
+//! │ Single Test Thread (tokio runtime)                              │
+//! ├─────────────────────────────────────────────────────────────────┤
+//! │                                                                  │
+//! │  Main Test Task                                                  │
+//! │  ├─ setup_threshold_isolated(4 parties)                         │
+//! │  │                                                               │
+//! │  └─ Spawns 4 async tasks (tokio::spawn):                        │
+//! │      ├─ Task 1: Party 1 Server (service port + MPC port)        │
+//! │      ├─ Task 2: Party 2 Server (service port + MPC port)        │
+//! │      ├─ Task 3: Party 3 Server (service port + MPC port)        │
+//! │      └─ Task 4: Party 4 Server (service port + MPC port)        │
+//! │                                                                  │
+//! │  All tasks run concurrently on tokio thread pool                │
+//! │  (NOT separate OS threads - async tasks!)                       │
+//! │                                                                  │
+//! └─────────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! **Key Points:**
+//! - Each party runs as a lightweight async task (via `tokio::spawn`)
+//! - All tasks share the same tokio runtime (thread pool)
+//! - Each party has unique ports: service port (gRPC) + MPC port (party communication)
+//! - Real TCP communication between parties over localhost
+//! - Efficient: Can run many parties without OS thread overhead
 //!
 //! ### PRSS Test Example
 //!
