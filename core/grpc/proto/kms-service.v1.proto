@@ -328,7 +328,7 @@ service CoreServiceEndpoint {
   // * The KMS _must_ be setup to use custodian-based backups
   // ## Post-condition: 
   // * The `context_id` in `request` now represents a new custodian context.
-  // * A backup of all private data has been constructed, and secret shared recovery information er persisted in the public storage. 
+  // * A backup of all private data has been constructed, and secret shared recovery information is persisted in the public storage. 
   // * The previous backup is still present but cannot be used directly.
   rpc NewCustodianContext(kms.v1.NewCustodianContextRequest) returns (kms.v1.Empty);
 
