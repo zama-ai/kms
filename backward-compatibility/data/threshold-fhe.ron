@@ -24,6 +24,26 @@
     (
         kms_core_version_min: "0.11.0",
         kms_core_module: "threshold-fhe",
+        metadata: Share((
+            test_filename: "share_64",
+            value: 34653246,
+            owner: 1,
+            residue_poly_size: 64,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11.0",
+        kms_core_module: "threshold-fhe",
+        metadata: Share((
+            test_filename: "share_128",
+            value: 934565743256423875434534434,
+            owner: 1,
+            residue_poly_size: 128,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11.0",
+        kms_core_module: "threshold-fhe",
         metadata: PrfKey((
             test_filename: "prf_key",
             seed: 100,
@@ -54,6 +74,26 @@
     (
         kms_core_version_min: "0.11.1",
         kms_core_module: "threshold-fhe",
+        metadata: Share((
+            test_filename: "share_64",
+            value: 34653246,
+            owner: 1,
+            residue_poly_size: 64,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11.1",
+        kms_core_module: "threshold-fhe",
+        metadata: Share((
+            test_filename: "share_128",
+            value: 934565743256423875434534434,
+            owner: 1,
+            residue_poly_size: 128,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11.1",
+        kms_core_module: "threshold-fhe",
         metadata: PrfKey((
             test_filename: "prf_key",
             seed: 100,
@@ -78,6 +118,26 @@
             amount: 10,
             threshold: 3,
             role_i: 1,
+            residue_poly_size: 128,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "threshold-fhe",
+        metadata: Share((
+            test_filename: "share_64",
+            value: 34653246,
+            owner: 1,
+            residue_poly_size: 64,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "threshold-fhe",
+        metadata: Share((
+            test_filename: "share_128",
+            value: 934565743256423875434534434,
+            owner: 1,
             residue_poly_size: 128,
         )),
     ),
