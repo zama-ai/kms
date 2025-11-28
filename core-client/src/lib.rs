@@ -10,7 +10,7 @@ pub mod prss_init;
 mod s3_operations;
 
 use crate::crsgen::{do_crsgen, fetch_and_check_crsgen, get_crsgen_responses};
-use crate::decrypt::{do_user_decrypt, get_public_decrypt_responses};
+use crate::decrypt::{do_public_decrypt, do_user_decrypt, get_public_decrypt_responses};
 use crate::keygen::{
     check_standard_keyset_ext_signature, do_keygen, do_partial_preproc, do_preproc,
     fetch_and_check_keygen, get_keygen_responses, get_preproc_keygen_responses,
@@ -1525,88 +1525,22 @@ pub async fn execute_cmd(
                 cipher_args.get_batch_size()
             ];
 
-            let mut timings_start = HashMap::new();
-            let mut durations = Vec::new();
-
-            let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
-            let start = tokio::time::Instant::now();
-            for _ in 0..cipher_args.get_num_requests() {
-                let req_id = RequestId::new_random(&mut rng);
-                let internal_client = internal_client.clone();
-                let ct_batch = ct_batch.clone();
-                let core_endpoints_req = core_endpoints_req.clone();
-                let core_endpoints_resp = core_endpoints_resp.clone();
-                let ptxt = ptxt.clone();
-                let kms_addrs = kms_addrs.clone();
-
-                // start timing measurement for this request
-                timings_start.insert(req_id, tokio::time::Instant::now()); // start timing for this request
-
-                join_set.spawn(async move {
-                    // DECRYPTION REQUEST
-                    let dec_req = internal_client.write().await.public_decryption_request(
-                        ct_batch,
-                        &dummy_domain(),
-                        &req_id,
-                        context_id.as_ref(),
-                        &key_id.into(),
-                    )?;
-
-                    // make parallel requests by calling [decrypt] in a thread
-                    let mut req_tasks = JoinSet::new();
-
-                    for (_party_id, ce) in core_endpoints_req.iter() {
-                        let req_cloned = dec_req.clone();
-                        let mut cur_client = ce.clone();
-                        req_tasks.spawn(async move {
-                            cur_client
-                                .public_decrypt(tonic::Request::new(req_cloned))
-                                .await
-                        });
-                    }
-
-                    let mut req_response_vec = Vec::new();
-                    while let Some(inner) = req_tasks.join_next().await {
-                        req_response_vec.push(inner.unwrap().unwrap().into_inner());
-                    }
-                    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
-
-                    tracing::info!(
-                        "{:?} ###! Sent all public decrypt requests. Since start {:?}",
-                        req_id.as_str(),
-                        start.elapsed()
-                    );
-
-                    let resp_response_vec = get_public_decrypt_responses(
-                        &core_endpoints_resp,
-                        Some(dec_req),
-                        Some(ptxt),
-                        req_id,
-                        max_iter,
-                        num_expected_responses,
-                        &*internal_client.read().await,
-                        &kms_addrs,
-                        start,
-                    )
-                    .await?;
-
-                    let res = format!("{resp_response_vec:x?}");
-                    Ok((Some(req_id), res))
-                });
-            }
-
-            let mut result_vec = Vec::new();
-            while let Some(result) = join_set.join_next().await {
-                let res = result??;
-                let req_id = res.0.unwrap();
-                let elapsed = timings_start.remove(&req_id).unwrap().elapsed();
-                durations.push(elapsed);
-                result_vec.push(res);
-            }
-
-            print_timings("public decrypt", &mut durations, start);
-
-            result_vec
+            do_public_decrypt(
+                &mut rng,
+                cipher_args.get_num_requests(),
+                internal_client,
+                ct_batch,
+                key_id,
+                context_id,
+                &core_endpoints_req,
+                &core_endpoints_resp,
+                ptxt,
+                num_parties,
+                kms_addrs.to_vec(),
+                max_iter,
+                num_expected_responses,
+            )
+            .await?
         }
         CCCommand::UserDecrypt(cipher_args) => {
             let internal_client = Arc::new(RwLock::new(
