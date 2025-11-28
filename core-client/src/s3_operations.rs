@@ -1,15 +1,14 @@
+use std::collections::HashMap;
 use std::{collections::HashSet, path::Path};
 
 use bytes::Bytes;
 use kms_grpc::rpc_types::PubDataType;
-
 #[cfg(feature = "testing")]
+use kms_lib::cryptography::signatures::PrivateSigKey;
 use kms_lib::{
     consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID},
-    cryptography::signatures::{PrivateSigKey, PublicSigKey},
+    cryptography::signatures::PublicSigKey,
 };
-#[cfg(feature = "testing")]
-use std::collections::HashMap;
 
 use crate::CoreClientConfig;
 
@@ -78,7 +77,6 @@ pub(crate) async fn fetch_elements(
 }
 
 /// This fetches the KMS public verification keys from S3 for all the cores.
-#[cfg(feature = "testing")]
 pub(crate) async fn fetch_kms_verification_keys(
     sim_conf: &CoreClientConfig,
 ) -> anyhow::Result<HashMap<usize, PublicSigKey>> {

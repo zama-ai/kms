@@ -409,7 +409,6 @@ async fn emulate_custodian(
                 &verf_key,
                 &cur_enc_key,
                 backup_id.clone().try_into().unwrap(),
-                Role::indexed_from_one(recovery_request.operator_role as usize),
             )
             .unwrap();
         // Add the result from this custodian to the map of results to the correct operator

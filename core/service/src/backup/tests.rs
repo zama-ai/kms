@@ -17,6 +17,7 @@ use crate::{
     engine::base::derive_request_id,
 };
 use aes_prng::AesRng;
+use alloy_primitives::Address;
 use itertools::Itertools;
 use kms_grpc::{kms::v1::CustodianContext, RequestId};
 use proptest::prelude::*;
@@ -59,7 +60,6 @@ fn operator_setup() {
 
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         let operator = Operator::new_for_sharing(
-            Role::indexed_from_zero(0),
             wrong_custodian_messages,
             signing_key,
             custodian_threshold,
@@ -78,7 +78,6 @@ fn operator_setup() {
 
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         let operator = Operator::new_for_sharing(
-            Role::indexed_from_zero(0),
             wrong_custodian_messages,
             signing_key,
             custodian_threshold,
@@ -119,11 +118,9 @@ fn custodian_reencrypt() {
         })
         .collect();
     let operators: Vec<_> = (0..operator_count)
-        .map(|i| {
-            let operator_role = Role::indexed_from_zero(i);
+        .map(|_i| {
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
             Operator::new_for_sharing(
-                operator_role,
                 custodian_messages.clone(),
                 signing_key,
                 custodian_threshold,
@@ -172,7 +169,6 @@ fn custodian_reencrypt() {
                 verification_key,
                 &ephemeral_enc_key,
                 backup_id,
-                operator_role,
             )
             .unwrap_err();
         assert!(matches!(err, BackupError::CustodianRecoveryError));
@@ -193,7 +189,6 @@ fn custodian_reencrypt() {
                 verification_key,
                 &ephemeral_enc_key,
                 backup_id,
-                operator_role,
             )
             .unwrap_err();
         assert!(matches!(err, BackupError::CustodianRecoveryError));
@@ -210,24 +205,6 @@ fn custodian_reencrypt() {
                 verification_key,
                 &ephemeral_enc_key,
                 bad_backup_id,
-                operator_role,
-            )
-            .unwrap_err();
-        assert!(matches!(err, BackupError::CustodianRecoveryError));
-    }
-
-    // use the wrong operator_role
-    {
-        let operator_role = Role::indexed_from_zero(0);
-        let wrong_operator_role = Role::indexed_from_zero(1);
-        let err = custodians[0]
-            .verify_reencrypt(
-                &mut rng,
-                cts[0].0.get(&operator_role).unwrap(),
-                verification_key,
-                &ephemeral_enc_key,
-                backup_id,
-                wrong_operator_role,
             )
             .unwrap_err();
         assert!(matches!(err, BackupError::CustodianRecoveryError));
@@ -243,7 +220,6 @@ fn custodian_reencrypt() {
                 verification_key,
                 &ephemeral_enc_key,
                 backup_id,
-                operator_role,
             )
             .unwrap();
     }
@@ -270,6 +246,7 @@ fn full_flow(
         custodian_threshold,
         custodian_count,
     );
+    let ops_addresses = operators.iter().map(|op| op.0);
     let backups = custodian_recover(
         &mut rng,
         &backup_id,
@@ -281,12 +258,11 @@ fn full_flow(
     let recovered_secrets = operator_recover(&backups, &operators, &backup_id);
     assert!(recovered_secrets.len() == operator_count);
 
-    for idx in 1..=operator_count {
-        let role = Role::indexed_from_one(idx);
-        assert!(recovered_secrets.contains_key(&role));
-        let cur_priv_key = operators.get(&role).unwrap().2.clone();
+    for op_addr in ops_addresses {
+        assert!(recovered_secrets.contains_key(op_addr));
+        let cur_priv_key = operators.get(op_addr).unwrap().2.clone();
         assert_eq!(
-            recovered_secrets[&role],
+            recovered_secrets[op_addr],
             bc2wrap::serialize(&cur_priv_key).unwrap()
         );
     }
@@ -309,6 +285,7 @@ fn full_flow_drop_msg() {
         custodian_threshold,
         custodian_count,
     );
+    let op_addresses = operators.iter().map(|op| op.0);
     // Drop first and last custodian
     let mnemonics_dropped: BTreeMap<Role, String> = mnemonics
         .iter()
@@ -333,12 +310,11 @@ fn full_flow_drop_msg() {
     let recovered_secrets = operator_recover(&backups, &operators, &backup_id);
     assert!(recovered_secrets.len() == operator_count);
 
-    for idx in 1..=operator_count {
-        let role = Role::indexed_from_one(idx);
-        assert!(recovered_secrets.contains_key(&role));
-        let cur_priv_key = operators.get(&role).unwrap().2.clone();
+    for addr in op_addresses {
+        assert!(recovered_secrets.contains_key(addr));
+        let cur_priv_key = operators.get(addr).unwrap().2.clone();
         assert_eq!(
-            recovered_secrets[&role],
+            recovered_secrets[addr],
             bc2wrap::serialize(&cur_priv_key).unwrap()
         );
     }
@@ -389,11 +365,9 @@ fn full_flow_malicious_custodian_init() {
     // Remove 2nd setup message
     setup_msgs_malicious.remove(1);
     // Should be fine since we just need at least 2+1 = 3 custodians
-    for op_idx in 1..=operator_count {
-        let operator_role = Role::indexed_from_one(op_idx);
+    for _op_idx in 1..=operator_count {
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         let operator = Operator::new_for_sharing(
-            operator_role,
             setup_msgs_malicious.to_vec(),
             signing_key.clone(),
             custodian_threshold,
@@ -433,6 +407,8 @@ fn full_flow_malicious_custodian_second() {
         custodian_threshold,
         custodian_count,
     );
+    let op_addresses = operators.iter().map(|op| *op.0).collect::<Vec<_>>();
+
     // Change one custodian's mnemonic to an invalid one
     {
         let mut mnemonics_malicious = mnemonics.clone();
@@ -453,16 +429,16 @@ fn full_flow_malicious_custodian_second() {
         let recovered_secrets = operator_recover(&backups, &operators, &backup_id);
         assert!(recovered_secrets.len() == operator_count);
 
-        for idx in 1..=operator_count {
-            let role = Role::indexed_from_one(idx);
-            assert!(recovered_secrets.contains_key(&role));
-            let cur_priv_key = operators.get(&role).unwrap().2.clone();
+        for op_addr in &op_addresses {
+            assert!(recovered_secrets.contains_key(op_addr));
+            let cur_priv_key = operators.get(op_addr).unwrap().2.clone();
             assert_eq!(
-                recovered_secrets[&role],
+                recovered_secrets[op_addr],
                 bc2wrap::serialize(&cur_priv_key).unwrap()
             );
         }
     }
+
     // Drop middle custodian and set the first one to something malicious
     {
         let mnemonics_malicious_dropped = mnemonics.clone();
@@ -493,12 +469,11 @@ fn full_flow_malicious_custodian_second() {
         let recovered_secrets = operator_recover(&backups, &operators, &backup_id);
         assert!(recovered_secrets.len() == operator_count);
 
-        for idx in 1..=operator_count {
-            let role = Role::indexed_from_one(idx);
-            assert!(recovered_secrets.contains_key(&role));
-            let cur_priv_key = operators.get(&role).unwrap().2.clone();
+        for op_addr in &op_addresses {
+            assert!(recovered_secrets.contains_key(op_addr));
+            let cur_priv_key = operators.get(op_addr).unwrap().2.clone();
             assert_eq!(
-                recovered_secrets[&role],
+                recovered_secrets[op_addr],
                 bc2wrap::serialize(&cur_priv_key).unwrap()
             );
         }
@@ -522,21 +497,27 @@ fn full_flow_malicious_operator() {
         custodian_threshold,
         custodian_count,
     );
+    let op_addresses = operators.iter().map(|op| *op.0).collect::<Vec<_>>();
+
     // Drop one operator's init messages and set another to something malicious
     {
         let mut payload_for_custodians_malicious = payload_for_custodians.clone();
+
         // Remove the 3rd operator's payload
-        let _ = payload_for_custodians_malicious.remove(&Role::indexed_from_one(3));
+        let op_to_remove = op_addresses[2];
+        let _ = payload_for_custodians_malicious.remove(&op_to_remove);
+
         // Change the first one maliciously by flipping a bit in each ciphertext
+        let op_malicious = op_addresses[0];
         let (first_verf_key, first_backup_key, mut first_backup) = payload_for_custodians_malicious
-            .get(&Role::indexed_from_one(1))
+            .get(&op_malicious)
             .unwrap()
             .clone();
         first_backup.iter_mut().for_each(|(_, v)| {
             v.signcryption.payload[0] ^= 1;
         });
         let _ = payload_for_custodians_malicious.insert(
-            Role::indexed_from_one(1),
+            op_malicious,
             (first_verf_key, first_backup_key, first_backup),
         );
 
@@ -592,23 +573,24 @@ fn operator_handle_init(
     custodian_count: usize,
 ) -> (
     BTreeMap<
-        Role,
+        Address,
         (
             Operator,
             RecoveryValidationMaterial,
             UnifiedPrivateEncKey,
             UnifiedPublicEncKey,
         ),
-    >, // Operator role to (Operator, validation material, ephemeral decryption key)
+    >, // Operator address to (Operator, validation material, ephemeral decryption key)
     BTreeMap<
-        Role,
+        Address,
         (
             PublicSigKey,
             UnifiedPublicEncKey,
             BTreeMap<Role, InnerOperatorBackupOutput>,
         ),
-    >, // Operator role to verf key, ephemeral key and backup ct map
+    >, // Operator address to verification key, ephemeral key and backup ct map
 ) {
+    // note that PublicSigKey cannot be used as BTreeMap key directly since it's not Ord
     let mut payload_for_custodians = BTreeMap::new();
     let mut operators = BTreeMap::new();
     let cus_context = CustodianContext {
@@ -619,11 +601,9 @@ fn operator_handle_init(
         context_id: Some((*backup_id).into()),
         threshold: custodian_threshold as u32,
     };
-    for op_idx in 1..=operator_count {
-        let operator_role = Role::indexed_from_one(op_idx);
+    for _op_idx in 1..=operator_count {
         let (verification_key, signing_key) = gen_sig_keys(rng);
         let operator = Operator::new_for_sharing(
-            operator_role,
             setup_msgs.to_vec(),
             signing_key.clone(),
             custodian_threshold,
@@ -649,7 +629,7 @@ fn operator_handle_init(
         )
         .unwrap();
         operators.insert(
-            operator_role,
+            verification_key.address(),
             (
                 operator,
                 validation_material,
@@ -658,7 +638,7 @@ fn operator_handle_init(
             ),
         );
         payload_for_custodians.insert(
-            operator_role,
+            verification_key.address(),
             (verification_key, backup_enc_key, cur_op_output),
         );
     }
@@ -668,9 +648,9 @@ fn operator_handle_init(
 fn custodian_recover(
     rng: &mut AesRng,
     backup_id: &RequestId,
-    mnemonics: &BTreeMap<Role, String>,
+    mnemonics: &BTreeMap<Role, String>, // keyed by custodian role
     backups: &BTreeMap<
-        Role,
+        Address,
         (
             PublicSigKey,
             UnifiedPublicEncKey,
@@ -678,9 +658,9 @@ fn custodian_recover(
         ),
     >, // Operator role to verf key, ephemeral key and backup ct map
     custodian_threshold: usize,
-) -> BTreeMap<Role, BTreeMap<Role, InternalCustodianRecoveryOutput>> {
+) -> BTreeMap<Address, BTreeMap<Role, InternalCustodianRecoveryOutput>> {
     let mut res = BTreeMap::new();
-    for (cur_operator_role, (verification_key, ephemeral_enc_key, cur_backup)) in backups {
+    for (cur_operator_address, (verification_key, ephemeral_enc_key, cur_backup)) in backups {
         let mut cur_operator_res = BTreeMap::new();
         for (cur_cus_role, cur_mnemonic) in mnemonics {
             let custodian = custodian_from_seed_phrase(cur_mnemonic, *cur_cus_role).unwrap();
@@ -691,7 +671,6 @@ fn custodian_recover(
                 verification_key,
                 ephemeral_enc_key,
                 *backup_id,
-                *cur_operator_role,
             ) {
                 Ok(cur_res) => cur_operator_res.insert(*cur_cus_role, cur_res),
                 Err(_) => {
@@ -701,16 +680,16 @@ fn custodian_recover(
         }
         // Only insert if we have enough re-encryptions
         if cur_operator_res.len() > custodian_threshold {
-            res.insert(*cur_operator_role, cur_operator_res);
+            res.insert(*cur_operator_address, cur_operator_res);
         }
     }
     res
 }
 
 fn operator_recover(
-    reencryptions: &BTreeMap<Role, BTreeMap<Role, InternalCustodianRecoveryOutput>>,
+    reencryptions: &BTreeMap<Address, BTreeMap<Role, InternalCustodianRecoveryOutput>>,
     operators: &BTreeMap<
-        Role,
+        Address,
         (
             Operator,
             RecoveryValidationMaterial,
@@ -719,10 +698,10 @@ fn operator_recover(
         ),
     >,
     backup_id: &RequestId,
-) -> BTreeMap<Role, Vec<u8>> {
+) -> BTreeMap<Address, Vec<u8>> {
     let mut res = BTreeMap::new();
-    for (cur_op_role, (cur_op, cur_com, cur_emphemeral_dec, cur_ephemeral_enc)) in operators {
-        if let Some(cur_reencs) = reencryptions.get(cur_op_role) {
+    for (cur_op_addr, (cur_op, cur_com, cur_emphemeral_dec, cur_ephemeral_enc)) in operators {
+        if let Some(cur_reencs) = reencryptions.get(cur_op_addr) {
             let reencs_vec: Vec<_> = cur_reencs.values().cloned().collect();
             match cur_op.verify_and_recover(
                 &reencs_vec,
@@ -731,7 +710,7 @@ fn operator_recover(
                 cur_emphemeral_dec,
                 cur_ephemeral_enc,
             ) {
-                Ok(plaintext) => res.insert(*cur_op_role, plaintext),
+                Ok(plaintext) => res.insert(*cur_op_addr, plaintext),
                 Err(_) => continue, // Skip if recovery fails
             };
         }

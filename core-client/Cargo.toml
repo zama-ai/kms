@@ -26,6 +26,7 @@ alloy-signer.workspace = true
 alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 anyhow.workspace = true
 attestation-doc-validation.workspace = true
+bc2wrap.workspace = true
 bytes.workspace = true
 clap = { workspace = true, features = ["derive"] }
 hex.workspace = true
