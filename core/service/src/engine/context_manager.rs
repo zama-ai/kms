@@ -128,7 +128,7 @@ where
         Ok(Response::new(Empty {}))
     }
 
-    /// Removed a custodian context from disc storage and RAM (the meta-store).
+    /// Removes a custodian context from disk storage and RAM (the meta-store).
     async fn destroy_custodian_context(
         &self,
         request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
