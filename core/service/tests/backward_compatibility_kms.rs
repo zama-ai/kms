@@ -51,8 +51,8 @@ use kms_lib::{
     },
     engine::{
         base::{
-            safe_serialize_hash_element_versioned, CrsGenMetadata, CrsGenMetadataInner,
-            KeyGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
+            safe_serialize_hash_element_versioned, CrsGenMetadata, KeyGenMetadata,
+            KeyGenMetadataInner, KmsFheKeyHandles,
         },
         threshold::service::ThresholdFheKeys,
     },
@@ -257,8 +257,7 @@ fn test_crs_gen_metadata(
     test: &CrsGenMetadataTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let original_current: CrsGenMetadataInner = load_and_unversionize(dir, test, format)?;
-
+    let original_current: CrsGenMetadata = load_and_unversionize(dir, test, format)?;
     let original_legacy: SignedPubDataHandleInternal =
         load_and_unversionize_auxiliary(dir, test, &test.legacy_filename, format)?;
 
@@ -275,19 +274,7 @@ fn test_crs_gen_metadata(
                 format,
             )
         })?;
-    let new_current =
-        match CrsGenMetadata::new(crs_id, digest, max_num_bits, external_signature.clone()) {
-            CrsGenMetadata::Current(crs_gen_metadata_inner) => crs_gen_metadata_inner,
-            CrsGenMetadata::LegacyV0(signed_pub_data_handle_internal) => {
-                return Err(test.failure(
-                    format!(
-                        "Expected current CrsGenMetadata, got legacy: {:?}",
-                        signed_pub_data_handle_internal
-                    ),
-                    format,
-                ))
-            }
-        };
+    let new_current = CrsGenMetadata::new(crs_id, digest, max_num_bits, external_signature.clone());
 
     let new_legacy = SignedPubDataHandleInternal::new(
         crs_id.to_string(),

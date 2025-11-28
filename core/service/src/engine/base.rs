@@ -849,7 +849,7 @@ pub enum CrsGenMetadataVersioned {
 }
 
 #[cfg(feature = "non-wasm")]
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(CrsGenMetadataVersioned)]
 pub enum CrsGenMetadata {
     Current(CrsGenMetadataInner),

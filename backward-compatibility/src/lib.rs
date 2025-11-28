@@ -346,6 +346,29 @@ impl TestType for PRSSSetupTest {
     }
 }
 
+// Distributed Decryption test
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ShareTest {
+    pub test_filename: Cow<'static, str>,
+    pub value: u128,
+    pub owner: usize,
+    pub residue_poly_size: u16,
+}
+
+impl TestType for ShareTest {
+    fn module(&self) -> String {
+        DISTRIBUTED_DECRYPTION_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "Share".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PrfKeyTest {
     pub test_filename: Cow<'static, str>,
@@ -707,6 +730,7 @@ pub enum TestMetadataKmsGrpc {
 pub enum TestMetadataDD {
     PRSSSetup(PRSSSetupTest),
     PrfKey(PrfKeyTest),
+    Share(ShareTest),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
