@@ -105,8 +105,8 @@ jobs:
       app-cache-dir: 'kms-base'
       use-cgr-secrets: true
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
-      runs-on-amd: ${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
-      runs-on-arm: ${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache
+      runs-on-amd: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
+      runs-on-arm: "runs-on=${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache"
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
@@ -138,8 +138,8 @@ jobs:
       app-cache-dir: 'kms-core-client'
       use-cgr-secrets: true
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
-      runs-on-amd: ${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
-      runs-on-arm: ${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache
+      runs-on-amd: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
+      runs-on-arm: "runs-on=${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache"
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
@@ -171,8 +171,8 @@ jobs:
       app-cache-dir: 'kms'
       use-cgr-secrets: true
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
-      runs-on-amd: ${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache
-      runs-on-arm: ${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache
+      runs-on-amd: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
+      runs-on-arm: "runs-on=${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache"
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
