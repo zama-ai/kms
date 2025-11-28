@@ -1,22 +1,126 @@
 //! CLI Integration Tests - Native Execution (Docker-free)
 //!
 //! Verifies kms-core-client CLI tool functionality using isolated native KMS servers.
+//! Replaces Docker Compose-based tests with faster, more reliable native execution.
 //!
-//! **Default (9 tests, parallel)**:
-//! - Centralized: keygen, decryption, CRS, backup/restore, custodian backup
-//! - Threshold: CRS (concurrent/sequential), backup/restore, custodian backup
+//! ## Test Coverage
 //!
-//! **PRSS Tests (5 tests, K8s CI only, sequential)**:
-//! - Threshold: keygen, preprocessing (sequential/concurrent/full), MPC context init
+//! **Default Tests (9 tests as of 2025-11-28, parallel execution)**:
+//! - Centralized (4): keygen, decryption, CRS, backup/restore, custodian backup
+//! - Threshold (5): CRS (concurrent/sequential), backup/restore, custodian backup
+//!
+//! **PRSS Tests (6 tests as of 2025-11-28, K8s CI only, sequential execution)**:
+//! - Threshold: keygen, preprocessing (sequential/concurrent/full), MPC context init/switch
 //! - Disabled locally due to PRSS networking requirements
 //! - Enable: `cargo test --features k8s_tests,testing -- --test-threads=1`
 //!
 //! ## Architecture
-//! - Each test uses isolated temporary directory with pre-generated material
-//! - Native KMS servers (no Docker Compose)
-//! - Tests run in parallel (except PRSS which requires sequential execution)
+//!
+//! **Test Isolation:**
+//! - Each test gets isolated temporary directory with pre-generated cryptographic material
+//! - Native KMS servers spawned in-process (no Docker Compose)
+//! - Automatic cleanup on test completion (RAII pattern via TempDir)
+//! - No shared state between tests (full isolation)
+//!
+//! **Execution:**
+//! - Default tests run in parallel for speed
+//! - PRSS tests run sequentially (marked with `#[serial]`) due to network coordination
 //! - CLI commands unchanged (testing actual CLI functionality)
-//! - MPC context test requires `testing` feature for context generation utilities
+//!
+//! **Feature Flags:**
+//! - `k8s_tests`: Enables PRSS tests (requires stable network environment)
+//! - `testing`: Enables test helper functions (required for compilation)
+//!
+//! ## Writing New Tests
+//!
+//! ### Centralized Test Example
+//!
+//! ```no_run
+//! #[tokio::test]
+//! async fn test_my_centralized_feature() -> Result<()> {
+//!     // Setup: Returns (TempDir, ServerHandle, PathBuf)
+//!     let (material_dir, _server, config_path) =
+//!         setup_isolated_centralized_cli_test("my_test").await?;
+//!     
+//!     // Run CLI commands using config_path
+//!     let output = Command::new(env!("CARGO_BIN_EXE_kms-core-client"))
+//!         .args(["--config", config_path.to_str().unwrap()])
+//!         .args(["your-command"])
+//!         .output()?;
+//!     
+//!     assert!(output.status.success());
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ### Threshold Test Example
+//!
+//! ```no_run
+//! #[tokio::test]
+//! async fn test_my_threshold_feature() -> Result<()> {
+//!     // Setup: Returns (TempDir, HashMap<u32, ServerHandle>, PathBuf)
+//!     let (material_dir, _servers, config_path) =
+//!         setup_isolated_threshold_cli_test_default("my_test", 4).await?;
+//!     
+//!     // CLI automatically communicates with all 4 parties via config
+//!     // Run your test commands here
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ### PRSS Test Example
+//!
+//! ```no_run
+//! #[tokio::test]
+//! #[serial]  // Required: Sequential execution for PRSS
+//! #[cfg_attr(not(feature = "k8s_tests"), ignore)]  // Required: K8s CI only
+//! async fn test_my_prss_feature() -> Result<()> {
+//!     // Setup with PRSS enabled
+//!     let (material_dir, _servers, config_path) =
+//!         setup_isolated_threshold_cli_test_with_prss("my_test", 4).await?;
+//!     
+//!     // Run PRSS operations (keygen, preprocessing, etc.)
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Setup Function Variants
+//!
+//! **Centralized:**
+//! - `setup_isolated_centralized_cli_test()` - Basic setup
+//! - `setup_isolated_centralized_cli_test_with_backup()` - With backup vault
+//! - `setup_isolated_centralized_cli_test_with_custodian_backup()` - With custodian keychain
+//!
+//! **Threshold:**
+//! - `setup_isolated_threshold_cli_test()` - Test FHE params (fast)
+//! - `setup_isolated_threshold_cli_test_default()` - Default FHE params (production-like)
+//! - `setup_isolated_threshold_cli_test_with_prss()` - With PRSS (Test params)
+//! - `setup_isolated_threshold_cli_test_with_prss_default()` - With PRSS (Default params)
+//! - `setup_isolated_threshold_cli_test_with_backup()` - With backup vault
+//! - `setup_isolated_threshold_cli_test_with_custodian_backup()` - With custodian keychain
+//!
+//! ## Return Values Explained
+//!
+//! All setup functions return a tuple with:
+//! 1. `TempDir` - Isolated temporary directory (auto-cleanup on drop)
+//! 2. `ServerHandle` or `HashMap<u32, ServerHandle>` - Running KMS server(s) (auto-shutdown on drop)
+//! 3. `PathBuf` - Path to generated CLI config file (use with `--config` flag)
+//!
+//! ## Running Tests
+//!
+//! ```bash
+//! # All tests (excluding PRSS)
+//! cargo test --test integration_tests --features testing
+//!
+//! # All tests (including PRSS, sequential)
+//! cargo test --test integration_tests --features k8s_tests,testing -- --test-threads=1
+//!
+//! # Specific test
+//! cargo test --test integration_tests --features testing test_centralized_insecure
+//!
+//! # Via Makefile
+//! make test-isolated-integration
+//! ```
 
 use anyhow::Result;
 use futures::future::join_all;
@@ -89,6 +193,20 @@ fn create_file_storage(
 }
 
 /// Helper to setup isolated centralized KMS for CLI testing (without backup vault)
+///
+/// # Arguments
+/// * `test_name` - Test identifier for logging/debugging (e.g., "centralized_insecure")
+///
+/// # Returns
+/// * `TempDir` - Isolated temporary directory with test material (auto-cleanup on drop)
+/// * `ServerHandle` - Running KMS server (auto-shutdown on drop)
+/// * `PathBuf` - Path to generated CLI config file (for --config flag)
+///
+/// # Example
+/// ```no_run
+/// let (material_dir, _server, config_path) =
+///     setup_isolated_centralized_cli_test("my_test").await?;
+/// ```
 async fn setup_isolated_centralized_cli_test(
     test_name: &str,
 ) -> Result<(TempDir, ServerHandle, PathBuf)> {
@@ -219,6 +337,21 @@ object_folder = "PUB"
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing (without PRSS / backup vault)
+///
+/// # Arguments
+/// * `test_name` - Test identifier for logging/debugging (e.g., "threshold_crs")
+/// * `party_count` - Number of parties in threshold cluster (typically 4)
+///
+/// # Returns
+/// * `TempDir` - Isolated temporary directory with test material (auto-cleanup on drop)
+/// * `HashMap<u32, ServerHandle>` - Map of running KMS servers (party_id -> ServerHandle)
+/// * `PathBuf` - Path to generated CLI config file (for --config flag)
+///
+/// # Example
+/// ```no_run
+/// let (material_dir, _servers, config_path) =
+///     setup_isolated_threshold_cli_test("my_test", 4).await?;
+/// ```
 async fn setup_isolated_threshold_cli_test(
     test_name: &str,
     party_count: usize,
@@ -228,6 +361,33 @@ async fn setup_isolated_threshold_cli_test(
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing with PRSS enabled
+///
+/// # Arguments
+/// * `test_name` - Test identifier for logging/debugging (e.g., "threshold_prss_keygen")
+/// * `party_count` - Number of parties in threshold cluster (typically 4)
+///
+/// # Returns
+/// * `TempDir` - Isolated temporary directory with PRSS material (auto-cleanup on drop)
+/// * `HashMap<u32, ServerHandle>` - Map of KMS servers with PRSS initialized
+/// * `PathBuf` - Path to generated CLI config file (for --config flag)
+///
+/// # Note
+/// Requires `k8s_tests` feature. Tests using this must be marked with:
+/// - `#[serial]` - Sequential execution required (PRSS network coordination)
+/// - `#[cfg_attr(not(feature = "k8s_tests"), ignore)]` - Only runs in K8s CI
+///
+/// # Example
+/// ```no_run
+/// #[tokio::test]
+/// #[serial]
+/// #[cfg_attr(not(feature = "k8s_tests"), ignore)]
+/// async fn test_prss_feature() -> Result<()> {
+///     let (material_dir, _servers, config_path) =
+///         setup_isolated_threshold_cli_test_with_prss("my_prss_test", 4).await?;
+///     // Run PRSS operations
+///     Ok(())
+/// }
+/// ```
 #[cfg(feature = "k8s_tests")]
 async fn setup_isolated_threshold_cli_test_with_prss(
     test_name: &str,
@@ -253,6 +413,24 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
 }
 
 /// Helper to setup isolated threshold KMS for CLI testing with Default FHE parameters
+///
+/// # Arguments
+/// * `test_name` - Test identifier for logging/debugging (e.g., "threshold_default")
+/// * `party_count` - Number of parties in threshold cluster (typically 4)
+///
+/// # Returns
+/// * `TempDir` - Isolated temporary directory with test material (auto-cleanup on drop)
+/// * `HashMap<u32, ServerHandle>` - Map of running KMS servers with Default FHE params
+/// * `PathBuf` - Path to generated CLI config file (for --config flag)
+///
+/// # Note
+/// Uses Default FHE parameters (production-like, slower than Test params)
+///
+/// # Example
+/// ```no_run
+/// let (material_dir, _servers, config_path) =
+///     setup_isolated_threshold_cli_test_default("my_test", 4).await?;
+/// ```
 async fn setup_isolated_threshold_cli_test_default(
     test_name: &str,
     party_count: usize,

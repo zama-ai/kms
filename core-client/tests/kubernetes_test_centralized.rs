@@ -1,3 +1,62 @@
+//! Kubernetes Cluster Integration Tests - Centralized Mode
+//!
+//! Tests CLI functionality against a real KMS cluster running in Kubernetes (kind).
+//! These tests verify end-to-end functionality in a production-like environment.
+//!
+//! ## Purpose
+//!
+//! Unlike isolated tests (which use in-process native servers), these tests:
+//! - Connect to actual KMS pods running in Kubernetes cluster
+//! - Test real network communication and service discovery
+//! - Verify CLI works with production-like deployment
+//! - Validate Kubernetes-specific configurations
+//!
+//! ## Test Coverage
+//!
+//! **Centralized Mode Tests:**
+//! - `k8s_test_centralized_insecure` - Keygen + decryption workflow
+//!
+//! ## Architecture
+//!
+//! **Cluster Setup:**
+//! - Uses kind (Kubernetes in Docker) cluster
+//! - KMS pods deployed via Helm charts
+//! - CLI connects via service endpoints
+//! - Config: `client_local_kind_centralized.toml`
+//!
+//! **Test Flow:**
+//! 1. Assumes KMS cluster is already running (deployed separately)
+//! 2. CLI connects to cluster via config file
+//! 3. Executes commands against real KMS services
+//! 4. Validates responses and behavior
+//!
+//! ## Running These Tests
+//!
+//! **Prerequisites:**
+//! ```bash
+//! # 1. Start kind cluster with KMS deployed
+//! make kind-start-centralized  # or equivalent deployment
+//!
+//! # 2. Verify cluster is ready
+//! kubectl get pods -n kms
+//! ```
+//!
+//! **Run tests:**
+//! ```bash
+//! # Run all k8s tests
+//! cargo test --test kubernetes_test_centralized --features k8s_tests
+//!
+//! # Via Makefile (if available)
+//! make test-k8s-centralized
+//! ```
+//!
+//! ## Configuration
+//!
+//! Tests use: `core-client/config/client_local_kind_centralized.toml`
+//! - Points to KMS service endpoints in kind cluster
+//! - Configured for local kind cluster access
+//! - Must match actual cluster deployment
+
 use kms_core_client::*;
 use std::path::Path;
 use std::path::PathBuf;

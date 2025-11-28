@@ -97,56 +97,57 @@ linting-package:
 # Isolated Test Targets (No Docker Required)
 .PHONY: test-isolated test-isolated-centralized test-isolated-threshold test-isolated-integration test-isolated-parallel test-isolated-nightly
 
-# Run all isolated tests (centralized + threshold + integration)
+# Run all isolated tests (31 tests: 16 library + 15 CLI integration)
 # Skips nightly and full_gen_tests for faster feedback
 test-isolated: generate-test-material-testing
-	@echo "Running all isolated tests (11 integration tests, skipping nightly)..."
-	@echo "Running centralized tests..."
+	@echo "Running all isolated tests (31 tests total, skipping nightly)..."
+	@echo "Running centralized library tests (5 tests)..."
 	cargo test --lib --features insecure,testing centralized::misc_tests_isolated -- --test-threads=1
 	cargo test --lib --features insecure,testing centralized::restore_from_backup_tests_isolated -- --test-threads=1
-	@echo "Running threshold tests..."
+	@echo "Running threshold library tests (8 tests)..."
 	cargo test --lib --features insecure,testing threshold::key_gen_tests_isolated -- --test-threads=1
 	cargo test --lib --features insecure,testing threshold::misc_tests_isolated -- --test-threads=1
 	cargo test --lib --features insecure,testing threshold::restore_from_backup_tests_isolated -- --test-threads=1
-	@echo "Running integration tests (skipping nightly and full_gen_tests)..."
-	cargo test --test integration_tests --features k8s_tests -- --skip nightly --skip full_gen_tests --skip k8s_ --skip isolated_test_example
+	@echo "Running CLI integration tests (15 tests: 4 centralized + 11 threshold)..."
+	cargo test --test integration_tests --features k8s_tests,testing -- --skip nightly --skip full_gen_tests --skip k8s_ --skip isolated_test_example
 
-# Run centralized isolated tests only
+# Run centralized library tests only (5 tests)
 test-isolated-centralized: generate-test-material-testing
-	@echo "Running centralized isolated tests..."
+	@echo "Running centralized library tests (5 tests)..."
 	cargo test --lib --features insecure,testing centralized::misc_tests_isolated -- --test-threads=1
 	cargo test --lib --features insecure,testing centralized::restore_from_backup_tests_isolated -- --test-threads=1
 
-# Run threshold isolated tests only
+# Run threshold library tests only (8 tests)
 test-isolated-threshold: generate-test-material-testing
-	@echo "Running threshold isolated tests..."
+	@echo "Running threshold library tests (8 tests)..."
 	cargo test --lib --features insecure,testing threshold::key_gen_tests_isolated -- --test-threads=1
 	cargo test --lib --features insecure,testing threshold::misc_tests_isolated -- --test-threads=1
 	cargo test --lib --features insecure,testing threshold::restore_from_backup_tests_isolated -- --test-threads=1
 
-# Run integration tests only (includes PRSS tests with k8s_tests feature)
+# Run CLI integration tests only (15 tests: 4 centralized + 11 threshold)
+# Includes PRSS tests (5 tests with k8s_tests feature)
 # Note: #[serial] attribute handles sequential execution for PRSS tests automatically
 # Skips nightly and full_gen_tests for faster feedback
 test-isolated-integration: generate-test-material-testing
-	@echo "Running integration tests (11 tests: 4 centralized + 7 threshold, skipping nightly)..."
-	cargo test --test integration_tests --features k8s_tests -- --skip nightly --skip full_gen_tests --skip k8s_ --skip isolated_test_example
+	@echo "Running CLI integration tests (15 tests: 4 centralized + 11 threshold)..."
+	cargo test --test integration_tests --features k8s_tests,testing -- --skip nightly --skip full_gen_tests --skip k8s_ --skip isolated_test_example
 
 # Run isolated tests with parallel execution (where safe - non-PRSS tests)
 test-isolated-parallel: generate-test-material-testing
 	@echo "Running isolated tests in parallel..."
 	cargo test --lib --features insecure,testing misc_tests_isolated -- --test-threads=4
 
-# Run nightly tests (ALL integration tests including nightly_* and full_gen_tests_*)
+# Run nightly tests (ALL 15 CLI integration tests including nightly_* and full_gen_tests_*)
 # These are slower, comprehensive tests that run in CI nightly
 test-isolated-nightly: generate-test-material-testing
-	@echo "Running ALL integration tests (no skips)..."
+	@echo "Running ALL CLI integration tests (15 tests, no skips)..."
 	@echo "Includes nightly tests:"
 	@echo "  - nightly_tests_threshold_sequential_crs"
 	@echo "  - nightly_tests_threshold_sequential_preproc_keygen"
 	@echo "  - full_gen_tests_default_threshold_sequential_crs"
 	@echo "  - full_gen_tests_default_threshold_sequential_preproc_keygen"
-	@echo "Plus all regular tests"
-	cargo test --test integration_tests --features k8s_tests -- --skip k8s_ --skip isolated_test_example
+	@echo "Plus all regular tests (4 centralized + 11 threshold)"
+	cargo test --test integration_tests --features k8s_tests,testing -- --skip k8s_ --skip isolated_test_example
 
 # Clean up test artifacts
 clean-test-artifacts:
