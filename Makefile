@@ -109,7 +109,7 @@ test-isolated: generate-test-material-testing
 	cargo test --lib --features insecure,testing threshold::misc_tests_isolated -- --test-threads=1
 	cargo test --lib --features insecure,testing threshold::restore_from_backup_tests_isolated -- --test-threads=1
 	@echo "Running integration tests (skipping nightly and full_gen_tests)..."
-	cargo test --test integration_test_backup --features k8s_tests -- --skip nightly --skip full_gen_tests --skip k8s_ --skip isolated_test_example
+	cargo test --test integration_tests --features k8s_tests -- --skip nightly --skip full_gen_tests --skip k8s_ --skip isolated_test_example
 
 # Run centralized isolated tests only
 test-isolated-centralized: generate-test-material-testing
@@ -129,7 +129,7 @@ test-isolated-threshold: generate-test-material-testing
 # Skips nightly and full_gen_tests for faster feedback
 test-isolated-integration: generate-test-material-testing
 	@echo "Running integration tests (11 tests: 4 centralized + 7 threshold, skipping nightly)..."
-	cargo test --test integration_test_backup --features k8s_tests -- --skip nightly --skip full_gen_tests --skip k8s_ --skip isolated_test_example
+	cargo test --test integration_tests --features k8s_tests -- --skip nightly --skip full_gen_tests --skip k8s_ --skip isolated_test_example
 
 # Run isolated tests with parallel execution (where safe - non-PRSS tests)
 test-isolated-parallel: generate-test-material-testing
@@ -146,7 +146,7 @@ test-isolated-nightly: generate-test-material-testing
 	@echo "  - full_gen_tests_default_threshold_sequential_crs"
 	@echo "  - full_gen_tests_default_threshold_sequential_preproc_keygen"
 	@echo "Plus all regular tests"
-	cargo test --test integration_test_backup --features k8s_tests -- --skip k8s_ --skip isolated_test_example
+	cargo test --test integration_tests --features k8s_tests -- --skip k8s_ --skip isolated_test_example
 
 # Clean up test artifacts
 clean-test-artifacts:
