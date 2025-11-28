@@ -13,6 +13,11 @@ use path_absolutize::Absolutize;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
+#[cfg(feature = "slow_tests")]
+use anyhow::anyhow;
+#[cfg(feature = "slow_tests")]
+use tracing::debug;
+
 #[derive(Parser)]
 #[command(name = "generate-test-material")]
 #[command(about = "Pre-generates test material for KMS tests")]
@@ -133,17 +138,27 @@ async fn generate_all_material(output_dir: &Path, force: bool) -> Result<()> {
 
 /// Generate testing material (fast, small keys)
 async fn generate_testing_material(output_dir: &Path, force: bool) -> Result<()> {
+    use tokio::fs;
+
     info!("Generating testing material...");
+
+    let testing_dir = output_dir.join("testing");
 
     if !force && testing_material_exists(output_dir).await? {
         info!("Testing material already exists, skipping generation");
         return Ok(());
     }
 
-    // Generate testing material using existing KMS functions
-    ensure_testing_material_exists(Some(output_dir)).await;
+    // Create testing subdirectory
+    fs::create_dir_all(&testing_dir).await?;
 
-    info!("Testing material generated successfully");
+    // Generate testing material using existing KMS functions
+    ensure_testing_material_exists(Some(&testing_dir)).await;
+
+    info!(
+        "Testing material generated successfully at: {}",
+        testing_dir.display()
+    );
     Ok(())
 }
 
@@ -315,11 +330,18 @@ async fn material_exists(output_dir: &Path) -> Result<bool> {
 
 /// Check if testing material exists
 async fn testing_material_exists(output_dir: &Path) -> Result<bool> {
-    // Check for key indicators of testing material
-    let indicators = ["tmp", "keys", "PUB", "PRIV", "CLIENT"];
+    // Check for testing subdirectory with key indicators
+    let testing_dir = output_dir.join("testing");
+
+    if !testing_dir.exists() {
+        return Ok(false);
+    }
+
+    // Check for key indicators of testing material in subdirectory
+    let indicators = ["PUB", "PRIV", "CLIENT"];
 
     for indicator in &indicators {
-        let path = output_dir.join(indicator);
+        let path = testing_dir.join(indicator);
         if path.exists() {
             return Ok(true);
         }
@@ -330,9 +352,24 @@ async fn testing_material_exists(output_dir: &Path) -> Result<bool> {
 
 /// Check if default material exists
 async fn default_material_exists(output_dir: &Path) -> Result<bool> {
-    // Default material typically has the same structure as testing material
-    // but with different key sizes and parameters
-    testing_material_exists(output_dir).await
+    // Check for default subdirectory with key indicators
+    let default_dir = output_dir.join("default");
+
+    if !default_dir.exists() {
+        return Ok(false);
+    }
+
+    // Check for key indicators of default material in subdirectory
+    let indicators = ["PUB", "PRIV", "CLIENT"];
+
+    for indicator in &indicators {
+        let path = default_dir.join(indicator);
+        if path.exists() {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 /// Validate directory structure
@@ -354,22 +391,82 @@ async fn validate_directory_structure(
 }
 
 /// Copy default material to output directory
+///
+/// Default material is generated to the workspace root (None path) by ensure_default_material_exists.
+/// This function copies it to the specified output directory under a 'default' subdirectory.
 #[cfg(feature = "slow_tests")]
-async fn copy_default_material_to_output(_output_dir: &Path) -> Result<()> {
-    // The ensure_default_material_exists function generates to a default location
-    // We need to copy it to our specified output directory
-    // This is a placeholder - the actual implementation would depend on
-    // where ensure_default_material_exists generates the material
+async fn copy_default_material_to_output(output_dir: &Path) -> Result<()> {
+    use tokio::fs;
 
     info!("Copying default material to output directory...");
 
-    // TODO: Implement actual copying logic based on where default material is generated
-    // This might involve:
-    // 1. Finding the default generation location
-    // 2. Copying all generated files to output_dir
-    // 3. Preserving directory structure
+    // Default material is generated to workspace root (where cargo is run from)
+    let current = std::env::current_dir()?;
+    let workspace_root = current
+        .parent()
+        .ok_or_else(|| anyhow!("Cannot find workspace root"))?
+        .parent()
+        .ok_or_else(|| anyhow!("Cannot find workspace root parent"))?
+        .to_path_buf();
+
+    // Create default subdirectory in output
+    let default_output = output_dir.join("default");
+    fs::create_dir_all(&default_output).await?;
+
+    // Storage directories to copy
+    let storage_dirs = ["PUB", "PRIV", "CLIENT", "KEYS"];
+    let mut copied_count = 0;
+
+    for storage_type in &storage_dirs {
+        let source = workspace_root.join(storage_type);
+        if source.exists() {
+            let dest = default_output.join(storage_type);
+            copy_dir_recursive(&source, &dest).await?;
+            info!("Copied {} to default material", storage_type);
+            copied_count += 1;
+        } else {
+            debug!("Skipping {} (does not exist)", storage_type);
+        }
+    }
+
+    if copied_count == 0 {
+        warn!("No default material found to copy. Ensure ensure_default_material_exists() ran successfully.");
+    } else {
+        info!(
+            "Successfully copied {} storage directories to default material",
+            copied_count
+        );
+    }
 
     Ok(())
+}
+
+/// Recursively copy a directory and all its contents
+#[cfg(feature = "slow_tests")]
+fn copy_dir_recursive<'a>(
+    src: &'a Path,
+    dst: &'a Path,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+    Box::pin(async move {
+        use tokio::fs;
+
+        fs::create_dir_all(dst).await?;
+        let mut entries = fs::read_dir(src).await?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let file_type = entry.file_type().await?;
+            let src_path = entry.path();
+            let dst_path = dst.join(entry.file_name());
+
+            if file_type.is_dir() {
+                copy_dir_recursive(&src_path, &dst_path).await?;
+            } else if file_type.is_file() {
+                fs::copy(&src_path, &dst_path).await?;
+            }
+        }
+
+        Ok(())
+    })
 }
 
 #[cfg(not(feature = "slow_tests"))]

@@ -106,7 +106,29 @@ impl TestMaterialSpec {
         }
     }
 
+    /// Create specification for centralized test with Default parameters
+    ///
+    /// Uses production-like key sizes (MaterialType::Default).
+    /// **Requires:** Pre-generated default material via `make generate-test-material-all`
+    pub fn centralized_default() -> Self {
+        let mut spec = Self::centralized_basic();
+        spec.material_type = MaterialType::Default;
+        spec
+    }
+
+    /// Create specification for threshold test with Default parameters
+    ///
+    /// Uses production-like key sizes (MaterialType::Default).
+    /// **Requires:** Pre-generated default material via `make generate-test-material-all`
+    pub fn threshold_default(party_count: usize) -> Self {
+        let mut spec = Self::threshold_basic(party_count);
+        spec.material_type = MaterialType::Default;
+        spec
+    }
+
     /// Create specification for production-like testing
+    ///
+    /// **Deprecated:** Use `centralized_default()` or `threshold_default()` instead.
     pub fn production_like(party_count: Option<usize>) -> Self {
         let mut spec = if let Some(count) = party_count {
             Self::threshold_basic(count)
