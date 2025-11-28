@@ -277,7 +277,7 @@ service CoreServiceEndpoint {
   // * The `request_id` in `request` can be used to retrieve the result of the CRS generation again in the future. However there is no guarantee on how long the result will be stored.
   rpc GetCrsGenResult(kms.v1.RequestId) returns (kms.v1.CrsGenResult);
 
-  // Contructs a new MPC context.
+  // Constructs a new MPC context.
   //
   // That is, updates the internal state and configuration files to support a new MPC context.
   //
@@ -291,7 +291,7 @@ service CoreServiceEndpoint {
   // * The `context_id` in `request` now represents a new MPC context.
   rpc NewMpcContext(kms.v1.NewMpcContextRequest) returns (kms.v1.Empty);
 
-  // Destroyes an MPC context by removing it from memory and storage.
+  // Destroys an MPC context by removing it from memory and storage.
   // Care must be taken to ensure that the currently active MPC context is not destroyed as the KMS is agnostic to which context is active and which is not.
   //
   // # Parameters
@@ -308,7 +308,7 @@ service CoreServiceEndpoint {
 
   rpc GetResharingResult(kms.v1.RequestId) returns (kms.v1.ResharingResultResponse);
 
-  // Contructs a new custodian context.
+  // Constructs a new custodian context.
   //
   // That is, updates the internal state and configuration files to start using a new custodian context.
   // Internally the KMS will sample a backup key pair and immediately construct a backup based on this.
