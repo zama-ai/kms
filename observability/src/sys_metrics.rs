@@ -1,8 +1,6 @@
-use std::time::Duration;
-
-use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
-
 use crate::metrics::METRICS;
+use std::time::Duration;
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Result<()> {
     // Only fail for info we'll actually poll later on
@@ -11,13 +9,13 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
         .with_memory(MemoryRefreshKind::nothing().with_ram());
     let mut system = sysinfo::System::new_with_specifics(specifics);
 
-    let num_cpus = system.cpus().len() as f64;
+    let num_cpus = system.cpus().len();
 
     let total_ram = system.total_memory();
     let free_ram = system.free_memory();
 
     tracing::info!("Starting system metrics collection...\n Running on {} CPUs. Total memory: {} bytes, Free memory: {} bytes.",
-        num_cpus,  total_ram, free_ram);
+        num_cpus, total_ram, free_ram);
 
     let mut networks = sysinfo::Networks::new_with_refreshed_list();
 
@@ -27,7 +25,7 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
         loop {
             // Update CPU metrics
             system.refresh_specifics(specifics);
-            let cpus_load_avg = System::load_average().one / num_cpus;
+            let cpus_load_avg = System::load_average().one / num_cpus as f64;
 
             tracing::debug!("CPU Load Average within 1 min {cpus_load_avg}");
 
