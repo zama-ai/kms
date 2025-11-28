@@ -16,6 +16,7 @@ pub mod large_execution {
 }
 pub mod online {
     pub mod malicious_gen_bits;
+    pub mod malicious_reshare;
     pub mod preprocessing {
         pub mod orchestration {
             #[cfg(feature = "extension_degree_4")]
