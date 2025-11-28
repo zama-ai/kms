@@ -1,15 +1,16 @@
 use crate::s3_operations::fetch_elements;
 use crate::{
-    dummy_domain, CmdConfig, CoreClientConfig, SharedKeyGenParameters,
-    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+    dummy_domain, CmdConfig, CoreClientConfig, PartialKeyGenPreprocParameters,
+    SharedKeyGenParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
 };
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
-use kms_grpc::kms::v1::{FheParameter, KeyGenResult};
+use kms_grpc::identifiers::EpochId;
+use kms_grpc::kms::v1::{FheParameter, KeyGenPreprocResult, KeyGenResult};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::solidity_types::KeygenVerification;
-use kms_grpc::RequestId;
+use kms_grpc::{ContextId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
 use kms_lib::engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY};
@@ -318,4 +319,171 @@ pub(crate) fn check_standard_keyset_ext_signature(
             "External signature verification failed for keygen as it does not contain the right address!"
         ))
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn do_preproc(
+    internal_client: &mut Client,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    rng: &mut AesRng,
+    cmd_conf: &CmdConfig,
+    num_parties: usize,
+    fhe_params: FheParameter,
+    context_id: Option<&ContextId>,
+    epoch_id: Option<&EpochId>,
+) -> anyhow::Result<RequestId> {
+    let req_id = RequestId::new_random(rng);
+
+    let max_iter = cmd_conf.max_iter;
+    // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
+    // this function is only used for testing.
+    let domain = dummy_domain();
+    let pp_req = internal_client.preproc_request(
+        &req_id,
+        Some(fhe_params),
+        context_id,
+        epoch_id,
+        None,
+        &domain,
+    )?; //TODO keyset config
+
+    // make parallel requests by calling insecure keygen in a thread
+    let mut req_tasks = JoinSet::new();
+
+    for (_party_id, ce) in core_endpoints.iter() {
+        let req_cloned = pp_req.clone();
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .key_gen_preproc(tonic::Request::new(req_cloned))
+                .await
+        });
+    }
+
+    let mut req_response_vec = Vec::new();
+    while let Some(inner) = req_tasks.join_next().await {
+        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+    }
+    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+
+    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    for response in responses {
+        // this part also verifies the signature
+        internal_client.process_preproc_response(&req_id, &domain, &response)?;
+    }
+
+    Ok(req_id)
+}
+
+pub(crate) async fn do_partial_preproc(
+    internal_client: &mut Client,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    rng: &mut AesRng,
+    cmd_conf: &CmdConfig,
+    num_parties: usize,
+    fhe_params: FheParameter,
+    preproc_params: &PartialKeyGenPreprocParameters,
+) -> anyhow::Result<RequestId> {
+    let req_id = RequestId::new_random(rng);
+
+    let max_iter = cmd_conf.max_iter;
+    // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
+    // this function is only used for testing.
+    let domain = dummy_domain();
+    let pp_req = internal_client.partial_preproc_request(
+        &req_id,
+        Some(fhe_params),
+        preproc_params.context_id.as_ref(),
+        preproc_params.epoch_id.as_ref(),
+        None,
+        &domain,
+        Some(kms_grpc::kms::v1::PartialKeyGenPreprocParams {
+            percentage_offline: preproc_params.percentage_offline,
+            store_dummy_preprocessing: preproc_params.store_dummy_preprocessing,
+        }),
+    )?;
+
+    // make parallel requests by calling insecure keygen in a thread
+    let mut req_tasks = JoinSet::new();
+
+    for (_party_id, ce) in core_endpoints.iter() {
+        let req_cloned = pp_req.clone();
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .partial_key_gen_preproc(tonic::Request::new(req_cloned))
+                .await
+        });
+    }
+
+    let mut req_response_vec = Vec::new();
+    while let Some(inner) = req_tasks.join_next().await {
+        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+    }
+    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
+
+    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    for response in responses {
+        internal_client.process_preproc_response(&req_id, &domain, &response)?;
+    }
+
+    Ok(req_id)
+}
+
+pub(crate) async fn get_preproc_keygen_responses(
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    request_id: RequestId,
+    max_iter: usize,
+) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
+    let mut resp_tasks = JoinSet::new();
+    //We use enumerate to be able to sort the responses so they are determinstic for a given config
+    for (core_id, client) in core_endpoints.iter() {
+        let mut client = client.clone();
+        let core_id = *core_id; // Copy the key so it is owned in the async block
+        resp_tasks.spawn(async move {
+            // Sleep to give the server some time to complete preprocessing
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+            ))
+            .await;
+
+            let mut response = client
+                .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
+                .await;
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(tokio::time::Duration::from_millis(
+                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                ))
+                .await;
+                // do at most max_iter retries
+                assert!(
+                    ctr < max_iter,
+                    "timeout while waiting for preprocessing after {max_iter} retries."
+                );
+                ctr += 1;
+                response = client
+                    .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
+                    .await;
+            }
+
+            (core_id, request_id, response.unwrap().into_inner())
+        });
+    }
+    let mut resp_response_vec = Vec::new();
+    while let Some(resp) = resp_tasks.join_next().await {
+        let (core_id, resp_request_id, resp_res) = resp?;
+        assert_eq!(request_id, resp_request_id);
+        // any failures that happen will panic here
+        resp_response_vec.push((core_id, resp_res));
+    }
+    resp_response_vec.sort_by_key(|(id, _)| *id);
+    let resp_response_vec: Vec<_> = resp_response_vec
+        .into_iter()
+        .map(|(_, resp)| resp)
+        .collect();
+    assert_eq!(resp_response_vec.len(), core_endpoints.len());
+    Ok(resp_response_vec)
 }
