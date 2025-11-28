@@ -458,7 +458,7 @@ pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
     }
 }
 
-/// Validate that a exists
+/// Validate that a backup exists
 pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) -> bool {
     let mut backup_exists = true;
     if amount_parties == 1 {
