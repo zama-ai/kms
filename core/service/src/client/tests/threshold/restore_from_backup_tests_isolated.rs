@@ -1,4 +1,19 @@
-//! Isolated versions of threshold backup tests
+//! Isolated threshold backup and restore tests
+//!
+//! These tests use isolated test material (TestMaterialManager). Each test runs
+//! in its own temporary directory with pre-generated cryptographic material.
+//!
+//! ## Tests Included
+//! - DKG backup and restore flow
+//! - Auto-backup after server restart
+//! - CRS backup and restore flow
+//!
+//! ## Key Features
+//! - No Docker dependency
+//! - Each test uses isolated temporary directory
+//! - Pre-generated material copied per test
+//! - Native KMS servers spawned in-process
+//! - Automatic cleanup via RAII (Drop trait)
 
 use crate::client::test_tools::{domain_to_msg, setup_threshold_isolated, ThresholdTestConfig};
 #[cfg(feature = "insecure")]
@@ -91,7 +106,21 @@ async fn setup_isolated_threshold_backup_test(
     Ok((material_dir, servers, clients))
 }
 
-// NOTE: Requires 'insecure' feature: cargo test --features insecure
+/// Test threshold DKG backup and restore flow.
+///
+/// Generates two threshold FHE keys, deletes them from private storage on all parties,
+/// restores from backup, and verifies restoration succeeded. Tests the complete
+/// backup/restore cycle for threshold key material.
+///
+/// **Flow:**
+/// 1. Generate two keys using insecure DKG
+/// 2. Delete both keys from private storage (all parties)
+/// 3. Verify deletion
+/// 4. Restore from backup (all parties)
+/// 5. Verify restoration (checks FheKeyInfo exists)
+///
+/// **Requires:** `insecure` feature flag
+/// **Run with:** `cargo test --lib --features insecure,testing nightly_test_insecure_threshold_dkg_backup_isolated`
 #[tokio::test]
 #[cfg(feature = "insecure")]
 async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
@@ -165,7 +194,20 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
     Ok(())
 }
 
-// NOTE: Requires 'insecure' feature: cargo test --features insecure
+/// Test threshold auto-backup after server restart.
+///
+/// Generates a threshold FHE key, shuts down servers, restarts them with the same
+/// storage, and verifies that backup was automatically created on restart. Tests
+/// the auto-backup mechanism that protects against key loss.
+///
+/// **Flow:**
+/// 1. Generate key using insecure DKG
+/// 2. Shutdown all servers
+/// 3. Restart servers with same storage
+/// 4. Verify backup was auto-created (checks FheKeyInfo in backup storage)
+///
+/// **Requires:** `insecure` feature flag
+/// **Run with:** `cargo test --lib --features insecure,testing nightly_test_insecure_threshold_autobackup_after_deletion_isolated`
 #[tokio::test]
 #[cfg(feature = "insecure")]
 async fn nightly_test_insecure_threshold_autobackup_after_deletion_isolated() -> Result<()> {
@@ -232,6 +274,21 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion_isolated() ->
     Ok(())
 }
 
+/// Test threshold CRS backup and restore flow.
+///
+/// Generates CRS (Common Reference String) on all parties, deletes it from private
+/// storage, restores from backup, and verifies restoration. Tests the complete
+/// backup/restore cycle for CRS material.
+///
+/// **Flow:**
+/// 1. Generate CRS on all parties
+/// 2. Wait for CRS generation to complete
+/// 3. Delete CRS from private storage (all parties)
+/// 4. Verify deletion
+/// 5. Restore from backup (all parties)
+/// 6. Verify both backup and restored CRS exist
+///
+/// **Run with:** `cargo test --lib --features testing test_insecure_threshold_crs_backup_isolated`
 #[tokio::test]
 async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
     use kms_grpc::kms::v1::CrsGenRequest;
