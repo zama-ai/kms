@@ -1,3 +1,69 @@
+//! Kubernetes Cluster Integration Tests - Threshold Mode
+//!
+//! Tests CLI functionality against a real threshold KMS cluster running in Kubernetes (kind).
+//! These tests verify end-to-end threshold cryptography in a production-like environment.
+//!
+//! ## Purpose
+//!
+//! Unlike isolated tests (which use in-process native servers), these tests:
+//! - Connect to actual threshold KMS pods (multiple parties) in Kubernetes
+//! - Test real distributed MPC operations across network
+//! - Verify CLI works with production-like threshold deployment
+//! - Validate Kubernetes-specific threshold configurations
+//! - Test actual party-to-party communication
+//!
+//! ## Test Coverage
+//!
+//! **Threshold Mode Tests:**
+//! - `k8s_test_threshold_insecure` - Distributed keygen + decryption workflow
+//!
+//! ## Architecture
+//!
+//! **Cluster Setup:**
+//! - Uses kind (Kubernetes in Docker) cluster
+//! - Multiple KMS pods (typically 4 parties) deployed via Helm charts
+//! - Each party runs as separate pod with own storage
+//! - CLI connects to all parties via service endpoints
+//! - Config: `client_local_kind_threshold.toml`
+//!
+//! **Threshold Flow:**
+//! 1. Assumes threshold KMS cluster is already running (all parties deployed)
+//! 2. CLI connects to all parties via config file
+//! 3. Executes distributed operations (keygen, decryption) across parties
+//! 4. Validates MPC protocol execution and results
+//!
+//! ## Running These Tests
+//!
+//! **Prerequisites:**
+//! ```bash
+//! # 1. Start kind cluster with threshold KMS deployed (all parties)
+//! make kind-start-threshold  # or equivalent deployment
+//!
+//! # 2. Verify all parties are ready
+//! kubectl get pods -n kms
+//! # Should show multiple kms-core pods (e.g., kms-core-0, kms-core-1, kms-core-2, kms-core-3)
+//!
+//! # 3. Verify party communication
+//! kubectl logs -n kms kms-core-0 | grep "Connected to peer"
+//! ```
+//!
+//! **Run tests:**
+//! ```bash
+//! # Run all k8s threshold tests
+//! cargo test --test kubernetes_test_threshold --features k8s_tests
+//!
+//! # Via Makefile (if available)
+//! make test-k8s-threshold
+//! ```
+//!
+//! ## Configuration
+//!
+//! Tests use: `core-client/config/client_local_kind_threshold.toml`
+//! - Points to all party endpoints in kind cluster
+//! - Configured for local kind cluster access
+//! - Must list all parties (typically 4)
+//! - Must match actual cluster deployment
+
 use kms_core_client::*;
 use std::path::Path;
 use std::path::PathBuf;
