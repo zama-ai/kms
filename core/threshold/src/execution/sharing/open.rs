@@ -578,7 +578,7 @@ pub(crate) mod test {
         ErrorCorrect, Invert, Ring, RingWithExceptionalSequence,
     };
     use crate::execution::runtime::party::{Role, TwoSetsRole, TwoSetsThreshold};
-    use crate::execution::runtime::sessions::base_session::TwoSetsBaseSession;
+    use crate::execution::runtime::sessions::base_session::{BaseSession, TwoSetsBaseSession};
     use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::execution::runtime::sessions::small_session::SmallSession;
     use crate::execution::sharing::open::ExternalOpeningInfo;
@@ -896,7 +896,9 @@ pub(crate) mod test {
         // Set 1 will open one secret to each of the parties in set 2
         let num_secrets = num_parties_set_2;
 
-        let mut task_honest = |session: TwoSetsBaseSession| async move {
+        let mut task_honest = |session: TwoSetsBaseSession,
+                               _set_1_session: Option<BaseSession>,
+                               _set_2_session: Option<BaseSession>| async move {
             test_robust_open_external_task::<_, Z>(
                 num_secrets,
                 num_parties_set_1,
@@ -906,7 +908,10 @@ pub(crate) mod test {
             .await
         };
 
-        let mut task_malicious = |session: TwoSetsBaseSession, malicious_robust_open: RO| async move {
+        let mut task_malicious = |session: TwoSetsBaseSession,
+                                  _set_1_session: Option<BaseSession>,
+                                  _set_2_session: Option<BaseSession>,
+                                  malicious_robust_open: RO| async move {
             test_robust_open_external_task::<_, Z>(
                 num_secrets,
                 num_parties_set_1,

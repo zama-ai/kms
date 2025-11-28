@@ -89,14 +89,13 @@ pub mod tests_and_benches {
         let roles_set_2 = generate_fixed_roles(parties_set_2);
         let test_runtime_set_2: DistributedTestRuntime<Z, Role, EXTENSION_DEGREE> =
             DistributedTestRuntime::new(roles_set_2, threshold.threshold_set_2, network_mode, None);
-        let session_id = SessionId::from(1);
 
         let mut tasks = JoinSet::new();
         for party in roles {
             // Create distinct RNG seed per set
             let rng_seed = get_seed_for_two_sets_role(&party);
             let session = test_runtime_two_sets.base_session_for_party(
-                session_id,
+                SessionId::from(1),
                 party,
                 Some(AesRng::seed_from_u64(rng_seed)),
             );
@@ -858,8 +857,17 @@ pub mod tests {
         malicious_role: HashSet<TwoSetsRole>,
         malicious_strategy: P,
         network_mode: NetworkMode,
-        task_honest: &mut dyn FnMut(GenericBaseSession<TwoSetsRole>) -> TaskOutputT,
-        task_malicious: &mut dyn FnMut(GenericBaseSession<TwoSetsRole>, P) -> TaskOutputM,
+        task_honest: &mut dyn FnMut(
+            GenericBaseSession<TwoSetsRole>,
+            Option<BaseSession>,
+            Option<BaseSession>,
+        ) -> TaskOutputT,
+        task_malicious: &mut dyn FnMut(
+            GenericBaseSession<TwoSetsRole>,
+            Option<BaseSession>,
+            Option<BaseSession>,
+            P,
+        ) -> TaskOutputM,
     ) -> (
         HashMap<TwoSetsRole, OutputT>,
         HashMap<TwoSetsRole, Result<OutputM, JoinError>>,
@@ -878,6 +886,17 @@ pub mod tests {
             intersection_size,
         );
 
+        let test_runtime_two_sets: DistributedTestRuntime<Z, TwoSetsRole, EXTENSION_DEGREE> =
+            DistributedTestRuntime::new(roles.clone(), threshold, network_mode, None);
+
+        let roles_set_1 = generate_fixed_roles(parties_set_1);
+        let test_runtime_set_1: DistributedTestRuntime<Z, Role, EXTENSION_DEGREE> =
+            DistributedTestRuntime::new(roles_set_1, threshold.threshold_set_1, network_mode, None);
+
+        let roles_set_2 = generate_fixed_roles(parties_set_2);
+        let test_runtime_set_2: DistributedTestRuntime<Z, Role, EXTENSION_DEGREE> =
+            DistributedTestRuntime::new(roles_set_2, threshold.threshold_set_2, network_mode, None);
+
         // Assers that all malicious roles are part of the roles set (especially since it'we have the Both variant)
         for malicious_role in malicious_role.iter() {
             assert!(
@@ -885,39 +904,77 @@ pub mod tests {
                 "malicious role {malicious_role:?} not part of roles set {roles:?}"
             );
         }
-        let test_runtime: DistributedTestRuntime<Z, TwoSetsRole, EXTENSION_DEGREE> =
-            DistributedTestRuntime::new(roles.clone(), threshold, network_mode, None);
 
-        let sid = SessionId::from(1);
-        let honest_sessions = roles.difference(&malicious_role).map(|party| {
-            let session = test_runtime.base_session_for_party(
-                sid,
-                *party,
-                Some(AesRng::seed_from_u64(get_seed_for_two_sets_role(party))),
+        let sid_two_sets = SessionId::from(1);
+        let sid_set_1 = SessionId::from(2);
+        let sid_set_2 = SessionId::from(3);
+        let sessions = roles.into_iter().map(|party| {
+            let seed = get_seed_for_two_sets_role(&party);
+            let session = test_runtime_two_sets.base_session_for_party(
+                sid_two_sets,
+                party,
+                Some(AesRng::seed_from_u64(seed)),
             );
-            (*party, session)
+
+            let (set_1_session, set_2_session) = match party {
+                TwoSetsRole::Set1(role) => (
+                    Some(test_runtime_set_1.base_session_for_party(
+                        sid_set_1,
+                        role,
+                        Some(AesRng::seed_from_u64(seed + 1)),
+                    )),
+                    None,
+                ),
+                TwoSetsRole::Set2(role) => (
+                    None,
+                    Some(test_runtime_set_2.base_session_for_party(
+                        sid_set_2,
+                        role,
+                        Some(AesRng::seed_from_u64(seed + 2)),
+                    )),
+                ),
+                TwoSetsRole::Both(dual_role) => (
+                    Some(test_runtime_set_1.base_session_for_party(
+                        sid_set_1,
+                        dual_role.role_set_1,
+                        Some(AesRng::seed_from_u64(seed + 1)),
+                    )),
+                    Some(test_runtime_set_2.base_session_for_party(
+                        sid_set_2,
+                        dual_role.role_set_2,
+                        Some(AesRng::seed_from_u64(seed + 2)),
+                    )),
+                ),
+            };
+            (party, session, set_1_session, set_2_session)
         });
 
-        let honest_tasks = honest_sessions
-            .map(|(party, session)| task_honest(session).map(move |output| (party, output)));
+        let (malicious_sessions, honest_sessions): (Vec<_>, Vec<_>) =
+            sessions.partition(|(party, _, _, _)| malicious_role.contains(party));
 
-        let malicious_sessions = malicious_role.iter().map(|party| {
-            let session = test_runtime.base_session_for_party(
-                sid,
-                *party,
-                Some(AesRng::seed_from_u64(get_seed_for_two_sets_role(party))),
-            );
-            (*party, session)
-        });
+        let honest_tasks =
+            honest_sessions
+                .into_iter()
+                .map(|(party, session, session_set_1, session_set_2)| {
+                    task_honest(session, session_set_1, session_set_2)
+                        .map(move |output| (party, output))
+                });
 
         // Spawn the malicious task in its own tokio task as it may panic
         let mut malicious_task = Vec::new();
-        malicious_sessions.into_iter().for_each(|(party, session)| {
-            malicious_task.push((
-                party,
-                tokio::spawn(task_malicious(session, malicious_strategy.clone())),
-            ));
-        });
+        malicious_sessions.into_iter().for_each(
+            |(party, session, session_set_1, session_set_2)| {
+                malicious_task.push((
+                    party,
+                    tokio::spawn(task_malicious(
+                        session,
+                        session_set_1,
+                        session_set_2,
+                        malicious_strategy.clone(),
+                    )),
+                ));
+            },
+        );
 
         let results_honest = tokio::task::JoinSet::from_iter(honest_tasks)
             .join_all()
