@@ -521,7 +521,7 @@ pub async fn file_backup_vault(
     }
 }
 
-/// Helpter method for tests to read teh plain custodian backup files without going through the Vault API, and hence decryption.
+/// Helper method for tests to read the plain custodian backup files without going through the Vault API, and hence decryption.
 pub async fn read_custodian_backup_files(
     amount_parties: usize,
     test_path: Option<&Path>,
