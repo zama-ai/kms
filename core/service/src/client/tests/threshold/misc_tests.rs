@@ -1,6 +1,8 @@
-use crate::client::test_tools::{
-    await_server_ready, check_port_is_closed, get_health_client, get_status,
-};
+//! Threshold miscellaneous tests - SHARED MATERIAL
+//!
+//! This file contains threshold tests that use shared test material.
+
+use crate::client::test_tools::{get_health_client, get_status};
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::tests::threshold::common::threshold_handles;
 use crate::consts::{
@@ -163,6 +165,7 @@ async fn test_threshold_health_endpoint_availability() {
     assert!(status.is_err(),);
 }
 
+// !!!!!!!!!!!!!
 /// Validate that dropping the server signal triggers the server to shut down
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
@@ -297,6 +300,7 @@ async fn test_threshold_shutdown() {
     check_port_is_closed(mpc_port).await;
     check_port_is_closed(service_port).await;
 }
+// !!!!!!!!!!!!!
 
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "slow_tests")]
