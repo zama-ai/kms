@@ -395,6 +395,16 @@
     (
         kms_core_version_min: "0.13.0",
         kms_core_module: "kms",
+        metadata: CrsGenMetadata((
+            test_filename: "crs_gen_metadata",
+            legacy_filename: "legacy_crs_gen_metadata",
+            state: 100,
+            max_num_bits: 2048,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "kms",
         metadata: TypedPlaintext((
             test_filename: "typed_plaintext",
             plaintext_bytes: [

@@ -23,7 +23,7 @@ use kms_0_13_0::cryptography::{
     },
 };
 use kms_0_13_0::engine::base::{
-    safe_serialize_hash_element_versioned, KeyGenMetadataInner, KmsFheKeyHandles,
+    safe_serialize_hash_element_versioned, CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
 };
 use kms_0_13_0::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_13_0::engine::threshold::service::ThresholdFheKeys;
@@ -32,7 +32,7 @@ use kms_0_13_0::vault::keychain::AppKeyBlob;
 use kms_grpc_0_13_0::{
     kms::v1::{CustodianContext, CustodianSetupMessage, TypedPlaintext},
     rpc_types::{PrivDataType, PubDataType, PublicKeyType, SignedPubDataHandleInternal},
-    solidity_types::KeygenVerification,
+    solidity_types::{CrsgenVerification, KeygenVerification},
     RequestId,
 };
 use rand::{RngCore, SeedableRng};
@@ -79,15 +79,15 @@ use backward_compatibility::parameters::{
     SwitchAndSquashCompressionParametersTest, SwitchAndSquashParametersTest,
 };
 use backward_compatibility::{
-    AppKeyBlobTest, BackupCiphertextTest, HybridKemCtTest, InternalCustodianContextTest,
-    InternalCustodianRecoveryOutputTest, InternalCustodianSetupMessageTest, KeyGenMetadataTest,
-    KmsFheKeyHandlesTest, OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest,
-    PrivateSigKeyTest, PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest,
-    RecoveryValidationMaterialTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest,
-    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
-    KMS_MODULE_NAME,
+    AppKeyBlobTest, BackupCiphertextTest, CrsGenMetadataTest, HybridKemCtTest,
+    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
+    InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest,
+    OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest,
+    PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    SigncryptionPayloadTest, SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS,
+    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
+    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
+    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 
 use kms_0_13_0::cryptography::signcryption::SigncryptionPayload;
@@ -291,6 +291,14 @@ const KEY_GEN_METADATA_TEST: KeyGenMetadataTest = KeyGenMetadataTest {
     test_filename: Cow::Borrowed("key_gen_metadata"),
     legacy_filename: Cow::Borrowed("legacy_key_gen_metadata"),
     state: 100,
+};
+
+// KMS test
+const CRS_GEN_METADATA_TEST: CrsGenMetadataTest = CrsGenMetadataTest {
+    test_filename: Cow::Borrowed("crs_gen_metadata"),
+    legacy_filename: Cow::Borrowed("legacy_crs_gen_metadata"),
+    state: 100,
+    max_num_bits: 2048,
 };
 
 // KMS test
@@ -532,8 +540,9 @@ impl KmsV0_13 {
         let crs_id: RequestId = RequestId::new_random(&mut rng);
         let digest = [12u8; 32].to_vec();
         let max_num_bits = CRS_GEN_METADATA_TEST.max_num_bits;
-        let sol_type = CrsgenVerification::new(crs_id, max_num_bits, digest.clone());
-        let external_signature = compute_eip712_signature(&sig_key, &sol_type, &dummy_domain())?;
+        let sol_type = CrsgenVerification::new(&crs_id, max_num_bits as usize, digest.clone());
+        let external_signature =
+            compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
         let current_crs_meta_data =
             CrsGenMetadata::new(crs_id, digest, max_num_bits, external_signature.clone());
 
@@ -1207,6 +1216,7 @@ impl KMSCoreVersion for V0_13 {
             KmsV0_13::gen_public_sig_key(&dir),
             KmsV0_13::gen_app_key_blob(&dir),
             KmsV0_13::gen_key_gen_metadata(&dir),
+            KmsV0_13::gen_crs_metadata(&dir),
             KmsV0_13::gen_typed_plaintext(&dir),
             KmsV0_13::gen_signcryption_payload(&dir),
             KmsV0_13::gen_signcryption_key(&dir),
