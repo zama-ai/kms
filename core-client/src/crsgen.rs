@@ -316,14 +316,17 @@ mod tests {
         );
 
         let max_num_bits = max_num_bits_from_crs(&crs);
-        let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
+        let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs)
+            .expect("serialization should succeed");
         let crs_sol_struct = CrsgenVerification::new(crs_id, max_num_bits, crs_digest);
 
         // sign with EIP712
-        let external_sig = compute_eip712_signature(&sk, &crs_sol_struct, &domain).unwrap();
+        let external_sig = compute_eip712_signature(&sk, &crs_sol_struct, &domain)
+            .expect("signature computation should succeed");
 
         // check that the signature verifies and unwraps without error
-        check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, &[addr]).unwrap();
+        check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, &[addr])
+            .expect("signature should be valid");
 
         // check that verification fails for a wrong address
         let wrong_address = alloy_primitives::address!("0EdA6bf26964aF942Eed9e03e53442D37aa960EE");

@@ -11,7 +11,6 @@ use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::solidity_types::KeygenVerification;
 use kms_grpc::RequestId;
 use kms_lib::client::client_wasm::Client;
-use kms_lib::conf;
 use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
 use kms_lib::engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY};
 use kms_lib::util::key_setup::test_tools::{load_material_from_storage, load_pk_from_storage};
@@ -163,8 +162,8 @@ pub(crate) async fn fetch_and_check_keygen(
         #[cfg(feature = "testing")]
         match cc_conf.cores[first_party_id - 1].config_path {
             Some(ref p) => {
-                let core_config: conf::CoreConfig =
-                    conf::init_conf(p.to_str().expect("expect core config path")).unwrap();
+                let core_config: kms_lib::conf::CoreConfig =
+                    kms_lib::conf::init_conf(p.to_str().expect("expect core config path")).unwrap();
                 core_config
                     .threshold
                     .expect("expect threshold config")
