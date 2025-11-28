@@ -1,4 +1,19 @@
-//! Isolated versions of centralized backup tests
+//! Isolated centralized backup and restore tests
+//!
+//! These tests use isolated test material (TestMaterialManager). Each test runs
+//! in its own temporary directory with pre-generated cryptographic material.
+//!
+//! ## Tests Included
+//! - DKG backup and restore flow
+//! - Auto-backup after server restart
+//! - CRS backup and restore flow (nightly)
+//!
+//! ## Key Features
+//! - No Docker dependency
+//! - Each test uses isolated temporary directory
+//! - Pre-generated material copied per test
+//! - Native KMS server spawned in-process
+//! - Automatic cleanup via RAII (Drop trait)
 
 use crate::client::test_tools::{domain_to_msg, setup_centralized_isolated};
 use crate::consts::{OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM};
@@ -195,6 +210,20 @@ async fn decrypt_and_verify_isolated(
     Ok(())
 }
 
+/// Test centralized DKG backup and restore flow.
+///
+/// Generates two FHE keys, deletes them from private storage, restores from backup,
+/// and verifies restoration by performing decryption. Tests the complete backup/restore
+/// cycle for centralized key material.
+///
+/// **Flow:**
+/// 1. Generate two keys using insecure DKG
+/// 2. Delete both keys from private storage
+/// 3. Verify deletion
+/// 4. Restore from backup
+/// 5. Verify restoration via decryption test
+///
+/// **Run with:** `cargo test --lib --features testing test_insecure_central_dkg_backup_isolated`
 #[tokio::test]
 async fn test_insecure_central_dkg_backup_isolated() -> Result<()> {
     let (material_dir, server, mut client) =
@@ -233,6 +262,19 @@ async fn test_insecure_central_dkg_backup_isolated() -> Result<()> {
     Ok(())
 }
 
+/// Test centralized auto-backup after server restart.
+///
+/// Generates an FHE key, shuts down server, restarts it with the same storage,
+/// and verifies that backup was automatically created on restart. Tests the
+/// auto-backup mechanism that protects against key loss.
+///
+/// **Flow:**
+/// 1. Generate key using insecure DKG
+/// 2. Shutdown server
+/// 3. Restart server with same storage
+/// 4. Verify backup was auto-created (checks FhePrivateKey in backup storage)
+///
+/// **Run with:** `cargo test --lib --features testing test_insecure_central_autobackup_after_deletion_isolated`
 #[tokio::test]
 async fn test_insecure_central_autobackup_after_deletion_isolated() -> Result<()> {
     let (material_dir, server, mut client) =

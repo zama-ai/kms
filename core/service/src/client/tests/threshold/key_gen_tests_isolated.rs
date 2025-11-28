@@ -1,4 +1,14 @@
-//! Isolated versions of threshold key generation tests
+//! Isolated threshold key generation tests
+//!
+//! These tests use isolated test material (TestMaterialManager). Each test runs
+//! in its own temporary directory with pre-generated cryptographic material.
+//!
+//! ## Key Features
+//! - No Docker dependency
+//! - Each test uses isolated temporary directory
+//! - Pre-generated material copied per test
+//! - Native KMS servers spawned in-process
+//! - Automatic cleanup via RAII (Drop trait)
 
 use crate::client::test_tools::{setup_threshold_isolated, ThresholdTestConfig};
 #[cfg(feature = "insecure")]
@@ -69,6 +79,13 @@ async fn setup_isolated_threshold_keygen_test(
     Ok((material_dir, servers, clients))
 }
 
+/// Test insecure threshold DKG with Test parameters.
+///
+/// Generates a threshold FHE key using insecure mode (no preprocessing) with
+/// Test parameters across 4 parties. Verifies key generation succeeded on all parties.
+///
+/// **Requires:** `insecure` feature flag
+/// **Run with:** `cargo test --lib --features insecure,testing test_insecure_dkg_isolated`
 #[tokio::test]
 #[cfg(feature = "insecure")]
 async fn test_insecure_dkg_isolated() -> Result<()> {
@@ -97,6 +114,16 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
     Ok(())
 }
 
+/// Test insecure threshold DKG with Default parameters.
+///
+/// Generates a threshold FHE key using insecure mode with Default parameters
+/// (larger keys, production-size) across 4 parties. Verifies key generation
+/// succeeded on all parties.
+///
+/// **Note:** Default parameters generate significantly larger keys than Test parameters.
+///
+/// **Requires:** `insecure` feature flag
+/// **Run with:** `cargo test --lib --features insecure,testing default_insecure_dkg_isolated`
 #[tokio::test]
 #[cfg(feature = "insecure")]
 async fn default_insecure_dkg_isolated() -> Result<()> {
