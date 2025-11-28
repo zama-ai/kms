@@ -55,7 +55,7 @@ on:
       nextest-test-threads:
         type: string
         required: false
-        default: '1'
+        default: '3'
     secrets:
       CODECOV_TOKEN:
         required: false
