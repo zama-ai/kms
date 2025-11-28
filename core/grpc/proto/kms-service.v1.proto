@@ -332,7 +332,7 @@ service CoreServiceEndpoint {
   // * The previous backup is still present but cannot be used directly.
   rpc NewCustodianContext(kms.v1.NewCustodianContextRequest) returns (kms.v1.Empty);
 
-  // Destroyes a custodian context (and its associated backup) by removing it from memory and storage.
+  // Destroys a custodian context (and its associated backup) by removing it from memory and storage.
   // This is only possible for a context which is not the currently active one. 
   //
   // # Parameters
