@@ -64,7 +64,7 @@ impl Vault {
     /// Method for removing an old custodian backup identified by `backup_id`.
     /// This is based on the id of the backup, and remove all the backed up information under `backup_id`.
     /// An error will be returned if the backup exists but could not be deleted or if `backup_id` is the _current_ backup id.
-    /// An info log is procuced for each data type that is not found in the backup.
+    /// An info log is produced for each data type that is not found in the backup.
     async fn remove_old_backup(&mut self, backup_id: &RequestId) -> anyhow::Result<()> {
         match self.keychain.as_ref() {
             Some(KeychainProxy::SecretSharing(secret_share_keychain)) => {
