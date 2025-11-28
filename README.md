@@ -66,7 +66,7 @@ For local development, the project can be built with:
 cargo build
 ```
 
-Typical testing can be done using
+Typical testing can be done using:
 ```bash
 cargo test -F testing
 ```
@@ -81,6 +81,12 @@ To run the full test-suite (which may take several hours) run the tests with the
 ```bash
 cargo test -F slow_tests
 ```
+
+**For detailed information on how tests work** (native isolated tests, test execution flow, writing new tests), see:
+- **CLI Integration Tests:** [`core-client/tests/integration_tests.rs`](./core-client/tests/integration_tests.rs) - Comprehensive module documentation with execution flow diagrams (centralized + threshold async task architecture)
+- **Library Test Examples:** [`core/service/src/client/tests/isolated_test_example.rs`](./core/service/src/client/tests/isolated_test_example.rs) - Example test patterns
+
+**Key insight:** Tests run native KMS servers as lightweight async tasks (via `tokio::spawn`), not Docker containers or separate OS threads. Threshold tests spawn multiple async tasks (one per party) that run concurrently on the tokio runtime.
 
 ### Running the KMS locally
 
