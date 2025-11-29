@@ -401,6 +401,63 @@ pub async fn setup_threshold<
     (server_handles, client_handles)
 }
 
+/// Configuration for optional threshold test setup parameters
+#[cfg(any(test, feature = "testing"))]
+#[derive(Default)]
+pub struct ThresholdTestConfig<'a> {
+    pub run_prss: bool,
+    pub rate_limiter_conf: Option<RateLimiterConfig>,
+    pub decryption_mode: Option<DecryptionMode>,
+    pub test_material_path: Option<&'a std::path::Path>,
+}
+
+/// Setup_threshold that supports isolated test material
+/// Note: The test_material_path in config is kept for API compatibility but not used.
+/// Tests should set up their own isolated material using TestMaterialManager before calling this.
+#[cfg(any(test, feature = "testing"))]
+pub async fn setup_threshold_isolated<
+    PubS: Storage + Clone + Sync + Send + 'static,
+    PrivS: Storage + Clone + Sync + Send + 'static,
+>(
+    threshold: u8,
+    pub_storage: Vec<PubS>,
+    priv_storage: Vec<PrivS>,
+    vaults: Vec<Option<Vault>>,
+    config: ThresholdTestConfig<'_>,
+) -> (
+    HashMap<u32, ServerHandle>,
+    HashMap<u32, CoreServiceEndpointClient<Channel>>,
+) {
+    let num_parties = priv_storage.len();
+
+    // Setup the threshold scheme
+    let server_handles = setup_threshold_no_client::<PubS, PrivS>(
+        threshold,
+        pub_storage,
+        priv_storage,
+        vaults,
+        config.run_prss,
+        config.rate_limiter_conf,
+        config.decryption_mode,
+    )
+    .await;
+
+    assert_eq!(server_handles.len(), num_parties);
+    let mut client_handles = HashMap::new();
+
+    for (i, server_handle) in &server_handles {
+        let url = format!(
+            "{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{}",
+            server_handle.service_port()
+        );
+        let uri = Uri::from_str(&url).unwrap();
+        let channel = connect_with_retry(uri).await;
+        client_handles.insert(*i, CoreServiceEndpointClient::new(channel));
+    }
+
+    (server_handles, client_handles)
+}
+
 /// Setup a client and a server running with non-persistent storage.
 pub async fn setup_centralized_no_client<
     PubS: Storage + Sync + Send + 'static,
@@ -430,6 +487,10 @@ pub async fn setup_centralized_no_client<
         rate_limiter_conf,
     )
     .await
+    .map_err(|e| {
+        eprintln!("Failed to create KMS: {:?}", e);
+        e
+    })
     .expect("Could not create KMS");
     let arc_kms = Arc::new(kms);
     let arc_kms_clone = Arc::clone(&arc_kms);
@@ -483,6 +544,37 @@ pub(crate) async fn setup_centralized<
     let uri = Uri::from_str(&url).unwrap();
     let channel = connect_with_retry(uri).await;
     let client = CoreServiceEndpointClient::new(channel);
+    (server_handle, client)
+}
+
+/// Centralized setup that supports isolated test material
+/// Note: The test_material_path parameter is kept for API compatibility but not used.
+/// Tests should set up their own isolated material using TestMaterialManager before calling this.
+#[cfg(any(test, feature = "testing"))]
+pub async fn setup_centralized_isolated<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+>(
+    pub_storage: PubS,
+    priv_storage: PrivS,
+    backup_vault: Option<Vault>,
+    rate_limiter_conf: Option<RateLimiterConfig>,
+    _test_material_path: Option<&std::path::Path>,
+) -> (
+    ServerHandle,
+    CoreServiceEndpointClient<tonic::transport::Channel>,
+) {
+    let server_handle =
+        setup_centralized_no_client(pub_storage, priv_storage, backup_vault, rate_limiter_conf)
+            .await;
+    let url = format!(
+        "{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{}",
+        server_handle.service_port
+    );
+    let uri = Uri::from_str(&url).unwrap();
+    let channel = connect_with_retry(uri).await;
+    let client = CoreServiceEndpointClient::new(channel);
+
     (server_handle, client)
 }
 
@@ -609,4 +701,34 @@ pub(crate) async fn get_status(
     });
     let response = health_client.check(request).await?;
     Ok(response.into_inner().status)
+}
+
+// ============================================================================
+// TEST UTILITIES FOR ISOLATED TESTS
+// ============================================================================
+
+/// Convert Eip712Domain to Eip712DomainMsg for gRPC requests
+#[cfg(any(test, feature = "testing"))]
+pub fn domain_to_msg(domain: &alloy_dyn_abi::Eip712Domain) -> kms_grpc::kms::v1::Eip712DomainMsg {
+    kms_grpc::kms::v1::Eip712DomainMsg {
+        name: domain
+            .name
+            .as_ref()
+            .map(|n| n.to_string())
+            .unwrap_or_default(),
+        version: domain
+            .version
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        chain_id: domain
+            .chain_id
+            .map(|id| id.to_string().into_bytes())
+            .unwrap_or_default(),
+        verifying_contract: domain
+            .verifying_contract
+            .map(|addr| addr.to_string())
+            .unwrap_or_default(),
+        salt: domain.salt.map(|s| s.to_vec()),
+    }
 }
