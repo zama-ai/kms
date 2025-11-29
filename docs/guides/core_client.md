@@ -427,7 +427,7 @@ Upon success, both the command to request to generate a CRS _and_ the command to
 
 #### Backup restoring
 
-If a backup vault is specified in the in the server configuration toml file, then all non-volatile private key material (i.e. what is stored in the private vault) is backed up to this location. This also means that it is possible to restore this content in case access to the private vault is lost, or that the private vault needs to be moved.
+If a backup vault is specified in the server configuration toml file, then all non-volatile private key material (i.e. what is stored in the private vault) is backed up to this location. This also means that it is possible to restore this content in case access to the private vault is lost, or that the private vault needs to be moved.
 This is done through the backup recovery command:
 
 ```{bash}
