@@ -123,11 +123,12 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
 /// **IMPORTANT:** Uses MaterialType::Default (production-like key sizes).
 /// **Requires:**
 /// - `insecure` feature flag
+/// - `slow_tests` feature flag (for default material generation)
 /// - Pre-generated default material: `make generate-test-material-all`
 ///
-/// **Run with:** `cargo test --lib --features insecure,testing default_insecure_dkg_isolated`
+/// **Run with:** `cargo test --lib --features insecure,testing,slow_tests default_insecure_dkg_isolated`
 #[tokio::test]
-#[cfg(feature = "insecure")]
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 async fn default_insecure_dkg_isolated() -> Result<()> {
     let party_count = 4;
 
