@@ -7,16 +7,11 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use kms_lib::util::key_setup::test_material_spec::{MaterialType, TestMaterialSpec};
 #[cfg(feature = "slow_tests")]
-use kms_lib::util::key_setup::test_tools::setup::ensure_default_material_exists;
+use kms_lib::util::key_setup::test_tools::setup::ensure_default_material_exists_to_path;
 use kms_lib::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use path_absolutize::Absolutize;
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
-
-#[cfg(feature = "slow_tests")]
-use anyhow::anyhow;
-#[cfg(feature = "slow_tests")]
-use tracing::debug;
 
 #[derive(Parser)]
 #[command(name = "generate-test-material")]
@@ -174,15 +169,21 @@ async fn generate_default_material(output_dir: &Path, force: bool) -> Result<()>
     // Generate default material using existing KMS functions
     #[cfg(feature = "slow_tests")]
     {
-        // Note: This requires the slow_tests feature to be enabled
-        ensure_default_material_exists().await;
+        use tokio::fs;
 
-        // Move generated material to output directory if needed
-        // The ensure_default_material_exists function generates to default location
-        // We may need to copy it to our specified output directory
-        copy_default_material_to_output(output_dir).await?;
+        let default_dir = output_dir.join("default");
 
-        info!("Default material generated successfully");
+        // Create default subdirectory
+        fs::create_dir_all(&default_dir).await?;
+
+        // Generate default material directly to the default subdirectory
+        // This matches the pattern used for testing material
+        ensure_default_material_exists_to_path(Some(&default_dir)).await;
+
+        info!(
+            "Default material generated successfully at: {}",
+            default_dir.display()
+        );
     }
 
     #[cfg(not(feature = "slow_tests"))]
@@ -241,8 +242,7 @@ async fn generate_material_for_spec(output_dir: &Path, spec: &TestMaterialSpec) 
         MaterialType::Default => {
             #[cfg(feature = "slow_tests")]
             {
-                ensure_default_material_exists().await;
-                copy_default_material_to_output(&spec_dir).await?;
+                ensure_default_material_exists_to_path(Some(&spec_dir)).await;
             }
             #[cfg(not(feature = "slow_tests"))]
             {
@@ -377,100 +377,33 @@ async fn validate_directory_structure(
     output_dir: &Path,
     errors: &mut Vec<&'static str>,
 ) -> Result<()> {
-    let required_dirs = ["tmp", "keys"];
+    // Check that testing and/or default directories have proper subdirectories
+    let testing_dir = output_dir.join("testing");
+    let default_dir = output_dir.join("default");
 
-    for dir_name in &required_dirs {
-        let dir_path = output_dir.join(dir_name);
-        if !dir_path.exists() {
-            errors.push("Missing required directory structure");
-            break;
-        }
-    }
+    let required_subdirs = ["PUB", "PRIV", "CLIENT"];
 
-    Ok(())
-}
-
-/// Copy default material to output directory
-///
-/// Default material is generated to the workspace root (None path) by ensure_default_material_exists.
-/// This function copies it to the specified output directory under a 'default' subdirectory.
-#[cfg(feature = "slow_tests")]
-async fn copy_default_material_to_output(output_dir: &Path) -> Result<()> {
-    use tokio::fs;
-
-    info!("Copying default material to output directory...");
-
-    // Default material is generated to workspace root (where cargo is run from)
-    let current = std::env::current_dir()?;
-    let workspace_root = current
-        .parent()
-        .ok_or_else(|| anyhow!("Cannot find workspace root"))?
-        .parent()
-        .ok_or_else(|| anyhow!("Cannot find workspace root parent"))?
-        .to_path_buf();
-
-    // Create default subdirectory in output
-    let default_output = output_dir.join("default");
-    fs::create_dir_all(&default_output).await?;
-
-    // Storage directories to copy
-    let storage_dirs = ["PUB", "PRIV", "CLIENT", "KEYS"];
-    let mut copied_count = 0;
-
-    for storage_type in &storage_dirs {
-        let source = workspace_root.join(storage_type);
-        if source.exists() {
-            let dest = default_output.join(storage_type);
-            copy_dir_recursive(&source, &dest).await?;
-            info!("Copied {} to default material", storage_type);
-            copied_count += 1;
-        } else {
-            debug!("Skipping {} (does not exist)", storage_type);
-        }
-    }
-
-    if copied_count == 0 {
-        warn!("No default material found to copy. Ensure ensure_default_material_exists() ran successfully.");
-    } else {
-        info!(
-            "Successfully copied {} storage directories to default material",
-            copied_count
-        );
-    }
-
-    Ok(())
-}
-
-/// Recursively copy a directory and all its contents
-#[cfg(feature = "slow_tests")]
-fn copy_dir_recursive<'a>(
-    src: &'a Path,
-    dst: &'a Path,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
-    Box::pin(async move {
-        use tokio::fs;
-
-        fs::create_dir_all(dst).await?;
-        let mut entries = fs::read_dir(src).await?;
-
-        while let Some(entry) = entries.next_entry().await? {
-            let file_type = entry.file_type().await?;
-            let src_path = entry.path();
-            let dst_path = dst.join(entry.file_name());
-
-            if file_type.is_dir() {
-                copy_dir_recursive(&src_path, &dst_path).await?;
-            } else if file_type.is_file() {
-                fs::copy(&src_path, &dst_path).await?;
+    // Validate testing directory if it exists
+    if testing_dir.exists() {
+        for subdir in &required_subdirs {
+            let path = testing_dir.join(subdir);
+            if !path.exists() {
+                errors.push("Testing material missing required subdirectories");
+                break;
             }
         }
+    }
 
-        Ok(())
-    })
-}
+    // Validate default directory if it exists
+    if default_dir.exists() {
+        for subdir in &required_subdirs {
+            let path = default_dir.join(subdir);
+            if !path.exists() {
+                errors.push("Default material missing required subdirectories");
+                break;
+            }
+        }
+    }
 
-#[cfg(not(feature = "slow_tests"))]
-#[allow(dead_code)]
-async fn copy_default_material_to_output(_output_dir: &Path) -> Result<()> {
     Ok(())
 }
