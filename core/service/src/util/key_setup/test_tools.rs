@@ -686,21 +686,21 @@ pub mod setup {
     }
 
     #[cfg(feature = "slow_tests")]
-    async fn default_material() {
+    async fn default_material(path: Option<&Path>) {
         use crate::consts::{
             DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM,
             DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_CRS_ID_13P,
             DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P,
             DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
         };
-        ensure_dir_exist(None).await;
-        ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
+        ensure_dir_exist(path).await;
+        ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
         central_material(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_DEFAULT_ID,
             &DEFAULT_CENTRAL_CRS_ID,
-            None,
+            path,
         )
         .await;
         threshold_material(
@@ -708,7 +708,7 @@ pub mod setup {
             &DEFAULT_THRESHOLD_KEY_ID_4P,
             &DEFAULT_THRESHOLD_CRS_ID_4P,
             4,
-            None,
+            path,
         )
         .await;
         threshold_material(
@@ -716,7 +716,7 @@ pub mod setup {
             &DEFAULT_THRESHOLD_KEY_ID_10P,
             &DEFAULT_THRESHOLD_CRS_ID_10P,
             10,
-            None,
+            path,
         )
         .await;
         threshold_material(
@@ -724,7 +724,7 @@ pub mod setup {
             &DEFAULT_THRESHOLD_KEY_ID_13P,
             &DEFAULT_THRESHOLD_CRS_ID_13P,
             13,
-            None,
+            path,
         )
         .await;
     }
@@ -817,7 +817,12 @@ pub mod setup {
 
     #[cfg(feature = "slow_tests")]
     pub async fn ensure_default_material_exists() {
-        default_material().await;
+        default_material(None).await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    pub async fn ensure_default_material_exists_to_path(path: Option<&Path>) {
+        default_material(path).await;
     }
 }
 
