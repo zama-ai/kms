@@ -437,7 +437,7 @@ $ cargo run -- -f <path-to-toml-config-file> custodian-backup-restore
 Note that this operation will copy the content from the backup vault to the private vault. In case any of the backed up content already exists in the private vault, then the request will fail.
 After restoring you *must* reboot the KMS server before the restored data can be used. 
 
-This can be used to move private information from one node to another. More specifically; by constructing a temporary backup vault shared between the old and new node will ensure the relevant private information gets placed in the vault. Then we the new node wish to take over, they use the backup restoring command to move the private information into their own private storage. Afterwards they can construct a new, private, backup vault and the shared backup vault can be destroyed. 
+This can be used to move private information from one node to another. More specifically; by constructing a temporary backup vault shared between the old and new node will ensure the relevant private information gets placed in the vault. Then when the new node wish to take over, they will use the backup restoring command to move the private information into their own private storage. Afterwards they can construct a new, private, backup vault and the shared backup vault can be destroyed. 
 
 WARNING: The backup vault is NOT encrypted by default, unless a relevant AWS KMS configuration is used. 
 
