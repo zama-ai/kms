@@ -167,6 +167,29 @@ jobs:
           buildkitd-flags: --debug
 
       ############################################################################
+      # Free up disk space before running tests
+      #
+      - name: Free Disk Space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h
+          
+          # Remove large packages (Android SDK, .NET, etc.)
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          
+          # Clean apt cache
+          sudo apt-get clean
+          
+          # Remove Docker images we don't need
+          docker system prune -af --volumes || true
+          
+          echo "Disk space after cleanup:"
+          df -h
+
+      ############################################################################
       # Rust toolchain setup
       #
       - name: Set up Rust
