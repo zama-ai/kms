@@ -1,8 +1,11 @@
-//! Threshold key generation tests - SLOW TESTS ONLY
+//! Threshold key generation helper functions
 //!
-//! This file contains slow/complex threshold key generation tests that require
-//! significant resources and time. For basic threshold key generation tests,
-//! see `key_gen_tests_isolated.rs`.
+//! This file contains helper functions for threshold key generation used by various
+//! integration tests (nightly, custodian backup, reshare). These helpers support
+//! complex multi-step workflows with shared test material and are used by tests
+//! that require specific setup patterns.
+//!
+//! **For basic key generation tests, see `key_gen_tests_isolated.rs`**
 
 // Allow unused imports - some are only used in slow_tests feature
 #![allow(unused_imports)]
@@ -86,54 +89,31 @@ impl TestKeyGenResult {
 // migrated to key_gen_tests_isolated.rs for faster execution with isolated test material.
 // See key_gen_tests_isolated.rs for the isolated versions of these tests.
 
+// MIGRATED: test_insecure_threshold_decompression_keygen
+// See: test_insecure_threshold_decompression_keygen_isolated in key_gen_tests_isolated.rs
+// Generates 2 insecure keysets, then a secure decompression key between them.
+// Uses KeySetConfig with KeySetType::DecompressionOnly and KeySetAddedInfo with from/to keyset IDs.
+
 #[cfg(all(feature = "slow_tests", feature = "insecure"))]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+#[ignore] // Migrated to key_gen_tests_isolated.rs - use isolated version instead
 async fn test_insecure_threshold_decompression_keygen() {
     // Note that the first 2 key gens are insecure, but the last is secure as needed to generate decompression keys
     run_threshold_decompression_keygen(4, FheParameter::Test, true).await;
 }
 
-#[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn secure_threshold_keygen_test() {
-    preproc_and_keygen(4, FheParameter::Test, false, 1, false, None, None, None).await;
-}
+// NOTE: secure_threshold_keygen_test has been migrated to key_gen_tests_isolated.rs
+// as secure_threshold_keygen_isolated for faster execution with isolated test material.
+// See key_gen_tests_isolated.rs for the isolated version of this test.
 
-#[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn secure_threshold_keygen_test_crash_online() {
-    preproc_and_keygen(
-        4,
-        FheParameter::Test,
-        false,
-        1,
-        false,
-        None,
-        Some(vec![2]),
-        None,
-    )
-    .await;
-}
+// NOTE: secure_threshold_keygen_test_crash_online has been migrated to key_gen_tests_isolated.rs
+// as secure_threshold_keygen_crash_online_isolated for faster execution with isolated test material.
+// See key_gen_tests_isolated.rs for the isolated version of this test.
 
-#[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn secure_threshold_keygen_test_crash_preprocessing() {
-    preproc_and_keygen(
-        4,
-        FheParameter::Test,
-        false,
-        1,
-        false,
-        Some(vec![3]),
-        None,
-        None,
-    )
-    .await;
-}
+// NOTE: secure_threshold_keygen_test_crash_preprocessing has been migrated to key_gen_tests_isolated.rs
+// as secure_threshold_keygen_crash_preprocessing_isolated for faster execution with isolated test material.
+// See key_gen_tests_isolated.rs for the isolated version of this test.
 
 #[allow(clippy::too_many_arguments)]
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
