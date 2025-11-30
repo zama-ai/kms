@@ -249,9 +249,19 @@ jobs:
 
       # Generate test material required by isolated tests
       # Must run from workspace root, not working-directory
+      # Generate default material if slow_tests feature is enabled, otherwise just testing material
       - name: Generate Test Material
         working-directory: .
-        run: cargo run -p generate-test-material -- --output ./test-material --verbose testing
+        env:
+          ARGS_TESTS: ${{ inputs.args-tests }}
+        run: |
+          if [[ "${ARGS_TESTS}" == *"slow_tests"* ]]; then
+            echo "Generating all test material (testing + default) for slow_tests..."
+            cargo run -p generate-test-material --features slow_tests -- --output ./test-material --verbose all
+          else
+            echo "Generating testing material only..."
+            cargo run -p generate-test-material -- --output ./test-material --verbose testing
+          fi
 
       # Build kms-custodian binary required by integration tests
       - name: Build kms-custodian binary
