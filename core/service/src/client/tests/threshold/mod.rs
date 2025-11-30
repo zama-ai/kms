@@ -2,7 +2,7 @@ mod common;
 mod crs_gen_tests;
 mod custodian_backup_tests;
 mod custodian_context_tests;
-mod key_gen_tests;
+mod key_gen_helpers;
 #[cfg(any(test, feature = "testing"))]
 mod key_gen_tests_isolated;
 mod misc_tests;

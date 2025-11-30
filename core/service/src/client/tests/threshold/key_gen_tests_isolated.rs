@@ -70,6 +70,7 @@ async fn setup_isolated_threshold_keygen_test(
         priv_storages,
         (0..party_count).map(|_| None).collect(),
         ThresholdTestConfig {
+            run_prss: true, // Required for secure key generation with preprocessing
             test_material_path: Some(material_dir.path()),
             ..Default::default()
         },
@@ -170,6 +171,7 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
         priv_storages,
         (0..party_count).map(|_| None).collect(),
         ThresholdTestConfig {
+            run_prss: true, // Required for secure key generation with preprocessing
             test_material_path: Some(material_dir.path()),
             ..Default::default()
         },
@@ -188,6 +190,430 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
             .get_insecure_key_gen_result(tonic::Request::new(key_id.into()))
             .await?;
         assert_eq!(result.into_inner().request_id, Some(key_id.into()));
+    }
+
+    for (_, server) in servers {
+        server.assert_shutdown().await;
+    }
+
+    Ok(())
+}
+
+/// Test secure threshold key generation with preprocessing.
+///
+/// Generates a threshold FHE key using secure mode (with preprocessing) with Test parameters
+/// across 4 parties. Verifies key generation succeeded on all parties.
+///
+/// **IMPORTANT:** Uses secure mode with preprocessing (not insecure mode).
+/// **Requires:**
+/// - `slow_tests` feature flag
+/// - Pre-generated testing material: `make generate-test-material-testing`
+///
+/// **Run with:** `cargo test --lib --features slow_tests,testing secure_threshold_keygen_isolated`
+#[tokio::test]
+#[cfg(feature = "slow_tests")]
+async fn secure_threshold_keygen_isolated() -> Result<()> {
+    use crate::client::tests::threshold::common::threshold_key_gen_secure_isolated;
+
+    let party_count = 4;
+    let (_material_dir, servers, clients) =
+        setup_isolated_threshold_keygen_test("secure_threshold_keygen", party_count).await?;
+
+    let preproc_id = derive_request_id("secure_threshold_keygen_preproc")?;
+    let keygen_id = derive_request_id("secure_threshold_keygen")?;
+
+    // Run secure key generation with preprocessing
+    threshold_key_gen_secure_isolated(&clients, &preproc_id, &keygen_id, FheParameter::Test)
+        .await?;
+
+    // Verify key was generated on all parties
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let result = cur_client
+            .get_key_gen_result(tonic::Request::new(keygen_id.into()))
+            .await?;
+        assert_eq!(result.into_inner().request_id, Some(keygen_id.into()));
+    }
+
+    for (_, server) in servers {
+        server.assert_shutdown().await;
+    }
+
+    Ok(())
+}
+
+/// Test secure threshold key generation with crash during online phase.
+///
+/// Simulates party 2 crashing during the online (keygen) phase. Verifies that the remaining
+/// parties (1, 3, 4) can still complete key generation successfully.
+///
+/// **IMPORTANT:** Tests crash recovery - party 2 excluded from keygen.
+/// **Requires:**
+/// - `slow_tests` feature flag
+/// - Pre-generated testing material: `make generate-test-material-testing`
+///
+/// **Run with:** `cargo test --lib --features slow_tests,testing secure_threshold_keygen_crash_online_isolated`
+#[tokio::test]
+#[cfg(feature = "slow_tests")]
+async fn secure_threshold_keygen_crash_online_isolated() -> Result<()> {
+    use crate::client::test_tools::domain_to_msg;
+    use crate::dummy_domain;
+
+    let party_count = 4;
+    let (_material_dir, servers, clients) =
+        setup_isolated_threshold_keygen_test("secure_keygen_crash_online", party_count).await?;
+
+    let preproc_id = derive_request_id("secure_keygen_crash_online_preproc")?;
+    let keygen_id = derive_request_id("secure_keygen_crash_online")?;
+
+    // Run preprocessing with all parties
+    let mut preproc_tasks = tokio::task::JoinSet::new();
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let preproc_req = kms_grpc::kms::v1::KeyGenPreprocRequest {
+            request_id: Some(preproc_id.into()),
+            params: FheParameter::Test as i32,
+            domain: Some(domain_to_msg(&dummy_domain())),
+            keyset_config: None,
+            context_id: None,
+            epoch_id: None,
+        };
+        preproc_tasks.spawn(async move {
+            cur_client
+                .key_gen_preproc(tonic::Request::new(preproc_req))
+                .await
+        });
+    }
+
+    while let Some(res) = preproc_tasks.join_next().await {
+        res??;
+    }
+
+    // Wait for preprocessing to complete on all parties
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let mut result = cur_client
+            .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
+            .await;
+        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            result = cur_client
+                .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
+                .await;
+        }
+        result?;
+    }
+
+    // Simulate crash: Run keygen WITHOUT party 2 (party_id=2, which is key=1 in 0-indexed HashMap)
+    let crashed_party_key = 1u32; // Party 2 in 1-indexed = key 1 in 0-indexed HashMap
+    let active_clients: HashMap<_, _> = clients
+        .iter()
+        .filter(|(k, _)| **k != crashed_party_key)
+        .map(|(k, v)| (*k, v.clone()))
+        .collect();
+
+    // Run keygen with only active parties (excluding crashed party 2)
+    let mut keygen_tasks = tokio::task::JoinSet::new();
+    for client in active_clients.values() {
+        let mut cur_client = client.clone();
+        let keygen_req = kms_grpc::kms::v1::KeyGenRequest {
+            request_id: Some(keygen_id.into()),
+            params: Some(FheParameter::Test as i32),
+            preproc_id: Some(preproc_id.into()),
+            domain: Some(domain_to_msg(&dummy_domain())),
+            keyset_config: None,
+            keyset_added_info: None,
+            context_id: None,
+            epoch_id: None,
+        };
+        keygen_tasks
+            .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });
+    }
+
+    while let Some(res) = keygen_tasks.join_next().await {
+        res??;
+    }
+
+    // Verify key generation completed on active parties (not crashed party)
+    for client in active_clients.values() {
+        let mut cur_client = client.clone();
+        let mut result = cur_client
+            .get_key_gen_result(tonic::Request::new(keygen_id.into()))
+            .await;
+        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            result = cur_client
+                .get_key_gen_result(tonic::Request::new(keygen_id.into()))
+                .await;
+        }
+        result?;
+    }
+
+    for (_, server) in servers {
+        server.assert_shutdown().await;
+    }
+
+    Ok(())
+}
+
+/// Test secure threshold key generation with crash during preprocessing.
+///
+/// Simulates party 3 crashing during the preprocessing phase. Verifies that the remaining
+/// parties (1, 2, 4) can still complete preprocessing and key generation successfully.
+///
+/// **IMPORTANT:** Tests crash recovery - party 3 excluded from preprocessing and keygen.
+/// **Requires:**
+/// - `slow_tests` feature flag
+/// - Pre-generated testing material: `make generate-test-material-testing`
+///
+/// **Run with:** `cargo test --lib --features slow_tests,testing secure_threshold_keygen_crash_preprocessing_isolated`
+#[tokio::test]
+#[cfg(feature = "slow_tests")]
+async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
+    use crate::client::test_tools::domain_to_msg;
+    use crate::dummy_domain;
+
+    let party_count = 4;
+    let (_material_dir, servers, clients) =
+        setup_isolated_threshold_keygen_test("secure_keygen_crash_preproc", party_count).await?;
+
+    let preproc_id = derive_request_id("secure_keygen_crash_preproc_preproc")?;
+    let keygen_id = derive_request_id("secure_keygen_crash_preproc")?;
+
+    // Simulate crash: Run preprocessing WITHOUT party 3 (party_id=3, which is key=2 in 0-indexed HashMap)
+    let crashed_party_key = 2u32; // Party 3 in 1-indexed = key 2 in 0-indexed HashMap
+    let active_clients: HashMap<_, _> = clients
+        .iter()
+        .filter(|(k, _)| **k != crashed_party_key)
+        .map(|(k, v)| (*k, v.clone()))
+        .collect();
+
+    // Run preprocessing with only active parties
+    let mut preproc_tasks = tokio::task::JoinSet::new();
+    for client in active_clients.values() {
+        let mut cur_client = client.clone();
+        let preproc_req = kms_grpc::kms::v1::KeyGenPreprocRequest {
+            request_id: Some(preproc_id.into()),
+            params: FheParameter::Test as i32,
+            domain: Some(domain_to_msg(&dummy_domain())),
+            keyset_config: None,
+            context_id: None,
+            epoch_id: None,
+        };
+        preproc_tasks.spawn(async move {
+            cur_client
+                .key_gen_preproc(tonic::Request::new(preproc_req))
+                .await
+        });
+    }
+
+    while let Some(res) = preproc_tasks.join_next().await {
+        res??;
+    }
+
+    // Wait for preprocessing to complete on active parties
+    for client in active_clients.values() {
+        let mut cur_client = client.clone();
+        let mut result = cur_client
+            .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
+            .await;
+        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            result = cur_client
+                .get_key_gen_preproc_result(tonic::Request::new(preproc_id.into()))
+                .await;
+        }
+        result?;
+    }
+
+    // Run keygen with same active parties (crashed party stays crashed)
+    let mut keygen_tasks = tokio::task::JoinSet::new();
+    for client in active_clients.values() {
+        let mut cur_client = client.clone();
+        let keygen_req = kms_grpc::kms::v1::KeyGenRequest {
+            request_id: Some(keygen_id.into()),
+            params: Some(FheParameter::Test as i32),
+            preproc_id: Some(preproc_id.into()),
+            domain: Some(domain_to_msg(&dummy_domain())),
+            keyset_config: None,
+            keyset_added_info: None,
+            context_id: None,
+            epoch_id: None,
+        };
+        keygen_tasks
+            .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });
+    }
+
+    while let Some(res) = keygen_tasks.join_next().await {
+        res??;
+    }
+
+    // Verify key generation completed on active parties
+    for client in active_clients.values() {
+        let mut cur_client = client.clone();
+        let mut result = cur_client
+            .get_key_gen_result(tonic::Request::new(keygen_id.into()))
+            .await;
+        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            result = cur_client
+                .get_key_gen_result(tonic::Request::new(keygen_id.into()))
+                .await;
+        }
+        result?;
+    }
+
+    for (_, server) in servers {
+        server.assert_shutdown().await;
+    }
+
+    Ok(())
+}
+
+/// Test insecure threshold decompression key generation.
+///
+/// Generates two regular keysets using insecure mode, then generates a decompression key
+/// between them using secure mode (required for decompression keys). Tests the full
+/// decompression workflow.
+///
+/// **Workflow:**
+/// 1. Generate first keyset (insecure mode)
+/// 2. Generate second keyset (insecure mode)
+/// 3. Generate decompression key from keyset 1 to keyset 2 (secure mode with preprocessing)
+/// 4. Verify all keys generated successfully
+///
+/// **Requires:**
+/// - `slow_tests` and `insecure` feature flags
+/// - Pre-generated testing material: `make generate-test-material-testing`
+///
+/// **Run with:** `cargo test --lib --features slow_tests,testing,insecure test_insecure_threshold_decompression_keygen_isolated`
+#[tokio::test]
+#[cfg(all(feature = "slow_tests", feature = "insecure"))]
+async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
+    use crate::client::test_tools::domain_to_msg;
+    use crate::client::tests::threshold::common::threshold_key_gen_isolated;
+    use crate::dummy_domain;
+    use kms_grpc::kms::v1::{KeySetAddedInfo, KeySetConfig, KeySetType};
+
+    let party_count = 4;
+    let (_material_dir, servers, clients) =
+        setup_isolated_threshold_keygen_test("decompression_keygen", party_count).await?;
+
+    // Step 1: Generate first keyset (insecure mode)
+    let key_id_1 = derive_request_id("decom_dkg_key_1")?;
+    threshold_key_gen_isolated(&clients, &key_id_1, FheParameter::Test).await?;
+
+    // Step 2: Generate second keyset (insecure mode)
+    let key_id_2 = derive_request_id("decom_dkg_key_2")?;
+    threshold_key_gen_isolated(&clients, &key_id_2, FheParameter::Test).await?;
+
+    // Step 3: Generate decompression key (secure mode - required for decompression)
+    let preproc_id_3 = derive_request_id("decom_dkg_preproc_3")?;
+    let key_id_3 = derive_request_id("decom_dkg_key_3")?;
+
+    // Run preprocessing for decompression key generation
+    let mut preproc_tasks = tokio::task::JoinSet::new();
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let preproc_req = kms_grpc::kms::v1::KeyGenPreprocRequest {
+            request_id: Some(preproc_id_3.into()),
+            params: FheParameter::Test as i32,
+            domain: Some(domain_to_msg(&dummy_domain())),
+            keyset_config: None,
+            context_id: None,
+            epoch_id: None,
+        };
+        preproc_tasks.spawn(async move {
+            cur_client
+                .key_gen_preproc(tonic::Request::new(preproc_req))
+                .await
+        });
+    }
+
+    while let Some(res) = preproc_tasks.join_next().await {
+        res??;
+    }
+
+    // Wait for preprocessing to complete
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let mut result = cur_client
+            .get_key_gen_preproc_result(tonic::Request::new(preproc_id_3.into()))
+            .await;
+        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            result = cur_client
+                .get_key_gen_preproc_result(tonic::Request::new(preproc_id_3.into()))
+                .await;
+        }
+        result?;
+    }
+
+    // Generate decompression key with proper configuration
+    let mut keygen_tasks = tokio::task::JoinSet::new();
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let keygen_req = kms_grpc::kms::v1::KeyGenRequest {
+            request_id: Some(key_id_3.into()),
+            params: Some(FheParameter::Test as i32),
+            preproc_id: Some(preproc_id_3.into()),
+            domain: Some(domain_to_msg(&dummy_domain())),
+            keyset_config: Some(KeySetConfig {
+                keyset_type: KeySetType::DecompressionOnly.into(),
+                standard_keyset_config: None,
+            }),
+            keyset_added_info: Some(KeySetAddedInfo {
+                compression_keyset_id: None,
+                from_keyset_id_decompression_only: Some(key_id_1.into()),
+                to_keyset_id_decompression_only: Some(key_id_2.into()),
+            }),
+            context_id: None,
+            epoch_id: None,
+        };
+        keygen_tasks
+            .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });
+    }
+
+    while let Some(res) = keygen_tasks.join_next().await {
+        res??;
+    }
+
+    // Wait for decompression key generation to complete
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let mut result = cur_client
+            .get_key_gen_result(tonic::Request::new(key_id_3.into()))
+            .await;
+        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            result = cur_client
+                .get_key_gen_result(tonic::Request::new(key_id_3.into()))
+                .await;
+        }
+        result?;
+    }
+
+    // Verify all keys were generated successfully
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+
+        // Verify first keyset
+        let result1 = cur_client
+            .get_insecure_key_gen_result(tonic::Request::new(key_id_1.into()))
+            .await?;
+        assert_eq!(result1.into_inner().request_id, Some(key_id_1.into()));
+
+        // Verify second keyset
+        let result2 = cur_client
+            .get_insecure_key_gen_result(tonic::Request::new(key_id_2.into()))
+            .await?;
+        assert_eq!(result2.into_inner().request_id, Some(key_id_2.into()));
+
+        // Verify decompression key
+        let result3 = cur_client
+            .get_key_gen_result(tonic::Request::new(key_id_3.into()))
+            .await?;
+        assert_eq!(result3.into_inner().request_id, Some(key_id_3.into()));
     }
 
     for (_, server) in servers {
