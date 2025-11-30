@@ -1,5 +1,5 @@
 use crate::client::tests::threshold::crs_gen_tests::crs_gen;
-use crate::client::tests::threshold::key_gen_tests::{
+use crate::client::tests::threshold::key_gen_helpers::{
     preproc_and_keygen, run_threshold_decompression_keygen,
 };
 use crate::client::tests::threshold::public_decryption_tests::decryption_threshold;
