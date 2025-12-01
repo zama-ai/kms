@@ -142,12 +142,12 @@ async fn test_different_material_types() -> Result<()> {
     let production_spec = TestMaterialSpec::production_like(None);
     assert_eq!(production_spec.material_type, MaterialType::Default);
 
-    let production_dir = manager
-        .setup_test_material(&production_spec, "production_material")
+    let _production_handle = manager
+        .setup_test_material_auto(&production_spec, "production_material")
         .await?;
     tracing::info!(
         "Production material setup in: {}",
-        production_dir.path().display()
+        _production_handle.path().display()
     );
 
     // Test with comprehensive material (all key types)

@@ -143,9 +143,10 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
         .unwrap()
         .join("test-material");
     let manager = TestMaterialManager::new(Some(source_path));
-    let material_dir = manager
-        .setup_test_material(&spec, "default_insecure_dkg")
+    let _material_handle = manager
+        .setup_test_material_auto(&spec, "default_insecure_dkg")
         .await?;
+    let material_path = _material_handle.path();
 
     // Setup threshold servers with Default material
     let mut pub_storages = Vec::new();
@@ -153,12 +154,12 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
     for i in 1..=party_count {
         let role = Role::indexed_from_one(i);
         pub_storages.push(FileStorage::new(
-            Some(material_dir.path()),
+            Some(material_path),
             StorageType::PUB,
             Some(role),
         )?);
         priv_storages.push(FileStorage::new(
-            Some(material_dir.path()),
+            Some(material_path),
             StorageType::PRIV,
             Some(role),
         )?);
@@ -172,7 +173,7 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
         (0..party_count).map(|_| None).collect(),
         ThresholdTestConfig {
             run_prss: true, // Required for secure key generation with preprocessing
-            test_material_path: Some(material_dir.path()),
+            test_material_path: Some(material_path),
             ..Default::default()
         },
     )
