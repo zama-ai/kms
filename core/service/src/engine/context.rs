@@ -194,12 +194,12 @@ impl Named for NodeInfo {
     const NAME: &'static str = "kms::NodeInfo";
 }
 
-#[derive(VersionsDispatch, Clone, Debug, Serialize, Deserialize)]
+#[derive(VersionsDispatch, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContextInfoVersioned {
     V0(ContextInfo),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(ContextInfoVersioned)]
 pub struct ContextInfo {
     pub mpc_nodes: Vec<NodeInfo>,
