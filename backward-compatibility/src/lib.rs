@@ -348,6 +348,31 @@ impl TestType for PRSSSetupTest {
 
 // Distributed Decryption test
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PrssSetTest {
+    pub test_filename: Cow<'static, str>,
+    pub legacy_filename: Cow<'static, str>,
+    pub amount_parties: usize,
+    pub amount_points: usize,
+    pub residue_poly_size: u16,
+    pub state: u64,
+}
+
+impl TestType for PrssSetTest {
+    fn module(&self) -> String {
+        DISTRIBUTED_DECRYPTION_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "PrssSet".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// Distributed Decryption test
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ShareTest {
     pub test_filename: Cow<'static, str>,
     pub value: u128,
@@ -729,6 +754,7 @@ pub enum TestMetadataKmsGrpc {
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum TestMetadataDD {
     PRSSSetup(PRSSSetupTest),
+    PrssSet(PrssSetTest),
     PrfKey(PrfKeyTest),
     Share(ShareTest),
 }

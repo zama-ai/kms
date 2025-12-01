@@ -258,7 +258,7 @@ fn test_crs_gen_metadata(
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
     let original_current: CrsGenMetadata = load_and_unversionize(dir, test, format)?;
-    let original_legacy: SignedPubDataHandleInternal =
+    let original_legacy: CrsGenMetadata =
         load_and_unversionize_auxiliary(dir, test, &test.legacy_filename, format)?;
 
     let mut rng = AesRng::seed_from_u64(test.state);
@@ -282,7 +282,16 @@ fn test_crs_gen_metadata(
         external_signature.clone(),
     );
 
-    if original_legacy != new_legacy {
+    let original_legacy_unwrapped = match &original_legacy {
+        CrsGenMetadata::Current(crs_gen_metadata_inner) => panic!(
+            "Expected legacy CrsGenMetadata, got current: {:?}",
+            crs_gen_metadata_inner
+        ),
+        CrsGenMetadata::LegacyV0(signed_pub_data_handle_internal) => {
+            signed_pub_data_handle_internal.clone()
+        }
+    };
+    if original_legacy_unwrapped != new_legacy {
         return Err(test.failure(
             format!(
                 "Invalid legacy key gen metadata:\n Expected :\n{original_legacy:?}\nGot:\n{new_legacy:?}"

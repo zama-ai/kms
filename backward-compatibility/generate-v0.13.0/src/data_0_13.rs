@@ -1,7 +1,9 @@
 //! Data generation for kms-core v0.13.0
 //! This file provides the code that is used to generate all the data to serialize and versionize
 //! for kms-core v0.13.0
+
 use aes_prng::AesRng;
+use backward_compatibility::PrssSetTest;
 use kms_0_13_0::backup::custodian::{
     Custodian, CustodianSetupMessagePayload, InternalCustodianContext,
 };
@@ -60,6 +62,7 @@ use tfhe_1_4::{
     },
     ServerKey, Tag,
 };
+use tfhe_versionable_0_6::Upgrade;
 use threshold_fhe_0_13_0::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
 use threshold_fhe_0_13_0::execution::small_execution::prf::PrfKey;
 use threshold_fhe_0_13_0::execution::tfhe_internals::public_keysets::FhePubKeySet;
@@ -67,6 +70,7 @@ use threshold_fhe_0_13_0::{
     execution::{
         runtime::party::Role,
         sharing::share::Share,
+        small_execution::prss::{PrssSet, PrssSetV0},
         tfhe_internals::{
             parameters::{DKGParams, DKGParamsRegular, DKGParamsSnS, DkgMode},
             test_feature::initialize_key_material,
@@ -133,6 +137,7 @@ fn convert_dkg_params_regular(value: DKGParamsRegularTest) -> DKGParamsRegular {
         ciphertext_parameters: convert_classic_pbs_parameters(value.ciphertext_parameters),
         dedicated_compact_public_key_parameters: None,
         compression_decompression_parameters: None,
+        secret_key_deviations: None, // TODO THIS BREAKS BACKWARD COMPATIBILITY !!! CHECK WITH TITOUAN
         cpk_re_randomization_ksk_params: None,
     }
 }
@@ -222,6 +227,26 @@ const PRSS_SETUP_RPOLY_128_TEST: PRSSSetupTest = PRSSSetupTest {
 const PRF_KEY_TEST: PrfKeyTest = PrfKeyTest {
     test_filename: Cow::Borrowed("prf_key"),
     seed: 100,
+};
+
+// Distributed Decryption test
+const PRSS_SET_64_TEST: PrssSetTest = PrssSetTest {
+    test_filename: Cow::Borrowed("prss_set_64"),
+    legacy_filename: Cow::Borrowed("legacy_prss_set_64"),
+    amount_parties: 13,
+    amount_points: 7,
+    residue_poly_size: 64,
+    state: 11111,
+};
+
+// Distributed Decryption test
+const PRSS_SET_128_TEST: PrssSetTest = PrssSetTest {
+    test_filename: Cow::Borrowed("prss_set_128"),
+    legacy_filename: Cow::Borrowed("legacy_prss_set_128"),
+    amount_parties: 13,
+    amount_points: 7,
+    residue_poly_size: 128,
+    state: 2222,
 };
 
 // Distributed Decryption test
@@ -1158,6 +1183,82 @@ impl DistributedDecryptionV0_13 {
         TestMetadataDD::PRSSSetup(PRSS_SETUP_RPOLY_128_TEST)
     }
 
+    fn gen_prss_set_64(dir: &PathBuf) -> TestMetadataDD {
+        let mut rng = AesRng::seed_from_u64(PRSS_SET_64_TEST.state);
+
+        let mut party_set = Vec::new();
+        for i in 1..=PRSS_SET_128_TEST.amount_parties {
+            party_set.push(Role::indexed_from_one(i));
+        }
+
+        let mut set_key = [0u8; 16];
+        rng.fill_bytes(&mut set_key);
+
+        let mut f_a_points = Vec::new();
+        for _ in 0..PRSS_SET_128_TEST.amount_points {
+            f_a_points.push(ResiduePolyF4Z64::from_scalar(Wrapping(rng.next_u64())));
+        }
+
+        let current_set = PrssSet::<ResiduePolyF4Z64> {
+            parties: party_set.clone(),
+            set_key: PrfKey(set_key.clone()),
+            f_a_points: f_a_points.clone(),
+        };
+        let legacy_set = PrssSetV0::<ResiduePolyF4Z64> {
+            parties: party_set.iter().map(|r| r.one_based()).collect(),
+            set_key: PrfKey(set_key.clone()),
+            f_a_points: f_a_points.clone(),
+        };
+        store_versioned_auxiliary!(
+            &legacy_set.upgrade().unwrap(),
+            dir,
+            &PRSS_SET_64_TEST.test_filename,
+            &PRSS_SET_64_TEST.legacy_filename,
+        );
+        store_versioned_test!(&current_set, dir, &PRSS_SET_64_TEST.test_filename);
+
+        TestMetadataDD::PrssSet(PRSS_SET_64_TEST)
+    }
+
+    fn gen_prss_set_128(dir: &PathBuf) -> TestMetadataDD {
+        let mut rng = AesRng::seed_from_u64(PRSS_SET_128_TEST.state);
+
+        let mut party_set = Vec::new();
+        for i in 1..=PRSS_SET_128_TEST.amount_parties {
+            party_set.push(Role::indexed_from_one(i));
+        }
+
+        let mut set_key = [0u8; 16];
+        rng.fill_bytes(&mut set_key);
+
+        let mut f_a_points = Vec::new();
+        for _ in 0..PRSS_SET_128_TEST.amount_points {
+            f_a_points.push(ResiduePolyF4Z128::from_scalar(Wrapping(
+                rng.next_u64() as u128
+            )));
+        }
+
+        let current_set = PrssSet::<ResiduePolyF4Z128> {
+            parties: party_set.clone(),
+            set_key: PrfKey(set_key.clone()),
+            f_a_points: f_a_points.clone(),
+        };
+        let legacy_set = PrssSetV0::<ResiduePolyF4Z128> {
+            parties: party_set.iter().map(|r| r.one_based()).collect(),
+            set_key: PrfKey(set_key.clone()),
+            f_a_points: f_a_points.clone(),
+        };
+        store_versioned_auxiliary!(
+            &legacy_set.upgrade().unwrap(),
+            dir,
+            &PRSS_SET_128_TEST.test_filename,
+            &PRSS_SET_128_TEST.legacy_filename,
+        );
+        store_versioned_test!(&current_set, dir, &PRSS_SET_128_TEST.test_filename);
+
+        TestMetadataDD::PrssSet(PRSS_SET_128_TEST)
+    }
+
     fn gen_share_64(dir: &PathBuf) -> TestMetadataDD {
         let role = Role::indexed_from_one(SHARE_64_TEST.owner);
         let val = ResiduePolyF4Z64::from_scalar(Wrapping(SHARE_64_TEST.value as u64));
@@ -1281,6 +1382,8 @@ impl KMSCoreVersion for V0_13 {
         vec![
             DistributedDecryptionV0_13::gen_prss_setup_rpoly_64(&dir),
             DistributedDecryptionV0_13::gen_prss_setup_rpoly_128(&dir),
+            DistributedDecryptionV0_13::gen_prss_set_64(&dir),
+            DistributedDecryptionV0_13::gen_prss_set_128(&dir),
             DistributedDecryptionV0_13::gen_share_64(&dir),
             DistributedDecryptionV0_13::gen_share_128(&dir),
             DistributedDecryptionV0_13::gen_prf_key(&dir),

@@ -124,6 +124,30 @@
     (
         kms_core_version_min: "0.13.0",
         kms_core_module: "threshold-fhe",
+        metadata: PrssSet((
+            test_filename: "prss_set_64",
+            legacy_filename: "legacy_prss_set_64",
+            amount_parties: 13,
+            amount_points: 7,
+            residue_poly_size: 64,
+            state: 11111,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "threshold-fhe",
+        metadata: PrssSet((
+            test_filename: "prss_set_128",
+            legacy_filename: "legacy_prss_set_128",
+            amount_parties: 13,
+            amount_points: 7,
+            residue_poly_size: 128,
+            state: 2222,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "threshold-fhe",
         metadata: Share((
             test_filename: "share_64",
             value: 34653246,
