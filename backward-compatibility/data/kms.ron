@@ -505,8 +505,30 @@
     (
         kms_core_version_min: "0.13.0",
         kms_core_module: "kms",
+        metadata: NodeInfo((
+            test_filename: "node_info",
+            mpc_identity: "node_mpc_identity",
+            party_id: 4,
+            public_storage_url: "https://storage.example.com/node4",
+            external_url: "https://node4.example.com/mpc/something-something",
+            ca_cert: Some([
+                1,
+                2,
+                3,
+                4,
+                6,
+                7,
+                8,
+                9,
+            ]),
+            state: 500,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "kms",
         metadata: SoftwareVersion((
-            test_filename: "recovery_material",
+            test_filename: "software_version",
             major: 0,
             minor: 13,
             patch: 4,

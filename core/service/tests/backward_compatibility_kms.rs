@@ -14,7 +14,7 @@ use backward_compatibility::{
     tests::{run_all_tests, TestedModule},
     AppKeyBlobTest, BackupCiphertextTest, CrsGenMetadataTest, HybridKemCtTest,
     InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
-    InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest,
+    InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PrivateSigKeyTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
     SigncryptionPayloadTest, SoftwareVersionTest, TestMetadataKMS, TestType, Testcase,
     ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
@@ -54,7 +54,7 @@ use kms_lib::{
             safe_serialize_hash_element_versioned, CrsGenMetadata, KeyGenMetadata,
             KeyGenMetadataInner, KmsFheKeyHandles,
         },
-        context::SoftwareVersion,
+        context::{NodeInfo, SoftwareVersion},
         threshold::service::ThresholdFheKeys,
     },
     util::key_setup::FhePublicKey,
@@ -550,6 +550,38 @@ fn test_hybrid_kem_ct(
     }
 }
 
+fn test_node_info(
+    dir: &Path,
+    test: &NodeInfoTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: NodeInfo = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+    let (verf_key2, _sig_key) = gen_sig_keys(&mut rng);
+    let new_versionized = NodeInfo {
+        mpc_identity: test.mpc_identity.to_string(),
+        party_id: test.party_id,
+        verification_key: Some(verf_key),
+        external_url: test.external_url.to_string(),
+        ca_cert: test.ca_cert.clone(), // We currently don't have simple code for generating certificates
+        public_storage_url: test.public_storage_url.to_string(),
+        extra_verification_keys: vec![verf_key2],
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid NodeInfo:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 fn test_software_version(
     dir: &Path,
     test: &SoftwareVersionTest,
@@ -990,6 +1022,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::HybridKemCt(test) => {
                 test_hybrid_kem_ct(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::NodeInfo(test) => {
+                test_node_info(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::SoftwareVersion(test) => {
                 test_software_version(test_dir.as_ref(), test, format).into()

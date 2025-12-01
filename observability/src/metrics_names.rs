@@ -61,6 +61,7 @@ pub const TAG_TFHE_TYPE: &str = "tfhe_type";
 pub const TAG_PUBLIC_DECRYPTION_KIND: &str = "public_decryption_mode";
 
 // Common error values
+// NOTE: make sure to update docs/operations/advanced/metrics.md when changing
 pub const ERR_RATE_LIMIT_EXCEEDED: &str = "rate_limit_exceeded";
 pub const ERR_KEY_EXISTS: &str = "key_already_exists";
 pub const ERR_KEY_NOT_FOUND: &str = "key_not_found";

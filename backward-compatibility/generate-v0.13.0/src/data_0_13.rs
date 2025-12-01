@@ -3,7 +3,6 @@
 //! for kms-core v0.13.0
 
 use aes_prng::AesRng;
-use backward_compatibility::PrssSetTest;
 use kms_0_13_0::backup::custodian::{
     Custodian, CustodianSetupMessagePayload, InternalCustodianContext,
 };
@@ -28,7 +27,7 @@ use kms_0_13_0::engine::base::{
     safe_serialize_hash_element_versioned, CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
 };
 use kms_0_13_0::engine::centralized::central_kms::generate_client_fhe_key;
-use kms_0_13_0::engine::context::SoftwareVersion;
+use kms_0_13_0::engine::context::{NodeInfo, SoftwareVersion};
 use kms_0_13_0::engine::threshold::service::ThresholdFheKeys;
 use kms_0_13_0::util::key_setup::FhePublicKey;
 use kms_0_13_0::vault::keychain::AppKeyBlob;
@@ -88,14 +87,14 @@ use backward_compatibility::parameters::{
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, CrsGenMetadataTest, HybridKemCtTest,
     InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
-    InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest,
+    InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest,
-    PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
-    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
-    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
-    UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
-    KMS_MODULE_NAME,
+    PrssSetTest, PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest,
+    RecoveryValidationMaterialTest, ShareTest, SigncryptionPayloadTest,
+    SignedPubDataHandleInternalTest, SoftwareVersionTest, TestMetadataDD, TestMetadataKMS,
+    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
+    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
+    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 
 use kms_0_13_0::cryptography::signcryption::SigncryptionPayload;
@@ -418,8 +417,21 @@ fn hybrid_kem_ct_test() -> HybridKemCtTest {
 }
 
 // KMS test
+fn node_info_test() -> NodeInfoTest {
+    NodeInfoTest {
+        test_filename: Cow::Borrowed("node_info"),
+        mpc_identity: Cow::Borrowed("node_mpc_identity"),
+        party_id: 4,
+        external_url: Cow::Borrowed("https://node4.example.com/mpc/something-something"),
+        public_storage_url: Cow::Borrowed("https://storage.example.com/node4"),
+        ca_cert: Some(vec![1, 2, 3, 4, 6, 7, 8, 9]),
+        state: 500,
+    }
+}
+
+// KMS test
 const SOFTWARE_VERSION_TEST: SoftwareVersionTest = SoftwareVersionTest {
-    test_filename: Cow::Borrowed("recovery_material"),
+    test_filename: Cow::Borrowed("software_version"),
     major: 0,
     minor: 13,
     patch: 4,
@@ -764,6 +776,26 @@ impl KmsV0_13 {
         store_versioned_test!(&cipher, dir, &test.test_filename);
 
         TestMetadataKMS::HybridKemCt(test)
+    }
+
+    fn gen_node_info(dir: &PathBuf) -> TestMetadataKMS {
+        let node_info_test = node_info_test();
+        let mut rng = AesRng::seed_from_u64(node_info_test.state);
+        let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+        let (verf_key2, _sig_key) = gen_sig_keys(&mut rng);
+        let node_info = NodeInfo {
+            mpc_identity: node_info_test.mpc_identity.to_string(),
+            party_id: node_info_test.party_id,
+            verification_key: Some(verf_key),
+            external_url: node_info_test.external_url.to_string(),
+            ca_cert: node_info_test.ca_cert.clone(), // We currently don't have simple code for generating certificates
+            public_storage_url: node_info_test.public_storage_url.to_string(),
+            extra_verification_keys: vec![verf_key2],
+        };
+
+        store_versioned_test!(&node_info, dir, &node_info_test.test_filename);
+
+        TestMetadataKMS::NodeInfo(node_info_test)
     }
 
     fn gen_software_version(dir: &PathBuf) -> TestMetadataKMS {
@@ -1388,6 +1420,7 @@ impl KMSCoreVersion for V0_13 {
             KmsV0_13::gen_backup_ciphertext(&dir),
             KmsV0_13::gen_unified_cipher(&dir),
             KmsV0_13::gen_hybrid_kem_ct(&dir),
+            KmsV0_13::gen_node_info(&dir),
             KmsV0_13::gen_software_version(&dir),
             KmsV0_13::gen_recovery_material(&dir),
             KmsV0_13::gen_internal_cus_context_handles(&dir),
