@@ -150,7 +150,7 @@ where
                             )
                         })?;
                         let attestation_document = match &self.security_module {
-                            Some(sm) => sm.attest_pk_bytes(public_key.clone()).await.map_err(|e| Status::new(Code::Internal, format!("Could not issue attestation document for operator backup public key: {e}")))?,
+                            Some(sm) => sm.attest(public_key.clone(), None).await.map_err(|e| Status::new(Code::Internal, format!("Could not issue attestation document for operator backup public key: {e}")))?,
                             None => vec![],
                         };
                         Ok(Response::new(OperatorPublicKey {

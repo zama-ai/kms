@@ -32,7 +32,7 @@ use crate::backup::BackupCiphertext;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
-use crate::util::key_setup::test_tools::{purge_backup, read_backup_files};
+use crate::util::key_setup::test_tools::{purge_backup, read_custodian_backup_files};
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,
     client::tests::threshold::common::threshold_handles_custodian_backup,
@@ -81,7 +81,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     )
     .await;
     // Check that signing key was backed up, since it will always be there
-    let initial_backup: Vec<BackupCiphertext> = read_backup_files(
+    let initial_backup: Vec<BackupCiphertext> = read_custodian_backup_files(
         amount_parties,
         test_path,
         &req_new_cus,
@@ -111,7 +111,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
         test_path,
     )
     .await;
-    let _reread_backup: Vec<BackupCiphertext> = read_backup_files(
+    let _reread_backup: Vec<BackupCiphertext> = read_custodian_backup_files(
         amount_parties,
         test_path,
         &req_new_cus,
@@ -178,7 +178,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     )
     .await;
     // Check that the new CRS was backed up
-    let crss: Vec<BackupCiphertext> = read_backup_files(
+    let crss: Vec<BackupCiphertext> = read_custodian_backup_files(
         amount_parties,
         test_path,
         &req_new_cus,
@@ -214,7 +214,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         test_path,
     )
     .await;
-    let reread_crss: Vec<BackupCiphertext> = read_backup_files(
+    let reread_crss: Vec<BackupCiphertext> = read_custodian_backup_files(
         amount_parties,
         test_path,
         &req_new_cus,

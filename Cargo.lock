@@ -3802,6 +3802,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "iam-rs"
+version = "0.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf8d5289fad8531c141b5ae939fa31034a7aebe36fd43ce2a7c5e983e1bdb8e2"
+dependencies = [
+ "chrono",
+ "ipnet",
+ "serde",
+ "serde_json",
+ "serde_with 3.15.1",
+]
+
+[[package]]
 name = "iana-time-zone"
 version = "0.1.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4194,6 +4207,7 @@ dependencies = [
  "bip39",
  "cbc",
  "cfg-if",
+ "ciborium",
  "clap",
  "console_error_panic_hook",
  "enum_dispatch",
@@ -4201,6 +4215,7 @@ dependencies = [
  "hex",
  "http 0.2.12",
  "hyper-rustls 0.24.2",
+ "iam-rs",
  "itertools 0.14.0",
  "k256",
  "kms",
