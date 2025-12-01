@@ -40,6 +40,26 @@ fn compute_storage_path(
     }
 }
 
+/// Handle to test material that can be either isolated (copied) or shared (in-place)
+#[cfg(any(test, feature = "testing"))]
+pub enum TestMaterialHandle {
+    /// Isolated material in a temporary directory (auto-deleted on drop)
+    Isolated(TempDir),
+    /// Shared material in the source directory (not deleted)
+    Shared(PathBuf),
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl TestMaterialHandle {
+    /// Get the path to the test material
+    pub fn path(&self) -> &Path {
+        match self {
+            TestMaterialHandle::Isolated(temp_dir) => temp_dir.path(),
+            TestMaterialHandle::Shared(path) => path.as_path(),
+        }
+    }
+}
+
 /// Manager for test material operations
 pub struct TestMaterialManager {
     /// Path to the pre-generated test material
@@ -89,6 +109,77 @@ impl TestMaterialManager {
         );
 
         Ok(temp_dir)
+    }
+
+    /// Setup test material using shared source directory (no copying)
+    ///
+    /// This is useful in CI environments where:
+    /// - Tests run sequentially (no parallel conflicts)
+    /// - Disk space is limited
+    /// - Material is read-only
+    ///
+    /// Returns the path to the shared material directory.
+    /// The directory is NOT deleted (it's the source material).
+    #[cfg(any(test, feature = "testing"))]
+    pub fn setup_test_material_shared(
+        &self,
+        spec: &TestMaterialSpec,
+        test_name: &str,
+    ) -> Result<PathBuf> {
+        // Verify source material exists
+        self.verify_material_exists(spec)?;
+
+        let source_path = self
+            .source_path
+            .as_ref()
+            .ok_or_else(|| anyhow!("Source path must be configured for shared material mode"))?;
+
+        // Determine subdirectory based on material type
+        let material_subdir = match spec.material_type {
+            super::test_material_spec::MaterialType::Testing => "testing",
+            super::test_material_spec::MaterialType::Default => "default",
+        };
+
+        let material_path = source_path.join(material_subdir);
+
+        tracing::debug!(
+            "Using shared test material for '{}' (type: {:?}) from: {}",
+            test_name,
+            spec.material_type,
+            material_path.display()
+        );
+
+        Ok(material_path)
+    }
+
+    /// Automatically choose between shared and isolated material based on environment
+    ///
+    /// Uses shared material (no copying) if:
+    /// - KMS_TEST_SHARED_MATERIAL=1 environment variable is set (CI mode)
+    /// - Saves disk space by not copying material
+    /// - Requires sequential test execution
+    ///
+    /// Uses isolated material (with copying) otherwise:
+    /// - Each test gets its own temporary directory
+    /// - Safe for parallel test execution
+    /// - Uses more disk space
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn setup_test_material_auto(
+        &self,
+        spec: &TestMaterialSpec,
+        test_name: &str,
+    ) -> Result<TestMaterialHandle> {
+        let use_shared = std::env::var("KMS_TEST_SHARED_MATERIAL")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+
+        if use_shared {
+            let path = self.setup_test_material_shared(spec, test_name)?;
+            Ok(TestMaterialHandle::Shared(path))
+        } else {
+            let temp_dir = self.setup_test_material(spec, test_name).await?;
+            Ok(TestMaterialHandle::Isolated(temp_dir))
+        }
     }
 
     /// Verify that source material exists for the requested material type
