@@ -562,7 +562,6 @@ fn generate_setup_messages(
 /// Emulate the honest operators' execute of `CustodianRecoveryInit` by
 /// returning two maps; one with the material to return to the custodians and
 /// one with the material of the emulated operators' internal state (needed to continue the backup recovery protocol).
-#[allow(clippy::type_complexity)]
 fn operator_handle_init(
     rng: &mut AesRng,
     setup_msgs: &[InternalCustodianSetupMessage],
@@ -570,25 +569,7 @@ fn operator_handle_init(
     operator_count: usize,
     custodian_threshold: usize,
     custodian_count: usize,
-) -> (
-    BTreeMap<
-        Vec<u8>,
-        (
-            Operator,
-            RecoveryValidationMaterial,
-            UnifiedPrivateEncKey,
-            UnifiedPublicEncKey,
-        ),
-    >, // Operator address to (Operator, validation material, ephemeral decryption key)
-    BTreeMap<
-        Vec<u8>,
-        (
-            PublicSigKey,
-            UnifiedPublicEncKey,
-            BTreeMap<Role, InnerOperatorBackupOutput>,
-        ),
-    >, // Operator address to verification key, ephemeral key and backup ct map
-) {
+) -> (OperatorsMap, CustodianBackupsMap) {
     // note that PublicSigKey cannot be used as BTreeMap key directly since it's not Ord
     let mut payload_for_custodians = BTreeMap::new();
     let mut operators = BTreeMap::new();
@@ -644,18 +625,32 @@ fn operator_handle_init(
     (operators, payload_for_custodians)
 }
 
+// Operator address to verification key, ephemeral key and backup ct map
+type CustodianBackupsMap = BTreeMap<
+    Vec<u8>,
+    (
+        PublicSigKey,
+        UnifiedPublicEncKey,
+        BTreeMap<Role, InnerOperatorBackupOutput>,
+    ),
+>;
+
+// Operator address to (Operator, validation material, ephemeral decryption key)
+type OperatorsMap = BTreeMap<
+    Vec<u8>,
+    (
+        Operator,
+        RecoveryValidationMaterial,
+        UnifiedPrivateEncKey,
+        UnifiedPublicEncKey,
+    ),
+>;
+
 fn custodian_recover(
     rng: &mut AesRng,
     backup_id: &RequestId,
     mnemonics: &BTreeMap<Role, String>, // keyed by custodian role
-    backups: &BTreeMap<
-        Vec<u8>,
-        (
-            PublicSigKey,
-            UnifiedPublicEncKey,
-            BTreeMap<Role, InnerOperatorBackupOutput>,
-        ),
-    >, // Operator role to verf key, ephemeral key and backup ct map
+    backups: &CustodianBackupsMap, // Operator role to verf key, ephemeral key and backup ct map
     custodian_threshold: usize,
 ) -> BTreeMap<Vec<u8>, BTreeMap<Role, InternalCustodianRecoveryOutput>> {
     let mut res = BTreeMap::new();
@@ -687,15 +682,7 @@ fn custodian_recover(
 
 fn operator_recover(
     reencryptions: &BTreeMap<Vec<u8>, BTreeMap<Role, InternalCustodianRecoveryOutput>>,
-    operators: &BTreeMap<
-        Vec<u8>,
-        (
-            Operator,
-            RecoveryValidationMaterial,
-            UnifiedPrivateEncKey,
-            UnifiedPublicEncKey,
-        ),
-    >,
+    operators: &OperatorsMap,
     backup_id: &RequestId,
 ) -> BTreeMap<Vec<u8>, Vec<u8>> {
     let mut res = BTreeMap::new();
