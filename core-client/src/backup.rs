@@ -124,9 +124,12 @@ pub(crate) async fn do_custodian_backup_recovery(
     custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
 ) -> anyhow::Result<()> {
     // fetch the public keys of operators
-    // order of the verf keys should match the order of the core endpoints
+    // order of the verf keys will match the order of the
+    // core endpoints in the core-client config file
     let verf_keys = fetch_kms_verification_keys(sim_conf).await?;
     let mut req_tasks = JoinSet::new();
+    // TODO(zama-ai/kms-internal#2837)
+    // we should change the key in the [core_endpoints] hashmap to be the verification key
     for (endpoint_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         // We assume the core client endpoints are ordered by the server identity
