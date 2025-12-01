@@ -114,7 +114,10 @@ async fn main() -> Result<(), anyhow::Error> {
                 .generate_setup_message(&mut rng, params.custodian_name)
                 .unwrap();
             safe_write_element_versioned(&params.path, &setup_msg).await?;
-            tracing::info!("Custodian keys generated successfully! Mnemonic will now be printed:");
+            tracing::info!(
+                "Custodian keys generated successfully in {}! Mnemonic will now be printed:",
+                params.path.to_string_lossy(),
+            );
             println!("{SEED_PHRASE_DESC}{mnemonic}");
         }
         CustodianCommand::Verify(params) => {

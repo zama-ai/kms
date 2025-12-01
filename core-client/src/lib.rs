@@ -1473,14 +1473,13 @@ async fn do_custodian_backup_recovery(
     let verf_keys = fetch_kms_verification_keys(sim_conf).await?;
 
     let mut req_tasks = JoinSet::new();
-    for (endpoint_idx, ce) in core_endpoints.iter() {
+    for (endpoint_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
-        let endpoint_id = *endpoint_idx as usize + 1;
         // We assume the core client endpoints are ordered by the server identity
         let mut cur_recoveries = Vec::new();
         for cur_recover in custodian_recovery_outputs.iter() {
             // Find the recoveries designated for the correct server
-            let verf_key = &verf_keys[&endpoint_id];
+            let verf_key = &verf_keys[&(*endpoint_id as usize)];
 
             if &cur_recover.operator_verification_key == verf_key {
                 cur_recoveries.push(CustodianRecoveryOutput {
