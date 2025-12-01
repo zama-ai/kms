@@ -881,6 +881,8 @@ mod tests {
     ) -> CustodianRecoveryOutput {
         CustodianRecoveryOutput {
             custodian_role,
+            // TODO(zama-ai/kms-internal/issues/2836)
+            // we may change how the verification key is serialized
             operator_verification_key: bc2wrap::serialize(&operator_verification_key).unwrap(),
             backup_output: Some(OperatorBackupOutput {
                 signcryption: vec![1, 2, 3],

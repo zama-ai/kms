@@ -57,6 +57,8 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
                 "Invalid custodian role in CustodianRecoveryOutput"
             ));
         }
+        // TODO(zama-ai/kms-internal/issues/2836)
+        // we may change how the verification key is serialized
         let verification_key: PublicSigKey =
             bc2wrap::deserialize_safe(&value.operator_verification_key).map_err(|e| {
                 anyhow::anyhow!("Failed to deserialize operator verification key: {}", e)

@@ -17,7 +17,6 @@ use crate::{
     engine::base::derive_request_id,
 };
 use aes_prng::AesRng;
-use alloy_primitives::Address;
 use itertools::Itertools;
 use kms_grpc::{kms::v1::CustodianContext, RequestId};
 use proptest::prelude::*;
@@ -246,7 +245,7 @@ fn full_flow(
         custodian_threshold,
         custodian_count,
     );
-    let ops_addresses = operators.iter().map(|op| op.0);
+    let ops_addresses = operators.keys();
     let backups = custodian_recover(
         &mut rng,
         &backup_id,
@@ -285,7 +284,7 @@ fn full_flow_drop_msg() {
         custodian_threshold,
         custodian_count,
     );
-    let op_addresses = operators.iter().map(|op| op.0);
+    let op_addresses = operators.keys();
     // Drop first and last custodian
     let mnemonics_dropped: BTreeMap<Role, String> = mnemonics
         .iter()
@@ -407,7 +406,7 @@ fn full_flow_malicious_custodian_second() {
         custodian_threshold,
         custodian_count,
     );
-    let op_addresses = operators.iter().map(|op| *op.0).collect::<Vec<_>>();
+    let op_addresses = operators.keys().cloned().collect::<Vec<_>>();
 
     // Change one custodian's mnemonic to an invalid one
     {
@@ -497,27 +496,27 @@ fn full_flow_malicious_operator() {
         custodian_threshold,
         custodian_count,
     );
-    let op_addresses = operators.iter().map(|op| *op.0).collect::<Vec<_>>();
+    let op_addresses = operators.keys().cloned().collect::<Vec<_>>();
 
     // Drop one operator's init messages and set another to something malicious
     {
         let mut payload_for_custodians_malicious = payload_for_custodians.clone();
 
         // Remove the 3rd operator's payload
-        let op_to_remove = op_addresses[2];
-        let _ = payload_for_custodians_malicious.remove(&op_to_remove);
+        let op_to_remove = &op_addresses[2];
+        let _ = payload_for_custodians_malicious.remove(op_to_remove);
 
         // Change the first one maliciously by flipping a bit in each ciphertext
-        let op_malicious = op_addresses[0];
+        let op_malicious = &op_addresses[0];
         let (first_verf_key, first_backup_key, mut first_backup) = payload_for_custodians_malicious
-            .get(&op_malicious)
+            .get(op_malicious)
             .unwrap()
             .clone();
         first_backup.iter_mut().for_each(|(_, v)| {
             v.signcryption.payload[0] ^= 1;
         });
         let _ = payload_for_custodians_malicious.insert(
-            op_malicious,
+            op_malicious.clone(),
             (first_verf_key, first_backup_key, first_backup),
         );
 
@@ -573,7 +572,7 @@ fn operator_handle_init(
     custodian_count: usize,
 ) -> (
     BTreeMap<
-        Address,
+        Vec<u8>,
         (
             Operator,
             RecoveryValidationMaterial,
@@ -582,7 +581,7 @@ fn operator_handle_init(
         ),
     >, // Operator address to (Operator, validation material, ephemeral decryption key)
     BTreeMap<
-        Address,
+        Vec<u8>,
         (
             PublicSigKey,
             UnifiedPublicEncKey,
@@ -629,7 +628,7 @@ fn operator_handle_init(
         )
         .unwrap();
         operators.insert(
-            verification_key.address(),
+            verification_key.verf_key_id(),
             (
                 operator,
                 validation_material,
@@ -638,7 +637,7 @@ fn operator_handle_init(
             ),
         );
         payload_for_custodians.insert(
-            verification_key.address(),
+            verification_key.verf_key_id(),
             (verification_key, backup_enc_key, cur_op_output),
         );
     }
@@ -650,7 +649,7 @@ fn custodian_recover(
     backup_id: &RequestId,
     mnemonics: &BTreeMap<Role, String>, // keyed by custodian role
     backups: &BTreeMap<
-        Address,
+        Vec<u8>,
         (
             PublicSigKey,
             UnifiedPublicEncKey,
@@ -658,7 +657,7 @@ fn custodian_recover(
         ),
     >, // Operator role to verf key, ephemeral key and backup ct map
     custodian_threshold: usize,
-) -> BTreeMap<Address, BTreeMap<Role, InternalCustodianRecoveryOutput>> {
+) -> BTreeMap<Vec<u8>, BTreeMap<Role, InternalCustodianRecoveryOutput>> {
     let mut res = BTreeMap::new();
     for (cur_operator_address, (verification_key, ephemeral_enc_key, cur_backup)) in backups {
         let mut cur_operator_res = BTreeMap::new();
@@ -680,16 +679,16 @@ fn custodian_recover(
         }
         // Only insert if we have enough re-encryptions
         if cur_operator_res.len() > custodian_threshold {
-            res.insert(*cur_operator_address, cur_operator_res);
+            res.insert(cur_operator_address.clone(), cur_operator_res);
         }
     }
     res
 }
 
 fn operator_recover(
-    reencryptions: &BTreeMap<Address, BTreeMap<Role, InternalCustodianRecoveryOutput>>,
+    reencryptions: &BTreeMap<Vec<u8>, BTreeMap<Role, InternalCustodianRecoveryOutput>>,
     operators: &BTreeMap<
-        Address,
+        Vec<u8>,
         (
             Operator,
             RecoveryValidationMaterial,
@@ -698,7 +697,7 @@ fn operator_recover(
         ),
     >,
     backup_id: &RequestId,
-) -> BTreeMap<Address, Vec<u8>> {
+) -> BTreeMap<Vec<u8>, Vec<u8>> {
     let mut res = BTreeMap::new();
     for (cur_op_addr, (cur_op, cur_com, cur_emphemeral_dec, cur_ephemeral_enc)) in operators {
         if let Some(cur_reencs) = reencryptions.get(cur_op_addr) {
@@ -710,7 +709,7 @@ fn operator_recover(
                 cur_emphemeral_dec,
                 cur_ephemeral_enc,
             ) {
-                Ok(plaintext) => res.insert(*cur_op_addr, plaintext),
+                Ok(plaintext) => res.insert(cur_op_addr.clone(), plaintext),
                 Err(_) => continue, // Skip if recovery fails
             };
         }
