@@ -26,7 +26,6 @@ use crate::prss_init::do_prss_init;
 use crate::reshare::do_reshare;
 use crate::s3_operations::fetch_elements;
 use aes_prng::AesRng;
-use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
