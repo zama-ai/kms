@@ -173,6 +173,17 @@ impl TestMaterialManager {
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
 
+        tracing::info!(
+            "setup_test_material_auto for '{}': KMS_TEST_SHARED_MATERIAL={}, mode={}",
+            test_name,
+            std::env::var("KMS_TEST_SHARED_MATERIAL").unwrap_or_else(|_| "not set".to_string()),
+            if use_shared {
+                "SHARED (no copying)"
+            } else {
+                "ISOLATED (copying)"
+            }
+        );
+
         if use_shared {
             let path = self.setup_test_material_shared(spec, test_name)?;
             Ok(TestMaterialHandle::Shared(path))
