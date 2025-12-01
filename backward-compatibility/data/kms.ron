@@ -505,6 +505,15 @@
     (
         kms_core_version_min: "0.13.0",
         kms_core_module: "kms",
+        metadata: ContextInfo((
+            test_filename: "context_info",
+            threshold: 3,
+            state: 234,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "kms",
         metadata: NodeInfo((
             test_filename: "node_info",
             mpc_identity: "node_mpc_identity",

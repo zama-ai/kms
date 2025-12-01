@@ -27,7 +27,7 @@ use kms_0_13_0::engine::base::{
     safe_serialize_hash_element_versioned, CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
 };
 use kms_0_13_0::engine::centralized::central_kms::generate_client_fhe_key;
-use kms_0_13_0::engine::context::{NodeInfo, SoftwareVersion};
+use kms_0_13_0::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
 use kms_0_13_0::engine::threshold::service::ThresholdFheKeys;
 use kms_0_13_0::util::key_setup::FhePublicKey;
 use kms_0_13_0::vault::keychain::AppKeyBlob;
@@ -76,6 +76,7 @@ use threshold_fhe_0_13_0::{
             test_feature::initialize_key_material,
         },
     },
+    networking::tls::ReleasePCRValues,
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
 use tokio::runtime::Runtime;
@@ -85,7 +86,7 @@ use backward_compatibility::parameters::{
     SwitchAndSquashCompressionParametersTest, SwitchAndSquashParametersTest,
 };
 use backward_compatibility::{
-    AppKeyBlobTest, BackupCiphertextTest, CrsGenMetadataTest, HybridKemCtTest,
+    AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest, HybridKemCtTest,
     InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest,
@@ -413,6 +414,15 @@ fn hybrid_kem_ct_test() -> HybridKemCtTest {
         nonce: [2u8; 12],
         kem_ct: vec![1, 2, 3, 4, 5],
         payload_ct: vec![6, 7, 8, 9, 10],
+    }
+}
+
+// KMS test
+fn context_info_test() -> ContextInfoTest {
+    ContextInfoTest {
+        test_filename: Cow::Borrowed("context_info"),
+        threshold: 3,
+        state: 234,
     }
 }
 
@@ -776,6 +786,43 @@ impl KmsV0_13 {
         store_versioned_test!(&cipher, dir, &test.test_filename);
 
         TestMetadataKMS::HybridKemCt(test)
+    }
+
+    fn gen_context_info(dir: &PathBuf) -> TestMetadataKMS {
+        let test = context_info_test();
+        let mut rng = AesRng::seed_from_u64(test.state);
+        // Note that `NodeInfo`, `SoftwareVersion` and `ReleasePCRValues` are tested separately so we just do a simple static construction here
+        let node_info = NodeInfo {
+            mpc_identity: "Staoshi Nakamoto".to_string(),
+            party_id: 42,
+            verification_key: None,
+            external_url: "https://node42.example.com".to_string(),
+            ca_cert: None,
+            public_storage_url: "https://storage.example.com/node42".to_string(),
+            extra_verification_keys: vec![],
+        };
+        let software_version = SoftwareVersion {
+            major: 2,
+            minor: 11,
+            patch: 12,
+            tag: None,
+        };
+        let pcr_values = ReleasePCRValues {
+            pcr0: vec![0_u8; 32],
+            pcr1: vec![1_u8; 32],
+            pcr2: vec![2_u8; 32],
+        };
+        let context_info = ContextInfo {
+            mpc_nodes: vec![node_info.clone(), node_info.clone()],
+            software_version,
+            context_id: RequestId::new_random(&mut rng).into(),
+            threshold: test.threshold,
+            pcr_values: vec![pcr_values.clone(), pcr_values.clone()],
+        };
+
+        store_versioned_test!(&context_info, dir, &test.test_filename);
+
+        TestMetadataKMS::ContextInfo(test)
     }
 
     fn gen_node_info(dir: &PathBuf) -> TestMetadataKMS {
@@ -1420,6 +1467,7 @@ impl KMSCoreVersion for V0_13 {
             KmsV0_13::gen_backup_ciphertext(&dir),
             KmsV0_13::gen_unified_cipher(&dir),
             KmsV0_13::gen_hybrid_kem_ct(&dir),
+            KmsV0_13::gen_context_info(&dir),
             KmsV0_13::gen_node_info(&dir),
             KmsV0_13::gen_software_version(&dir),
             KmsV0_13::gen_recovery_material(&dir),

@@ -12,7 +12,7 @@ use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
-    AppKeyBlobTest, BackupCiphertextTest, CrsGenMetadataTest, HybridKemCtTest,
+    AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest, HybridKemCtTest,
     InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PrivateSigKeyTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
@@ -54,7 +54,7 @@ use kms_lib::{
             safe_serialize_hash_element_versioned, CrsGenMetadata, KeyGenMetadata,
             KeyGenMetadataInner, KmsFheKeyHandles,
         },
-        context::{NodeInfo, SoftwareVersion},
+        context::{ContextInfo, NodeInfo, SoftwareVersion},
         threshold::service::ThresholdFheKeys,
     },
     util::key_setup::FhePublicKey,
@@ -69,8 +69,9 @@ use std::{
     sync::Arc,
 };
 use tfhe::integer::compression_keys::DecompressionKey;
-use threshold_fhe::execution::{
-    runtime::party::Role, tfhe_internals::public_keysets::FhePubKeySet,
+use threshold_fhe::{
+    execution::{runtime::party::Role, tfhe_internals::public_keysets::FhePubKeySet},
+    networking::tls::ReleasePCRValues,
 };
 
 // This domain should match what is in the data_XX.rs file in backward compatibility.
@@ -542,6 +543,53 @@ fn test_hybrid_kem_ct(
         Err(test.failure(
             format!(
                 "Invalid UnifiedCipher:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_context_info(
+    dir: &Path,
+    test: &ContextInfoTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: ContextInfo = load_and_unversionize(dir, test, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let node_info = NodeInfo {
+        mpc_identity: "Staoshi Nakamoto".to_string(),
+        party_id: 42,
+        verification_key: None,
+        external_url: "https://node42.example.com".to_string(),
+        ca_cert: None,
+        public_storage_url: "https://storage.example.com/node42".to_string(),
+        extra_verification_keys: vec![],
+    };
+    let software_version = SoftwareVersion {
+        major: 2,
+        minor: 11,
+        patch: 12,
+        tag: None,
+    };
+    let pcr_values = ReleasePCRValues {
+        pcr0: vec![0_u8; 32],
+        pcr1: vec![1_u8; 32],
+        pcr2: vec![2_u8; 32],
+    };
+    let new_versionized = ContextInfo {
+        mpc_nodes: vec![node_info.clone(), node_info.clone()],
+        software_version,
+        context_id: RequestId::new_random(&mut rng).into(),
+        threshold: test.threshold,
+        pcr_values: vec![pcr_values.clone(), pcr_values.clone()],
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid NodeInfo:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -1022,6 +1070,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::HybridKemCt(test) => {
                 test_hybrid_kem_ct(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::ContextInfo(test) => {
+                test_context_info(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::NodeInfo(test) => {
                 test_node_info(test_dir.as_ref(), test, format).into()

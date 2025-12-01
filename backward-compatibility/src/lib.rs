@@ -629,6 +629,28 @@ impl TestType for HybridKemCtTest {
 
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ContextInfoTest {
+    pub test_filename: Cow<'static, str>,
+    pub threshold: u32,
+    pub state: u64,
+}
+
+impl TestType for ContextInfoTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "ContextInfo".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct NodeInfoTest {
     pub test_filename: Cow<'static, str>,
     pub mpc_identity: Cow<'static, str>,
@@ -784,6 +806,7 @@ pub enum TestMetadataKMS {
     BackupCiphertext(BackupCiphertextTest),
     UnifiedCipher(UnifiedCipherTest),
     HybridKemCt(HybridKemCtTest),
+    ContextInfo(ContextInfoTest),
     NodeInfo(NodeInfoTest),
     SoftwareVersion(SoftwareVersionTest),
     RecoveryValidationMaterial(RecoveryValidationMaterialTest),
