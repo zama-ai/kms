@@ -1228,8 +1228,14 @@ mod tests {
         online::preprocessing::dummy::DummyPreprocessing,
         runtime::sessions::session_parameters::GenericParameterHandles,
     };
+    use crate::malicious_execution::communication::malicious_broadcast::{
+        MaliciousBroadcastDrop, MaliciousBroadcastSender, MaliciousBroadcastSenderEcho,
+    };
     use crate::malicious_execution::online::malicious_reshare::{
         DropReshareAsBothSets, DropReshareAsSet1, DropReshareAsSet2,
+    };
+    use crate::malicious_execution::open::malicious_open::{
+        MaliciousRobustOpenDrop, MaliciousRobustOpenLie,
     };
     use crate::networking::NetworkMode;
     use crate::tests::helper::tests::execute_protocol_two_sets_w_malicious;
@@ -1274,6 +1280,92 @@ mod tests {
             DropReshareAsSet1,
             DropReshareAsSet2,
             DropReshareAsBothSets,
+        )
+        .await;
+    }
+
+    #[rstest::rstest]
+    async fn test_reshare_malicious_subprotocols<
+        RO: RobustOpen + 'static,
+        BC: Broadcast + 'static,
+    >(
+        #[values((
+            7,
+            4,
+            2,
+            TwoSetsThreshold {
+                threshold_set_1: 2,
+                threshold_set_2: 1,
+            },
+            HashSet::from([
+                TwoSetsRole::Set1(Role::indexed_from_one(4)),
+                TwoSetsRole::Both(DualRole {
+                    role_set_1: Role::indexed_from_one(2),
+                    role_set_2: Role::indexed_from_one(3),
+                }),
+            ])),
+            (
+            4,
+            7,
+            4,
+            TwoSetsThreshold {
+                threshold_set_1: 1,
+                threshold_set_2: 2,
+            },
+            HashSet::from([
+                TwoSetsRole::Set2(Role::indexed_from_one(6)),
+                TwoSetsRole::Both(DualRole {
+                    role_set_1: Role::indexed_from_one(3),
+                    role_set_2: Role::indexed_from_one(4),
+                }),
+            ])
+
+        ))]
+        (num_parties_s1, num_parties_s2, intersection_size, threshold, malicious_roles): (
+            usize,
+            usize,
+            usize,
+            TwoSetsThreshold,
+            HashSet<TwoSetsRole>,
+        ),
+        #[values(MaliciousRobustOpenDrop::default(), MaliciousRobustOpenLie::default())]
+        open_protocol: RO,
+        #[values(
+            MaliciousBroadcastDrop::default(),
+            MaliciousBroadcastSender::default(),
+            MaliciousBroadcastSenderEcho::default()
+        )]
+        broadcast_protocol: BC,
+    ) {
+        let reshare_s1 = RealTwoSetsReshareAsSet1 {
+            open_protocol: open_protocol.clone(),
+            broadcast_protocol: broadcast_protocol.clone(),
+            two_sets_session_marker: std::marker::PhantomData::<GenericBaseSession<TwoSetsRole>>,
+        };
+
+        let reshare_s2 = RealTwoSetsReshareAsSet2 {
+            open_protocol: open_protocol.clone(),
+            broadcast_protocol: broadcast_protocol.clone(),
+            two_sets_session_marker: std::marker::PhantomData::<GenericBaseSession<TwoSetsRole>>,
+            one_set_session_marker: std::marker::PhantomData::<BaseSession>,
+        };
+
+        let reshare_both = RealTwoSetsReshareAsBothSets {
+            open_protocol,
+            broadcast_protocol,
+            two_sets_session_marker: std::marker::PhantomData::<GenericBaseSession<TwoSetsRole>>,
+            one_set_session_marker: std::marker::PhantomData::<BaseSession>,
+        };
+
+        test_reshare_two_sets::<Z128, _, _, _, 4>(
+            num_parties_s1,
+            num_parties_s2,
+            intersection_size,
+            threshold,
+            malicious_roles,
+            reshare_s1,
+            reshare_s2,
+            reshare_both,
         )
         .await;
     }
