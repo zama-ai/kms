@@ -28,7 +28,6 @@ use crate::mpc_context::do_new_mpc_context;
 use crate::prss_init::do_prss_init;
 use crate::reshare::do_reshare;
 use aes_prng::AesRng;
-use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
