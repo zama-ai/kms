@@ -1,7 +1,8 @@
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
-use crate::conf::{self, Keychain, SecretSharingKeychain};
+use crate::conf::{Keychain, SecretSharingKeychain};
 use crate::consts::SIGNING_KEY_ID;
+use crate::util::key_setup::test_tools::file_backup_vault;
 #[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
 use crate::util::key_setup::test_tools::setup::{ensure_dir_exist, ensure_testing_material_exists};
@@ -10,8 +11,6 @@ use crate::util::key_setup::{
     ThresholdSigningKeyConfig,
 };
 use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::keychain::make_keychain_proxy;
-use crate::vault::storage::make_storage;
 use crate::vault::storage::{file::FileStorage, StorageType};
 use crate::vault::Vault;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -120,7 +119,7 @@ pub(crate) async fn threshold_handles(
     let mut vaults = Vec::new();
     for i in 1..=amount_parties {
         let cur_role = Role::indexed_from_one(i);
-        let cur_vault = file_system_vault(cur_role, None).await;
+        let cur_vault = file_backup_vault(Some(cur_role), None, None, None).await;
         vaults.push(Some(cur_vault));
     }
     threshold_handles_w_vaults(
@@ -155,7 +154,13 @@ pub(crate) async fn threshold_handles_custodian_backup(
     let mut vaults = Vec::new();
     for i in 1..=amount_parties {
         let cur_role = Role::indexed_from_one(i);
-        let cur_vault = custodian_backup_vault(cur_role, test_data_path).await;
+        let cur_vault = file_backup_vault(
+            Some(cur_role),
+            Some(&Keychain::SecretSharing(SecretSharingKeychain {})),
+            test_data_path,
+            test_data_path,
+        )
+        .await;
         vaults.push(Some(cur_vault));
     }
     threshold_handles_w_vaults(
@@ -169,44 +174,4 @@ pub(crate) async fn threshold_handles_custodian_backup(
         test_data_path,
     )
     .await
-}
-
-pub(crate) async fn custodian_backup_vault(role: Role, test_data_path: Option<&Path>) -> Vault {
-    let store_path = test_data_path.map(|p| {
-        conf::Storage::File(conf::FileStorage {
-            path: p.to_path_buf(),
-        })
-    });
-    let pub_proxy_storage =
-        make_storage(store_path.clone(), StorageType::PUB, Some(role), None, None).unwrap();
-    let backup_proxy_storage =
-        make_storage(store_path, StorageType::BACKUP, Some(role), None, None).unwrap();
-    let keychain = Some(
-        make_keychain_proxy(
-            &Keychain::SecretSharing(SecretSharingKeychain {}),
-            None,
-            None,
-            Some(&pub_proxy_storage),
-        )
-        .await
-        .unwrap(),
-    );
-    Vault {
-        storage: backup_proxy_storage,
-        keychain,
-    }
-}
-
-pub(crate) async fn file_system_vault(role: Role, test_data_path: Option<&Path>) -> Vault {
-    let store_path = test_data_path.map(|p| {
-        conf::Storage::File(conf::FileStorage {
-            path: p.to_path_buf(),
-        })
-    });
-    let backup_proxy_storage =
-        make_storage(store_path, StorageType::BACKUP, Some(role), None, None).unwrap();
-    Vault {
-        storage: backup_proxy_storage,
-        keychain: None,
-    }
 }

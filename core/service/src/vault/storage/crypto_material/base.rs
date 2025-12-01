@@ -685,10 +685,9 @@ where
         };
         let vault_purge = async {
             match back_vault {
-                Some(mut back_vault) => {
-                    delete_all_at_request_id(&mut (*back_vault), req_id).await;
-                    true
-                }
+                Some(mut back_vault) => delete_all_at_request_id(&mut (*back_vault), req_id)
+                    .await
+                    .is_err(),
                 None => false, // No backup vault, so no error
             }
         };

@@ -365,13 +365,13 @@ mod tests {
                 "PRSSSetup_Z128_ID_{PRSS_INIT_REQ_ID}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}"
             ))
             .unwrap();
-            purge(None, None, None, &req_id, PRSS_AMOUNT_PARTIES).await;
+            purge(None, None, &req_id, PRSS_AMOUNT_PARTIES).await;
 
             let req_id = derive_request_id(&format!(
                 "PRSSSetup_Z64_ID_{PRSS_INIT_REQ_ID}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}"
             ))
             .unwrap();
-            purge(None, None, None, &req_id, PRSS_AMOUNT_PARTIES).await;
+            purge(None, None, &req_id, PRSS_AMOUNT_PARTIES).await;
 
             priv_storage.push(cur_priv);
             vaults.push(None);
