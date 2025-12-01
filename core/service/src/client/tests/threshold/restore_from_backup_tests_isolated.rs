@@ -141,8 +141,8 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
             StorageType::PRIV,
             Some(Role::indexed_from_one(i)),
         )?;
-        delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
-        delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
+        let _ = delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
+        let _ = delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
     }
 
     // Verify deletion
@@ -340,7 +340,7 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
             StorageType::PRIV,
             Some(Role::indexed_from_one(i)),
         )?;
-        delete_all_at_request_id(&mut priv_storage, &req_id).await;
+        let _ = delete_all_at_request_id(&mut priv_storage, &req_id).await;
 
         assert!(
             !priv_storage
