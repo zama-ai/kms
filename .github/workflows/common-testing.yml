@@ -132,10 +132,6 @@ jobs:
           version="$(cat "$GH_WORKSPACE/toolchain.txt")"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
 
-      # - name: Setup Home
-      #   if: "${{ !contains(inputs.runs-on, 'ubuntu') }}"
-      #   run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
-
       # LFS files are needed for backward compatibility tests
       # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
       # need to do it right after and then manually pull LFS files
@@ -163,13 +159,6 @@ jobs:
           username: ${{ secrets.CGR_USERNAME }}
           password: ${{ secrets.CGR_PASSWORD }}
 
-      # - name: Configure AWS credentials
-      #   uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
-      #   with:
-      #     aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      #     aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      #     aws-region: eu-west-3
-
       ############################################################################
       # Initialize Docker Buildx for multi-platform builds.
       - name: Set up Docker Buildx
@@ -196,25 +185,6 @@ jobs:
         run: |
           cargo install cargo-nextest --locked
           cargo install grcov --locked
-
-      ############################################################################
-      # Setup cache for dockerfile and inject in docker
-      #
-      # - name: Setup Cache
-      #   uses: runs-on/cache@a10d0f887093e2bc9de875be9edf8ab98c94a154 # v4.3.0
-      #   id: cache
-      #   env:
-      #     RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
-      #     RUNS_ON_AWS_REGION: eu-west-3
-      #   with:
-      #     path: |
-      #       /home/ubuntu/.cargo/bin/
-      #       /home/ubuntu/.cargo/registry/index/
-      #       /home/ubuntu/.cargo/registry/cache/
-      #       /home/ubuntu/.cargo/git/db/
-      #       ${{ github.workspace }}/target
-      #     key: |
-      #       ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install Protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0

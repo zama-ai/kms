@@ -410,8 +410,7 @@ jobs:
       - start-runner-cargo
       - kind-testing
     runs-on: ubuntu-latest
-    # if: failure() && !cancelled() && needs.start-runner-cargo.result != 'skipped'
-    if: always()
+    if: ${{ always() && needs.start-runner-cargo.result == 'success' }}
     steps:
       - name: Stop EC2 runner
         uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
@@ -428,8 +427,7 @@ jobs:
       - start-runner-threshold
       - kind-testing
     runs-on: ubuntu-latest
-    # if: failure() && !cancelled() && needs.start-runner-threshold.result != 'skipped'
-    if: always()
+    if: ${{ always() && needs.start-runner-threshold.result == 'success' }}
     steps:
       - name: Stop EC2 runner
         uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
@@ -446,8 +444,7 @@ jobs:
       - start-runner-centralized
       - kind-testing
     runs-on: ubuntu-latest
-    # if: failure() && !cancelled() && needs.start-runner-centralized.result != 'skipped'
-    if: always()
+    if: ${{ always() && needs.start-runner-centralized.result == 'success' }}
     steps:
       - name: Stop EC2 runner
         uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
