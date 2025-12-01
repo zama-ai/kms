@@ -505,6 +505,17 @@
     (
         kms_core_version_min: "0.13.0",
         kms_core_module: "kms",
+        metadata: SoftwareVersion((
+            test_filename: "recovery_material",
+            major: 0,
+            minor: 13,
+            patch: 4,
+            tag: "super fun version",
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "kms",
         metadata: RecoveryValidationMaterial((
             test_filename: "recovery_material",
             internal_cus_context_filename: "internal_cus_context_handle",

@@ -16,9 +16,9 @@ use backward_compatibility::{
     InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest,
     OperatorBackupOutputTest, PrivateSigKeyTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
-    SigncryptionPayloadTest, TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
-    TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
-    UnifiedUnsigncryptionKeyTest,
+    SigncryptionPayloadTest, SoftwareVersionTest, TestMetadataKMS, TestType, Testcase,
+    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
 };
 use kms_grpc::{
     kms::v1::TypedPlaintext,
@@ -54,6 +54,7 @@ use kms_lib::{
             safe_serialize_hash_element_versioned, CrsGenMetadata, KeyGenMetadata,
             KeyGenMetadataInner, KmsFheKeyHandles,
         },
+        context::SoftwareVersion,
         threshold::service::ThresholdFheKeys,
     },
     util::key_setup::FhePublicKey,
@@ -549,6 +550,36 @@ fn test_hybrid_kem_ct(
     }
 }
 
+fn test_software_version(
+    dir: &Path,
+    test: &SoftwareVersionTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: SoftwareVersion = load_and_unversionize(dir, test, format)?;
+
+    let new_versionized = SoftwareVersion {
+        major: test.major,
+        minor: test.minor,
+        patch: test.patch,
+        tag: if test.tag.is_empty() {
+            None
+        } else {
+            Some(test.tag.to_string())
+        },
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid SoftwareVersion:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 fn test_recovery_material(
     dir: &Path,
     test: &RecoveryValidationMaterialTest,
@@ -959,6 +990,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::HybridKemCt(test) => {
                 test_hybrid_kem_ct(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::SoftwareVersion(test) => {
+                test_software_version(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::RecoveryValidationMaterial(test) => {
                 test_recovery_material(test_dir.as_ref(), test, format).into()

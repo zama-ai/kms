@@ -629,6 +629,30 @@ impl TestType for HybridKemCtTest {
 
 // KMS test
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SoftwareVersionTest {
+    pub test_filename: Cow<'static, str>,
+    pub major: u8,
+    pub minor: u8,
+    pub patch: u8,
+    pub tag: Cow<'static, str>,
+}
+
+impl TestType for SoftwareVersionTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "SoftwareVersion".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+// KMS test
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RecoveryValidationMaterialTest {
     pub test_filename: Cow<'static, str>,
     pub internal_cus_context_filename: Cow<'static, str>,
@@ -734,6 +758,7 @@ pub enum TestMetadataKMS {
     BackupCiphertext(BackupCiphertextTest),
     UnifiedCipher(UnifiedCipherTest),
     HybridKemCt(HybridKemCtTest),
+    SoftwareVersion(SoftwareVersionTest),
     RecoveryValidationMaterial(RecoveryValidationMaterialTest),
     InternalCustodianContext(InternalCustodianContextTest),
     InternalCustodianSetupMessage(InternalCustodianSetupMessageTest),

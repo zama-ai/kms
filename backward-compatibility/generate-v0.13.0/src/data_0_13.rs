@@ -28,6 +28,7 @@ use kms_0_13_0::engine::base::{
     safe_serialize_hash_element_versioned, CrsGenMetadata, KeyGenMetadataInner, KmsFheKeyHandles,
 };
 use kms_0_13_0::engine::centralized::central_kms::generate_client_fhe_key;
+use kms_0_13_0::engine::context::SoftwareVersion;
 use kms_0_13_0::engine::threshold::service::ThresholdFheKeys;
 use kms_0_13_0::util::key_setup::FhePublicKey;
 use kms_0_13_0::vault::keychain::AppKeyBlob;
@@ -90,8 +91,8 @@ use backward_compatibility::{
     InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest,
     OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest,
     PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
-    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, TestMetadataDD,
-    TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
+    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
+    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
     UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
     UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
     KMS_MODULE_NAME,
@@ -415,6 +416,15 @@ fn hybrid_kem_ct_test() -> HybridKemCtTest {
         payload_ct: vec![6, 7, 8, 9, 10],
     }
 }
+
+// KMS test
+const SOFTWARE_VERSION_TEST: SoftwareVersionTest = SoftwareVersionTest {
+    test_filename: Cow::Borrowed("recovery_material"),
+    major: 0,
+    minor: 13,
+    patch: 4,
+    tag: Cow::Borrowed("super fun version"),
+};
 
 // KMS test
 const RECOVERY_MATERIAL_TEST: RecoveryValidationMaterialTest = RecoveryValidationMaterialTest {
@@ -754,6 +764,19 @@ impl KmsV0_13 {
         store_versioned_test!(&cipher, dir, &test.test_filename);
 
         TestMetadataKMS::HybridKemCt(test)
+    }
+
+    fn gen_software_version(dir: &PathBuf) -> TestMetadataKMS {
+        let software_version = SoftwareVersion {
+            major: SOFTWARE_VERSION_TEST.major,
+            minor: SOFTWARE_VERSION_TEST.minor,
+            patch: SOFTWARE_VERSION_TEST.patch,
+            tag: Some(SOFTWARE_VERSION_TEST.tag.to_string()),
+        };
+
+        store_versioned_test!(&software_version, dir, &SOFTWARE_VERSION_TEST.test_filename);
+
+        TestMetadataKMS::SoftwareVersion(SOFTWARE_VERSION_TEST)
     }
 
     fn gen_recovery_material(dir: &PathBuf) -> TestMetadataKMS {
@@ -1365,6 +1388,7 @@ impl KMSCoreVersion for V0_13 {
             KmsV0_13::gen_backup_ciphertext(&dir),
             KmsV0_13::gen_unified_cipher(&dir),
             KmsV0_13::gen_hybrid_kem_ct(&dir),
+            KmsV0_13::gen_software_version(&dir),
             KmsV0_13::gen_recovery_material(&dir),
             KmsV0_13::gen_internal_cus_context_handles(&dir),
             KmsV0_13::gen_internal_cus_setup_msg(&dir),
