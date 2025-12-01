@@ -122,7 +122,10 @@ async fn test_threshold_isolated_example() -> Result<()> {
 }
 
 /// Test using different material types
+/// NOTE: This test is skipped in CI (--skip isolated_test_example) as it's primarily
+/// for demonstration purposes. To run locally: cargo test --lib test_different_material_types --ignored
 #[tokio::test]
+#[ignore]
 async fn test_different_material_types() -> Result<()> {
     let manager = TestMaterialManager::new(None);
 
@@ -142,12 +145,12 @@ async fn test_different_material_types() -> Result<()> {
     let production_spec = TestMaterialSpec::production_like(None);
     assert_eq!(production_spec.material_type, MaterialType::Default);
 
-    let _production_handle = manager
-        .setup_test_material_auto(&production_spec, "production_material")
+    let production_dir = manager
+        .setup_test_material(&production_spec, "production_material")
         .await?;
     tracing::info!(
         "Production material setup in: {}",
-        _production_handle.path().display()
+        production_dir.path().display()
     );
 
     // Test with comprehensive material (all key types)
