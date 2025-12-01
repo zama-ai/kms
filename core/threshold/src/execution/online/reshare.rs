@@ -1229,7 +1229,8 @@ mod tests {
         runtime::sessions::session_parameters::GenericParameterHandles,
     };
     use crate::malicious_execution::communication::malicious_broadcast::{
-        MaliciousBroadcastDrop, MaliciousBroadcastSender, MaliciousBroadcastSenderEcho,
+        MaliciousBroadcastDrop, MaliciousBroadcastRandomizer, MaliciousBroadcastSender,
+        MaliciousBroadcastSenderEcho,
     };
     use crate::malicious_execution::online::malicious_reshare::{
         DropReshareAsBothSets, DropReshareAsSet1, DropReshareAsSet2,
@@ -1333,7 +1334,8 @@ mod tests {
         #[values(
             MaliciousBroadcastDrop::default(),
             MaliciousBroadcastSender::default(),
-            MaliciousBroadcastSenderEcho::default()
+            MaliciousBroadcastSenderEcho::default(),
+            MaliciousBroadcastRandomizer::default()
         )]
         broadcast_protocol: BC,
     ) {
