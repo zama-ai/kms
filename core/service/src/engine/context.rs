@@ -34,10 +34,9 @@ pub enum SoftwareVersionVersioned {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(SoftwareVersionVersioned)]
 pub struct SoftwareVersion {
-    // TODO Is there a reason we use use u8 and not u32
-    pub major: u8,
-    pub minor: u8,
-    pub patch: u8,
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
     pub tag: Option<String>,
 }
 
@@ -104,12 +103,12 @@ impl From<&str> for SoftwareVersion {
     }
 }
 
-#[derive(Clone, Debug, VersionsDispatch)]
+#[derive(Clone, Debug, PartialEq, Eq, VersionsDispatch)]
 pub enum NodeInfoVersioned {
     V0(NodeInfo),
 }
 
-#[derive(Clone, Debug, Versionize, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Versionize, Serialize, Deserialize)]
 #[versionize(NodeInfoVersioned)]
 pub struct NodeInfo {
     pub mpc_identity: String,
