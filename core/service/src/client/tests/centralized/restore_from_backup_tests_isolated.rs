@@ -236,8 +236,8 @@ async fn test_insecure_central_dkg_backup_isolated() -> Result<()> {
     key_gen_isolated(&mut client, &key_id_2, FheParameter::Test).await?;
 
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
-    delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
-    delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
+    let _ = delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
+    let _ = delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
 
     assert!(
         !priv_storage
@@ -345,7 +345,7 @@ async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
     assert_eq!(inner_resp.request_id, Some(req_id.into()));
 
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
-    delete_all_at_request_id(&mut priv_storage, &req_id).await;
+    let _ = delete_all_at_request_id(&mut priv_storage, &req_id).await;
 
     assert!(
         !priv_storage

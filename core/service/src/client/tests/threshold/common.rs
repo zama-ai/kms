@@ -28,31 +28,6 @@ use tonic::transport::Channel;
 // HELPER FUNCTIONS
 // ============================================================================
 
-/// Create storage configuration from optional path
-fn storage_config_from_path(path: Option<&Path>) -> Option<conf::Storage> {
-    path.map(|p| {
-        conf::Storage::File(conf::FileStorage {
-            path: p.to_path_buf(),
-        })
-    })
-}
-
-/// Create storage proxy for given type and role
-fn create_storage_proxy(
-    path: Option<&Path>,
-    storage_type: StorageType,
-    role: Option<Role>,
-) -> crate::vault::storage::StorageProxy {
-    make_storage(
-        storage_config_from_path(path),
-        storage_type,
-        role,
-        None,
-        None,
-    )
-    .unwrap()
-}
-
 // ============================================================================
 // TEST SETUP FUNCTIONS
 // ============================================================================
@@ -230,32 +205,8 @@ pub(crate) async fn threshold_handles_custodian_backup(
     .await
 }
 
-pub(crate) async fn custodian_backup_vault(role: Role, test_data_path: Option<&Path>) -> Vault {
-    let pub_proxy = create_storage_proxy(test_data_path, StorageType::PUB, Some(role));
-    let backup_proxy = create_storage_proxy(test_data_path, StorageType::BACKUP, Some(role));
-    let keychain = Some(
-        make_keychain_proxy(
-            &Keychain::SecretSharing(SecretSharingKeychain {}),
-            None,
-            None,
-            Some(&pub_proxy),
-        )
-        .await
-        .unwrap(),
-    );
-    Vault {
-        storage: backup_proxy,
-        keychain,
-    }
-}
-
-pub(crate) async fn file_system_vault(role: Role, test_data_path: Option<&Path>) -> Vault {
-    let backup_proxy = create_storage_proxy(test_data_path, StorageType::BACKUP, Some(role));
-    Vault {
-        storage: backup_proxy,
-        keychain: None,
-    }
-}
+// Note: custodian_backup_vault and file_system_vault have been replaced by
+// inline implementations in isolated test files for better clarity and control.
 
 // ============================================================================
 // ISOLATED TEST HELPERS
