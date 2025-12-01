@@ -85,36 +85,6 @@ impl TestKeyGenResult {
     }
 }
 
-// NOTE: Basic insecure DKG tests (test_insecure_dkg and default_insecure_dkg) have been
-// migrated to key_gen_tests_isolated.rs for faster execution with isolated test material.
-// See key_gen_tests_isolated.rs for the isolated versions of these tests.
-
-// MIGRATED: test_insecure_threshold_decompression_keygen
-// See: test_insecure_threshold_decompression_keygen_isolated in key_gen_tests_isolated.rs
-// Generates 2 insecure keysets, then a secure decompression key between them.
-// Uses KeySetConfig with KeySetType::DecompressionOnly and KeySetAddedInfo with from/to keyset IDs.
-
-#[cfg(all(feature = "slow_tests", feature = "insecure"))]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-#[ignore] // Migrated to key_gen_tests_isolated.rs - use isolated version instead
-async fn test_insecure_threshold_decompression_keygen() {
-    // Note that the first 2 key gens are insecure, but the last is secure as needed to generate decompression keys
-    run_threshold_decompression_keygen(4, FheParameter::Test, true).await;
-}
-
-// NOTE: secure_threshold_keygen_test has been migrated to key_gen_tests_isolated.rs
-// as secure_threshold_keygen_isolated for faster execution with isolated test material.
-// See key_gen_tests_isolated.rs for the isolated version of this test.
-
-// NOTE: secure_threshold_keygen_test_crash_online has been migrated to key_gen_tests_isolated.rs
-// as secure_threshold_keygen_crash_online_isolated for faster execution with isolated test material.
-// See key_gen_tests_isolated.rs for the isolated version of this test.
-
-// NOTE: secure_threshold_keygen_test_crash_preprocessing has been migrated to key_gen_tests_isolated.rs
-// as secure_threshold_keygen_crash_preprocessing_isolated for faster execution with isolated test material.
-// See key_gen_tests_isolated.rs for the isolated version of this test.
-
 #[allow(clippy::too_many_arguments)]
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 pub(crate) async fn run_threshold_keygen(
