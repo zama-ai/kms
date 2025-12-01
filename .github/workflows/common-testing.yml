@@ -302,6 +302,15 @@ jobs:
             echo "NEXTEST_TEST_THREADS not set (using nextest default)"
           fi
           
+          # Enable shared test material mode for slow_tests to save disk space
+          # Tests run sequentially (NEXTEST_TEST_THREADS=1) so no conflicts
+          if [[ "${ARGS_TESTS}" == *"slow_tests"* ]]; then
+            export KMS_TEST_SHARED_MATERIAL=1
+            echo "KMS_TEST_SHARED_MATERIAL enabled for slow_tests (using shared material, no copying)"
+          else
+            echo "KMS_TEST_SHARED_MATERIAL not set (using isolated material with copying)"
+          fi
+          
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
           echo "aws_access_key_id = ${AWS_ACCESS_KEY_ID}" >> ~/.aws/credentials &&
