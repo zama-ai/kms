@@ -1041,6 +1041,13 @@ fn take_majority_vote_on_broadcasts<
                             *candidate_for_role_in_s1.entry(value.coefs).or_default() += 1_usize;
                         }
                     }
+                } else {
+                    // Note that this may be because the sender sent an empty vec (or nothing)
+                    tracing::warn!(
+                        "During resharing, party {:?} did not provide values for party {:?}",
+                        sender_in_s2,
+                        role_in_s1
+                    );
                 }
             }
         } else {
@@ -1071,10 +1078,10 @@ fn take_majority_vote_on_broadcasts<
                 );
                 agreed_values.push(ResiduePoly::from_array(value));
             } else {
-                return Err(anyhow_error_and_log(format!(
+                tracing::warn!(
                     "During resharing, no majority vote could be found for party {:?}",
                     role_in_s1
-                )));
+                );
             }
         }
         agreed_contributions_from_s1.insert(role_in_s1, agreed_values);
