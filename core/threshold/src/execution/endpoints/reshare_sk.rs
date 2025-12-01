@@ -619,7 +619,9 @@ mod tests {
     use crate::algebra::structure_traits::{BaseRing, Ring};
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::RandomPreprocessing;
-    use crate::execution::runtime::party::Role;
+    use crate::execution::runtime::party::{Role, TwoSetsThreshold};
+    use crate::execution::runtime::sessions::base_session::{BaseSession, GenericBaseSession};
+    use crate::execution::runtime::sessions::small_session::SmallSession;
     use crate::execution::sharing::shamir::{RevealOp, ShamirSharings};
     use crate::execution::sharing::share::Share;
     use crate::execution::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS};
@@ -627,25 +629,23 @@ mod tests {
         keygen_all_party_shares_from_keyset, KeySet,
     };
     use crate::networking::NetworkMode;
+    use crate::tests::helper::tests_and_benches::{
+        execute_protocol_small, execute_protocol_two_sets,
+    };
+    use crate::tests::test_data_setup::tests::TEST_PARAMETERS;
     use crate::{
         algebra::structure_traits::Sample,
-        error::error_handler::anyhow_error_and_log,
         execution::{
-            constants::SMALL_TEST_KEY_PATH,
-            online::preprocessing::dummy::DummyPreprocessing,
-            runtime::{
-                sessions::session_parameters::GenericParameterHandles,
-                test_runtime::{generate_fixed_roles, DistributedTestRuntime},
-            },
+            constants::SMALL_TEST_KEY_PATH, online::preprocessing::dummy::DummyPreprocessing,
+            runtime::sessions::session_parameters::GenericParameterHandles,
             sharing::shamir::InputOp,
         },
         file_handling::tests::read_element,
-        session_id::SessionId,
     };
     use aes_prng::AesRng;
     use itertools::Itertools;
     use rand::SeedableRng;
-    use std::{collections::HashMap, fmt::Display};
+    use std::fmt::Display;
     use tfhe::boolean::prelude::GlweDimension;
     use tfhe::core_crypto::entities::GlweSecretKey;
     use tfhe::shortint::client_key::atomic_pattern::{
@@ -655,7 +655,595 @@ mod tests {
     use tfhe::shortint::prelude::ModulusSwitchType;
     use tfhe::shortint::PBSParameters;
     use tfhe::{core_crypto::entities::LweSecretKey, shortint::ClassicPBSParameters};
-    use tokio::task::JoinSet;
+
+    #[tokio::test]
+    async fn reshare_no_error_f4() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<4>(false, false).await
+    }
+
+    #[tokio::test]
+    async fn reshare_with_error_f4() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<4>(true, false).await
+    }
+
+    #[tokio::test]
+    async fn reshare_with_missing_f4() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<4>(false, true).await
+    }
+
+    #[cfg(feature = "extension_degree_3")]
+    #[tokio::test]
+    async fn reshare_no_error_f3() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<3>(false, false).await
+    }
+
+    #[cfg(feature = "extension_degree_3")]
+    #[tokio::test]
+    async fn reshare_with_error_f3() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<3>(true, false).await
+    }
+
+    #[cfg(feature = "extension_degree_3")]
+    #[tokio::test]
+    async fn reshare_with_missing_f3() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<3>(false, true).await
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[tokio::test]
+    async fn reshare_no_error_f5() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<5>(false, false).await
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[tokio::test]
+    async fn reshare_with_error_f5() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<5>(true, false).await
+    }
+
+    #[cfg(feature = "extension_degree_5")]
+    #[tokio::test]
+    async fn reshare_with_missing_f5() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<5>(false, true).await
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[tokio::test]
+    async fn reshare_no_error_f6() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<6>(false, false).await
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[tokio::test]
+    async fn reshare_with_error_f6() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<6>(true, false).await
+    }
+
+    #[cfg(feature = "extension_degree_6")]
+    #[tokio::test]
+    async fn reshare_with_missing_f6() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<6>(false, true).await
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[tokio::test]
+    async fn reshare_no_error_f7() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<7>(false, false).await
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[tokio::test]
+    async fn reshare_with_error_f7() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<7>(true, false).await
+    }
+
+    #[cfg(feature = "extension_degree_7")]
+    #[tokio::test]
+    async fn reshare_with_missing_f7() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<7>(false, true).await
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[tokio::test]
+    async fn reshare_no_error_f8() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<8>(false, false).await
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[tokio::test]
+    async fn reshare_with_error_f8() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<8>(true, false).await
+    }
+
+    #[cfg(feature = "extension_degree_8")]
+    #[tokio::test]
+    async fn reshare_with_missing_f8() -> anyhow::Result<()> {
+        simulate_reshare_same_set::<8>(false, true).await
+    }
+
+    #[tokio::test]
+    async fn reshare_no_error_f4_two_sets() -> anyhow::Result<()> {
+        simulate_reshare_two_sets::<4>(false).await
+    }
+
+    #[tokio::test]
+    async fn reshare_with_error_f4_two_sets() -> anyhow::Result<()> {
+        simulate_reshare_two_sets::<4>(true).await
+    }
+
+    async fn simulate_reshare_same_set<const EXTENSION_DEGREE: usize>(
+        add_error: bool,
+        remove_share: bool,
+    ) -> anyhow::Result<()>
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    {
+        let num_parties = 7;
+        let threshold = 2;
+
+        let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+                        _added_info: Option<String>| async move {
+            let mut keyset: KeySet =
+                read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
+
+            // we make the shares shorter to make sure the test doesn't take too long
+            // NOTE that TEST_PARAMETERS must be the parameters of SMALL_TEST_KEY_PATH
+            let new_params = get_truncated_client_keys_params(TEST_PARAMETERS);
+            truncate_client_keys(&mut keyset, new_params);
+
+            let (key_shares, expected_sk) = generate_key_with_error_in_s1(
+                keyset,
+                new_params,
+                session.num_parties(),
+                session.threshold() as usize,
+                add_error,
+            )
+            .unwrap();
+
+            let party_keyshare = session.my_role().get_from(&key_shares).unwrap().clone();
+            let mut preproc128 =
+                DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(42, &session);
+            let mut preproc64 =
+                DummyPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(42, &session);
+
+            //Testing ResharePreprocRequired
+            let preproc_required = ResharePreprocRequired::new(session.num_parties(), new_params);
+
+            let mut new_preproc_64 = InMemoryBasePreprocessing {
+                available_triples: Vec::new(),
+                available_randoms: preproc64
+                    .next_random_vec(preproc_required.batch_params_64.randoms)
+                    .unwrap(),
+            };
+
+            let mut new_preproc_128 = InMemoryBasePreprocessing {
+                available_triples: Vec::new(),
+                available_randoms: preproc128
+                    .next_random_vec(preproc_required.batch_params_128.randoms)
+                    .unwrap(),
+            };
+
+            let mut my_contribution =
+                if session.my_role() == Role::indexed_from_zero(0) && remove_share {
+                    // simulating a party that lost its key share
+                    None
+                } else {
+                    Some(party_keyshare)
+                };
+
+            let out = SecureReshareSecretKeys::reshare_sk_same_set(
+                &mut session,
+                &mut new_preproc_128,
+                &mut new_preproc_64,
+                &mut my_contribution,
+                new_params,
+            )
+            .await
+            .unwrap();
+
+            //Making sure ResharPreprocRequired doesn't ask for too much preprocessing
+            assert_eq!(new_preproc_64.available_randoms.len(), 0);
+            assert_eq!(new_preproc_128.available_randoms.len(), 0);
+            (session.my_role(), out, my_contribution, expected_sk)
+        };
+
+        let mut results = execute_protocol_small::<_, _, _, EXTENSION_DEGREE>(
+            num_parties,
+            threshold as u8,
+            None,
+            NetworkMode::Sync,
+            None,
+            &mut task,
+            None,
+        )
+        .await;
+
+        // we need to sort by identities and then reconstruct
+        results.sort_by(|a, b| a.0.cmp(&(b.0)));
+        let (new_shares, (old_shares, expected_sks)): (Vec<_>, (Vec<_>, Vec<_>)) =
+            results.into_iter().map(|(_, b, c, d)| (b, (c, d))).unzip();
+        let actual_sk = reconstruct_sk(new_shares.clone(), threshold, 0);
+
+        let mut expected_sks_iter = expected_sks.into_iter();
+        let expected_sk = expected_sks_iter.next().unwrap();
+        expected_sks_iter.for_each(|v| assert_eq!(v, expected_sk));
+        // check results
+        assert_eq!(actual_sk, expected_sk);
+
+        // Also try to reconstruct with only some shares (including 0 as it's always the corrupt/missing one)
+        let partial_shares = new_shares[0..=threshold].to_vec();
+        let actual_sk = reconstruct_sk(partial_shares, threshold, 0);
+        assert_eq!(actual_sk, expected_sk);
+
+        // check old shares are zero
+        for osh in old_shares.into_iter().flatten() {
+            osh.glwe_secret_key_share_sns_as_lwe
+                .unwrap()
+                .data_as_raw_vec()
+                .iter()
+                .for_each(|x| assert!(x.is_zero()));
+        }
+        Ok(())
+    }
+
+    async fn simulate_reshare_two_sets<const EXTENSION_DEGREE: usize>(
+        add_error: bool,
+    ) -> anyhow::Result<()>
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+    {
+        let num_parties_s1 = 7;
+        let num_parties_s2 = 4;
+        let intersection_size = 2;
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: 2,
+            threshold_set_2: 1,
+        };
+
+        let mut task = |mut common_session: GenericBaseSession<TwoSetsRole>,
+                        session_set_1: Option<BaseSession>,
+                        session_set_2: Option<BaseSession>| async move {
+            let new_params = get_truncated_client_keys_params(TEST_PARAMETERS);
+            let (mut party_keyshare, expected_sk, _key_shares) = if let Some(session_set_1) =
+                session_set_1.as_ref()
+            {
+                let mut keyset = read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
+                // we make the shares shorter to make sure the test doesn't take too long
+
+                truncate_client_keys(&mut keyset, new_params);
+
+                let (key_shares, expected_sk) = generate_key_with_error_in_s1(
+                    keyset,
+                    new_params,
+                    session_set_1.num_parties(),
+                    session_set_1.threshold() as usize,
+                    add_error,
+                )
+                .unwrap();
+
+                let party_keyshare = session_set_1
+                    .my_role()
+                    .get_from(&key_shares)
+                    .unwrap()
+                    .clone();
+                (Some(party_keyshare), Some(expected_sk), Some(key_shares))
+            } else {
+                (None, None, None)
+            };
+
+            let (mut preproc_64, mut preproc_128) = if let Some(session_set_2) =
+                session_set_2.as_ref()
+            {
+                let mut preproc128 = DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
+                    42,
+                    session_set_2,
+                );
+                let mut preproc64 = DummyPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
+                    43,
+                    session_set_2,
+                );
+
+                //Testing ResharePreprocRequired
+                let num_parties_set_1 = common_session
+                    .roles()
+                    .iter()
+                    .filter(|p| p.is_set1())
+                    .count();
+                assert_eq!(num_parties_set_1, num_parties_s1);
+                let preproc_required = ResharePreprocRequired::new(num_parties_set_1, new_params);
+
+                let new_preproc_64 = InMemoryBasePreprocessing {
+                    available_triples: Vec::new(),
+                    available_randoms: preproc64
+                        .next_random_vec(preproc_required.batch_params_64.randoms)
+                        .unwrap(),
+                };
+
+                let new_preproc_128 = InMemoryBasePreprocessing {
+                    available_triples: Vec::new(),
+                    available_randoms: preproc128
+                        .next_random_vec(preproc_required.batch_params_128.randoms)
+                        .unwrap(),
+                };
+                (Some(new_preproc_64), Some(new_preproc_128))
+            } else {
+                (None, None)
+            };
+
+            let my_role = common_session.my_role();
+            let out = match my_role {
+                TwoSetsRole::Set1(_) => {
+                    let mut party_keyshare = party_keyshare.unwrap();
+                    SecureReshareSecretKeys::reshare_sk_two_sets_as_s1(
+                        &mut common_session,
+                        &mut party_keyshare,
+                        new_params,
+                    )
+                    .await
+                    .unwrap();
+                    party_keyshare
+                }
+                TwoSetsRole::Set2(_) => SecureReshareSecretKeys::reshare_sk_two_sets_as_s2(
+                    &mut (common_session, session_set_2.unwrap()),
+                    preproc_128.as_mut().unwrap(),
+                    preproc_64.as_mut().unwrap(),
+                    new_params,
+                )
+                .await
+                .unwrap(),
+                TwoSetsRole::Both(_) => SecureReshareSecretKeys::reshare_sk_two_sets_as_both_sets(
+                    &mut (common_session, session_set_2.unwrap()),
+                    preproc_128.as_mut().unwrap(),
+                    preproc_64.as_mut().unwrap(),
+                    party_keyshare.as_mut().unwrap(),
+                    new_params,
+                )
+                .await
+                .unwrap(),
+            };
+
+            //Making sure ResharPreprocRequired doesn't ask for too much preprocessing
+            if let Some(p) = preproc_64 {
+                assert_eq!(p.available_randoms.len(), 0)
+            }
+            if let Some(p) = preproc_128 {
+                assert_eq!(p.available_randoms.len(), 0)
+            }
+
+            (my_role, out, expected_sk)
+        };
+
+        let results = execute_protocol_two_sets::<
+            _,
+            _,
+            ResiduePoly<Z128, EXTENSION_DEGREE>,
+            EXTENSION_DEGREE,
+        >(
+            num_parties_s1,
+            num_parties_s2,
+            intersection_size,
+            threshold,
+            None,
+            NetworkMode::Sync,
+            &mut task,
+        )
+        .await;
+
+        let (mut results_set_1, mut results_set_2) = (Vec::new(), Vec::new());
+
+        for (role, out, expected_sk) in results {
+            match role {
+                TwoSetsRole::Set1(role) => results_set_1.push((role, out, expected_sk)),
+                TwoSetsRole::Set2(role) => results_set_2.push((role, out, expected_sk)),
+                TwoSetsRole::Both(dual_role) => {
+                    results_set_1.push((dual_role.role_set_1, out.clone(), expected_sk.clone()));
+                    results_set_2.push((dual_role.role_set_2, out, expected_sk));
+                }
+            }
+        }
+
+        // we need to sort by identities and then reconstruct
+        results_set_2.sort_by(|a, b| a.0.cmp(&(b.0)));
+        let new_shares: Vec<_> = results_set_2.into_iter().map(|(_, b, _)| b).collect();
+        let actual_sk = reconstruct_sk(new_shares.clone(), threshold.threshold_set_2 as usize, 0);
+
+        let (should_be_zeroized_shares, expected_sks): (Vec<_>, Vec<_>) = results_set_1
+            .into_iter()
+            .map(|(role, out, expected_sk)| ((role, out), expected_sk.unwrap()))
+            .unzip();
+
+        let mut expected_sks_iter = expected_sks.into_iter();
+        let expected_sk = expected_sks_iter.next().unwrap();
+        expected_sks_iter.for_each(|v| assert_eq!(v, expected_sk));
+        // check results
+        assert_eq!(actual_sk, expected_sk);
+
+        // check old shares are zero
+        for (role, osh) in should_be_zeroized_shares.into_iter() {
+            if !osh
+                .glwe_secret_key_share_sns_as_lwe
+                .clone()
+                .unwrap()
+                .data_as_raw_vec()
+                .iter()
+                .all(|x| x.is_zero())
+            {
+                println!("Role {:?} did not zeroize its old share! : {:?}", role, osh);
+            }
+            osh.glwe_secret_key_share_sns_as_lwe
+                .unwrap()
+                .data_as_raw_vec()
+                .iter()
+                .for_each(|x| assert!(x.is_zero()));
+        }
+        Ok(())
+    }
+
+    // We return test params to use to truncate the keys
+    fn get_truncated_client_keys_params(params: DKGParams) -> DKGParams {
+        let new_sns_params = if let DKGParams::WithSnS(sns_params) = params {
+            let mut new_sns_params = sns_params.sns_params;
+
+            let sns_private_key_len = 8;
+            let sns_poly_size = tfhe::shortint::prelude::PolynomialSize(1);
+            match &mut new_sns_params {
+                tfhe::shortint::parameters::NoiseSquashingParameters::Classic(
+                    noise_squashing_classic_parameters,
+                ) => {
+                    noise_squashing_classic_parameters.polynomial_size = sns_poly_size;
+                    noise_squashing_classic_parameters.glwe_dimension =
+                        GlweDimension(sns_private_key_len);
+                }
+                tfhe::shortint::parameters::NoiseSquashingParameters::MultiBit(
+                    noise_squashing_multi_bit_parameters,
+                ) => {
+                    noise_squashing_multi_bit_parameters.polynomial_size = sns_poly_size;
+                    noise_squashing_multi_bit_parameters.glwe_dimension =
+                        GlweDimension(sns_private_key_len);
+                }
+            }
+            Some(new_sns_params)
+        } else {
+            None
+        };
+        let params = PBSParameters::PBS(
+            params
+                .get_params_basics_handle()
+                .to_classic_pbs_parameters(),
+        );
+        let test_lwe_dim = params.lwe_dimension().0.min(8);
+        let test_glwe_dim = params.glwe_dimension().0.min(1);
+        let test_poly_size = params.polynomial_size().0.min(10);
+        let new_pbs_params = ClassicPBSParameters {
+            lwe_dimension: tfhe::integer::parameters::LweDimension(test_lwe_dim),
+            glwe_dimension: tfhe::integer::parameters::GlweDimension(test_glwe_dim),
+            polynomial_size: tfhe::integer::parameters::PolynomialSize(test_poly_size),
+            lwe_noise_distribution: params.lwe_noise_distribution(),
+            glwe_noise_distribution: params.glwe_noise_distribution(),
+            pbs_base_log: params.pbs_base_log(),
+            pbs_level: params.pbs_level(),
+            ks_base_log: params.ks_base_log(),
+            ks_level: params.ks_level(),
+            message_modulus: params.message_modulus(),
+            carry_modulus: params.carry_modulus(),
+            max_noise_level: params.max_noise_level(),
+            // currently there's no getter for log2_p_fail, so we set it manually
+            // doesn't matter what it is
+            log2_p_fail: -80.,
+            ciphertext_modulus: params.ciphertext_modulus(),
+            encryption_key_choice: params.encryption_key_choice(),
+            modulus_switch_noise_reduction_params: ModulusSwitchType::Standard,
+        };
+
+        let regular_params = DKGParamsRegular {
+            dkg_mode: DkgMode::Z128,
+            sec: 128,
+            ciphertext_parameters: new_pbs_params,
+            dedicated_compact_public_key_parameters: None,
+            compression_decompression_parameters: None,
+            cpk_re_randomization_ksk_params: None,
+            secret_key_deviations: None,
+        };
+
+        if let Some(new_sns_params) = new_sns_params {
+            DKGParams::WithSnS(DKGParamsSnS {
+                regular_params,
+                sns_params: new_sns_params,
+                sns_compression_params: None,
+            })
+        } else {
+            DKGParams::WithoutSnS(regular_params)
+        }
+    }
+
+    // We truncate the keys in the keyset to make the test faster
+    // to match the sizes in the target parameters
+    fn truncate_client_keys(keyset: &mut KeySet, target_params: DKGParams) {
+        let new_sns_private_key = if let DKGParams::WithSnS(sns_params) = target_params {
+            let (raw_sns_private_key, _) = keyset
+                .client_key
+                .clone()
+                .into_raw_parts()
+                .3
+                .unwrap()
+                .into_raw_parts()
+                .into_raw_parts();
+
+            let sns_private_key_len = sns_params.glwe_dimension_sns().0;
+            let sns_poly_size = sns_params.polynomial_size_sns();
+            let new_raw_sns_private_key = GlweSecretKey::from_container(
+                raw_sns_private_key.into_container()[..sns_private_key_len * sns_poly_size.0]
+                    .to_vec(),
+                sns_poly_size,
+            );
+
+            Some(
+                tfhe::integer::noise_squashing::NoiseSquashingPrivateKey::from_raw_parts(
+                    NoiseSquashingPrivateKey::from_raw_parts(
+                        new_raw_sns_private_key,
+                        sns_params.sns_params,
+                    ),
+                ),
+            )
+        } else {
+            None
+        };
+
+        let (glwe_raw, lwe_raw, _, _) = match keyset
+            .client_key
+            .to_owned()
+            .into_raw_parts()
+            .0
+            .into_raw_parts()
+            .atomic_pattern
+        {
+            tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
+                standard_atomic_pattern_client_key,
+            ) => standard_atomic_pattern_client_key.into_raw_parts(),
+            tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey::KeySwitch32(_) => {
+                panic!("KeySwitch32 is not supported in this test")
+            }
+        };
+
+        let target_params = target_params.get_params_basics_handle();
+
+        let test_lwe_dim = target_params.lwe_dimension().0;
+        let test_glwe_dim = target_params.glwe_dimension().0;
+        let test_poly_size = target_params.polynomial_size().0;
+        let lwe_cont: Vec<u64> = lwe_raw.into_container();
+        let con = lwe_cont[..test_lwe_dim].to_vec();
+        let new_lwe_raw = LweSecretKey::from_container(con);
+        let glwe_cont = glwe_raw.into_container();
+        let con = glwe_cont[..test_poly_size * test_glwe_dim].to_vec();
+        let new_glwe_raw = GlweSecretKey::from_container(
+            con,
+            tfhe::integer::parameters::PolynomialSize(test_poly_size),
+        );
+
+        let sck = StandardAtomicPatternClientKey::from_raw_parts(
+            new_glwe_raw,
+            new_lwe_raw,
+            PBSParameters::PBS(target_params.to_classic_pbs_parameters()),
+            None,
+        );
+        let sck = tfhe::shortint::ClientKey {
+            atomic_pattern: AtomicPatternClientKey::Standard(sck),
+        };
+        let sck = tfhe::integer::ClientKey::from_raw_parts(sck);
+
+        let ck = tfhe::ClientKey::from_raw_parts(
+            sck,
+            None,
+            None,
+            new_sns_private_key,
+            None,
+            None,
+            tfhe::Tag::default(),
+        );
+        keyset.client_key = ck;
+    }
 
     fn reconstruct_shares_to_scalar<Z: BaseRing + Display, const EXTENSION_DEGREE: usize>(
         shares: Vec<Vec<ResiduePoly<Z, EXTENSION_DEGREE>>>,
@@ -760,132 +1348,26 @@ mod tests {
         (glwe_sns_sk128, lwe_sk64, glwe_sk64)
     }
 
-    #[test]
-    fn reshare_no_error_f4() -> anyhow::Result<()> {
-        simulate_reshare::<4>(false, false)
-    }
-
-    #[test]
-    fn reshare_with_error_f4() -> anyhow::Result<()> {
-        simulate_reshare::<4>(true, false)
-    }
-
-    #[test]
-    fn reshare_with_missing_f4() -> anyhow::Result<()> {
-        simulate_reshare::<4>(false, true)
-    }
-
-    #[cfg(feature = "extension_degree_3")]
-    #[test]
-    fn reshare_no_error_f3() -> anyhow::Result<()> {
-        simulate_reshare::<3>(false, false)
-    }
-
-    #[cfg(feature = "extension_degree_3")]
-    #[test]
-    fn reshare_with_error_f3() -> anyhow::Result<()> {
-        simulate_reshare::<3>(true, false)
-    }
-
-    #[cfg(feature = "extension_degree_3")]
-    #[test]
-    fn reshare_with_missing_f3() -> anyhow::Result<()> {
-        simulate_reshare::<3>(false, true)
-    }
-
-    #[cfg(feature = "extension_degree_5")]
-    #[test]
-    fn reshare_no_error_f5() -> anyhow::Result<()> {
-        simulate_reshare::<5>(false, false)
-    }
-
-    #[cfg(feature = "extension_degree_5")]
-    #[test]
-    fn reshare_with_error_f5() -> anyhow::Result<()> {
-        simulate_reshare::<5>(true, false)
-    }
-
-    #[cfg(feature = "extension_degree_5")]
-    #[test]
-    fn reshare_with_missing_f5() -> anyhow::Result<()> {
-        simulate_reshare::<5>(false, true)
-    }
-
-    #[cfg(feature = "extension_degree_6")]
-    #[test]
-    fn reshare_no_error_f6() -> anyhow::Result<()> {
-        simulate_reshare::<6>(false, false)
-    }
-
-    #[cfg(feature = "extension_degree_6")]
-    #[test]
-    fn reshare_with_error_f6() -> anyhow::Result<()> {
-        simulate_reshare::<6>(true, false)
-    }
-
-    #[cfg(feature = "extension_degree_6")]
-    #[test]
-    fn reshare_with_missing_f6() -> anyhow::Result<()> {
-        simulate_reshare::<6>(false, true)
-    }
-
-    #[cfg(feature = "extension_degree_7")]
-    #[test]
-    fn reshare_no_error_f7() -> anyhow::Result<()> {
-        simulate_reshare::<7>(false, false)
-    }
-
-    #[cfg(feature = "extension_degree_7")]
-    #[test]
-    fn reshare_with_error_f7() -> anyhow::Result<()> {
-        simulate_reshare::<7>(true, false)
-    }
-
-    #[cfg(feature = "extension_degree_7")]
-    #[test]
-    fn reshare_with_missing_f7() -> anyhow::Result<()> {
-        simulate_reshare::<7>(false, true)
-    }
-
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn reshare_no_error_f8() -> anyhow::Result<()> {
-        simulate_reshare::<8>(false, false)
-    }
-
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn reshare_with_error_f8() -> anyhow::Result<()> {
-        simulate_reshare::<8>(true, false)
-    }
-
-    #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn reshare_with_missing_f8() -> anyhow::Result<()> {
-        simulate_reshare::<8>(false, true)
-    }
-
-    fn simulate_reshare<const EXTENSION_DEGREE: usize>(
+    #[allow(clippy::type_complexity)]
+    fn generate_key_with_error_in_s1<const EXTENSION_DEGREE: usize>(
+        keyset: KeySet,
+        params: DKGParams,
+        num_parties: usize,
+        threshold: usize,
         add_error: bool,
-        remove_share: bool,
-    ) -> anyhow::Result<()>
+    ) -> anyhow::Result<(
+        Vec<PrivateKeySet<EXTENSION_DEGREE>>,
+        (Vec<u128>, Vec<u64>, Vec<u64>),
+    )>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
-        let num_parties = 7;
-        let threshold = 2;
-
-        let mut keyset: KeySet = read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
-
-        // we make the shares shorter to make sure the test doesn't take too long
-        let new_params = truncate_client_keys(&mut keyset);
-
         // generate the key shares
-        let mut rng = AesRng::from_entropy();
+        let mut rng = AesRng::seed_from_u64(4242);
         let mut key_shares = keygen_all_party_shares_from_keyset(
             &keyset,
-            new_params
+            params
                 .get_params_basics_handle()
                 .to_classic_pbs_parameters(),
             &mut rng,
@@ -894,13 +1376,6 @@ mod tests {
         )
         .unwrap();
 
-        let roles = generate_fixed_roles(num_parties);
-        //Reshare assumes Sync network
-        let mut runtime: DistributedTestRuntime<
-            ResiduePoly<Z128, EXTENSION_DEGREE>,
-            Role,
-            EXTENSION_DEGREE,
-        > = DistributedTestRuntime::new(roles, threshold as u8, NetworkMode::Sync, None);
         if add_error {
             key_shares[0] = PrivateKeySet {
                 lwe_compute_secret_key_share: LweSecretKeyShare {
@@ -990,241 +1465,6 @@ mod tests {
         let rec_sk = reconstruct_sk(key_shares.clone(), threshold, 1);
         assert_eq!(rec_sk, expected_sk);
 
-        runtime.setup_sks(key_shares);
-
-        let session_id = SessionId::from(2);
-
-        let rt = tokio::runtime::Runtime::new()?;
-        let _guard = rt.enter();
-
-        let mut set = JoinSet::new();
-        for role in &runtime.roles {
-            let party_keyshare = runtime
-                .keyshares
-                .clone()
-                .map(|ks| ks[role.one_based() - 1].clone())
-                .ok_or_else(|| {
-                    anyhow_error_and_log("key share not set during decryption".to_string())
-                })?;
-            let mut session = runtime.large_session_for_party(session_id, *role);
-
-            set.spawn(async move {
-                let mut preproc128 =
-                    DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(42, &session);
-                let mut preproc64 =
-                    DummyPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(42, &session);
-
-                //Testing ResharePreprocRequired
-                let preproc_required =
-                    ResharePreprocRequired::new(session.num_parties(), new_params);
-
-                let mut new_preproc_64 = InMemoryBasePreprocessing {
-                    available_triples: Vec::new(),
-                    available_randoms: preproc64
-                        .next_random_vec(preproc_required.batch_params_64.randoms)
-                        .unwrap(),
-                };
-
-                let mut new_preproc_128 = InMemoryBasePreprocessing {
-                    available_triples: Vec::new(),
-                    available_randoms: preproc128
-                        .next_random_vec(preproc_required.batch_params_128.randoms)
-                        .unwrap(),
-                };
-
-                let mut my_contribution =
-                    if session.my_role() == Role::indexed_from_zero(0) && remove_share {
-                        // simulating a party that lost its key share
-                        None
-                    } else {
-                        Some(party_keyshare)
-                    };
-
-                let out = SecureReshareSecretKeys::reshare_sk_same_set(
-                    &mut session,
-                    &mut new_preproc_128,
-                    &mut new_preproc_64,
-                    &mut my_contribution,
-                    new_params,
-                )
-                .await
-                .unwrap();
-
-                //Making sure ResharPreprocRequired doesn't ask for too much preprocessing
-                assert_eq!(new_preproc_64.available_randoms.len(), 0);
-                assert_eq!(new_preproc_128.available_randoms.len(), 0);
-                (session.my_role(), out, my_contribution)
-            });
-        }
-
-        let mut results = rt
-            .block_on(async {
-                let mut results = HashMap::new();
-                while let Some(v) = set.join_next().await {
-                    let (role, new_share, old_share) = v.unwrap();
-                    results.insert(
-                        role,
-                        (
-                            new_share,
-                            old_share.map(|osh| osh.glwe_secret_key_share_sns_as_lwe.unwrap()),
-                        ),
-                    );
-                }
-                results
-            })
-            .into_iter()
-            .collect_vec();
-
-        // we need to sort by identities and then reconstruct
-        results.sort_by(|a, b| a.0.cmp(&(b.0)));
-        let (new_shares, old_shares): (Vec<_>, Vec<_>) =
-            results.into_iter().map(|(_, b)| b).unzip();
-        let actual_sk = reconstruct_sk(new_shares.clone(), threshold, 0);
-
-        // check results
-        assert_eq!(actual_sk, expected_sk);
-
-        // Also try to reconstruct with only some shares (including 0 as it's always the corrupt/missing one)
-        let partial_shares = new_shares[0..=threshold].to_vec();
-        let actual_sk = reconstruct_sk(partial_shares, threshold, 0);
-        assert_eq!(actual_sk, expected_sk);
-
-        // check old shares are zero
-        for osh in old_shares.into_iter().flatten() {
-            osh.data_as_raw_vec()
-                .iter()
-                .for_each(|x| assert!(x.is_zero()));
-        }
-        Ok(())
-    }
-
-    // We truncate the keys in the keyset to make the test faster
-    // We return the params that correspond to the truncated keys
-    fn truncate_client_keys(keyset: &mut KeySet) -> DKGParams {
-        let (raw_sns_private_key, sns_params) = keyset
-            .client_key
-            .clone()
-            .into_raw_parts()
-            .3
-            .unwrap()
-            .into_raw_parts()
-            .into_raw_parts();
-        let sns_private_key_len = 8;
-        let sns_poly_size = tfhe::shortint::prelude::PolynomialSize(1);
-        let new_raw_sns_private_key = GlweSecretKey::from_container(
-            raw_sns_private_key.into_container()[..sns_private_key_len].to_vec(),
-            sns_poly_size,
-        );
-        let mut new_sns_params = sns_params;
-
-        match &mut new_sns_params {
-            tfhe::shortint::parameters::NoiseSquashingParameters::Classic(
-                noise_squashing_classic_parameters,
-            ) => {
-                noise_squashing_classic_parameters.polynomial_size = sns_poly_size;
-                noise_squashing_classic_parameters.glwe_dimension =
-                    GlweDimension(sns_private_key_len);
-            }
-            tfhe::shortint::parameters::NoiseSquashingParameters::MultiBit(
-                noise_squashing_multi_bit_parameters,
-            ) => {
-                noise_squashing_multi_bit_parameters.polynomial_size = sns_poly_size;
-                noise_squashing_multi_bit_parameters.glwe_dimension =
-                    GlweDimension(sns_private_key_len);
-            }
-        }
-        let new_sns_private_key =
-            tfhe::integer::noise_squashing::NoiseSquashingPrivateKey::from_raw_parts(
-                NoiseSquashingPrivateKey::from_raw_parts(new_raw_sns_private_key, new_sns_params),
-            );
-
-        let (glwe_raw, lwe_raw, params, _) = match keyset
-            .client_key
-            .to_owned()
-            .into_raw_parts()
-            .0
-            .into_raw_parts()
-            .atomic_pattern
-        {
-            tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
-                standard_atomic_pattern_client_key,
-            ) => standard_atomic_pattern_client_key.into_raw_parts(),
-            tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey::KeySwitch32(_) => {
-                panic!("KeySwitch32 is not supported in this test")
-            }
-        };
-
-        //We update the parameters to match with our truncated keys.
-        //In particular we truncate the lwe_key by picking a new lwe_dimension
-        //and the glwe_key by picking a new GlweDimension and PolynomialSize
-        // and set modulus switch noise reduction to standard
-        let test_lwe_dim = params.lwe_dimension().0.min(8);
-        let test_glwe_dim = params.glwe_dimension().0.min(1);
-        let test_poly_size = params.polynomial_size().0.min(10);
-        let new_pbs_params = ClassicPBSParameters {
-            lwe_dimension: tfhe::integer::parameters::LweDimension(test_lwe_dim),
-            glwe_dimension: tfhe::integer::parameters::GlweDimension(test_glwe_dim),
-            polynomial_size: tfhe::integer::parameters::PolynomialSize(test_poly_size),
-            lwe_noise_distribution: params.lwe_noise_distribution(),
-            glwe_noise_distribution: params.glwe_noise_distribution(),
-            pbs_base_log: params.pbs_base_log(),
-            pbs_level: params.pbs_level(),
-            ks_base_log: params.ks_base_log(),
-            ks_level: params.ks_level(),
-            message_modulus: params.message_modulus(),
-            carry_modulus: params.carry_modulus(),
-            max_noise_level: params.max_noise_level(),
-            // currently there's no getter for log2_p_fail, so we set it manually
-            // doesn't matter what it is
-            log2_p_fail: -80.,
-            ciphertext_modulus: params.ciphertext_modulus(),
-            encryption_key_choice: params.encryption_key_choice(),
-            modulus_switch_noise_reduction_params: ModulusSwitchType::Standard,
-        };
-
-        let lwe_cont: Vec<u64> = lwe_raw.into_container();
-        let con = lwe_cont[..test_lwe_dim].to_vec();
-        let new_lwe_raw = LweSecretKey::from_container(con);
-        let glwe_cont = glwe_raw.into_container();
-        let con = glwe_cont[..test_poly_size * test_glwe_dim].to_vec();
-        let new_glwe_raw = GlweSecretKey::from_container(
-            con,
-            tfhe::integer::parameters::PolynomialSize(test_poly_size),
-        );
-
-        let sck = StandardAtomicPatternClientKey::from_raw_parts(
-            new_glwe_raw,
-            new_lwe_raw,
-            PBSParameters::PBS(new_pbs_params),
-            None,
-        );
-        let sck = tfhe::shortint::ClientKey {
-            atomic_pattern: AtomicPatternClientKey::Standard(sck),
-        };
-        let sck = tfhe::integer::ClientKey::from_raw_parts(sck);
-
-        let ck = tfhe::ClientKey::from_raw_parts(
-            sck,
-            None,
-            None,
-            Some(new_sns_private_key),
-            None,
-            None,
-            tfhe::Tag::default(),
-        );
-        keyset.client_key = ck;
-        DKGParams::WithSnS(DKGParamsSnS {
-            regular_params: DKGParamsRegular {
-                dkg_mode: DkgMode::Z128,
-                sec: 128,
-                ciphertext_parameters: new_pbs_params,
-                dedicated_compact_public_key_parameters: None,
-                compression_decompression_parameters: None,
-                cpk_re_randomization_ksk_params: None,
-                secret_key_deviations: None,
-            },
-            sns_params: new_sns_params,
-            sns_compression_params: None,
-        })
+        Ok((key_shares, expected_sk))
     }
 }

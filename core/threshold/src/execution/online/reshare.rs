@@ -647,15 +647,15 @@ where
                 )));
             }
             let mut vj = Vec::with_capacity(expected_input_len);
-            for (r, s) in rs_opened.iter().zip_eq(input_shares.clone()) {
+            for (r, s) in rs_opened.iter().zip_eq(input_shares.iter()) {
                 vj.push(*r + s.value());
             }
 
             // erase the memory of sk_share and rj
-            for share in input_shares {
+            for share in input_shares.iter_mut() {
                 share.zeroize();
             }
-            for r in &mut rs_opened {
+            for r in rs_opened.iter_mut() {
                 r.zeroize();
             }
 
