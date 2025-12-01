@@ -358,16 +358,17 @@ pub enum PrssSetVersioned<Z> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(PrssSetVersioned)]
 pub struct PrssSet<Z> {
-    parties: PartySet,
-    set_key: PrfKey,
-    f_a_points: Vec<Z>,
+    pub parties: PartySet,
+    pub set_key: PrfKey,
+    pub f_a_points: Vec<Z>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Version)]
+#[versionize(PrssSetVersioned)] // TODO shouldn't this be versionized?
 pub struct PrssSetV0<Z> {
-    parties: PartySetV0,
-    set_key: PrfKey,
-    f_a_points: Vec<Z>,
+    pub parties: PartySetV0,
+    pub set_key: PrfKey,
+    pub f_a_points: Vec<Z>,
 }
 
 impl<Z> Upgrade<PrssSet<Z>> for PrssSetV0<Z> {
