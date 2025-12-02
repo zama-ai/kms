@@ -97,12 +97,12 @@ where
 
     let new_current = PrssSet::<Z> {
         parties: party_set.clone(),
-        set_key: PrfKey(set_key.clone()),
+        set_key: PrfKey(set_key),
         f_a_points: f_a_points.clone(),
     };
     let new_legacy = PrssSetV0::<Z> {
         parties: party_set.iter().map(|r| r.one_based()).collect(),
-        set_key: PrfKey(set_key.clone()),
+        set_key: PrfKey(set_key),
         f_a_points,
     };
 

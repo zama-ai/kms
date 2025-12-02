@@ -504,8 +504,8 @@ fn test_prss_setup_combined(
     let new_versionized = PRSSSetupCombined {
         prss_setup_z64,
         prss_setup_z128,
-        num_parties: test.amount as u8,
-        threshold: test.threshold as u8,
+        num_parties: test.amount,
+        threshold: test.threshold,
     };
 
     if original_versionized != new_versionized {
