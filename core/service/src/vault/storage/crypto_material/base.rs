@@ -5,8 +5,8 @@
 use super::{check_data_exists, log_storage_success, CryptoMaterialReader};
 use crate::{
     anyhow_error_and_warn_log,
-    backup::operator::{RecoveryRequestPayload, RecoveryValidationMaterial},
-    cryptography::internal_crypto_types::PrivateSigKey,
+    backup::operator::RecoveryValidationMaterial,
+    cryptography::signatures::PrivateSigKey,
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
         context::ContextInfo,
@@ -17,8 +17,9 @@ use crate::{
     vault::{
         keychain::KeychainProxy,
         storage::{
-            delete_all_at_request_id, delete_at_request_id, delete_pk_at_request_id,
-            read_all_data_versioned, store_context_at_id, store_pk_at_request_id,
+            crypto_material::log_storage_success_optional_variant, delete_all_at_request_id,
+            delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned,
+            read_context_at_id, store_context_at_id, store_pk_at_request_id,
             store_versioned_at_request_id, Storage,
         },
         Vault,
@@ -29,7 +30,6 @@ use kms_grpc::{
     rpc_types::{KMSType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
     RequestId,
 };
-use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
@@ -236,58 +236,6 @@ where
             &PrivDataType::FheKeyInfo.to_string(),
         )
         .await
-    }
-
-    // =========================
-    // Storage Primitives
-    // =========================
-    // TODO(#2748) seems to be dead code
-    // Simplified storage methods without metadata
-    pub async fn store_private_serializable_data<T>(
-        &self,
-        req_id: &RequestId,
-        data: &T,
-        data_type: PrivDataType,
-    ) -> anyhow::Result<()>
-    where
-        T: Serialize + tfhe::Versionize + tfhe::named::Named + Send + Sync,
-        for<'a> <T as tfhe::Versionize>::Versioned<'a>: Serialize + Send + Sync,
-    {
-        let mut priv_storage = self.private_storage.lock().await;
-        store_versioned_at_request_id(&mut *priv_storage, req_id, data, &data_type.to_string())
-            .await?;
-
-        tracing::info!(
-            "Successfully stored private {} data for request ID {} in {}",
-            data_type.to_string(),
-            req_id,
-            priv_storage.info()
-        );
-        Ok(())
-    }
-
-    // TODO(#2748) seems to be dead code
-    pub async fn store_public_serializable_data<T>(
-        &self,
-        req_id: &RequestId,
-        data: &T,
-        data_type: PubDataType,
-    ) -> anyhow::Result<()>
-    where
-        T: Serialize + tfhe::Versionize + tfhe::named::Named + Send + Sync,
-        for<'a> <T as tfhe::Versionize>::Versioned<'a>: Serialize + Send + Sync,
-    {
-        let mut pub_storage = self.public_storage.lock().await;
-        store_versioned_at_request_id(&mut *pub_storage, req_id, data, &data_type.to_string())
-            .await?;
-
-        tracing::info!(
-            "Successfully stored public {} data for request ID {} in {}",
-            data_type.to_string(),
-            req_id,
-            pub_storage.info()
-        );
-        Ok(())
     }
 
     // =========================
@@ -610,7 +558,6 @@ where
     #[allow(clippy::too_many_arguments)]
     pub async fn write_backup_keys_with_meta_store(
         &self,
-        recovery_request: &RecoveryRequestPayload,
         recovery_material: &RecoveryValidationMaterial,
         meta_store: Arc<RwLock<CustodianMetaStore>>,
     ) {
@@ -624,36 +571,14 @@ where
             let mut public_storage_guard = self.public_storage.lock().await;
 
             let pub_storage_future = async {
-                let recovery_store_result = store_versioned_at_request_id(
-                    &mut (*public_storage_guard),
-                    &req_id,
-                    recovery_request,
-                    &PubDataType::RecoveryRequest.to_string(),
-                )
-                .await;
-                if let Err(e) = &recovery_store_result {
-                    tracing::error!(
-                        "Failed to store recovery request to the public storage for request {}: {}",
-                        req_id,
-                        e
-                    );
-                } else {
-                    log_storage_success(
-                        req_id,
-                        public_storage_guard.info(),
-                        &PubDataType::RecoveryRequest.to_string(),
-                        true,
-                        true,
-                    );
-                }
-                let commit_store_result = store_versioned_at_request_id(
+                let store_result = store_versioned_at_request_id(
                     &mut (*public_storage_guard),
                     &req_id,
                     recovery_material,
                     &PubDataType::RecoveryMaterial.to_string(),
                 )
                 .await;
-                if let Err(e) = &recovery_store_result {
+                if let Err(e) = &store_result {
                     tracing::error!(
                         "Failed to store commitments to the public storage for request {}: {}",
                         req_id,
@@ -668,7 +593,7 @@ where
                         true,
                     );
                 }
-                recovery_store_result.is_ok() && commit_store_result.is_ok()
+                store_result.is_ok()
             };
             tokio::join!(pub_storage_future).0
         };
@@ -687,9 +612,7 @@ where
             };
             // If everything is ok, we update the meta store with a success
             if pub_res {
-                if let Err(e) = guarded_meta_store
-                    .update(&req_id, Ok(recovery_material.custodian_context().clone()))
-                {
+                if let Err(e) = guarded_meta_store.update(&req_id, Ok(recovery_material.clone())) {
                     tracing::error!("Failed to update meta store for request {req_id}: {e}");
                     self.purge_backup_material(&req_id, guarded_meta_store)
                         .await;
@@ -745,40 +668,26 @@ where
         };
 
         let pub_purge = async {
-            let request_res = delete_at_request_id(
-                &mut (*pub_storage),
-                req_id,
-                &PubDataType::RecoveryRequest.to_string(),
-            )
-            .await;
-            if let Err(e) = &request_res {
-                tracing::warn!(
-                    "Failed to delete public backup key material for request {}: {}",
-                    req_id,
-                    e
-                );
-            }
-            let commit_res = delete_at_request_id(
+            let res = delete_at_request_id(
                 &mut (*pub_storage),
                 req_id,
                 &PubDataType::RecoveryMaterial.to_string(),
             )
             .await;
-            if let Err(e) = &commit_res {
+            if let Err(e) = &res {
                 tracing::warn!(
                     "Failed to delete commitment material for request {}: {}",
                     req_id,
                     e
                 );
             }
-            request_res.is_err() && commit_res.is_err()
+            res.is_err()
         };
         let vault_purge = async {
             match back_vault {
-                Some(mut back_vault) => {
-                    delete_all_at_request_id(&mut (*back_vault), req_id).await;
-                    true
-                }
+                Some(mut back_vault) => delete_all_at_request_id(&mut (*back_vault), req_id)
+                    .await
+                    .is_err(),
                 None => false, // No backup vault, so no error
             }
         };
@@ -877,7 +786,6 @@ where
 
     /// Read the public key from a cache, if it does not exist,
     /// attempt to read it from the public storage backend.
-    #[cfg(test)]
     pub(crate) async fn read_cloned_pk(
         &self,
         req_id: &RequestId,
@@ -890,7 +798,20 @@ where
         .await
     }
 
-    #[cfg(test)]
+    /// Read the server key
+    /// from the public storage backend.
+    pub(crate) async fn read_cloned_server_key(
+        &self,
+        req_id: &RequestId,
+    ) -> anyhow::Result<tfhe::ServerKey> {
+        Self::read_cloned_crypto_material::<tfhe::ServerKey, _>(
+            Arc::new(RwLock::new(HashMap::new())),
+            req_id,
+            self.public_storage.clone(),
+        )
+        .await
+    }
+
     pub(crate) async fn read_cloned_crypto_material<T, S>(
         cache: Arc<RwLock<HashMap<RequestId, T>>>,
         req_id: &RequestId,
@@ -912,7 +833,10 @@ where
                 let pk = T::read_from_storage(&(*pub_storage), req_id)
                     .await
                     .inspect_err(|e| {
-                        tracing::error!("Failed to read CRS with the handle {} ({e})", req_id);
+                        tracing::error!(
+                            "Failed to read public material with the handle {} ({e})",
+                            req_id
+                        );
                     })?;
 
                 let mut write_cache_guard = cache.write().await;
@@ -976,7 +900,7 @@ where
                 }
                 Err(e) => {
                     return Err(anyhow_error_and_warn_log(format!(
-                        "Failed to read crypto material from storage for request ID {req_id}: {e}"
+                        "Failed to refresh crypto material from storage for request ID {req_id}: {e}"
                     )));
                 }
             }
@@ -989,18 +913,41 @@ where
         &self,
         context_id: &ContextId,
         context_info: &ContextInfo,
-        is_threshold: bool,
     ) -> anyhow::Result<()> {
         let mut priv_storage = self.private_storage.lock().await;
         store_context_at_id(&mut *priv_storage, context_id, context_info).await?;
-        log_storage_success(
+        log_storage_success_optional_variant(
             context_id,
             priv_storage.info(),
             "context info",
             false,
-            is_threshold,
+            None,
         );
         Ok(())
+    }
+
+    pub async fn read_context_info(&self, context_id: &ContextId) -> anyhow::Result<ContextInfo> {
+        let priv_storage = self.private_storage.lock().await;
+        let res = read_context_at_id(&*priv_storage, context_id).await?;
+        log_storage_success_optional_variant(
+            context_id,
+            priv_storage.info(),
+            "context info",
+            false,
+            None,
+        );
+        Ok(res)
+    }
+
+    /// Read all context info entries from storage.
+    pub async fn read_all_context_info(&self) -> anyhow::Result<Vec<ContextInfo>> {
+        let priv_storage = self.private_storage.lock().await;
+
+        let context_map: HashMap<_, ContextInfo> =
+            read_all_data_versioned(&*priv_storage, &PrivDataType::ContextInfo.to_string())
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to read context info: {}", e))?;
+        Ok(context_map.into_values().collect())
     }
 }
 

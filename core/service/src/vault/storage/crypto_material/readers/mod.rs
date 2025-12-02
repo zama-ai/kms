@@ -6,5 +6,6 @@
 mod context;
 mod crs;
 mod fhe_keys;
+mod server_key;
 mod threshold_keys;
 mod wrapped_key;

@@ -1,0 +1,456 @@
+name: kind-testing
+
+on:
+  pull_request:
+  schedule:
+    - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
+
+permissions: {}
+
+jobs:
+  ############################################################################
+  # Docker Build Job (Commented Out)
+  # This job is currently disabled but can be used to build and publish Docker images
+  # for testing purposes when needed.
+  ############################################################################
+  docker-build:
+    if: github.event_name == 'pull_request'
+    name: kind-testing/docker-build
+    permissions:
+      actions: read # Read workflow run information
+      contents: write # Checkout repository code
+      id-token: write # OIDC authentication
+      pull-requests: read # Access pull request information
+      packages: write # Publish Docker images
+      attestations: write # Create build attestations
+    uses: ./.github/workflows/docker-build.yml
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  ############################################################################
+  # Start EC2 Runner Jobs
+  # Initializes self-hosted runners for running tests in parallel
+  ############################################################################
+  start-runner-cargo:
+    name: kind-testing/start-runner (cargo)
+    runs-on: ubuntu-latest
+    needs:
+      - docker-build
+    outputs:
+      label: ${{ steps.start-ec2-runner.outputs.label }}
+    steps:
+      - name: Start EC2 runner
+        id: start-ec2-runner
+        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
+        with:
+          mode: start
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          backend: aws
+          profile: 'big-instance'
+
+  start-runner-threshold:
+    name: kind-testing/start-runner (threshold)
+    runs-on: ubuntu-latest
+    needs:
+      - docker-build
+    outputs:
+      label: ${{ steps.start-ec2-runner.outputs.label }}
+    steps:
+      - name: Start EC2 runner
+        id: start-ec2-runner
+        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
+        with:
+          mode: start
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          backend: aws
+          profile: 'big-instance-kind'
+
+  start-runner-centralized:
+    name: kind-testing/start-runner (centralized)
+    runs-on: ubuntu-latest
+    needs:
+      - docker-build
+    outputs:
+      label: ${{ steps.start-ec2-runner.outputs.label }}
+    steps:
+      - name: Start EC2 runner
+        id: start-ec2-runner
+        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
+        with:
+          mode: start
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          backend: aws
+          profile: 'big-instance-service'
+
+  ############################################################################
+  # Kind Testing Job
+  # Main job that sets up a Kubernetes cluster using Kind and runs the tests
+  ############################################################################
+  kind-testing:
+    name: kind-testing (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: cargo-check
+            cargo-check: true
+            runner-label: ${{ needs.start-runner-cargo.outputs.label }}
+          - name: threshold
+            deployment-type: threshold
+            num-parties: 4
+            runner-label: ${{ needs.start-runner-threshold.outputs.label }}
+          - name: centralized
+            deployment-type: centralized
+            num-parties: 1
+            runner-label: ${{ needs.start-runner-centralized.outputs.label }}
+    needs:
+      - start-runner-cargo
+      - start-runner-threshold
+      - start-runner-centralized
+      - docker-build
+    runs-on: ${{ matrix.runner-label }}
+
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          submodules: true
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: true
+
+      - name: Get Rust version
+        env:
+          GH_WORKSPACE: ${{ github.workspace }}
+        run: |
+          version="$(cat "$GH_WORKSPACE/toolchain.txt")"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Setup Home
+        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
+
+      # ==========================================================================
+      # Git LFS Setup
+      # Required for handling large files in tests, especially for backward compatibility
+      # ==========================================================================
+      - name: Setup Git LFS
+        env:
+          GIT_LFS_VERSION: '3.6.1' # Pinned version for reproducibility
+        run: |
+          # Download and install Git LFS
+          wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
+          tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
+          "./git-lfs-${GIT_LFS_VERSION}/install.sh"
+          # Pull LFS files after installation
+          git lfs pull
+
+      # ==========================================================================
+      # Docker Buildx Setup
+      # Configures Docker Buildx for building multi-platform images
+      #
+      - name: Set up Docker Buildx
+        if: matrix.cargo-check == false
+        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v3.3.0
+        with:
+          platforms: linux/amd64 # Target platform for builds
+          buildkitd-flags: --debug # Enable debug logging for BuildKit
+
+      - name: Install kubectl
+        if: matrix.cargo-check == false
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl.sha256"
+          check_sum=$(echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check)
+          if [ "$check_sum" != "kubectl: OK" ]; then
+            echo "kubectl checksum does not match"
+            exit 1
+          fi
+          install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+          chmod +x kubectl
+          mkdir -p ~/.local/bin
+          mv ./kubectl ~/.local/bin/kubectl
+          export PATH=$PATH:~/.local/bin
+          kubectl version --client
+
+      - name: Install KIND
+        if: matrix.cargo-check == false
+        run: |
+          # For AMD64 / x86_64
+          [ "$(uname -m)" = "x86_64" ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64
+          # For ARM64
+          [ "$(uname -m)" = "aarch64" ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-arm64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Install Helm
+        if: matrix.cargo-check == false
+        run: |
+          curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+          chmod 700 get_helm.sh
+          ./get_helm.sh
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+          aws-region: eu-west-3
+
+      # Needed to be able to pull some docker images for the simulator test
+      - name: Login to zws GitHub Container Registry
+        if: matrix.cargo-check == false
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.ZWS_BOT_TOKEN }}
+
+      # ==========================================================================
+      # Rust toolchain setup
+      #
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          components: rustfmt, clippy, llvm-tools-preview, llvm-tools
+          cache: false
+
+      # ==========================================================================
+      # Setup cache for dockerfile and inject in docker
+      #
+      - name: Setup Cache
+        uses: runs-on/cache@a10d0f887093e2bc9de875be9edf8ab98c94a154 # v4.3.0
+        id: cache
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
+          RUNS_ON_AWS_REGION: eu-west-3
+        with:
+          path: |
+            /home/ubuntu/.cargo/bin/
+            /home/ubuntu/.cargo/registry/index/
+            /home/ubuntu/.cargo/registry/cache/
+            /home/ubuntu/.cargo/git/db/
+            ${{ github.workspace }}/target
+          key: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: '26.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
+
+      - name: Setup cargo nextest and grcov
+        if: matrix.cargo-check == false
+        run: |
+          cargo install cargo-nextest grcov --locked --force
+
+      - name: Setup cargo dylint
+        if: matrix.cargo-check == true
+        run: |
+          cargo install cargo-dylint dylint-link --force
+
+      - name: clippy and rustfmt versions
+        if: matrix.cargo-check == true
+        run: |
+          cargo clippy -V && cargo fmt --version
+
+      - name: Formatting
+        if: matrix.cargo-check == true
+        run: cargo fmt --all -- --check
+
+      - name: Linting default features
+        if: matrix.cargo-check == true
+        env:
+          PACKAGE_NAME: 'kms-core-client'
+        run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
+
+      - name: Linting All features
+        if: matrix.cargo-check == true
+        env:
+          PACKAGE_NAME: 'kms-core-client'
+        run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings
+
+      - name: Linting dylint
+        if: matrix.cargo-check == true
+        run: cargo dylint --all
+
+      # ==========================================================================
+      # Test Execution
+      # Runs the Kubernetes integration tests using the configured environment
+      #
+      - name: Setup Kind Cluster in threshold mode with 4 parties
+        if: matrix.cargo-check == false
+        id: setup
+        env:
+          DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
+          GITHUB_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+          KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          NAMESPACE: kms-test-${{ matrix.deployment-type }}
+          NUM_PARTIES: ${{ matrix.num-parties }} # Number of parties
+        run: |
+          # Start KMS setup and wait for completion
+          # Uses environment variables: NAMESPACE, KMS_CORE_IMAGE_TAG, KMS_CORE_CLIENT_IMAGE_TAG,
+          # DEPLOYMENT_TYPE, NUM_PARTIES
+          ./ci/kube-testing/scripts/manage_kind_setup.sh start
+
+      - name: Run Kubernetes Tests
+        if: matrix.cargo-check == false
+        id: tests
+        env:
+          DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
+          NAMESPACE: kms-test-${{ matrix.deployment-type }}
+          NUM_PARTIES: ${{ matrix.num-parties }} # Number of parties
+        run: |
+          #============================================================
+          # Here we run the tests and capture exit code
+          #============================================================
+          #
+          cargo nextest run --test kubernetes_test_"${DEPLOYMENT_TYPE}" --profile ci --no-fail-fast
+          echo "TEST_EXIT_CODE=$?" >> "${GITHUB_ENV}"
+
+          # Collect logs after tests complete
+          ./ci/kube-testing/scripts/setup_kms_in_kind.sh --collect-logs
+
+      - name: Copy Test Results
+        if: (!cancelled() || !failure() && github.event_name == 'pull_request')
+        run: |
+          if find "${GITHUB_WORKSPACE}"/target/nextest/ci -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
+            echo "Files found in ${GITHUB_WORKSPACE}/target/nextest/ci"
+            ls -R "${GITHUB_WORKSPACE}"/target/nextest/ci
+            echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> "$GITHUB_ENV"
+            cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit.xml # zizmor: ignore[template-injection]
+            echo "EXIT_CODE=0" >> "$GITHUB_ENV"
+          else
+            echo "No junit test files found in ${GITHUB_WORKSPACE}/target/nextest/ci"
+            echo "EXIT_CODE=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+        shell: bash
+
+      - name: Upload Test Results
+        if: ((!cancelled() || !failure() && github.event_name == 'pull_request') && env.EXIT_CODE == 0)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: junit-test-report-${{ env.TIMESTAMP }}
+          path: /tmp/junit.xml
+
+      - name: Cleanup Kind Setup and Collect Logs
+        if: always() && matrix.cargo-check == false
+        env:
+          DEPLOYMENT_TYPE: ${{ matrix.deployment-type }}
+          NAMESPACE: kms-test-${{ matrix.deployment-type }}
+          NUM_PARTIES: ${{ matrix.num-parties }}
+        run: |
+          # Stop setup script and cleanup resources
+          # This will collect logs from pods based on DEPLOYMENT_TYPE and NUM_PARTIES
+          SETUP_PID=$(cat .setup_pid 2>/dev/null || echo "")
+          TAIL_PID=$(cat .tail_pid 2>/dev/null || echo "")
+          ./ci/kube-testing/scripts/manage_kind_setup.sh stop "${SETUP_PID}" "${TAIL_PID}"
+
+      - name: Upload kms-core logs
+        if: always() && matrix.cargo-check == false
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kms-core-${{ matrix.deployment-type }}-logs
+          path: |
+            /tmp/kms-service-threshold-*.log
+            /tmp/kms-core-*.log
+          retention-days: 7 # Keep logs for 7 days
+          if-no-files-found: warn # Only warn if no log files are found
+
+      - name: Check Test Results
+        if: always() && matrix.cargo-check == false
+        run: |
+          # Fail the workflow if tests failed
+          if [ "${TEST_EXIT_CODE:-0}" -ne 0 ]; then
+            echo "Tests failed with exit code ${TEST_EXIT_CODE}"
+            exit "${TEST_EXIT_CODE}"
+          fi
+          echo "Tests passed successfully"
+
+  # Test reporting job that runs after all tests complete
+  # Only runs on pull requests to generate test reports
+  test-reporter:
+    name: kms-testing/test-reporter
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs:
+      - kind-testing
+    uses: ./.github/workflows/test-reporter.yml
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
+  ############################################################################
+  # Stop EC2 Runner Jobs
+  # Cleans up the EC2 runners after tests complete or fail
+  ############################################################################
+  stop-runner-cargo:
+    name: kind-testing/stop-runner (cargo)
+    needs:
+      - start-runner-cargo
+      - kind-testing
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.start-runner-cargo.result == 'success' }}
+    steps:
+      - name: Stop EC2 runner
+        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
+        with:
+          mode: stop
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          label: ${{ needs.start-runner-cargo.outputs.label }}
+
+  stop-runner-threshold:
+    name: kind-testing/stop-runner (threshold)
+    needs:
+      - start-runner-threshold
+      - kind-testing
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.start-runner-threshold.result == 'success' }}
+    steps:
+      - name: Stop EC2 runner
+        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
+        with:
+          mode: stop
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          label: ${{ needs.start-runner-threshold.outputs.label }}
+
+  stop-runner-centralized:
+    name: kind-testing/stop-runner (centralized)
+    needs:
+      - start-runner-centralized
+      - kind-testing
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.start-runner-centralized.result == 'success' }}
+    steps:
+      - name: Stop EC2 runner
+        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
+        with:
+          mode: stop
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          label: ${{ needs.start-runner-centralized.outputs.label }}

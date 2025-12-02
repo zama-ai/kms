@@ -5,7 +5,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
 use anyhow::anyhow;
 use itertools::Itertools;
 use kms_grpc::{
-    identifiers::ContextId,
+    identifiers::{ContextId, EpochId},
     kms::v1::{
         self, CiphertextFormat, Empty, PublicDecryptionRequest, PublicDecryptionResponse,
         PublicDecryptionResponsePayload, TypedPlaintext,
@@ -33,7 +33,7 @@ use threshold_fhe::{
             LowLevelCiphertext, OfflineNoiseFloodSession, SecureOnlineNoiseFloodDecryption,
             SmallOfflineNoiseFloodSession,
         },
-        runtime::session::SmallSession,
+        runtime::sessions::small_session::SmallSession,
         tfhe_internals::private_keysets::PrivateKeySet,
     },
     session_id::SessionId,
@@ -47,13 +47,14 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    consts::DEFAULT_MPC_CONTEXT,
+    consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
+    cryptography::internal_crypto_types::LegacySerialization,
     engine::{
         base::{
             compute_external_pt_signature, deserialize_to_low_level, BaseKmsStruct,
             PubDecCallValues,
         },
-        threshold::{service::session::SessionPreparerGetter, traits::PublicDecryptor},
+        threshold::{service::session::ImmutableSessionMaker, traits::PublicDecryptor},
         traits::BaseKms,
         validation::{
             parse_proto_request_id, validate_public_decrypt_req, RequestIdParsingErr,
@@ -69,7 +70,7 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::{session::SessionPreparer, ThresholdFheKeys};
+use super::ThresholdFheKeys;
 
 #[tonic::async_trait]
 pub trait NoiseFloodDecryptor: Send + Sync {
@@ -94,7 +95,7 @@ pub struct SecureNoiseFloodDecryptor;
 impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
     type Prep = SmallOfflineNoiseFloodSession<
         { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        threshold_fhe::execution::runtime::session::SmallSession<ResiduePolyF4Z128>,
+        threshold_fhe::execution::runtime::sessions::small_session::SmallSession<ResiduePolyF4Z128>,
     >;
 
     async fn decrypt<T>(
@@ -132,7 +133,7 @@ pub struct RealPublicDecryptor<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
-    pub session_preparer_getter: SessionPreparerGetter,
+    pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
     pub decryption_mode: DecryptionMode,
@@ -156,7 +157,8 @@ impl<
     async fn inner_decrypt<T>(
         session_id: SessionId,
         context_id: ContextId,
-        session_prep: Arc<SessionPreparer>,
+        epoch_id: EpochId,
+        session_maker: ImmutableSessionMaker,
         ct: Vec<u8>,
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
@@ -167,9 +169,10 @@ impl<
         T: tfhe::integer::block_decomposition::Recomposable
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
     {
+        let my_identity = session_maker.my_identity(&context_id).await?;
         tracing::info!(
             "{:?} started inner_decrypt with mode {:?} with session ID {session_id} and context ID {context_id}",
-            session_prep.own_identity().await?,
+            my_identity,
             dec_mode
         );
 
@@ -180,11 +183,12 @@ impl<
         })
         .await??;
 
+        let my_role = session_maker.my_role(&context_id).await?;
         let dec = match dec_mode {
             DecryptionMode::NoiseFloodSmall => {
                 let session = ok_or_tonic_abort(
-                    session_prep
-                        .make_small_async_session_z128(session_id, context_id)
+                    session_maker
+                        .make_small_async_session_z128(session_id, context_id, epoch_id)
                         .await,
                     "Could not prepare ddec data for noiseflood decryption".to_string(),
                 )?;
@@ -204,8 +208,8 @@ impl<
             }
             DecryptionMode::BitDecSmall => {
                 let mut session = ok_or_tonic_abort(
-                    session_prep
-                        .make_small_async_session_z64(session_id, context_id)
+                    session_maker
+                        .make_small_async_session_z64(session_id, context_id, epoch_id)
                         .await,
                     "Could not prepare ddec data for bitdec decryption".to_string(),
                 )?;
@@ -215,7 +219,7 @@ impl<
                     &low_level_ct.try_get_small_ct()?,
                     &keys.private_keys,
                     keys.get_key_switching_key()?,
-                    session_prep.my_role()?,
+                    my_role,
                 )
                 .await
             }
@@ -239,7 +243,7 @@ impl<
                 };
                 tracing::info!(
                     "Decryption completed on {:?}. Inner thread took {:?} ms",
-                    session_prep.own_identity().await?,
+                    my_identity,
                     time.as_millis()
                 );
                 raw_decryption
@@ -263,7 +267,7 @@ impl<
     > PublicDecryptor for RealPublicDecryptor<PubS, PrivS, Dec>
 {
     #[tracing::instrument(skip(self, request), fields(
-        party = ?self.session_preparer_getter.name(),
+        request_id = ?request.get_ref().request_id,
         operation = "decrypt"
     ))]
     async fn public_decrypt(
@@ -284,26 +288,23 @@ impl<
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
             None => *DEFAULT_MPC_CONTEXT,
         };
-        let session_preparer = Arc::new(
-            self.session_preparer_getter
-                .get(&context_id)
-                .await
-                .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?,
-        );
+        let epoch_id: EpochId = match &inner.epoch_id {
+            Some(c) => c
+                .try_into()
+                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
+            None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
+        };
 
         // Start timing and counting before any operations
+        let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
+            tonic::Status::internal(format!(
+                "Failed to get my role for context {context_id}: {e:?}"
+            ))
+        })?;
         let mut timer = metrics::METRICS
             .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
-            .tag(
-                TAG_PARTY_ID,
-                session_preparer
-                    .my_role()
-                    .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?
-                    .to_string(),
-            )
+            .tag(TAG_PARTY_ID, my_role.to_string())
             .start();
-
-        let permit = self.rate_limiter.start_pub_decrypt().await?;
 
         let (ciphertexts, key_id, req_id, eip712_domain) = {
             let inner_compute = Arc::clone(&inner);
@@ -334,6 +335,11 @@ impl<
                 )));
             }
         }
+
+        // Check for resource exhaustion once all the other checks are ok
+        // because resource exhaustion can be recovered by sending the exact same request
+        // but the errors above cannot be tried again.
+        let permit = self.rate_limiter.start_pub_decrypt().await?;
 
         self.crypto_storage
             .refresh_threshold_fhe_keys(&key_id)
@@ -372,7 +378,7 @@ impl<
         // Log after lock is released
         tracing::info!(
             "MetaStore INITIAL insert - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
-            req_id, key_id, session_preparer.my_role().map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?, ciphertexts.len(), lock_acquired_time, total_lock_time
+            req_id, key_id, my_role, ciphertexts.len(), lock_acquired_time, total_lock_time
         );
 
         let ext_handles_bytes = ciphertexts
@@ -388,13 +394,7 @@ impl<
             let inner_timer = metrics::METRICS
                 .time_operation(OP_PUBLIC_DECRYPT_INNER)
                 .tags([
-                    (
-                        TAG_PARTY_ID,
-                        session_preparer
-                            .my_role()
-                            .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?
-                            .to_string(),
-                    ),
+                    (TAG_PARTY_ID, my_role.to_string()),
                     (TAG_KEY_ID, key_id.as_str()),
                     (
                         TAG_PUBLIC_DECRYPTION_KIND,
@@ -417,10 +417,10 @@ impl<
             );
 
             let crypto_storage = self.crypto_storage.clone();
-            let prep = Arc::clone(&session_preparer);
 
             // we do not need to hold the handle,
             // the result of the computation is tracked by the pub_dec_meta_store
+            let session_maker = self.session_maker.clone();
             let decrypt_future = || async move {
                 let fhe_type_string = typed_ciphertext.fhe_type_string();
                 let fhe_type = if let Ok(f) = typed_ciphertext.fhe_type() {
@@ -446,7 +446,8 @@ impl<
                     FheTypes::Uint2048 => Self::inner_decrypt::<tfhe::integer::bigint::U2048>(
                         internal_sid,
                         context_id,
-                        prep,
+                        epoch_id,
+                        session_maker,
                         ciphertext,
                         fhe_type,
                         ct_format,
@@ -458,7 +459,8 @@ impl<
                     FheTypes::Uint1024 => Self::inner_decrypt::<tfhe::integer::bigint::U1024>(
                         internal_sid,
                         context_id,
-                        prep,
+                        epoch_id,
+                        session_maker,
                         ciphertext,
                         fhe_type,
                         ct_format,
@@ -470,7 +472,8 @@ impl<
                     FheTypes::Uint512 => Self::inner_decrypt::<tfhe::integer::bigint::U512>(
                         internal_sid,
                         context_id,
-                        prep,
+                        epoch_id,
+                        session_maker,
                         ciphertext,
                         fhe_type,
                         ct_format,
@@ -482,7 +485,8 @@ impl<
                     FheTypes::Uint256 => Self::inner_decrypt::<tfhe::integer::U256>(
                         internal_sid,
                         context_id,
-                        prep,
+                        epoch_id,
+                        session_maker,
                         ciphertext,
                         fhe_type,
                         ct_format,
@@ -494,7 +498,8 @@ impl<
                     FheTypes::Uint160 => Self::inner_decrypt::<tfhe::integer::U256>(
                         internal_sid,
                         context_id,
-                        prep,
+                        epoch_id,
+                        session_maker,
                         ciphertext,
                         fhe_type,
                         ct_format,
@@ -506,7 +511,8 @@ impl<
                     FheTypes::Uint128 => Self::inner_decrypt::<u128>(
                         internal_sid,
                         context_id,
-                        prep,
+                        epoch_id,
+                        session_maker,
                         ciphertext,
                         fhe_type,
                         ct_format,
@@ -518,7 +524,8 @@ impl<
                     FheTypes::Uint80 => Self::inner_decrypt::<u128>(
                         internal_sid,
                         context_id,
-                        prep,
+                        epoch_id,
+                        session_maker,
                         ciphertext,
                         fhe_type,
                         ct_format,
@@ -535,7 +542,8 @@ impl<
                     | FheTypes::Uint64 => Self::inner_decrypt::<u64>(
                         internal_sid,
                         context_id,
-                        prep,
+                        epoch_id,
+                        session_maker,
                         ciphertext,
                         fhe_type,
                         ct_format,
@@ -565,10 +573,11 @@ impl<
 
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
-        let sigkey = Arc::clone(&self.base_kms.sig_key);
-        let party = session_preparer
-            .my_role()
-            .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?;
+        let sigkey = self.base_kms.sig_key().map_err(|e| {
+            tonic::Status::internal(format!(
+                "Failed to get signing key for public decryption request {req_id}: {e:?}"
+            ))
+        })?;
         let dec_sig_future = move |_permit| async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
@@ -657,7 +666,7 @@ impl<
             // Log after lock is released
             tracing::info!(
                 "MetaStore SUCCESS update - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
-                req_id, key_id, party, pts_len, lock_acquired_time, total_lock_time
+                req_id, key_id, my_role, pts_len, lock_acquired_time, total_lock_time
             );
             Ok(())
         };
@@ -698,7 +707,11 @@ impl<
             )));
         }
 
-        let server_verf_key = self.base_kms.get_serialized_verf_key();
+        let server_verf_key = self.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
+            Status::failed_precondition(format!(
+                "Failed to serialize server verification key: {e:?}"
+            ))
+        })?;
         let sig_payload = PublicDecryptionResponsePayload {
             plaintexts,
             verification_key: server_verf_key,
@@ -733,16 +746,18 @@ mod tests {
     };
     use rand::SeedableRng;
     use threshold_fhe::execution::{
-        runtime::session::ParameterHandles, small_execution::prss::PRSSSetup,
-        tfhe_internals::utils::expanded_encrypt,
+        runtime::sessions::session_parameters::GenericParameterHandles,
+        small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
     };
 
     use crate::{
         consts::TEST_PARAM,
-        cryptography::internal_crypto_types::gen_sig_keys,
+        cryptography::signatures::gen_sig_keys,
         dummy_domain,
-        engine::base::{compute_info_standard_keygen, DSEP_PUBDATA_KEY},
-        engine::threshold::service::session::SessionPreparerManager,
+        engine::{
+            base::{compute_info_standard_keygen, DSEP_PUBDATA_KEY},
+            threshold::service::session::SessionMaker,
+        },
         vault::storage::ram,
     };
 
@@ -754,7 +769,9 @@ mod tests {
     impl NoiseFloodDecryptor for DummyNoisefloodDecryptor {
         type Prep = SmallOfflineNoiseFloodSession<
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            threshold_fhe::execution::runtime::session::SmallSession<ResiduePolyF4Z128>,
+            threshold_fhe::execution::runtime::sessions::small_session::SmallSession<
+                ResiduePolyF4Z128,
+            >,
         >;
 
         async fn decrypt<T>(
@@ -793,7 +810,7 @@ mod tests {
             base_kms: BaseKmsStruct,
             pub_storage: PubS,
             priv_storage: PrivS,
-            session_preparer_getter: SessionPreparerGetter,
+            session_maker: ImmutableSessionMaker,
         ) -> Self {
             let crypto_storage = ThresholdCryptoMaterialStorage::new(
                 pub_storage,
@@ -810,7 +827,7 @@ mod tests {
                 base_kms,
                 crypto_storage,
                 pub_dec_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-                session_preparer_getter,
+                session_maker,
                 tracker,
                 rate_limiter,
                 decryption_mode: DecryptionMode::NoiseFloodSmall,
@@ -830,11 +847,11 @@ mod tests {
     impl RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor> {
         async fn init_test_dummy_decryptor(
             base_kms: BaseKmsStruct,
-            session_preparer_getter: SessionPreparerGetter,
+            session_maker: ImmutableSessionMaker,
         ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(base_kms, pub_storage, priv_storage, session_preparer_getter).await
+            Self::init_test(base_kms, pub_storage, priv_storage, session_maker).await
         }
     }
 
@@ -848,35 +865,26 @@ mod tests {
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
         let param = TEST_PARAM;
-        let session_preparer_manager = SessionPreparerManager::new_test_session();
 
-        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-
-        let session_preparer = SessionPreparer::new_test_session(
-            base_kms.new_instance().await,
+        let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,
+            base_kms.new_rng().await,
         );
-        session_preparer_manager
-            .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
-            .await;
+
         let public_decryptor = RealPublicDecryptor::init_test_dummy_decryptor(
             base_kms,
-            session_preparer_manager.make_getter(),
+            session_maker.make_immutable(),
         )
         .await;
 
         let key_id = RequestId::new_random(rng);
 
         // make a dummy private keyset
-        let (threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param, rng);
+        let (threshold_fhe_keys, fhe_key_set) =
+            ThresholdFheKeys::init_dummy(param, key_id.into(), rng);
 
         // Not a huge deal if we clone this server key since we only use small/test parameters
         tfhe::set_server_key(fhe_key_set.server_key.clone());
@@ -909,7 +917,7 @@ mod tests {
         }
         public_decryptor
             .crypto_storage
-            .write_threshold_keys_with_meta_store(
+            .write_threshold_keys_with_dkg_meta_store(
                 &key_id,
                 threshold_fhe_keys,
                 fhe_key_set,

@@ -1,10 +1,16 @@
-use super::{
-    party::Role,
-    session::{BaseSession, LargeSession, ParameterHandles, SessionParameters, SmallSession},
-};
+use super::party::Role;
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Ring},
     execution::{
+        runtime::{
+            party::{DualRole, RoleKind, RoleTrait, TwoSetsRole},
+            sessions::{
+                base_session::{BaseSession, GenericBaseSession},
+                large_session::LargeSession,
+                session_parameters::{GenericParameterHandles, GenericSessionParameters},
+                small_session::SmallSession,
+            },
+        },
         small_execution::{
             agree_random::DummyAgreeRandom,
             prf::PRSSConversions,
@@ -17,6 +23,7 @@ use crate::{
         NetworkMode,
     },
     session_id::SessionId,
+    tests::helper::tests_and_benches::get_seed_for_two_sets_role,
 };
 use aes_prng::AesRng;
 use rand::SeedableRng;
@@ -32,12 +39,12 @@ use tfhe::{core_crypto::prelude::LweKeyswitchKey, ServerKey};
 //
 // NOTE: Unfortunately generic params can not be used in const expression,
 // so we need an explicit degree here although it is exactly Z::EXTENSION_DEGREE
-pub struct DistributedTestRuntime<Z: Ring, const EXTENSION_DEGREE: usize> {
-    pub threshold: u8,
+pub struct DistributedTestRuntime<Z: Ring, R: RoleTrait, const EXTENSION_DEGREE: usize> {
+    pub threshold: R::ThresholdType,
     pub prss_setups: Option<HashMap<Role, PRSSSetup<Z>>>,
     pub keyshares: Option<Vec<PrivateKeySet<EXTENSION_DEGREE>>>,
-    pub user_nets: HashMap<Role, Arc<LocalNetworking>>,
-    pub roles: HashSet<Role>,
+    pub user_nets: HashMap<R, Arc<LocalNetworking<R>>>,
+    pub roles: HashSet<R>,
     pub server_key: Option<Arc<ServerKey>>,
     pub ks_key: Option<Arc<LweKeyswitchKey<Vec<u64>>>>,
 }
@@ -47,12 +54,58 @@ pub fn generate_fixed_roles(parties: usize) -> HashSet<Role> {
     (1..=parties).map(Role::indexed_from_one).collect()
 }
 
-impl<Z: Ring, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, EXTENSION_DEGREE> {
+pub fn generate_fixed_roles_two_sets_with_intersection(
+    parties_set_1: usize,
+    parties_set_2: usize,
+    intersection_size: usize,
+) -> HashSet<TwoSetsRole> {
+    assert!(
+        intersection_size <= std::cmp::min(parties_set_1, parties_set_2),
+        "Intersection size cannot be larger than the smallest set size"
+    );
+
+    let mut roles = (1..=parties_set_1)
+        .map(Role::indexed_from_one)
+        .map(TwoSetsRole::Set1)
+        .chain(
+            (1..=parties_set_2)
+                .map(Role::indexed_from_one)
+                .map(TwoSetsRole::Set2),
+        )
+        .collect::<HashSet<_>>();
+
+    // For each intersection party, remove the P_i from Set1 and P_{i+1} from Set2 roles
+    // and add the corresponding dual role
+    for i in 0..intersection_size {
+        // index_role_2 is i+1 with wrap around back to 1
+        let role_set1 = TwoSetsRole::Set1(Role::indexed_from_zero(i));
+        let role_set2 = TwoSetsRole::Set2(Role::indexed_from_zero((i + 1) % parties_set_2));
+        assert!(
+            roles.remove(&role_set1),
+            "role {role_set1:?} not found in roles set"
+        );
+        assert!(
+            roles.remove(&role_set2),
+            "role {role_set2:?} not found in roles set"
+        );
+        let role_both = TwoSetsRole::Both(DualRole {
+            role_set_1: Role::indexed_from_zero(i),
+            role_set_2: Role::indexed_from_zero((i + 1) % parties_set_2),
+        });
+        roles.insert(role_both);
+    }
+
+    roles
+}
+
+impl<Z: Ring, R: RoleTrait, const EXTENSION_DEGREE: usize>
+    DistributedTestRuntime<Z, R, EXTENSION_DEGREE>
+{
     pub fn new(
-        roles: HashSet<Role>,
-        threshold: u8,
+        roles: HashSet<R>,
+        threshold: R::ThresholdType,
         network_mode: NetworkMode,
-        delay_map: Option<HashMap<Role, Duration>>,
+        delay_map: Option<HashMap<R, Duration>>,
     ) -> Self {
         let net_producer = LocalNetworkingProducer::from_roles(&roles);
         let user_nets = roles
@@ -68,19 +121,40 @@ impl<Z: Ring, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, EXTENSION
             })
             .collect::<HashMap<_, _>>();
 
-        let prss_setups = None;
-
         DistributedTestRuntime {
             threshold,
-            prss_setups,
-            keyshares: None,
             user_nets,
             roles,
+            prss_setups: None,
+            keyshares: None,
             server_key: None,
             ks_key: None,
         }
     }
 
+    pub fn base_session_for_party(
+        &self,
+        session_id: SessionId,
+        party: R,
+        rng: Option<AesRng>,
+    ) -> GenericBaseSession<R> {
+        let net = self.user_nets[&party].clone();
+        let parameters =
+            GenericSessionParameters::new(self.threshold, session_id, party, self.roles.clone())
+                .unwrap();
+
+        let rng = rng.unwrap_or_else(|| match party.get_role_kind() {
+            RoleKind::SingleSet(role) => AesRng::seed_from_u64(role.one_based() as u64),
+            RoleKind::TwoSet(two_sets_role) => {
+                AesRng::seed_from_u64(get_seed_for_two_sets_role(&two_sets_role))
+            }
+        });
+
+        GenericBaseSession::new(parameters, net, rng).unwrap()
+    }
+}
+
+impl<Z: Ring, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, Role, EXTENSION_DEGREE> {
     pub fn get_server_key(&self) -> Arc<ServerKey> {
         self.server_key.clone().unwrap()
     }
@@ -110,26 +184,9 @@ impl<Z: Ring, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, EXTENSION
     pub fn large_session_for_party(&self, session_id: SessionId, party: Role) -> LargeSession {
         LargeSession::new(self.base_session_for_party(session_id, party, None))
     }
-
-    pub fn base_session_for_party(
-        &self,
-        session_id: SessionId,
-        party: Role,
-        rng: Option<AesRng>,
-    ) -> BaseSession {
-        let net = self.user_nets[&party].clone();
-        let parameters =
-            SessionParameters::new(self.threshold, session_id, party, self.roles.clone()).unwrap();
-        BaseSession::new(
-            parameters,
-            net,
-            rng.unwrap_or_else(|| AesRng::seed_from_u64(party.one_based() as u64)),
-        )
-        .unwrap()
-    }
 }
 
-impl<Z, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, EXTENSION_DEGREE>
+impl<Z, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, Role, EXTENSION_DEGREE>
 where
     Z: ErrorCorrect,
     Z: Invert,

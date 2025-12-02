@@ -18,8 +18,8 @@ storage_cache_size = 1000
 [public_vault.storage.s3]
 bucket = "kms"
 
-[private_vault.storage.file]
-path = "./keys"
+[private_vault.storage.s3]
+bucket = "kms"
 
 [backup_vault]
 [backup_vault.storage.file]
@@ -109,3 +109,4 @@ user_decrypt = 1
 crsgen = 100
 preproc = 25000
 keygen = 1000
+reshare = 1

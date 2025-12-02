@@ -5,10 +5,16 @@ use crate::{
     execution::{
         runtime::{
             party::Role,
-            session::{
-                BaseSession, BaseSessionHandles, DeSerializationRunTime, NetworkingImpl,
-                ParameterHandles, SessionParameters, SmallSession, SmallSessionHandles,
-                ToBaseSession,
+            sessions::{
+                base_session::{
+                    BaseSession, BaseSessionHandles, GenericBaseSessionHandles,
+                    SingleSetNetworkingImpl, ToBaseSession,
+                },
+                session_parameters::{
+                    DeSerializationRunTime, GenericParameterHandles, ParameterHandles,
+                    SessionParameters,
+                },
+                small_session::{SmallSession, SmallSessionHandles},
             },
         },
         small_execution::{
@@ -56,7 +62,7 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z>> GenericSmallSessionStruct<Z, Prss> {
     }
 }
 
-impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> ParameterHandles
+impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> GenericParameterHandles<Role>
     for GenericSmallSessionStruct<Z, Prss>
 {
     fn my_role(&self) -> Role {
@@ -101,7 +107,12 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> ParameterHandles
     }
 }
 
-impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> BaseSessionHandles
+impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> ParameterHandles
+    for GenericSmallSessionStruct<Z, Prss>
+{
+}
+
+impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> GenericBaseSessionHandles<Role>
     for GenericSmallSessionStruct<Z, Prss>
 {
     type RngType = aes_prng::AesRng;
@@ -109,7 +120,7 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> BaseSessionHandles
         self.base_session.rng()
     }
 
-    fn network(&self) -> &NetworkingImpl {
+    fn network(&self) -> &SingleSetNetworkingImpl {
         self.base_session.network()
     }
 
@@ -120,6 +131,11 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> BaseSessionHandles
     fn add_corrupt(&mut self, role: Role) -> bool {
         self.base_session.add_corrupt(role)
     }
+}
+
+impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> BaseSessionHandles
+    for GenericSmallSessionStruct<Z, Prss>
+{
 }
 
 impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> SmallSessionHandles<Z>

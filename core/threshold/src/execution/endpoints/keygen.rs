@@ -10,7 +10,9 @@ use crate::{
             preprocessing::{DKGPreprocessing, RandomPreprocessing},
             triple::open_list,
         },
-        runtime::session::{BaseSessionHandles, DeSerializationRunTime},
+        runtime::sessions::{
+            base_session::BaseSessionHandles, session_parameters::DeSerializationRunTime,
+        },
         tfhe_internals::{
             compression_decompression_key::CompressionPrivateKeyShares,
             compression_decompression_key_generation::{
@@ -34,14 +36,13 @@ use crate::{
                 generate_compressed_mod_switch_noise_reduction_key,
                 generate_mod_switch_noise_reduction_key,
             },
-            parameters::{DKGParams, MSNRKConfiguration},
+            parameters::{DKGParams, DKGParamsBasics, MSNRKConfiguration},
             private_keysets::{GenericPrivateKeySet, PrivateKeySet},
             public_keysets::{
                 CompressedReRandomizationRawKeySwitchingKey, FhePubKeySet, RawCompressedPubKeySet,
                 RawPubKeySet, ReRandomizationRawKeySwitchingKey,
             },
             randomness::MPCEncryptionRandomGenerator,
-            sns_compression_key::SnsCompressionPrivateKeyShares,
             sns_compression_key_generation::{
                 generate_compressed_sns_compression_keys, generate_sns_compression_keys,
             },
@@ -53,9 +54,7 @@ use num_integer::div_ceil;
 use tfhe::{
     core_crypto::entities::LweBootstrapKey,
     shortint::{
-        list_compression::{
-            CompressedDecompressionKey, DecompressionKey, NoiseSquashingCompressionKey,
-        },
+        list_compression::{CompressedDecompressionKey, DecompressionKey},
         parameters::LweCiphertextCount,
         server_key::{CompressedModulusSwitchConfiguration, ModulusSwitchConfiguration},
         ClassicPBSParameters,
@@ -108,8 +107,8 @@ trait Finalizable<const EXTENSION_DEGREE: usize> {
 impl<const EXTENSION_DEGREE: usize> Finalizable<EXTENSION_DEGREE>
     for GenericPrivateKeySet<Z128, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
 {
     fn finalize_keyset(self, parameters: ClassicPBSParameters) -> PrivateKeySet<EXTENSION_DEGREE> {
         self.finalize_keyset(parameters)
@@ -119,7 +118,7 @@ where
 impl<const EXTENSION_DEGREE: usize> Finalizable<EXTENSION_DEGREE>
     for GenericPrivateKeySet<Z64, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
 {
     fn finalize_keyset(self, parameters: ClassicPBSParameters) -> PrivateKeySet<EXTENSION_DEGREE> {
         self.finalize_keyset(parameters)
@@ -156,6 +155,7 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         session: &mut S,
         preprocessing: &mut P,
         params: DKGParams,
+        tag: tfhe::Tag,
         existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
@@ -194,6 +194,7 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         session: &mut S,
         preprocessing: &mut P,
         params: DKGParams,
+        tag: tfhe::Tag,
         existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
@@ -222,6 +223,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         session: &mut S,
         preprocessing: &mut P,
         params: DKGParams,
+        tag: tfhe::Tag,
         existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
@@ -262,7 +264,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         )
         .await?;
         Ok((
-            pub_key_set.to_pubkeyset(params),
+            pub_key_set.to_pubkeyset(params, tag),
             priv_key_set.finalize_keyset(
                 params
                     .get_params_basics_handle()
@@ -280,6 +282,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         session: &mut S,
         preprocessing: &mut P,
         params: DKGParams,
+        tag: tfhe::Tag,
         existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
@@ -321,7 +324,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
             )
             .await?;
         Ok((
-            pub_key_set.to_compressed_pubkeyset(params),
+            pub_key_set.to_compressed_pubkeyset(params, tag),
             priv_key_set.finalize_keyset(
                 params
                     .get_params_basics_handle()
@@ -385,7 +388,10 @@ where
         LweSecretKeyShare::new_from_preprocessing(
             params_basics_handle.lwe_dimension(),
             preprocessing,
-        )?
+            params_basics_handle.get_pmax(),
+            session,
+        )
+        .await?
     } else {
         lwe_hat_secret_key_share.clone()
     };
@@ -398,7 +404,10 @@ where
         params_basics_handle.glwe_sk_num_bits(),
         params_basics_handle.polynomial_size(),
         preprocessing,
-    )?;
+        params_basics_handle.get_pmax(),
+        session,
+    )
+    .await?;
 
     let glwe_sk_share_as_lwe = glwe_secret_key_share.clone().into_lwe_secret_key();
 
@@ -453,7 +462,10 @@ where
                 sns_params.glwe_sk_num_bits_sns(),
                 sns_params.polynomial_size_sns(),
                 preprocessing,
-            )?;
+                sns_params.get_pmax(),
+                session,
+            )
+            .await?;
 
             //Computing and opening BK SNS can take a while, so we increase the timeout
             session.network().set_timeout_for_bk_sns().await;
@@ -703,7 +715,10 @@ where
         LweSecretKeyShare::new_from_preprocessing(
             params_basics_handle.lwe_dimension(),
             preprocessing,
-        )?
+            params_basics_handle.get_pmax(),
+            session,
+        )
+        .await?
     } else {
         lwe_hat_secret_key_share.clone()
     };
@@ -716,7 +731,10 @@ where
         params_basics_handle.glwe_sk_num_bits(),
         params_basics_handle.polynomial_size(),
         preprocessing,
-    )?;
+        params_basics_handle.get_pmax(),
+        session,
+    )
+    .await?;
 
     let glwe_sk_share_as_lwe = glwe_secret_key_share.clone().into_lwe_secret_key();
 
@@ -796,7 +814,10 @@ where
                 sns_params.glwe_sk_num_bits_sns(),
                 sns_params.polynomial_size_sns(),
                 preprocessing,
-            )?;
+                sns_params.get_pmax(),
+                session,
+            )
+            .await?;
 
             //Computing and opening BK SNS can take a while, so we increase the timeout
             //(in theory we should be in async setting here anyway)
@@ -1075,47 +1096,6 @@ pub fn decompress_compressed_standalone_decompression_key_from_xof(
     (decompressed_key, count)
 }
 
-#[instrument(name="Gen sns compression Key Z128", skip(glwe_secret_key_share_sns_as_lwe, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
-pub async fn distributed_sns_compression_keygen_z128<
-    S: BaseSessionHandles,
-    P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
-    const EXTENSION_DEGREE: usize,
->(
-    session: &mut S,
-    preprocessing: &mut P,
-    params: DKGParams,
-    glwe_secret_key_share_sns_as_lwe: &LweSecretKeyShare<Z128, EXTENSION_DEGREE>,
-) -> anyhow::Result<(
-    SnsCompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>,
-    NoiseSquashingCompressionKey,
-)>
-where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
-{
-    let params_basics_handle = params.get_params_basics_handle();
-    let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
-    //Init the XOF with the seed computed above
-    // QU: Do we want to use the same DSEP as in the regualr KG?
-    let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
-        Z128,
-        SoftwareRandomGenerator,
-        EXTENSION_DEGREE,
-    >::new_from_seed(XofSeed::new_u128(seed, DSEP_KG));
-
-    let params = params_basics_handle
-        .get_sns_compression_params()
-        .ok_or_else(|| anyhow::anyhow!("missing sns compression parameters"))?;
-
-    generate_sns_compression_keys(
-        glwe_secret_key_share_sns_as_lwe,
-        params,
-        &mut mpc_encryption_rng,
-        session,
-        preprocessing,
-    )
-    .await
-}
-
 #[cfg(test)]
 pub mod tests {
     use super::OnlineDistributedKeyGen;
@@ -1123,11 +1103,13 @@ pub mod tests {
         algebra::{
             base_ring::{Z128, Z64},
             galois_rings::common::ResiduePoly,
-            structure_traits::{ErrorCorrect, Invert, Ring, Solve},
+            structure_traits::{ErrorCorrect, Invert, Solve},
         },
         execution::{
             online::preprocessing::dummy::DummyPreprocessing,
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
+            },
             tfhe_internals::{
                 parameters::{DKGParamsBasics, DKGParamsRegular, DKGParamsSnS},
                 public_keysets::FhePubKeySet,
@@ -1135,7 +1117,7 @@ pub mod tests {
             },
         },
         file_handling::tests::read_element,
-        tests::helper::tests_and_benches::execute_protocol_large,
+        tests::helper::tests_and_benches::execute_protocol_large_w_extra_data,
     };
     use crate::{
         execution::tfhe_internals::utils::tests::reconstruct_lwe_secret_key_from_file,
@@ -1149,7 +1131,7 @@ pub mod tests {
                     DKGParams, BC_PARAMS_NO_SNS, NIST_PARAMS_P32_NO_SNS_FGLWE,
                     NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE,
                     NIST_PARAMS_P8_NO_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_LWE,
-                    NIST_PARAMS_P8_SNS_FGLWE, OLD_PARAMS_P32_REAL_WITH_SNS, PARAMS_TEST_BK_SNS,
+                    NIST_PARAMS_P8_SNS_FGLWE, PARAMS_TEST_BK_SNS,
                 },
                 test_feature::to_hl_client_key,
                 utils::tests::reconstruct_glwe_secret_key_from_file,
@@ -1172,11 +1154,17 @@ pub mod tests {
             entities::{Fourier128LweBootstrapKey, GlweSecretKey, LweBootstrapKey, LweSecretKey},
         },
         integer::parameters::DynamicDistribution,
-        prelude::{CiphertextList, FheDecrypt, FheMin, FheTryEncrypt, ReRandomize},
+        prelude::{CiphertextList, FheDecrypt, FheMin, FheTryEncrypt, ReRandomize, Tagged},
         set_server_key,
         shortint::{
             client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
-            noise_squashing::{NoiseSquashingKey, Shortint128BootstrappingKey},
+            noise_squashing::{
+                atomic_pattern::{
+                    standard::StandardAtomicPatternNoiseSquashingKey,
+                    AtomicPatternNoiseSquashingKey,
+                },
+                NoiseSquashingKey, Shortint128BootstrappingKey,
+            },
             parameters::CoreCiphertextModulus,
             PBSParameters,
         },
@@ -1193,8 +1181,9 @@ pub mod tests {
             config::BatchParams,
             keyset_config::KeySetConfig,
             online::preprocessing::{create_memory_factory, DKGPreprocessing},
-            runtime::session::{
-                BaseSessionHandles, SmallSession, SmallSessionHandles, ToBaseSession,
+            runtime::sessions::{
+                base_session::ToBaseSession,
+                small_session::{SmallSession, SmallSessionHandles},
             },
             small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
             tfhe_internals::test_feature::run_decompression_test,
@@ -1233,47 +1222,6 @@ pub mod tests {
         try_tfhe_pk_compactlist_computation(&client_key, &server_key, &public_key);
         set_server_key(server_key);
         try_tfhe_rerand(&client_key, &public_key);
-    }
-
-    #[cfg(feature = "extension_degree_8")]
-    #[tokio::test]
-    #[ignore]
-    async fn old_keygen_params32_with_sns_f8() {
-        old_keygen_params32_with_sns::<8>(false).await
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn old_keygen_params32_with_sns_f4() {
-        old_keygen_params32_with_sns::<4>(false).await
-    }
-
-    #[cfg(feature = "extension_degree_3")]
-    #[tokio::test]
-    #[ignore]
-    async fn old_keygen_params32_with_sns_f3() {
-        old_keygen_params32_with_sns::<3>(false).await
-    }
-
-    async fn old_keygen_params32_with_sns<const EXTENSION_DEGREE: usize>(run_compressed: bool)
-    where
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
-    {
-        run_keygen_test::<EXTENSION_DEGREE>(
-            OLD_PARAMS_P32_REAL_WITH_SNS,
-            5,
-            1,
-            KeygenTestConfig {
-                run_switch_and_squash: true,
-                run_shortint_with_compact: false,
-                run_fheuint: true,
-                run_fheuint_with_compression: false,
-                run_rerand: false,
-                run_compressed,
-            },
-        )
-        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
@@ -1544,9 +1492,15 @@ pub mod tests {
         let num_parties = 4;
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
+        let tag = {
+            let mut tag = tfhe::Tag::default();
+            tag.set_data("hello tag".as_bytes());
+            tag
+        };
 
         run_real_dkg_and_save(
             params,
+            tag.clone(),
             num_parties,
             threshold,
             temp_dir.path(),
@@ -1558,6 +1512,7 @@ pub mod tests {
         run_switch_and_squash(
             temp_dir.path(),
             params.try_into().unwrap(),
+            tag.clone(),
             num_parties,
             threshold,
         );
@@ -1569,6 +1524,7 @@ pub mod tests {
             threshold,
             true,
         );
+
         run_tfhe_computation_fheuint::<EXTENSION_DEGREE>(
             temp_dir.path(),
             params,
@@ -1577,6 +1533,8 @@ pub mod tests {
             true,
             false,
         );
+
+        run_tag_test::<EXTENSION_DEGREE>(temp_dir.path(), params, num_parties, threshold, &tag);
     }
 
     #[cfg(feature = "extension_degree_8")]
@@ -1718,18 +1676,6 @@ pub mod tests {
             .await
     }
 
-    #[cfg(feature = "slow_tests")]
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn sns_compression_keygen_f4() {
-        let params = PARAMS_TEST_BK_SNS;
-        let num_parties = 4;
-        let threshold = 1;
-        let temp_dir = tempfile::tempdir().unwrap();
-        run_real_sns_compression_dkg_and_save::<4>(params, num_parties, threshold, temp_dir.path())
-            .await
-    }
-
     struct KeygenTestConfig {
         run_switch_and_squash: bool,
         run_shortint_with_compact: bool,
@@ -1749,9 +1695,15 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
         let temp_dir = tempfile::tempdir().unwrap();
+        let tag = {
+            let mut tag = tfhe::Tag::default();
+            tag.set_data("hello tag".as_bytes());
+            tag
+        };
 
         run_dkg_and_save(
             params,
+            tag.clone(),
             num_parties,
             threshold,
             temp_dir.path(),
@@ -1763,6 +1715,7 @@ pub mod tests {
             run_switch_and_squash(
                 temp_dir.path(),
                 params.try_into().unwrap(),
+                tag.clone(),
                 num_parties,
                 threshold,
             );
@@ -1800,6 +1753,8 @@ pub mod tests {
                 config.run_rerand,
             );
         }
+
+        run_tag_test::<EXTENSION_DEGREE>(temp_dir.path(), params, num_parties, threshold, &tag);
     }
 
     // taken from https://stackoverflow.com/questions/64498617/how-to-transpose-a-vector-of-vectors-in-rust
@@ -1906,8 +1861,9 @@ pub mod tests {
         // first we need to generate two server keys
         let keyset_config = KeySetConfig::DecompressionOnly;
         let mut rng = aes_prng::AesRng::from_random_seed();
-        let keyset1 = gen_key_set(params, &mut rng);
-        let keyset2 = gen_key_set(params, &mut rng);
+        let tag = tfhe::Tag::default();
+        let keyset1 = gen_key_set(params, tag.clone(), &mut rng);
+        let keyset2 = gen_key_set(params, tag, &mut rng);
 
         let compression_key_1_poly_size = keyset1
             .get_raw_compression_client_key()
@@ -1995,6 +1951,11 @@ pub mod tests {
             assert_eq!(0, dkg_preproc.randoms_len());
 
             use strum::IntoEnumIterator;
+
+            use crate::execution::runtime::sessions::{
+                base_session::GenericBaseSessionHandles,
+                session_parameters::GenericParameterHandles,
+            };
             for bound in crate::execution::tfhe_internals::parameters::NoiseBounds::iter() {
                 assert_eq!(0, dkg_preproc.noise_len(bound));
             }
@@ -2032,176 +1993,9 @@ pub mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    async fn run_real_sns_compression_dkg_and_save<const EXTENSION_DEGREE: usize>(
-        params: DKGParams,
-        num_parties: usize,
-        threshold: usize,
-        prefix_path: &Path,
-    ) where
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
-        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
-    {
-        use std::collections::HashMap;
-
-        use tfhe::{
-            core_crypto::prelude::GlweSecretKeyOwned,
-            shortint::list_compression::NoiseSquashingCompressionPrivateKey,
-        };
-
-        use crate::{
-            execution::{
-                endpoints::keygen::distributed_sns_compression_keygen_z128,
-                sharing::share::Share,
-                tfhe_internals::{
-                    glwe_key::GlweSecretKeyShare,
-                    test_feature::{combine_and_run_sns_compression_test, gen_key_set},
-                },
-            },
-            file_handling::tests::{read_element, write_element},
-        };
-
-        let keyset_config = KeySetConfig::AddSnsCompressionKey;
-        let mut rng = aes_prng::AesRng::from_random_seed();
-
-        // here we need to remove the private sns compression key
-        let keyset = {
-            let mut tmp = gen_key_set(params, &mut rng);
-            let ck_parts = tmp.client_key.into_raw_parts();
-            tmp.client_key = tfhe::ClientKey::from_raw_parts(
-                ck_parts.0, ck_parts.1, ck_parts.2, ck_parts.3, None, ck_parts.5, ck_parts.6,
-            );
-            tmp
-        };
-
-        let (glwe_sns_key_poly_size, glwe_sns_key) = {
-            let k = keyset.get_raw_glwe_client_sns_key().unwrap();
-            (k.polynomial_size(), k.into_container())
-        };
-
-        // and then secret share the secret keys
-        let glwe_sns_key_shares =
-            binary_vec_to_shares128(glwe_sns_key, num_parties, threshold, &mut rng);
-        assert_eq!(glwe_sns_key_shares.len(), num_parties);
-
-        // We need to pass these shares into the FnMut,
-        // but FnMut doesn't allow us to move a reference
-        // so write these two shares into the temporary storage
-        // and then we'll read it in the task.
-        const GLWE_SNS_KEY_SHARES: &str = "glwe_sns_key_shares";
-        write_element(prefix_path.join(GLWE_SNS_KEY_SHARES), &glwe_sns_key_shares).unwrap();
-
-        let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
-                        prefix: Option<String>| async move {
-            session
-                .network()
-                .set_timeout_for_next_round(Duration::from_secs(240))
-                .await;
-            let mut dkg_preproc =
-                generate_preproc_from_params(&params, keyset_config, &mut session).await;
-
-            let my_role = session.my_role();
-            let prefix = prefix.unwrap();
-            let path_glwe_sns_key_shares = Path::new(&prefix).join(GLWE_SNS_KEY_SHARES);
-            let glwe_key_sns_shares = &read_element::<
-                Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>,
-                _,
-            >(path_glwe_sns_key_shares)
-            .unwrap()[&my_role];
-
-            let private_glwe_sns_key_share = GlweSecretKeyShare {
-                data: glwe_key_sns_shares.to_vec(),
-                polynomial_size: glwe_sns_key_poly_size,
-            };
-            let (sns_compression_shares, sns_compression_key) =
-                distributed_sns_compression_keygen_z128(
-                    &mut session,
-                    dkg_preproc.as_mut(),
-                    params,
-                    &private_glwe_sns_key_share.into_lwe_secret_key(),
-                )
-                .await
-                .unwrap();
-
-            // make sure we used up all the preprocessing materials
-            assert_eq!(0, dkg_preproc.bits_len());
-            assert_eq!(0, dkg_preproc.triples_len());
-            assert_eq!(0, dkg_preproc.randoms_len());
-
-            use strum::IntoEnumIterator;
-
-            for bound in crate::execution::tfhe_internals::parameters::NoiseBounds::iter() {
-                assert_eq!(0, dkg_preproc.noise_len(bound));
-            }
-
-            (my_role, (sns_compression_shares, sns_compression_key))
-        };
-
-        // Sync network because we also init the PRSS in the task
-        let mut results =
-            execute_protocol_small::<_, _, ResiduePoly<Z128, EXTENSION_DEGREE>, EXTENSION_DEGREE>(
-                num_parties,
-                threshold as u8,
-                None,
-                NetworkMode::Sync,
-                None,
-                &mut task,
-                Some(prefix_path.to_str().unwrap().to_string()),
-            )
-            .await;
-
-        // reconstruct the shares
-        let all_shares = results
-            .iter()
-            .map(|(role, (share, _))| (*role, share.post_packing_ks_key.clone().data))
-            .collect::<HashMap<_, _>>();
-        let sns_compression_glwe_sk_bits =
-            crate::execution::tfhe_internals::utils::reconstruct_bit_vec::<_, EXTENSION_DEGREE>(
-                all_shares,
-                match params {
-                    DKGParams::WithoutSnS(_) => panic!("expected sns compression params"),
-                    DKGParams::WithSnS(dkgparams_sn_s) => {
-                        dkgparams_sn_s.sns_compression_sk_num_bits()
-                    }
-                },
-                threshold,
-            )
-            .into_iter()
-            .map(|x| x as u128)
-            .collect::<Vec<_>>();
-
-        let sns_compression_params = match params {
-            DKGParams::WithoutSnS(_) => panic!("expected sns compression params"),
-            DKGParams::WithSnS(dkgparams_sn_s) => dkgparams_sn_s.sns_compression_params.unwrap(),
-        };
-        let sns_compression_private_key = NoiseSquashingCompressionPrivateKey::from_raw_parts(
-            GlweSecretKeyOwned::from_container(
-                sns_compression_glwe_sk_bits,
-                glwe_sns_key_poly_size,
-            ),
-            sns_compression_params,
-        );
-
-        // check that the compression keys are the same
-        let sns_compression_key = results.pop().unwrap().1 .1;
-        let decompression_key_bytes = bc2wrap::serialize(&sns_compression_key).unwrap();
-        for (_role, key) in results {
-            let buf = bc2wrap::serialize(&key.1).unwrap();
-            assert_eq!(buf, decompression_key_bytes);
-        }
-
-        // check that we can do the sns compression test
-        combine_and_run_sns_compression_test(
-            params,
-            &keyset.client_key,
-            sns_compression_key,
-            sns_compression_private_key,
-            None,
-        );
-    }
-
-    #[cfg(feature = "slow_tests")]
     async fn run_real_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
+        tag: tfhe::Tag,
         num_parties: usize,
         threshold: usize,
         prefix_path: &Path,
@@ -2212,8 +2006,18 @@ pub mod tests {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     {
         let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
-                        _bot: Option<String>| async move {
-            use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
+                        tag: Option<String>| async move {
+            use crate::execution::{
+                runtime::sessions::base_session::GenericBaseSessionHandles,
+                tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares,
+            };
+            let tag = tag
+                .map(|s| {
+                    let mut tag = tfhe::Tag::default();
+                    tag.set_data(s.as_bytes());
+                    tag
+                })
+                .unwrap_or_default();
             let compression_sk_shares = if keyset_config.is_standard_using_existing_compression_sk()
             {
                 // we use dummy preprocessing to generate the existing compression sk
@@ -2231,7 +2035,10 @@ pub mod tests {
                             .unwrap()
                             .raw_compression_parameters,
                         &mut dummy_preproc,
+                        params_basics_handles.get_pmax(),
+                        &mut session,
                     )
+                    .await
                     .unwrap(),
                 )
             } else {
@@ -2256,6 +2063,7 @@ pub mod tests {
                         &mut session,
                         &mut dkg_preproc,
                         params,
+                        tag.clone(),
                         compression_sk_shares.as_ref(),
                     )
                     .await
@@ -2273,6 +2081,7 @@ pub mod tests {
                     &mut session,
                     &mut dkg_preproc,
                     params,
+                    tag,
                     compression_sk_shares.as_ref(),
                 )
                 .await
@@ -2301,7 +2110,7 @@ pub mod tests {
                 NetworkMode::Sync,
                 None,
                 &mut task,
-                None,
+                Some(std::str::from_utf8(tag.as_slice()).unwrap().to_string()),
             )
             .await;
 
@@ -2323,17 +2132,25 @@ pub mod tests {
     /// and [`FakeBitGenEven`]. Saves the results to file.
     async fn run_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
+        tag: tfhe::Tag,
         num_parties: usize,
         threshold: usize,
         prefix_path: &Path,
         run_compressed: bool,
     ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
-        ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
     {
-        let mut task = |mut session: LargeSession| async move {
+        let mut task = |mut session: LargeSession, tag: Option<String>| async move {
             let my_role = session.my_role();
             let mut dkg_preproc = DummyPreprocessing::new(DUMMY_PREPROC_SEED, &session);
+            let tag = tag
+                .map(|s| {
+                    let mut tag = tfhe::Tag::default();
+                    tag.set_data(s.as_bytes());
+                    tag
+                })
+                .unwrap_or_default();
 
             let (pk, sk) = if run_compressed {
                 let (compressed_pk, sk) =
@@ -2341,6 +2158,7 @@ pub mod tests {
                         &mut session,
                         &mut dkg_preproc,
                         params,
+                        tag.clone(),
                         None,
                     )
                     .await
@@ -2358,6 +2176,7 @@ pub mod tests {
                     &mut session,
                     &mut dkg_preproc,
                     params,
+                    tag,
                     None,
                 )
                 .await
@@ -2370,16 +2189,21 @@ pub mod tests {
         //Async because the preprocessing is Dummy
         //Delay P1 by 1s every round
         let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let results =
-            execute_protocol_large::<_, _, ResiduePoly<Z128, EXTENSION_DEGREE>, EXTENSION_DEGREE>(
-                num_parties,
-                threshold,
-                None,
-                NetworkMode::Async,
-                Some(delay_vec),
-                &mut task,
-            )
-            .await;
+        let results = execute_protocol_large_w_extra_data::<
+            _,
+            _,
+            ResiduePoly<Z128, EXTENSION_DEGREE>,
+            EXTENSION_DEGREE,
+        >(
+            num_parties,
+            threshold,
+            None,
+            NetworkMode::Async,
+            Some(delay_vec),
+            Some(std::str::from_utf8(tag.as_slice()).unwrap().to_string()),
+            &mut task,
+        )
+        .await;
 
         let pk_ref = results[0].1.clone();
 
@@ -2398,6 +2222,7 @@ pub mod tests {
     fn run_switch_and_squash<const EXTENSION_DEGREE: usize>(
         prefix_path: &Path,
         params: DKGParamsSnS,
+        tag: tfhe::Tag,
         num_parties: usize,
         threshold: usize,
     ) where
@@ -2434,6 +2259,7 @@ pub mod tests {
         let ddec_pk = pk.public_key;
         let ddec_sk = to_hl_client_key(
             &DKGParams::WithSnS(params),
+            tag,
             sk_lwe.clone(),
             sk_glwe,
             None,
@@ -2496,23 +2322,34 @@ pub mod tests {
             let (key, pt_modulus, pt_carry, ct_modulus) =
                 ck.clone().into_raw_parts().into_raw_parts();
             let mod_switch = match key {
-                Shortint128BootstrappingKey::Classic {
-                    bsk: _bsk,
-                    modulus_switch_noise_reduction_key,
-                } => modulus_switch_noise_reduction_key,
-                Shortint128BootstrappingKey::MultiBit {
-                    bsk: _bsk,
-                    thread_count: _thread_count,
-                    deterministic_execution: _deterministic_execution,
-                } => panic!("Do not support multibit for now"),
+                AtomicPatternNoiseSquashingKey::Standard(ref standard_sns_key) => {
+                    match standard_sns_key.bootstrapping_key() {
+                        Shortint128BootstrappingKey::Classic {
+                            bsk: _bsk,
+                            modulus_switch_noise_reduction_key,
+                        } => modulus_switch_noise_reduction_key,
+                        Shortint128BootstrappingKey::MultiBit {
+                            bsk: _bsk,
+                            thread_count: _thread_count,
+                            deterministic_execution: _deterministic_execution,
+                        } => panic!("Do not support multibit for now"),
+                    }
+                }
+                AtomicPatternNoiseSquashingKey::KeySwitch32(_) => {
+                    panic!("Do not support KeySwitch32 for now")
+                }
             };
 
             tfhe::integer::noise_squashing::NoiseSquashingKey::from_raw_parts(
                 NoiseSquashingKey::from_raw_parts(
-                    Shortint128BootstrappingKey::Classic {
-                        bsk: fbsk_out,
-                        modulus_switch_noise_reduction_key: mod_switch,
-                    },
+                    AtomicPatternNoiseSquashingKey::Standard(
+                        StandardAtomicPatternNoiseSquashingKey::from_raw_parts(
+                            Shortint128BootstrappingKey::Classic {
+                                bsk: fbsk_out,
+                                modulus_switch_noise_reduction_key: mod_switch.clone(),
+                            },
+                        ),
+                    ),
                     pt_modulus,
                     pt_carry,
                     ct_modulus,
@@ -2558,7 +2395,10 @@ pub mod tests {
         );
 
         set_server_key(pk.server_key.clone());
-        let shortint_pk = pk.server_key.clone().into_raw_parts().0.into_raw_parts();
+        let (shortint_pk, tag) = {
+            let (shorint_pk, _, _, _, _, _, _, tag) = pk.server_key.clone().into_raw_parts();
+            (shorint_pk.into_raw_parts(), tag)
+        };
         for _ in 0..100 {
             try_tfhe_shortint_computation(&shortint_sk, &shortint_pk);
         }
@@ -2571,10 +2411,37 @@ pub mod tests {
                 None,
                 None,
                 None,
-                tfhe::Tag::default(),
+                tag,
             );
             try_tfhe_pk_compactlist_computation(&tfhe_sk, &pk.server_key, &pk.public_key);
         }
+    }
+
+    ///Runs both shortint and fheuint computation
+    fn run_tag_test<const EXTENSION_DEGREE: usize>(
+        prefix_path: &Path,
+        params: DKGParams,
+        num_parties: usize,
+        threshold: usize,
+        expected_tag: &tfhe::Tag,
+    ) where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        let (_shortint_sk, pk) = retrieve_keys_from_files::<EXTENSION_DEGREE>(
+            params,
+            num_parties,
+            threshold,
+            prefix_path,
+        );
+
+        assert_eq!(expected_tag, pk.server_key.tag());
+        assert_eq!(expected_tag, pk.public_key.tag());
+
+        let msg = 12u64;
+        let small_ct: FheUint64 = expanded_encrypt(&pk.public_key, msg, 64).unwrap();
+
+        assert_eq!(expected_tag, small_ct.tag());
     }
 
     ///Runs both shortint and fheuint computation
@@ -2597,6 +2464,7 @@ pub mod tests {
         );
 
         set_server_key(pk.server_key.clone());
+        let tag = pk.server_key.tag();
 
         let shortint_pk = pk.server_key.clone().into_raw_parts().0.into_raw_parts();
         for _ in 0..100 {
@@ -2612,7 +2480,7 @@ pub mod tests {
             None,
             None,
             None,
-            tfhe::Tag::default(),
+            tag.clone(),
         );
 
         try_tfhe_fheuint_computation(&tfhe_sk);

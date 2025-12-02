@@ -90,14 +90,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         CryptoMaterialStorage::<PubS, PrivS>::crs_exists(&self.inner, req_id).await
     }
 
-    /// Write the key materials (result of a keygen) to storage and cache
-    /// for the threshold KMS.
-    /// The [meta_store] is updated to "Done" if the procedure is successful.
-    ///
-    /// When calling this function more than once, the same [meta_store]
-    /// must be used, otherwise the storage state may become inconsistent.
-    pub async fn write_threshold_keys_with_meta_store(
+    async fn inner_write_threshold_keys(
         &self,
+        reshare_id: Option<&RequestId>,
         key_id: &RequestId,
         threshold_fhe_keys: ThresholdFheKeys,
         fhe_key_set: FhePubKeySet,
@@ -108,7 +103,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
         let mut guarded_meta_storage = meta_store.write().await;
-
         let (r1, r2, r3) = {
             // Lock the storage components in the correct order to avoid deadlocks.
             let mut pub_storage = self.inner.public_storage.lock().await;
@@ -217,15 +211,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             tokio::join!(f1, f2, f3)
         };
         // Try to store the new data
-        tracing::info!("Storing DKG objects for key ID {}", key_id);
+        tracing::info!("Storing Keys objects for key ID {}", key_id);
 
-        let meta_update_result = guarded_meta_storage.update(key_id, Ok(info));
+        let meta_update_result =
+            guarded_meta_storage.update(reshare_id.unwrap_or(key_id), Ok(info));
         if let Err(e) = &meta_update_result {
-            tracing::error!(
-                "Error ({}) while updating KeyGen meta store for {}",
-                e,
-                key_id
-            );
+            tracing::error!("Error ({}) while updating meta store for {}", e, key_id);
         }
         if r1 && r2 && r3 && meta_update_result.is_ok() {
             // updating the cache is not critical to system functionality,
@@ -254,18 +245,62 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     tracing::debug!("Added new threshold FHE keys to cache for {}", key_id);
                 }
             }
-            tracing::info!("Finished DKG for Request Id {key_id}.");
+            tracing::info!("Finished storing key for Key Id {key_id}.");
         } else {
             // Try to delete stored data to avoid anything dangling
             // Ignore any failure to delete something since it might be
             // because the data did not get created
             // In any case, we can't do much.
             tracing::warn!(
-                "Failed to ensure existence of threshold key material for request with ID: {}",
+                "Failed to ensure existence of threshold key material for Key with ID: {}",
                 key_id
             );
             self.purge_key_material(key_id, guarded_meta_storage).await;
         }
+    }
+
+    pub async fn write_threshold_keys_with_reshare_meta_store(
+        &self,
+        reshare_id: &RequestId,
+        key_id: &RequestId,
+        threshold_fhe_keys: ThresholdFheKeys,
+        fhe_key_set: FhePubKeySet,
+        info: KeyGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+    ) {
+        self.inner_write_threshold_keys(
+            Some(reshare_id),
+            key_id,
+            threshold_fhe_keys,
+            fhe_key_set,
+            info,
+            meta_store,
+        )
+        .await
+    }
+    /// Write the key materials (result of a keygen) to storage and cache
+    /// for the threshold KMS.
+    /// The [meta_store] is updated to "Done" if the procedure is successful.
+    ///
+    /// When calling this function more than once, the same [meta_store]
+    /// must be used, otherwise the storage state may become inconsistent.
+    pub async fn write_threshold_keys_with_dkg_meta_store(
+        &self,
+        key_id: &RequestId,
+        threshold_fhe_keys: ThresholdFheKeys,
+        fhe_key_set: FhePubKeySet,
+        info: KeyGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+    ) {
+        self.inner_write_threshold_keys(
+            None,
+            key_id,
+            threshold_fhe_keys,
+            fhe_key_set,
+            info,
+            meta_store,
+        )
+        .await
     }
 
     /// Read the key materials for decryption in the threshold case.
@@ -345,6 +380,20 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         self.inner
             .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)
             .await
+    }
+
+    pub async fn read_cloned_pk(
+        &self,
+        req_id: &RequestId,
+    ) -> anyhow::Result<WrappedPublicKeyOwned> {
+        self.inner.read_cloned_pk(req_id).await
+    }
+
+    pub async fn read_cloned_server_key(
+        &self,
+        req_id: &RequestId,
+    ) -> anyhow::Result<tfhe::ServerKey> {
+        self.inner.read_cloned_server_key(req_id).await
     }
 }
 

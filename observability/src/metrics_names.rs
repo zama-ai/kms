@@ -8,10 +8,8 @@ pub const OP_INSECURE_KEYGEN_REQUEST: &str = "insecure_keygen_request";
 pub const OP_INSECURE_KEYGEN_RESULT: &str = "insecure_keygen_result";
 pub const OP_INSECURE_KEYGEN: &str = "insecure_keygen";
 pub const OP_INSECURE_DECOMPRESSION_KEYGEN: &str = "insecure_decompression_keygen";
-pub const OP_INSECURE_SNS_COMPRESSION_KEYGEN: &str = "insecure_sns_compression_keygen";
 pub const OP_KEYGEN: &str = "keygen";
 pub const OP_DECOMPRESSION_KEYGEN: &str = "decompression_keygen";
-pub const OP_SNS_COMPRESSION_KEYGEN: &str = "sns_compression_keygen";
 pub const OP_KEYGEN_PREPROC_REQUEST: &str = "keygen_preproc_request";
 pub const OP_KEYGEN_PREPROC_RESULT: &str = "keygen_preproc_result";
 
@@ -36,13 +34,17 @@ pub const OP_INSECURE_CRS_GEN_RESULT: &str = "insecure_crs_gen_result";
 pub const OP_INIT: &str = "init";
 
 // Context operations
-pub const OP_NEW_KMS_CONTEXT: &str = "new_kms_context";
-pub const OP_DESTROY_KMS_CONTEXT: &str = "destroy_kms_context";
+pub const OP_NEW_MPC_CONTEXT: &str = "new_mpc_context";
+pub const OP_DESTROY_MPC_CONTEXT: &str = "destroy_mpc_context";
 pub const OP_NEW_CUSTODIAN_CONTEXT: &str = "new_custodian_context";
 pub const OP_DESTROY_CUSTODIAN_CONTEXT: &str = "destroy_custodian_context";
 pub const OP_CUSTODIAN_BACKUP_RECOVERY: &str = "custodian_backup_recovery";
 pub const OP_CUSTODIAN_RECOVERY_INIT: &str = "custodian_recovery_init";
 pub const OP_RESTORE_FROM_BACKUP: &str = "restore_from_backup";
+
+// Resharing
+pub const OP_INITIATE_RESHARING: &str = "initiate_resharing";
+pub const OP_GET_INITIATE_RESHARING_RESULT: &str = "get_initiate_resharing_result";
 
 // PK fetch
 pub const OP_FETCH_PK: &str = "fetch_pk";

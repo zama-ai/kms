@@ -52,13 +52,11 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
         ).into() ));
         }
         if conf.my_id > num_parties {
-            return Err(ValidationError::new("Incorrect party ID").with_message(
-                format!(
-                    "Party ID cannot be greater than the number of parties ({}), but was {}.",
-                    num_parties, conf.my_id
-                )
-                .into(),
-            ));
+            tracing::warn!(
+                "my_id {} is greater than number of parties {}, in some situations this may be a misconfiguration",
+                conf.my_id,
+                num_parties
+            );
         }
         for peer in peers {
             if peer.party_id > num_parties {
@@ -72,6 +70,8 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
             );
             }
         }
+    } else {
+        tracing::info!("No peer list provided; skipping threshold and party ID validation");
     }
     Ok(())
 }
@@ -92,6 +92,7 @@ pub enum TlsConf {
     SemiAuto {
         cert: TlsCert,
         trusted_releases: Vec<ReleasePCRValues>,
+        ignore_aws_ca_chain: Option<bool>,
     },
     // The party will use its core signing key to sign an emphemeral TLS
     // certificate on boot that that bundles the attestation document, acting as
@@ -99,6 +100,8 @@ pub enum TlsConf {
     // key and included in the peer list.
     FullAuto {
         trusted_releases: Vec<ReleasePCRValues>,
+        ignore_aws_ca_chain: Option<bool>,
+        attest_private_vault_root_key: Option<bool>,
     },
 }
 
@@ -110,14 +113,22 @@ pub enum TlsCert {
 }
 
 impl TlsCert {
+    pub fn unchecked_cert_string(&self) -> anyhow::Result<String> {
+        match self {
+            TlsCert::Path(ref cert_path) => std::fs::read_to_string(cert_path)
+                .map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", cert_path.display(), e)),
+            TlsCert::Pem(ref cert_bytes) => Ok(cert_bytes.to_string()),
+        }
+    }
+
+    /// Parses the certificate without any validation against peerlist.
+    pub fn unchecked_pem(&self) -> anyhow::Result<Pem> {
+        let cert_bytes = self.unchecked_cert_string()?;
+        Ok(parse_x509_pem(cert_bytes.as_ref())?.1)
+    }
+
     pub fn into_pem(&self, my_id: usize, peers: &[PeerConf]) -> anyhow::Result<Pem> {
-        let cert_bytes = match self {
-            TlsCert::Path(ref cert_path) => std::fs::read_to_string(cert_path).map_err(|e| {
-                anyhow::anyhow!("Failed to open file {}: {}", cert_path.display(), e)
-            })?,
-            TlsCert::Pem(ref cert_bytes) => cert_bytes.to_string(),
-        };
-        let cert_pem = parse_x509_pem(cert_bytes.as_ref())?.1;
+        let cert_pem = self.unchecked_pem()?;
         let x509_cert = cert_pem.parse_x509()?;
         // sanity check: peerlist needs to have an entry for the
         // current party
@@ -190,4 +201,34 @@ impl PeerConf {
             Identity::new(self.address.clone(), self.port, self.mpc_identity.clone()),
         )
     }
+}
+
+#[test]
+fn test_pem_serialization() {
+    let tls_cert = "-----BEGIN CERTIFICATE-----
+MIIB8zCCAZmgAwIBAgIURPn0etQqZ41UG1Q6WlXa9al6M7owCgYIKoZIzj0EAwIw
+HTEbMBkGA1UEAwwSZGV2LWttcy1jb3JlLTEuY29tMCAXDTc1MDEwMTAwMDAwMFoY
+DzQwOTYwMTAxMDAwMDAwWjAdMRswGQYDVQQDDBJkZXYta21zLWNvcmUtMS5jb20w
+VjAQBgcqhkjOPQIBBgUrgQQACgNCAAQqtmWLJljQ8oxemhbeNvlW71Xxmg/FgTrG
+z3KoIG6XAbnv2OqNrYnZRRK4ksQOiB7VIL2EUq+zmX9nizhfxXZMo4G3MIG0MG4G
+A1UdEQRnMGWCFCouZGV2LWttcy1jb3JlLTEuY29tghJkZXYta21zLWNvcmUtMS5j
+b22HBH8AAAGCCWxvY2FsaG9zdIcEwKgAAYcQAAAAAAAAAAAAAAAAAAAAAYcQAAAA
+AAAAAAAAAAAAAAAAATAPBgNVHQ8BAf8EBQMDB4YAMB0GA1UdDgQWBBRxsm/KVbIt
+6jODpZfF90u9faexGjASBgNVHRMBAf8ECDAGAQH/AgEAMAoGCCqGSM49BAMCA0gA
+MEUCIEfh23uIR76K+tv+s5pi0uksEeleDonWm+tqStxeRFR5AiEAs4mw/Yi6aoDg
+2XT+7AGP8EPTN4GHif+bdwU0TZDjPVQ=
+-----END CERTIFICATE-----
+";
+
+    let tls_cert = TlsCert::Pem(tls_cert.to_string());
+    let peers = vec![PeerConf {
+        party_id: 1,
+        address: "localhost".to_string(),
+        mpc_identity: Some("dev-kms-core-1.com".to_string()),
+        port: 1234,
+        tls_cert: Some(tls_cert.clone()),
+    }];
+
+    // `into_pem` will deserialize the string inside `tls_cert`
+    let _ = tls_cert.into_pem(1, &peers).unwrap();
 }

@@ -4,11 +4,10 @@ use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams,
     engine::base::{derive_request_id, INSECURE_PREPROCESSING_ID},
     util::key_setup::test_tools::{
-        purge, purge_backup, purge_priv, purge_pub, EncryptionConfig, TestingPlaintext,
+        file_backup_vault, purge, purge_backup, purge_priv, purge_pub, EncryptionConfig,
+        TestingPlaintext,
     },
-    vault::storage::{
-        delete_all_at_request_id, file::FileStorage, make_storage, StorageReader, StorageType,
-    },
+    vault::storage::{delete_all_at_request_id, file::FileStorage, StorageReader, StorageType},
 };
 use kms_grpc::{
     kms::v1::{Empty, FheParameter},
@@ -21,7 +20,7 @@ use tokio::task::JoinSet;
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn test_insecure_threshold_dkg_backup() {
+async fn nightly_test_insecure_threshold_dkg_backup() {
     // NOTE: amount_parties must not be too high when changing the param to FheParameter::Default
     // because every party will load all the keys and each ServerKey is 1.5 GB
     // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
@@ -41,8 +40,8 @@ async fn test_insecure_threshold_dkg_backup() {
     let test_path = None;
     // Purge private to make the test run faster since there will be less data to back up.
     purge_priv(test_path).await;
-    purge(test_path, test_path, test_path, &key_id_1, amount_parties).await;
-    purge(test_path, test_path, test_path, &key_id_2, amount_parties).await;
+    purge(test_path, test_path, &key_id_1, amount_parties).await;
+    purge(test_path, test_path, &key_id_2, amount_parties).await;
     purge_backup(test_path, amount_parties).await;
     let (kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
@@ -53,7 +52,6 @@ async fn test_insecure_threshold_dkg_backup() {
         &internal_client,
         &INSECURE_PREPROCESSING_ID,
         &key_id_1,
-        None,
         None,
         true,
         test_path,
@@ -67,7 +65,6 @@ async fn test_insecure_threshold_dkg_backup() {
         &internal_client,
         &INSECURE_PREPROCESSING_ID,
         &key_id_2,
-        None,
         None,
         true,
         test_path,
@@ -83,8 +80,12 @@ async fn test_insecure_threshold_dkg_backup() {
             Some(Role::indexed_from_one(i)),
         )
         .unwrap();
-        delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
-        delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
+        delete_all_at_request_id(&mut priv_storage, &key_id_1)
+            .await
+            .unwrap();
+        delete_all_at_request_id(&mut priv_storage, &key_id_2)
+            .await
+            .unwrap();
     }
 
     // Now try to restore both keys
@@ -141,13 +142,10 @@ async fn test_insecure_threshold_dkg_backup() {
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn test_insecure_threshold_autobackup_after_deletion() {
+async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
     // NOTE: amount_parties must not be too high when changing the param to FheParameter::Default
     // because every party will load all the keys and each ServerKey is 1.5 GB
     // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
-    use crate::conf::FileStorage as FileStorageConf;
-    use crate::conf::Storage as StorageConf;
-
     let amount_parties = 4;
     let param = FheParameter::Test;
     let dkg_param: WrappedDKGParams = param.into();
@@ -159,7 +157,7 @@ async fn test_insecure_threshold_autobackup_after_deletion() {
     let test_path = None;
     // Purge private to make the test run faster since there will be less data to back up.
     purge_priv(test_path).await;
-    purge(test_path, test_path, test_path, &key_id, amount_parties).await;
+    purge(test_path, test_path, &key_id, amount_parties).await;
     purge_backup(test_path, amount_parties).await;
     let (kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
@@ -170,7 +168,6 @@ async fn test_insecure_threshold_autobackup_after_deletion() {
         &internal_client,
         &INSECURE_PREPROCESSING_ID,
         &key_id,
-        None,
         None,
         true,
         test_path,
@@ -189,21 +186,14 @@ async fn test_insecure_threshold_autobackup_after_deletion() {
     let (_kms_servers, _kms_clients, _internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
     // Check the storage
-    let vault_storage_option = test_path.map(|path| {
-        StorageConf::File(FileStorageConf {
-            path: path.to_path_buf(),
-        })
-    });
     for cur_party in 1..=amount_parties {
-        let backup_storage = make_storage(
-            vault_storage_option.clone(),
-            StorageType::BACKUP,
+        let backup_storage = file_backup_vault(
             Some(Role::indexed_from_one(cur_party)),
             None,
-            None,
+            test_path,
+            test_path,
         )
-        .unwrap();
-        // Validate that the backup is constructed again
+        .await;
         assert!(backup_storage
             .data_exists(&key_id, &PrivDataType::FheKeyInfo.to_string())
             .await
@@ -225,7 +215,7 @@ async fn test_insecure_threshold_crs_backup() {
     ))
     .unwrap();
     let test_path = None;
-    purge(test_path, test_path, test_path, &req_id, amount_parties).await;
+    purge(test_path, test_path, &req_id, amount_parties).await;
     purge_backup(test_path, amount_parties).await;
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
@@ -246,7 +236,9 @@ async fn test_insecure_threshold_crs_backup() {
             Some(Role::indexed_from_one(i)),
         )
         .unwrap();
-        delete_all_at_request_id(&mut priv_storage, &req_id).await;
+        delete_all_at_request_id(&mut priv_storage, &req_id)
+            .await
+            .unwrap();
         // Check that is has been removed
         assert!(!priv_storage
             .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())

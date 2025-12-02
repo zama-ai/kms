@@ -4,7 +4,7 @@
 //! storage management, and common operations needed by the cryptographic material
 //! storage system.
 
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::vault::storage::StorageReader;
 use crate::{
     anyhow_error_and_warn_log,
@@ -152,8 +152,40 @@ pub fn log_storage_success<T: Display, U: Display>(
     is_public: bool,
     is_threshold: bool,
 ) {
+    log_storage_success_optional_variant(
+        req_id,
+        storage_info,
+        data_type,
+        is_public,
+        Some(is_threshold),
+    );
+}
+
+/// Logs a message indicating successful storage of data.
+///
+/// # Arguments
+/// * `req_id` - The request ID associated with the stored data
+/// * `storage_info` - Information about the storage where data was stored
+/// * `data_type` - Type of the data that was stored
+/// * `is_public` - Whether the stored data is public or private
+/// * `is_threshold` - If this is None, then no variant is logged.
+///   If Some(true), threshold is logged, if Some(false), centralized is logged.
+///
+/// # Note
+/// The log level is set to `info` to track successful storage operations.
+pub fn log_storage_success_optional_variant<T: Display, U: Display>(
+    req_id: T,
+    storage_info: U,
+    data_type: &str,
+    is_public: bool,
+    is_threshold: Option<bool>,
+) {
     let visibility = if is_public { "public" } else { "private" };
-    let variant = if is_threshold { "threshold " } else { "" };
+    let variant = match is_threshold {
+        Some(true) => "threshold ",
+        Some(false) => "centralized ",
+        None => "",
+    };
 
     tracing::info!(
         "Successfully stored {} {}{} under the handle {} in storage \"{}\"",
@@ -219,7 +251,7 @@ pub fn calculate_max_num_bits(dkg_params: &DKGParams) -> usize {
 ///
 /// # Arguments
 /// * `storage` - The storage backend containing the per-entity data, such as signing keys, representable as `T`
-/// * `storage_type` - The type tag for the per-entity data used in storage URLs (one of `ClientDataType`, `PrivDataType`, `PubDataType`)
+/// * `data_type` - The type tag for the per-entity data used in storage URLs (one of `ClientDataType`, `PrivDataType`, `PubDataType`)
 ///
 /// # Returns
 /// The `T` value if found and valid, or an error if:
@@ -234,30 +266,29 @@ async fn get_unique<
     U: Display,
 >(
     storage: &S,
-    storage_type: U,
+    data_type: U,
 ) -> anyhow::Result<T> {
-    let mut sk_map: HashMap<RequestId, T> =
-        read_all_data_versioned(storage, &storage_type.to_string())
-            .await
-            .map_err(|e| {
-                anyhow_error_and_warn_log(format!("Failed to read signing key data: {e}"))
-            })?;
+    let data_map: HashMap<RequestId, T> = read_all_data_versioned(storage, &data_type.to_string())
+        .await
+        .map_err(|e| {
+            anyhow_error_and_warn_log(format!(
+                "Failed to read {} from \"{}\": {e}",
+                &data_type.to_string(),
+                storage.info()
+            ))
+        })?;
 
-    if sk_map.values().len() != 1 {
+    if data_map.values().len() != 1 {
         return Err(anyhow_error_and_warn_log(format!(
-            "{} key map should contain exactly one entry, but contains {} entries for storage \"{}\"",
-            storage_type, sk_map.values().len(), storage.info()
+            "{} storage should contain exactly one entry, but contains {} entries for storage \"{}\"",
+            data_type,
+            data_map.values().len(),
+            storage.info()
         )));
     }
 
-    let req_id = *sk_map
-        .keys()
-        .last()
-        .ok_or_else(|| anyhow_error_and_warn_log("No keys found in signing key map".to_string()))?;
-
-    sk_map
-        .remove(&req_id)
-        .ok_or_else(|| anyhow_error_and_warn_log("Failed to remove key from map".to_string()))
+    let value = data_map.into_values().next().unwrap(); // Safe unwrap since we checked length above
+    Ok(value)
 }
 
 pub async fn get_core_signing_key<S: StorageReader>(storage: &S) -> anyhow::Result<PrivateSigKey> {

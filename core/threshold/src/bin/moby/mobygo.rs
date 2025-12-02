@@ -498,7 +498,7 @@ async fn preproc_decrypt_command(
     params: PreprocDecryptArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pk_serialized = std::fs::read(params.pub_key_file)?;
-    let (key_sid, _): (SessionId, FhePubKeySet) = bc2wrap::deserialize(&pk_serialized)?;
+    let (key_sid, _): (SessionId, FhePubKeySet) = bc2wrap::deserialize_unsafe(&pk_serialized)?;
     let session_id = params.session_id.unwrap_or(random());
     let num_ctxts = params.num_ctxts;
     let ctxt_type = params.tfhe_type;
@@ -599,7 +599,7 @@ fn encrypt_messages(
 
 async fn encrypt_command(params: EncryptArgs) -> Result<(), Box<dyn std::error::Error>> {
     let pk_serialized = std::fs::read(params.pub_key_file)?;
-    let (_key_sid, pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize(&pk_serialized)?;
+    let (_key_sid, pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize_unsafe(&pk_serialized)?;
     let compact_key = pk.public_key;
 
     set_server_key(pk.server_key);
@@ -625,11 +625,11 @@ async fn threshold_decrypt_from_file_command(
     params: ThresholdDecryptFromFileArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pk_serialized = std::fs::read(params.pub_key_file)?;
-    let (key_sid, _pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize(&pk_serialized)?;
+    let (key_sid, _pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize_unsafe(&pk_serialized)?;
 
     let ctxt_serialized = tokio::fs::read(params.input_file).await?;
     let (tfhe_type, ctxt): (TfheType, RadixOrBoolCiphertext) =
-        bc2wrap::deserialize(&ctxt_serialized)?;
+        bc2wrap::deserialize_unsafe(&ctxt_serialized)?;
 
     let session_id = params.session_id.unwrap_or(random());
     let session_id = runtime
@@ -664,7 +664,7 @@ async fn threshold_decrypt_command(
     let tfhe_type = params.tfhe_type;
     let num_messages = params.num_ctxts;
     let pk_serialized = std::fs::read(params.pub_key_file)?;
-    let (key_sid, pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize(&pk_serialized)?;
+    let (key_sid, pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize_unsafe(&pk_serialized)?;
     let compact_key = pk.public_key;
 
     //Required to be able to expand the CompactCiphertextList if the encryption and compute keys

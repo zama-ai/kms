@@ -32,7 +32,7 @@ async fn main() {
     let mut rng = AesRng::from_entropy();
 
     // Generate the keys normally, we'll secret share them later.
-    let keyset: KeySet = gen_key_set(BC_PARAMS_SNS, &mut rng);
+    let keyset: KeySet = gen_key_set(BC_PARAMS_SNS, tfhe::Tag::default(), &mut rng);
     set_server_key(keyset.public_keys.server_key.clone());
 
     let params = keyset.get_cpu_params().unwrap();
@@ -51,6 +51,7 @@ async fn main() {
     let roles = generate_fixed_roles(num_parties);
     let mut runtime = DistributedTestRuntime::<
         ResiduePolyF4Z64,
+        _,
         { ResiduePolyF4Z64::EXTENSION_DEGREE },
     >::new(roles.clone(), threshold as u8, NetworkMode::Sync, None);
 

@@ -13,11 +13,11 @@ on:
       runs-on:
         type: string
         required: false
-        default: "ubuntu-latest"
+        default: 'ubuntu-latest'
       args-tests:
         type: string
         required: false
-        default: ""
+        default: ''
       run-minio:
         type: boolean
         required: false
@@ -33,7 +33,7 @@ on:
       wasm-test-feature:
         type: string
         required: false
-        default: "-F wasm_tests"
+        default: '-F wasm_tests'
       package-name:
         type: string
         required: true
@@ -55,7 +55,7 @@ on:
       nextest-test-threads:
         type: string
         required: false
-        default: "1"
+        default: '1'
     secrets:
       CODECOV_TOKEN:
         required: false
@@ -85,7 +85,7 @@ env:
   DOCKER_BUILD_TEST_CORE_CLIENT: 1
   CARGO_INCREMENTAL: 0
   DOCKER_BUILDKIT: 1
-  NPM_TAG: ""
+  NPM_TAG: ''
 
 # No top-level permissions needed - job-level permissions are more specific
 permissions: {}
@@ -101,7 +101,7 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     timeout-minutes: 500
-    runs-on: ${{ inputs.runs-on }}
+    runs-on: runs-on=${{ github.run_id }}/runner=${{ inputs.runs-on }}/spot=false/volume=200gb/extras=s3-cache
     services:
       redis:
         image: ${{ inputs.run-redis && 'redis/redis-stack:7.4.0-v3@sha256:c2019e98fd5abce4dd11feec004de44d1709d2366a6efa5ffb2bd0daf8f9c6a4' || '' }}
@@ -113,8 +113,13 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
 
     steps:
+      - name: Setup Runs-on
+        uses: runs-on/action@cd2b598b0515d39d78c38a02d529db87d2196d1e # v2.0.3
+        with:
+          metrics: cpu,network,memory,disk,io
+
       - name: Checkout Project
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           submodules: true
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -127,20 +132,16 @@ jobs:
           version="$(cat "$GH_WORKSPACE/toolchain.txt")"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
 
-      - name: Setup Home
-        if: "${{ !contains(inputs.runs-on, 'ubuntu') }}"
-        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
-
       # LFS files are needed for backward compatibility tests
       # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
       # need to do it right after and then manually pull LFS files
       - name: setup gitlfs from binary
         env:
-          GIT_LFS_VERSION: "3.6.1"
+          GIT_LFS_VERSION: '3.6.1'
         run: |
           wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
           tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
-          "./git-lfs-${GIT_LFS_VERSION}/install.sh"
+          sudo ./git-lfs-"${GIT_LFS_VERSION}"/install.sh
           git lfs pull
 
       # Needed to be able to pull some docker images for the simulator test
@@ -158,13 +159,6 @@ jobs:
           username: ${{ secrets.CGR_USERNAME }}
           password: ${{ secrets.CGR_PASSWORD }}
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-          aws-region: eu-west-3
-
       ############################################################################
       # Initialize Docker Buildx for multi-platform builds.
       - name: Set up Docker Buildx
@@ -178,40 +172,24 @@ jobs:
       # Rust toolchain setup
       #
       - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8 # v1.10.1
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
         with:
           toolchain: ${{ env.RUST_IMAGE_VERSION }}
           components: rustfmt, clippy, llvm-tools-preview, llvm-tools
           cache: false
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
 
       - name: Install nextest and grcov
         run: |
           cargo install cargo-nextest --locked
           cargo install grcov --locked
 
-      ############################################################################
-      # Setup cache for dockerfile and inject in docker
-      #
-      - name: Setup Cache
-        uses: runs-on/cache@197b09d6da1bf42f673fee18769c794b789a0c7d # v4.0.0
-        id: cache
-        env:
-          RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
-          RUNS_ON_AWS_REGION: eu-west-3
-        with:
-          path: |
-            /home/ubuntu/.cargo/bin/
-            /home/ubuntu/.cargo/registry/index/
-            /home/ubuntu/.cargo/registry/cache/
-            /home/ubuntu/.cargo/git/db/
-            ${{ github.workspace }}/target
-          key: |
-            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
       - name: Install Protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
-          version: "26.x"
+          version: '26.x'
           repo-token: ${{ secrets.GITHUB_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
 
       - name: Setup usage of private repo
@@ -295,10 +273,10 @@ jobs:
           # else
           #   RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
           # fi
-          AWS_ACCESS_KEY_ID: "minioadmin"
-          AWS_SECRET_ACCESS_KEY: "minioadmin"
-          AWS_DEFAULT_REGION: "eu-north-1"
-          AWS_ENDPOINT: "http://127.0.0.1:9000"
+          AWS_ACCESS_KEY_ID: 'minioadmin'
+          AWS_SECRET_ACCESS_KEY: 'minioadmin'
+          AWS_DEFAULT_REGION: 'eu-north-1'
+          AWS_ENDPOINT: 'http://127.0.0.1:9000'
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_RETRIES: 3
@@ -316,7 +294,7 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
-          RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+          RUST_BACKTRACE=full cargo nextest --profile ci run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
@@ -369,8 +347,8 @@ jobs:
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
           SLACK_USERNAME: ${{ secrets.BOT_USERNAME }}
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          SLACK_ICON_EMOJI: ":github-octocat:"
-          SLACK_TITLE: "Nightly Tests Result"
+          SLACK_ICON_EMOJI: ':github-octocat:'
+          SLACK_TITLE: 'Nightly Tests Result'
           SLACK_COLOR: ${{ steps.slack_color.outputs.color }}
           SLACK_MESSAGE: "${{ steps.tests.outcome }} \nFor args: ${{ inputs.args-tests }}"
 
@@ -384,7 +362,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: logs-${{ inputs.package-name }}-${{ github.workflow }}-${{ github.run_number }}-${{ github.job }}-${{ steps.unique-id.outputs.id }}
-          path: "**/*.log"
+          path: '**/*.log'
           retention-days: 30
           if-no-files-found: ignore
 

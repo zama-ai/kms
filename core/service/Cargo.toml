@@ -1,5 +1,7 @@
 [package]
 name = "kms"
+repository.workspace = true
+description.workspace = true
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -59,6 +61,7 @@ bincode.workspace = true
 bip39.workspace = true
 cbc.workspace = true
 cfg-if.workspace = true
+ciborium.workspace = true
 clap = { workspace = true, features = ["derive"] }
 console_error_panic_hook.workspace = true
 enum_dispatch.workspace = true
@@ -66,6 +69,7 @@ futures-util.workspace = true
 hex.workspace = true
 http-legacy.workspace = true
 hyper-rustls = { workspace = true, optional = true }
+iam-rs = { workspace = true, optional = true }
 itertools.workspace = true
 k256.workspace = true
 kms-grpc = { workspace = true, default-features = false }
@@ -154,6 +158,7 @@ non-wasm = [
     "dep:aws-smithy-runtime-api",
     "dep:aws-smithy-types",
     "dep:hyper-rustls",
+    "dep:iam-rs",
     "dep:observability",
     "dep:rustls-webpki",
     "dep:rcgen",

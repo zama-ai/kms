@@ -19,11 +19,12 @@ use tfhe::{
 use crate::{
     algebra::{
         galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect, Ring},
+        structure_traits::{BaseRing, ErrorCorrect},
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        online::triple::open_list, runtime::session::BaseSessionHandles, sharing::share::Share,
+        online::triple::open_list, runtime::sessions::base_session::BaseSessionHandles,
+        sharing::share::Share,
     },
 };
 
@@ -222,7 +223,7 @@ pub fn encrypt_lwe_ciphertext<Gen, Z, const EXTENSION_DEGREE: usize>(
 ) where
     Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let (mask, body) = output.get_mut_mask_and_body();
 
@@ -238,7 +239,7 @@ pub fn encrypt_lwe_ciphertext_list<Gen, Z, const EXTENSION_DEGREE: usize>(
 where
     Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     assert_eq!(
         output.len(),
@@ -279,7 +280,7 @@ fn fill_lwe_mask_and_body_for_encryption<Z, Gen, const EXTENSION_DEGREE: usize>(
 ) where
     Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     //Sample the mask, the only LWE encryptions we need are in the small domain
     generator.fill_slice_with_random_mask_custom_mod(output_mask, EncryptionType::Bits64);
@@ -331,7 +332,9 @@ mod tests {
                 preprocessing::dummy::DummyPreprocessing,
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
+            },
             sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{
                 randomness::{

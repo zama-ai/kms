@@ -5,7 +5,7 @@ use tfhe::{
 
 use crate::algebra::{
     galois_rings::common::ResiduePoly,
-    structure_traits::{BaseRing, Ring, Zero},
+    structure_traits::{BaseRing, ErrorCorrect, Zero},
 };
 
 use super::{
@@ -81,7 +81,7 @@ pub fn encrypt_glwe_ciphertext_assign<Gen, Z, const EXTENSION_DEGREE: usize>(
 ) where
     Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let encryption_type = output.encryption_type;
     let (mask, body) = output.get_mut_mask_and_body();
@@ -104,7 +104,7 @@ pub fn encrypt_glwe_ciphertext<Gen, Z, const EXTENSION_DEGREE: usize>(
 ) where
     Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let (mask, body) = output.get_mut_mask_and_body();
     *body = input_plaintext_list.to_vec();
@@ -128,7 +128,7 @@ pub(crate) fn encrypt_glwe_ciphertext_list<Gen, Z, const EXTENSION_DEGREE: usize
 ) where
     Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let polynomial_size = glwe_secret_key.polynomial_size();
     let chunks = input_plaintext_list.chunks_exact(polynomial_size.0);
@@ -159,7 +159,7 @@ fn fill_glwe_mask_and_body_for_encryption_assign<Z, Gen, const EXTENSION_DEGREE:
 ) where
     Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     //Sample the mask
     generator.fill_slice_with_random_mask_custom_mod(output_mask, encryption_type);
@@ -218,7 +218,9 @@ mod tests {
             },
             runtime::{
                 party::Role,
-                session::{LargeSession, ParameterHandles},
+                sessions::{
+                    large_session::LargeSession, session_parameters::GenericParameterHandles,
+                },
             },
             sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{

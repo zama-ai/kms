@@ -9,10 +9,11 @@ use crate::consts::DEFAULT_PARAM;
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
 use crate::consts::TEST_PARAM;
+#[cfg(feature = "slow_tests")]
 use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::cryptography::internal_crypto_types::{UnifiedPrivateEncKey, UnifiedPublicEncKey};
+use crate::cryptography::encryption::{PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey};
+use crate::cryptography::signatures::{internal_sign, PrivateSigKey};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
@@ -39,8 +40,41 @@ use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
 use tokio::task::JoinSet;
 
+#[cfg(feature = "slow_tests")]
 #[rstest::rstest]
 #[case(true, TestingPlaintext::U32(42), 10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
+#[case(false, TestingPlaintext::U32(42), 10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::NoiseFloodSmall)]
+#[case(true, TestingPlaintext::U32(42), 10, &TEST_THRESHOLD_KEY_ID_10P, DecryptionMode::BitDecSmall)]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_user_decryption_threshold_nightly(
+    #[case] secure: bool,
+    #[case] pt: TestingPlaintext,
+    #[case] amount_parties: usize,
+    #[case] key_id: &RequestId,
+    #[case] decryption_mode: DecryptionMode,
+) {
+    user_decryption_threshold(
+        TEST_PARAM,
+        key_id,
+        false,
+        false,
+        pt,
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: false,
+        },
+        1,
+        secure,
+        amount_parties,
+        None,
+        None,
+        Some(decryption_mode),
+    )
+    .await;
+}
+
+#[rstest::rstest]
 #[case(true, TestingPlaintext::Bool(true), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(true, TestingPlaintext::U8(88), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(true, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
@@ -459,25 +493,22 @@ pub(crate) async fn user_decryption_threshold(
                 ciphertext_format: ct_format.into(),
                 external_handle: j.to_be_bytes().to_vec(),
             }];
-            let (req, enc_pk, enc_sk) = if legacy {
-                internal_client
-                    .user_decryption_request_legacy(
-                        &dummy_domain(),
-                        typed_ciphertexts,
-                        &request_id,
-                        &key_id.to_string().try_into().unwrap(),
-                    )
-                    .unwrap()
+            let encryption_scheme = if legacy {
+                PkeSchemeType::MlKem1024
             } else {
-                internal_client
-                    .user_decryption_request(
-                        &dummy_domain(),
-                        typed_ciphertexts,
-                        &request_id,
-                        &key_id.to_string().try_into().unwrap(),
-                    )
-                    .unwrap()
+                PkeSchemeType::MlKem512
             };
+            let (req, enc_pk, enc_sk) = internal_client
+                .user_decryption_request(
+                    &dummy_domain(),
+                    typed_ciphertexts,
+                    &request_id,
+                    &key_id.to_string().try_into().unwrap(),
+                    None,
+                    encryption_scheme,
+                )
+                .unwrap();
+
             (req, enc_pk, enc_sk)
         })
         .collect();
@@ -702,7 +733,7 @@ async fn process_batch_threshold_user_decryption(
                                 payload.party_id -= 1;
                             }
                             let sig_payload_vec = bc2wrap::serialize(&payload).unwrap();
-                            let sig = crate::cryptography::signcryption::internal_sign(
+                            let sig = internal_sign(
                                 &DSEP_USER_DECRYPTION,
                                 &sig_payload_vec,
                                 &server_private_keys[&orig_party_id],

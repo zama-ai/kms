@@ -1,12 +1,13 @@
 use crate::client::client_wasm::Client;
-use crate::conf::{self, Keychain, SecretSharingKeychain};
+use crate::conf::{Keychain, SecretSharingKeychain};
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
+use crate::engine::base::BaseKmsStruct;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::threshold::service::new_real_threshold_kms;
 use crate::engine::{run_server, Shutdown};
+use crate::util::key_setup::test_tools::file_backup_vault;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::make_storage;
 use crate::vault::storage::{
     crypto_material::get_core_signing_key, file::FileStorage, Storage, StorageType,
@@ -23,6 +24,7 @@ use futures_util::FutureExt;
 use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
+use kms_grpc::rpc_types::KMSType;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
@@ -133,6 +135,8 @@ pub async fn setup_threshold_no_client<
                 decryption_mode,
             };
             let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+
             // TODO pass in cert_paths for testing TLS
             let server = new_real_threshold_kms(
                 threshold_party_config,
@@ -141,7 +145,7 @@ pub async fn setup_threshold_no_client<
                 cur_vault,
                 None,
                 mpc_listener,
-                sk,
+                base_kms,
                 None,
                 false,
                 run_prss,
@@ -215,7 +219,10 @@ pub async fn setup_threshold_no_client<
 /// try to connect to a URI and retry every 200ms for 50 times before giving up after 5 seconds.
 pub async fn connect_with_retry(uri: Uri) -> Channel {
     tracing::info!("Client connecting to {}", uri);
-    let mut channel = Channel::builder(uri.clone()).connect().await;
+    let mut channel = Channel::builder(uri.clone())
+        .tcp_nodelay(true)
+        .connect()
+        .await;
     let mut tries = 0usize;
     loop {
         match channel {
@@ -225,7 +232,10 @@ pub async fn connect_with_retry(uri: Uri) -> Channel {
             Err(_) => {
                 tracing::info!("Retrying: Client connection to {}", uri);
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                channel = Channel::builder(uri.clone()).connect().await;
+                channel = Channel::builder(uri.clone())
+                    .tcp_nodelay(true)
+                    .connect()
+                    .await;
                 tries += 1;
                 if tries > MAX_TRIES {
                     break;
@@ -526,29 +536,13 @@ pub async fn centralized_custodian_handles(
     rate_limiter_conf: Option<RateLimiterConfig>,
     test_data_path: Option<&Path>,
 ) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
-    let store_path = test_data_path.map(|p| {
-        conf::Storage::File(conf::FileStorage {
-            path: p.to_path_buf(),
-        })
-    });
-    let pub_proxy_storage =
-        make_storage(store_path.clone(), StorageType::PUB, None, None, None).unwrap();
-    let backup_proxy_storage =
-        make_storage(store_path, StorageType::BACKUP, None, None, None).unwrap();
-    let keychain = Some(
-        make_keychain_proxy(
-            &Keychain::SecretSharing(SecretSharingKeychain {}),
-            None,
-            None,
-            Some(&pub_proxy_storage),
-        )
-        .await
-        .unwrap(),
-    );
-    let backup_vault = Vault {
-        storage: backup_proxy_storage,
-        keychain,
-    };
+    let backup_vault = file_backup_vault(
+        None,
+        Some(&Keychain::SecretSharing(SecretSharingKeychain {})),
+        test_data_path,
+        test_data_path,
+    )
+    .await;
     central_handle_w_vault(param, rate_limiter_conf, Some(backup_vault), test_data_path).await
 }
 /// Wait for a server to be ready for requests. I.e. wait until it enters the SERVING state.

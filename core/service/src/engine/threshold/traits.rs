@@ -58,6 +58,13 @@ pub trait KeyGenPreprocessor {
         &self,
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status>;
+
+    #[cfg(feature = "insecure")]
+    async fn partial_key_gen_preproc(
+        &self,
+        request: Request<PartialKeyGenPreprocRequest>,
+    ) -> Result<Response<Empty>, Status>;
+
     async fn get_result(
         &self,
         request: Request<RequestId>,
@@ -85,4 +92,16 @@ pub trait InsecureCrsGenerator {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status>;
+}
+
+#[tonic::async_trait]
+pub trait Resharer {
+    async fn initiate_resharing(
+        &self,
+        request: Request<InitiateResharingRequest>,
+    ) -> Result<Response<InitiateResharingResponse>, Status>;
+    async fn get_resharing_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<ResharingResultResponse>, Status>;
 }

@@ -1,16 +1,17 @@
 use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::threshold::traits::{
-    CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, UserDecryptor,
+    CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, Resharer,
+    UserDecryptor,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::traits::{BackupOperator, ContextManager};
 use kms_grpc::kms::v1::{
-    CrsGenRequest, CrsGenResult, DestroyKmsContextRequest, Empty, HealthStatus, InitRequest,
-    KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
-    KeyMaterialAvailabilityResponse, NewKmsContextRequest, NodeType, PeersFromContext,
-    PublicDecryptionRequest, PublicDecryptionResponse, RequestId, UserDecryptionRequest,
-    UserDecryptionResponse,
+    CrsGenRequest, CrsGenResult, DestroyMpcContextRequest, Empty, HealthStatus, InitRequest,
+    InitiateResharingRequest, InitiateResharingResponse, KeyGenPreprocRequest, KeyGenPreprocResult,
+    KeyGenRequest, KeyGenResult, KeyMaterialAvailabilityResponse, NewMpcContextRequest, NodeType,
+    PeersFromContext, PublicDecryptionRequest, PublicDecryptionResponse, RequestId,
+    ResharingResultResponse, UserDecryptionRequest, UserDecryptionResponse,
 };
 use kms_grpc::kms::v1::{HealthStatusResponse, PeerHealth};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
@@ -19,10 +20,11 @@ use observability::{
     metrics_names::{
         map_tonic_code_to_metric_tag, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
         OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_DESTROY_CUSTODIAN_CONTEXT,
-        OP_DESTROY_KMS_CONTEXT, OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST,
-        OP_KEYGEN_PREPROC_RESULT, OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT,
-        OP_NEW_KMS_CONTEXT, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
-        OP_RESTORE_FROM_BACKUP, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
+        OP_DESTROY_MPC_CONTEXT, OP_FETCH_PK, OP_GET_INITIATE_RESHARING_RESULT, OP_INIT,
+        OP_INITIATE_RESHARING, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT,
+        OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_MPC_CONTEXT,
+        OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_RESTORE_FROM_BACKUP,
+        OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
     },
 };
 use threshold_fhe::networking::health_check::HealthCheckStatus;
@@ -41,7 +43,8 @@ macro_rules! impl_endpoint {
                 CG: CrsGenerator + Sync + Send + 'static,
                 CM: ContextManager + Sync + Send + 'static,
                 BO: BackupOperator + Sync + Send + 'static,
-            > CoreServiceEndpoint for ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO> $implementations
+                RE: Resharer + Sync + Send + 'static,
+            > CoreServiceEndpoint for ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO, RE> $implementations
 
         #[cfg(feature="insecure")]
         #[tonic::async_trait]
@@ -56,7 +59,8 @@ macro_rules! impl_endpoint {
                 ICG: InsecureCrsGenerator + Sync + Send + 'static,
                 CM: ContextManager + Sync + Send + 'static,
                 BO: BackupOperator + Sync + Send + 'static,
-            > CoreServiceEndpoint for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO> $implementations
+                RE: Resharer + Sync + Send + 'static,
+            > CoreServiceEndpoint for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO, RE> $implementations
     }
 }
 
@@ -80,6 +84,20 @@ impl_endpoint! {
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
             self.keygen_preprocessor.key_gen_preproc(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, tag);
+            })
+        }
+
+        #[cfg(feature = "insecure")]
+        #[tracing::instrument(skip(self, request))]
+        async fn partial_key_gen_preproc(
+            &self,
+            request: Request<kms_grpc::kms::v1::PartialKeyGenPreprocRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
+            self.keygen_preprocessor.partial_key_gen_preproc(request).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
                 let _ = METRICS
                     .increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, tag);
@@ -265,31 +283,57 @@ impl_endpoint! {
         }
 
         #[tracing::instrument(skip(self, request))]
-        async fn new_kms_context(
+        async fn new_mpc_context(
             &self,
-            request: Request<NewKmsContextRequest>,
+            request: Request<NewMpcContextRequest>,
         ) -> Result<Response<Empty>, Status> {
-            METRICS.increment_request_counter(OP_NEW_KMS_CONTEXT);
-            self.context_manager.new_kms_context(request).await.inspect_err(|err| {
+            METRICS.increment_request_counter(OP_NEW_MPC_CONTEXT);
+            self.context_manager.new_mpc_context(request).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
                 let _ = METRICS
-                    .increment_error_counter(OP_NEW_KMS_CONTEXT, tag);
+                    .increment_error_counter(OP_NEW_MPC_CONTEXT, tag);
             })
 
         }
 
         #[tracing::instrument(skip(self, request))]
-        async fn destroy_kms_context(
+        async fn destroy_mpc_context(
             &self,
-            request: Request<DestroyKmsContextRequest>,
+            request: Request<DestroyMpcContextRequest>,
         ) -> Result<Response<Empty>, Status> {
-            METRICS.increment_request_counter(OP_DESTROY_KMS_CONTEXT);
-            self.context_manager.destroy_kms_context(request).await.inspect_err(|err| {
+            METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
+            self.context_manager.destroy_mpc_context(request).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
                 let _ = METRICS
-                    .increment_error_counter(OP_DESTROY_KMS_CONTEXT, tag);
+                    .increment_error_counter(OP_DESTROY_MPC_CONTEXT, tag);
             })
 
+        }
+
+        #[tracing::instrument(skip(self, request))]
+        async fn initiate_resharing(
+            &self,
+            request: Request<InitiateResharingRequest>,
+        ) -> Result<Response<InitiateResharingResponse>, Status> {
+            METRICS.increment_request_counter(OP_INITIATE_RESHARING);
+            self.resharer.initiate_resharing(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_INITIATE_RESHARING, tag);
+            })
+        }
+
+        #[tracing::instrument(skip(self, request))]
+        async fn get_resharing_result(
+            &self,
+            request: Request<RequestId>,
+        ) -> Result<Response<ResharingResultResponse>, Status> {
+            METRICS.increment_request_counter(OP_GET_INITIATE_RESHARING_RESULT);
+            self.resharer.get_resharing_result(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_GET_INITIATE_RESHARING_RESULT, tag);
+            })
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -404,7 +448,7 @@ impl_endpoint! {
             // Add preprocessing IDs from the preprocessor
             own_material.preprocessing_ids = self.keygen_preprocessor.get_all_preprocessing_ids().await?;
 
-            let health_check_sessions = self.session_preparer.get_healthcheck_session_all_contexts().await
+            let health_check_sessions = self.session_maker.get_healthcheck_session_all_contexts().await
             .map_err(|e| {tonic::Status::internal(format!("Failed to get health check sessions: {}", e))})?;
 
             let mut peers_from_all_contexts = Vec::new();

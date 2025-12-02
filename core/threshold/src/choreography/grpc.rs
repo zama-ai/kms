@@ -29,7 +29,6 @@ use crate::choreography::requests::{
 };
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
-use crate::execution::constants::DEFAULT_CHOREOGRAPHY_CONTEXT_ID;
 use crate::execution::endpoints::decryption::{
     combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
     task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, OfflineNoiseFloodSession,
@@ -56,10 +55,12 @@ use crate::execution::online::preprocessing::{
 };
 use crate::execution::online::reshare::{reshare_sk_same_sets, ResharePreprocRequired};
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
-use crate::execution::runtime::session::ParameterHandles;
-use crate::execution::runtime::session::ToBaseSession;
-use crate::execution::runtime::session::{BaseSession, BaseSessionHandles};
-use crate::execution::runtime::session::{LargeSession, SessionParameters};
+use crate::execution::runtime::sessions::base_session::ToBaseSession;
+use crate::execution::runtime::sessions::base_session::{BaseSession, BaseSessionHandles};
+use crate::execution::runtime::sessions::large_session::LargeSession;
+use crate::execution::runtime::sessions::session_parameters::{
+    GenericParameterHandles, SessionParameters,
+};
 use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::execution::small_execution::prf::PRSSConversions;
 use crate::execution::small_execution::prss::{DerivePRSSState, PRSSPrimitives};
@@ -426,16 +427,14 @@ where
     async fn create_base_session(
         &self,
         request_sid: SessionId,
-        context_id: SessionId,
         threshold: u8,
-        role_assignment: Arc<RwLock<RoleAssignment>>,
+        role_assignment: Arc<RwLock<RoleAssignment<Role>>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<BaseSession> {
         Ok(self
             .create_base_sessions(
                 request_sid,
-                context_id,
                 1,
                 threshold,
                 role_assignment,
@@ -459,11 +458,10 @@ where
     async fn create_base_sessions(
         &self,
         request_sid: SessionId,
-        context_id: SessionId,
         num_sessions: usize,
         threshold: u8,
         // TODO does not need to be Arc
-        role_assignment: Arc<RwLock<RoleAssignment>>,
+        role_assignment: Arc<RwLock<RoleAssignment<Role>>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<Vec<BaseSession>> {
@@ -485,7 +483,6 @@ where
                 .networking_manager
                 .make_network_session(
                     session_id,
-                    context_id,
                     &*role_assignment.read().await,
                     self.my_role,
                     network_mode,
@@ -585,7 +582,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -593,12 +590,13 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let prss_params: PrssInitParams = bc2wrap::deserialize(&request.params).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to parse prss params: {e:?}"),
-            )
-        })?;
+        let prss_params: PrssInitParams =
+            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse prss params: {e:?}"),
+                )
+            })?;
 
         let session_id = prss_params.session_id;
         let ring = prss_params.ring;
@@ -606,7 +604,6 @@ where
         let mut base_session = self
             .create_base_session(
                 session_id,
-                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 threshold,
                 role_assignment,
                 NetworkMode::Sync,
@@ -701,7 +698,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -709,8 +706,8 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let preproc_params: PreprocKeyGenParams =
-            bc2wrap::deserialize(&request.params).map_err(|e| {
+        let preproc_params: PreprocKeyGenParams = bc2wrap::deserialize_safe(&request.params)
+            .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Preproc KeyGen params: {e:?}"),
@@ -728,7 +725,6 @@ where
         let base_sessions = self
             .create_base_sessions(
                 start_sid,
-                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 num_sessions as usize,
                 threshold,
                 role_assignment,
@@ -912,6 +908,9 @@ where
 
         let request = request.into_inner();
 
+        // should match what is in [self.threshold_key_gen_result]
+        let tag = tfhe::Tag::default();
+
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
@@ -920,7 +919,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -929,7 +928,7 @@ where
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let kg_params: ThresholdKeyGenParams =
-            bc2wrap::deserialize(&request.params).map_err(|e| {
+            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Threshold KeyGen params: {e:?}"),
@@ -943,7 +942,6 @@ where
         let mut base_session = self
             .create_base_session(
                 session_id,
-                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 threshold,
                 role_assignment,
                 NetworkMode::Async,
@@ -979,6 +977,7 @@ where
                         &mut base_session,
                         preproc.as_mut(),
                         dkg_params,
+                        tag,
                         None,
                     )
                     .await
@@ -1002,6 +1001,7 @@ where
                         &mut base_session,
                         &mut preproc,
                         dkg_params,
+                        tag,
                         None,
                     )
                     .await
@@ -1034,6 +1034,7 @@ where
                         &mut base_session,
                         preproc.as_mut(),
                         dkg_params,
+                        tag,
                         None,
                     )
                     .await
@@ -1057,6 +1058,7 @@ where
                         &mut base_session,
                         &mut preproc,
                         dkg_params,
+                        tag,
                         None,
                     )
                     .await
@@ -1087,21 +1089,23 @@ where
         request: tonic::Request<ThresholdKeyGenResultRequest>,
     ) -> Result<tonic::Response<ThresholdKeyGenResultResponse>, tonic::Status> {
         let request = request.into_inner();
+        // should match what is in [self.threshold_key_gen]
+        let tag = tfhe::Tag::default();
 
-        let kg_result_params: ThresholdKeyGenResultParams = bc2wrap::deserialize(&request.params)
-            .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to parse Threshold KeyGen Result params: {e:?}"),
-            )
-        })?;
+        let kg_result_params: ThresholdKeyGenResultParams =
+            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse Threshold KeyGen Result params: {e:?}"),
+                )
+            })?;
 
         let session_id = kg_result_params.session_id;
         let dkg_params = kg_result_params.dkg_params;
 
         if let Some(dkg_params) = dkg_params {
             let role_assignment: HashMap<Role, Identity> =
-                bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+                bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
                         format!("Failed to parse role assignment: {e:?}"),
@@ -1112,7 +1116,6 @@ where
             let mut base_session = self
                 .create_base_session(
                     session_id,
-                    *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                     0,
                     role_assignment,
                     NetworkMode::Sync,
@@ -1126,7 +1129,7 @@ where
                     )
                 })?;
 
-            let keys = local_initialize_key_material(&mut base_session, dkg_params)
+            let keys = local_initialize_key_material(&mut base_session, dkg_params, tag)
                 .await
                 .map_err(|e| {
                     tonic::Status::new(
@@ -1188,7 +1191,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -1196,8 +1199,8 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let preproc_params: PreprocDecryptParams =
-            bc2wrap::deserialize(&request.params).map_err(|e| {
+        let preproc_params: PreprocDecryptParams = bc2wrap::deserialize_safe(&request.params)
+            .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Preproc Decrypt params: {e:?}"),
@@ -1232,7 +1235,6 @@ where
                 let base_sessions = self
                     .create_base_sessions(
                         session_id,
-                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         num_sessions,
                         threshold,
                         role_assignment,
@@ -1302,7 +1304,6 @@ where
                 let base_sessions = self
                     .create_base_sessions(
                         session_id,
-                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         num_sessions,
                         threshold,
                         role_assignment,
@@ -1396,7 +1397,6 @@ where
                 let base_session = self
                     .create_base_session(
                         session_id,
-                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         threshold,
                         role_assignment,
                         NetworkMode::Sync,
@@ -1447,7 +1447,6 @@ where
                 let base_session = self
                     .create_base_session(
                         session_id,
-                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         threshold,
                         role_assignment,
                         NetworkMode::Sync,
@@ -1529,7 +1528,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -1539,7 +1538,7 @@ where
         let roles = role_assignment.keys().cloned().collect();
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let decrypt_params: ThresholdDecryptParams = bc2wrap::deserialize(&request.params)
+        let decrypt_params: ThresholdDecryptParams = bc2wrap::deserialize_safe(&request.params)
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
@@ -1603,7 +1602,6 @@ where
             let mut bcast_session = self
                 .create_base_session(
                     session_id,
-                    *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                     threshold,
                     role_assignment.clone(),
                     NetworkMode::Sync,
@@ -1623,7 +1621,6 @@ where
                     let base_sessions = self
                         .create_base_sessions(
                             new_session_id,
-                            *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                             num_sessions,
                             threshold,
                             role_assignment.clone(),
@@ -1765,7 +1762,6 @@ where
                     let base_sessions = self
                         .create_base_sessions(
                             new_session_id,
-                            *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                             num_sessions * num_blocks,
                             threshold,
                             role_assignment.clone(),
@@ -1967,7 +1963,6 @@ where
                 .networking_manager
                 .make_network_session(
                     session_id,
-                    *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                     &*role_assignment.read().await,
                     self.my_role,
                     NetworkMode::Async,
@@ -2024,7 +2019,6 @@ where
                     let base_sessions = self
                         .create_base_sessions(
                             session_id,
-                            *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                             num_sessions,
                             threshold,
                             role_assignment.clone(),
@@ -2236,7 +2230,7 @@ where
         request: tonic::Request<ThresholdDecryptResultRequest>,
     ) -> Result<tonic::Response<ThresholdDecryptResultResponse>, tonic::Status> {
         let request = request.into_inner();
-        let session_id = bc2wrap::deserialize(&request.request_id).map_err(|e| {
+        let session_id = bc2wrap::deserialize_safe(&request.request_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error deserializing session_id: {e}"),
@@ -2289,7 +2283,7 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
@@ -2297,7 +2291,7 @@ where
             })?;
         let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
-        let crs_params: CrsGenParams = bc2wrap::deserialize(&request.params).map_err(|e| {
+        let crs_params: CrsGenParams = bc2wrap::deserialize_safe(&request.params).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Failed to parse Crs Gen params: {e:?}"),
@@ -2310,7 +2304,6 @@ where
         let mut base_session = self
             .create_base_session(
                 session_id,
-                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 threshold,
                 role_assignment.clone(),
                 NetworkMode::Sync,
@@ -2362,12 +2355,13 @@ where
     ) -> Result<tonic::Response<CrsGenResultResponse>, tonic::Status> {
         let request = request.into_inner();
 
-        let session_id: SessionId = bc2wrap::deserialize(&request.request_id).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Error deserializing session_id: {e}"),
-            )
-        })?;
+        let session_id: SessionId =
+            bc2wrap::deserialize_safe(&request.request_id).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Error deserializing session_id: {e}"),
+                )
+            })?;
 
         let res = self
             .data
@@ -2398,7 +2392,7 @@ where
         request: tonic::Request<StatusCheckRequest>,
     ) -> Result<tonic::Response<StatusCheckResponse>, tonic::Status> {
         let request = request.into_inner();
-        let sid: SessionId = bc2wrap::deserialize(&request.request_id).map_err(|e| {
+        let sid: SessionId = bc2wrap::deserialize_safe(&request.request_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error deserializing session_id: {e}"),
@@ -2449,19 +2443,20 @@ where
         })?;
 
         let role_assignment: HashMap<Role, Identity> =
-            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize_safe(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
 
-        let reshare_params: ReshareParams = bc2wrap::deserialize(&request.params).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("Failed to parse Reshare params: {e:?}"),
-            )
-        })?;
+        let reshare_params: ReshareParams =
+            bc2wrap::deserialize_safe(&request.params).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse Reshare params: {e:?}"),
+                )
+            })?;
 
         let session_type = reshare_params.session_type;
         //We use the new_key_sid as the session_id for the protocol
@@ -2472,7 +2467,6 @@ where
         let mut base_sessions = self
             .create_base_sessions(
                 session_id,
-                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 3,
                 threshold,
                 Arc::new(RwLock::new(RoleAssignment::from(role_assignment))),
@@ -2704,6 +2698,7 @@ pub(crate) async fn fill_network_memory_info_single_session<B: BaseSessionHandle
 async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
     session: &mut BaseSession,
     params: DKGParams,
+    tag: tfhe::Tag,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: crate::algebra::structure_traits::Ring,
@@ -2711,13 +2706,15 @@ where
 {
     let _tracing_subscribe =
         tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::new());
-    crate::execution::tfhe_internals::test_feature::initialize_key_material(session, params).await
+    crate::execution::tfhe_internals::test_feature::initialize_key_material(session, params, tag)
+        .await
 }
 
 #[cfg(not(feature = "testing"))]
 async fn local_initialize_key_material<const EXTENSION_DEGREE: usize>(
     _session: &mut BaseSession,
     _params: DKGParams,
+    _tag: tfhe::Tag,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)> {
     panic!("Require the testing feature on the moby cluster to perform a local intialization of the keys")
 }

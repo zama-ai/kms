@@ -21,7 +21,9 @@ pub mod tests {
         file_path: P,
     ) -> anyhow::Result<T> {
         let read_element = std::fs::read(file_path)?;
-        Ok(bc2wrap::deserialize(read_element.as_slice())?)
+        // This is inside a test module, so we can use the unsafe deserialization here
+        // (Might be useful to deserialize keys which may be huge)
+        Ok(bc2wrap::deserialize_unsafe(read_element.as_slice())?)
     }
 
     #[cfg(test)]

@@ -57,6 +57,8 @@ validator.workspace = true
 # Maintain alphabetical order
 assert_cmd.workspace = true
 cc-tests-utils = { path = "./tests-utils" }
+# Self-import for integration tests
+kms-core-client = { workspace = true, features = ["testing"] }
 serial_test.workspace = true
 test-context.workspace = true
 
@@ -65,3 +67,6 @@ tonic-build.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["kms", "strum"]
+
+[features]
+testing = []

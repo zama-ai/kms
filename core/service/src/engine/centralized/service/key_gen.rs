@@ -13,13 +13,12 @@ use tokio::sync::{OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{
     compute_info_decompression_keygen, retrieve_parameters, KeyGenMetadata, DSEP_PUBDATA_KEY,
 };
 use crate::engine::centralized::central_kms::{
-    async_generate_decompression_keys, async_generate_fhe_keys,
-    async_generate_sns_compression_keys, CentralizedKms,
+    async_generate_decompression_keys, async_generate_fhe_keys, CentralizedKms,
 };
 use crate::engine::keyset_configuration::InternalKeySetConfig;
 use crate::engine::traits::{BackupOperator, ContextManager};
@@ -44,7 +43,6 @@ pub async fn key_gen_impl<
 ) -> Result<Response<Empty>, Status> {
     let _timer = METRICS.time_operation(OP_KEYGEN).start();
 
-    let permit = service.rate_limiter.start_keygen().await?;
     let inner = request.into_inner();
     tracing::info!(
         "centralized key-gen with request id: {:?}",
@@ -75,7 +73,7 @@ pub async fn key_gen_impl<
     // also check that the request ID is not used yet
     // If all is ok write the request ID to the meta store
     // All validation must be done before inserting the request ID
-    let params = {
+    let (params, permit) = {
         // Note that the keygen meta store should be checked first
         // because we do not want to delete the preprocessing ID
         // if the keygen request cannot proceed.
@@ -86,6 +84,8 @@ pub async fn key_gen_impl<
                 format!("Key with ID {req_id} already exists"),
             ));
         };
+
+        let permit = service.rate_limiter.start_keygen().await?;
 
         let check_meta_store = {
             #[cfg(feature = "insecure")]
@@ -125,12 +125,17 @@ pub async fn key_gen_impl<
             guarded_meta_store.insert(&req_id),
             "Could not insert key generation into meta store".to_string(),
         )?;
-        params
+        (params, permit)
     };
 
     let meta_store = Arc::clone(&service.key_meta_map);
     let crypto_storage = service.crypto_storage.clone();
-    let sk = Arc::clone(&service.base_kms.sig_key);
+    let sk = service.base_kms.sig_key().map_err(|e| {
+        tonic::Status::new(
+            tonic::Code::FailedPrecondition,
+            format!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+        )
+    })?;
 
     let handle = service.tracker.spawn(
         async move {
@@ -335,42 +340,6 @@ pub(crate) async fn key_gen_background<
                 start.elapsed()
             );
         }
-        KeySetConfig::AddSnsCompressionKey => {
-            let existing_key_id =
-                internal_keyset_config.get_base_key_id_for_sns_compression_key()?;
-            tracing::info!("Starting key generation for SNS compression key with request ID: {}, base key ID: {}", req_id, existing_key_id);
-            let (fhe_key_set, key_info) = match async_generate_sns_compression_keys(
-                &sk,
-                crypto_storage.clone(),
-                params,
-                &existing_key_id,
-                req_id,
-                preproc_id,
-                eip712_domain,
-            )
-            .await
-            {
-                Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
-                Err(e) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
-                        req_id,
-                        Err(format!(
-                            "Failed key generation for key with ID {req_id}: {e}"
-                        )),
-                    );
-                    return Err(anyhow::anyhow!("Failed key generation: {}", e));
-                }
-            };
-            crypto_storage
-                .write_centralized_keys_with_meta_store(req_id, key_info, fhe_key_set, meta_store)
-                .await;
-
-            tracing::info!(
-                "⏱️ Core Event Time for SNS compression Keygen: {:?}",
-                start.elapsed()
-            );
-        }
     }
     Ok(())
 }
@@ -385,7 +354,7 @@ pub(crate) mod tests {
     use rand::SeedableRng;
 
     use crate::{
-        cryptography::internal_crypto_types::PublicSigKey,
+        cryptography::signatures::PublicSigKey,
         dummy_domain,
         engine::{
             base::derive_request_id,

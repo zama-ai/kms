@@ -1,13 +1,16 @@
-use crate::cryptography::backup_pke::BackupCiphertext;
+use crate::backup::BackupCiphertext;
+use crate::conf::{self, Keychain};
 use crate::util::file_handling::safe_read_element_versioned;
 use crate::util::key_setup::FhePublicKey;
+use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
-    delete_all_at_request_id, read_versioned_at_request_id, StorageReader,
+    delete_all_at_request_id, make_storage, read_versioned_at_request_id, StorageReader,
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
+use crate::vault::{Vault, VaultDataType};
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
-use kms_grpc::rpc_types::{BackupDataType, PubDataType, WrappedPublicKeyOwned};
+use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
 use kms_grpc::RequestId;
 use serde::de::DeserializeOwned;
 use std::path::Path;
@@ -326,6 +329,7 @@ pub async fn load_pk_from_storage(
         party_id,
     )
     .await;
+    tracing::info!("loading pk from storage root dir: {:?}", storage.root_dir());
     let wrapped_pk = read_pk_at_request_id(&storage, key_id)
         .await
         .expect("load_pk_from_storage failed");
@@ -354,37 +358,24 @@ pub async fn compute_cipher_from_stored_key(
     recv.await.unwrap()
 }
 
-/// Purge any kind of data, regardless of type, for a specific request ID.
+/// Purge any kind of public or private data, regardless of type, for a specific request ID.
 ///
 /// This function should be used for testing only and it can panic.
 pub async fn purge(
     pub_path: Option<&Path>,
     priv_path: Option<&Path>,
-    _backup_path: Option<&Path>,
     id: &RequestId,
     amount_parties: usize,
 ) {
-    // TODO(#2748) backups should probably be handled separately since this does not delete all the custodian based backups
-    // but only the non-custodian ones. Hence the following lines are commented out for now.
-    // let vault_storage_option = backup_path.map(|path| {
-    //     StorageConf::File(FileStorageConf {
-    //         path: path.to_path_buf(),
-    //     })
-    // });
     if amount_parties == 1 {
         let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-        delete_all_at_request_id(&mut pub_storage, id).await;
+        delete_all_at_request_id(&mut pub_storage, id)
+            .await
+            .unwrap();
         let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
-        delete_all_at_request_id(&mut priv_storage, id).await;
-        // let mut backup_storage = make_storage(
-        //     vault_storage_option.clone(),
-        //     StorageType::BACKUP,
-        //     None,
-        //     None,
-        //     None,
-        // )
-        // .unwrap();
-        // delete_all_at_request_id(&mut backup_storage, id).await;
+        delete_all_at_request_id(&mut priv_storage, id)
+            .await
+            .unwrap();
     } else {
         for i in 1..=amount_parties {
             let mut threshold_pub =
@@ -396,17 +387,12 @@ pub async fn purge(
                 Some(Role::indexed_from_one(i)),
             )
             .unwrap();
-            delete_all_at_request_id(&mut threshold_pub, id).await;
-            delete_all_at_request_id(&mut threshold_priv, id).await;
-            // let mut backup_storage = make_storage(
-            //     vault_storage_option.clone(),
-            //     StorageType::BACKUP,
-            //     Some(Role::indexed_from_one(i)),
-            //     None,
-            //     None,
-            // )
-            // .unwrap();
-            // delete_all_at_request_id(&mut backup_storage, id).await;
+            delete_all_at_request_id(&mut threshold_pub, id)
+                .await
+                .unwrap();
+            delete_all_at_request_id(&mut threshold_priv, id)
+                .await
+                .unwrap();
         }
     }
 }
@@ -451,7 +437,7 @@ pub async fn purge_pub(pub_path: Option<&Path>) {
 
 /// Purge _all_ backed up data. Both custodian and non-custodian based backups.
 /// Note however that this method does _not_ purge anything in the private or public storage.
-/// Thus, if you want to avoid new custodian backups being constructed at boot ensure that `purge_recovery_info`
+/// Thus, if you want to avoid new custodian backups being constructed at boot ensure that `purge_recovery_material`
 /// is also called, as it deletes all the custodian recovery info.
 pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
     if amount_parties == 1 {
@@ -472,14 +458,15 @@ pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
     }
 }
 
+/// Validate that a backup exists
 pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) -> bool {
-    let mut backup_exists = false;
+    let mut backup_exists = true;
     if amount_parties == 1 {
         let storage = FileStorage::new(backup_path, StorageType::BACKUP, None).unwrap();
         let base_path = storage.root_dir();
         let mut files = tokio::fs::read_dir(base_path).await.unwrap();
-        if files.next_entry().await.unwrap().is_some() {
-            backup_exists = true;
+        if files.next_entry().await.unwrap().is_none() {
+            backup_exists = false;
         }
     } else {
         for cur_party in 1..=amount_parties {
@@ -491,15 +478,51 @@ pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) ->
             .unwrap();
             let base_path = storage.root_dir();
             let mut files = tokio::fs::read_dir(base_path).await.unwrap();
-            if files.next_entry().await.unwrap().is_some() {
-                backup_exists = true;
+            if files.next_entry().await.unwrap().is_none() {
+                backup_exists = false;
             }
         }
     }
     backup_exists
 }
 
-pub async fn read_backup_files(
+/// Helper method to construct a backup vault for testing. That is either without encryption (no `Keychain`) or using custodians.
+pub async fn file_backup_vault(
+    role: Option<Role>,
+    keychain_conf: Option<&Keychain>,
+    pub_path: Option<&Path>,
+    backup_path: Option<&Path>,
+) -> Vault {
+    let backup_store_path = backup_path.map(|p| {
+        conf::Storage::File(conf::FileStorage {
+            path: p.to_path_buf(),
+        })
+    });
+    let pub_store_path = pub_path.map(|p| {
+        conf::Storage::File(conf::FileStorage {
+            path: p.to_path_buf(),
+        })
+    });
+    let pub_proxy_storage =
+        make_storage(pub_store_path.clone(), StorageType::PUB, role, None, None).unwrap();
+    let backup_proxy_storage =
+        make_storage(backup_store_path, StorageType::BACKUP, role, None, None).unwrap();
+    let keychain = match keychain_conf {
+        Some(conf) => Some(
+            make_keychain_proxy(conf, None, None, Some(&pub_proxy_storage))
+                .await
+                .unwrap(),
+        ),
+        None => None,
+    };
+    Vault {
+        storage: backup_proxy_storage,
+        keychain,
+    }
+}
+
+/// Helper method for tests to read the plain custodian backup files without going through the Vault API, and hence decryption.
+pub async fn read_custodian_backup_files(
     amount_parties: usize,
     test_path: Option<&Path>,
     backup_id: &RequestId,
@@ -511,8 +534,10 @@ pub async fn read_backup_files(
         let storage = FileStorage::new(test_path, StorageType::BACKUP, None).unwrap();
         let coerced_path = storage
             .root_dir()
-            .join(backup_id.to_string())
-            .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
+            .join(
+                VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
+                    .to_string(),
+            )
             .join(file_req.to_string());
         // Attempt to read the file
         if let Ok(file) = safe_read_element_versioned(coerced_path).await {
@@ -528,8 +553,10 @@ pub async fn read_backup_files(
             .unwrap();
             let coerced_path = storage
                 .root_dir()
-                .join(backup_id.to_string())
-                .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
+                .join(
+                    VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
+                        .to_string(),
+                )
                 .join(file_req.to_string());
             // Attempt to read the file
             if let Ok(file) = safe_read_element_versioned(coerced_path).await {
@@ -543,12 +570,14 @@ pub async fn read_backup_files(
 /// Remove all the data needed to perform custodian backups.
 /// This then allows your to prevent the automatic backup being done at boot
 /// when the system is configured with custodian backups.
-pub async fn purge_recovery_info(path: Option<&Path>, amount_parties: usize) {
+/// TODO currently not used anywhere
+pub async fn purge_recovery_material(path: Option<&Path>, amount_parties: usize) {
     if amount_parties == 1 {
         let storage = FileStorage::new(path, StorageType::PUB, None).unwrap();
         let base_dir = storage.root_dir();
-        let _ = tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryRequest.to_string()))
-            .await;
+        let _ =
+            tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryMaterial.to_string()))
+                .await;
         let _ =
             tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryMaterial.to_string()))
                 .await;
@@ -562,9 +591,6 @@ pub async fn purge_recovery_info(path: Option<&Path>, amount_parties: usize) {
             )
             .unwrap();
             let base_dir = storage.root_dir();
-            let _ =
-                tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryRequest.to_string()))
-                    .await;
             let _ = tokio::fs::remove_dir_all(
                 &base_dir.join(PubDataType::RecoveryMaterial.to_string()),
             )
@@ -839,7 +865,6 @@ async fn test_purge() {
         .unwrap();
     assert_eq!(priv_ids.len(), 1);
     purge(
-        test_prefix,
         test_prefix,
         test_prefix,
         &pub_ids.into_iter().next().unwrap(),

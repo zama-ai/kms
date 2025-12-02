@@ -22,7 +22,8 @@ use crate::experimental::{
 use crate::{
     algebra::structure_traits::FromU128,
     execution::{
-        online::triple::open_list, runtime::session::SmallSessionHandles, sharing::share::Share,
+        online::triple::open_list, runtime::sessions::small_session::SmallSessionHandles,
+        sharing::share::Share,
     },
     experimental::{
         algebra::integers::IntQ,
@@ -163,7 +164,7 @@ mod tests {
     use crate::algebra::structure_traits::Ring;
     use crate::algebra::structure_traits::ZConsts;
     use crate::algebra::structure_traits::Zero;
-    use crate::execution::runtime::session::ParameterHandles;
+    use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::execution::runtime::test_runtime::generate_fixed_roles;
     use crate::execution::runtime::test_runtime::DistributedTestRuntime;
     use crate::execution::sharing::shamir::RevealOp;
@@ -248,7 +249,7 @@ mod tests {
             *roles.get(&Role::indexed_from_one(1)).unwrap(),
             tokio::time::Duration::from_secs(1),
         )]);
-        let runtime: DistributedTestRuntime<LevelOne, { LevelOne::EXTENSION_DEGREE }> =
+        let runtime: DistributedTestRuntime<LevelOne, Role, { LevelOne::EXTENSION_DEGREE }> =
             DistributedTestRuntime::new(roles, threshold, NetworkMode::Async, Some(delay_map));
 
         let session_id = SessionId::from(1);

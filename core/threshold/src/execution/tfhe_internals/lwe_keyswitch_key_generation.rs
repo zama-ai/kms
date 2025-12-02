@@ -1,11 +1,11 @@
 use crate::{
     algebra::{
         galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect, Ring, Zero},
+        structure_traits::{BaseRing, ErrorCorrect, Zero},
     },
     execution::{
-        online::preprocessing::DKGPreprocessing, runtime::session::BaseSessionHandles,
-        tfhe_internals::parameters::KSKParams,
+        online::preprocessing::DKGPreprocessing,
+        runtime::sessions::base_session::BaseSessionHandles, tfhe_internals::parameters::KSKParams,
     },
 };
 
@@ -38,7 +38,7 @@ pub fn generate_lwe_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
 ) -> anyhow::Result<()>
 where
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
     Gen: ParallelByteRandomGenerator,
 {
     let decomp_base_log = lwe_keyswitch_key.decomposition_base_log();
@@ -92,7 +92,7 @@ pub fn allocate_and_generate_new_lwe_keyswitch_key<Z, Gen, const EXTENSION_DEGRE
 ) -> anyhow::Result<LweKeySwitchKeyShare<Z, EXTENSION_DEGREE>>
 where
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
     Gen: ParallelByteRandomGenerator,
 {
     let mut new_lwe_keyswitch_key = LweKeySwitchKeyShare::new(
@@ -266,7 +266,9 @@ mod tests {
                 preprocessing::dummy::DummyPreprocessing,
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
+            },
             tfhe_internals::{
                 glwe_key::GlweSecretKeyShare,
                 lwe_key::LweSecretKeyShare,

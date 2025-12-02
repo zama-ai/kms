@@ -6,22 +6,18 @@ use tonic::{service::interceptor::InterceptedService, transport::Channel, Status
 
 use crate::{
     error::error_handler::anyhow_error_and_log,
-    execution::runtime::party::Identity,
-    networking::{grpc::HealthTag, Role},
-    session_id::SessionId,
+    execution::runtime::party::{Identity, RoleTrait},
+    networking::grpc::HealthTag,
 };
 
-pub struct HealthCheckSession {
+pub struct HealthCheckSession<R: RoleTrait> {
     /// My own [`Identity`]
     pub(crate) owner: Identity,
     /// My own [`Role`]
-    pub(crate) my_role: Role,
+    pub(crate) my_role: R,
     pub(crate) timeout: Duration,
-    pub(crate) context_id: SessionId,
-    pub(crate) connection_channels: HashMap<
-        (Role, Identity),
-        GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
-    >,
+    pub(crate) connection_channels:
+        HashMap<(R, Identity), GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>,
 }
 
 pub enum HealthCheckStatus {
@@ -30,29 +26,27 @@ pub enum HealthCheckStatus {
     TimeOut(Duration),
 }
 
-pub type HealthCheckResult = HashMap<(Role, Identity), HealthCheckStatus>;
+pub type HealthCheckResult<R> = HashMap<(R, Identity), HealthCheckStatus>;
 
-impl HealthCheckSession {
+impl<R: RoleTrait> HealthCheckSession<R> {
     pub fn new(
         owner: Identity,
-        my_role: Role,
-        context_id: SessionId,
+        my_role: R,
         timeout: Duration,
         connection_channels: HashMap<
-            (Role, Identity),
+            (R, Identity),
             GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
         >,
     ) -> Self {
         Self {
             owner,
             my_role,
-            context_id,
             timeout,
             connection_channels,
         }
     }
 
-    pub fn get_my_role(&self) -> Role {
+    pub fn get_my_role(&self) -> R {
         self.my_role
     }
 
@@ -65,10 +59,9 @@ impl HealthCheckSession {
         self.connection_channels.len() + 1
     }
 
-    pub async fn run_healthcheck(&self) -> anyhow::Result<HealthCheckResult> {
+    pub async fn run_healthcheck(&self) -> anyhow::Result<HealthCheckResult<R>> {
         let tag = HealthTag {
             sender: self.owner.mpc_identity(),
-            context_id: self.context_id,
         };
 
         let tag_serialized = bc2wrap::serialize(&tag)

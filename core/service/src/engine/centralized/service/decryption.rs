@@ -13,6 +13,7 @@ use observability::metrics_names::{
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
+use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::engine::base::compute_external_pt_signature;
 use crate::engine::centralized::central_kms::{
     async_user_decrypt, central_public_decrypt, CentralizedKms,
@@ -43,8 +44,6 @@ pub async fn user_decrypt_impl<
         .tag(TAG_PARTY_ID, "central")
         .start();
 
-    let permit = service.rate_limiter.start_user_decrypt().await?;
-
     let inner = request.into_inner();
 
     let (typed_ciphertexts, link, client_enc_key, client_address, key_id, request_id, domain) =
@@ -64,7 +63,7 @@ pub async fn user_decrypt_impl<
 
     // if the request already exists, then return the AlreadyExists error
     // otherwise attempt to insert it to the meta store
-    {
+    let permit = {
         let mut guarded_meta_store = service.user_dec_meta_store.write().await;
         if guarded_meta_store.exists(&request_id) {
             return Err(tonic::Status::new(
@@ -76,6 +75,8 @@ pub async fn user_decrypt_impl<
             ));
         }
 
+        let permit = service.rate_limiter.start_user_decrypt().await?;
+
         // everything after this point should result in an abort error
         ok_or_tonic_abort(
             guarded_meta_store.insert(&request_id),
@@ -84,12 +85,19 @@ pub async fn user_decrypt_impl<
                 request_id
             ),
         )?;
-    }
+
+        permit
+    };
 
     timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 
     let meta_store = Arc::clone(&service.user_dec_meta_store);
-    let sig_key = Arc::clone(&service.base_kms.sig_key);
+    let sig_key = service.base_kms.sig_key().map_err(|e| {
+        tonic::Status::new(
+            tonic::Code::FailedPrecondition,
+            format!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+        )
+    })?;
     let crypto_storage = service.crypto_storage.clone();
     let mut rng = service.base_kms.new_rng().await;
 
@@ -105,7 +113,11 @@ pub async fn user_decrypt_impl<
         (TAG_PUBLIC_DECRYPTION_KIND, "centralized".to_string()),
     ];
 
-    let server_verf_key = service.base_kms.get_serialized_verf_key();
+    let server_verf_key = service.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
+        Status::failed_precondition(format!(
+            "Failed to serialize server verification key: {e:?}"
+        ))
+    })?;
 
     let handle = tokio::spawn(
         async move {
@@ -290,7 +302,12 @@ pub async fn public_decrypt_impl<
     timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 
     let meta_store = Arc::clone(&service.pub_dec_meta_store);
-    let sigkey = Arc::clone(&service.base_kms.sig_key);
+    let sigkey = service.base_kms.sig_key().map_err(|e| {
+        tonic::Status::new(
+            tonic::Code::FailedPrecondition,
+            format!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+        )
+    })?;
     let crypto_storage = service.crypto_storage.clone();
 
     ok_or_tonic_abort(
@@ -445,7 +462,11 @@ pub async fn get_public_decryption_result_impl<
         external_signature
     );
 
-    let server_verf_key = service.get_serialized_verf_key();
+    let server_verf_key = service.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
+        Status::failed_precondition(format!(
+            "Failed to serialize server verification key: {e:?}"
+        ))
+    })?;
 
     // the payload to be signed for verification inside the KMS
     let kms_sig_payload = PublicDecryptionResponsePayload {
@@ -482,7 +503,7 @@ pub(crate) mod tests {
     };
 
     use crate::{
-        cryptography::internal_crypto_types::PublicSigKey,
+        cryptography::signatures::PublicSigKey,
         engine::centralized::{
             central_kms::RealCentralizedKms,
             service::key_gen::tests::{setup_test_kms_with_preproc, test_standard_keygen},
@@ -793,15 +814,13 @@ mod tests_public_decryption {
 mod test_user_decryption {
     use aes_prng::AesRng;
     use kms_grpc::rpc_types::alloy_to_protobuf_domain;
-    use ml_kem::{kem::Kem, MlKem512Params};
     use rand::SeedableRng;
 
     use crate::{
         consts::SAFE_SER_SIZE_LIMIT,
         cryptography::{
-            hybrid_ml_kem,
-            internal_crypto_types::{Cipher, PrivateEncKey, UnifiedPublicEncKey},
-            signcryption::ephemeral_encryption_key_generation,
+            encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey},
+            hybrid_ml_kem::{self, HybridKemCt},
         },
         dummy_domain,
         engine::{
@@ -813,16 +832,13 @@ mod test_user_decryption {
 
     use super::*;
 
-    fn make_test_pk(rng: &mut AesRng) -> (Vec<u8>, PrivateEncKey<Kem<MlKem512Params>>) {
-        let (enc_pk, enc_sk) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(rng);
+    fn make_test_pk(rng: &mut AesRng) -> (Vec<u8>, UnifiedPrivateEncKey) {
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, rng);
+        let (enc_sk, enc_pk) = encryption.keygen().unwrap();
         let mut enc_key_buf = Vec::new();
         // The key is freshly generated, so we can safely unwrap the serialization
-        tfhe::safe_serialization::safe_serialize(
-            &UnifiedPublicEncKey::MlKem512(enc_pk.clone()),
-            &mut enc_key_buf,
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .expect("Failed to serialize ephemeral encryption key");
+        tfhe::safe_serialization::safe_serialize(&enc_pk, &mut enc_key_buf, SAFE_SER_SIZE_LIMIT)
+            .expect("Failed to serialize ephemeral encryption key");
 
         (enc_key_buf, enc_sk)
     }
@@ -858,7 +874,8 @@ mod test_user_decryption {
             get_user_decryption_result_impl(&kms, tonic::Request::new(request_id.into()))
                 .await
                 .unwrap();
-        let signcrypted_msg: Cipher = bc2wrap::deserialize(
+        // LEGACY should have been using safe_deserialize
+        let signcrypted_msg: HybridKemCt = bc2wrap::deserialize_unsafe(
             &response
                 .into_inner()
                 .payload
@@ -867,7 +884,12 @@ mod test_user_decryption {
                 .signcrypted_ciphertext,
         )
         .unwrap();
-        let res = hybrid_ml_kem::dec::<ml_kem::MlKem512>(signcrypted_msg.0, &enc_sk.0).unwrap();
+        // Extract the DecapsulationKey<MlKem512Params> from UnifiedPrivateDecKey
+        let decap_key = match &enc_sk {
+            UnifiedPrivateEncKey::MlKem512(sk) => sk,
+            _ => panic!("Expected UnifiedPrivateDecKey::MlKem512"),
+        };
+        let res = hybrid_ml_kem::dec::<ml_kem::MlKem512>(signcrypted_msg, &decap_key.0).unwrap();
         assert_eq!(TestingPlaintext::from((res, tfhe::FheTypes::Bool)), msg);
     }
 

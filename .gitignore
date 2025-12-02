@@ -29,3 +29,6 @@ kms.sublime-workspace
 **/tests/data
 /core-client/artifacts
 *.tgz
+
+# Local values files for Kind testing
+ci/kube-testing/kms/local-values-*.yaml

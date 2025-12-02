@@ -29,7 +29,7 @@ use tonic::transport::Channel;
 async fn test_crs_gen_manual() {
     let crs_req_id = derive_request_id("test_crs_gen_manual").unwrap();
     // Delete potentially old data
-    purge(None, None, None, &crs_req_id, 1).await;
+    purge(None, None, &crs_req_id, 1).await;
     // TEST_PARAM uses V1 CRS
     crs_gen_centralized_manual(&TEST_PARAM, &crs_req_id, Some(FheParameter::Test), None).await;
 }
@@ -39,7 +39,7 @@ async fn test_crs_gen_manual() {
 async fn test_crs_gen_centralized() {
     let crs_req_id = derive_request_id("test_crs_gen_centralized").unwrap();
     // Delete potentially old data
-    purge(None, None, None, &crs_req_id, 1).await;
+    purge(None, None, &crs_req_id, 1).await;
     // TEST_PARAM uses V1 CRS
     crs_gen_centralized(&crs_req_id, FheParameter::Test, false, None).await;
 }
@@ -50,7 +50,7 @@ async fn test_crs_gen_centralized() {
 async fn test_insecure_crs_gen_centralized() {
     let crs_req_id = derive_request_id("test_insecure_crs_gen_centralized").unwrap();
     // Delete potentially old data
-    purge(None, None, None, &crs_req_id, 1).await;
+    purge(None, None, &crs_req_id, 1).await;
     // TEST_PARAM uses V1 CRS
     crs_gen_centralized(&crs_req_id, FheParameter::Test, true, None).await;
 }
@@ -149,6 +149,7 @@ pub async fn crs_gen_centralized(
         crsgen: 100,
         preproc: 1,
         keygen: 1,
+        reshare: 1,
     };
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, mut kms_client, internal_client) =

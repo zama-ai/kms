@@ -68,7 +68,9 @@ pub async fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
     file_path: P,
 ) -> anyhow::Result<T> {
     let read_element = tokio::fs::read(file_path).await?;
-    Ok(bc2wrap::deserialize(read_element.as_slice())?)
+    // This is gated behind a testing flag, so we can use the unsafe deserialization here
+    // (Might be useful to deserialize keys which may be huge)
+    Ok(bc2wrap::deserialize_unsafe(read_element.as_slice())?)
 }
 
 #[cfg(test)]

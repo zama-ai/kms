@@ -2,8 +2,8 @@ use crate::{
     backup::custodian::Custodian,
     consts::RND_SIZE,
     cryptography::{
-        backup_pke::{self, BackupPrivateKey},
-        internal_crypto_types::{gen_sig_keys, PrivateSigKey},
+        encryption::{Encryption, PkeScheme, PkeSchemeType},
+        signatures::gen_sig_keys,
     },
 };
 use aes_prng::AesRng;
@@ -31,10 +31,7 @@ where
     Ok(mnemonic.to_string())
 }
 
-pub fn custodian_from_seed_phrase(
-    seed_phrase: &str,
-    role: Role,
-) -> anyhow::Result<Custodian<PrivateSigKey, BackupPrivateKey>> {
+pub fn custodian_from_seed_phrase(seed_phrase: &str, role: Role) -> anyhow::Result<Custodian> {
     let mnemonic = Mnemonic::from_str(&seed_phrase.trim().to_lowercase())?;
     let entropy = mnemonic.to_entropy();
     assert!(
@@ -44,11 +41,17 @@ pub fn custodian_from_seed_phrase(
     let mut entropy_arr = [0u8; RND_SIZE];
     entropy_arr.copy_from_slice(&entropy[..RND_SIZE]);
     let mut enc_rng = rng_from_dsep_entropy::<AesRng>(&DSEP_MNEMONIC_ENC, &entropy_arr)?;
-    let (pub_key, priv_key) = backup_pke::keygen(&mut enc_rng)?;
+    let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut enc_rng);
+    let (dec_key, enc_key) = enc.keygen().map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to generate custodian keys from seed phrase: {}",
+            e.to_string()
+        )
+    })?;
     let mut sig_rng = rng_from_dsep_entropy::<AesRng>(&DSEP_MNEMONIC_SIG, &entropy_arr)?;
-    let (verf_key, sig_key) = gen_sig_keys(&mut sig_rng);
+    let (_verf_key, sig_key) = gen_sig_keys(&mut sig_rng);
 
-    Custodian::new(role, sig_key, verf_key, priv_key, pub_key).map_err(|e| {
+    Custodian::new(role, sig_key, enc_key, dec_key).map_err(|e| {
         anyhow::anyhow!(
             "Failed to create custodian from seed phrase: {}",
             e.to_string()
@@ -87,7 +90,10 @@ mod tests {
         // Observe that keys don't depend directly on name or role
         let regenerated_custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(2)).unwrap();
-        assert_eq!(custodian.public_key(), regenerated_custodian.public_key());
+        assert_eq!(
+            custodian.public_enc_key(),
+            regenerated_custodian.public_enc_key()
+        );
         assert_eq!(
             custodian.verification_key(),
             regenerated_custodian.verification_key()
@@ -116,8 +122,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            regeneratred_custodian.public_key(),
-            prune_custodian.public_key()
+            regeneratred_custodian.public_enc_key(),
+            prune_custodian.public_enc_key()
         );
         assert_eq!(
             regeneratred_custodian.verification_key(),

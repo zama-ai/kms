@@ -10,12 +10,18 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::broadcast::{Broadcast, SyncReliableBroadcast},
+        communication::{
+            broadcast::{Broadcast, SyncReliableBroadcast},
+            p2p::generic_receive_from_all_senders_with_role_transform,
+        },
         config::BatchParams,
         online::preprocessing::BasePreprocessing,
-        runtime::{party::Role, session::BaseSessionHandles},
+        runtime::{
+            party::{Role, TwoSetsRole},
+            sessions::base_session::{BaseSessionHandles, GenericBaseSessionHandles},
+        },
         sharing::{
-            open::{RobustOpen, SecureRobustOpen},
+            open::{ExternalOpeningInfo, RobustOpen, SecureRobustOpen},
             shamir::ShamirSharings,
             share::Share,
         },
@@ -29,10 +35,14 @@ use crate::{
             },
         },
     },
-    networking::value::BroadcastValue,
+    networking::value::{BroadcastValue, NetworkValue},
 };
 use itertools::{izip, Itertools};
-use std::collections::HashMap;
+use std::{
+    collections::{BTreeMap, BinaryHeap, HashMap, HashSet},
+    sync::Arc,
+};
+use tokio::task::JoinSet;
 use tracing::instrument;
 use zeroize::Zeroize;
 
@@ -301,6 +311,263 @@ where
     })
 }
 
+// Note: Can't really split into 2 functions one for sender one for receiver
+// because we have parties in both sets.
+// We __ALWAYS__ reshare from set1 to set2
+pub async fn reshare_two_sets<
+    TwoSetsSession: GenericBaseSessionHandles<TwoSetsRole>,
+    OneSetSession: BaseSessionHandles,
+    P: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
+    Z: BaseRing + Zeroize,
+    const EXTENSION_DEGREE: usize,
+>(
+    two_sets_session: &mut TwoSetsSession,
+    set_2_session: &mut Option<OneSetSession>,
+    preproc: &mut Option<P>,
+    input_shares: &mut Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+    expected_input_len: usize,
+) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+{
+    // If I belong to set 2, fetch the masks to send to set 1
+    let masks_to_resharers = if two_sets_session.my_role().is_set2() {
+        if let Some(preproc) = preproc {
+            // setup r_{i,j} shares
+            let mut inner_masks_to_resharers = HashMap::new();
+            for role in two_sets_session.get_all_sorted_roles() {
+                if role.is_set1() {
+                    let v = preproc
+                        .next_random_vec(expected_input_len)?
+                        .into_iter()
+                        .map(|v| v.value())
+                        .collect_vec();
+                    inner_masks_to_resharers.insert(*role, v);
+                }
+            }
+            Some(inner_masks_to_resharers)
+        } else {
+            return Err(anyhow_error_and_log(
+                "Preprocessing is required for parties in set 2 during resharing",
+            ));
+        }
+    } else {
+        None
+    };
+
+    let external_opening_information = if two_sets_session.my_role().is_set1() {
+        // If I belong to set 1, prepare to receive the masks from set 2
+        Some(ExternalOpeningInfo::FromSet2(expected_input_len))
+    } else {
+        None
+    };
+
+    // Parties from set_2 open masks to parties in set_1
+    let robust_open = SecureRobustOpen::default();
+    let masks_opened = robust_open
+        .robust_open_list_to_set::<ResiduePoly<Z, EXTENSION_DEGREE>, _>(
+            two_sets_session,
+            masks_to_resharers.clone(),
+            two_sets_session.threshold().threshold_set_2 as usize,
+            external_opening_information,
+        )
+        .await?;
+
+    // Increase round counter on the shared session
+    two_sets_session.network().increase_round_counter().await;
+
+    // Parties in set 1 mask their share of the key and send to parties in set 2
+    // if ever I am in both sets I remember my own masked share
+    let my_masked_shares = if two_sets_session.my_role().is_set1() {
+        if let (Some(input_shares), Some(mut rs_opened)) = (input_shares, masks_opened) {
+            if input_shares.len() != expected_input_len || rs_opened.len() != expected_input_len {
+                return Err(anyhow_error_and_log(format!(
+                    "Expected the amount of input shares ({}), the amount of masks ({}) and expected_input_len ({}), to be equal.",
+                    input_shares.len(),
+                    rs_opened.len(),
+                    expected_input_len,
+                )));
+            }
+            let mut vj = Vec::with_capacity(expected_input_len);
+            for (r, s) in rs_opened.iter().zip_eq(input_shares.clone()) {
+                vj.push(*r + s.value());
+            }
+
+            // erase the memory of sk_share and rj
+            for share in input_shares {
+                share.zeroize();
+            }
+            for r in &mut rs_opened {
+                r.zeroize();
+            }
+
+            // Send the masked shares to parties in set 2
+            // except myself if I am in both sets
+            let values_to_send = Arc::new(NetworkValue::VecRingValue(vj.clone()).to_network());
+            for party in two_sets_session.get_all_sorted_roles() {
+                if party.is_set2() && party != &two_sets_session.my_role() {
+                    two_sets_session
+                        .network()
+                        .send(Arc::clone(&values_to_send), party)
+                        .await?;
+                }
+            }
+            Some(vj)
+        } else {
+            return Err(anyhow_error_and_log(
+                "Input shares and masks are required for parties in set 1 during resharing.",
+            ));
+        }
+    } else {
+        None
+    };
+
+    // Parties in set 2 receive the masked shares from parties in set 1
+    // and finish the resharing
+    if two_sets_session.my_role().is_set2() {
+        let my_set_session = if let Some(s) = set_2_session {
+            s
+        } else {
+            return Err(anyhow_error_and_log(
+                "One-set session is required for parties in set 2 during resharing.",
+            ));
+        };
+
+        let mut multicast_results = if let Some(my_masked_share) = my_masked_shares {
+            let my_role_set_1 = match two_sets_session.my_role() {
+                TwoSetsRole::Both(dual_role) => dual_role.role_set_1,
+                // We panic here as this must be a bug if we are not in both sets
+                _ => panic!("Expected to be in both sets"),
+            };
+            BTreeMap::from([(my_role_set_1, my_masked_share)])
+        } else {
+            BTreeMap::new()
+        };
+        // Receive the masked shares from parties in set 1
+        let parties_in_s1 = two_sets_session
+            .get_all_sorted_roles()
+            .clone()
+            .into_iter()
+            .filter(|r| r.is_set1())
+            .collect();
+
+        let mut jobs = JoinSet::new();
+        let transform_s1_to_role = |sender: &TwoSetsRole, _external_opening_info: ()| match sender {
+            TwoSetsRole::Set1(role) => *role,
+            TwoSetsRole::Both(dual_role) => dual_role.role_set_1,
+            // Here it is OK to panic because this function is only called for parties in set 1
+            TwoSetsRole::Set2(role) => {
+                panic!("Expected to receive from set 1 parties, got {:?}", role)
+            }
+        };
+
+        generic_receive_from_all_senders_with_role_transform(
+            &mut jobs,
+            two_sets_session,
+            &two_sets_session.my_role(),
+            &parties_in_s1,
+            Some(two_sets_session.corrupt_roles()),
+            |msg, _id| match msg {
+                NetworkValue::VecRingValue(v) => Ok(v),
+                _ => Err(anyhow_error_and_log(format!(
+                    "Received {}, expected a Ring value in robust open to all",
+                    msg.network_type_name()
+                ))),
+            },
+            transform_s1_to_role,
+            (),
+        )
+        .await;
+
+        while let Some(res) = jobs.join_next().await {
+            let joined_result = if let Ok(v) = res {
+                v
+            } else {
+                tracing::warn!(
+                    "During resharing, failed to receive masked share from party in set 1"
+                );
+                continue;
+            };
+
+            match joined_result {
+                Ok((role, result)) => {
+                    if let Ok(values) = result {
+                        multicast_results.insert(role, values);
+                    } else {
+                        tracing::warn!(
+                            "During resharing, failed to receive masked share from party {} in set 1: {}",
+                            role,
+                            result.err().unwrap()
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("During resharing, Some party has timed out: {}", e);
+                }
+            }
+        }
+
+        let parties_in_s1 = parties_in_s1
+            .iter()
+            .map(|role| transform_s1_to_role(role, ()))
+            .collect::<HashSet<_>>();
+        // Make sure I have something to say for all roles in s1, even if it's an empty vec
+        for role_in_s1 in parties_in_s1.iter() {
+            multicast_results
+                .entry(*role_in_s1)
+                .or_insert_with(Vec::new);
+        }
+
+        // Broadcast those received values within set 2
+        let broadcast_results = SyncReliableBroadcast::default()
+            .broadcast_from_all(
+                my_set_session,
+                BroadcastValue::MapRingVector(multicast_results),
+            )
+            .await?;
+
+        // For each of the received values, take the majority vote
+        let agreed_contributions_from_s1 = take_majority_vote_on_broadcasts(
+            my_set_session,
+            broadcast_results,
+            &parties_in_s1,
+            expected_input_len,
+        )?;
+
+        // Compute my share of the unmasked secret
+        if let Some(rs_shares) = masks_to_resharers {
+            let rs_shares = rs_shares
+                .into_iter()
+                .map(|(role, value)| (transform_s1_to_role(&role, ()), value))
+                .collect::<HashMap<_, _>>();
+
+            let unmasked_reshared_shares = unmask_reshared_shares(
+                agreed_contributions_from_s1,
+                rs_shares,
+                expected_input_len,
+            )?;
+
+            // Everything below this should be similar as if we were resharing to same set
+            return Ok(Some(
+                open_syndromes_and_correct_errors(
+                    my_set_session,
+                    unmasked_reshared_shares,
+                    parties_in_s1.into_iter().collect_vec(),
+                    two_sets_session.threshold().threshold_set_1 as usize,
+                    expected_input_len,
+                )
+                .await?,
+            ));
+        } else {
+            return Err(anyhow_error_and_log(
+                "Masks from set 2 are required for parties in set 2 during resharing.",
+            ));
+        };
+    }
+
+    Ok(None)
+}
+
 pub async fn reshare_same_sets<
     Ses: BaseSessionHandles,
     P: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
@@ -321,43 +588,23 @@ where
     all_roles_sorted.sort();
 
     // setup r_{i,j} shares
-    let mut rs_shares = HashMap::with_capacity(n1);
+    let mut masks_to_resharers = HashMap::with_capacity(n1);
     for role in &all_roles_sorted {
         let v = preproc
             .next_random_vec(expected_input_len)?
             .into_iter()
             .map(|v| v.value())
             .collect_vec();
-        rs_shares.insert(*role, v);
+        masks_to_resharers.insert(*role, v);
     }
 
     // open r_{i,j} to party j
-    let my_role = session.my_role();
-    //let mut opened = vec![]; // this will be zeroized later
-    //for other_role in &all_roles_sorted {
-    //    let rs_share = rs_shares
-    //        .get(other_role)
-    //        .ok_or_else(|| anyhow_error_and_log(format!("missing share for {:?}", other_role)))?
-    //        .iter()
-    //        .map(|x| x.value())
-    //        .collect_vec();
-    //    if let Some(res) =
-    //        robust_opens_to(session, &rs_share, session.threshold() as usize, other_role).await?
-    //    {
-    //        opened.push(res)
-    //    }
-    //}
-
-    //// only one r should be opened to us, which we call `rj`
-    //if opened.len() != 1 {
-    //    return Err(anyhow_error_and_log(format!(
-    //        "expected to only receive exactly one opening but got {}",
-    //        opened.len()
-    //    )));
-    //}
-
-    let mut opened = if let Some(result) = SecureRobustOpen::default()
-        .multi_robust_open_list_to(session, rs_shares.clone(), session.threshold() as usize)
+    let mut masks_opened = if let Some(result) = SecureRobustOpen::default()
+        .multi_robust_open_list_to(
+            session,
+            masks_to_resharers.clone(),
+            session.threshold() as usize,
+        )
         .await?
     {
         result
@@ -366,18 +613,25 @@ where
     };
 
     // opened[0] is r_j
-    if opened.len() != expected_input_len {
+    if masks_opened.len() != expected_input_len {
         return Err(anyhow_error_and_log(format!(
             "Expected the amount of input shares; {}, and openings; {}, to be equal",
             expected_input_len,
-            opened.len()
+            masks_opened.len()
         )));
     }
 
     // Broadcast our part of the resharing if we have keys to reshare,
     // If we have nothing to reshare, we just broadcast Bot
-    let broadcast_value = if let Some(input_shares) = input_shares {
-        let vj = opened
+    let my_broadcast_masked_shares = if let Some(input_shares) = input_shares {
+        if input_shares.len() != expected_input_len {
+            return Err(anyhow_error_and_log(format!(
+                "Expected the amount of input shares ({}), and expected_input_len ({}), to be equal.",
+                input_shares.len(),
+                expected_input_len,
+            )));
+        }
+        let vj = masks_opened
             .iter()
             .zip_eq(input_shares.clone())
             .map(|(r, s)| *r + s.value())
@@ -387,7 +641,7 @@ where
         for share in input_shares {
             share.zeroize();
         }
-        for r in &mut opened {
+        for r in &mut masks_opened {
             r.zeroize();
         }
 
@@ -398,33 +652,67 @@ where
         BroadcastValue::Bot
     };
 
-    let broadcast_result = SyncReliableBroadcast::default()
-        .broadcast_from_all(session, broadcast_value)
+    let all_broadcast_masked_shares = SyncReliableBroadcast::default()
+        .broadcast_from_all(session, my_broadcast_masked_shares)
         .await?;
 
-    // compute v_{i,j} - <r_{i,j}>^{S_2}_k, k = 0,1,...,n1-1
+    // Process the received broadcasts
+    let all_broadcast_masked_shares = all_broadcast_masked_shares
+        .into_iter()
+        .map(|(role, msg)| {
+            if let BroadcastValue::RingVector(v) = msg {
+                (role, v)
+            } else if let BroadcastValue::Bot = msg {
+                tracing::warn!("During resharing, received Bot from {}", role);
+                (role, Vec::new())
+            } else {
+                // Any other variant is malicious behavior
+                // since it's broadcast we can add it to malicious parties
+                session.add_corrupt(role);
+                tracing::error!(
+                    "During resharing, unexpected broadcast. Adding {} to corrupt parties",
+                    role
+                );
+                (role, Vec::new())
+            }
+        })
+        .collect::<HashMap<_, _>>();
+
+    let unmasked_reshared_shares = unmask_reshared_shares(
+        all_broadcast_masked_shares,
+        masks_to_resharers,
+        expected_input_len,
+    )?;
+
+    open_syndromes_and_correct_errors(
+        session,
+        unmasked_reshared_shares,
+        all_roles_sorted.clone(),
+        session.threshold() as usize,
+        expected_input_len,
+    )
+    .await
+}
+
+fn unmask_reshared_shares<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    agreed_contributions_from_resharers: HashMap<Role, Vec<ResiduePoly<Z, EXTENSION_DEGREE>>>,
+    mut masks_to_resharers: HashMap<Role, Vec<ResiduePoly<Z, EXTENSION_DEGREE>>>,
+    expected_input_len: usize,
+) -> anyhow::Result<Vec<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+{
     let mut s_share_vec = vec![vec![]; expected_input_len];
-    for (sender, msg) in broadcast_result {
-        let vs = if let BroadcastValue::RingVector(vs) = msg {
-            vs
-        } else if let BroadcastValue::Bot = msg {
-            tracing::warn!("During resharing, received Bot from {}", sender);
-            Vec::new()
-        } else {
-            // Any other variant is malicious behavior
-            // since it's broadcast we can add it to malicious parties
-            session.add_corrupt(sender);
-            tracing::error!(
-                "During resharing, unexpected broadcast. Adding {} to corrupt parties",
-                sender
-            );
-            Vec::new()
-        };
-
-        let rs_share_iter = rs_shares
-            .remove(&sender)
-            .ok_or_else(|| anyhow_error_and_log(format!("missing share for {sender:?}")))?;
-
+    for (resharer_role, vs) in agreed_contributions_from_resharers.into_iter() {
+        let rs_share_iter = masks_to_resharers
+            .remove(&resharer_role)
+            .ok_or_else(|| {
+                anyhow_error_and_log(format!(
+                    "Missing mask share from party {:?} in set 2 during resharing",
+                    resharer_role
+                ))
+            })?
+            .clone();
         // rs_share_iter length can be trusted as we generated it ourselves
         // Note: should be equal to expected_input_len
         if vs.len() != rs_share_iter.len() {
@@ -451,27 +739,113 @@ where
         // in a "tranposed way"
         // Note that `zip_eq` may panic, but it would imply a bug in this method
         for (v, s) in s_share_vec.iter_mut().zip_eq(s_share) {
-            v.push(Share::new(sender, s));
+            v.push(Share::new(resharer_role, s));
         }
     }
 
-    let lagrange_numerators = make_lagrange_numerators(&all_roles_sorted)?;
-    let deltas = all_roles_sorted
-        .iter()
-        .map(|role| delta0i(&lagrange_numerators, role))
-        .collect::<Result<Vec<_>, _>>()?;
+    Ok(s_share_vec)
+}
 
+fn take_majority_vote_on_broadcasts<
+    Z: BaseRing,
+    const EXTENSION_DEGREE: usize,
+    Ses: BaseSessionHandles,
+>(
+    my_set_session: &mut Ses,
+    broadcast_results: HashMap<Role, BroadcastValue<ResiduePoly<Z, EXTENSION_DEGREE>>>,
+    parties_in_s1: &HashSet<Role>,
+    expected_input_len: usize,
+) -> anyhow::Result<HashMap<Role, Vec<ResiduePoly<Z, EXTENSION_DEGREE>>>> {
+    let mut votes = HashMap::with_capacity(parties_in_s1.len());
+    for (sender_in_s2, broadcast_result) in broadcast_results.into_iter() {
+        if let BroadcastValue::MapRingVector(mut map_ring_vector) = broadcast_result {
+            // We are exploring the purported `multicast_results` receive from `sender_in_s2`
+            // and we register its votes
+            for role_in_s1 in parties_in_s1.iter() {
+                if let Some(values) = map_ring_vector.remove(role_in_s1) {
+                    let candidates_for_role_in_s1 = votes.entry(*role_in_s1).or_insert_with(|| {
+                        vec![
+                            HashMap::<_, usize>::with_capacity(my_set_session.num_parties());
+                            expected_input_len
+                        ]
+                    });
+                    let mut values_iter = values.into_iter();
+                    for candidate_for_role_in_s1 in candidates_for_role_in_s1.iter_mut() {
+                        if let Some(value) = values_iter.next() {
+                            // Using the raw coefs here to be able to use a BinaryHeap later on
+                            // so we have a deterministic ordering even if we have equal number of votes
+                            *candidate_for_role_in_s1.entry(value.coefs).or_default() += 1_usize;
+                        }
+                    }
+                }
+            }
+        } else {
+            tracing::warn!(
+                    "During resharing, unexpected broadcast. Adding party {sender_in_s2:?} to corrupt parties"
+                );
+            my_set_session.add_corrupt(sender_in_s2);
+        }
+    }
+
+    // Now we take the majority vote for each party in set 1
+    let mut agreed_contributions_from_s1 = HashMap::with_capacity(parties_in_s1.len());
+    for (role_in_s1, candidates_for_role_in_s1) in votes.into_iter() {
+        let mut agreed_values = Vec::with_capacity(expected_input_len);
+        for (idx, candidate_for_role_in_s1) in candidates_for_role_in_s1.into_iter().enumerate() {
+            // Take the max with a deterministic ordering even if there's a tie in votes
+            // because it's then ordered on the raw coefficients
+            // Note: Heap might be overkill since we only need to track the max...
+            let mut heap = BinaryHeap::new();
+            for (value, count) in candidate_for_role_in_s1.into_iter() {
+                heap.push((count, value));
+            }
+            if let Some((count, value)) = heap.pop() {
+                tracing::info!(
+                    "During resharing, party {:?} got {} votes for its {idx}th value ",
+                    role_in_s1,
+                    count,
+                );
+                agreed_values.push(ResiduePoly::from_array(value));
+            } else {
+                return Err(anyhow_error_and_log(format!(
+                    "During resharing, no majority vote could be found for party {:?}",
+                    role_in_s1
+                )));
+            }
+        }
+        agreed_contributions_from_s1.insert(role_in_s1, agreed_values);
+    }
+    Ok(agreed_contributions_from_s1)
+}
+
+async fn open_syndromes_and_correct_errors<
+    Z: BaseRing,
+    Ses: BaseSessionHandles,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut Ses,
+    unmasked_reshared_shares: Vec<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+    resharing_set: Vec<Role>,
+    threshold_resharers: usize,
+    expected_input_len: usize,
+) -> anyhow::Result<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
+{
+    let resharing_set_sorted = resharing_set.iter().cloned().sorted().collect_vec();
+    let num_parties_resharing_set = resharing_set_sorted.len();
     // To avoid calling robust open many times sequentially,
     // we first compute the syndrome shares and then put
     // all the syndrome shares into a n1*share_count vector and call robust open once
     // upon receiving the result we unpack the long vector into a 2D vector
     let mut all_shamir_shares = Vec::with_capacity(expected_input_len);
-    let mut all_syndrome_poly_shares = Vec::with_capacity(expected_input_len * n1);
-    for shares in s_share_vec {
+    let mut all_syndrome_poly_shares =
+        Vec::with_capacity(expected_input_len * num_parties_resharing_set);
+    for shares in unmasked_reshared_shares {
         let shamir_sharing = ShamirSharings::create(shares);
         let syndrome_share = ResiduePoly::<Z, EXTENSION_DEGREE>::syndrome_compute(
             &shamir_sharing,
-            session.threshold() as usize,
+            threshold_resharers,
         )?;
         all_shamir_shares.push(shamir_sharing);
         all_syndrome_poly_shares.append(&mut syndrome_share.into_container());
@@ -494,7 +868,7 @@ where
     // now we create chunks from the received syndrome polynomials
     // and create the secret key share
     let mut new_sk_share = Vec::with_capacity(expected_input_len);
-    let syndrome_length = n1 - (session.threshold() as usize + 1);
+    let syndrome_length = num_parties_resharing_set - (threshold_resharers + 1);
     let chunks = all_syndrome_polys.chunks_exact(syndrome_length);
     if chunks.len() != all_shamir_shares.len() {
         return Err(anyhow_error_and_log(format!(
@@ -503,19 +877,26 @@ where
             all_shamir_shares.len()
         )));
     }
+
+    let lagrange_numerators = make_lagrange_numerators(&resharing_set_sorted)?;
+    let deltas = resharing_set_sorted
+        .iter()
+        .map(|role| delta0i(&lagrange_numerators, role))
+        .collect::<Result<Vec<_>, _>>()?;
+
     for (s, shamir_sharing) in chunks.zip_eq(all_shamir_shares) {
         let syndrome_poly = Poly::from_coefs(s.iter().copied().collect_vec());
         let opened_syndrome = ResiduePoly::<Z, EXTENSION_DEGREE>::syndrome_decode(
             syndrome_poly,
-            &all_roles_sorted,
-            session.threshold() as usize,
+            &resharing_set_sorted,
+            threshold_resharers,
         )?;
 
         let res: ResiduePoly<Z, EXTENSION_DEGREE> =
             izip!(shamir_sharing.shares, &deltas, opened_syndrome)
                 .map(|(s, d, e)| *d * (s.value() - e))
                 .sum();
-        new_sk_share.push(Share::new(my_role, res));
+        new_sk_share.push(Share::new(session.my_role(), res));
     }
 
     Ok(new_sk_share)
@@ -524,14 +905,23 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
+    use crate::algebra::structure_traits::FromU128;
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::RandomPreprocessing;
+    use crate::execution::online::triple::open_list;
+    use crate::execution::runtime::party::TwoSetsThreshold;
+    use crate::execution::runtime::sessions::base_session::{BaseSession, TwoSetsBaseSession};
+    use crate::execution::sharing::open::test::deterministically_compute_my_shares;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::parameters::{DKGParamsRegular, DKGParamsSnS};
     use crate::execution::tfhe_internals::test_feature::{
         keygen_all_party_shares_from_keyset, KeySet,
     };
     use crate::networking::NetworkMode;
+    use crate::tests::helper::tests_and_benches::{
+        execute_protocol_two_sets, TwoSetsExpectedRounds,
+    };
     use crate::{
         algebra::structure_traits::Sample,
         error::error_handler::anyhow_error_and_log,
@@ -539,7 +929,7 @@ mod tests {
             constants::SMALL_TEST_KEY_PATH,
             online::preprocessing::dummy::DummyPreprocessing,
             runtime::{
-                session::ParameterHandles,
+                sessions::session_parameters::GenericParameterHandles,
                 test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
             sharing::shamir::InputOp,
@@ -802,6 +1192,7 @@ mod tests {
         //Reshare assumes Sync network
         let mut runtime: DistributedTestRuntime<
             ResiduePoly<Z128, EXTENSION_DEGREE>,
+            Role,
             EXTENSION_DEGREE,
         > = DistributedTestRuntime::new(roles, threshold as u8, NetworkMode::Sync, None);
         if add_error {
@@ -1124,9 +1515,236 @@ mod tests {
                 dedicated_compact_public_key_parameters: None,
                 compression_decompression_parameters: None,
                 cpk_re_randomization_ksk_params: None,
+                secret_key_deviations: None,
             },
             sns_params: new_sns_params,
             sns_compression_params: None,
         })
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_reshare_two_sets() {
+        let num_parties_s1 = 7;
+        let num_parties_s2 = 4;
+        let intersection_size = 3;
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: 2,
+            threshold_set_2: 1,
+        };
+
+        let num_secrets = 10;
+
+        let mut task = |mut two_sets_session: TwoSetsBaseSession,
+                        set_1_session: Option<BaseSession>,
+                        mut set_2_session: Option<BaseSession>| async move {
+            let s1_roles_cheat = [Role::indexed_from_one(2), Role::indexed_from_one(3)];
+            let (mut my_shares, inner_secrets) = if let Some(mut set_1_session) = set_1_session {
+                let (inner_secrets, shares) =
+                    deterministically_compute_my_shares::<ResiduePolyF4Z128>(
+                        num_secrets,
+                        set_1_session.my_role(),
+                        set_1_session.num_parties(),
+                        set_1_session.threshold() as usize,
+                        42,
+                    );
+                let my_role = set_1_session.my_role();
+                let my_shares = shares
+                    .into_iter()
+                    .map(|v| {
+                        if s1_roles_cheat.contains(&my_role) {
+                            let error = ResiduePolyF4Z128::sample(set_1_session.rng());
+                            Share::new(set_1_session.my_role(), v + error)
+                        } else {
+                            Share::new(set_1_session.my_role(), v)
+                        }
+                    })
+                    .collect_vec();
+                (Some(my_shares), Some(inner_secrets))
+            } else {
+                (None, None)
+            };
+
+            let mut preproc = if let Some(set_2_session) = set_2_session.as_ref() {
+                let preproc = DummyPreprocessing::<ResiduePolyF4Z128>::new(42, set_2_session);
+                Some(preproc)
+            } else {
+                None
+            };
+
+            let reshare_result = reshare_two_sets(
+                &mut two_sets_session,
+                &mut set_2_session,
+                &mut preproc,
+                &mut my_shares,
+                num_secrets,
+            )
+            .await;
+
+            if let Some(set_2_session) = set_2_session {
+                let reshare_result = reshare_result.unwrap().unwrap();
+                let opened_reshared = open_list(&reshare_result, &set_2_session).await.unwrap();
+                (two_sets_session.my_role(), opened_reshared)
+            } else {
+                assert!(reshare_result.unwrap().is_none());
+                (two_sets_session.my_role(), inner_secrets.unwrap())
+            }
+        };
+
+        let mut results = execute_protocol_two_sets::<
+            _,
+            _,
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+        >(
+            num_parties_s1,
+            num_parties_s2,
+            intersection_size,
+            threshold,
+            Some(TwoSetsExpectedRounds {
+                num_rounds_within_s1: 0,
+                num_rounds_within_s2: (threshold.threshold_set_2 as usize + 3) + 1 + 1, // Broadcast + Open syndrome + Open inside the test
+                num_rounds_across_sets: 2, // Multicast from S2 to S1 and back
+            }),
+            NetworkMode::Sync,
+            &mut task,
+        )
+        .await;
+
+        assert_eq!(
+            results.len(),
+            num_parties_s2 + num_parties_s1 - intersection_size
+        );
+        let pivot = results.pop().unwrap();
+        for (role, inner_secrets) in results {
+            assert_eq!(
+                inner_secrets, pivot.1,
+                "mismatch between pivot role {} and role {}",
+                pivot.0, role
+            );
+        }
+    }
+
+    #[test]
+    fn test_majority_vote_reshare() {
+        // Generate inputs to test take_majority_vote_on_broadcast
+        let expected_input_len = 2;
+
+        // P1 in S2 has received [1,2],[3,4] from parties 1,2 in S1
+        let broadcast_from_p1 = BTreeMap::from([
+            (
+                Role::indexed_from_one(1),
+                vec![
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(1)),
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(2)),
+                ],
+            ),
+            (
+                Role::indexed_from_one(2),
+                vec![
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(3)),
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(4)),
+                ],
+            ),
+        ]);
+        // P2 in S2 has received [2,3],[4,5] from parties 1,2,3,4 in S1
+        let broadcast_from_p2 = BTreeMap::from([
+            (
+                Role::indexed_from_one(1),
+                vec![
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(2)),
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(3)),
+                ],
+            ),
+            (
+                Role::indexed_from_one(2),
+                vec![
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(4)),
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(5)),
+                ],
+            ),
+        ]);
+
+        // P3 in S2 has received [1,3],[3,5] from parties 1,2,3,4 in S1
+        let broadcast_from_p3 = BTreeMap::from([
+            (
+                Role::indexed_from_one(1),
+                vec![
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(1)),
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(3)),
+                ],
+            ),
+            (
+                Role::indexed_from_one(2),
+                vec![
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(3)),
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(6)),
+                ],
+            ),
+        ]);
+
+        // P4 in S2 has received [1,2], [_] from parties 1,2,3,4 in S1
+        let broadcast_from_p4 = BTreeMap::from([
+            (
+                Role::indexed_from_one(1),
+                vec![
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(1)),
+                    ResiduePolyF4Z128::from_scalar(Z128::from_u128(2)),
+                ],
+            ),
+            (Role::indexed_from_one(2), vec![]),
+        ]);
+
+        // Winners are :
+        // - [1,3] for P1, 1 with 3 votes and 3 with tie of 2 votes but 3>2
+        // - [3,6] for P2 with 2 votes but tie break because 6 is bigger
+        let broadcast_results = HashMap::from([
+            (
+                Role::indexed_from_one(1),
+                BroadcastValue::MapRingVector(broadcast_from_p1),
+            ),
+            (
+                Role::indexed_from_one(2),
+                BroadcastValue::MapRingVector(broadcast_from_p2),
+            ),
+            (
+                Role::indexed_from_one(3),
+                BroadcastValue::MapRingVector(broadcast_from_p3),
+            ),
+            (
+                Role::indexed_from_one(4),
+                BroadcastValue::MapRingVector(broadcast_from_p4),
+            ),
+        ]);
+
+        let mut session = crate::tests::helper::testing::get_networkless_base_session_for_parties(
+            4,
+            1,
+            Role::indexed_from_one(1),
+        );
+
+        let parties_in_s1 = HashSet::from([Role::indexed_from_one(1), Role::indexed_from_one(2)]);
+
+        let majority_results = take_majority_vote_on_broadcasts(
+            &mut session,
+            broadcast_results,
+            &parties_in_s1,
+            expected_input_len,
+        )
+        .unwrap();
+
+        assert_eq!(
+            majority_results[&Role::indexed_from_one(1)],
+            vec![
+                ResiduePolyF4Z128::from_scalar(Z128::from_u128(1)),
+                ResiduePolyF4Z128::from_scalar(Z128::from_u128(3))
+            ]
+        );
+        assert_eq!(
+            majority_results[&Role::indexed_from_one(2)],
+            vec![
+                ResiduePolyF4Z128::from_scalar(Z128::from_u128(3)),
+                ResiduePolyF4Z128::from_scalar(Z128::from_u128(6))
+            ]
+        );
     }
 }

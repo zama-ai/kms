@@ -1,6 +1,6 @@
 [package]
 name = "backward-compatibility"
-version = "0.12.0"
+version = "0.13.0-rc.0"
 publish = false
 authors = ["Zama"]
 edition = "2021"
@@ -8,7 +8,7 @@ license = "BSD-3-Clause-Clear"
 
 [dependencies]
 # Dependencies for loading and testing backward compatibility data
-# Use ranges (starting from 0.11.0 deps) to support 
+# Use ranges (starting from 0.11.0 deps) to support
 # multiple generator versions while maintaining compatibility
 serde = { version = ">=1.0.219, <2", features = ["derive"] }
 strum = { version = ">=0.27, <1", features = ["derive"] }

@@ -5,10 +5,10 @@ use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
-    PubDataTypeTest, PublicKeyTypeTest, SignedPubDataHandleInternalTest, TestMetadataKmsGrpc,
-    TestType, Testcase,
+    PrivDataTypeTest, PubDataTypeTest, PublicKeyTypeTest, SignedPubDataHandleInternalTest,
+    TestMetadataKmsGrpc, TestType, Testcase,
 };
-use kms_grpc::rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal};
+use kms_grpc::rpc_types::{PrivDataType, PubDataType, PublicKeyType, SignedPubDataHandleInternal};
 use std::path::Path;
 
 fn test_signed_pub_data_handle_internal(
@@ -79,6 +79,28 @@ fn test_pub_data_type(
     }
 }
 
+fn test_priv_data_type(
+    dir: &Path,
+    test: &PrivDataTypeTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: PrivDataType = load_and_unversionize(dir, test, format)?;
+
+    // Last element in the enum
+    let new_versionized = PrivDataType::ContextInfo;
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid signed priv data handle (internal):\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 pub struct KmsGrpc;
 
 impl TestedModule for KmsGrpc {
@@ -99,6 +121,9 @@ impl TestedModule for KmsGrpc {
             }
             Self::Metadata::PubDataType(test) => {
                 test_pub_data_type(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::PrivDataType(test) => {
+                test_priv_data_type(test_dir.as_ref(), test, format).into()
             }
         }
     }

@@ -6,14 +6,16 @@ use crate::engine::validation::RequestIdParsingErr;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
+use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{
-    FheParameter, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
-    KeySetAddedInfo, KeySetConfig,
+    FheParameter, InitiateResharingRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
+    KeyGenRequest, KeyGenResult, KeySetAddedInfo, KeySetConfig,
 };
 use kms_grpc::rpc_types::{
     alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
 };
 use kms_grpc::solidity_types::{KeygenVerification, PrepKeygenVerification};
+use kms_grpc::ContextId;
 use kms_grpc::RequestId;
 use tfhe::CompactPublicKey;
 use tfhe::ServerKey;
@@ -26,10 +28,13 @@ impl Client {
     /// We need to reference the preprocessing we want to consume via
     /// its [`RequestId`]. In theory this is not needed in the centralized case
     /// but we still require it so that it is consistent with the threshold case.
+    #[allow(clippy::too_many_arguments)]
     pub fn key_gen_request(
         &self,
         request_id: &RequestId,
         preproc_id: &RequestId,
+        context_id: Option<&ContextId>,
+        epoch_id: Option<&EpochId>,
         param: Option<FheParameter>,
         keyset_config: Option<KeySetConfig>,
         keyset_added_info: Option<KeySetAddedInfo>,
@@ -57,8 +62,8 @@ impl Client {
             domain: Some(alloy_to_protobuf_domain(&eip712_domain)?),
             keyset_config,
             keyset_added_info,
-            context_id: None,
-            epoch_id: None,
+            context_id: context_id.map(|id| (*id).into()),
+            epoch_id: epoch_id.map(|id| (*id).into()),
         })
     }
 
@@ -66,6 +71,8 @@ impl Client {
         &self,
         request_id: &RequestId,
         param: Option<FheParameter>,
+        context_id: Option<&ContextId>,
+        epoch_id: Option<&EpochId>,
         keyset_config: Option<KeySetConfig>,
         domain: &Eip712Domain,
     ) -> anyhow::Result<KeyGenPreprocRequest> {
@@ -81,8 +88,55 @@ impl Client {
             params: param.unwrap_or_default().into(),
             keyset_config,
             request_id: Some((*request_id).into()),
-            context_id: None,
+            context_id: context_id.map(|id| (*id).into()),
             domain: Some(domain),
+            epoch_id: epoch_id.map(|id| (*id).into()),
+        })
+    }
+
+    #[cfg(feature = "insecure")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn partial_preproc_request(
+        &self,
+        request_id: &RequestId,
+        param: Option<FheParameter>,
+        context_id: Option<&ContextId>,
+        epoch_id: Option<&EpochId>,
+        keyset_config: Option<KeySetConfig>,
+        domain: &Eip712Domain,
+        partial_params: Option<kms_grpc::kms::v1::PartialKeyGenPreprocParams>,
+    ) -> anyhow::Result<kms_grpc::kms::v1::PartialKeyGenPreprocRequest> {
+        let base_request = self.preproc_request(
+            request_id,
+            param,
+            context_id,
+            epoch_id,
+            keyset_config,
+            domain,
+        )?;
+
+        Ok(kms_grpc::kms::v1::PartialKeyGenPreprocRequest {
+            base_request: Some(base_request),
+            partial_params,
+        })
+    }
+
+    pub fn reshare_request(
+        &self,
+        request_id: &RequestId,
+        key_id: &RequestId,
+        preproc_id: &RequestId,
+        param: Option<FheParameter>,
+        domain: &Eip712Domain,
+    ) -> anyhow::Result<InitiateResharingRequest> {
+        let domain = alloy_to_protobuf_domain(domain)?;
+        Ok(InitiateResharingRequest {
+            request_id: Some((*request_id).into()),
+            context_id: None,
+            key_id: Some((*key_id).into()),
+            key_parameters: param.unwrap_or_default().into(),
+            domain: Some(domain),
+            preproc_id: Some((*preproc_id).into()),
             epoch_id: None,
         })
     }
@@ -341,15 +395,10 @@ impl Client {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::vault::storage::StorageReader;
-
-    use crate::client::client_wasm::Client;
-    use kms_grpc::rpc_types::PubDataType;
-    use kms_grpc::RequestId;
     use tfhe::core_crypto::prelude::{
         decrypt_lwe_ciphertext, divide_round, ContiguousEntityContainer, LweCiphertextOwned,
     };
-    use tfhe::prelude::ParameterSetConformant;
+    use tfhe::prelude::{ParameterSetConformant, Tagged};
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
     use tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey;
     use tfhe::shortint::server_key::ModulusSwitchConfiguration;
@@ -360,6 +409,7 @@ pub(crate) mod tests {
         let shortint_server_key: &tfhe::shortint::ServerKey = int_server_key.as_ref();
         let max_degree = shortint_server_key.max_degree; // we don't really check the max degree
         assert!(shortint_server_key.is_conformant(&(pbs_params, max_degree)));
+        assert_eq!(server_key.tag(), client_key.tag());
 
         match &shortint_server_key.atomic_pattern {
             AtomicPatternServerKey::Standard(atomic_pattern) => {
@@ -429,49 +479,5 @@ pub(crate) mod tests {
                 panic!("Unsuported AtomicPatternServerKey::Dynamic")
             }
         }
-    }
-
-    // check that the server keys stored under the IDs `key_id_base` and `key_id_with_sns_compression`
-    // are identical except for the sns compression key
-    pub(crate) async fn identical_keys_except_sns_compression_from_storage<R: StorageReader>(
-        internal_client: &Client,
-        storage: &R,
-        key_id_base: &RequestId,
-        key_id_with_sns_compression: &RequestId,
-    ) {
-        let server_key_base: tfhe::ServerKey = internal_client
-            .get_key(key_id_base, PubDataType::ServerKey, storage)
-            .await
-            .unwrap();
-
-        let server_key_sns: tfhe::ServerKey = internal_client
-            .get_key(key_id_with_sns_compression, PubDataType::ServerKey, storage)
-            .await
-            .unwrap();
-
-        identical_keys_except_sns_compression(server_key_base, server_key_sns).await
-    }
-
-    // check that the two keys are identical except for the sns compression key
-    pub(crate) async fn identical_keys_except_sns_compression(
-        server_key_base: tfhe::ServerKey,
-        server_key_sns: tfhe::ServerKey,
-    ) {
-        let server_key_base_parts = server_key_base.into_raw_parts();
-        let server_key_sns_parts = server_key_sns.into_raw_parts();
-
-        // 5 should be sns compression
-        assert!(server_key_sns_parts.5.is_some());
-
-        // we can't compare keys directly, so we serialize them
-        assert_eq!(
-            bc2wrap::serialize(&server_key_base_parts.0).unwrap(),
-            bc2wrap::serialize(&server_key_sns_parts.0).unwrap()
-        );
-
-        assert_ne!(
-            bc2wrap::serialize(&server_key_base_parts.5).unwrap(),
-            bc2wrap::serialize(&server_key_sns_parts.5).unwrap(),
-        )
     }
 }

@@ -19,7 +19,9 @@ use observability::{
 use threshold_fhe::{
     algebra::base_ring::Z64,
     execution::{
-        runtime::session::{BaseSession, ParameterHandles},
+        runtime::sessions::{
+            base_session::BaseSession, session_parameters::GenericParameterHandles,
+        },
         tfhe_internals::parameters::DKGParams,
         zk::ceremony::{compute_witness_dim, Ceremony},
     },
@@ -33,10 +35,10 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     consts::DEFAULT_MPC_CONTEXT,
-    cryptography::internal_crypto_types::PrivateSigKey,
+    cryptography::signatures::PrivateSigKey,
     engine::{
         base::{compute_info_crs, BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS},
-        threshold::traits::CrsGenerator,
+        threshold::{service::session::ImmutableSessionMaker, traits::CrsGenerator},
         validation::{parse_proto_request_id, validate_crs_gen_request, RequestIdParsingErr},
     },
     util::{
@@ -45,9 +47,6 @@ use crate::{
     },
     vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
 };
-
-// === Current Module Imports ===
-use super::session::SessionPreparerGetter;
 
 // === Insecure Feature-Specific Imports ===
 cfg_if::cfg_if! {
@@ -72,7 +71,7 @@ pub struct RealCrsGenerator<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub crs_meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
-    pub session_preparer_getter: SessionPreparerGetter,
+    pub(crate) session_maker: ImmutableSessionMaker,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
     // Map of ongoing crs generation tasks
@@ -92,8 +91,6 @@ impl<
         request: Request<CrsGenRequest>,
         insecure: bool,
     ) -> Result<Response<Empty>, Status> {
-        let permit = self.rate_limiter.start_crsgen().await?;
-
         let inner = request.into_inner();
         tracing::info!(
             "Starting crs generation on kms for request ID {:?}",
@@ -134,6 +131,11 @@ impl<
             }
         }
 
+        // Check for resource exhaustion once all the other checks are ok
+        // because resource exhaustion can be recovered by sending the exact same request
+        // but the errors above cannot be tried again.
+        let permit = self.rate_limiter.start_crsgen().await?;
+
         // NOTE: everything inside this function will cause an Aborted error code
         // so before calling it we should do as much validation as possible without modifying state
         self.inner_crs_gen(
@@ -164,7 +166,6 @@ impl<
         insecure: bool,
     ) -> anyhow::Result<()> {
         let context_id = context_id.as_ref().unwrap_or(&DEFAULT_MPC_CONTEXT);
-        let session_preparer = self.session_preparer_getter.get(context_id).await?;
 
         // Retrieve the correct tag
         let op_tag = if insecure {
@@ -175,9 +176,10 @@ impl<
 
         // Prepare the timer before giving it to the tokio task
         // that runs the computation
-        let timer = metrics::METRICS
-            .time_operation(op_tag)
-            .tag(TAG_PARTY_ID, session_preparer.my_role()?.to_string());
+        let timer = metrics::METRICS.time_operation(op_tag).tag(
+            TAG_PARTY_ID,
+            self.session_maker.my_role(context_id).await?.to_string(),
+        );
         {
             let mut guarded_meta_store = self.crs_meta_store.write().await;
             guarded_meta_store.insert(&req_id)?;
@@ -185,7 +187,8 @@ impl<
 
         let session_id = req_id.derive_session_id()?;
         // CRS ceremony requires a sync network
-        let session = session_preparer
+        let session = self
+            .session_maker
             .make_base_session(session_id, *context_id, NetworkMode::Sync)
             .await?;
 
@@ -197,7 +200,7 @@ impl<
 
         // we need to clone the signature key because it needs to be given
         // the thread that spawns the CRS ceremony
-        let sk = self.base_kms.sig_key.clone();
+        let sk = self.base_kms.sig_key()?;
 
         // we do not need to hold the handle,
         // the result of the computation is tracked the crs_meta_store
@@ -423,7 +426,7 @@ impl<
                 base_kms: value.base_kms.new_instance().await,
                 crypto_storage: value.crypto_storage.clone(),
                 crs_meta_store: Arc::clone(&value.crs_meta_store),
-                session_preparer_getter: value.session_preparer_getter.clone(),
+                session_maker: value.session_maker.clone(),
                 tracker: Arc::clone(&value.tracker),
                 ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
@@ -471,16 +474,14 @@ mod tests {
     use threshold_fhe::{
         algebra::structure_traits::Ring,
         execution::{
-            runtime::session::BaseSessionHandles, small_execution::prss::PRSSSetup,
+            runtime::sessions::base_session::BaseSessionHandles, small_execution::prss::PRSSSetup,
             zk::ceremony::FinalizedInternalPublicParameter,
         },
     };
 
     use crate::{
-        consts::DURATION_WAITING_ON_RESULT_SECONDS,
-        cryptography::internal_crypto_types::gen_sig_keys,
-        dummy_domain,
-        engine::threshold::service::session::{SessionPreparer, SessionPreparerManager},
+        consts::DURATION_WAITING_ON_RESULT_SECONDS, cryptography::signatures::gen_sig_keys,
+        dummy_domain, engine::threshold::service::session::SessionMaker,
     };
 
     use super::*;
@@ -495,7 +496,7 @@ mod tests {
             base_kms: BaseKmsStruct,
             pub_storage: PubS,
             priv_storage: PrivS,
-            session_preparer_getter: SessionPreparerGetter,
+            session_maker: ImmutableSessionMaker,
         ) -> Self {
             let crypto_storage = ThresholdCryptoMaterialStorage::new(
                 pub_storage,
@@ -512,7 +513,7 @@ mod tests {
                 base_kms,
                 crypto_storage,
                 crs_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-                session_preparer_getter,
+                session_maker,
                 tracker,
                 ongoing,
                 rate_limiter,
@@ -570,23 +571,13 @@ mod tests {
     ) -> RealCrsGenerator<ram::RamStorage, ram::RamStorage, C> {
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
-        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let session_preparer_manager = SessionPreparerManager::new_test_session();
-        let session_preparer = SessionPreparer::new_test_session(
-            base_kms.new_instance().await,
+        let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,
+            base_kms.new_rng().await,
         );
-        session_preparer_manager
-            .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
-            .await;
 
         let pub_storage = ram::RamStorage::new();
         let priv_storage = ram::RamStorage::new();
@@ -594,7 +585,7 @@ mod tests {
             base_kms,
             pub_storage,
             priv_storage,
-            session_preparer_manager.make_getter(),
+            session_maker.make_immutable(),
         )
         .await
     }

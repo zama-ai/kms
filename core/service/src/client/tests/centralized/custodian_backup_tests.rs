@@ -1,5 +1,4 @@
 use crate::backup::custodian::Custodian;
-use crate::backup::operator::InternalRecoveryRequest;
 use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::test_tools::centralized_custodian_handles;
 #[cfg(feature = "insecure")]
@@ -8,9 +7,8 @@ use crate::client::tests::centralized::custodian_context_tests::run_new_cus_cont
 use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized;
 use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
-use crate::cryptography::backup_pke::BackupPrivateKey;
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::util::key_setup::test_tools::{purge_backup, read_backup_files};
+use crate::cryptography::signatures::PrivateSigKey;
+use crate::util::key_setup::test_tools::{purge_backup, read_custodian_backup_files};
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
@@ -56,7 +54,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     )
     .await;
     // Check that signing key was backed up, since it will always be there
-    let _non_custodian_backup = read_backup_files(
+    let _non_custodian_backup = read_custodian_backup_files(
         1,
         test_path,
         &req_new_cus,
@@ -76,7 +74,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     // Check that the backup is still there
     let (_kms_server, _kms_client, _internal_client) =
         centralized_custodian_handles(&dkg_param, None, test_path).await;
-    let _reread_backup = read_backup_files(
+    let _reread_backup = read_custodian_backup_files(
         1,
         test_path,
         &req_new_cus,
@@ -129,7 +127,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     )
     .await;
     // Check that the new CRS was backed up
-    let crss = read_backup_files(
+    let crss = read_custodian_backup_files(
         1,
         test_path,
         &req_new_cus,
@@ -147,7 +145,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     // Check that the backup is still there and unmodified
     let (_kms_server, _kms_client, _internal_client) =
         centralized_custodian_handles(&dkg_param, None, test_path).await;
-    let reread_crss = read_backup_files(
+    let reread_crss = read_custodian_backup_files(
         1,
         test_path,
         &req_new_cus,
@@ -257,6 +255,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         &kms_client,
         &mut internal_client,
         &key_id,
+        None,
         vec![TestingPlaintext::U8(u8::MAX)],
         EncryptionConfig {
             compression: false,
@@ -274,10 +273,10 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 async fn test_decrypt_after_recovery_centralized_negative() {
     decrypt_after_recovery_negative(5, 2).await;
     assert!(logs_contain(
-        "Could not verify recovery validation material signature for custodian role 1"
+        "Could not validate signcryption for custodian role 1"
     ));
     assert!(logs_contain(
-        "Could not verify recovery validation material signature for custodian role 3"
+        "Could not validate signcryption for custodian role 3"
     ));
 }
 
@@ -339,16 +338,24 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     cus_rec_req
         .custodian_recovery_outputs
         .get_mut(0)
-        .unwrap()
-        // Flip a bit in the 11th byte
-        .ciphertext[11] ^= 1;
+        .map(|inner| {
+            inner
+                .backup_output
+                .as_mut()
+                // Flip a bit in the 11th byte
+                .map(|back_out| back_out.signcryption[11] ^= 1)
+        });
     // Then in custodian 3
     cus_rec_req
         .custodian_recovery_outputs
         .get_mut(2)
-        .unwrap()
-        // Flip a bit in the 7th byte
-        .ciphertext[7] ^= 1;
+        .map(|inner| {
+            inner
+                .backup_output
+                .as_mut()
+                // Flip a bit in the 7th byte
+                .map(|back_out| back_out.signcryption[7] ^= 1)
+        });
     let _recovery_output = kms_client
         .custodian_backup_recovery(tonic::Request::new(cus_rec_req))
         .await
@@ -379,7 +386,7 @@ async fn emulate_custodian(
     let backup_id = recovery_request.backup_id.clone().unwrap();
     let mut cus_outputs = Vec::new();
     for (cur_idx, cur_mnemonic) in mnemonics.iter().enumerate() {
-        let custodian: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian: Custodian =
             custodian_from_seed_phrase(cur_mnemonic, Role::indexed_from_zero(cur_idx)).unwrap();
         let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
         let verf_key = read_versioned_at_request_id(
@@ -389,19 +396,16 @@ async fn emulate_custodian(
         )
         .await
         .unwrap();
-        let internal_recovery_req: InternalRecoveryRequest =
-            recovery_request.to_owned().try_into().unwrap();
-        assert!(internal_recovery_req.is_valid(&verf_key).unwrap());
         let cur_cus_reenc = recovery_request.cts.get(&((cur_idx + 1) as u64)).unwrap();
         let cur_enc_key = safe_deserialize(
-            std::io::Cursor::new(&recovery_request.enc_key),
+            std::io::Cursor::new(&recovery_request.ephem_op_enc_key),
             SAFE_SER_SIZE_LIMIT,
         )
         .unwrap();
         let cur_out = custodian
             .verify_reencrypt(
                 rng,
-                &cur_cus_reenc.to_owned().into(),
+                &cur_cus_reenc.to_owned().try_into().unwrap(),
                 &verf_key,
                 &cur_enc_key,
                 backup_id.clone().try_into().unwrap(),

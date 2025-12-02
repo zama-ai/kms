@@ -190,6 +190,9 @@ Note: since this structure is empty, it is tricky to set this with an environmen
 KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true
 ```
 
+This environment variable must be given to the `kms-server` executable,
+if the KMS is running with docker, another environment variable `KMS_DOCKER_BACKUP_SECRET_SHARING=true` must be used instead.
+
 Here is an example configuration:
 ```{toml}
 [backup_vault.storage.file]
@@ -198,6 +201,8 @@ path = "./backup_vault"
 ```
 
 #### Recovery
+WARNING: DURING RECOVERY WE ASSUME THE KMS DOES NOT HAVE ACCESS TO ITS PRIVATE STORAGE. HENCE IT IS CRUCIAL THAT THE `VerfKey` IN THE PUBLIC STORAGE OF THE KMS IS VALIDATED TO BE BYTE-EQUAL TO THE CURRENT VERIFICATION KEY ON THE GATEWAY BEFORE STARTING! THIS VALIDATION IS NEEDED SINCE WE DO NOT ASSUME THAT THE PUBLIC STORAGE CANNOT BE MODIFIED BY AN ADVERSARY, BUT DURING RECOVERY THE VERIFICATION KEY OF THE KMS IS THE TRUST ANCHOR!
+
 Recovery with custodians is rather complex and requires multiple steps and manually transferring data in a trusted manner. For this reason, we walk through all the steps needed from the beginning to the end in order to set up custodian-based backup and recovery.
 
 Assuming the TOML file has been appropriately modified to allow custodian-based backup, as discussed above, then the steps needed are as follows:
@@ -252,15 +257,6 @@ Assuming the TOML file has been appropriately modified to allow custodian-based 
   $ cargo run -- -f config/client_local_threshold.toml backup-restore
   ```
 
-### Pitfalls
-One subtle problem remains in restoring, regardless of using the import/export approach or the custodian approach; the fact that a KMS server cannot boot without the existence of a signing key in the private storage. Furthermore, until contexts are fully implemented, it is the case that all signing keys will have the static name `60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee`.
-Hence to allow booting the KMS server for restoring, it is recommended to use the KMS key generation tool to generate a temporary signing key s.t. the KMS server will boot.
-After the KMS server has booted the signing key should manually be removed from the private file system such that the true signing key, which is backed up, can be restored.
-
-Another subtle pitfall is the fact that custodian setup messages will _only_ be valid for 1 hour for security reasons. Hence `custodian-recovery-init` will fail if the setup messages are more than 1 hour old.
-
-Ensure that the correct KMS verification keys are used. Since keys are not overwritten, they must be deleted manually in order to generate new ones.
-
 ### Concrete e2e example for custodian backup
 For completeness we here list all the steps needed to carry out for custodian-based manual recovery. Hence this can be considered a manual feasibility test. We present these steps under the assumption that everything is running on a local machine using docker, after having checked out the source code of the project.
 
@@ -270,8 +266,8 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
   Ensure the latest code is compiled and start the custodian-based Docker-setup images:
   ```{bash}
   cargo build
-  docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold-custodian.yml build
-  docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold-custodian.yml up
+  docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
+  KMS_DOCKER_BACKUP_SECRET_SHARING=true docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up
   ```
   Note: In case you have already been running this, old data might be present in MinIO. Hence use the [MinIO web interface](http://localhost:9001/login) to clean all old data and reboot. Use password `admin` and password `superstrongpassword`. If you don't do this, then the process might fail.
 1. Set up custodians:
@@ -357,6 +353,8 @@ $ cargo run -- -f <path-to-toml-config-file> insecure-key-gen-result --request-i
 Upon success, both the command to request to generate a key _and_ the command to fetch the result, will save the key material produced by the core in the `object_folder` given in the configuration file.
 
 #### Preprocessing for Secure Key-Generation
+
+#### Secure Preprocessing
 Secure key-generation (see [below](#secure-key-generation)) requires a pre-processing step, that can be triggered via the following command:
 
 ```{bash}
@@ -370,6 +368,16 @@ $ cargo run -- -f <path-to-toml-config-file> preproc-key-gen-result --request-id
 ```
 
 Upon success, both the command to request to generate preprocessing material _and_ the command to fetch the result, will print the following: `preproc done - <REQUEST_ID>`.
+
+#### Partial (Insecure) Preprocessing
+Due to how long the preprocessing phase can take, we also provide a way to perform only partially the preprocessing phase.
+One can thus specify the percentage of the offline phase that should run, as well as whether at the end of this partial preprocessing we want to store a _dummy_ (__insecure__) preprocessing to be able to run the Key-Generaiton phase nonetheless.
+Partial preprocessing can be triggered via the following command:
+
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> partial-preproc-key-gen --percentage-offline <percentage_to_run> [--store-dummy-preprocessing]
+```
+
 
 #### Secure Key-Generation
 Analogously to above, _secure_ key-generation can be done using the following command:
@@ -550,6 +558,22 @@ Finally a concrete example of a command for a setup with 3 custodians is the fol
 $ cargo run -- -f config/client_local_threshold.toml new-custodian-context -t 1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-1 -m tests/data/keys/CUSTODIAN/setup-msg/setup-2 -m tests/data/keys/CUSTODIAN/setup-msg/setup-3
 ```
 
+### Reshare
+
+In case some parties crashed during the DKG process we currently support doing a reshare within the current set of parties.
+This will then allow __all__ parties (including the one that failed during DKG) to hold a share of the secret keys.
+
+Before executing reshare, we expect the TFHE public key material to be present in the public storage of all the parties. Which implies that if a party has crashed during DKG, we need to copy this material _somehow_.
+
+To execute a reshare, one then runs the command
+```{bash}
+cargo run --bin kms-core-client -- -f config/client_local_threshold.toml reshare -k <KEY_ID> -i <PREPROC_ID>
+```
+
+Where the `KEY_ID` corresponds to the ID of the key we want to reshare and the `PREPROC_ID` corresponds to the ID of the preprocessing that was used to generate said key.
+The `PREPROC_ID` is required because it is part of the metadata that is signed by the parties.
+
+__NOTE__: Currently, because this is meant to be used only in case of DKG fails, and is __not__ triggered by the GW, the reshared key will be stored under the __same__ key ID as previously (we internally overwrite the storage to achieve this).
 
 ## Example Commands
 - Generate a set of private and public FHE keys for testing in a threshold KMS using the default threshold config. This command will expect all responses (`-a`) and will output logs (`-l`).

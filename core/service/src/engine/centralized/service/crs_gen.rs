@@ -12,7 +12,7 @@ use tokio::sync::{OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::CrsGenMetadata;
 use crate::engine::centralized::central_kms::{async_generate_crs, CentralizedKms};
 use crate::engine::traits::{BackupOperator, ContextManager};
@@ -37,8 +37,6 @@ pub async fn crs_gen_impl<
     tracing::info!("Received CRS generation request");
     let _timer = METRICS.time_operation(OP_CRS_GEN_REQUEST).start();
 
-    let permit = service.rate_limiter.start_crsgen().await?;
-
     let inner = request.into_inner();
     let (req_id, params, eip712_domain, _context_id) = validate_crs_gen_request(inner.clone())?;
 
@@ -59,9 +57,19 @@ pub async fn crs_gen_impl<
         )?;
     }
 
+    let permit = service.rate_limiter.start_crsgen().await?;
+
     let meta_store = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();
-    let sk = Arc::clone(&service.base_kms.sig_key);
+    let sk = service
+            .base_kms
+            .sig_key()
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::FailedPrecondition,
+                    format!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+                )
+            })?;
     let rng = service.base_kms.new_rng().await;
 
     let handle = service.tracker.spawn(

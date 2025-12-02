@@ -26,9 +26,9 @@ use observability::{
     metrics_names::{
         map_tonic_code_to_metric_tag, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
         OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_DESTROY_CUSTODIAN_CONTEXT,
-        OP_DESTROY_KMS_CONTEXT, OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST,
+        OP_DESTROY_MPC_CONTEXT, OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST,
         OP_KEYGEN_PREPROC_RESULT, OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT,
-        OP_NEW_KMS_CONTEXT, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
+        OP_NEW_MPC_CONTEXT, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
         OP_RESTORE_FROM_BACKUP, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
     },
 };
@@ -62,6 +62,20 @@ impl<
                 tag,
             );
         })
+    }
+
+    // In the centralized case it makes no diffrence whether it's partial or not
+    // as it's dummy anyway
+    #[cfg(feature = "insecure")]
+    #[tracing::instrument(skip(self, request))]
+    async fn partial_key_gen_preproc(
+        &self,
+        request: Request<kms_grpc::kms::v1::PartialKeyGenPreprocRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        self.key_gen_preproc(Request::new(request.into_inner().base_request.ok_or_else(
+            || tonic::Status::new(tonic::Code::Aborted, "Missing preproc base_request"),
+        )?))
+        .await
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -258,32 +272,32 @@ impl<
     }
 
     #[tracing::instrument(skip(self, request))]
-    async fn new_kms_context(
+    async fn new_mpc_context(
         &self,
-        request: Request<kms_grpc::kms::v1::NewKmsContextRequest>,
+        request: Request<kms_grpc::kms::v1::NewMpcContextRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
-        METRICS.increment_request_counter(OP_NEW_KMS_CONTEXT);
+        METRICS.increment_request_counter(OP_NEW_MPC_CONTEXT);
         self.context_manager
-            .new_kms_context(request)
+            .new_mpc_context(request)
             .await
             .inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_NEW_KMS_CONTEXT, tag);
+                let _ = METRICS.increment_error_counter(OP_NEW_MPC_CONTEXT, tag);
             })
     }
 
     #[tracing::instrument(skip(self, request))]
-    async fn destroy_kms_context(
+    async fn destroy_mpc_context(
         &self,
-        request: Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
+        request: Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
     ) -> Result<Response<Empty>, Status> {
-        METRICS.increment_request_counter(OP_DESTROY_KMS_CONTEXT);
+        METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
         self.context_manager
-            .destroy_kms_context(request)
+            .destroy_mpc_context(request)
             .await
             .inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_DESTROY_KMS_CONTEXT, tag);
+                let _ = METRICS.increment_error_counter(OP_DESTROY_MPC_CONTEXT, tag);
             })
     }
 
@@ -418,5 +432,21 @@ impl<
         };
 
         Ok(Response::new(response))
+    }
+
+    #[tracing::instrument(skip(self, _request))]
+    async fn initiate_resharing(
+        &self,
+        _request: Request<kms_grpc::kms::v1::InitiateResharingRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::InitiateResharingResponse>, Status> {
+        unimplemented!("Resharing is not supported in Centralized KMS");
+    }
+
+    #[tracing::instrument(skip(self, _request))]
+    async fn get_resharing_result(
+        &self,
+        _request: Request<v1::RequestId>,
+    ) -> Result<Response<kms_grpc::kms::v1::ResharingResultResponse>, Status> {
+        unimplemented!("Resharing is not supported in Centralized KMS");
     }
 }

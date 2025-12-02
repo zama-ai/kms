@@ -1,14 +1,18 @@
 use crate::{
+    consts::DEFAULT_MPC_CONTEXT,
     engine::{
         centralized::central_kms::CentralizedKms,
         traits::{BackupOperator, ContextManager},
-        validation::{parse_optional_proto_request_id, RequestIdParsingErr},
+        validation::{
+            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+        },
     },
     vault::storage::Storage,
 };
 use kms_grpc::{
     kms::v1::{Empty, InitRequest},
     utils::tonic_result::ok_or_tonic_abort,
+    ContextId,
 };
 use tonic::{Request, Response, Status};
 
@@ -43,8 +47,24 @@ pub async fn init_impl<
     request: Request<InitRequest>,
 ) -> Result<Response<Empty>, Status> {
     let inner = request.into_inner();
-    let request_id = parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::Init)?;
-    let mut ids = service.init_ids.write().await;
+    let epoch_id = parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::Init)?;
+    let context_id: ContextId = match inner.context_id {
+        Some(ctx_id) => parse_proto_request_id(&ctx_id, RequestIdParsingErr::Init)?.into(),
+        None => *DEFAULT_MPC_CONTEXT,
+    };
+
+    if !service
+        .context_manager
+        .mpc_context_exists(&context_id)
+        .await?
+    {
+        return Err(tonic::Status::new(
+            tonic::Code::NotFound,
+            format!("Context {context_id} not found"),
+        ));
+    }
+
+    let mut ids = service.epoch_ids.write().await;
     // Check that the system is not already initialized
     if !ids.get_all_request_ids().is_empty() {
         return Err(tonic::Status::new(
@@ -53,16 +73,16 @@ pub async fn init_impl<
         ));
     }
     ok_or_tonic_abort(
-        ids.insert(&request_id),
+        ids.insert(&epoch_id),
         "Could not insert init ID into meta store".to_string(),
     )?;
     ok_or_tonic_abort(
-        ids.update(&request_id, Ok(())).map_err(|e| e.to_string()),
+        ids.update(&epoch_id, Ok(())).map_err(|e| e.to_string()),
         "Could not update init ID in meta store".to_string(),
     )?;
     tracing::warn!(
         "Init called on centralized KMS with ID {} - no action taken",
-        request_id
+        epoch_id
     );
     Ok(Response::new(Empty {}))
 }
@@ -78,19 +98,21 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn test_init_sunshine() {
+    async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_init_sunshine").unwrap();
+
         let preproc_req = InitRequest {
             request_id: Some((req_id).into()),
+            context_id: None,
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
-        assert!(result.is_ok());
+        let _ = result.unwrap();
     }
 
     #[tokio::test]
-    async fn test_init_already_exists() {
+    async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id1 = derive_request_id("test_init_already_exists_1").unwrap();
@@ -99,27 +121,30 @@ mod tests {
         // First initialization should succeed
         let preproc_req1 = InitRequest {
             request_id: Some(req_id1.into()),
+            context_id: None,
         };
         let result1 = init_impl(&kms, Request::new(preproc_req1)).await;
-        assert!(result1.is_ok());
+        let _ = result1.unwrap();
 
         // Second initialization should fail with AlreadyExists
         let preproc_req2 = InitRequest {
             request_id: Some(req_id2.into()),
+            context_id: None,
         };
         let result2 = init_impl(&kms, Request::new(preproc_req2)).await;
-        assert!(result2.is_err());
         let status = result2.unwrap_err();
         assert_eq!(status.code(), tonic::Code::AlreadyExists);
     }
 
     #[tokio::test]
-    async fn test_init_missing_request_id() {
+    async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
-        let preproc_req = InitRequest { request_id: None };
+        let preproc_req = InitRequest {
+            request_id: None,
+            context_id: None,
+        };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
-        assert!(result.is_err());
         let status = result.unwrap_err();
         assert_eq!(status.code(), tonic::Code::InvalidArgument);
     }

@@ -1,0 +1,48 @@
+# Config for a threshold deployment of n=4 cores with threshold t=1
+
+# The type of the KMS ("centralized" or "threshold")
+kms_type = "threshold"
+
+# The minimum number of matching responses required to have an honest majority
+num_majority = 2
+
+# The minimum number of responses required to reconstruct a value (e.g. in user decryption)
+num_reconstruct = 3
+
+# Decryption mode used in user decryption reconstruction.
+# Options are NoiseFloodSmall and BitDecSmall.
+# Must match the deployed core/service setting!
+# Only relevant for threshold.
+decryption_mode = "NoiseFloodSmall"
+
+# fhe_params = "Test" # Small, insecure parameters for testing
+fhe_params = "Default" # Large, secure parameters
+
+# List of connection info to each of the cores
+[[cores]]
+# The ID of the given KMS server (monotonically increasing positive integer starting at 1)
+party_id = 1
+# The address of the given KMS server, including the port
+address = "localhost:50100"
+# The S3 endpoint where the public material of the given server can be reached
+s3_endpoint = "http://localhost:9000/kms-public"
+# The folder at the S3 endpoint where the data is stored
+object_folder = "PUB-p1"
+
+[[cores]]
+party_id = 2
+address = "localhost:50200"
+s3_endpoint = "http://localhost:9000/kms-public"
+object_folder = "PUB-p2"
+
+[[cores]]
+party_id = 3
+address = "localhost:50300"
+s3_endpoint = "http://localhost:9000/kms-public"
+object_folder = "PUB-p3"
+
+[[cores]]
+party_id = 4
+address = "localhost:50400"
+s3_endpoint = "http://localhost:9000/kms-public"
+object_folder = "PUB-p4"

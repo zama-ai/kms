@@ -74,13 +74,13 @@ use crate::client::user_decryption_wasm::{
     ParsedUserDecryptionRequestHex, TestingUserDecryptionTranscript,
 };
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::hybrid_ml_kem;
-use crate::cryptography::internal_crypto_types::{
+use crate::cryptography::encryption::{
     PrivateEncKey, PublicEncKey, UnifiedPrivateEncKey, UnifiedPublicEncKey,
 };
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::hybrid_ml_kem;
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use aes_prng::AesRng;
-use bc2wrap::{deserialize, serialize};
+use bc2wrap::deserialize_safe;
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::kms::v1::UserDecryptionResponse;
 use kms_grpc::kms::v1::{Eip712DomainMsg, TypedPlaintext, UserDecryptionResponsePayload};
@@ -113,6 +113,7 @@ pub fn ml_kem_pke_sk_len() -> usize {
 
 #[wasm_bindgen]
 pub fn public_sig_key_to_u8vec(pk: &PublicSigKey) -> Vec<u8> {
+    #[allow(deprecated)]
     pk.pk().to_sec1_bytes().to_vec()
 }
 
@@ -125,12 +126,12 @@ pub fn u8vec_to_public_sig_key(v: &[u8]) -> Result<PublicSigKey, JsError> {
 
 #[wasm_bindgen]
 pub fn private_sig_key_to_u8vec(sk: &PrivateSigKey) -> Result<Vec<u8>, JsError> {
-    serialize(sk).map_err(|e| JsError::new(&e.to_string()))
+    bc2wrap::serialize(sk).map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
 pub fn u8vec_to_private_sig_key(v: &[u8]) -> Result<PrivateSigKey, JsError> {
-    deserialize(v).map_err(|e| JsError::new(&e.to_string()))
+    deserialize_safe(v).map_err(|e| JsError::new(&e.to_string()))
 }
 
 // We cannot use a hashmap so use this struct as an alternative
@@ -227,7 +228,7 @@ pub fn get_client_address(client: &Client) -> String {
 #[cfg(feature = "wasm_tests")]
 pub fn buf_to_transcript(buf: &[u8]) -> TestingUserDecryptionTranscript {
     console_error_panic_hook::set_once();
-    bc2wrap::deserialize(buf).unwrap()
+    bc2wrap::deserialize_safe(buf).unwrap()
 }
 
 #[wasm_bindgen]
@@ -350,7 +351,7 @@ pub fn ml_kem_pke_pk_to_u8vec(pk: &PublicEncKeyMlKem512) -> Result<Vec<u8>, JsEr
 
 #[wasm_bindgen]
 pub fn ml_kem_pke_sk_to_u8vec(sk: &PrivateEncKeyMlKem512) -> Result<Vec<u8>, JsError> {
-    serialize(&sk.0).map_err(|e| JsError::new(&e.to_string()))
+    bc2wrap::serialize(&sk.0).map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
@@ -365,7 +366,7 @@ pub fn u8vec_to_ml_kem_pke_pk(v: &[u8]) -> Result<PublicEncKeyMlKem512, JsError>
 
 #[wasm_bindgen]
 pub fn u8vec_to_ml_kem_pke_sk(v: &[u8]) -> Result<PrivateEncKeyMlKem512, JsError> {
-    deserialize::<PrivateEncKey<ml_kem::MlKem512>>(v)
+    deserialize_safe::<PrivateEncKey<ml_kem::MlKem512>>(v)
         .map(PrivateEncKeyMlKem512)
         .map_err(|e| JsError::new(&e.to_string()))
 }
@@ -375,8 +376,10 @@ pub fn u8vec_to_ml_kem_pke_sk(v: &[u8]) -> Result<PrivateEncKeyMlKem512, JsError
 #[wasm_bindgen]
 pub fn ml_kem_pke_encrypt(msg: &[u8], their_pk: &PublicEncKeyMlKem512) -> Vec<u8> {
     let mut rng = AesRng::from_entropy();
-    serialize(&hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(&mut rng, msg, &their_pk.0 .0).unwrap())
-        .unwrap()
+    bc2wrap::serialize(
+        &hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(&mut rng, msg, &their_pk.0 .0).unwrap(),
+    )
+    .unwrap()
 }
 
 /// This function is *not* used by relayer-sdk because the decryption
@@ -384,7 +387,7 @@ pub fn ml_kem_pke_encrypt(msg: &[u8], their_pk: &PublicEncKeyMlKem512) -> Vec<u8
 /// It's just here for completeness and tests.
 #[wasm_bindgen]
 pub fn ml_kem_pke_decrypt(ct: &[u8], my_sk: &PrivateEncKeyMlKem512) -> Vec<u8> {
-    let ct: hybrid_ml_kem::HybridKemCt = deserialize(ct).unwrap();
+    let ct: hybrid_ml_kem::HybridKemCt = deserialize_safe(ct).unwrap();
     hybrid_ml_kem::dec::<ml_kem::MlKem512>(ct, &my_sk.0 .0).unwrap()
 }
 
@@ -403,7 +406,7 @@ fn resp_to_js(agg_resp: Vec<UserDecryptionResponse>) -> JsValue {
         let r = UserDecryptionResponseHex {
             signature: hex::encode(&resp.external_signature),
             payload: match resp.payload {
-                Some(inner) => Some(hex::encode(serialize(&inner).unwrap())),
+                Some(inner) => Some(hex::encode(bc2wrap::serialize(&inner).unwrap())),
                 None => None,
             },
             extra_data: Some(hex::encode(&resp.extra_data)),
@@ -432,7 +435,7 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
             payload: match hex_resp.payload {
                 Some(inner) => {
                     let buf = hex::decode(&inner)?;
-                    Some(deserialize::<UserDecryptionResponsePayload>(&buf)?)
+                    Some(deserialize_safe::<UserDecryptionResponsePayload>(&buf)?)
                 }
                 None => None,
             },

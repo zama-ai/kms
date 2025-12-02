@@ -8,10 +8,10 @@ use std::{
 // === External Crates ===
 use anyhow::anyhow;
 use kms_grpc::{
-    identifiers::ContextId,
+    identifiers::{ContextId, EpochId},
     kms::v1::{
-        self, Empty, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
-        UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
+        self, Empty, TypedCiphertext, TypedSigncryptedCiphertext, UserDecryptionRequest,
+        UserDecryptionResponse, UserDecryptionResponsePayload,
     },
     utils::tonic_result::BoxedStatus,
     IdentifierError, RequestId,
@@ -40,7 +40,7 @@ use threshold_fhe::{
             DecryptionMode, LowLevelCiphertext, OfflineNoiseFloodSession,
             SmallOfflineNoiseFloodSession,
         },
-        runtime::session::SmallSession,
+        runtime::sessions::small_session::SmallSession,
         tfhe_internals::private_keysets::PrivateKeySet,
     },
     thread_handles::spawn_compute_bound,
@@ -53,17 +53,16 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    consts::DEFAULT_MPC_CONTEXT,
+    consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
     cryptography::{
-        internal_crypto_types::{PrivateSigKey, UnifiedPublicEncKey},
-        signcryption::{signcrypt, SigncryptionPayload},
+        compute_external_user_decrypt_signature,
+        error::CryptographyError,
+        internal_crypto_types::LegacySerialization,
+        signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
     },
     engine::{
-        base::{
-            compute_external_user_decrypt_signature, deserialize_to_low_level, BaseKmsStruct,
-            UserDecryptCallValues,
-        },
-        threshold::{service::session::SessionPreparerGetter, traits::UserDecryptor},
+        base::{deserialize_to_low_level, BaseKmsStruct, UserDecryptCallValues},
+        threshold::{service::session::ImmutableSessionMaker, traits::UserDecryptor},
         traits::BaseKms,
         validation::{
             parse_proto_request_id, validate_user_decrypt_req, RequestIdParsingErr,
@@ -79,7 +78,7 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::{session::SessionPreparer, ThresholdFheKeys};
+use super::ThresholdFheKeys;
 
 #[tonic::async_trait]
 pub trait NoiseFloodPartialDecryptor: Send + Sync {
@@ -146,7 +145,7 @@ pub struct RealUserDecryptor<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub user_decrypt_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
-    pub session_preparer_getter: SessionPreparerGetter,
+    pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
     pub decryption_mode: DecryptionMode,
@@ -172,16 +171,14 @@ impl<
     #[allow(clippy::too_many_arguments)]
     async fn inner_user_decrypt(
         req_id: &RequestId,
-        session_prep: Arc<SessionPreparer>,
+        session_maker: ImmutableSessionMaker,
         context_id: ContextId,
+        epoch_id: EpochId,
         rng: impl CryptoRng + RngCore + Send + 'static,
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
-        client_enc_key: UnifiedPublicEncKey,
-        client_address: alloy_primitives::Address,
-        sig_key: Arc<PrivateSigKey>,
+        signcryption_key: Arc<UnifiedSigncryptionKeyOwned>,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
-        server_verf_key: Vec<u8>,
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
         metric_tags: Vec<(&'static str, String)>,
@@ -191,9 +188,6 @@ impl<
         let mut all_signcrypted_cts = vec![];
 
         let rng = Arc::new(Mutex::new(rng));
-        let client_enc_key = Arc::new(client_enc_key);
-        let client_address = Arc::new(client_address);
-
         // TODO: Each iteration of this loop should probably happen
         // inside its own tokio task
         for (ctr, typed_ciphertext) in typed_ciphertexts.into_iter().enumerate() {
@@ -229,8 +223,8 @@ impl<
             let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
                     let session = ok_or_tonic_abort(
-                        session_prep
-                            .make_small_async_session_z128(session_id, context_id)
+                        session_maker
+                            .make_small_async_session_z128(session_id, context_id, epoch_id)
                             .await,
                         "Could not prepare ddec data for noiseflood decryption".to_string(),
                     )?;
@@ -273,8 +267,8 @@ impl<
                 }
                 DecryptionMode::BitDecSmall => {
                     let mut session = ok_or_tonic_abort(
-                        session_prep
-                            .make_small_async_session_z64(session_id, context_id)
+                        session_maker
+                            .make_small_async_session_z64(session_id, context_id, epoch_id)
                             .await,
                         "Could not prepare ddec data for bitdec decryption".to_string(),
                     )?;
@@ -320,38 +314,31 @@ impl<
 
             let (partial_signcryption, packing_factor) = match pdec {
                 Ok((pdec_serialized, packing_factor, time)) => {
-                    let signcryption_msg = SigncryptionPayload {
-                        plaintext: TypedPlaintext::from_bytes(pdec_serialized, fhe_type),
-                        link: link.clone(),
-                    };
-
                     let rng = rng.clone();
-                    let sig_key = sig_key.clone();
-                    let client_enc_key = client_enc_key.clone();
-                    let client_address = client_address.clone();
+                    let signcryption_key_clone = Arc::clone(&signcryption_key);
+                    let link_clone = link.clone();
 
                     let enc_res = spawn_compute_bound(move || {
-                        let mut rng = rng
-                            .lock()
-                            .map_err(|_| anyhow_error_and_log("Poisoned mutex guard"))?;
-                        signcrypt(
+                        let mut rng = rng.lock().map_err(|_| {
+                            CryptographyError::Other("Poisoned mutex guard".to_string())
+                        })?;
+                        signcryption_key_clone.signcrypt_plaintext(
                             rng.deref_mut(),
                             &DSEP_USER_DECRYPTION,
-                            &bc2wrap::serialize(&signcryption_msg)?,
-                            &client_enc_key,
-                            &client_address,
-                            &sig_key,
+                            &pdec_serialized,
+                            fhe_type,
+                            &link_clone,
                         )
                     })
                     .await??;
-                    let res = bc2wrap::serialize(&enc_res)?;
 
                     tracing::info!(
                         "User decryption completed for type {:?}. Inner thread took {:?} ms",
                         fhe_type,
                         time.as_millis()
                     );
-                    (res, packing_factor)
+                    // LEGACY: for legacy reasons we return the inner payload only
+                    (enc_res.payload, packing_factor)
                 }
                 Err(e) => return Err(anyhow!("Failed user decryption: {e}")),
             };
@@ -365,21 +352,33 @@ impl<
             drop(inner_timer);
         }
 
+        let my_role = session_maker
+            .my_role(&context_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("Could not get my role: {e}"))?;
+        let threshold = session_maker
+            .threshold(&context_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("Could not get threshold: {e}"))?;
         let payload = UserDecryptionResponsePayload {
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
-            verification_key: server_verf_key,
-            party_id: session_prep.my_role()?.one_based() as u32,
-            degree: session_prep.threshold()? as u32,
+            verification_key: signcryption_key
+                .signing_key
+                .verf_key()
+                .to_legacy_bytes()
+                .map_err(|e| anyhow::anyhow!("Could not serialize verification key {}", e))?,
+            party_id: my_role.one_based() as u32,
+            degree: threshold as u32,
         };
 
         // NOTE: extra_data is not used in the current implementation
         let extra_data = vec![];
         let external_signature = compute_external_user_decrypt_signature(
-            &sig_key,
+            &signcryption_key.signing_key,
             &payload,
             domain,
-            &client_enc_key,
+            &signcryption_key.receiver_enc_key,
             extra_data.clone(),
         )?;
         Ok((payload, external_signature, extra_data))
@@ -390,7 +389,7 @@ impl<
         base_kms: BaseKmsStruct,
         pub_storage: PubS,
         priv_storage: PrivS,
-        session_preparer_getter: SessionPreparerGetter,
+        session_maker: ImmutableSessionMaker,
     ) -> Self {
         let crypto_storage = ThresholdCryptoMaterialStorage::new(
             pub_storage,
@@ -407,7 +406,7 @@ impl<
             base_kms,
             crypto_storage,
             user_decrypt_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-            session_preparer_getter,
+            session_maker,
             tracker,
             rate_limiter,
             decryption_mode: DecryptionMode::NoiseFloodSmall,
@@ -463,26 +462,23 @@ impl<
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
             None => *DEFAULT_MPC_CONTEXT,
         };
-        let session_preparer = Arc::new(
-            self.session_preparer_getter
-                .get(&context_id)
-                .await
-                .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?,
-        );
+        let epoch_id: EpochId = match &inner.epoch_id {
+            Some(c) => c
+                .try_into()
+                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
+            None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap since `PRSS_INIT_REQ_ID` is valid
+        };
+        let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
+            tonic::Status::not_found(format!(
+                "Could not get my role for context {context_id}: {e}"
+            ))
+        })?;
 
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
             .time_operation(OP_USER_DECRYPT_REQUEST)
-            .tag(
-                TAG_PARTY_ID,
-                session_preparer
-                    .my_role()
-                    .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?
-                    .to_string(),
-            )
+            .tag(TAG_PARTY_ID, my_role.to_string())
             .start();
-
-        let permit = self.rate_limiter.start_user_decrypt().await?;
 
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) = {
             let inner = inner.clone();
@@ -504,12 +500,10 @@ impl<
             );
         })?;
 
-        timer.tags([(TAG_KEY_ID, key_id.as_str())]);
-
-        let meta_store = Arc::clone(&self.user_decrypt_meta_store);
-        let crypto_storage = self.crypto_storage.clone();
-        let rng = self.base_kms.new_rng().await;
-        let sig_key = Arc::clone(&self.base_kms.sig_key);
+        // Check for resource exhaustion once all the other checks are ok
+        // because resource exhaustion can be recovered by sending the exact same request
+        // but the errors above cannot be tried again.
+        let permit = self.rate_limiter.start_user_decrypt().await?;
 
         // Do some checks before we start modifying the database
         {
@@ -521,6 +515,12 @@ impl<
                 )));
             }
         }
+
+        timer.tags([(TAG_KEY_ID, key_id.as_str())]);
+
+        let meta_store = Arc::clone(&self.user_decrypt_meta_store);
+        let crypto_storage = self.crypto_storage.clone();
+        let rng = self.base_kms.new_rng().await;
 
         self.crypto_storage
             .refresh_threshold_fhe_keys(&key_id)
@@ -543,27 +543,39 @@ impl<
             )?;
         }
 
-        let prep = Arc::clone(&session_preparer);
         let dec_mode = self.decryption_mode;
 
         let metric_tags = vec![
-            (TAG_PARTY_ID, prep.my_role_string_unchecked()),
+            (TAG_PARTY_ID, my_role.to_string()),
             (TAG_KEY_ID, key_id.as_str()),
             (
                 TAG_PUBLIC_DECRYPTION_KIND,
                 dec_mode.as_str_name().to_string(),
             ),
         ];
-
-        let server_verf_key = self.base_kms.get_serialized_verf_key();
-
+        let sk = (*self.base_kms.sig_key().map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::FailedPrecondition,
+                    format!(
+                        "Signing key is not present. This should only happen when server is booted in recovery mode: {}",
+                        e
+                    ),
+                )
+            })?).clone();
+        let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
+            sk,
+            client_enc_key,
+            client_address.to_vec(),
+        ));
         // the result of the computation is tracked the tracker
+        let session_maker = self.session_maker.clone();
         self.tracker.spawn(
             async move {
                 // Capture the timer, it is stopped when it's dropped
                 let _timer = timer;
                 // explicitly move the rate limiter context
                 let _permit = permit;
+
                 // Note that we'll hold a read lock for some time
                 // but this should be ok since write locks
                 // happen rarely as keygen is a rare event.
@@ -574,16 +586,14 @@ impl<
                     Ok(k) => {
                         Self::inner_user_decrypt(
                             &req_id,
-                            prep,
+                            session_maker,
                             context_id,
+                            epoch_id,
                             rng,
                             typed_ciphertexts,
-                            link.clone(),
-                            client_enc_key,
-                            client_address,
-                            sig_key,
+                            link,
+                            signcryption_key,
                             k,
-                            server_verf_key,
                             dec_mode,
                             &domain,
                             metric_tags,
@@ -664,18 +674,21 @@ mod tests {
     use rand::SeedableRng;
     use tfhe::FheTypes;
     use threshold_fhe::execution::{
-        runtime::session::ParameterHandles, small_execution::prss::PRSSSetup,
-        tfhe_internals::utils::expanded_encrypt,
+        runtime::sessions::session_parameters::GenericParameterHandles,
+        small_execution::prss::PRSSSetup, tfhe_internals::utils::expanded_encrypt,
     };
 
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::{
-            internal_crypto_types::gen_sig_keys, signcryption::ephemeral_encryption_key_generation,
+            encryption::{Encryption, PkeScheme, PkeSchemeType},
+            signatures::gen_sig_keys,
         },
         dummy_domain,
-        engine::base::{compute_info_standard_keygen, DSEP_PUBDATA_KEY},
-        engine::threshold::service::session::SessionPreparerManager,
+        engine::{
+            base::{compute_info_standard_keygen, DSEP_PUBDATA_KEY},
+            threshold::service::session::SessionMaker,
+        },
         vault::storage::ram,
     };
 
@@ -687,7 +700,9 @@ mod tests {
     impl NoiseFloodPartialDecryptor for DummyNoiseFloodPartialDecryptor {
         type Prep = SmallOfflineNoiseFloodSession<
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            threshold_fhe::execution::runtime::session::SmallSession<ResiduePolyF4Z128>,
+            threshold_fhe::execution::runtime::sessions::small_session::SmallSession<
+                ResiduePolyF4Z128,
+            >,
         >;
 
         async fn partial_decrypt(
@@ -714,24 +729,21 @@ mod tests {
     impl RealUserDecryptor<ram::RamStorage, ram::RamStorage, DummyNoiseFloodPartialDecryptor> {
         pub async fn init_test_dummy_decryptor(
             base_kms: BaseKmsStruct,
-            session_preparer_getter: SessionPreparerGetter,
+            session_maker: ImmutableSessionMaker,
         ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(base_kms, pub_storage, priv_storage, session_preparer_getter).await
+            Self::init_test(base_kms, pub_storage, priv_storage, session_maker).await
         }
     }
 
     fn make_dummy_enc_pk(rng: &mut AesRng) -> Vec<u8> {
-        let (enc_pk, _enc_sk) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, rng);
+        let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
         let mut enc_key_buf = Vec::new();
         // The key is freshly generated, so we can safely unwrap the serialization
-        tfhe::safe_serialization::safe_serialize(
-            &UnifiedPublicEncKey::MlKem512(enc_pk.clone()),
-            &mut enc_key_buf,
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .expect("Failed to serialize ephemeral encryption key");
+        tfhe::safe_serialization::safe_serialize(&enc_pk, &mut enc_key_buf, SAFE_SER_SIZE_LIMIT)
+            .expect("Failed to serialize ephemeral encryption key");
         enc_key_buf
     }
 
@@ -745,35 +757,24 @@ mod tests {
         let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
-        let session_preparer_manager = SessionPreparerManager::new_test_session();
 
-        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
+        let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
 
-        let session_preparer = SessionPreparer::new_test_session(
-            base_kms.new_instance().await,
+        let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,
+            base_kms.new_rng().await,
         );
-        session_preparer_manager
-            .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
-            .await;
-        let user_decryptor = RealUserDecryptor::init_test_dummy_decryptor(
-            base_kms,
-            session_preparer_manager.make_getter(),
-        )
-        .await;
+        let user_decryptor =
+            RealUserDecryptor::init_test_dummy_decryptor(base_kms, session_maker.make_immutable())
+                .await;
 
         let key_id = RequestId::new_random(rng);
 
         // make a dummy private keyset
-        let (threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param, rng);
+        let (threshold_fhe_keys, fhe_key_set) =
+            ThresholdFheKeys::init_dummy(param, key_id.into(), rng);
 
         // Not a huge deal if we clone this server key since we only use small/test parameters
         tfhe::set_server_key(fhe_key_set.server_key.clone());
@@ -806,7 +807,7 @@ mod tests {
         }
         user_decryptor
             .crypto_storage
-            .write_threshold_keys_with_meta_store(
+            .write_threshold_keys_with_dkg_meta_store(
                 &key_id,
                 threshold_fhe_keys,
                 fhe_key_set,

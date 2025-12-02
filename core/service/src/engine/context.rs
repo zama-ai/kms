@@ -5,25 +5,18 @@ use kms_grpc::identifiers::ContextId;
 use serde::{Deserialize, Serialize};
 use tfhe::{named::Named, Versionize};
 use tfhe_versionable::VersionsDispatch;
+use threshold_fhe::{execution::runtime::party::Role, networking::tls::ReleasePCRValues};
 
 use crate::{
-    cryptography::internal_crypto_types::{PublicEncKey, PublicSigKey},
-    engine::validation::{
-        parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
-    },
-    vault::storage::{crypto_material::get_core_signing_key, read_context_at_id, StorageReader},
+    cryptography::signatures::PublicSigKey,
+    engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr},
+    vault::storage::{crypto_material::get_core_signing_key, StorageReader},
 };
 
 const ERR_DUPLICATE_PARTY_IDS: &str = "Duplicate party_ids found in context";
 const ERR_DUPLICATE_NAMES: &str = "Duplicate names found in context";
-const ERR_INCONSISTENT_SIGNING_KEY: &str = "Inconsistent signing key in context";
 const ERR_INVALID_THRESHOLD_SINGLE_NODE: &str = "Invalid threshold for centralized context";
 const ERR_INVALID_THRESHOLD_MULTI_NODE: &str = "Invalid threshold for threshold context";
-const ERR_MISSING_PREVIOUS_CONTEXT: &str = "Missing previous context";
-const ERR_WRONG_SOFTWARE_VERSION: &str = "Current version is lower than previous version";
-const ERR_DUPLICATE_CONTEXT_ID: &str = "Context ID is the same as the previous context";
-const ERR_PREVIOUS_CONTEXT_ID_MISMATCH: &str =
-    "Previous context ID does not match the given previous context";
 
 #[derive(Clone, Debug, VersionsDispatch)]
 pub enum SoftwareVersionVersioned {
@@ -40,6 +33,13 @@ pub struct SoftwareVersion {
     pub minor: u8,
     pub patch: u8,
     pub tag: Option<String>,
+}
+
+impl SoftwareVersion {
+    pub fn current() -> Self {
+        let version = env!("CARGO_PKG_VERSION");
+        Self::from(version)
+    }
 }
 
 impl PartialOrd for SoftwareVersion {
@@ -68,6 +68,36 @@ impl std::fmt::Display for SoftwareVersion {
     }
 }
 
+impl From<&str> for SoftwareVersion {
+    fn from(s: &str) -> Self {
+        let parts: Vec<&str> = s.split('-').collect();
+        let version_parts: Vec<&str> = parts[0].split('.').collect();
+        let major = version_parts
+            .first()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let minor = version_parts
+            .get(1)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let patch = version_parts
+            .get(2)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let tag = if parts.len() > 1 {
+            Some(parts[1].to_string())
+        } else {
+            None
+        };
+        SoftwareVersion {
+            major,
+            minor,
+            patch,
+            tag,
+        }
+    }
+}
+
 #[derive(Clone, Debug, VersionsDispatch)]
 pub enum NodeInfoVersioned {
     V0(NodeInfo),
@@ -76,54 +106,75 @@ pub enum NodeInfoVersioned {
 #[derive(Clone, Debug, Versionize, Serialize, Deserialize)]
 #[versionize(NodeInfoVersioned)]
 pub struct NodeInfo {
-    pub name: String,
+    pub mpc_identity: String,
     pub party_id: u32,
-    pub verification_key: PublicSigKey,
-    pub backup_encryption_public_key: PublicEncKey<ml_kem::MlKem512>,
 
+    /// This is optional for legacy reasons because typically MPC parties
+    /// do not know the public verification keys of other parties when it first starts.
+    pub verification_key: Option<PublicSigKey>,
+
+    /// Must be a valid URL.
     pub external_url: String,
 
-    // Unfortunately, the TLS certificate is a Vec<u8> here,
-    // because we cannot versionize the X509Certificate type.
-    pub tls_cert: Vec<u8>,
+    /// The TLS certificate is a String here
+    /// because we cannot versionize the X509Certificate type.
+    ///
+    /// Also it's optional because we need to support non-TLS connections for testing purposes.
+    pub ca_cert: Option<Vec<u8>>,
 
     pub public_storage_url: String,
     pub extra_verification_keys: Vec<PublicSigKey>,
 }
 
-impl TryFrom<kms_grpc::kms::v1::KmsNode> for NodeInfo {
+impl TryFrom<kms_grpc::kms::v1::MpcNode> for NodeInfo {
     type Error = anyhow::Error;
 
-    fn try_from(value: kms_grpc::kms::v1::KmsNode) -> anyhow::Result<Self> {
+    fn try_from(value: kms_grpc::kms::v1::MpcNode) -> anyhow::Result<Self> {
+        // check the ca_cert is valid PEM if present
+        let ca_cert = match &value.ca_cert {
+            Some(cert_bytes) => {
+                let _pem = x509_parser::pem::parse_x509_pem(cert_bytes)
+                    .map_err(|e| anyhow::anyhow!("Invalid PEM in ca_cert: {}", e))?;
+                Some(cert_bytes.clone())
+            }
+            None => None,
+        };
+
+        // check the external_url is a valid URL
+        let _ = url::Url::parse(&value.external_url)?;
+
         Ok(NodeInfo {
-            name: value.name,
+            mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
-            verification_key: bc2wrap::deserialize(&value.verification_key)?,
-            backup_encryption_public_key: bc2wrap::deserialize(
-                &value.backup_encryption_public_key,
-            )?,
+            verification_key: match value.verification_key {
+                None => None,
+                Some(vk_bytes) => Some(bc2wrap::deserialize_safe(&vk_bytes)?),
+            },
             external_url: value.external_url,
-            tls_cert: value.tls_cert,
+            ca_cert,
             public_storage_url: value.public_storage_url,
             extra_verification_keys: value
                 .extra_verification_keys
                 .into_iter()
-                .map(|k| bc2wrap::deserialize(&k))
+                .map(|k| bc2wrap::deserialize_safe(&k))
                 .collect::<Result<Vec<_>, _>>()?,
         })
     }
 }
 
-impl TryFrom<NodeInfo> for kms_grpc::kms::v1::KmsNode {
+impl TryFrom<NodeInfo> for kms_grpc::kms::v1::MpcNode {
     type Error = anyhow::Error;
     fn try_from(value: NodeInfo) -> anyhow::Result<Self> {
-        Ok(kms_grpc::kms::v1::KmsNode {
-            name: value.name,
+        // Observe that legacy formats have never been used here, so it is safe to use safe_serialize
+        Ok(kms_grpc::kms::v1::MpcNode {
+            mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
-            verification_key: bc2wrap::serialize(&value.verification_key)?,
-            backup_encryption_public_key: bc2wrap::serialize(&value.backup_encryption_public_key)?,
+            verification_key: match value.verification_key {
+                Some(inner) => Some(bc2wrap::serialize(&inner)?),
+                None => None,
+            },
             external_url: value.external_url,
-            tls_cert: value.tls_cert,
+            ca_cert: value.ca_cert,
             public_storage_url: value.public_storage_url,
             extra_verification_keys: value
                 .extra_verification_keys
@@ -146,11 +197,11 @@ pub enum ContextInfoVersioned {
 #[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(ContextInfoVersioned)]
 pub struct ContextInfo {
-    pub kms_nodes: Vec<NodeInfo>,
+    pub mpc_nodes: Vec<NodeInfo>,
     pub context_id: ContextId,
-    pub previous_context_id: Option<ContextId>,
     pub software_version: SoftwareVersion,
     pub threshold: u32,
+    pub pcr_values: Vec<ReleasePCRValues>,
 }
 
 impl ContextInfo {
@@ -160,39 +211,32 @@ impl ContextInfo {
 
     /// Most of these checks are simply sanity checks because
     /// before the context passed to the KMS, it should have been validated on the gateway.
-    pub async fn verify<S: StorageReader>(
-        &self,
-        my_id: u32,
-        storage: &S,
-        previous_context: Option<&ContextInfo>,
-    ) -> anyhow::Result<()> {
+    pub async fn verify<S: StorageReader>(&self, storage: &S) -> anyhow::Result<Role> {
         // Check the signing key is consistent with the private key in storage.
         let signing_key = get_core_signing_key(storage).await?;
+        let verification_key = signing_key.verf_key();
 
         let my_node = self
-            .kms_nodes
+            .mpc_nodes
             .iter()
-            .find(|node| node.party_id == my_id)
+            .find(|node| {
+                node.verification_key
+                    .as_ref()
+                    .map(|inner| inner == &verification_key)
+                    .unwrap_or(false)
+            })
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "Node with party_id {} not found in context {}",
-                    my_id,
+                    "Node with verification key {:?} not found in context {}",
+                    verification_key,
                     self.context_id()
                 )
             })?;
 
-        if my_node.verification_key.pk() != signing_key.sk().verifying_key() {
-            return Err(anyhow::anyhow!(
-                "{} {}",
-                ERR_INCONSISTENT_SIGNING_KEY,
-                self.context_id()
-            ));
-        }
-
-        // check kms_nodes have unique party_ids
+        // check mpc_nodes have unique party_ids
         let party_ids: std::collections::HashSet<_> =
-            self.kms_nodes.iter().map(|node| node.party_id).collect();
-        if party_ids.len() != self.kms_nodes.len() {
+            self.mpc_nodes.iter().map(|node| node.party_id).collect();
+        if party_ids.len() != self.mpc_nodes.len() {
             return Err(anyhow::anyhow!(
                 "{} {}",
                 ERR_DUPLICATE_PARTY_IDS,
@@ -200,9 +244,9 @@ impl ContextInfo {
             ));
         }
 
-        // check that the party IDs are in the range [1, kms_nodes.len()]
-        for node in &self.kms_nodes {
-            (1..=self.kms_nodes.len() as u32)
+        // check that the party IDs are in the range [1, mpc_nodes.len()]
+        for node in &self.mpc_nodes {
+            (1..=self.mpc_nodes.len() as u32)
                 .contains(&node.party_id)
                 .then_some(())
                 .ok_or_else(|| {
@@ -214,7 +258,7 @@ impl ContextInfo {
                 })?;
         }
 
-        if self.kms_nodes.len() == 1 {
+        if self.mpc_nodes.len() == 1 {
             // threshold must be 0 for single node context
             if self.threshold != 0 {
                 return Err(anyhow::anyhow!(
@@ -224,25 +268,25 @@ impl ContextInfo {
                 ));
             }
         } else {
-            // check that threshold is valid such that 3*threshold + 1 == kms_nodes.len()
-            if self.kms_nodes.len() != 3 * self.threshold as usize + 1 {
+            // check that threshold is valid such that 3*threshold + 1 == mpc_nodes.len()
+            if self.mpc_nodes.len() != 3 * self.threshold as usize + 1 {
                 return Err(anyhow::anyhow!(
                     "{} (context={}, threshold={}, nodes={})",
                     ERR_INVALID_THRESHOLD_MULTI_NODE,
                     self.context_id(),
                     self.threshold,
-                    self.kms_nodes.len()
+                    self.mpc_nodes.len()
                 ));
             }
         }
 
-        // the kms_nodes must have unique names
+        // the mpc_nodes must have unique names
         let names: std::collections::HashSet<_> = self
-            .kms_nodes
+            .mpc_nodes
             .iter()
-            .map(|node| node.name.clone())
+            .map(|node| node.mpc_identity.clone())
             .collect();
-        if names.len() != self.kms_nodes.len() {
+        if names.len() != self.mpc_nodes.len() {
             return Err(anyhow::anyhow!(
                 "{} {}",
                 ERR_DUPLICATE_NAMES,
@@ -250,51 +294,19 @@ impl ContextInfo {
             ));
         }
 
-        if let Some(prev_context) = previous_context {
-            // self.previous_context_id must match the previous context ID
-            if self.previous_context_id != Some(*prev_context.context_id()) {
-                return Err(anyhow::anyhow!(
-                    "{}: expected {:?}, got {:?}",
-                    ERR_PREVIOUS_CONTEXT_ID_MISMATCH,
-                    Some(*prev_context.context_id()),
-                    self.previous_context_id,
-                ));
-            }
-
-            // check that the previous context exists in storage
-            let _ = read_context_at_id(storage, prev_context.context_id())
-                .await
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "{} (prev_context={}, error={})",
-                        ERR_MISSING_PREVIOUS_CONTEXT,
-                        prev_context.context_id(),
-                        e
-                    )
-                })?;
-
-            // check that the software version is equal or higher than the previous context
-            if self.software_version < prev_context.software_version {
-                return Err(anyhow::anyhow!(
-                    "{} (prev_version={}, current_version={}, context_id={})",
-                    ERR_WRONG_SOFTWARE_VERSION,
-                    prev_context.software_version,
-                    self.software_version,
-                    self.context_id()
-                ));
-            }
-
-            // check that the context ID is different from the previous context
-            if self.context_id == *prev_context.context_id() {
-                return Err(anyhow::anyhow!(
-                    "{} {}",
-                    ERR_DUPLICATE_CONTEXT_ID,
-                    self.context_id(),
-                ));
-            }
+        // check that the urls are valid
+        for node in &self.mpc_nodes {
+            let mpc_url = url::Url::parse(&node.external_url)
+                .map_err(|e| anyhow::anyhow!("url parsing failed {:?}", e))?;
+            let _hostname = mpc_url
+                .host_str()
+                .ok_or_else(|| anyhow::anyhow!("missing host"))?;
+            let _port = mpc_url
+                .port()
+                .ok_or_else(|| anyhow::anyhow!("missing port"))?;
         }
 
-        Ok(())
+        Ok(Role::indexed_from_one(my_node.party_id as usize))
     }
 }
 
@@ -302,25 +314,14 @@ impl Named for ContextInfo {
     const NAME: &'static str = "kms::ContextInfo";
 }
 
-impl TryFrom<kms_grpc::kms::v1::KmsContext> for ContextInfo {
+impl TryFrom<kms_grpc::kms::v1::MpcContext> for ContextInfo {
     type Error = anyhow::Error;
 
-    fn try_from(value: kms_grpc::kms::v1::KmsContext) -> anyhow::Result<Self> {
-        let software_version = bc2wrap::deserialize(&value.software_version)?;
-        let previous_context_id = match value.previous_context_id {
-            Some(id) => Some(
-                parse_proto_request_id(
-                    &id,
-                    RequestIdParsingErr::Other("invalid previous context ID".to_string()),
-                )?
-                .into(),
-            ),
-            None => None,
-        };
-
+    fn try_from(value: kms_grpc::kms::v1::MpcContext) -> anyhow::Result<Self> {
+        let software_version = bc2wrap::deserialize_safe(&value.software_version)?;
         Ok(ContextInfo {
-            kms_nodes: value
-                .kms_nodes
+            mpc_nodes: value
+                .mpc_nodes
                 .into_iter()
                 .map(NodeInfo::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
@@ -329,27 +330,43 @@ impl TryFrom<kms_grpc::kms::v1::KmsContext> for ContextInfo {
                 RequestIdParsingErr::Context,
             )?
             .into(),
-            previous_context_id,
             software_version,
             threshold: value.threshold as u32,
+            pcr_values: value
+                .pcr_values
+                .into_iter()
+                .map(|v| ReleasePCRValues {
+                    pcr0: v.pcr0,
+                    pcr1: v.pcr1,
+                    pcr2: v.pcr2,
+                })
+                .collect(),
         })
     }
 }
 
-impl TryFrom<ContextInfo> for kms_grpc::kms::v1::KmsContext {
+impl TryFrom<ContextInfo> for kms_grpc::kms::v1::MpcContext {
     type Error = anyhow::Error;
 
     fn try_from(value: ContextInfo) -> anyhow::Result<Self> {
-        Ok(kms_grpc::kms::v1::KmsContext {
-            kms_nodes: value
-                .kms_nodes
+        Ok(kms_grpc::kms::v1::MpcContext {
+            mpc_nodes: value
+                .mpc_nodes
                 .into_iter()
-                .map(kms_grpc::kms::v1::KmsNode::try_from)
+                .map(kms_grpc::kms::v1::MpcNode::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
             context_id: Some(value.context_id.into()),
-            previous_context_id: value.previous_context_id.map(|id| id.into()),
             software_version: bc2wrap::serialize(&value.software_version)?,
             threshold: value.threshold.try_into()?,
+            pcr_values: value
+                .pcr_values
+                .into_iter()
+                .map(|v| kms_grpc::kms::v1::PcrValues {
+                    pcr0: v.pcr0,
+                    pcr1: v.pcr1,
+                    pcr2: v.pcr2,
+                })
+                .collect(),
         })
     }
 }
@@ -357,12 +374,9 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::KmsContext {
 #[cfg(test)]
 mod tests {
     use kms_grpc::rpc_types::PrivDataType;
-    use rand::rngs::OsRng;
 
     use crate::{
-        cryptography::{
-            internal_crypto_types::gen_sig_keys, signcryption::ephemeral_encryption_key_generation,
-        },
+        cryptography::signatures::gen_sig_keys,
         vault::storage::{ram::RamStorage, store_versioned_at_request_id},
     };
 
@@ -484,34 +498,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_context_info_duplicate_party_ids() {
-        let (backup_encryption_public_key, _) = ephemeral_encryption_key_generation(&mut OsRng);
         let (verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
 
         let context = ContextInfo {
-            kms_nodes: vec![
+            mpc_nodes: vec![
                 NodeInfo {
-                    name: "Node1".to_string(),
+                    mpc_identity: "Node1".to_string(),
                     party_id: 1,
-                    verification_key: verification_key.clone(),
-                    backup_encryption_public_key: backup_encryption_public_key.clone(),
+                    verification_key: Some(verification_key.clone()),
                     external_url: "localhost:12345".to_string(),
-                    tls_cert: vec![],
+                    ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
                     extra_verification_keys: vec![],
                 },
                 NodeInfo {
-                    name: "Node2".to_string(),
+                    mpc_identity: "Node2".to_string(),
                     party_id: 1, // Duplicate party_id
-                    verification_key,
-                    backup_encryption_public_key,
+                    verification_key: Some(verification_key),
                     external_url: "localhost:12345".to_string(),
-                    tls_cert: vec![],
+                    ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
                     extra_verification_keys: vec![],
                 },
             ],
             context_id: ContextId::from_bytes([4u8; 32]),
-            previous_context_id: None,
             software_version: SoftwareVersion {
                 major: 1,
                 minor: 0,
@@ -519,6 +529,7 @@ mod tests {
                 tag: None,
             },
             threshold: 1,
+            pcr_values: vec![],
         };
 
         let mut storage = RamStorage::new();
@@ -531,11 +542,29 @@ mod tests {
         .await
         .unwrap();
 
-        let result = context.verify(1, &storage, None).await;
+        let result = context.verify(&storage).await;
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("Duplicate party_ids found in context"));
+            .contains(ERR_DUPLICATE_PARTY_IDS));
+    }
+
+    #[test]
+    fn parse_software_version() {
+        {
+            let version = SoftwareVersion::from("1.2.3-alpha");
+            assert_eq!(version.major, 1);
+            assert_eq!(version.minor, 2);
+            assert_eq!(version.patch, 3);
+            assert_eq!(version.tag, Some("alpha".to_string()));
+        }
+        {
+            let version = SoftwareVersion::from("zzz");
+            assert_eq!(version.major, 0);
+            assert_eq!(version.minor, 0);
+            assert_eq!(version.patch, 0);
+            assert_eq!(version.tag, None);
+        }
     }
 
     // TODO more tests will be added here once the context definition is fully fleshed out
