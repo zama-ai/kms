@@ -42,7 +42,6 @@ pub(crate) async fn do_get_operator_pub_keys(
         let Some(attested_pk) = attestation_doc.public_key else {
             anyhow::bail!("Bad response: public key not present in attestation document")
         };
-
         if pk.public_key.as_slice() != attested_pk.as_slice() {
             let dsep: DomainSep = *b"EQUALITY";
             let pk_hash = hex::encode(hash_element(&dsep, pk.public_key.as_slice()));
@@ -96,25 +95,30 @@ pub(crate) async fn do_custodian_recovery_init(
     overwrite_ephemeral_key: bool,
 ) -> anyhow::Result<Vec<InternalRecoveryRequest>> {
     let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter() {
+    for (client_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
+        let client_id = *client_id;
         req_tasks.spawn(async move {
-            cur_client
-                .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
-                    overwrite_ephemeral_key,
-                }))
-                .await
+            (
+                client_id,
+                cur_client
+                    .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+                        overwrite_ephemeral_key,
+                    }))
+                    .await,
+            )
         });
     }
 
     let mut res = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
-        let cur_rec_req = inner??;
-        let cur_inner_rec = cur_rec_req.into_inner();
-        res.push(cur_inner_rec.try_into()?);
+        let (id, cur_rec_req) = inner?;
+        let cur_inner_rec = cur_rec_req?.into_inner();
+        res.push((id, cur_inner_rec.try_into()?));
     }
+    res.sort_by(|a, b| a.0.cmp(&b.0));
 
-    Ok(res)
+    Ok(res.into_iter().map(|(_, v)| v).collect())
 }
 
 pub(crate) async fn do_custodian_backup_recovery(
