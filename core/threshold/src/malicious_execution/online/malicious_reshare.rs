@@ -38,6 +38,8 @@ impl Reshare for DropReshareAsSet1 {
     // As set 1 I have an input to reshare
     type MaybeExpectedInputShares<T> = Expected<T>;
 
+    type MaybeExpectedOutput<T> = Option<T>;
+
     async fn execute<
         Prep: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
         Z: BaseRing + Zeroize,
@@ -73,6 +75,7 @@ impl Reshare for DropReshareAsSet2 {
     type MaybeExpectedPreprocessing<T> = Expected<T>;
     // As set 2 I don't have an input to reshare
     type MaybeExpectedInputShares<T> = NotExpected<T>;
+    type MaybeExpectedOutput<T> = Option<T>;
 
     async fn execute<
         Prep: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
@@ -109,6 +112,7 @@ impl Reshare for DropReshareAsBothSets {
     type MaybeExpectedPreprocessing<T> = Expected<T>;
     // As both sets I have an input to reshare
     type MaybeExpectedInputShares<T> = Expected<T>;
+    type MaybeExpectedOutput<T> = Option<T>;
 
     async fn execute<
         Prep: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,

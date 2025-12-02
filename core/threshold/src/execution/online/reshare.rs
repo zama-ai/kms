@@ -1547,7 +1547,8 @@ mod tests {
                         &mut Expected(&mut my_shares.unwrap()),
                         num_secrets,
                     )
-                    .await,
+                    .await
+                    .map(|res| res.into()),
                 None,
             ),
             TwoSetsRole::Set2(_) => {
@@ -1560,7 +1561,8 @@ mod tests {
                             &mut NotExpected::default(),
                             num_secrets,
                         )
-                        .await,
+                        .await
+                        .map(|res| res.into()),
                     Some(sessions.1),
                 )
             }
@@ -1574,7 +1576,8 @@ mod tests {
                             &mut Expected(&mut my_shares.unwrap()),
                             num_secrets,
                         )
-                        .await,
+                        .await
+                        .map(|res| res.into()),
                     Some(sessions.1),
                 )
             }
