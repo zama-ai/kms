@@ -9,9 +9,12 @@ use kms_grpc::{
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     RequestId,
 };
-use kms_lib::backup::{
-    custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
-    operator::InternalRecoveryRequest,
+use kms_lib::{
+    backup::{
+        custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
+        operator::InternalRecoveryRequest,
+    },
+    cryptography::internal_crypto_types::LegacySerialization,
 };
 use threshold_fhe::hashing::{hash_element, DomainSep};
 use tokio::task::JoinSet;
@@ -150,9 +153,9 @@ pub(crate) async fn do_custodian_backup_recovery(
                         signing_type: cur_recover.signcryption.signing_type as i32,
                     }),
                     custodian_role: cur_recover.custodian_role.one_based() as u64,
-                    operator_verification_key: bc2wrap::serialize(
-                        &cur_recover.operator_verification_key,
-                    )?,
+                    operator_verification_key: cur_recover
+                        .operator_verification_key
+                        .to_legacy_bytes()?,
                 });
             }
         }
