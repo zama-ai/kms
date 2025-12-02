@@ -37,7 +37,7 @@ use tonic_health::pb::health_check_response::ServingStatus;
 async fn test_threshold_health_endpoint_availability() {
     // make sure the store does not contain any PRSS info (currently stored under ID PRSS_INIT_REQ_ID)
     let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID.to_string()).unwrap();
-    purge(None, None, None, &epoch_id.into(), 4).await;
+    purge(None, None, &epoch_id.into(), 4).await;
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
 
     // DON'T setup PRSS in order to ensure the server is not ready yet
@@ -289,7 +289,7 @@ async fn test_threshold_shutdown() {
 async fn test_ratelimiter() {
     let req_id: RequestId = derive_request_id("test_ratelimiter").unwrap();
     let domain = dummy_domain();
-    purge(None, None, None, &req_id, 4).await;
+    purge(None, None, &req_id, 4).await;
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100,
         pub_decrypt: 1,

@@ -50,11 +50,11 @@ pub(crate) async fn reshare(
 ) {
     let req_preproc: RequestId =
         derive_request_id(&format!("full_dkg_preproc_{amount_parties}_{parameters:?}")).unwrap();
-    purge(None, None, None, &req_preproc, amount_parties).await;
+    purge(None, None, &req_preproc, amount_parties).await;
 
     let req_key: RequestId =
         derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameters:?}")).unwrap();
-    purge(None, None, None, &req_key, amount_parties).await;
+    purge(None, None, &req_key, amount_parties).await;
 
     let dkg_param: WrappedDKGParams = parameters.into();
     // Preproc should use all the tokens in the bucket,

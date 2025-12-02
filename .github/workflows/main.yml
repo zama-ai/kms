@@ -215,20 +215,27 @@ jobs:
       needs.check-changes.outputs.changes-core-grpc == 'true' ||
       needs.check-changes.outputs.changes-ci == 'true' ||
       github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core/service'
       args-tests: 'backward_compatibility'
       package-name: 'kms'
-      slab-backend: 'big-instance-service'
+      # slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
+      # Availables runners:
+      #  - 1cpu-linux-x64 (m7a.medium)
+      #  - 2cpu-linux-x64 (m7i.large)
+      #  - 4cpu-linux-x64 (m7i.xlarge)
+      #  - 8cpu-linux-x64 (c7i.2xlarge)
+      #  - 16cpu-linux-x64 (c7i.4xlarge)
+      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
+      #  - 48cpu-linux-x64 (c7i.12xlarge)
+      #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
@@ -290,19 +297,26 @@ jobs:
       github.ref == 'refs/heads/main'
     strategy:
       matrix: ${{fromJson(needs.prepare-core-client-matrix.outputs.matrix)}}
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core-client'
       package-name: 'kms-core-client'
       args-tests: ${{ matrix.args-tests }}
       app-cache-dir: 'kms-core-client'
+      # Availables runners:
+      #  - 1cpu-linux-x64 (m7a.medium)
+      #  - 2cpu-linux-x64 (m7i.large)
+      #  - 4cpu-linux-x64 (m7i.xlarge)
+      #  - 8cpu-linux-x64 (c7i.2xlarge)
+      #  - 16cpu-linux-x64 (c7i.4xlarge)
+      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
+      #  - 48cpu-linux-x64 (c7i.12xlarge)
+      #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '64cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
@@ -324,20 +338,27 @@ jobs:
       contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-client == 'true'
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core-client'
       package-name: 'kms-core-client'
       # Explicitly skip integration tests since they are all named something with centralized or threshold or full_gen_tests
       args-tests: '-- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip centralzd --skip threshld'
       app-cache-dir: 'kms-core-client'
+      # Availables runners:
+      #  - 1cpu-linux-x64 (m7a.medium)
+      #  - 2cpu-linux-x64 (m7i.large)
+      #  - 4cpu-linux-x64 (m7i.xlarge)
+      #  - 8cpu-linux-x64 (c7i.2xlarge)
+      #  - 16cpu-linux-x64 (c7i.4xlarge)
+      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
+      #  - 48cpu-linux-x64 (c7i.12xlarge)
+      #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
@@ -364,19 +385,26 @@ jobs:
       contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core/grpc'
       args-tests: '--all-features'
       package-name: 'kms-grpc'
       app-cache-dir: 'kms-grpc'
+      # Availables runners:
+      #  - 1cpu-linux-x64 (m7a.medium)
+      #  - 2cpu-linux-x64 (m7i.large)
+      #  - 4cpu-linux-x64 (m7i.xlarge)
+      #  - 8cpu-linux-x64 (c7i.2xlarge)
+      #  - 16cpu-linux-x64 (c7i.4xlarge)
+      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
+      #  - 48cpu-linux-x64 (c7i.12xlarge)
+      #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
@@ -453,21 +481,28 @@ jobs:
       needs.check-changes.outputs.changes-ci == 'true'
     strategy:
       matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core/service'
       args-tests: ${{ matrix.args-tests }}
       run-minio: true
       package-name: 'kms'
-      slab-backend: 'big-instance-service'
+      # slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
+      # Availables runners:
+      #  - 1cpu-linux-x64 (m7a.medium)
+      #  - 2cpu-linux-x64 (m7i.large)
+      #  - 4cpu-linux-x64 (m7i.xlarge)
+      #  - 8cpu-linux-x64 (c7i.2xlarge)
+      #  - 16cpu-linux-x64 (c7i.4xlarge)
+      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
+      #  - 48cpu-linux-x64 (c7i.12xlarge)
+      #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '64cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
@@ -503,7 +538,7 @@ jobs:
       contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true'
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core/threshold'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
@@ -512,13 +547,20 @@ jobs:
       package-name: 'threshold-fhe'
       app-cache-dir: 'threshold-fhe'
       nextest-test-threads: 4
+      # Availables runners:
+      #  - 1cpu-linux-x64 (m7a.medium)
+      #  - 2cpu-linux-x64 (m7i.large)
+      #  - 4cpu-linux-x64 (m7i.xlarge)
+      #  - 8cpu-linux-x64 (c7i.2xlarge)
+      #  - 16cpu-linux-x64 (c7i.4xlarge)
+      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
+      #  - 48cpu-linux-x64 (c7i.12xlarge)
+      #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
@@ -542,7 +584,7 @@ jobs:
       contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
       working-directory: './core/threshold'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
@@ -552,12 +594,19 @@ jobs:
       package-name: 'threshold-fhe'
       app-cache-dir: 'threshold-fhe'
       nextest-test-threads: 4
+      # Availables runners:
+      #  - 1cpu-linux-x64 (m7a.medium)
+      #  - 2cpu-linux-x64 (m7i.large)
+      #  - 4cpu-linux-x64 (m7i.xlarge)
+      #  - 8cpu-linux-x64 (c7i.2xlarge)
+      #  - 16cpu-linux-x64 (c7i.4xlarge)
+      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
+      #  - 48cpu-linux-x64 (c7i.12xlarge)
+      #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '32cpu-linux-x64'
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}

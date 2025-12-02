@@ -64,7 +64,7 @@ pub(crate) async fn crs_gen(
             "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}_{insecure}"
         ))
         .unwrap();
-        purge(None, None, None, &req_crs, amount_parties).await;
+        purge(None, None, &req_crs, amount_parties).await;
     }
     let dkg_param: WrappedDKGParams = parameter.into();
 
