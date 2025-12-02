@@ -277,6 +277,17 @@ fn test_crs_gen_metadata(
             )
         })?;
     let new_current = CrsGenMetadata::new(crs_id, digest, max_num_bits, external_signature.clone());
+    match &new_current {
+        CrsGenMetadata::LegacyV0(_) => {
+            return Err(test.failure(
+                "Expected current CrsGenMetadata, got legacy".to_string(),
+                format,
+            ))
+        }
+        CrsGenMetadata::Current(_) => {
+            // Expected. Test done as match to ensure that it gets updated in case new types get added
+        }
+    }
 
     let new_legacy = SignedPubDataHandleInternal::new(
         crs_id.to_string(),

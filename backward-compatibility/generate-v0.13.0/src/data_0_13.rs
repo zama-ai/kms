@@ -91,7 +91,7 @@ use backward_compatibility::{
     InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest,
     PrssSetTest, PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest,
-    RecoveryValidationMaterialTest, ShareTest, SigncryptionPayloadTest,
+    RecoveryValidationMaterialTest, ReleasePCRValuesTest, ShareTest, SigncryptionPayloadTest,
     SignedPubDataHandleInternalTest, SoftwareVersionTest, TestMetadataDD, TestMetadataKMS,
     TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
     UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
@@ -264,6 +264,12 @@ const SHARE_128_TEST: ShareTest = ShareTest {
     value: 934565743256423875434534434,
     owner: 1,
     residue_poly_size: 128,
+};
+
+// Distributed Decryption test
+const RELEASE_PCR_VALUES_TEST: ReleasePCRValuesTest = ReleasePCRValuesTest {
+    test_filename: Cow::Borrowed("release_pcr_values"),
+    state: 64,
 };
 
 // KMS test
@@ -1392,6 +1398,26 @@ impl DistributedDecryptionV0_13 {
 
         TestMetadataDD::PrfKey(PRF_KEY_TEST)
     }
+
+    fn gen_release_pcr_values(dir: &PathBuf) -> TestMetadataDD {
+        let mut rng = AesRng::seed_from_u64(RELEASE_PCR_VALUES_TEST.state);
+        let mut pcr0 = [0u8; 64];
+        rng.fill_bytes(&mut pcr0);
+        let mut pcr1 = [0u8; 33];
+        rng.fill_bytes(&mut pcr1);
+        let mut pcr2 = [0u8; 73];
+        rng.fill_bytes(&mut pcr2);
+
+        let pcr_values = ReleasePCRValues {
+            pcr0: pcr0.to_vec(),
+            pcr1: pcr1.to_vec(),
+            pcr2: pcr2.to_vec(),
+        };
+
+        store_versioned_test!(&pcr_values, dir, &RELEASE_PCR_VALUES_TEST.test_filename);
+
+        TestMetadataDD::ReleasePCRValues(RELEASE_PCR_VALUES_TEST)
+    }
 }
 
 struct KmsGrpcV0_13;
@@ -1492,6 +1518,7 @@ impl KMSCoreVersion for V0_13 {
             DistributedDecryptionV0_13::gen_share_64(&dir),
             DistributedDecryptionV0_13::gen_share_128(&dir),
             DistributedDecryptionV0_13::gen_prf_key(&dir),
+            DistributedDecryptionV0_13::gen_release_pcr_values(&dir),
         ]
     }
 

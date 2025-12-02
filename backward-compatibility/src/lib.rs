@@ -414,6 +414,26 @@ impl TestType for PrfKeyTest {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ReleasePCRValuesTest {
+    pub test_filename: Cow<'static, str>,
+    pub state: u64,
+}
+
+impl TestType for ReleasePCRValuesTest {
+    fn module(&self) -> String {
+        DISTRIBUTED_DECRYPTION_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "ReleasePCRValues".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 // Distributed Decryption test
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ThresholdFheKeysTest {
@@ -832,6 +852,7 @@ pub enum TestMetadataDD {
     PrssSet(PrssSetTest),
     PrfKey(PrfKeyTest),
     Share(ShareTest),
+    ReleasePCRValues(ReleasePCRValuesTest),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -173,4 +173,12 @@
             seed: 100,
         )),
     ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "threshold-fhe",
+        metadata: ReleasePCRValues((
+            test_filename: "release_pcr_values",
+            state: 64,
+        )),
+    ),
 ]

@@ -11,7 +11,8 @@ use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
-    PRSSSetupTest, PrfKeyTest, PrssSetTest, ShareTest, TestMetadataDD, TestType, Testcase,
+    PRSSSetupTest, PrfKeyTest, PrssSetTest, ReleasePCRValuesTest, ShareTest, TestMetadataDD,
+    TestType, Testcase,
 };
 use rand::{RngCore, SeedableRng};
 use std::{env, path::Path};
@@ -30,6 +31,7 @@ use threshold_fhe::{
             prss::{PRSSSetup, PrssSet, PrssSetV0},
         },
     },
+    networking::tls::ReleasePCRValues,
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
 
@@ -224,6 +226,38 @@ fn test_prf_key(
     }
 }
 
+fn test_release_pcr_values(
+    dir: &Path,
+    test: &ReleasePCRValuesTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: ReleasePCRValues = load_and_unversionize(dir, test, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let mut pcr0 = [0u8; 64];
+    rng.fill_bytes(&mut pcr0);
+    let mut pcr1 = [0u8; 33];
+    rng.fill_bytes(&mut pcr1);
+    let mut pcr2 = [0u8; 73];
+    rng.fill_bytes(&mut pcr2);
+
+    let new_versionized = ReleasePCRValues {
+        pcr0: pcr0.to_vec(),
+        pcr1: pcr1.to_vec(),
+        pcr2: pcr2.to_vec(),
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid release PCR values key:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 struct ThresholdFhe;
 impl TestedModule for ThresholdFhe {
     type Metadata = TestMetadataDD;
@@ -241,6 +275,9 @@ impl TestedModule for ThresholdFhe {
             Self::Metadata::PrssSet(test) => test_prss_set(test_dir.as_ref(), test, format).into(),
             Self::Metadata::Share(test) => test_share(test_dir.as_ref(), test, format).into(),
             Self::Metadata::PrfKey(test) => test_prf_key(test_dir.as_ref(), test, format).into(),
+            Self::Metadata::ReleasePCRValues(test) => {
+                test_release_pcr_values(test_dir.as_ref(), test, format).into()
+            }
         }
     }
 }
