@@ -1619,7 +1619,7 @@ checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 [[package]]
 name = "bc2wrap"
 version = "2.0.1"
-source = "git+https://github.com/zama-ai/kms.git?rev=68a02d5901415017133ffae6a3edc76e0de5e3db#68a02d5901415017133ffae6a3edc76e0de5e3db"
+source = "git+https://github.com/zama-ai/kms.git?rev=7118fd0f603185c0a4673e343cc5379f15f4bb5e#7118fd0f603185c0a4673e343cc5379f15f4bb5e"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -3789,7 +3789,7 @@ dependencies = [
 [[package]]
 name = "kms"
 version = "0.13.0-rc.0"
-source = "git+https://github.com/zama-ai/kms.git?rev=68a02d5901415017133ffae6a3edc76e0de5e3db#68a02d5901415017133ffae6a3edc76e0de5e3db"
+source = "git+https://github.com/zama-ai/kms.git?rev=7118fd0f603185c0a4673e343cc5379f15f4bb5e#7118fd0f603185c0a4673e343cc5379f15f4bb5e"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3868,7 +3868,7 @@ dependencies = [
 [[package]]
 name = "kms-grpc"
 version = "0.13.0-rc.0"
-source = "git+https://github.com/zama-ai/kms.git?rev=68a02d5901415017133ffae6a3edc76e0de5e3db#68a02d5901415017133ffae6a3edc76e0de5e3db"
+source = "git+https://github.com/zama-ai/kms.git?rev=7118fd0f603185c0a4673e343cc5379f15f4bb5e#7118fd0f603185c0a4673e343cc5379f15f4bb5e"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -4377,7 +4377,7 @@ dependencies = [
 [[package]]
 name = "observability"
 version = "0.13.0-rc.0"
-source = "git+https://github.com/zama-ai/kms.git?rev=68a02d5901415017133ffae6a3edc76e0de5e3db#68a02d5901415017133ffae6a3edc76e0de5e3db"
+source = "git+https://github.com/zama-ai/kms.git?rev=7118fd0f603185c0a4673e343cc5379f15f4bb5e#7118fd0f603185c0a4673e343cc5379f15f4bb5e"
 dependencies = [
  "anyhow",
  "axum",
@@ -6655,7 +6655,7 @@ dependencies = [
 [[package]]
 name = "threshold-fhe"
 version = "0.13.0-rc.0"
-source = "git+https://github.com/zama-ai/kms.git?rev=68a02d5901415017133ffae6a3edc76e0de5e3db#68a02d5901415017133ffae6a3edc76e0de5e3db"
+source = "git+https://github.com/zama-ai/kms.git?rev=7118fd0f603185c0a4673e343cc5379f15f4bb5e#7118fd0f603185c0a4673e343cc5379f15f4bb5e"
 dependencies = [
  "aes",
  "aes-prng",

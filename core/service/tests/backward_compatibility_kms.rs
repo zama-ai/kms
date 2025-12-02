@@ -14,11 +14,12 @@ use backward_compatibility::{
     tests::{run_all_tests, TestedModule},
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest, HybridKemCtTest,
     InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
-    InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest, NodeInfoTest,
-    OperatorBackupOutputTest, PrivateSigKeyTest, PrssSetupCombinedTest, PublicSigKeyTest,
-    RecoveryValidationMaterialTest, SigncryptionPayloadTest, SoftwareVersionTest, TestMetadataKMS,
-    TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
+    InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
+    KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PrivateSigKeyTest,
+    PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    SigncryptionPayloadTest, SoftwareVersionTest, TestMetadataKMS, TestType, Testcase,
+    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
 };
 use kms_grpc::{
     kms::v1::TypedPlaintext,
@@ -33,8 +34,8 @@ use kms_lib::{
             InternalCustodianSetupMessage,
         },
         operator::{
-            BackupMaterial, InnerOperatorBackupOutput, Operator, RecoveryValidationMaterial,
-            DSEP_BACKUP_COMMITMENT,
+            BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
+            RecoveryValidationMaterial, DSEP_BACKUP_COMMITMENT,
         },
         BackupCiphertext,
     },
@@ -759,6 +760,45 @@ fn test_recovery_material(
     }
 }
 
+fn test_internal_recovery_request(
+    dir: &Path,
+    test: &InternalRecoveryRequestTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: InternalRecoveryRequest = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let backup_id: RequestId = RequestId::new_random(&mut rng);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+    let (_dec_key, enc_key) = encryption.keygen().unwrap();
+    let mut cts = BTreeMap::new();
+    for role_j in 1..=test.amount {
+        let cur_role = Role::indexed_from_one(role_j as usize);
+        let mut payload = [0_u8; 32];
+        rng.fill_bytes(&mut payload);
+        let signcryption = UnifiedSigncryption {
+            payload: payload.to_vec(),
+            pke_type: PkeSchemeType::MlKem512,
+            signing_type: SigningSchemeType::Ecdsa256k1,
+        };
+        cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
+    }
+    let new_versionized =
+        InternalRecoveryRequest::new(enc_key, cts, backup_id, Role::indexed_from_one(test.role))
+            .unwrap();
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid InternalRecoveryRequest:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 fn test_internal_custodian_context(
     dir: &Path,
     test: &InternalCustodianContextTest,
@@ -1129,6 +1169,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::RecoveryValidationMaterial(test) => {
                 test_recovery_material(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::InternalRecoveryRequest(test) => {
+                test_internal_recovery_request(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::InternalCustodianContext(test) => {
                 test_internal_custodian_context(test_dir.as_ref(), test, format).into()

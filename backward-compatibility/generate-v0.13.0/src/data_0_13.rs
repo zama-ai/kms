@@ -9,8 +9,8 @@ use kms_0_13_0::backup::custodian::{
 use kms_0_13_0::backup::{
     custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage},
     operator::{
-        BackupMaterial, InnerOperatorBackupOutput, Operator, RecoveryValidationMaterial,
-        DSEP_BACKUP_COMMITMENT,
+        BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
+        RecoveryValidationMaterial, DSEP_BACKUP_COMMITMENT,
     },
     BackupCiphertext,
 };
@@ -89,14 +89,15 @@ use backward_compatibility::parameters::{
 use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest, HybridKemCtTest,
     InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
-    InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest, NodeInfoTest,
-    OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest,
-    PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest,
-    RecoveryValidationMaterialTest, ReleasePCRValuesTest, ShareTest, SigncryptionPayloadTest,
-    SignedPubDataHandleInternalTest, SoftwareVersionTest, TestMetadataDD, TestMetadataKMS,
-    TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
-    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
+    KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest,
+    PrivDataTypeTest, PrivateSigKeyTest, PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest,
+    PublicKeyTypeTest, PublicSigKeyTest, RecoveryValidationMaterialTest, ReleasePCRValuesTest,
+    ShareTest, SigncryptionPayloadTest, SignedPubDataHandleInternalTest, SoftwareVersionTest,
+    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest,
+    UnifiedCipherTest, UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest,
+    UnifiedUnsigncryptionKeyTest, DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME,
+    KMS_MODULE_NAME,
 };
 
 use kms_0_13_0::cryptography::signcryption::SigncryptionPayload;
@@ -471,6 +472,14 @@ const RECOVERY_MATERIAL_TEST: RecoveryValidationMaterialTest = RecoveryValidatio
     internal_cus_context_filename: Cow::Borrowed("internal_cus_context_handle"),
     state: 300,
     custodian_count: 5,
+};
+
+// KMS test
+const INTERNAL_RECOVERY_REQEUST_TEST: InternalRecoveryRequestTest = InternalRecoveryRequestTest {
+    test_filename: Cow::Borrowed("internal_recovery_request"),
+    amount: 10,
+    role: 2,
+    state: 300,
 };
 
 // KMS test
@@ -995,6 +1004,38 @@ impl KmsV0_13 {
             &RECOVERY_MATERIAL_TEST.test_filename
         );
         TestMetadataKMS::RecoveryValidationMaterial(RECOVERY_MATERIAL_TEST)
+    }
+
+    fn gen_internal_recovery_request(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(INTERNAL_RECOVERY_REQEUST_TEST.state);
+        let backup_id: RequestId = RequestId::new_random(&mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_dec_key, enc_key) = encryption.keygen().unwrap();
+        let mut cts = BTreeMap::new();
+        for role_j in 1..=INTERNAL_RECOVERY_REQEUST_TEST.amount {
+            let cur_role = Role::indexed_from_one(role_j as usize);
+            let mut payload = [0_u8; 32];
+            rng.fill_bytes(&mut payload);
+            let signcryption = UnifiedSigncryption {
+                payload: payload.to_vec(),
+                pke_type: PkeSchemeType::MlKem512,
+                signing_type: SigningSchemeType::Ecdsa256k1,
+            };
+            cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
+        }
+        let recovery_material = InternalRecoveryRequest::new(
+            enc_key,
+            cts,
+            backup_id,
+            Role::indexed_from_one(INTERNAL_RECOVERY_REQEUST_TEST.role),
+        )
+        .unwrap();
+        store_versioned_test!(
+            &recovery_material,
+            dir,
+            &INTERNAL_RECOVERY_REQEUST_TEST.test_filename
+        );
+        TestMetadataKMS::InternalRecoveryRequest(INTERNAL_RECOVERY_REQEUST_TEST)
     }
 
     fn gen_internal_cus_context_handles(dir: &PathBuf) -> TestMetadataKMS {
@@ -1546,6 +1587,7 @@ impl KMSCoreVersion for V0_13 {
             KmsV0_13::gen_node_info(&dir),
             KmsV0_13::gen_software_version(&dir),
             KmsV0_13::gen_recovery_material(&dir),
+            KmsV0_13::gen_internal_recovery_request(&dir),
             KmsV0_13::gen_internal_cus_context_handles(&dir),
             KmsV0_13::gen_internal_cus_setup_msg(&dir),
             KmsV0_13::gen_kms_fhe_key_handles(&dir),

@@ -569,6 +569,16 @@
     (
         kms_core_version_min: "0.13.0",
         kms_core_module: "kms",
+        metadata: InternalRecoveryRequest((
+            test_filename: "internal_recovery_request",
+            amount: 10,
+            role: 2,
+            state: 300,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "kms",
         metadata: InternalCustodianContext((
             test_filename: "internal_cus_context",
             internal_cus_setup_filename: "internal_cus_setup_handle",
