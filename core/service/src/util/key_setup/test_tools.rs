@@ -600,7 +600,7 @@ pub async fn purge_recovery_material(path: Option<&Path>, amount_parties: usize)
 }
 
 #[cfg(any(test, feature = "testing"))]
-pub(crate) mod setup {
+pub mod setup {
     #[cfg(feature = "slow_tests")]
     use crate::consts::{TEST_THRESHOLD_CRS_ID_13P, TEST_THRESHOLD_KEY_ID_13P};
     use crate::util::key_setup::{
@@ -681,26 +681,26 @@ pub(crate) mod setup {
         .await;
     }
 
-    pub(crate) async fn ensure_testing_material_exists(path: Option<&Path>) {
+    pub async fn ensure_testing_material_exists(path: Option<&Path>) {
         testing_material(path).await;
     }
 
     #[cfg(feature = "slow_tests")]
-    async fn default_material() {
+    async fn default_material(path: Option<&Path>) {
         use crate::consts::{
             DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM,
             DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_CRS_ID_13P,
             DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P,
             DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
         };
-        ensure_dir_exist(None).await;
-        ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
+        ensure_dir_exist(path).await;
+        ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
         central_material(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_DEFAULT_ID,
             &DEFAULT_CENTRAL_CRS_ID,
-            None,
+            path,
         )
         .await;
         threshold_material(
@@ -708,7 +708,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_KEY_ID_4P,
             &DEFAULT_THRESHOLD_CRS_ID_4P,
             4,
-            None,
+            path,
         )
         .await;
         threshold_material(
@@ -716,7 +716,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_KEY_ID_10P,
             &DEFAULT_THRESHOLD_CRS_ID_10P,
             10,
-            None,
+            path,
         )
         .await;
         threshold_material(
@@ -724,7 +724,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_KEY_ID_13P,
             &DEFAULT_THRESHOLD_CRS_ID_13P,
             13,
-            None,
+            path,
         )
         .await;
     }
@@ -816,8 +816,13 @@ pub(crate) mod setup {
     }
 
     #[cfg(feature = "slow_tests")]
-    pub(crate) async fn ensure_default_material_exists() {
-        default_material().await;
+    pub async fn ensure_default_material_exists() {
+        default_material(None).await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    pub async fn ensure_default_material_exists_to_path(path: Option<&Path>) {
+        default_material(path).await;
     }
 }
 
