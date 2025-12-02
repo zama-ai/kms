@@ -15,10 +15,10 @@ use backward_compatibility::{
     AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest, HybridKemCtTest,
     InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest, NodeInfoTest,
-    OperatorBackupOutputTest, PrivateSigKeyTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
-    SigncryptionPayloadTest, SoftwareVersionTest, TestMetadataKMS, TestType, Testcase,
-    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
-    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
+    OperatorBackupOutputTest, PrivateSigKeyTest, PrssSetupCombinedTest, PublicSigKeyTest,
+    RecoveryValidationMaterialTest, SigncryptionPayloadTest, SoftwareVersionTest, TestMetadataKMS,
+    TestType, Testcase, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
+    UnifiedSigncryptionKeyTest, UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
 };
 use kms_grpc::{
     kms::v1::TypedPlaintext,
@@ -55,7 +55,7 @@ use kms_lib::{
             KeyGenMetadataInner, KmsFheKeyHandles,
         },
         context::{ContextInfo, NodeInfo, SoftwareVersion},
-        threshold::service::ThresholdFheKeys,
+        threshold::service::{session::PRSSSetupCombined, ThresholdFheKeys},
     },
     util::key_setup::FhePublicKey,
     vault::keychain::AppKeyBlob,
@@ -70,7 +70,11 @@ use std::{
 };
 use tfhe::integer::compression_keys::DecompressionKey;
 use threshold_fhe::{
-    execution::{runtime::party::Role, tfhe_internals::public_keysets::FhePubKeySet},
+    algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+    execution::{
+        runtime::party::Role, small_execution::prss::PRSSSetup,
+        tfhe_internals::public_keysets::FhePubKeySet,
+    },
     networking::tls::ReleasePCRValues,
 };
 
@@ -478,6 +482,35 @@ fn test_unified_signcryption(
         Err(test.failure(
             format!(
                 "Invalid UnifiedSigncryption:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_prss_setup_combined(
+    dir: &Path,
+    test: &PrssSetupCombinedTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: PRSSSetupCombined = load_and_unversionize(dir, test, format)?;
+    let prss_setup_z64: PRSSSetup<ResiduePolyF4Z64> =
+        load_and_unversionize_auxiliary(dir, test, &test.prss_setup_64, format)?;
+    let prss_setup_z128: PRSSSetup<ResiduePolyF4Z128> =
+        load_and_unversionize_auxiliary(dir, test, &test.prss_setup_128, format)?;
+    let new_versionized = PRSSSetupCombined {
+        prss_setup_z64,
+        prss_setup_z128,
+        num_parties: test.amount as u8,
+        threshold: test.threshold as u8,
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid PRSS Setup Combined test:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -1072,6 +1105,9 @@ impl TestedModule for KMS {
             }
             Self::Metadata::UnifiedSigncryption(test) => {
                 test_unified_signcryption(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::PrssSetupCombined(test) => {
+                test_prss_setup_combined(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::BackupCiphertext(test) => {
                 test_backup_ciphertext(test_dir.as_ref(), test, format).into()

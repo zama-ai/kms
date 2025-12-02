@@ -28,6 +28,7 @@ use kms_0_13_0::engine::base::{
 };
 use kms_0_13_0::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_13_0::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
+use kms_0_13_0::engine::threshold::service::session::PRSSSetupCombined;
 use kms_0_13_0::engine::threshold::service::ThresholdFheKeys;
 use kms_0_13_0::util::key_setup::FhePublicKey;
 use kms_0_13_0::vault::keychain::AppKeyBlob;
@@ -90,7 +91,7 @@ use backward_compatibility::{
     InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
     InternalCustodianSetupMessageTest, KeyGenMetadataTest, KmsFheKeyHandlesTest, NodeInfoTest,
     OperatorBackupOutputTest, PRSSSetupTest, PrfKeyTest, PrivDataTypeTest, PrivateSigKeyTest,
-    PrssSetTest, PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest,
+    PrssSetTest, PrssSetupCombinedTest, PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest,
     RecoveryValidationMaterialTest, ReleasePCRValuesTest, ShareTest, SigncryptionPayloadTest,
     SignedPubDataHandleInternalTest, SoftwareVersionTest, TestMetadataDD, TestMetadataKMS,
     TestMetadataKmsGrpc, ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest,
@@ -411,6 +412,16 @@ const UNIFIED_CIPHER_TEST: UnifiedCipherTest = UnifiedCipherTest {
     test_filename: Cow::Borrowed("unified_ciphertext"),
     hybrid_kem_filename: Cow::Borrowed("hybrid_kem_ct_handle"),
     state: 123,
+};
+
+// KMS test
+const PRSS_SETUP_COMBINED_TEST: PrssSetupCombinedTest = PrssSetupCombinedTest {
+    test_filename: Cow::Borrowed("prss_setup_combined"),
+    prss_setup_64: Cow::Borrowed("prss_setup_64"),
+    prss_setup_128: Cow::Borrowed("prss_setup_128"),
+    role_i: 3,
+    amount: 13,
+    threshold: 4,
 };
 
 // KMS test
@@ -792,6 +803,43 @@ impl KmsV0_13 {
         store_versioned_test!(&cipher, dir, &test.test_filename);
 
         TestMetadataKMS::HybridKemCt(test)
+    }
+
+    fn gen_prss_setup_combined(dir: &PathBuf) -> TestMetadataKMS {
+        let role = Role::indexed_from_one(PRSS_SETUP_COMBINED_TEST.role_i);
+        let base_session_64 = get_networkless_base_session_for_parties(
+            PRSS_SETUP_COMBINED_TEST.amount as usize,
+            PRSS_SETUP_COMBINED_TEST.threshold,
+            role,
+        );
+        let base_session_128 = get_networkless_base_session_for_parties(
+            PRSS_SETUP_COMBINED_TEST.amount as usize,
+            PRSS_SETUP_COMBINED_TEST.threshold,
+            role,
+        );
+        let prss_setup_z64 = get_dummy_prss_setup::<ResiduePolyF4Z64>(base_session_64);
+        let prss_setup_z128 = get_dummy_prss_setup::<ResiduePolyF4Z128>(base_session_128);
+        let prss = PRSSSetupCombined {
+            prss_setup_z64: prss_setup_z64.clone(),
+            prss_setup_z128: prss_setup_z128.clone(),
+            num_parties: PRSS_SETUP_COMBINED_TEST.amount,
+            threshold: PRSS_SETUP_COMBINED_TEST.threshold,
+        };
+        store_versioned_auxiliary!(
+            &prss_setup_z64,
+            dir,
+            &PRSS_SETUP_COMBINED_TEST.test_filename,
+            &PRSS_SETUP_COMBINED_TEST.prss_setup_64,
+        );
+        store_versioned_auxiliary!(
+            &prss_setup_z128,
+            dir,
+            &PRSS_SETUP_COMBINED_TEST.test_filename,
+            &PRSS_SETUP_COMBINED_TEST.prss_setup_128,
+        );
+
+        store_versioned_test!(&prss, dir, &PRSS_SETUP_COMBINED_TEST.test_filename);
+        TestMetadataKMS::PrssSetupCombined(PRSS_SETUP_COMBINED_TEST)
     }
 
     fn gen_context_info(dir: &PathBuf) -> TestMetadataKMS {
@@ -1493,6 +1541,7 @@ impl KMSCoreVersion for V0_13 {
             KmsV0_13::gen_backup_ciphertext(&dir),
             KmsV0_13::gen_unified_cipher(&dir),
             KmsV0_13::gen_hybrid_kem_ct(&dir),
+            KmsV0_13::gen_prss_setup_combined(&dir),
             KmsV0_13::gen_context_info(&dir),
             KmsV0_13::gen_node_info(&dir),
             KmsV0_13::gen_software_version(&dir),
