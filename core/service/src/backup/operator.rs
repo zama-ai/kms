@@ -48,7 +48,7 @@ pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
 pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRECO";
 const TIMESTAMP_VALIDATION_WINDOW_SECS: u64 = 24 * 3600; // 1 day
 
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum InternalRecoveryRequestVersioned {
     V0(InternalRecoveryRequest),
 }
@@ -62,7 +62,7 @@ impl Named for InternalRecoveryRequest {
 /// contain any authentication on the backup encryption key [`ephem_op_enc_key`].
 /// This is because we have to assume that the operator has no access to the private storage
 /// when creating this object.
-#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(InternalRecoveryRequestVersioned)]
 pub struct InternalRecoveryRequest {
     ephem_op_enc_key: UnifiedPublicEncKey,
