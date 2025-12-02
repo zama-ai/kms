@@ -114,6 +114,12 @@ jobs:
             deployment-type: threshold
             num-parties: 4
             runner-label: ${{ needs.start-runner-threshold.outputs.label }}
+          - name: threshold-context
+            deployment-type: threshold
+            test-name: threshold_context
+            num-parties: 6
+            enable-tls: true
+            runner-label: ${{ needs.start-runner-threshold.outputs.label }}
           - name: centralized
             deployment-type: centralized
             num-parties: 1
@@ -308,6 +314,7 @@ jobs:
         id: tests
         env:
           DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
+          TEST_NAME: ${{ matrix.test-name || matrix.deployment-type }} # Test name (defaults to deployment-type)
           NAMESPACE: kms-test-${{ matrix.deployment-type }}
           NUM_PARTIES: ${{ matrix.num-parties }} # Number of parties
         run: |
@@ -315,7 +322,7 @@ jobs:
           # Here we run the tests and capture exit code
           #============================================================
           #
-          cargo nextest run --test kubernetes_test_"${DEPLOYMENT_TYPE}" --profile ci --no-fail-fast
+          cargo nextest run --test kubernetes_test_"${TEST_NAME}" --profile ci --no-fail-fast
           echo "TEST_EXIT_CODE=$?" >> "${GITHUB_ENV}"
 
           # Collect logs after tests complete
