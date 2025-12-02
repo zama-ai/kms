@@ -1031,25 +1031,25 @@ mod tests {
         )
         .await;
 
-        let (mut results_set_1, mut results_set_2) = (Vec::new(), Vec::new());
-
-        for (role, out, expected_sk) in results {
-            match role {
-                TwoSetsRole::Set1(role) => results_set_1.push((role, out, expected_sk)),
-                TwoSetsRole::Set2(role) => results_set_2.push((role, out, expected_sk)),
+        let (results_set_1_only, mut results_set_2_and_both): (Vec<_>, Vec<_>) = results
+            .into_iter()
+            .partition_map(|(role, out, expected_sk)| match role {
+                TwoSetsRole::Set1(role) => itertools::Either::Left((role, out, expected_sk)),
+                TwoSetsRole::Set2(role) => itertools::Either::Right((role, out, expected_sk)),
                 TwoSetsRole::Both(dual_role) => {
-                    results_set_1.push((dual_role.role_set_1, out.clone(), expected_sk.clone()));
-                    results_set_2.push((dual_role.role_set_2, out, expected_sk));
+                    itertools::Either::Right((dual_role.role_set_2, out, expected_sk))
                 }
-            }
-        }
+            });
 
         // we need to sort by identities and then reconstruct
-        results_set_2.sort_by(|a, b| a.0.cmp(&(b.0)));
-        let new_shares: Vec<_> = results_set_2.into_iter().map(|(_, b, _)| b).collect();
+        results_set_2_and_both.sort_by(|a, b| a.0.cmp(&(b.0)));
+        let new_shares: Vec<_> = results_set_2_and_both
+            .into_iter()
+            .map(|(_, b, _)| b)
+            .collect();
         let actual_sk = reconstruct_sk(new_shares.clone(), threshold.threshold_set_2 as usize, 0);
 
-        let (should_be_zeroized_shares, expected_sks): (Vec<_>, Vec<_>) = results_set_1
+        let (should_be_zeroized_shares, expected_sks): (Vec<_>, Vec<_>) = results_set_1_only
             .into_iter()
             .map(|(role, out, expected_sk)| ((role, out), expected_sk.unwrap()))
             .unzip();
