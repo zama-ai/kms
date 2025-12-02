@@ -43,8 +43,6 @@ pub struct NotExpected<T> {
 
 pub struct Expected<T>(pub T);
 
-pub struct Optional<T>(pub Option<T>);
-
 pub trait MaybeExpected<T>: From<Option<T>> + Into<Option<T>> {}
 
 impl<T> From<Option<T>> for NotExpected<T> {
@@ -75,22 +73,8 @@ impl<T> From<Expected<T>> for Option<T> {
     }
 }
 
-impl<T> From<Option<T>> for Optional<T> {
-    fn from(value: Option<T>) -> Self {
-        Optional(value)
-    }
-}
-
-impl<T> From<Optional<T>> for Option<T> {
-    fn from(value: Optional<T>) -> Self {
-        value.0
-    }
-}
-
 impl<T> MaybeExpected<T> for NotExpected<T> {}
-impl<T> MaybeExpected<T> for Optional<T> {}
 impl<T> MaybeExpected<T> for Expected<T> {}
-// Canonical impl (not used in the codebase, but could be useful for users)
 impl<T> MaybeExpected<T> for Option<T> {}
 
 #[async_trait]
@@ -186,7 +170,7 @@ impl<Ses: BaseSessionHandles, OpenProtocol: RobustOpen, BroadcastProtocol: Broad
     // This is optional as a legacy use of this protocol
     // was to reshare after a failed DKG where all parties
     // might not have input to share.
-    type MaybeExpectedInputShares<T> = Optional<T>;
+    type MaybeExpectedInputShares<T> = Option<T>;
     // In same set resharing we always have output shares
     type MaybeExpectedOutput<T> = Expected<T>;
 
@@ -198,7 +182,7 @@ impl<Ses: BaseSessionHandles, OpenProtocol: RobustOpen, BroadcastProtocol: Broad
         &self,
         sessions: &mut Self::ReshareSessions,
         preproc: &mut Expected<&mut Prep>,
-        input_shares: &mut Optional<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
+        input_shares: &mut Option<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
         expected_input_len: usize,
     ) -> anyhow::Result<Expected<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
@@ -208,7 +192,7 @@ impl<Ses: BaseSessionHandles, OpenProtocol: RobustOpen, BroadcastProtocol: Broad
             reshare_same_sets(
                 preproc.0,
                 sessions,
-                &mut input_shares.0,
+                input_shares,
                 expected_input_len,
                 &self.open_protocol,
                 &self.broadcast_protocol,

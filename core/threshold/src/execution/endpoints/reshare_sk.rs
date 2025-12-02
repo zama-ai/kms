@@ -10,7 +10,7 @@ use crate::{
         online::{
             preprocessing::{memory::InMemoryBasePreprocessing, BasePreprocessing},
             reshare::{
-                Expected, NotExpected, Optional, Reshare, SecureSameSetReshare,
+                Expected, NotExpected, Reshare, SecureSameSetReshare,
                 SecureTwoSetsReshareAsBothSets, SecureTwoSetsReshareAsSet1,
                 SecureTwoSetsReshareAsSet2,
             },
@@ -208,7 +208,7 @@ impl ReshareSecretKeys for SecureReshareSecretKeys {
             Expected(preproc128),
             Expected(preproc64),
             session,
-            Optional(input_share.as_mut()),
+            input_share.as_mut(),
             parameters,
         )
         .await?
