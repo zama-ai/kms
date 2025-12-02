@@ -586,11 +586,6 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
         let serialized_key = verf_key.to_legacy_bytes().unwrap();
-        println!("Serialized key: {:x?}", serialized_key);
-        println!(
-            "Serialized key sec1: {:x?}",
-            verf_key.pk.0.to_sec1_bytes().to_vec()
-        );
         let deserialized_key = PublicSigKey::from_legacy_bytes(&serialized_key).unwrap();
         assert_eq!(verf_key, deserialized_key);
     }

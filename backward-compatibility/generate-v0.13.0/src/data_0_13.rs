@@ -140,7 +140,7 @@ fn convert_dkg_params_regular(value: DKGParamsRegularTest) -> DKGParamsRegular {
         ciphertext_parameters: convert_classic_pbs_parameters(value.ciphertext_parameters),
         dedicated_compact_public_key_parameters: None,
         compression_decompression_parameters: None,
-        secret_key_deviations: None, // TODO THIS BREAKS BACKWARD COMPATIBILITY !!! CHECK WITH TITOUAN
+        secret_key_deviations: None,
         cpk_re_randomization_ksk_params: None,
     }
 }
@@ -227,6 +227,7 @@ const PRSS_SETUP_RPOLY_128_TEST: PRSSSetupTest = PRSSSetupTest {
     residue_poly_size: 128,
 };
 
+// Distributed Decryption test
 const PRF_KEY_TEST: PrfKeyTest = PrfKeyTest {
     test_filename: Cow::Borrowed("prf_key"),
     seed: 100,
@@ -236,7 +237,7 @@ const PRF_KEY_TEST: PrfKeyTest = PrfKeyTest {
 const PRSS_SET_64_TEST: PrssSetTest = PrssSetTest {
     test_filename: Cow::Borrowed("prss_set_64"),
     legacy_filename: Cow::Borrowed("legacy_prss_set_64"),
-    amount_parties: 13,
+    amount_parties: 7,
     amount_points: 7,
     residue_poly_size: 64,
     state: 11111,
@@ -247,7 +248,7 @@ const PRSS_SET_128_TEST: PrssSetTest = PrssSetTest {
     test_filename: Cow::Borrowed("prss_set_128"),
     legacy_filename: Cow::Borrowed("legacy_prss_set_128"),
     amount_parties: 13,
-    amount_points: 7,
+    amount_points: 3,
     residue_poly_size: 128,
     state: 2222,
 };
@@ -1384,7 +1385,7 @@ impl DistributedDecryptionV0_13 {
         let mut rng = AesRng::seed_from_u64(PRSS_SET_64_TEST.state);
 
         let mut party_set = Vec::new();
-        for i in 1..=PRSS_SET_128_TEST.amount_parties {
+        for i in 1..=PRSS_SET_64_TEST.amount_parties {
             party_set.push(Role::indexed_from_one(i));
         }
 
@@ -1392,7 +1393,7 @@ impl DistributedDecryptionV0_13 {
         rng.fill_bytes(&mut set_key);
 
         let mut f_a_points = Vec::new();
-        for _ in 0..PRSS_SET_128_TEST.amount_points {
+        for _ in 0..PRSS_SET_64_TEST.amount_points {
             f_a_points.push(ResiduePolyF4Z64::from_scalar(Wrapping(rng.next_u64())));
         }
 

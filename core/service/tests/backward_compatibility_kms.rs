@@ -634,7 +634,7 @@ fn test_context_info(
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid NodeInfo:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+                "Invalid ContextInfo:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
