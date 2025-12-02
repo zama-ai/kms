@@ -39,6 +39,9 @@ use crate::execution::endpoints::decryption::{
     LargeOfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
 };
 use crate::execution::endpoints::keygen::{OnlineDistributedKeyGen, SecureOnlineDistributedKeyGen};
+use crate::execution::endpoints::reshare_sk::{
+    ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
+};
 use crate::execution::keyset_config::KeySetConfig;
 use crate::execution::large_execution::offline::SecureLargePreprocessing;
 use crate::execution::online::gen_bits::SecureBitGenEven;
@@ -53,7 +56,6 @@ use crate::execution::online::preprocessing::{
     BitDecPreprocessing, DKGPreprocessing, InMemoryBitDecPreprocessing, NoiseFloodPreprocessing,
     PreprocessorFactory,
 };
-use crate::execution::online::reshare::{reshare_sk_same_sets, ResharePreprocRequired};
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
 use crate::execution::runtime::sessions::base_session::ToBaseSession;
 use crate::execution::runtime::sessions::base_session::{BaseSession, BaseSessionHandles};
@@ -2515,7 +2517,7 @@ where
             let params = key_ref.as_ref().params;
 
             //Perform preprocessing
-            let num_needed_preproc = ResharePreprocRequired::new_same_set(num_parties, params);
+            let num_needed_preproc = ResharePreprocRequired::new(num_parties, params);
 
             let (mut preprocessing_64, mut preprocessing_128, sessions) = match session_type {
                 SessionType::Small => {
@@ -2592,10 +2594,10 @@ where
             };
 
             //Perform online
-            let new_private_key_set = reshare_sk_same_sets(
+            let new_private_key_set = SecureReshareSecretKeys::reshare_sk_same_set(
+                &mut reshare_base_session,
                 &mut preprocessing_128,
                 &mut preprocessing_64,
-                &mut reshare_base_session,
                 &mut Some(old_private_key_set),
                 params,
             )
