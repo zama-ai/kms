@@ -90,6 +90,8 @@ impl<T> From<Optional<T>> for Option<T> {
 impl<T> MaybeExpected<T> for NotExpected<T> {}
 impl<T> MaybeExpected<T> for Optional<T> {}
 impl<T> MaybeExpected<T> for Expected<T> {}
+// Canonical impl (not used in the codebase, but could be useful for users)
+impl<T> MaybeExpected<T> for Option<T> {}
 
 #[async_trait]
 pub trait Reshare: ProtocolDescription + Send + Sync + Clone {
@@ -100,6 +102,9 @@ pub trait Reshare: ProtocolDescription + Send + Sync + Clone {
     // This associated type allows us to have optional input shares
     // that is compiler enforced
     type MaybeExpectedInputShares<Z>: MaybeExpected<Z>;
+    // This associated type allows us to have optional output shares
+    // that is compiler enforced
+    type MaybeExpectedOutput<Z>: MaybeExpected<Z>;
 
     async fn execute<
         Prep: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
@@ -113,7 +118,7 @@ pub trait Reshare: ProtocolDescription + Send + Sync + Clone {
             &mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>,
         >,
         expected_input_len: usize,
-    ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
+    ) -> anyhow::Result<Self::MaybeExpectedOutput<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome;
 }
@@ -182,6 +187,8 @@ impl<Ses: BaseSessionHandles, OpenProtocol: RobustOpen, BroadcastProtocol: Broad
     // was to reshare after a failed DKG where all parties
     // might not have input to share.
     type MaybeExpectedInputShares<T> = Optional<T>;
+    // In same set resharing we always have output shares
+    type MaybeExpectedOutput<T> = Expected<T>;
 
     async fn execute<
         Prep: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
@@ -193,11 +200,11 @@ impl<Ses: BaseSessionHandles, OpenProtocol: RobustOpen, BroadcastProtocol: Broad
         preproc: &mut Expected<&mut Prep>,
         input_shares: &mut Optional<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
         expected_input_len: usize,
-    ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
+    ) -> anyhow::Result<Expected<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
-        Ok(Some(
+        Ok(Expected(
             reshare_same_sets(
                 preproc.0,
                 sessions,
@@ -283,6 +290,8 @@ impl<
     type MaybeExpectedPreprocessing<T> = NotExpected<T>;
     // As set 1 I have an input to reshare
     type MaybeExpectedInputShares<T> = Expected<T>;
+    // As set 1 I never have an output
+    type MaybeExpectedOutput<T> = NotExpected<T>;
 
     async fn execute<
         Prep: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
@@ -294,12 +303,12 @@ impl<
         _preproc: &mut NotExpected<&mut Prep>,
         input_shares: &mut Expected<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
         expected_input_len: usize,
-    ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
+    ) -> anyhow::Result<NotExpected<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
         assert!(sessions.my_role().is_set1() && !sessions.my_role().is_set2());
-        Ok(reshare_two_sets::<_, BaseSession, _, _, Prep, _, _>(
+        if reshare_two_sets::<_, BaseSession, _, _, Prep, _, _>(
             sessions,
             None,
             None,
@@ -308,7 +317,17 @@ impl<
             &self.open_protocol,
             &self.broadcast_protocol,
         )
-        .await?)
+        .await?
+        .is_some()
+        {
+            return Err(anyhow_error_and_log(
+                "Parties in set 1 should not receive output shares during resharing.",
+            ));
+        } else {
+            Ok(NotExpected {
+                _marker: std::marker::PhantomData,
+            })
+        }
     }
 }
 
@@ -395,6 +414,8 @@ impl<
     type MaybeExpectedPreprocessing<T> = Expected<T>;
     // As set 2 I don't have an input to reshare
     type MaybeExpectedInputShares<T> = NotExpected<T>;
+    // As set 2 I alway have an output
+    type MaybeExpectedOutput<T> = Expected<T>;
 
     async fn execute<
         Prep: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
@@ -406,13 +427,13 @@ impl<
         preproc: &mut Expected<&mut Prep>,
         _input_shares: &mut NotExpected<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
         expected_input_len: usize,
-    ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
+    ) -> anyhow::Result<Expected<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
         let (two_set_session, my_set_session) = sessions;
         assert!(two_set_session.my_role().is_set2() && !two_set_session.my_role().is_set1());
-        Ok(reshare_two_sets(
+        if let Some(res) = reshare_two_sets(
             two_set_session,
             Some(my_set_session),
             Some(preproc.0),
@@ -421,7 +442,14 @@ impl<
             &self.open_protocol,
             &self.broadcast_protocol,
         )
-        .await?)
+        .await?
+        {
+            Ok(Expected(res))
+        } else {
+            return Err(anyhow_error_and_log(
+                "Parties in set 2 should receive output shares during resharing.",
+            ));
+        }
     }
 }
 
@@ -508,6 +536,8 @@ impl<
     type MaybeExpectedPreprocessing<T> = Expected<T>;
     // As both sets I have an input to reshare
     type MaybeExpectedInputShares<T> = Expected<T>;
+    // As both sets I always have an output
+    type MaybeExpectedOutput<T> = Expected<T>;
 
     async fn execute<
         Prep: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
@@ -519,13 +549,13 @@ impl<
         preproc: &mut Expected<&mut Prep>,
         input_shares: &mut Expected<&mut Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>,
         expected_input_len: usize,
-    ) -> anyhow::Result<Option<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
+    ) -> anyhow::Result<Expected<Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>>>
     where
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
         let (two_set_session, my_set_session) = sessions;
         assert!(two_set_session.my_role().is_set1() && two_set_session.my_role().is_set2());
-        Ok(reshare_two_sets(
+        if let Some(res) = reshare_two_sets(
             two_set_session,
             Some(my_set_session),
             Some(preproc.0),
@@ -534,7 +564,14 @@ impl<
             &self.open_protocol,
             &self.broadcast_protocol,
         )
-        .await?)
+        .await?
+        {
+            Ok(Expected(res))
+        } else {
+            return Err(anyhow_error_and_log(
+                "Parties in both sets should receive output shares during resharing.",
+            ));
+        }
     }
 }
 

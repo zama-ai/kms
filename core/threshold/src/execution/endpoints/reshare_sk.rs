@@ -355,7 +355,7 @@ where
                 expected_key_size,
             )
             .await?;
-        (true, data.map(|data| LweSecretKeyShare { data }))
+        (true, data.into().map(|data| LweSecretKeyShare { data }))
     } else {
         (false, None)
     };
@@ -375,7 +375,7 @@ where
             expected_key_size,
         )
         .await?;
-    let lwe_compute_secret_key_share = data.map(|data| LweSecretKeyShare { data });
+    let lwe_compute_secret_key_share = data.into().map(|data| LweSecretKeyShare { data });
 
     // Reshare the LWE PKe key
     let expected_key_size = basic_params_handle.lwe_hat_dimension().0;
@@ -392,7 +392,7 @@ where
         )
         .await?;
 
-    let lwe_encryption_secret_key_share = data.map(|data| LweSecretKeyShare { data });
+    let lwe_encryption_secret_key_share = data.into().map(|data| LweSecretKeyShare { data });
 
     // Reshare the GLWE compute key
     let expected_key_size = basic_params_handle.glwe_sk_num_bits();
@@ -415,7 +415,7 @@ where
                     expected_key_size,
                 )
                 .await?;
-            data.map(|data| {
+            data.into().map(|data| {
                 GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
                     data,
                     polynomial_size,
@@ -440,7 +440,7 @@ where
                     expected_key_size,
                 )
                 .await?;
-            data.map(|data| {
+            data.into().map(|data| {
                 GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
                     data,
                     polynomial_size,
@@ -483,7 +483,7 @@ where
                             expected_key_size,
                         )
                         .await?;
-                    data.map(|data| {
+                    data.into().map(|data| {
                         CompressionPrivateKeySharesEnum::Z64(CompressionPrivateKeyShares {
                             post_packing_ks_key: GlweSecretKeyShare {
                                 data,
@@ -516,7 +516,7 @@ where
                             expected_key_size,
                         )
                         .await?;
-                    data.map(|data| {
+                    data.into().map(|data| {
                         CompressionPrivateKeySharesEnum::Z128(CompressionPrivateKeyShares {
                             post_packing_ks_key: GlweSecretKeyShare {
                                 data,
@@ -551,7 +551,7 @@ where
                         expected_key_size,
                     )
                     .await?;
-                (true, data.map(|data| LweSecretKeyShare { data }))
+                (true, data.into().map(|data| LweSecretKeyShare { data }))
             } else {
                 (false, None)
             }
