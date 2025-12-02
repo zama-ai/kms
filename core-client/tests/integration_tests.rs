@@ -1793,7 +1793,11 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
     Ok(())
 }
 
-/// Test 6-party MPC context switch with party resharing
+/// Test 6-party MPC context switch with party resharing (ISOLATED, NO TLS)
+///
+/// **NOTE:** This is the isolated test version WITHOUT TLS for fast execution.
+/// For TLS-enabled testing in K8s, see: `kubernetes_test_threshold_context::k8s_test_threshold_mpc_context_switch_6`
+///
 /// This test validates party resharing/remapping across MPC contexts:
 /// - First context: Physical servers 1,2,3,4 act as MPC parties 1,2,3,4
 /// - Second context: Physical servers 5,6,3,4 act as MPC parties 1,2,3,4
@@ -1804,6 +1808,9 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 /// - Disaster recovery (replacing failed servers)
 /// - Key rotation (changing physical server composition)
 /// - Dynamic party management in production
+///
+/// **TLS Status:** Disabled (isolated test, localhost only)
+/// **For TLS testing:** Use K8s version in `kubernetes_test_threshold_context.rs`
 #[tokio::test]
 #[serial] // PRSS requires sequential execution
 #[cfg_attr(not(feature = "k8s_tests"), ignore)] // Run only in K8s CI - enable locally with: cargo test --features k8s_tests -- --test-threads=1
