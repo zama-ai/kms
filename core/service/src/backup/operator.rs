@@ -68,7 +68,7 @@ pub struct InternalRecoveryRequest {
     ephem_op_enc_key: UnifiedPublicEncKey,
     cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     backup_id: RequestId,
-    operator_role: Role,
+    operator_verification_key: PublicSigKey,
 }
 
 impl InternalRecoveryRequest {
@@ -77,13 +77,13 @@ impl InternalRecoveryRequest {
         ephem_op_enc_key: UnifiedPublicEncKey,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
         backup_id: RequestId,
-        operator_role: Role,
+        operator_verification_key: PublicSigKey,
     ) -> anyhow::Result<Self> {
         let res = InternalRecoveryRequest {
             ephem_op_enc_key,
             cts,
             backup_id,
-            operator_role,
+            operator_verification_key,
         };
         if !backup_id.is_valid() {
             return Err(anyhow_error_and_log(
@@ -136,8 +136,8 @@ impl InternalRecoveryRequest {
         self.backup_id
     }
 
-    pub fn operator_role(&self) -> Role {
-        self.operator_role
+    pub fn operator_verification_key(&self) -> &PublicSigKey {
+        &self.operator_verification_key
     }
 }
 
@@ -145,8 +145,9 @@ impl Display for InternalRecoveryRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "InternalRecoveryRequest with:\n backup id: {}\n operator role: {}",
-            self.backup_id, self.operator_role,
+            "InternalRecoveryRequest with:\n backup id: {}\n operator : {}",
+            self.backup_id,
+            self.operator_verification_key.address(),
         )
     }
 }
@@ -168,18 +169,19 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
         }
         let backup_id: RequestId =
             parse_optional_proto_request_id(&value.backup_id, RequestIdParsingErr::BackupRecovery)?;
+        let operator_verification_key: PublicSigKey =
+            bc2wrap::deserialize_safe(&value.operator_verification_key)?;
         Ok(Self {
             ephem_op_enc_key,
             cts,
             backup_id,
-            operator_role: Role::indexed_from_one(value.operator_role as usize),
+            operator_verification_key,
         })
     }
 }
 
 #[derive(Clone)]
 pub struct Operator {
-    my_role: Role,
     custodian_keys: HashMap<Role, (UnifiedPublicEncKey, PublicSigKey)>,
     signing_key: Option<PrivateSigKey>,
     // the public component of [signing_key] above
@@ -190,7 +192,6 @@ pub struct Operator {
 impl std::fmt::Debug for Operator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Operator")
-            .field("my_id", &self.my_role)
             .field("custodian_keys", &self.custodian_keys)
             .field("signing_key", &"ommitted")
             .field("verification_key", &self.verification_key)
@@ -400,7 +401,6 @@ fn checked_decryption_deserialize(
     commitment: &[u8],
     backup_id: RequestId,
     custodian_role: Role,
-    operator_role: Role,
 ) -> Result<Vec<Share<ResiduePolyF4Z64>>, BackupError> {
     let backup_material: BackupMaterial = unsign_key
         .unsigncrypt(&DSEP_BACKUP_RECOVERY, signcryption)
@@ -415,7 +415,6 @@ fn checked_decryption_deserialize(
         unsign_key.sender_verf_key,
         custodian_role,
         unsign_key.receiver_id,
-        operator_role,
     ) {
         return Err(BackupError::OperatorError(
             "backup metadata check failure".to_string(),
@@ -449,7 +448,6 @@ pub struct BackupMaterial {
     pub custodian_role: Role,
     // sender
     pub operator_pk: PublicSigKey,
-    pub operator_role: Role,
     pub shares: Vec<Share<ResiduePolyF4Z64>>,
 }
 
@@ -460,7 +458,6 @@ impl BackupMaterial {
         custodian_verf_key: &PublicSigKey,
         custodian_role: Role,
         operator_pk_id: &[u8],
-        operator_role: Role,
     ) -> bool {
         if self.backup_id != backup_id {
             tracing::error!(
@@ -475,14 +472,6 @@ impl BackupMaterial {
                 "custodian_role mismatch: expected {} but got {}",
                 self.custodian_role,
                 custodian_role
-            );
-            return false;
-        }
-        if self.operator_role != operator_role {
-            tracing::error!(
-                "operator_role mismatch: expected {} but got {}",
-                self.operator_role,
-                operator_role,
             );
             return false;
         }
@@ -510,7 +499,6 @@ impl Operator {
     /// If you want to create an operator for recovery/restore operations (which does not require a signing key), use [Self::new_for_validating]
     /// as this method does not require a signing key, nor will it validate (the likely expired) timestamps.
     pub fn new_for_sharing(
-        my_role: Role,
         custodian_messages: Vec<InternalCustodianSetupMessage>,
         signing_key: PrivateSigKey,
         threshold: usize,
@@ -520,7 +508,6 @@ impl Operator {
         let custodian_keys =
             validate_custodian_messages(custodian_messages, threshold, amount_custodians, true)?;
         Ok(Self {
-            my_role,
             custodian_keys,
             signing_key: Some(signing_key),
             verification_key: verf_key,
@@ -532,7 +519,6 @@ impl Operator {
     /// This does not require a signing key.
     /// Furthermore, this will not validate the timestamps of the custodian setup messages.
     pub fn new_for_validating(
-        my_role: Role,
         custodian_messages: Vec<InternalCustodianSetupMessage>,
         verf_key: PublicSigKey,
         threshold: usize,
@@ -541,7 +527,6 @@ impl Operator {
         let custodian_keys =
             validate_custodian_messages(custodian_messages, threshold, amount_custodians, false)?;
         Ok(Self {
-            my_role,
             custodian_keys,
             signing_key: None,
             verification_key: verf_key,
@@ -551,10 +536,6 @@ impl Operator {
 
     pub fn verification_key(&self) -> &PublicSigKey {
         &self.verification_key
-    }
-
-    pub fn role(&self) -> Role {
-        self.my_role
     }
 
     // We allow the following lints because we are fine with mutating the rng even if
@@ -650,7 +631,6 @@ impl Operator {
                 custodian_pk: custodian_verf_key.clone(),
                 custodian_role: role_j,
                 operator_pk: self.verification_key.clone(),
-                operator_role: self.my_role,
                 shares,
             };
             let custodian_verf_id = custodian_verf_key.verf_key_id();
@@ -732,7 +712,6 @@ impl Operator {
                     commitment,
                     backup_id,
                     custodian_output.custodian_role,
-                    self.my_role,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;

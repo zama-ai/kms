@@ -54,7 +54,7 @@ pub struct RealBackupOperator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 > {
-    my_role: Role,
+    // note that base_kms also contains the verification key
     base_kms: BaseKmsStruct,
     crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     security_module: Option<Arc<SecurityModuleProxy>>,
@@ -68,13 +68,11 @@ where
     PrivS: Storage + Sync + Send + 'static,
 {
     pub fn new(
-        my_role: Role,
         base_kms: BaseKmsStruct,
         crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         security_module: Option<Arc<SecurityModuleProxy>>,
     ) -> Self {
         Self {
-            my_role,
             base_kms,
             crypto_storage,
             security_module: security_module.as_ref().map(Arc::clone),
@@ -116,7 +114,7 @@ where
             ephem_op_enc_key: serialized_pub_key,
             cts: grpc_cts,
             backup_id: Some(backup_id.into()),
-            operator_role: self.my_role.one_based() as u64,
+            operator_verification_key: bc2wrap::serialize(&self.base_kms.verf_key())?,
         };
         tracing::info!(
             "Generated outer recovery request for backup_id/context_id={}",
@@ -283,7 +281,6 @@ where
             filter_custodian_data(
                 inner.custodian_recovery_outputs,
                 &recovery_material,
-                self.my_role,
                 &self.base_kms.verf_key(),
                 &ephemeral_dec_key,
                 &ephemeral_enc_key,
@@ -318,7 +315,6 @@ where
                         // Amount of custodians get defined during context creation
                         let amount_custodians = recovery_material.payload.custodian_context.custodian_nodes.len();
                         let operator = Operator::new_for_validating(
-                            self.my_role,
                             recovery_material.custodian_context().custodian_nodes.values().cloned().collect_vec(),
                             (*self.base_kms.verf_key()).clone(),
                             recovery_material.custodian_context().threshold as usize,
@@ -451,19 +447,19 @@ where
 async fn filter_custodian_data(
     custodian_recovery_outputs: Vec<CustodianRecoveryOutput>,
     recovery_material: &RecoveryValidationMaterial,
-    my_role: Role,
     my_verf_key: &PublicSigKey,
     ephemeral_dec_key: &UnifiedPrivateEncKey,
     ephemeral_enc_key: &UnifiedPublicEncKey,
 ) -> anyhow::Result<HashMap<Role, InternalCustodianRecoveryOutput>> {
     let mut parsed_custodian_rec: HashMap<Role, InternalCustodianRecoveryOutput> = HashMap::new();
     for cur_recovery_output in &custodian_recovery_outputs {
-        let cur_op_role = Role::indexed_from_one(cur_recovery_output.operator_role as usize);
-        if cur_op_role != my_role {
+        let current_verf_key: PublicSigKey =
+            bc2wrap::deserialize_safe(&cur_recovery_output.operator_verification_key)?;
+        if current_verf_key != *my_verf_key {
             tracing::warn!(
-                    "Received recovery output for operator role {}, but current server's role is {}. The output will be ignored.",
-                    cur_recovery_output.operator_role,
-                    my_role.one_based()
+                    "Received recovery output for operator {}, but current server is {}. The output will be ignored.",
+                    current_verf_key.address(),
+                    my_verf_key.address(),
                 );
             continue;
         }
@@ -520,18 +516,23 @@ async fn filter_custodian_data(
             cur_recovery_output.to_owned(),
         ) {
             Ok(output) => {
-                if let Some(old_val) = parsed_custodian_rec.insert(output.custodian_role, output) {
-                    tracing::warn!(
-                                "Received multiple recovery outputs for custodian role {}. Only the first one will be used.",
-                                cur_op_role,
-                            );
-                    parsed_custodian_rec.insert(cur_op_role, old_val);
+                match parsed_custodian_rec.entry(output.custodian_role) {
+                    std::collections::hash_map::Entry::Occupied(_) => {
+                        /* do nothing if occupied */
+                        tracing::warn!(
+                                    "Received multiple recovery outputs for custodian {}. Only the first one will be used.",
+                                    current_verf_key.address(),
+                                );
+                    }
+                    std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                        vacant_entry.insert(output);
+                    }
                 }
             }
             Err(e) => {
                 tracing::warn!(
                             "Failed to parse custodian recovery output for operator role {}: {e}. The output will be ignored.",
-                            cur_op_role,
+                                current_verf_key.address(),
                         );
                 continue;
             }
@@ -874,10 +875,15 @@ mod tests {
         (rec_material, verf_key, dec_key, enc_key)
     }
 
-    fn dummy_output_for_role(custodian_role: u64, operator_role: u64) -> CustodianRecoveryOutput {
+    fn dummy_output_for_operator(
+        custodian_role: u64,
+        operator_verification_key: PublicSigKey,
+    ) -> CustodianRecoveryOutput {
         CustodianRecoveryOutput {
             custodian_role,
-            operator_role,
+            // TODO(zama-ai/kms-internal/issues/2836)
+            // we may change how the verification key is serialized
+            operator_verification_key: bc2wrap::serialize(&operator_verification_key).unwrap(),
             backup_output: Some(OperatorBackupOutput {
                 signcryption: vec![1, 2, 3],
                 pke_type: 0,
@@ -890,23 +896,15 @@ mod tests {
     #[tokio::test]
     async fn test_filter_custodian_missing_cus_output() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
-        let my_role = Role::indexed_from_one(1);
-        let mut outputs = vec![dummy_output_for_role(1, 1)];
+        let mut outputs = vec![dummy_output_for_operator(1, verf_key.clone())];
         let cus_2 = CustodianRecoveryOutput {
             custodian_role: 2,
-            operator_role: 1,
+            operator_verification_key: bc2wrap::serialize(&verf_key).unwrap(),
             backup_output: None, // Missing backup output for custodian role 2
         };
         outputs.push(cus_2);
-        let result = filter_custodian_data(
-            outputs,
-            &recovery_material,
-            my_role,
-            &verf_key,
-            &dec_key,
-            &enc_key,
-        )
-        .await;
+        let result =
+            filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
         assert!(logs_contain(
             "Could not find signcryption for custodian role"
         ));
@@ -917,41 +915,30 @@ mod tests {
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_operator_role() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
-        let my_role = Role::indexed_from_one(1);
-        let outputs = vec![
-            dummy_output_for_role(1, 2), // operator_role does not match my_role
-        ];
+        let outputs = vec![dummy_output_for_operator(1, verf_key.clone())];
+        let (bad_verf_key, _bad_sig_key) = gen_sig_keys(&mut AesRng::seed_from_u64(42));
         let result = filter_custodian_data(
             outputs,
             &recovery_material,
-            my_role,
-            &verf_key,
+            &bad_verf_key,
             &dec_key,
             &enc_key,
         )
         .await;
         assert!(result.is_err());
-        assert!(logs_contain("Received recovery output for operator role"));
+        assert!(logs_contain("Cannot recover the backup decryption key"));
     }
 
     #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_filter_custodian_data_invalid_custodian_role() {
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
-        let my_role = Role::indexed_from_one(1);
         let outputs = vec![
-            dummy_output_for_role(0, 1),  // custodian_role == 0
-            dummy_output_for_role(99, 1), // custodian_role out of bounds
+            dummy_output_for_operator(0, verf_key.clone()), // custodian_role == 0
+            dummy_output_for_operator(99, verf_key.clone()), // custodian_role out of bounds
         ];
-        let result = filter_custodian_data(
-            outputs,
-            &recovery_material,
-            my_role,
-            &verf_key,
-            &dec_key,
-            &enc_key,
-        )
-        .await;
+        let result =
+            filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
         assert!(result.is_err());
         assert!(logs_contain(
             "Received recovery output with invalid custodian role"
@@ -963,21 +950,13 @@ mod tests {
     async fn test_filter_custodian_data_invalid_signature() {
         // Note there is no node information in the dummy material
         let (recovery_material, verf_key, dec_key, enc_key) = dummy_recovery_material(1);
-        let my_role = Role::indexed_from_one(1);
         let outputs = vec![
-            dummy_output_for_role(1, 1),
-            dummy_output_for_role(2, 1),
-            dummy_output_for_role(3, 1),
+            dummy_output_for_operator(1, verf_key.clone()),
+            dummy_output_for_operator(2, verf_key.clone()),
+            dummy_output_for_operator(3, verf_key.clone()),
         ];
-        let result = filter_custodian_data(
-            outputs,
-            &recovery_material,
-            my_role,
-            &verf_key,
-            &dec_key,
-            &enc_key,
-        )
-        .await;
+        let result =
+            filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
         assert!(result.is_err());
         assert!(logs_contain(
             "Could not validate signcryption for custodian"
@@ -998,17 +977,12 @@ mod tests {
             .custodian_context
             .custodian_nodes
             .remove(&Role::indexed_from_one(2));
-        let my_role = Role::indexed_from_one(1);
-        let outputs = vec![dummy_output_for_role(1, 1), dummy_output_for_role(2, 1)];
-        let result = filter_custodian_data(
-            outputs,
-            &recovery_material,
-            my_role,
-            &verf_key,
-            &dec_key,
-            &enc_key,
-        )
-        .await;
+        let outputs = vec![
+            dummy_output_for_operator(1, verf_key.clone()),
+            dummy_output_for_operator(2, verf_key.clone()),
+        ];
+        let result =
+            filter_custodian_data(outputs, &recovery_material, &verf_key, &dec_key, &enc_key).await;
         assert!(result.is_err());
         assert!(logs_contain(
             "Could not find verification key for custodian role"

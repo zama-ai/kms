@@ -783,6 +783,14 @@ async fn custodian_reencrypt(
                 .args(args)
                 .output()
                 .unwrap();
+            println!(
+                "Custodian re-encrypt output: {}",
+                String::from_utf8_lossy(&cmd_output.stdout)
+            );
+            println!(
+                "Custodian re-encrypt errors: {}",
+                String::from_utf8_lossy(&cmd_output.stderr)
+            );
             assert!(cmd_output.status.success());
             // Copy the response files from docker to the local file system
             let cp_output_resp = Command::new("docker")

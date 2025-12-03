@@ -7,6 +7,7 @@ cfg_if::cfg_if! {
         use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
         use crate::consts::SAFE_SER_SIZE_LIMIT;
         use crate::cryptography::signatures::PrivateSigKey;
+        use crate::cryptography::signatures::PublicSigKey;
         use crate::engine::base::INSECURE_PREPROCESSING_ID;
         use crate::util::key_setup::test_tools::purge_priv;
         use crate::util::key_setup::test_tools::EncryptionConfig;
@@ -15,17 +16,16 @@ cfg_if::cfg_if! {
         use crate::vault::storage::read_versioned_at_request_id;
         use crate::vault::storage::StorageType;
         use aes_prng::AesRng;
-        use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
         use rand::SeedableRng;
         use kms_grpc::kms::v1::{CustodianRecoveryRequest, Empty, RecoveryRequest};
+        use kms_grpc::kms::v1::CustodianRecoveryOutput;
+        use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
         use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-        use kms_grpc::rpc_types::PubDataType;
         use std::collections::HashMap;
         use tfhe::safe_serialization::safe_deserialize;
         use threshold_fhe::execution::runtime::party::Role;
         use tokio::task::JoinSet;
         use tonic::transport::Channel;
-
     }
 }
 use crate::backup::BackupCiphertext;
@@ -38,6 +38,8 @@ use crate::{
     client::tests::threshold::common::threshold_handles_custodian_backup,
     engine::base::derive_request_id,
 };
+#[cfg(feature = "insecure")]
+use alloy_primitives::Address;
 use kms_grpc::{kms::v1::FheParameter, rpc_types::PrivDataType, RequestId};
 use serial_test::serial;
 
@@ -328,7 +330,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let mut rng = AesRng::seed_from_u64(13);
     let recovery_req_resp = run_custodian_recovery_init(&kms_clients).await;
     assert_eq!(recovery_req_resp.len(), amount_parties);
-    let cus_out = emulate_custodian(&mut rng, recovery_req_resp, mnemnonics, test_path).await;
+    let cus_out = emulate_custodian(&mut rng, recovery_req_resp, mnemnonics).await;
     let recovery_output = run_custodian_backup_recovery(&kms_clients, &cus_out).await;
     assert_eq!(recovery_output.len(), amount_parties);
     let res = run_restore_from_backup(&kms_clients).await;
@@ -473,10 +475,10 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     let mut rng = AesRng::seed_from_u64(13);
     let recovery_req_resp = run_custodian_recovery_init(&kms_clients).await;
     assert_eq!(recovery_req_resp.len(), amount_parties);
-    let mut cus_out = emulate_custodian(&mut rng, recovery_req_resp, mnemnonics, test_path).await;
+    let mut cus_out = emulate_custodian(&mut rng, recovery_req_resp, mnemnonics).await;
 
     // Change a bit in two of the custodians contribution to the recover requests to make them invalid
-    for (_cur_op_idx, cur_payload) in cus_out.iter_mut() {
+    for (_cur_op_idx, (_, cur_payload)) in cus_out.iter_mut() {
         // First custodian 1
         cur_payload
             .custodian_recovery_outputs
@@ -527,17 +529,20 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
 #[cfg(feature = "insecure")]
 async fn run_custodian_recovery_init(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-) -> Vec<RecoveryRequest> {
+) -> Vec<(u32, RecoveryRequest)> {
     let amount_parties = kms_clients.len();
     let mut tasks_gen = JoinSet::new();
     for i in 1..=amount_parties as u32 {
         let mut cur_client = kms_clients.get(&i).unwrap().clone();
         tasks_gen.spawn(async move {
-            cur_client
-                .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
-                    overwrite_ephemeral_key: false,
-                }))
-                .await
+            (
+                i,
+                cur_client
+                    .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+                        overwrite_ephemeral_key: false,
+                    }))
+                    .await,
+            )
         });
     }
     let mut responses_gen = Vec::new();
@@ -547,9 +552,9 @@ async fn run_custodian_recovery_init(
     }
     assert_eq!(responses_gen.len(), amount_parties);
     let mut res = Vec::new();
-    for response in responses_gen {
+    for (i, response) in responses_gen {
         assert!(response.is_ok());
-        res.push(response.unwrap().into_inner());
+        res.push((i, response.unwrap().into_inner()));
     }
     res
 }
@@ -558,19 +563,20 @@ async fn run_custodian_recovery_init(
 #[cfg(feature = "insecure")]
 async fn run_custodian_backup_recovery(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    req: &HashMap<usize, CustodianRecoveryRequest>,
+    reqs: &HashMap<Address, (u32, CustodianRecoveryRequest)>,
 ) -> Vec<Empty> {
     let amount_parties = kms_clients.len();
     let mut tasks_gen = JoinSet::new();
-    for i in 1..=amount_parties as u32 {
-        let mut cur_client = kms_clients.get(&i).unwrap().clone();
-        let req_clone = req.get(&(i as usize)).unwrap().to_owned();
+    for (_addr, (client_id, req)) in reqs.iter() {
+        let mut cur_client = kms_clients.get(client_id).unwrap().clone();
+        let req_clone = req.clone();
         tasks_gen.spawn(async move {
             cur_client
                 .custodian_backup_recovery(tonic::Request::new(req_clone))
                 .await
         });
     }
+
     let mut responses_gen = Vec::new();
     while let Some(inner) = tasks_gen.join_next().await {
         let resp = inner.unwrap();
@@ -618,35 +624,21 @@ async fn run_restore_from_backup(
 #[cfg(feature = "insecure")]
 async fn emulate_custodian(
     rng: &mut AesRng,
-    recovery_requests: Vec<RecoveryRequest>,
+    recovery_requests: Vec<(u32, RecoveryRequest)>,
     mnemonics: Vec<String>,
-    test_path: Option<&std::path::Path>,
-) -> HashMap<usize, CustodianRecoveryRequest> {
-    let backup_id = recovery_requests[0].backup_id.clone().unwrap();
-    let mut outputs_for_operators = HashMap::new();
+) -> HashMap<Address, (u32, CustodianRecoveryRequest)> {
+    let backup_id = recovery_requests[0].1.backup_id.clone().unwrap();
+
     // Setup a map to contain the results for each operator role
-    for idx in 1..=recovery_requests.len() {
-        outputs_for_operators.insert(idx, Vec::new());
-    }
+    let mut outputs_for_operators: HashMap<(u32, Address), Vec<CustodianRecoveryOutput>> =
+        HashMap::new();
+
     for (cur_idx, cur_mnemonic) in mnemonics.iter().enumerate() {
         let custodian: Custodian =
             custodian_from_seed_phrase(cur_mnemonic, Role::indexed_from_zero(cur_idx)).unwrap();
-        for cur_recovery_req in &recovery_requests {
-            let pub_storage = FileStorage::new(
-                test_path,
-                StorageType::PUB,
-                Some(Role::indexed_from_one(
-                    cur_recovery_req.operator_role as usize,
-                )),
-            )
-            .unwrap();
-            let cur_verf_key = read_versioned_at_request_id(
-                &pub_storage,
-                &SIGNING_KEY_ID,
-                &PubDataType::VerfKey.to_string(),
-            )
-            .await
-            .unwrap();
+        for (i, cur_recovery_req) in &recovery_requests {
+            let cur_verf_key: PublicSigKey =
+                bc2wrap::deserialize_safe(&cur_recovery_req.operator_verification_key).unwrap();
             let cur_cus_reenc = cur_recovery_req.cts.get(&((cur_idx + 1) as u64)).unwrap();
             let cur_enc_key = safe_deserialize(
                 std::io::Cursor::new(&cur_recovery_req.ephem_op_enc_key),
@@ -660,26 +652,32 @@ async fn emulate_custodian(
                     &cur_verf_key,
                     &cur_enc_key,
                     backup_id.clone().try_into().unwrap(),
-                    Role::indexed_from_one(cur_recovery_req.operator_role as usize),
                 )
                 .unwrap();
             // Add the result from this custodian to the map of results to the correct operator
-            let cur_operator_res = outputs_for_operators
-                .get_mut(&(cur_recovery_req.operator_role as usize))
-                .unwrap();
-            cur_operator_res.push(cur_out.try_into().unwrap());
+            match outputs_for_operators.entry((*i, cur_verf_key.address())) {
+                std::collections::hash_map::Entry::Occupied(occupied_entry) => {
+                    occupied_entry.into_mut().push(cur_out.try_into().unwrap());
+                }
+                std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                    vacant_entry.insert(vec![cur_out.try_into().unwrap()]);
+                }
+            };
         }
     }
     outputs_for_operators
         .into_iter()
-        .map(|(k, v)| {
+        .map(|((i, k), v)| {
             (
                 k,
-                CustodianRecoveryRequest {
-                    custodian_context_id: Some(backup_id.clone()),
-                    custodian_recovery_outputs: v,
-                },
+                (
+                    i,
+                    CustodianRecoveryRequest {
+                        custodian_context_id: Some(backup_id.clone()),
+                        custodian_recovery_outputs: v,
+                    },
+                ),
             )
         })
-        .collect::<HashMap<usize, CustodianRecoveryRequest>>()
+        .collect::<HashMap<Address, (u32, CustodianRecoveryRequest)>>()
 }

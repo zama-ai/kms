@@ -677,23 +677,30 @@ mod kms_custodian_binary_tests {
         }
 
         // Generate operator keys along with the message to be backed up
-        let mut commitments = Vec::new();
-        let mut operators = Vec::new();
-        let mut ephemeral_keys = Vec::new();
-        let mut backup_dec_keys = Vec::new();
+        struct OperatorData {
+            operator: Operator,
+            commitment: RecoveryValidationMaterial,
+            ephemeral_keys: (UnifiedPrivateEncKey, UnifiedPublicEncKey),
+            backup_dec_key: UnifiedPrivateEncKey,
+            operator_id: usize,
+        }
+        let mut operator_data = vec![];
         for operator_index in 1..=amount_operators {
             let (cur_commitments, operator, cur_ephemeral_keys, backup_dec) = make_backup_sunshine(
                 temp_dir.path(),
                 threshold,
-                Role::indexed_from_one(operator_index),
+                operator_index,
                 setup_msgs.clone(),
                 backup_id,
             )
             .await;
-            commitments.push(cur_commitments);
-            operators.push(operator);
-            ephemeral_keys.push(cur_ephemeral_keys);
-            backup_dec_keys.push(backup_dec);
+            operator_data.push(OperatorData {
+                operator,
+                commitment: cur_commitments,
+                ephemeral_keys: cur_ephemeral_keys,
+                backup_dec_key: backup_dec,
+                operator_id: operator_index,
+            });
         }
 
         // Decrypt
@@ -726,24 +733,31 @@ mod kms_custodian_binary_tests {
         }
 
         // Validate the decryption
-        for ((operator, commitment), (dec_key, enc_key)) in
-            operators.iter().zip(&commitments).zip(&ephemeral_keys)
+        for OperatorData {
+            operator,
+            commitment,
+            ephemeral_keys,
+            backup_dec_key,
+            operator_id,
+        } in operator_data
         {
+            let (dec_key, enc_key) = ephemeral_keys;
             let cur_res = decrypt_recovery(
                 temp_dir.path(),
                 amount_custodians,
-                operator,
-                commitment,
+                &operator,
+                operator_id,
+                &commitment,
                 backup_id,
-                dec_key,
-                enc_key,
+                &dec_key,
+                &enc_key,
             )
             .await;
             assert_eq!(
                 cur_res,
-                bc2wrap::serialize(&backup_dec_keys[&operator.role()]).unwrap(),
+                bc2wrap::serialize(&backup_dec_key).unwrap(),
                 "Decryption did not match expected data for operator {}",
-                operator.role().one_based()
+                operator.verification_key().address(),
             );
         }
     }
@@ -780,7 +794,7 @@ mod kms_custodian_binary_tests {
     async fn make_backup_sunshine(
         root_path: &Path,
         threshold: usize,
-        operator_role: Role,
+        operator_id: usize, // not actual operator ID, just for managing where the files go
         setup_msgs: Vec<InternalCustodianSetupMessage>,
         backup_id: RequestId,
     ) -> (
@@ -789,20 +803,21 @@ mod kms_custodian_binary_tests {
         (UnifiedPrivateEncKey, UnifiedPublicEncKey),
         UnifiedPrivateEncKey,
     ) {
-        let request_path = root_path.join(format!(
-            "operator-{operator_role}{MAIN_SEPARATOR}{backup_id}-request.bin"
-        ));
-        let operator_verf_path = root_path.join(format!(
-            "operator-{operator_role}{MAIN_SEPARATOR}{backup_id}-verf_key.bin"
-        ));
         let amount_custodians = setup_msgs.len();
         let mut rng = AesRng::seed_from_u64(40);
         // Note that in the actual deployment, the operator keys are generated before the encryption keys
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
+
+        let request_path = root_path.join(format!(
+            "operator-{operator_id}{MAIN_SEPARATOR}{backup_id}-request.bin",
+        ));
+        let operator_verf_path = root_path.join(format!(
+            "operator-{operator_id}{MAIN_SEPARATOR}{backup_id}-verf_key.bin",
+        ));
+
         let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (ephemeral_priv_key, ephemeral_pub_key) = enc.keygen().unwrap();
         let operator: Operator = Operator::new_for_sharing(
-            operator_role,
             setup_msgs.clone(),
             signing_key.clone(),
             threshold,
@@ -846,7 +861,7 @@ mod kms_custodian_binary_tests {
             ephemeral_pub_key.clone(),
             ciphertexts,
             backup_id,
-            operator_role,
+            verification_key.clone(),
         )
         .unwrap();
         safe_write_element_versioned(&Path::new(&operator_verf_path), &verification_key)
@@ -863,10 +878,12 @@ mod kms_custodian_binary_tests {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn decrypt_recovery(
         root_path: &Path,
         amount_custodians: usize,
         operator: &Operator,
+        operator_id: usize,
         recovery_material: &RecoveryValidationMaterial,
         backup_id: RequestId,
         ephem_dec_key: &UnifiedPrivateEncKey,
@@ -876,7 +893,7 @@ mod kms_custodian_binary_tests {
         for custodian_index in 1..=amount_custodians {
             let recovery_path = root_path.join(format!(
                 "operator-{}{MAIN_SEPARATOR}{backup_id}-recovered-keys-from-{custodian_index}.bin",
-                operator.role()
+                operator_id,
             ));
             let payload: InternalCustodianRecoveryOutput =
                 safe_read_element_versioned(&Path::new(&recovery_path))
