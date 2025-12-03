@@ -44,7 +44,8 @@ pub async fn create_test_context_info_from_core_config(
         // this requires the "mock_enclave = true" attribute in the kms-server config toml files.
         let threshold_config = core_config.threshold.clone().unwrap();
         match threshold_config.tls.unwrap() {
-            kms_lib::conf::threshold::TlsConf::FullAuto {
+            kms_lib::conf::threshold::TlsConf::Auto {
+                eif_signing_cert: _,
                 trusted_releases,
                 ignore_aws_ca_chain: _,
                 attest_private_vault_root_key: _,

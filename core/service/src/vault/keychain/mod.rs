@@ -57,7 +57,7 @@ pub trait Keychain {
         envelope: &mut EnvelopeLoad,
     ) -> anyhow::Result<T>;
 
-    fn root_key_measurements(&self) -> &RootKeyMeasurements;
+    fn root_key_measurements(&self) -> Arc<RootKeyMeasurements>;
 }
 
 #[allow(clippy::large_enum_variant)]

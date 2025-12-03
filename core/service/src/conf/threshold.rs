@@ -86,19 +86,16 @@ pub enum TlsConf {
         key: TlsKey,
     },
     // The party will generate a keypair inside of the enclave on boot and issue
-    // an ephemeral self-signed TLS certificate for it that bundles the provided
-    // certificate and the attestation document. The enclave image must be
-    // signed with the provided certificate.
-    SemiAuto {
-        cert: TlsCert,
-        trusted_releases: Vec<ReleasePCRValues>,
-        ignore_aws_ca_chain: Option<bool>,
-    },
-    // The party will use its core signing key to sign an emphemeral TLS
-    // certificate on boot that that bundles the attestation document, acting as
+    // an ephemeral TLS certificate with a bundled attestation document. By
+    // default, the party will use its core signing key to sign it, acting as
     // its own CA. The CA certificate must be self-signed with the core signing
     // key and included in the peer list.
-    FullAuto {
+    Auto {
+        // If a certificate is provided, the enclave image must be signed with
+        // the matching private key. This certificate will be used to establish
+        // the party identity instead of the core signing key then, so it must
+        // be included in the peer list.
+        eif_signing_cert: Option<TlsCert>,
         trusted_releases: Vec<ReleasePCRValues>,
         ignore_aws_ca_chain: Option<bool>,
         attest_private_vault_root_key: Option<bool>,
