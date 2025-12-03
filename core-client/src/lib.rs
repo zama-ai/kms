@@ -890,13 +890,14 @@ async fn read_kms_addresses_local(
     let mut addr_strings = Vec::with_capacity(sim_conf.cores.len());
 
     for cur_core in &sim_conf.cores {
-        let storage_prefix = Some(cur_core.object_folder.as_str());
+        let storage_prefix = Some(cur_core.object_folder.clone());
 
         let vault = {
             let store_path = Some(conf::Storage::File(conf::FileStorage {
                 path: path.to_path_buf(),
+                prefix: storage_prefix,
             }));
-            let storage = make_storage(store_path, StorageType::PUB, storage_prefix, None, None)?;
+            let storage = make_storage(store_path, StorageType::PUB, None, None)?;
             Vault {
                 storage,
                 keychain: None,

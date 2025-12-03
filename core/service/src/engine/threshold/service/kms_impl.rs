@@ -351,13 +351,9 @@ where
     // If no RedisConf is provided, we just use in-memory storage for storing preprocessing materials
     let preproc_factory = match &config.preproc_redis {
         None => create_memory_factory(),
-        Some(ref conf) => create_redis_factory(
-            match config.public_storage_prefix {
-                Some(ref prefix) => format!("REDIS_{}", prefix),
-                None => "REDIS".to_string(),
-            },
-            conf,
-        ),
+        Some(ref conf) => {
+            create_redis_factory(format!("REDIS_{}", base_kms.verf_key().address()), conf)
+        }
     };
 
     let num_sessions_preproc = config
@@ -461,6 +457,8 @@ where
         None => None,
     };
 
+    let private_storage_info = private_storage.info();
+
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         public_storage,
         private_storage,
@@ -520,15 +518,15 @@ where
     // Load existing PRSS from storage and optionally run a new setup with default IDs.
     if let Err(e) = initiator.init_legacy_prss_from_storage().await {
         tracing::warn!(
-            "Could not read legacy PRSS Setup from private storage for prefix {:?}: {}.",
-            config.private_storage_prefix,
+            "Could not read legacy PRSS Setup from private storage {:?}: {}.",
+            private_storage_info,
             e
         );
     }
     if let Err(e) = initiator.init_all_prss_from_storage().await {
         tracing::warn!(
-            "Could not read all PRSS Setup from storage for private storage prefix {:?}: {}. You may need to call the init end-point later before you can use the KMS server",
-            config.private_storage_prefix,
+            "Could not read all PRSS Setup from storage from private storage {:?}: {}. You may need to call the init end-point later before you can use the KMS server",
+            private_storage_info,
             e
         );
     }
@@ -538,7 +536,7 @@ where
         let default_context_id = *DEFAULT_MPC_CONTEXT;
         tracing::info!(
             "Initializing threshold KMS server and generating a new PRSS Setup for private storage prefix {:?}",
-            config.private_storage_prefix
+            private_storage_info,
         );
         initiator
             .init_prss(&default_context_id, &epoch_id_prss)

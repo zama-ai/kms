@@ -103,10 +103,9 @@ async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener
         .await
         .unwrap_or_else(|e| panic!("Could not bind to {mpc_socket_addr} \n {e:?}"));
     tracing::info!(
-                "Starting threshold KMS server v{} for party at storage prefix {:?}, listening for MPC communication on {:?}...",
-                env!("CARGO_PKG_VERSION"),
-                threshold_config.public_storage_prefix,
-                mpc_socket_addr
+        "Starting threshold KMS server v{}, listening for MPC communication on {:?}...",
+        env!("CARGO_PKG_VERSION"),
+        mpc_socket_addr
     );
     if let Some(peers) = &threshold_config.peers {
         tracing::info!(
@@ -490,14 +489,9 @@ async fn main_exec() -> anyhow::Result<()> {
         .map(Arc::new);
 
     // public vault
-    let public_storage_prefix = core_config
-        .threshold
-        .as_ref()
-        .and_then(|t| t.public_storage_prefix.as_deref());
     let public_storage = make_storage(
         core_config.public_vault.map(|v| v.storage),
         StorageType::PUB,
-        public_storage_prefix,
         public_storage_cache,
         s3_client.clone(),
     )
@@ -508,17 +502,12 @@ async fn main_exec() -> anyhow::Result<()> {
     };
 
     // private vault
-    let private_storage_prefix = core_config
-        .threshold
-        .as_ref()
-        .and_then(|t| t.private_storage_prefix.as_deref());
     let private_storage = make_storage(
         core_config
             .private_vault
             .as_ref()
             .map(|v| v.storage.clone()),
         StorageType::PRIV,
-        private_storage_prefix,
         private_storage_cache,
         s3_client.clone(),
     )
@@ -550,10 +539,6 @@ async fn main_exec() -> anyhow::Result<()> {
     // backup vault (unlike for private/public storage, there cannot be a
     // default location for backup storage, so there has to be
     // Some(storage_url))
-    let backup_storage_prefix = core_config
-        .threshold
-        .as_ref()
-        .and_then(|t| t.backup_storage_prefix.as_deref());
     let backup_storage = core_config
         .backup_vault
         .as_ref()
@@ -561,7 +546,6 @@ async fn main_exec() -> anyhow::Result<()> {
             make_storage(
                 Some(v.storage.clone()),
                 StorageType::BACKUP,
-                backup_storage_prefix,
                 None,
                 s3_client,
             )

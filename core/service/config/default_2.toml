@@ -12,13 +12,16 @@ s3_endpoint = "http://dev-s3-mock:9000"
 
 [public_vault.storage.file]
 path = "./keys"
+prefix = "PUB-p2"
 
 [private_vault.storage.file]
 path = "./keys"
+prefix = "PRIV-p2"
 
 [backup_vault]
 [backup_vault.storage.file]
 path = "./backup_vault"
+prefix = "BACKUP-p2"
 
 [threshold]
 listen_address = "0.0.0.0"

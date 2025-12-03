@@ -125,9 +125,6 @@ pub async fn setup_threshold_no_client<
                 threshold,
                 dec_capacity: DEC_CAPACITY,
                 min_dec_cache: MIN_DEC_CACHE,
-                public_storage_prefix: Some(format!("PUB-p{}", i)),
-                private_storage_prefix: Some(format!("PRIV-p{}", i)),
-                backup_storage_prefix: Some(format!("BACKUP-p{}", i)),
                 initial_party_id: Some(i),
                 preproc_redis: None,
                 // Add some parallelism so CI runs a bit faster
@@ -526,7 +523,7 @@ pub async fn centralized_handles(
     param: &DKGParams,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
-    let backup_proxy_storage = make_storage(None, StorageType::BACKUP, None, None, None).unwrap();
+    let backup_proxy_storage = make_storage(None, StorageType::BACKUP, None, None).unwrap();
     let backup_vault = Vault {
         storage: backup_proxy_storage,
         keychain: None,

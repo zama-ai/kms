@@ -40,21 +40,16 @@ impl S3Storage {
     pub fn new(
         s3_client: S3Client,
         bucket: String,
-        s3_prefix: Option<String>,
         storage_type: StorageType,
         storage_prefix: Option<&str>,
         cache: Option<StorageCache>,
     ) -> anyhow::Result<Self> {
-        let extra_prefix = match storage_prefix {
+        let prefix = match storage_prefix {
             Some(prefix) => {
                 storage_prefix_safety(storage_type, prefix)?;
                 prefix.to_string()
             }
             None => format!("{storage_type}"),
-        };
-        let prefix = match s3_prefix {
-            Some(p) if !p.is_empty() => format!("{p}/{extra_prefix}"),
-            _ => extra_prefix,
         };
         Ok(S3Storage {
             s3_client,
@@ -512,17 +507,15 @@ mod tests {
         let mut pub_storage = S3Storage::new(
             s3_client,
             BUCKET_NAME.to_string(),
+            StorageType::PUB,
             Some(
                 temp_dir
                     .path()
                     .to_str()
                     .unwrap()
                     .trim_start_matches('/')
-                    .trim_end_matches('/')
-                    .to_string(),
+                    .trim_end_matches('/'),
             ),
-            StorageType::PUB,
-            None,
             None,
         )
         .unwrap();
@@ -542,17 +535,15 @@ mod tests {
         let mut pub_storage = S3Storage::new(
             s3_client,
             BUCKET_NAME.to_string(),
+            StorageType::PUB,
             Some(
                 temp_dir
                     .path()
                     .to_str()
                     .unwrap()
                     .trim_start_matches('/')
-                    .trim_end_matches('/')
-                    .to_string(),
+                    .trim_end_matches('/'),
             ),
-            StorageType::PUB,
-            None,
             None,
         )
         .unwrap();

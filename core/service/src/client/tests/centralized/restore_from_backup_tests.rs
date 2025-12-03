@@ -93,7 +93,7 @@ async fn test_insecure_central_autobackup_after_deletion() {
     let (_kms_server, _kms_client, _internal_client) =
         crate::client::test_tools::centralized_handles(&dkg_param, None).await;
     // Check the storage
-    let backup_storage = make_storage(None, StorageType::BACKUP, None, None, None).unwrap();
+    let backup_storage = make_storage(None, StorageType::BACKUP, None, None).unwrap();
     // Validate that the backup is constructed again
     assert!(backup_storage
         .data_exists(&key_id, &PrivDataType::FhePrivateKey.to_string())

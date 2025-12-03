@@ -441,32 +441,30 @@ pub async fn file_backup_vault(
     pub_storage_prefix: Option<&str>,
     backup_storage_prefix: Option<&str>,
 ) -> Vault {
-    let backup_store_path = backup_path.map(|p| {
-        conf::Storage::File(conf::FileStorage {
-            path: p.to_path_buf(),
-        })
-    });
-    let pub_store_path = pub_path.map(|p| {
-        conf::Storage::File(conf::FileStorage {
-            path: p.to_path_buf(),
-        })
-    });
-    let pub_proxy_storage = make_storage(
-        pub_store_path.clone(),
-        StorageType::PUB,
-        pub_storage_prefix,
-        None,
-        None,
-    )
-    .unwrap();
-    let backup_proxy_storage = make_storage(
-        backup_store_path,
-        StorageType::BACKUP,
-        backup_storage_prefix,
-        None,
-        None,
-    )
-    .unwrap();
+    let create_storage_conf =
+        |path: Option<&Path>, storage_prefix: Option<&str>| match (path, storage_prefix) {
+            (None, None) => None,
+            (None, Some(prefix)) => Some(conf::Storage::File(conf::FileStorage {
+                path: std::env::current_dir()
+                    .unwrap()
+                    .join(crate::consts::KEY_PATH_PREFIX),
+                prefix: Some(prefix.to_string()),
+            })),
+            (Some(path), None) => Some(conf::Storage::File(conf::FileStorage {
+                path: path.to_path_buf(),
+                prefix: None,
+            })),
+            (Some(path), Some(prefix)) => Some(conf::Storage::File(conf::FileStorage {
+                path: path.to_path_buf(),
+                prefix: Some(prefix.to_string()),
+            })),
+        };
+    let backup_storage_conf = create_storage_conf(backup_path, backup_storage_prefix);
+    let pub_storage_conf = create_storage_conf(pub_path, pub_storage_prefix);
+
+    let pub_proxy_storage = make_storage(pub_storage_conf, StorageType::PUB, None, None).unwrap();
+    let backup_proxy_storage =
+        make_storage(backup_storage_conf, StorageType::BACKUP, None, None).unwrap();
     let keychain = match keychain_conf {
         Some(conf) => Some(
             make_keychain_proxy(conf, None, None, Some(&pub_proxy_storage))

@@ -19,6 +19,7 @@ use crate::vault::Vault;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use std::collections::HashMap;
 use std::path::Path;
+use tfhe::core_crypto::commons::utils::ZipChecked;
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tonic::transport::Channel;
@@ -170,7 +171,7 @@ pub(crate) async fn threshold_handles_custodian_backup(
     let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     for (pub_prefix, backup_prefix) in pub_storage_prefixes
         .iter()
-        .zip(backup_storage_prefixes.iter())
+        .zip_checked(backup_storage_prefixes.iter())
     {
         let cur_vault = file_backup_vault(
             Some(&Keychain::SecretSharing(SecretSharingKeychain {})),

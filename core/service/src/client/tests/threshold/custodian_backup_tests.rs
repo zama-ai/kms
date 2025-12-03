@@ -63,6 +63,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
         "test_auto_update_backups_threshold_{amount_parties}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
+
     let test_path = None;
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
@@ -144,6 +145,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         "test_backup_after_crs_threshold_{amount_parties}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
+
     let test_path = None;
     let crs_req: RequestId = derive_request_id(&format!(
         "test_backup_after_crs_threshold_{amount_parties}_{amount_custodians}_{threshold}"
@@ -183,6 +185,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         Some(16),
     )
     .await;
+
     // Check that the new CRS was backed up
     let crss: Vec<BackupCiphertext> = read_custodian_backup_files(
         test_path,
@@ -192,6 +195,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         backup_storage_prefixes,
     )
     .await;
+
     // Validate each backup
     assert_eq!(crss.len(), amount_parties);
     for i in 0..crss.len() - 1 {

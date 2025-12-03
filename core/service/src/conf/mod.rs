@@ -141,6 +141,7 @@ pub struct RamStorage {}
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct FileStorage {
     pub path: PathBuf,
+    pub prefix: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
@@ -298,14 +299,16 @@ mod tests {
         assert_eq!(
             private_vault.storage,
             Storage::File(FileStorage {
-                path: PathBuf::from("./keys")
+                path: PathBuf::from("./keys"),
+                prefix: Some("PRIV-p2".to_string()),
             })
         );
 
         assert_eq!(
             core_config.public_vault.unwrap().storage,
             Storage::File(FileStorage {
-                path: PathBuf::from("./keys")
+                path: PathBuf::from("./keys"),
+                prefix: Some("PUB-p2".to_string()),
             })
         );
 
@@ -391,6 +394,7 @@ mod tests {
             private_vault.storage,
             Storage::File(FileStorage {
                 path: PathBuf::from("./keys"),
+                prefix: None,
             })
         );
         assert!(private_vault.keychain.is_none(), "no keychain expected");
@@ -398,6 +402,7 @@ mod tests {
             core_config.public_vault.unwrap().storage,
             Storage::File(FileStorage {
                 path: PathBuf::from("./keys"),
+                prefix: None,
             })
         );
         assert_eq!(

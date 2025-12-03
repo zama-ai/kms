@@ -31,10 +31,6 @@ pub struct ThresholdPartyConf {
     // TODO: remove this
     pub threshold: u8,
 
-    pub public_storage_prefix: Option<String>,
-    pub private_storage_prefix: Option<String>,
-    pub backup_storage_prefix: Option<String>,
-
     #[validate(range(min = 1))]
     pub initial_party_id: Option<usize>,
 

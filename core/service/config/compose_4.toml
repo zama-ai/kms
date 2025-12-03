@@ -17,19 +17,22 @@ storage_cache_size = 1000
 
 [public_vault.storage.s3]
 bucket = "kms"
+prefix = "PUB-p4"
 
 [private_vault.storage.s3]
 bucket = "kms"
+prefix = "PRIV-p4"
 
 [backup_vault]
 [backup_vault.storage.file]
 path = "./backup_vault"
+prefix = "BACKUP-p4"
 
 [threshold]
 listen_address = "0.0.0.0"
 listen_port = 50004
 
-my_id = 4
+initial_party_id = 4
 
 threshold = 1
 dec_capacity = 10000

@@ -26,17 +26,33 @@ s3_endpoint = "http://dev-s3-mock:9000"
 # Public vault storage backend.
 [public_vault]
 
-# Storage URL. Two URL schemes are supported: file:// and s3://.
-# Paths can be the same for different storage types and parties.
+# The public storage configuration.
+# We support storage.file, storage.s3 and storage.ram.
+# When file storage is used, a path must be given with an optional prefix,
+# if the prefix is not given, then "PUB" is used as the prefix.
+# When s3 storage is used, a bucket name must be given with an optional prefix,
+# if the prefix is not given, then "PUB" is used as the prefix as well.
+# When ram is used, there are no additional parameters.
 [public_vault.storage.file]
 path = "./keys"
+prefix = "PUB-p1"
 
-# Private vault storage backend.
+# [public_vault.storage.s3]
+# bucket = "kms"
+# prefix = "PUB-p1"
+
+# The private vault storage configuration.
+[private_vault]
+
+# We support storage.file, storage.s3 and storage.ram.
+# When file storage is used, a path must be given with an optional prefix,
+# if the prefix is not given, then "PRIV" is used as the prefix.
+# When s3 storage is used, a bucket name must be given with an optional prefix,
+# if the prefix is not given, then "PRIV" is used as the prefix as well.
+# When ram is used, there are no additional parameters.
 [private_vault.storage.file]
-
-# Storage URL. Two URL schemes are supported: file:// and s3://.
-# Paths can be the same for different storage types and parties.
 path = "./keys"
+prefix = "PRIV-p1"
 
 # If S3 storage is used for private keys, it is recommended to run the Core inside
 # a Nitro Enclave to reduce leakage risk. Since Nitro enclaves do not have persistent
@@ -60,8 +76,16 @@ path = "./keys"
 # will also write to the backup vault.
 # We do not write PrssState to the backup vault since it can be regenerated easily.
 [backup_vault]
+
+# We support storage.file, storage.s3 and storage.ram.
+# When file storage is used, a path must be given with an optional prefix,
+# if the prefix is not given, then "BACKKUP" is used as the prefix.
+# When s3 storage is used, a bucket name must be given with an optional prefix,
+# if the prefix is not given, then "BACKUP" is used as the prefix as well.
+# When ram is used, there are no additional parameters.
 [backup_vault.storage.file]
 path = "./backup_vault"
+prefix = "BACKUP-p1"
 
 # Configuration for communicating with other KMS nodes.
 # Not needed when running in centralized mode.
@@ -72,11 +96,10 @@ path = "./backup_vault"
 listen_address = "0.0.0.0"
 listen_port = 50001
 
-# MPC identity of this core. Must be unique across all cores:
-# monotonically increasing positive integer starting at 1.
+# This is an optional parameter tha specifies the initial party ID
+# of the MPC core that's given in the peerlist.
 #
-# WARNING: this is deprecated and will be removed in future versions.
-# It is only used to determine the storage path and nothing else.
+# It is needed when the KMS starts with a peerlist, otherwise it can be omitted.
 initial_party_id = 1
 
 # Threshold is the number of corruptions that the protocol handles. Currently
