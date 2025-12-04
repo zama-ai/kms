@@ -347,7 +347,7 @@ impl<
                     let res = bc2wrap::serialize(&enc_res)?;
 
                     tracing::info!(
-                        "User decryption completed for type {:?}. Inner thread took {:?} ms",
+                        "User decryption {req_id} in session {session_id} completed for type {:?}. Inner thread took {:?} ms",
                         fhe_type,
                         time.as_millis()
                     );

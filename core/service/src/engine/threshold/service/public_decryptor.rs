@@ -238,7 +238,7 @@ impl<
                     }
                 };
                 tracing::info!(
-                    "Decryption completed on {:?}. Inner thread took {:?} ms",
+                    "Decryption in session {session_id} completed on {:?}. Inner thread took {:?} ms",
                     session_prep.own_identity().await?,
                     time.as_millis()
                 );
