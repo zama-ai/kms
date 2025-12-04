@@ -349,10 +349,7 @@ impl GrpcNetworkingManager {
 
         let mut connection_channels = HashMap::new();
         for (role, identity) in others.inner.into_iter() {
-            let channel = self
-                .sending_service
-                .connect_to_party(identity.clone())
-                .await?;
+            let channel = self.sending_service.connect_to_party(&identity).await?;
             connection_channels.insert((role, identity), channel);
         }
 
