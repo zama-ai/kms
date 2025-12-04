@@ -3,12 +3,17 @@
 
 use kms_grpc::identifiers::ContextId;
 use serde::{Deserialize, Serialize};
-use tfhe::{named::Named, Versionize};
+use tfhe::{
+    named::Named,
+    safe_serialization::{safe_deserialize, safe_serialize},
+    Versionize,
+};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{execution::runtime::party::Role, networking::tls::ReleasePCRValues};
 
 use crate::{
-    cryptography::signatures::PublicSigKey,
+    consts::SAFE_SER_SIZE_LIMIT,
+    cryptography::{internal_crypto_types::LegacySerialization, signatures::PublicSigKey},
     engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     vault::storage::{crypto_material::get_core_signing_key, StorageReader},
 };
@@ -29,9 +34,9 @@ pub enum SoftwareVersionVersioned {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(SoftwareVersionVersioned)]
 pub struct SoftwareVersion {
-    pub major: u8,
-    pub minor: u8,
-    pub patch: u8,
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
     pub tag: Option<String>,
 }
 
@@ -98,12 +103,12 @@ impl From<&str> for SoftwareVersion {
     }
 }
 
-#[derive(Clone, Debug, VersionsDispatch)]
+#[derive(Clone, Debug, PartialEq, Eq, VersionsDispatch)]
 pub enum NodeInfoVersioned {
     V0(NodeInfo),
 }
 
-#[derive(Clone, Debug, Versionize, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Versionize, Serialize, Deserialize)]
 #[versionize(NodeInfoVersioned)]
 pub struct NodeInfo {
     pub mpc_identity: String,
@@ -142,22 +147,22 @@ impl TryFrom<kms_grpc::kms::v1::MpcNode> for NodeInfo {
 
         // check the external_url is a valid URL
         let _ = url::Url::parse(&value.external_url)?;
-
+        let mut extra_verification_keys = Vec::new();
+        for k in &value.extra_verification_keys {
+            let pk = PublicSigKey::from_legacy_bytes(k)?;
+            extra_verification_keys.push(pk);
+        }
         Ok(NodeInfo {
             mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
             verification_key: match value.verification_key {
                 None => None,
-                Some(vk_bytes) => Some(bc2wrap::deserialize_safe(&vk_bytes)?),
+                Some(vk_bytes) => Some(PublicSigKey::from_legacy_bytes(&vk_bytes)?),
             },
             external_url: value.external_url,
             ca_cert,
             public_storage_url: value.public_storage_url,
-            extra_verification_keys: value
-                .extra_verification_keys
-                .into_iter()
-                .map(|k| bc2wrap::deserialize_safe(&k))
-                .collect::<Result<Vec<_>, _>>()?,
+            extra_verification_keys,
         })
     }
 }
@@ -170,7 +175,7 @@ impl TryFrom<NodeInfo> for kms_grpc::kms::v1::MpcNode {
             mpc_identity: value.mpc_identity,
             party_id: value.party_id.try_into()?,
             verification_key: match value.verification_key {
-                Some(inner) => Some(bc2wrap::serialize(&inner)?),
+                Some(inner) => Some(inner.to_legacy_bytes()?),
                 None => None,
             },
             external_url: value.external_url,
@@ -179,7 +184,7 @@ impl TryFrom<NodeInfo> for kms_grpc::kms::v1::MpcNode {
             extra_verification_keys: value
                 .extra_verification_keys
                 .into_iter()
-                .map(|k| bc2wrap::serialize(&k))
+                .map(|k| k.to_legacy_bytes())
                 .collect::<Result<Vec<_>, _>>()?,
         })
     }
@@ -189,12 +194,12 @@ impl Named for NodeInfo {
     const NAME: &'static str = "kms::NodeInfo";
 }
 
-#[derive(VersionsDispatch, Clone, Debug, Serialize, Deserialize)]
+#[derive(VersionsDispatch, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContextInfoVersioned {
     V0(ContextInfo),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(ContextInfoVersioned)]
 pub struct ContextInfo {
     pub mpc_nodes: Vec<NodeInfo>,
@@ -318,7 +323,9 @@ impl TryFrom<kms_grpc::kms::v1::MpcContext> for ContextInfo {
     type Error = anyhow::Error;
 
     fn try_from(value: kms_grpc::kms::v1::MpcContext) -> anyhow::Result<Self> {
-        let software_version = bc2wrap::deserialize_safe(&value.software_version)?;
+        let mut buf = std::io::Cursor::new(&value.software_version);
+        let software_version = safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT)
+            .map_err(|e| anyhow::anyhow!("Deserialization of software version failed: {e}"))?;
         Ok(ContextInfo {
             mpc_nodes: value
                 .mpc_nodes
@@ -349,6 +356,13 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::MpcContext {
     type Error = anyhow::Error;
 
     fn try_from(value: ContextInfo) -> anyhow::Result<Self> {
+        let mut software_version = Vec::new();
+        safe_serialize(
+            &value.software_version,
+            &mut software_version,
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(|e| anyhow::anyhow!("Serialization of software version failed: {e}"))?;
         Ok(kms_grpc::kms::v1::MpcContext {
             mpc_nodes: value
                 .mpc_nodes
@@ -356,7 +370,7 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::MpcContext {
                 .map(kms_grpc::kms::v1::MpcNode::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
             context_id: Some(value.context_id.into()),
-            software_version: bc2wrap::serialize(&value.software_version)?,
+            software_version,
             threshold: value.threshold.try_into()?,
             pcr_values: value
                 .pcr_values

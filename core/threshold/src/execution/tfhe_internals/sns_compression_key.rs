@@ -1,11 +1,9 @@
-use serde::{Deserialize, Serialize};
 use tfhe::{
     boolean::prelude::{GlweDimension, PolynomialSize},
     shortint::parameters::NoiseSquashingCompressionParameters,
-    Versionize,
 };
-use tfhe_versionable::VersionsDispatch;
 
+use super::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare};
 use crate::{
     algebra::{
         galois_rings::common::ResiduePoly,
@@ -17,15 +15,6 @@ use crate::{
     },
 };
 
-use super::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare};
-
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum SnsCompressionPrivateKeySharesVersioned<Z: Clone, const EXTENSION_DEGREE: usize> {
-    V0(SnsCompressionPrivateKeyShares<Z, EXTENSION_DEGREE>),
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
-#[versionize(SnsCompressionPrivateKeySharesVersioned)]
 pub struct SnsCompressionPrivateKeyShares<Z: Clone, const EXTENSION_DEGREE: usize> {
     pub post_packing_ks_key: GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     pub params: NoiseSquashingCompressionParameters,

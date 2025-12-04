@@ -395,6 +395,16 @@
     (
         kms_core_version_min: "0.13.0",
         kms_core_module: "kms",
+        metadata: CrsGenMetadata((
+            test_filename: "crs_gen_metadata",
+            legacy_filename: "legacy_crs_gen_metadata",
+            state: 100,
+            max_num_bits: 2048,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "kms",
         metadata: TypedPlaintext((
             test_filename: "typed_plaintext",
             plaintext_bytes: [
@@ -495,11 +505,74 @@
     (
         kms_core_version_min: "0.13.0",
         kms_core_module: "kms",
+        metadata: PrssSetupCombined((
+            test_filename: "prss_setup_combined",
+            prss_setup_64: "prss_setup_64",
+            prss_setup_128: "prss_setup_128",
+            role_i: 3,
+            amount: 13,
+            threshold: 4,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "kms",
+        metadata: ContextInfo((
+            test_filename: "context_info",
+            threshold: 3,
+            state: 234,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "kms",
+        metadata: NodeInfo((
+            test_filename: "node_info",
+            mpc_identity: "node_mpc_identity",
+            party_id: 4,
+            public_storage_url: "https://storage.example.com/node4",
+            external_url: "https://node4.example.com/mpc/something-something",
+            ca_cert: Some([
+                1,
+                2,
+                3,
+                4,
+                6,
+                7,
+                8,
+                9,
+            ]),
+            state: 500,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "kms",
+        metadata: SoftwareVersion((
+            test_filename: "software_version",
+            major: 0,
+            minor: 13,
+            patch: 4,
+            tag: "super fun version",
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "kms",
         metadata: RecoveryValidationMaterial((
             test_filename: "recovery_material",
             internal_cus_context_filename: "internal_cus_context_handle",
             state: 300,
             custodian_count: 5,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.13.0",
+        kms_core_module: "kms",
+        metadata: InternalRecoveryRequest((
+            test_filename: "internal_recovery_request",
+            amount: 10,
+            state: 300,
         )),
     ),
     (
