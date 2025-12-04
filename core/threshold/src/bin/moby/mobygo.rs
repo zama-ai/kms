@@ -14,16 +14,14 @@ use tfhe::{
 };
 use threshold_fhe::{
     choreography::{
-        choreographer::ChoreoRuntime,
+        choreographer::{ChoreoRuntime, KeySetMaybeCompressed},
         grpc::SupportedRing,
         requests::{SessionType, TfheType, ThroughtputParams},
     },
     conf::choreo::ChoreoConf,
     execution::{
         endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext},
-        tfhe_internals::{
-            parameters::DkgParamsAvailable, public_keysets::FhePubKeySet, utils::expanded_encrypt,
-        },
+        tfhe_internals::{parameters::DkgParamsAvailable, utils::expanded_encrypt},
     },
     session_id::SessionId,
 };
@@ -486,6 +484,13 @@ async fn threshold_keygen_result_command(
         )
         .await?;
 
+    match &keys {
+        KeySetMaybeCompressed::Compressed(_) =>
+            println!("Storing a compressed keys, can be used for KATs."),
+
+        KeySetMaybeCompressed::Uncompressed(_) => println!("Storing an uncompressed key, can not be used for KATs, because FFT is not iso on different CPUs."),
+    }
+
     let serialized_pk = bc2wrap::serialize(&(params.session_id, keys))?;
     std::fs::write(format!("{}/pk.bin", params.storage_path), serialized_pk)?;
     println!("Key stored in {}/pk.bin", params.storage_path);
@@ -498,7 +503,8 @@ async fn preproc_decrypt_command(
     params: PreprocDecryptArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pk_serialized = std::fs::read(params.pub_key_file)?;
-    let (key_sid, _): (SessionId, FhePubKeySet) = bc2wrap::deserialize_unsafe(&pk_serialized)?;
+    let (key_sid, _): (SessionId, KeySetMaybeCompressed) =
+        bc2wrap::deserialize_unsafe(&pk_serialized)?;
     let session_id = params.session_id.unwrap_or_else(random);
     let num_ctxts = params.num_ctxts;
     let ctxt_type = params.tfhe_type;
@@ -599,10 +605,19 @@ fn encrypt_messages(
 
 async fn encrypt_command(params: EncryptArgs) -> Result<(), Box<dyn std::error::Error>> {
     let pk_serialized = std::fs::read(params.pub_key_file)?;
-    let (_key_sid, pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize_unsafe(&pk_serialized)?;
-    let compact_key = pk.public_key;
+    let (_key_sid, pk): (SessionId, KeySetMaybeCompressed) =
+        bc2wrap::deserialize_unsafe(&pk_serialized)?;
 
-    set_server_key(pk.server_key);
+    let (compact_key, server_key) = match pk {
+        KeySetMaybeCompressed::Compressed(comp_pk) => {
+            comp_pk.decompress().unwrap().into_raw_parts()
+        }
+        KeySetMaybeCompressed::Uncompressed(uncomp_pk) => {
+            (uncomp_pk.public_key, uncomp_pk.server_key)
+        }
+    };
+
+    set_server_key(server_key);
     let ctxt = encrypt_messages(vec![params.value], params.tfhe_type.clone(), &compact_key)
         .pop()
         .unwrap();
@@ -625,7 +640,8 @@ async fn threshold_decrypt_from_file_command(
     params: ThresholdDecryptFromFileArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pk_serialized = std::fs::read(params.pub_key_file)?;
-    let (key_sid, _pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize_unsafe(&pk_serialized)?;
+    let (key_sid, _pk): (SessionId, KeySetMaybeCompressed) =
+        bc2wrap::deserialize_unsafe(&pk_serialized)?;
 
     let ctxt_serialized = tokio::fs::read(params.input_file).await?;
     let (tfhe_type, ctxt): (TfheType, RadixOrBoolCiphertext) =
@@ -664,12 +680,21 @@ async fn threshold_decrypt_command(
     let tfhe_type = params.tfhe_type;
     let num_messages = params.num_ctxts;
     let pk_serialized = std::fs::read(params.pub_key_file)?;
-    let (key_sid, pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize_unsafe(&pk_serialized)?;
-    let compact_key = pk.public_key;
+    let (key_sid, pk): (SessionId, KeySetMaybeCompressed) =
+        bc2wrap::deserialize_unsafe(&pk_serialized)?;
+
+    let (compact_key, server_key) = match pk {
+        KeySetMaybeCompressed::Compressed(comp_pk) => {
+            comp_pk.decompress().unwrap().into_raw_parts()
+        }
+        KeySetMaybeCompressed::Uncompressed(uncomp_pk) => {
+            (uncomp_pk.public_key, uncomp_pk.server_key)
+        }
+    };
 
     //Required to be able to expand the CompactCiphertextList if the encryption and compute keys
     //are different (i.e. need access to PKSK)
-    set_server_key(pk.server_key);
+    set_server_key(server_key);
     let max_value = if tfhe_type.get_num_bits_rep() >= 64 {
         u64::MAX
     } else {
