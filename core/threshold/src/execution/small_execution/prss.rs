@@ -364,7 +364,6 @@ pub struct PrssSet<Z> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Version)]
-#[versionize(PrssSetVersioned)] // TODO shouldn't this be versionized?
 pub struct PrssSetV0<Z> {
     pub parties: PartySetV0,
     pub set_key: PrfKey,
