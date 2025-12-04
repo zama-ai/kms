@@ -184,7 +184,7 @@ kmsPeers:
 ### Storage Configuration
 
 The KMS service requires persistent storage for its operation. Configure it according to your environment:
-You can keep empty to use the default storage class or set the default storage class name in the values file.
+You can keep it empty to use the default storage class or set the default storage class name in the values file.
 In AWS for example it can be `gp2` or `gp3`.
 
 ```yaml

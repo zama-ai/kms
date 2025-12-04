@@ -2,7 +2,7 @@ build-compose-base:
 	docker compose -vvv -f docker-compose-core-base.yml build
 
 build-compose-threshold:
-	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml -f docker-compose-core-gateway-threshold.yml build
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
 
 start-compose-threshold:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up -d --wait

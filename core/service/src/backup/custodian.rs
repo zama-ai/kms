@@ -41,7 +41,7 @@ pub enum InternalCustodianRecoveryOutputVersioned {
 pub struct InternalCustodianRecoveryOutput {
     pub signcryption: UnifiedSigncryption,
     pub custodian_role: Role,
-    pub operator_role: Role,
+    pub operator_verification_key: PublicSigKey,
 }
 
 impl Named for InternalCustodianRecoveryOutput {
@@ -57,11 +57,12 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
                 "Invalid custodian role in CustodianRecoveryOutput"
             ));
         }
-        if value.operator_role == 0 {
-            return Err(anyhow::anyhow!(
-                "Invalid operator role in CustodianRecoveryOutput"
-            ));
-        }
+        // TODO(zama-ai/kms-internal/issues/2836)
+        // we may change how the verification key is serialized
+        let verification_key: PublicSigKey =
+            bc2wrap::deserialize_safe(&value.operator_verification_key).map_err(|e| {
+                anyhow::anyhow!("Failed to deserialize operator verification key: {}", e)
+            })?;
         let backup_output = &value.backup_output.ok_or_else(|| {
             anyhow::anyhow!("backup output not part of the custodian recovery output")
         })?;
@@ -72,7 +73,7 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
                 backup_output.signing_type().into(),
             ),
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
-            operator_role: Role::indexed_from_one(value.operator_role as usize),
+            operator_verification_key: verification_key,
         })
     }
 }
@@ -81,6 +82,7 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
     type Error = anyhow::Error;
 
     fn try_from(value: InternalCustodianRecoveryOutput) -> Result<Self, Self::Error> {
+        let verification_key_buf = bc2wrap::serialize(&value.operator_verification_key)?;
         Ok(CustodianRecoveryOutput {
             backup_output: Some(OperatorBackupOutput {
                 signcryption: value.signcryption.payload,
@@ -88,7 +90,7 @@ impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
                 signing_type: value.signcryption.signing_type as i32,
             }),
             custodian_role: value.custodian_role.one_based() as u64,
-            operator_role: value.operator_role.one_based() as u64,
+            operator_verification_key: verification_key_buf,
         })
     }
 }
@@ -302,11 +304,10 @@ impl Custodian {
         operator_verification_key: &PublicSigKey,
         operator_ephem_enc_key: &UnifiedPublicEncKey,
         backup_id: RequestId,
-        operator_role: Role,
     ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
         tracing::debug!(
             "Verifying and re-encrypting backup for operator: {}",
-            operator_role
+            operator_verification_key.address(),
         );
         let custodian_id = self.verification_key().verf_key_id();
         let unsigncrypt_key = UnifiedUnsigncryptionKey::new(
@@ -319,22 +320,25 @@ impl Custodian {
             .unsigncrypt(&DSEP_BACKUP_CUSTODIAN, &backup.signcryption)
             .map_err(|e| {
                 tracing::warn!(
-                    "Unsigncryption failed for backup {backup_id} for operator {operator_role}: {e}"
+                    "Unsigncryption failed for backup {backup_id} for operator {}: {e}",
+                    operator_verification_key.address(),
                 );
                 BackupError::CustodianRecoveryError
             })?;
-        tracing::debug!("Decrypted ciphertext for operator: {}", operator_role);
+        tracing::debug!(
+            "Decrypted ciphertext for operator: {}",
+            operator_verification_key.address()
+        );
         // check the decrypted result
         if !backup_material.matches_expected_metadata(
             backup_id,
             &self.signing_key.verf_key(),
             self.role,
             &operator_verification_key.verf_key_id(),
-            operator_role,
         ) {
             tracing::error!(
                 "Backup material did not match expected metadata for operator: {}",
-                operator_role
+                operator_verification_key.address()
             );
             return Err(BackupError::CustodianRecoveryError);
         }
@@ -347,11 +351,14 @@ impl Custodian {
             &operator_verf_id,
         );
         let signcryption = signcrypt_key.signcrypt(rng, &DSEP_BACKUP_RECOVERY, &backup_material)?;
-        tracing::debug!("Signed re-encrypted share for operator: {}", operator_role);
+        tracing::debug!(
+            "Signed re-encrypted share for operator: {}",
+            operator_verification_key.address()
+        );
         Ok(InternalCustodianRecoveryOutput {
             signcryption,
             custodian_role: self.role,
-            operator_role,
+            operator_verification_key: operator_verification_key.clone(),
         })
     }
 

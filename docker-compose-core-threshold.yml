@@ -17,6 +17,7 @@ services:
     env_file:
       - "docker-compose-kms-core.env"
     entrypoint:
+      # We do a key-gen first because otherwise the service won't start
       - /bin/sh
       - -c
       - |
@@ -88,9 +89,6 @@ services:
       - KMS_DOCKER_BACKUP_SECRET_SHARING=${KMS_DOCKER_BACKUP_SECRET_SHARING}
       - KMS_DOCKER_EMPTY_PEERLIST=${KMS_DOCKER_EMPTY_PEERLIST}
       - KMS_DOCKER_CONFIG_FILE=config/compose_1.toml
-    # We do a key-gen first because otherwise the service won't start
-    # NOTE: currently debugging the upload to s3
-    # Credentials are set with both credentials file and env-var
     entrypoint:
       - ./docker-compose-core-threshold-entrypoint.sh
 

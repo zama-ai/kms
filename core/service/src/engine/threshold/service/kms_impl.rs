@@ -604,7 +604,6 @@ where
     let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
 
     let backup_operator = RealBackupOperator::new(
-        Role::indexed_from_one(config.my_id),
         base_kms.new_instance().await,
         crypto_storage.inner.clone(),
         security_module,
