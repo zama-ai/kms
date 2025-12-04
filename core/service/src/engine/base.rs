@@ -526,19 +526,19 @@ pub(crate) fn compute_external_user_decrypt_signature(
     extra_data: Vec<u8>,
 ) -> anyhow::Result<Vec<u8>> {
     let message_hash =
-        compute_user_decrypt_message_hash(payload, eip712_domain, user_pk, extra_data)?;
+        compute_user_decrypt_message_hash(payload, eip712_domain, user_pk, &extra_data)?;
 
     let signer = PrivateKeySigner::from_signing_key(server_sk.sk().clone());
-    let signer_address = signer.address();
-    tracing::info!("Signer address: {:?}", signer_address);
 
     // Sign the hash synchronously with the wallet.
     let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
 
     tracing::info!(
-        "UserDecryptResponseVerification Signature: {:?} with length {}",
+        "UserDecryptResponseVerification Signature: {:?} with length {} from signer address {} with extra data {}",
         hex::encode(signature.clone()),
         signature.len(),
+        signer.address(),
+        hex::encode(&extra_data)
     );
     Ok(signature)
 }
@@ -551,16 +551,19 @@ pub(crate) fn compute_external_pt_signature(
     extra_data: Vec<u8>,
     eip712_domain: Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
-    let message_hash = compute_pt_message_hash(ext_handles_bytes, pts, eip712_domain, extra_data)?;
+    let message_hash = compute_pt_message_hash(ext_handles_bytes, pts, eip712_domain, &extra_data)?;
 
     let signer = PrivateKeySigner::from_signing_key(server_sk.sk().clone());
-    let signer_address = signer.address();
-    tracing::info!("Signer address: {:?}", signer_address);
 
     // Sign the hash synchronously with the wallet.
     let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
 
-    tracing::info!("PT Signature: {:?}", hex::encode(signature.clone()));
+    tracing::info!(
+        "Plaintext Signature: {:?} from signer address {} with extra data {}",
+        hex::encode(signature.clone()),
+        signer.address(),
+        hex::encode(&extra_data)
+    );
 
     Ok(signature)
 }
@@ -776,7 +779,7 @@ pub fn compute_pt_message_hash(
     ext_handles_bytes: Vec<Vec<u8>>,
     pts: &[TypedPlaintext],
     eip712_domain: Eip712Domain,
-    extra_data: Vec<u8>,
+    extra_data: &Vec<u8>,
 ) -> anyhow::Result<B256> {
     // convert external_handles back to U256 to be signed
     let external_handles: Vec<_> = ext_handles_bytes
@@ -1620,9 +1623,9 @@ pub(crate) mod tests {
         let extra_data: Vec<u8> = vec![];
 
         // Determinism: same inputs -> same hash
-        let h1 = compute_pt_message_hash(handles.clone(), &pts, domain.clone(), extra_data.clone())
+        let h1 = compute_pt_message_hash(handles.clone(), &pts, domain.clone(), &extra_data)
             .expect("hash computation should succeed");
-        let h2 = compute_pt_message_hash(handles.clone(), &pts, domain.clone(), extra_data.clone())
+        let h2 = compute_pt_message_hash(handles.clone(), &pts, domain.clone(), &extra_data)
             .expect("hash computation should succeed");
         assert_eq!(h1, h2, "Hashes must be the same for identical inputs");
 
@@ -1630,7 +1633,7 @@ pub(crate) mod tests {
         let mut mutated_handles = handles.clone();
         mutated_handles[1][0] ^= 0x23;
         let h_changed_handle =
-            compute_pt_message_hash(mutated_handles, &pts, domain.clone(), extra_data.clone())
+            compute_pt_message_hash(mutated_handles, &pts, domain.clone(), &extra_data)
                 .expect("hash computation should succeed");
         assert_ne!(
             h1, h_changed_handle,
@@ -1640,13 +1643,9 @@ pub(crate) mod tests {
         // Changing a plaintext value changes the hash
         let mut pts_modified = pts.clone();
         pts_modified[0] = TypedPlaintext::from_u16(69);
-        let h_changed_pt = compute_pt_message_hash(
-            handles.clone(),
-            &pts_modified,
-            domain.clone(),
-            extra_data.clone(),
-        )
-        .expect("hash computation should succeed");
+        let h_changed_pt =
+            compute_pt_message_hash(handles.clone(), &pts_modified, domain.clone(), &extra_data)
+                .expect("hash computation should succeed");
         assert_ne!(
             h1, h_changed_pt,
             "Hash should change when a plaintext changes"
@@ -1655,7 +1654,7 @@ pub(crate) mod tests {
         // Changing extra data changes the hash
         let extra_data2 = vec![1u8, 2, 3, 5, 23];
         let h_changed_extra =
-            compute_pt_message_hash(handles.clone(), &pts, domain.clone(), extra_data2)
+            compute_pt_message_hash(handles.clone(), &pts, domain.clone(), &extra_data2)
                 .expect("hash computation should succeed");
         assert_ne!(
             h1, h_changed_extra,
@@ -1664,7 +1663,7 @@ pub(crate) mod tests {
 
         // Error path: a handle longer than 32 bytes should fail
         let bad_handles = vec![vec![0u8; 33]];
-        let err = compute_pt_message_hash(bad_handles, &pts, domain, vec![])
+        let err = compute_pt_message_hash(bad_handles, &pts, domain, &vec![])
             .expect_err("Expected error for handle > 32 bytes");
         assert!(
             err.to_string().contains("too long"),
