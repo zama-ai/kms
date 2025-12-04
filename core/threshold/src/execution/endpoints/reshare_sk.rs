@@ -761,14 +761,44 @@ mod tests {
         simulate_reshare_same_set::<8>(false, true).await
     }
 
-    #[tokio::test]
-    async fn reshare_no_error_f4_two_sets() -> anyhow::Result<()> {
-        simulate_reshare_two_sets::<4>(false).await
+    #[rstest::rstest]
+    async fn reshare_no_error_f4_two_sets(
+        #[values(0, 2)] intersection_size: usize,
+    ) -> anyhow::Result<()> {
+        let num_parties_s1 = 7;
+        let num_parties_s2 = 4;
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: 2,
+            threshold_set_2: 1,
+        };
+        simulate_reshare_two_sets::<4>(
+            false,
+            num_parties_s1,
+            num_parties_s2,
+            intersection_size,
+            threshold,
+        )
+        .await
     }
 
-    #[tokio::test]
-    async fn reshare_with_error_f4_two_sets() -> anyhow::Result<()> {
-        simulate_reshare_two_sets::<4>(true).await
+    #[rstest::rstest]
+    async fn reshare_with_error_f4_two_sets(
+        #[values(0, 2)] intersection_size: usize,
+    ) -> anyhow::Result<()> {
+        let num_parties_s1 = 7;
+        let num_parties_s2 = 4;
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: 2,
+            threshold_set_2: 1,
+        };
+        simulate_reshare_two_sets::<4>(
+            true,
+            num_parties_s1,
+            num_parties_s2,
+            intersection_size,
+            threshold,
+        )
+        .await
     }
 
     async fn simulate_reshare_same_set<const EXTENSION_DEGREE: usize>(
@@ -889,19 +919,15 @@ mod tests {
 
     async fn simulate_reshare_two_sets<const EXTENSION_DEGREE: usize>(
         add_error: bool,
+        num_parties_s1: usize,
+        num_parties_s2: usize,
+        intersection_size: usize,
+        threshold: TwoSetsThreshold,
     ) -> anyhow::Result<()>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome,
     {
-        let num_parties_s1 = 7;
-        let num_parties_s2 = 4;
-        let intersection_size = 2;
-        let threshold = TwoSetsThreshold {
-            threshold_set_1: 2,
-            threshold_set_2: 1,
-        };
-
         let mut task = |mut common_session: GenericBaseSession<TwoSetsRole>,
                         session_set_1: Option<BaseSession>,
                         session_set_2: Option<BaseSession>| async move {
