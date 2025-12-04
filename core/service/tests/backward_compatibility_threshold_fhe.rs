@@ -93,16 +93,12 @@ where
         f_a_points.push(Z::from_u128(rng.next_u64() as u128));
     }
 
-    let new_current = PrssSet::<Z> {
-        parties: party_set.clone(),
-        set_key: PrfKey(set_key),
-        f_a_points: f_a_points.clone(),
-    };
-    let new_legacy = PrssSetV0::<Z> {
-        parties: party_set.iter().map(|r| r.one_based()).collect(),
-        set_key: PrfKey(set_key),
+    let new_current = PrssSet::<Z>::new(party_set.clone(), PrfKey(set_key), f_a_points.clone());
+    let new_legacy = PrssSetV0::<Z>::new(
+        party_set.iter().map(|r| r.one_based()).collect(),
+        PrfKey(set_key),
         f_a_points,
-    };
+    );
 
     if original_legacy != new_legacy.clone().upgrade().unwrap() {
         return Err(test.failure(
