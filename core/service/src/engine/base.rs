@@ -525,8 +525,10 @@ pub(crate) fn compute_external_user_decrypt_signature(
     user_pk: &UnifiedPublicEncKey,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<Vec<u8>> {
+    let extra_data_hex = hex::encode(&extra_data);
+
     let message_hash =
-        compute_user_decrypt_message_hash(payload, eip712_domain, user_pk, &extra_data)?;
+        compute_user_decrypt_message_hash(payload, eip712_domain, user_pk, extra_data)?;
 
     let signer = PrivateKeySigner::from_signing_key(server_sk.sk().clone());
 
@@ -538,7 +540,7 @@ pub(crate) fn compute_external_user_decrypt_signature(
         hex::encode(signature.clone()),
         signature.len(),
         signer.address(),
-        hex::encode(&extra_data)
+        extra_data_hex,
     );
     Ok(signature)
 }

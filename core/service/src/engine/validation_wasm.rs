@@ -72,7 +72,8 @@ pub(crate) fn check_ext_user_decryption_signature(
                 anyhow_error_and_log(format!("Error deserializing UnifiedPublicEncKey: {e}"))
             })?,
         };
-    let hash = crate::compute_user_decrypt_message_hash(payload, eip712_domain, &unified_pk, &[])?;
+    let hash =
+        crate::compute_user_decrypt_message_hash(payload, eip712_domain, &unified_pk, vec![])?;
 
     let addr = sig.recover_address_from_prehash(&hash)?;
     tracing::info!("recovered address: {}", addr);
