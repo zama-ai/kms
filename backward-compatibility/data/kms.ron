@@ -572,7 +572,6 @@
         metadata: InternalRecoveryRequest((
             test_filename: "internal_recovery_request",
             amount: 10,
-            role: 2,
             state: 300,
         )),
     ),

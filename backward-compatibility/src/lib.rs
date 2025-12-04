@@ -772,7 +772,6 @@ impl TestType for RecoveryValidationMaterialTest {
 pub struct InternalRecoveryRequestTest {
     pub test_filename: Cow<'static, str>,
     pub amount: u8,
-    pub role: usize,
     pub state: u64,
 }
 

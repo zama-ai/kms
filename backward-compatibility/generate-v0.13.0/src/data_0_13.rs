@@ -476,10 +476,9 @@ const RECOVERY_MATERIAL_TEST: RecoveryValidationMaterialTest = RecoveryValidatio
 };
 
 // KMS test
-const INTERNAL_RECOVERY_REQEUST_TEST: InternalRecoveryRequestTest = InternalRecoveryRequestTest {
+const INTERNAL_RECOVERY_REQUEST_TEST: InternalRecoveryRequestTest = InternalRecoveryRequestTest {
     test_filename: Cow::Borrowed("internal_recovery_request"),
     amount: 10,
-    role: 2,
     state: 300,
 };
 
@@ -936,7 +935,6 @@ impl KmsV0_13 {
                 custodian_pk,
                 custodian_role: cus_role,
                 operator_pk: operator_pk.clone(),
-                operator_role: Role::indexed_from_one(1),
                 shares: Vec::new(),
             };
             let msg_digest =
@@ -1008,12 +1006,13 @@ impl KmsV0_13 {
     }
 
     fn gen_internal_recovery_request(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(INTERNAL_RECOVERY_REQEUST_TEST.state);
+        let mut rng = AesRng::seed_from_u64(INTERNAL_RECOVERY_REQUEST_TEST.state);
         let backup_id: RequestId = RequestId::new_random(&mut rng);
         let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
         let (_dec_key, enc_key) = encryption.keygen().unwrap();
+        let (verf_key, _) = gen_sig_keys(&mut rng);
         let mut cts = BTreeMap::new();
-        for role_j in 1..=INTERNAL_RECOVERY_REQEUST_TEST.amount {
+        for role_j in 1..=INTERNAL_RECOVERY_REQUEST_TEST.amount {
             let cur_role = Role::indexed_from_one(role_j as usize);
             let mut payload = [0_u8; 32];
             rng.fill_bytes(&mut payload);
@@ -1024,19 +1023,14 @@ impl KmsV0_13 {
             };
             cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
         }
-        let recovery_material = InternalRecoveryRequest::new(
-            enc_key,
-            cts,
-            backup_id,
-            Role::indexed_from_one(INTERNAL_RECOVERY_REQEUST_TEST.role),
-        )
-        .unwrap();
+        let recovery_material =
+            InternalRecoveryRequest::new(enc_key, cts, backup_id, verf_key).unwrap();
         store_versioned_test!(
             &recovery_material,
             dir,
-            &INTERNAL_RECOVERY_REQEUST_TEST.test_filename
+            &INTERNAL_RECOVERY_REQUEST_TEST.test_filename
         );
-        TestMetadataKMS::InternalRecoveryRequest(INTERNAL_RECOVERY_REQEUST_TEST)
+        TestMetadataKMS::InternalRecoveryRequest(INTERNAL_RECOVERY_REQUEST_TEST)
     }
 
     fn gen_internal_cus_context_handles(dir: &PathBuf) -> TestMetadataKMS {
@@ -1279,6 +1273,7 @@ impl KmsV0_13 {
 
     fn gen_internal_cus_rec_out(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(INTERNAL_CUS_REC_OUT_TEST.state);
+        let (operator_verification_key, _) = gen_sig_keys(&mut rng);
         let mut buf = [0u8; 100];
         rng.fill_bytes(&mut buf);
         let signcryption = UnifiedSigncryption {
@@ -1289,7 +1284,7 @@ impl KmsV0_13 {
         let icro = InternalCustodianRecoveryOutput {
             signcryption,
             custodian_role: Role::indexed_from_one(2),
-            operator_role: Role::indexed_from_one(3),
+            operator_verification_key,
         };
         store_versioned_test!(&icro, dir, &INTERNAL_CUS_REC_OUT_TEST.test_filename);
         TestMetadataKMS::InternalCustodianRecoveryOutput(INTERNAL_CUS_REC_OUT_TEST)
@@ -1324,7 +1319,6 @@ impl KmsV0_13 {
         let operator = {
             let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
             Operator::new_for_sharing(
-                Role::indexed_from_one(1),
                 custodian_messages,
                 signing_key,
                 OPERATOR_BACKUP_OUTPUT_TEST.custodian_threshold,
