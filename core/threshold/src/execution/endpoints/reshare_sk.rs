@@ -763,7 +763,7 @@ mod tests {
 
     #[rstest::rstest]
     async fn reshare_no_error_f4_two_sets(
-        #[values(0, 2)] intersection_size: usize,
+        #[values(0, 2, 4)] intersection_size: usize,
     ) -> anyhow::Result<()> {
         let num_parties_s1 = 7;
         let num_parties_s2 = 4;
@@ -783,7 +783,7 @@ mod tests {
 
     #[rstest::rstest]
     async fn reshare_with_error_f4_two_sets(
-        #[values(0, 2)] intersection_size: usize,
+        #[values(0, 2, 4)] intersection_size: usize,
     ) -> anyhow::Result<()> {
         let num_parties_s1 = 7;
         let num_parties_s2 = 4;
