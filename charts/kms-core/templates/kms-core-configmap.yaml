@@ -40,6 +40,9 @@ data:
     {{- else }}
     [public_vault.storage.file]
     path = "/keys"
+      {{- if .Values.kmsCore.publicVault.file.prefix }}
+    prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__FILE__PREFIX}"
+      {{- end }}
     {{- end }}
 
     {{- if .Values.kmsCore.privateVault.s3.enabled }}
@@ -52,6 +55,9 @@ data:
     {{- else }}
     [private_vault.storage.file]
     path = "/keys"
+      {{- if .Values.kmsCore.privateVault.file.enabled }}
+    prefix = "PRIV-p${KMS_CORE__THRESHOLD__INITIAL_PARTY_ID}"
+      {{- end }}
     {{- end }}
     {{- if .Values.kmsCore.nitroEnclave.enabled }}
     [private_vault.keychain.aws_kms]
@@ -75,7 +81,7 @@ data:
     enabled = true
     {{- if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]
-    my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
+    initial_party_id = "${KMS_CORE__THRESHOLD__INITIAL_PARTY_ID}"
       {{- if .Values.kmsCore.thresholdMode.peersList }}
     num_parties = {{ len .Values.kmsCore.thresholdMode.peersList }}
       {{- else }}
@@ -99,7 +105,7 @@ data:
     listen_address = "0.0.0.0"
     listen_port = {{ int .Values.kmsCore.ports.peer }}
 
-    my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
+    initial_party_id = "${KMS_CORE__THRESHOLD__INITIAL_PARTY_ID}"
 
     # Threshold is the number of corruptions that the protocol handles.
     threshold = {{ int .Values.kmsCore.thresholdMode.thresholdValue }}

@@ -189,7 +189,6 @@ struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
     overwrite: bool,
     show_existing: bool,
     signing_key_party_id: Option<usize>,
-    // TODO: change this to the storage prefixes
     num_parties: usize,
     tls_subject: String,
     tls_wildcard: bool,

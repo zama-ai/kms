@@ -163,6 +163,8 @@ kmsCore:
       enabled: false
       rootKeyId: 00000000-0000-0000-0000-000000000000
       rootKeySpec: symm
+    file:
+      enabled: true
   backupVault:
     s3:
       enabled: false

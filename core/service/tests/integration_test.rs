@@ -478,9 +478,16 @@ mod kms_server_binary_test {
     #[integration_test]
     #[persistent_traces]
     fn subcommand_dev_threshold() {
-        purge_all();
         Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
+            .arg("--private-file-path")
+            .arg("./keys")
+            .arg("--private-file-prefix")
+            .arg("PRIV-p1")
+            .arg("--public-file-path")
+            .arg("./keys")
+            .arg("--public-file-prefix")
+            .arg("PUB-p1")
             .arg("--param-test")
             .arg("threshold")
             .output()
