@@ -32,7 +32,7 @@ pub struct ThresholdPartyConf {
     pub threshold: u8,
 
     #[validate(range(min = 1))]
-    pub initial_party_id: Option<usize>,
+    pub my_id: Option<usize>,
 
     pub dec_capacity: usize,
     pub min_dec_cache: usize,

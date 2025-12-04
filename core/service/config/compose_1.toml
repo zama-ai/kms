@@ -32,7 +32,7 @@ prefix = "BACKUP-p1"
 listen_address = "0.0.0.0"
 listen_port = 50001
 
-initial_party_id = 1
+my_id = 1
 
 threshold = 1
 dec_capacity = 10000

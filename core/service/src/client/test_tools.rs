@@ -125,7 +125,7 @@ pub async fn setup_threshold_no_client<
                 threshold,
                 dec_capacity: DEC_CAPACITY,
                 min_dec_cache: MIN_DEC_CACHE,
-                initial_party_id: Some(i),
+                my_id: Some(i),
                 preproc_redis: None,
                 // Add some parallelism so CI runs a bit faster
                 // since it uses large machines

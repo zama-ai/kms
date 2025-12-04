@@ -27,7 +27,7 @@ prefix = "BACKUP-p4"
 listen_address = "0.0.0.0"
 listen_port = 50004
 
-initial_party_id = 4
+my_id = 4
 
 threshold = 1
 dec_capacity = 10000

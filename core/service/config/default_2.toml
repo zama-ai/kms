@@ -27,7 +27,7 @@ prefix = "BACKUP-p2"
 listen_address = "0.0.0.0"
 listen_port = 50002
 
-initial_party_id = 2
+my_id = 2
 
 threshold = 1
 dec_capacity = 10000

@@ -32,8 +32,8 @@ prefix = "BACKUP-p6"
 listen_address = "0.0.0.0"
 listen_port = 50006
 
-# No need to set initial_party_id because this node is started without context
-# initial_party_id = 6
+# No need to set my_id because this node is started without context
+# my_id = 6
 
 threshold = 1
 dec_capacity = 10000

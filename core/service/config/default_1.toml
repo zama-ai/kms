@@ -100,7 +100,7 @@ listen_port = 50001
 # of the MPC core that's given in the peerlist.
 #
 # It is needed when the KMS starts with a peerlist, otherwise it can be omitted.
-initial_party_id = 1
+my_id = 1
 
 # Threshold is the number of corruptions that the protocol handles. Currently
 # it must be an integer value smaller than parties/3.

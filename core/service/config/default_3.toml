@@ -27,7 +27,7 @@ prefix = "BACKUP-p3"
 listen_address = "0.0.0.0"
 listen_port = 50003
 
-initial_party_id = 3
+my_id = 3
 
 threshold = 1
 dec_capacity = 10000

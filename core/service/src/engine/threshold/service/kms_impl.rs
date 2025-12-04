@@ -399,8 +399,8 @@ where
                     {
                         Ok(pem_string) => {
                             let verification_key =
-                                // note that 0 is an invalid party ID, so we'll use the None branch if initial_party_id is not set
-                                if peer.party_id == config.initial_party_id.unwrap_or(0) {
+                                // note that 0 is an invalid party ID, so we'll use the None branch if my_id is not set
+                                if peer.party_id == config.my_id.unwrap_or(0) {
                                     Some(PublicSigKey::clone(&base_kms.verf_key()))
                                 } else {
                                     // we do not know the verification key of the other parties at startup
