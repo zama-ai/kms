@@ -363,11 +363,35 @@ pub struct PrssSet<Z> {
     f_a_points: Vec<Z>,
 }
 
+impl<Z> PrssSet<Z> {
+    // We need to be able to construct PrssSet in the backwards compatibility tests
+    #[cfg(feature = "testing")]
+    pub fn new(parties: PartySet, set_key: PrfKey, f_a_points: Vec<Z>) -> PrssSet<Z> {
+        PrssSet {
+            parties,
+            set_key,
+            f_a_points,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Version)]
 pub struct PrssSetV0<Z> {
     parties: PartySetV0,
     set_key: PrfKey,
     f_a_points: Vec<Z>,
+}
+
+impl<Z> PrssSetV0<Z> {
+    // We need to be able to construct PrssSet in the backwards compatibility tests
+    #[cfg(feature = "testing")]
+    pub fn new(parties: PartySetV0, set_key: PrfKey, f_a_points: Vec<Z>) -> PrssSetV0<Z> {
+        PrssSetV0 {
+            parties,
+            set_key,
+            f_a_points,
+        }
+    }
 }
 
 impl<Z> Upgrade<PrssSet<Z>> for PrssSetV0<Z> {
