@@ -30,5 +30,6 @@ pub mod thread_handles;
 pub mod tls_certs;
 
 pub trait ProtocolDescription {
+    const INDENT_STRING: &str = "   ";
     fn protocol_desc(depth: usize) -> String;
 }

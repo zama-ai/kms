@@ -101,7 +101,7 @@ where
 
 impl<Z> crate::ProtocolDescription for DummyPreprocessing<Z> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-DummyPreprocessing")
     }
 }

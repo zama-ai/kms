@@ -33,7 +33,7 @@ pub struct DummyCoinflip {}
 
 impl ProtocolDescription for DummyCoinflip {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-DummyCoinflip")
     }
 }
@@ -58,7 +58,7 @@ pub struct RealCoinflip<V: Vss, RO: RobustOpen> {
 
 impl<V: Vss, RO: RobustOpen> ProtocolDescription for RealCoinflip<V, RO> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-RealCoinflip:\n{}\n{}",
             indent,

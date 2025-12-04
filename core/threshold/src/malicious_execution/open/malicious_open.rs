@@ -22,7 +22,7 @@ pub struct MaliciousRobustOpenDrop {}
 
 impl ProtocolDescription for MaliciousRobustOpenDrop {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-MaliciousRobustOpenDrop")
     }
 }
@@ -56,7 +56,7 @@ pub struct MaliciousRobustOpenLie {}
 
 impl ProtocolDescription for MaliciousRobustOpenLie {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-MaliciousRobustOpenLie")
     }
 }

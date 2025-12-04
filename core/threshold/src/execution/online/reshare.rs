@@ -158,7 +158,7 @@ impl<Ses: BaseSessionHandles, OpenProtocol: RobustOpen, BroadcastProtocol: Broad
     ProtocolDescription for RealSameSetsReshare<Ses, OpenProtocol, BroadcastProtocol>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{indent}-SameSetsReshare:\n{}\n{}",
             OpenProtocol::protocol_desc(depth + 1),
@@ -260,7 +260,7 @@ impl<
     for RealTwoSetsReshareAsSet1<TwoSetsSes, OpenProtocol, BroadcastProtocol>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{indent}-SameSetsReshareAsSet1:\n{}\n{}",
             OpenProtocol::protocol_desc(depth + 1),
@@ -382,7 +382,7 @@ impl<
     for RealTwoSetsReshareAsSet2<TwoSetsSes, OneSetSes, RobustOpenProtocol, BroadcastProtocol>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{indent}-SameSetsReshareAsSet2:\n{}\n{}",
             RobustOpenProtocol::protocol_desc(depth + 1),
@@ -504,7 +504,7 @@ impl<
     for RealTwoSetsReshareAsBothSets<TwoSetsSes, OneSetSes, RobustOpenProtocol, BroadcastProtocol>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{indent}-SameSetsReshareAsBothSets:\n{}\n{}",
             RobustOpenProtocol::protocol_desc(depth + 1),

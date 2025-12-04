@@ -25,7 +25,7 @@ pub struct DropReshareAsSet1;
 
 impl ProtocolDescription for DropReshareAsSet1 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{}-DropReshareAsSet1", indent)
     }
 }
@@ -63,7 +63,7 @@ pub struct DropReshareAsSet2;
 
 impl ProtocolDescription for DropReshareAsSet2 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{}-DropReshareAsSet2", indent)
     }
 }
@@ -100,7 +100,7 @@ pub struct DropReshareAsBothSets;
 
 impl ProtocolDescription for DropReshareAsBothSets {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{}-DropReshareAsBothSets", indent)
     }
 }

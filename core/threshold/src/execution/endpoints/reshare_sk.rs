@@ -805,7 +805,7 @@ mod tests {
             let mut preproc128 =
                 DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(42, &session);
             let mut preproc64 =
-                DummyPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(42, &session);
+                DummyPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(43, &session);
 
             //Testing ResharePreprocRequired
             let preproc_required = ResharePreprocRequired::new(session.num_parties(), new_params);
@@ -826,7 +826,7 @@ mod tests {
 
             let mut my_contribution =
                 if session.my_role() == Role::indexed_from_zero(0) && remove_share {
-                    // simulating a party that lost its key share
+                    // simulating that the first party lost its key share
                     None
                 } else {
                     Some(party_keyshare)
@@ -871,12 +871,12 @@ mod tests {
         // check results
         assert_eq!(actual_sk, expected_sk);
 
-        // Also try to reconstruct with only some shares (including 0 as it's always the corrupt/missing one)
+        // Also try to reconstruct with only some shares (including 0 (i.e. Party 1) as it's always the corrupt/missing one when add_error is true)
         let partial_shares = new_shares[0..=threshold].to_vec();
         let actual_sk = reconstruct_sk(partial_shares, threshold, 0);
         assert_eq!(actual_sk, expected_sk);
 
-        // check old shares are zero
+        // check that the old shares have been zeroized
         for osh in old_shares.into_iter().flatten() {
             osh.glwe_secret_key_share_sns_as_lwe
                 .unwrap()

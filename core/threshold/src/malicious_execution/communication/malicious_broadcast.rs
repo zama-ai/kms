@@ -29,7 +29,7 @@ pub struct MaliciousBroadcastDrop {}
 
 impl ProtocolDescription for MaliciousBroadcastDrop {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-MaliciousBroadcastDrop")
     }
 }
@@ -54,7 +54,7 @@ pub struct MaliciousBroadcastSender {}
 
 impl ProtocolDescription for MaliciousBroadcastSender {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-MaliciousBroadcastSender")
     }
 }
@@ -197,7 +197,7 @@ pub struct MaliciousBroadcastSenderEcho {}
 
 impl ProtocolDescription for MaliciousBroadcastSenderEcho {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-MaliciousBroadcastSenderEcho")
     }
 }
@@ -308,13 +308,13 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
 }
 
 /// Malicious implementation of the [`Broadcast`] protocol where the
-/// party (P_i), when acting as the sender, sends honestly broadcast a random message (of the same variant) instead of its prescribed input
+/// party (P_i), when acting as the sender, honestly broadcasts a random message (of the same variant) instead of its prescribed input
 #[derive(Default, Clone)]
 pub struct MaliciousBroadcastRandomizer {}
 
 impl ProtocolDescription for MaliciousBroadcastRandomizer {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-MaliciousBroadcastRandomizer")
     }
 }

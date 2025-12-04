@@ -20,7 +20,7 @@ pub struct MaliciousOfflineDrop {}
 
 impl ProtocolDescription for MaliciousOfflineDrop {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-MaliciousOfflineDrop")
     }
 }
@@ -56,7 +56,7 @@ impl<Z, Bcast: Broadcast> MaliciousOfflineWrongAmount<Z, Bcast> {
 
 impl<Z, Bcast: Broadcast> ProtocolDescription for MaliciousOfflineWrongAmount<Z, Bcast> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-MaliciousOfflineWrongAmount:\n{}",
             indent,
@@ -101,7 +101,7 @@ impl<Z> Default for FailingPreprocessing<Z> {
 
 impl<Z> ProtocolDescription for FailingPreprocessing<Z> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-FailingPreprocessing")
     }
 }
