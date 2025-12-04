@@ -705,7 +705,6 @@ fn test_software_version(
     }
 }
 
-#[allow(dead_code)]
 fn test_recovery_material(
     dir: &Path,
     test: &RecoveryValidationMaterialTest,
@@ -846,7 +845,6 @@ fn test_internal_custodian_context(
     }
 }
 
-#[allow(dead_code)]
 fn test_internal_custodian_recovery_output(
     dir: &Path,
     test: &InternalCustodianRecoveryOutputTest,
@@ -855,6 +853,7 @@ fn test_internal_custodian_recovery_output(
     let original_versionized: InternalCustodianRecoveryOutput =
         load_and_unversionize(dir, test, format)?;
     let mut rng = AesRng::seed_from_u64(test.state);
+    let (operator_verification_key, _sk) = gen_sig_keys(&mut rng);
     let mut buf = [0u8; 100];
     rng.fill_bytes(&mut buf);
     let signcryption = UnifiedSigncryption {
@@ -862,12 +861,11 @@ fn test_internal_custodian_recovery_output(
         pke_type: PkeSchemeType::MlKem512,
         signing_type: SigningSchemeType::Ecdsa256k1,
     };
-    let (pk, _sk) = gen_sig_keys(&mut rng);
 
     let new_versionized = InternalCustodianRecoveryOutput {
         signcryption,
         custodian_role: Role::indexed_from_one(2),
-        operator_verification_key: pk,
+        operator_verification_key,
     };
 
     if original_versionized != new_versionized {
@@ -1040,7 +1038,6 @@ fn test_internal_custodian_message(
     }
 }
 
-#[allow(dead_code)]
 fn test_operator_backup_output(
     dir: &Path,
     test: &OperatorBackupOutputTest,
@@ -1171,9 +1168,7 @@ impl TestedModule for KMS {
                 test_software_version(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::RecoveryValidationMaterial(test) => {
-                // TODO(zama-ai/kms-internal/issues/2831): renable this test
-                // test_recovery_material(test_dir.as_ref(), test, format).into()
-                Ok(test.success(format)).into()
+                test_recovery_material(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::InternalRecoveryRequest(test) => {
                 test_internal_recovery_request(test_dir.as_ref(), test, format).into()
@@ -1185,14 +1180,10 @@ impl TestedModule for KMS {
                 test_internal_custodian_message(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::InternalCustodianRecoveryOutput(test) => {
-                // TODO(zama-ai/kms-internal/issues/2831): renable this test
-                // test_internal_custodian_recovery_output(test_dir.as_ref(), test, format).into()
-                Ok(test.success(format)).into()
+                test_internal_custodian_recovery_output(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::OperatorBackupOutput(test) => {
-                // TODO(zama-ai/kms-internal/issues/2831): renable this test
-                // test_operator_backup_output(test_dir.as_ref(), test, format).into()
-                Ok(test.success(format)).into()
+                test_operator_backup_output(test_dir.as_ref(), test, format).into()
             }
         }
     }

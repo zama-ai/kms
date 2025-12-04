@@ -1391,16 +1391,16 @@ impl DistributedDecryptionV0_13 {
             f_a_points.push(ResiduePolyF4Z64::from_scalar(Wrapping(rng.next_u64())));
         }
 
-        let current_set = PrssSet::<ResiduePolyF4Z64> {
-            parties: party_set.clone(),
-            set_key: PrfKey(set_key.clone()),
-            f_a_points: f_a_points.clone(),
-        };
-        let legacy_set = PrssSetV0::<ResiduePolyF4Z64> {
-            parties: party_set.iter().map(|r| r.one_based()).collect(),
-            set_key: PrfKey(set_key.clone()),
-            f_a_points: f_a_points.clone(),
-        };
+        let current_set = PrssSet::<ResiduePolyF4Z64>::new(
+            party_set.clone(),
+            PrfKey(set_key.clone()),
+            f_a_points.clone(),
+        );
+        let legacy_set = PrssSetV0::<ResiduePolyF4Z64>::new(
+            party_set.iter().map(|r| r.one_based()).collect(),
+            PrfKey(set_key.clone()),
+            f_a_points.clone(),
+        );
         store_versioned_auxiliary!(
             &legacy_set.upgrade().unwrap(),
             dir,
@@ -1430,16 +1430,16 @@ impl DistributedDecryptionV0_13 {
             )));
         }
 
-        let current_set = PrssSet::<ResiduePolyF4Z128> {
-            parties: party_set.clone(),
-            set_key: PrfKey(set_key.clone()),
-            f_a_points: f_a_points.clone(),
-        };
-        let legacy_set = PrssSetV0::<ResiduePolyF4Z128> {
-            parties: party_set.iter().map(|r| r.one_based()).collect(),
-            set_key: PrfKey(set_key.clone()),
-            f_a_points: f_a_points.clone(),
-        };
+        let current_set = PrssSet::<ResiduePolyF4Z128>::new(
+            party_set.clone(),
+            PrfKey(set_key.clone()),
+            f_a_points.clone(),
+        );
+        let legacy_set = PrssSetV0::<ResiduePolyF4Z128>::new(
+            party_set.iter().map(|r| r.one_based()).collect(),
+            PrfKey(set_key.clone()),
+            f_a_points.clone(),
+        );
         store_versioned_auxiliary!(
             &legacy_set.upgrade().unwrap(),
             dir,
