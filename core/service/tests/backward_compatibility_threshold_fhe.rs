@@ -37,7 +37,6 @@ use threshold_fhe::{
 
 use crate::common::load_and_unversionize_auxiliary;
 
-#[allow(dead_code)]
 fn compare_prss_setup<Z>(
     dir: &Path,
     test: &PRSSSetupTest,
@@ -66,7 +65,6 @@ where
     }
 }
 
-#[allow(dead_code)]
 fn compare_prss_set<Z>(
     dir: &Path,
     test: &PrssSetTest,
@@ -125,7 +123,6 @@ where
     }
 }
 
-#[allow(dead_code)]
 fn compare_share<Z>(
     dir: &Path,
     test: &ShareTest,
@@ -154,7 +151,6 @@ where
     }
 }
 
-#[allow(dead_code)]
 fn test_prss_setup(
     dir: &Path,
     test: &PRSSSetupTest,
