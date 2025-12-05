@@ -68,6 +68,12 @@ pub(crate) fn compute_user_decrypt_message(
         .to_legacy_bytes()
         .map_err(|e| anyhow::anyhow!("serialization error: {e}"))?;
 
+    tracing::info!(
+        "Computed UserDecryptResponseVerification for handles {:?} and extra data {}.",
+        external_handles,
+        hex::encode(&extra_data)
+    );
+
     Ok(UserDecryptResponseVerification {
         publicKey: user_pk_buf.into(),
         ctHandles: external_handles,

@@ -722,7 +722,7 @@ pub fn compute_public_decryption_message(
 ) -> anyhow::Result<PublicDecryptVerification> {
     // convert external_handles back to U256 to be signed
     let external_handles: Vec<_> = ext_handles_bytes
-        .into_iter()
+        .iter()
         .enumerate()
         .map(|(idx, h)| {
             if h.as_slice().len() > 32 {
@@ -737,11 +737,17 @@ pub fn compute_public_decryption_message(
 
     let pt_bytes = abi_encode_plaintexts(pts)?;
 
+    tracing::info!(
+        "Computed PublicDecryptVerification for handles {:?} with extra_data {}.",
+        ext_handles_bytes,
+        hex::encode(&extra_data)
+    );
+
     // the solidity structure to sign with EIP-712
     Ok(PublicDecryptVerification {
         ctHandles: external_handles.clone(),
         decryptedResult: pt_bytes.clone(),
-        extraData: extra_data.clone().into(),
+        extraData: extra_data.into(),
     })
 }
 

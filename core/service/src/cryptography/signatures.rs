@@ -5,7 +5,6 @@ use crate::{
 };
 use ::signature::{Signer, Verifier};
 use aes_prng::AesRng;
-use alloy_primitives::B256;
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{Eip712Domain, SolStruct};
@@ -440,24 +439,16 @@ pub fn compute_eip712_signature<D: SolStruct>(
     eip712_domain: &Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
     let message_hash = data.eip712_signing_hash(eip712_domain);
-    tracing::info!("Public Data EIP-712 Message hash: {:?}", message_hash);
-    compute_eip712_signature_from_msg_hash(sk, &message_hash)
-}
-
-pub fn compute_eip712_signature_from_msg_hash(
-    sk: &PrivateSigKey,
-    msg_hash: &B256,
-) -> anyhow::Result<Vec<u8>> {
     let signer = PrivateKeySigner::from_signing_key(sk.sk.0.clone());
-    let signer_address = signer.address();
-    tracing::info!("Signer address: {:?}", signer_address);
 
     // Sign the hash synchronously with the wallet.
-    let signature = signer.sign_hash_sync(msg_hash)?.as_bytes().to_vec();
+    let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
 
     tracing::info!(
-        "Public Data EIP-712 Signature: {:?}",
-        hex::encode(signature.clone())
+        "Public data EIP-712 hash {} with signature {} from signer {}",
+        message_hash,
+        hex::encode(signature.clone()),
+        signer.address(),
     );
 
     Ok(signature)
@@ -484,15 +475,18 @@ pub fn recover_address_from_ext_signature<S: SolStruct>(
         external_sig[64] & 0x01 == 0,
     );
 
-    tracing::debug!("ext. signature bytes: {:x?}", external_sig);
-    tracing::debug!("ext. signature: {:?}", sig);
-    tracing::debug!("EIP-712 domain: {:?}", domain);
+    tracing::debug!(
+        "ext. signature bytes: {:x?}, ext. signature: {:?}, EIP-712 domain: {:?}",
+        external_sig,
+        sig,
+        domain
+    );
 
     let hash = data.eip712_signing_hash(domain);
     tracing::info!("Public Data EIP-712 Message hash: {:?}", hash);
 
     let addr = sig.recover_address_from_prehash(&hash)?;
-    tracing::info!("reconstructed address: {}", addr);
+    tracing::info!("Reconstructed address: {}", addr);
 
     Ok(addr)
 }
