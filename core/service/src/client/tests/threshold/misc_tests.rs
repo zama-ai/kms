@@ -3,7 +3,10 @@ use crate::client::test_tools::{
 };
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::tests::threshold::common::threshold_handles;
-use crate::consts::{PRSS_INIT_REQ_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID};
+use crate::consts::{
+    PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PRSS_INIT_REQ_ID, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
+    TEST_PARAM, TEST_THRESHOLD_KEY_ID,
+};
 use crate::engine::threshold::service::RealThresholdKms;
 use crate::util::key_setup::test_tools::purge;
 use crate::vault::storage::file::FileStorage;
@@ -35,14 +38,24 @@ use tonic_health::pb::health_check_response::ServingStatus;
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_threshold_health_endpoint_availability() {
+    let amount_parties = 4;
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     // make sure the store does not contain any PRSS info (currently stored under ID PRSS_INIT_REQ_ID)
     let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID.to_string()).unwrap();
-    purge(None, None, &epoch_id.into(), 4).await;
+    purge(
+        None,
+        None,
+        &epoch_id.into(),
+        pub_storage_prefixes,
+        priv_storage_prefixes,
+    )
+    .await;
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
 
     // DON'T setup PRSS in order to ensure the server is not ready yet
     let (kms_servers, kms_clients, mut internal_client) =
-        threshold_handles(TEST_PARAM, 4, false, None, None).await;
+        threshold_handles(TEST_PARAM, amount_parties, false, None, None).await;
 
     // Validate that the core server is not ready
     let (dec_tasks, req_id) = crate::client::tests::common::send_dec_reqs(
@@ -51,6 +64,7 @@ async fn test_threshold_health_endpoint_availability() {
         None,
         &kms_clients,
         &mut internal_client,
+        pub_storage_prefixes,
     )
     .await;
     let dec_res = dec_tasks.join_all().await;
@@ -209,9 +223,11 @@ async fn test_threshold_close_after_drop() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_threshold_shutdown() {
+    let amount_parties = 4;
+    let storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (mut kms_servers, kms_clients, mut internal_client) =
-        threshold_handles(TEST_PARAM, 4, true, None, None).await;
+        threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
     // Ensure that the servers are ready
     for cur_handle in kms_servers.values() {
         let service_name = <CoreServiceEndpointServer<
@@ -256,6 +272,7 @@ async fn test_threshold_shutdown() {
         None,
         &kms_clients,
         &mut internal_client,
+        storage_prefixes,
     )
     .await;
     let dec_res = tasks.join_all().await;
@@ -287,9 +304,19 @@ async fn test_threshold_shutdown() {
 #[cfg(feature = "slow_tests")]
 #[serial]
 async fn test_ratelimiter() {
+    let amount_parties = 4;
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let req_id: RequestId = derive_request_id("test_ratelimiter").unwrap();
     let domain = dummy_domain();
-    purge(None, None, &req_id, 4).await;
+    purge(
+        None,
+        None,
+        &req_id,
+        pub_storage_prefixes,
+        priv_storage_prefixes,
+    )
+    .await;
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100,
         pub_decrypt: 1,
@@ -299,8 +326,14 @@ async fn test_ratelimiter() {
         keygen: 1,
         reshare: 1,
     };
-    let (_kms_servers, kms_clients, internal_client) =
-        threshold_handles(TEST_PARAM, 4, true, Some(rate_limiter_conf), None).await;
+    let (_kms_servers, kms_clients, internal_client) = threshold_handles(
+        TEST_PARAM,
+        amount_parties,
+        true,
+        Some(rate_limiter_conf),
+        None,
+    )
+    .await;
 
     let req_id = derive_request_id("test rate limiter 1").unwrap();
     let req = internal_client

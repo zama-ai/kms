@@ -48,6 +48,7 @@ pub struct ConfigValidation {
     pub valid: bool,
     pub config_type: String,
     pub storage_type: String,
+    // TODO check storage prefixes
     pub errors: Vec<String>,
 }
 

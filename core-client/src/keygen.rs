@@ -14,7 +14,9 @@ use kms_grpc::{ContextId, RequestId};
 use kms_lib::client::client_wasm::Client;
 use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
 use kms_lib::engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY};
-use kms_lib::util::key_setup::test_tools::{load_material_from_storage, load_pk_from_storage};
+use kms_lib::util::key_setup::test_tools::{
+    load_material_from_pub_storage, load_pk_from_pub_storage,
+};
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::{CompactPublicKey, ServerKey};
@@ -156,36 +158,18 @@ pub(crate) async fn fetch_and_check_keygen(
     )
     .await?;
     let first_party_id = *party_ids.first().unwrap() as usize;
-
-    // [party_ids] are the logical party IDs, not the party IDs that define storage locations.
-    // Here we convert it to the storage party ID if the kms config is provided.
-    let storage_party_id = {
-        #[cfg(feature = "testing")]
-        match cc_conf.cores[first_party_id - 1].config_path {
-            Some(ref p) => {
-                let core_config: kms_lib::conf::CoreConfig =
-                    kms_lib::conf::init_conf(p.to_str().expect("expect core config path")).unwrap();
-                core_config
-                    .threshold
-                    .expect("expect threshold config")
-                    .my_id
-            }
-            None => first_party_id,
-        }
-        #[cfg(not(feature = "testing"))]
-        first_party_id
-    };
+    let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
 
     // Even if we did not download all keys, we still check that they are identical
     // by checking all signatures against the first downloaded keyset.
     // If all signatures match, then all keys must be identical.
     let public_key =
-        load_pk_from_storage(Some(destination_prefix), &request_id, storage_party_id).await;
-    let server_key: ServerKey = load_material_from_storage(
+        load_pk_from_pub_storage(Some(destination_prefix), &request_id, pub_storage_prefix).await;
+    let server_key: ServerKey = load_material_from_pub_storage(
         Some(destination_prefix),
         &request_id,
         PubDataType::ServerKey,
-        storage_party_id,
+        pub_storage_prefix,
     )
     .await;
 

@@ -89,6 +89,7 @@ async fn test_central_close_after_drop() {
         None,
         &client_map,
         &mut internal_client,
+        &[None],
     )
     .await;
     // Drop server

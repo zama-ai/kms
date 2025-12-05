@@ -25,18 +25,20 @@ pub(crate) async fn send_dec_reqs(
     context_id: Option<&ContextId>,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &mut Client,
+    storage_prefixes: &[Option<String>],
 ) -> (
     JoinSet<Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status>>,
     RequestId,
 ) {
     let mut cts = Vec::new();
+    let storage_prefix = storage_prefixes[0].as_deref(); // just need one storage prefix to compute cts
     for i in 0..amount_cts {
         let msg = TestingPlaintext::U32(i as u32);
         let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
             None,
             msg,
             key_id,
-            1,
+            storage_prefix,
             EncryptionConfig {
                 compression: true,
                 precompute_sns: false,

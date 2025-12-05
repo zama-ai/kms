@@ -1,5 +1,5 @@
 use super::{Storage, StorageCache, StorageForBytes, StorageReader, StorageType};
-use crate::consts::SAFE_SER_SIZE_LIMIT;
+use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
 use aws_config::SdkConfig;
 use aws_sdk_s3::{error::ProvideErrorMetadata, primitives::ByteStream, Client as S3Client};
 use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
@@ -22,7 +22,6 @@ use tfhe::{
     safe_serialization::{safe_deserialize, safe_serialize},
     Unversionize, Versionize,
 };
-use threshold_fhe::execution::runtime::party::Role;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use url::Url;
@@ -41,18 +40,16 @@ impl S3Storage {
     pub fn new(
         s3_client: S3Client,
         bucket: String,
-        prefix: Option<String>,
         storage_type: StorageType,
-        party_role: Option<Role>,
+        storage_prefix: Option<&str>,
         cache: Option<StorageCache>,
     ) -> anyhow::Result<Self> {
-        let extra_prefix = match party_role {
-            Some(party_role) => format!("{storage_type}-p{party_role}"),
+        let prefix = match storage_prefix {
+            Some(prefix) => {
+                storage_prefix_safety(storage_type, prefix)?;
+                prefix.to_string()
+            }
             None => format!("{storage_type}"),
-        };
-        let prefix = match prefix {
-            Some(p) if !p.is_empty() => format!("{p}/{extra_prefix}"),
-            _ => extra_prefix,
         };
         Ok(S3Storage {
             s3_client,
@@ -510,17 +507,15 @@ mod tests {
         let mut pub_storage = S3Storage::new(
             s3_client,
             BUCKET_NAME.to_string(),
+            StorageType::PUB,
             Some(
                 temp_dir
                     .path()
                     .to_str()
                     .unwrap()
                     .trim_start_matches('/')
-                    .trim_end_matches('/')
-                    .to_string(),
+                    .trim_end_matches('/'),
             ),
-            StorageType::PUB,
-            None,
             None,
         )
         .unwrap();
@@ -540,17 +535,15 @@ mod tests {
         let mut pub_storage = S3Storage::new(
             s3_client,
             BUCKET_NAME.to_string(),
+            StorageType::PUB,
             Some(
                 temp_dir
                     .path()
                     .to_str()
                     .unwrap()
                     .trim_start_matches('/')
-                    .trim_end_matches('/')
-                    .to_string(),
+                    .trim_end_matches('/'),
             ),
-            StorageType::PUB,
-            None,
             None,
         )
         .unwrap();

@@ -9,6 +9,7 @@ use crate::client::tests::threshold::common::threshold_handles;
 use crate::consts::DEFAULT_PARAM;
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
+use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
 use crate::consts::TEST_PARAM;
 use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
@@ -300,8 +301,14 @@ pub async fn run_decryption_threshold_optionally_fail(
     let mut cts = Vec::new();
     let mut bits = 0;
     for (i, msg) in msgs.clone().into_iter().enumerate() {
-        let (ct, ct_format, fhe_type) =
-            compute_cipher_from_stored_key(data_root_path, msg, key_id, 1, enc_config).await;
+        let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
+            data_root_path,
+            msg,
+            key_id,
+            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
+            enc_config,
+        )
+        .await;
         let ctt = TypedCiphertext {
             ciphertext: ct,
             fhe_type: fhe_type as i32,

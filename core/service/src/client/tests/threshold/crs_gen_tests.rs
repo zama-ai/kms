@@ -14,11 +14,11 @@ cfg_if::cfg_if! {
     use serial_test::serial;
     use std::collections::HashMap;
     use std::sync::Arc;
-    use threshold_fhe::execution::runtime::party::Role;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
     use tokio::task::JoinSet;
     use tonic::transport::Channel;
     use crate::client::tests::{common::TIME_TO_SLEEP_MS, threshold::common::threshold_handles};
+    use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
 }}
 
 #[cfg(feature = "insecure")]
@@ -59,12 +59,21 @@ pub(crate) async fn crs_gen(
     iterations: usize,
     concurrent: bool,
 ) {
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     for i in 0..iterations {
         let req_crs: RequestId = derive_request_id(&format!(
             "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}_{insecure}"
         ))
         .unwrap();
-        purge(None, None, &req_crs, amount_parties).await;
+        purge(
+            None,
+            None,
+            &req_crs,
+            pub_storage_prefixes,
+            priv_storage_prefixes,
+        )
+        .await;
     }
     let dkg_param: WrappedDKGParams = parameter.into();
 
@@ -217,25 +226,26 @@ pub async fn wait_for_crsgen_result(
 
         // we need to setup the storage devices in the right order
         // so that the client can read the CRS
+        tracing::info!(
+            "Got {} responses for CRS gen request id {}",
+            joined_responses.len(),
+            req_id
+        );
         let res_storage = joined_responses
             .into_iter()
             .map(|(i, res)| {
                 (res, {
-                    FileStorage::new(
-                        None,
-                        StorageType::PUB,
-                        Some(Role::indexed_from_one(i as usize)),
-                    )
-                    .unwrap()
+                    let prefix = PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[i as usize - 1].as_deref();
+                    FileStorage::new(None, StorageType::PUB, prefix).unwrap()
                 })
             })
             .collect_vec();
         // Compute threshold < amount_parties/3
         let threshold = max_threshold(amount_parties);
-        let min_count_agree = (threshold + 1) as u32;
+        let min_agree_count = (threshold + 1) as u32;
 
         let pp = internal_client
-            .process_distributed_crs_result(&req_id, res_storage.clone(), &domain, min_count_agree)
+            .process_distributed_crs_result(&req_id, res_storage.clone(), &domain, min_agree_count)
             .await
             .unwrap();
         crate::client::crs_gen::tests::verify_pp(param, &pp);
@@ -246,7 +256,7 @@ pub async fn wait_for_crsgen_result(
                 &req_id,
                 res_storage[0..res_storage.len() - threshold].to_vec(),
                 &domain,
-                min_count_agree,
+                min_agree_count,
             )
             .await
             .unwrap();
@@ -257,7 +267,7 @@ pub async fn wait_for_crsgen_result(
                 &req_id,
                 res_storage[0..threshold].to_vec(),
                 &domain,
-                min_count_agree
+                min_agree_count
             )
             .await
             .is_err());
@@ -269,7 +279,7 @@ pub async fn wait_for_crsgen_result(
                 &bad_request_id,
                 res_storage.clone(),
                 &domain,
-                min_count_agree
+                min_agree_count
             )
             .await
             .is_err());
@@ -288,7 +298,7 @@ pub async fn wait_for_crsgen_result(
                 &req_id,
                 final_responses_with_bad_sig,
                 &domain,
-                min_count_agree,
+                min_agree_count,
             )
             .await
             .unwrap();
@@ -305,7 +315,7 @@ pub async fn wait_for_crsgen_result(
                 &req_id,
                 final_responses_with_bad_sig,
                 &domain,
-                min_count_agree
+                min_agree_count
             )
             .await
             .is_err());
@@ -324,7 +334,7 @@ pub async fn wait_for_crsgen_result(
                 &req_id,
                 final_responses_with_bad_digest,
                 &domain,
-                min_count_agree,
+                min_agree_count,
             )
             .await
             .unwrap();
@@ -343,7 +353,7 @@ pub async fn wait_for_crsgen_result(
                 &req_id,
                 final_responses_with_bad_digest,
                 &domain,
-                min_count_agree
+                min_agree_count
             )
             .await
             .is_err());

@@ -44,7 +44,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, mut kms_client, mut internal_client) =
-        centralized_custodian_handles(&dkg_param, None, test_path).await;
+        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
     let _mnemnonics = run_new_cus_context(
         &mut kms_client,
         &mut internal_client,
@@ -55,11 +55,11 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     .await;
     // Check that signing key was backed up, since it will always be there
     let _non_custodian_backup = read_custodian_backup_files(
-        1,
         test_path,
         &req_new_cus,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
+        &[None],
     )
     .await;
 
@@ -69,17 +69,17 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     drop(internal_client);
 
     // Purge backup
-    purge_backup(test_path, 1).await;
+    purge_backup(test_path, &[None]).await;
 
     // Check that the backup is still there
     let (_kms_server, _kms_client, _internal_client) =
-        centralized_custodian_handles(&dkg_param, None, test_path).await;
+        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
     let _reread_backup = read_custodian_backup_files(
-        1,
         test_path,
         &req_new_cus,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
+        &[None],
     )
     .await;
 }
@@ -108,7 +108,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
 
     // Generate a new crs
     let (kms_server, mut kms_client, mut internal_client) =
-        centralized_custodian_handles(&dkg_param, None, test_path).await;
+        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
     let _mnemnonics = run_new_cus_context(
         &mut kms_client,
         &mut internal_client,
@@ -128,11 +128,11 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     .await;
     // Check that the new CRS was backed up
     let crss = read_custodian_backup_files(
-        1,
         test_path,
         &req_new_cus,
         &crs_req,
         &PrivDataType::CrsInfo.to_string(),
+        &[None],
     )
     .await;
     // Check that the format is correct
@@ -144,13 +144,13 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     kms_server.assert_shutdown().await;
     // Check that the backup is still there and unmodified
     let (_kms_server, _kms_client, _internal_client) =
-        centralized_custodian_handles(&dkg_param, None, test_path).await;
+        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
     let reread_crss = read_custodian_backup_files(
-        1,
         test_path,
         &req_new_cus,
         &crs_req,
         &PrivDataType::CrsInfo.to_string(),
+        &[None],
     )
     .await;
     assert_eq!(reread_crss, crss);
@@ -172,7 +172,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let test_path = Some(temp_dir.path());
 
     let (kms_server, mut kms_client, mut internal_client) =
-        centralized_custodian_handles(&dkg_param, None, test_path).await;
+        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
     let mnemnonics = run_new_cus_context(
         &mut kms_client,
         &mut internal_client,
@@ -207,13 +207,13 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .unwrap();
 
     // Purge the private storage to tests the backup
-    purge_priv(test_path).await;
+    purge_priv(test_path, &[None]).await;
 
     // Reboot the servers
     let (kms_server, mut kms_client, internal_client) =
-        centralized_custodian_handles(&dkg_param, None, test_path).await;
+        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
     // Purge the private storage again to delete the signing key
-    purge_priv(test_path).await;
+    purge_priv(test_path, &[None]).await;
 
     // Execute the backup restoring
     let mut rng = AesRng::seed_from_u64(13);
@@ -248,7 +248,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     drop(kms_client);
     drop(internal_client);
     let (_kms_server, kms_client, mut internal_client) =
-        centralized_custodian_handles(&dkg_param, None, test_path).await;
+        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
 
     // Check the data is correctly recovered
     run_decryption_centralized(
@@ -288,7 +288,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     let test_path = Some(temp_dir.path());
 
     let (kms_server, mut kms_client, mut internal_client) =
-        centralized_custodian_handles(&dkg_param, None, test_path).await;
+        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
     let mnemnonics = run_new_cus_context(
         &mut kms_client,
         &mut internal_client,
@@ -314,13 +314,13 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     .unwrap();
 
     // Purge the private storage to tests the backup
-    purge_priv(test_path).await;
+    purge_priv(test_path, &[None]).await;
 
     // Reboot the servers
     let (_kms_server, mut kms_client, _internal_client) =
-        centralized_custodian_handles(&dkg_param, None, test_path).await;
+        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
     // Purge the private storage again to delete the signing key
-    purge_priv(test_path).await;
+    purge_priv(test_path, &[None]).await;
 
     // Execute the backup restoring
     let mut rng = AesRng::seed_from_u64(13);

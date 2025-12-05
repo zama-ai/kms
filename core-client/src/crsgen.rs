@@ -10,7 +10,7 @@ use kms_grpc::RequestId;
 use kms_lib::client::client_wasm::Client;
 use kms_lib::cryptography::signatures::recover_address_from_ext_signature;
 use kms_lib::engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS};
-use kms_lib::util::key_setup::test_tools::load_material_from_storage;
+use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::zk::CompactPkeCrs;
@@ -128,14 +128,20 @@ pub(crate) async fn fetch_and_check_crsgen(
     )
     .await?;
 
+    let core_config = cc_conf
+        .cores
+        .iter()
+        .find(|c| c.party_id == party_ids[0])
+        .unwrap();
+
     // Even if we did not download all CRSes, we still check that they are identical
     // by checking all signatures against the first downloaded CRS.
     // If all signatures match, then all CRSes must be identical.
-    let crs: CompactPkeCrs = load_material_from_storage(
+    let crs: CompactPkeCrs = load_material_from_pub_storage(
         Some(destination_prefix),
         &request_id,
         PubDataType::CRS,
-        *party_ids.first().expect("no party IDs found"),
+        Some(core_config.object_folder.as_str()),
     )
     .await;
 
