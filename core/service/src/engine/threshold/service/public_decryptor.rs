@@ -237,19 +237,19 @@ impl<
                     Some(raw_decryption) => *raw_decryption,
                     None => {
                         return Err(anyhow!(
-                            "Decryption with session ID {} could not be retrived",
+                            "Public Decryption with session ID {} could not be retrived",
                             session_id.to_string()
                         ))
                     }
                 };
                 tracing::info!(
-                    "Decryption in session {session_id} completed on {:?}. Inner thread took {:?} ms",
+                    "Public decryption in session {session_id} completed on {:?}. Inner thread took {:?} ms",
                     my_identity,
                     time.as_millis()
                 );
                 raw_decryption
             }
-            Err(e) => return Err(anyhow!("Failed decryption with noiseflooding: {e}")),
+            Err(e) => return Err(anyhow!("Failed public decryption with noiseflooding: {e}")),
         };
         Ok(raw_decryption)
     }
