@@ -1,6 +1,6 @@
 use super::{Storage, StorageCache, StorageForBytes, StorageReader, StorageType};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use aws_config::SdkConfig;
+use aws_config::{self, SdkConfig};
 use aws_sdk_s3::{error::ProvideErrorMetadata, primitives::ByteStream, Client as S3Client};
 use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
 use aws_smithy_runtime_api::{
@@ -35,6 +35,48 @@ pub struct S3Storage {
     pub bucket: String,
     pub prefix: String,
     cache: Option<Arc<Mutex<StorageCache>>>,
+}
+
+/// Read-only S3 storage wrapper, should not implement Storage trait.
+pub struct S3StorageReadOnly {
+    inner: S3Storage,
+}
+
+impl S3StorageReadOnly {
+    pub fn new(
+        s3_client: S3Client,
+        bucket: String,
+        prefix: Option<String>,
+        storage_type: StorageType,
+        party_role: Option<Role>,
+        cache: Option<StorageCache>,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            inner: S3Storage::new(s3_client, bucket, prefix, storage_type, party_role, cache)?,
+        })
+    }
+}
+
+impl StorageReader for S3StorageReadOnly {
+    async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
+        self.inner.data_exists(data_id, data_type).await
+    }
+
+    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<T> {
+        self.inner.read_data(data_id, data_type).await
+    }
+
+    async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
+        self.inner.all_data_ids(data_type).await
+    }
+
+    fn info(&self) -> String {
+        self.inner.info()
+    }
 }
 
 impl S3Storage {
@@ -346,6 +388,21 @@ impl Intercept for HostHeaderInterceptor {
     }
 }
 
+// This builds an anonymous S3 client, useful for accessing public S3 buckets.
+pub async fn build_anonymous_s3_client(aws_s3_endpoint: Option<Url>) -> anyhow::Result<S3Client> {
+    let sdk_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .no_credentials()
+        .load()
+        .await;
+
+    let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&sdk_config);
+    if let Some(p) = aws_s3_endpoint {
+        s3_config_builder = s3_config_builder.endpoint_url(p);
+    }
+    let s3_config = s3_config_builder.build();
+    Ok(S3Client::from_conf(s3_config))
+}
+
 /// Given the address of a vsock-to-TCP proxy, constructs an S3 client for use inside of a Nitro
 /// enclave.
 pub async fn build_s3_client(
@@ -560,4 +617,27 @@ mod tests {
             "already exists. Keeping the data without overwriting"
         ));
     }
+}
+
+#[tokio::test]
+async fn test_s3_anon() {
+    let s3_client = build_anonymous_s3_client(Some(
+        Url::parse("https://s3.eu-west-1.amazonaws.com/").unwrap(),
+    ))
+    .await
+    .unwrap();
+    let pub_storage = S3StorageReadOnly::new(
+        s3_client,
+        "zama-zws-dev-kms-fhevm-dev-lh7tg".to_string(),
+        None,
+        StorageType::PUB,
+        Some(Role::indexed_from_one(1)),
+        None,
+    )
+    .unwrap();
+
+    let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
+    println!("public_key_ids: {:?}", public_key_ids);
+    // at least one public key should be present in the bucket
+    assert!(!public_key_ids.is_empty());
 }
