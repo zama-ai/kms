@@ -6,6 +6,7 @@ use std::{
 };
 
 // === External Crates ===
+use alloy_primitives::U256;
 use anyhow::anyhow;
 use kms_grpc::{
     identifiers::ContextId,
@@ -212,7 +213,10 @@ impl<
             let session_id = req_id.derive_session_id_with_counter(ctr as u64)?;
 
             let hex_req_id = hex::encode(req_id.as_bytes());
-            let decimal_req_id: u128 = (*req_id).try_into().unwrap_or(0);
+            let decimal_req_id = U256::try_from_be_slice(req_id.as_bytes())
+                .unwrap_or(U256::ZERO)
+                .to_string();
+
             tracing::info!(
                 request_id = hex_req_id,
                 request_id_decimal = decimal_req_id,
@@ -347,7 +351,7 @@ impl<
                     let res = bc2wrap::serialize(&enc_res)?;
 
                     tracing::info!(
-                        "User decryption completed for type {:?}. Inner thread took {:?} ms",
+                        "User decryption {req_id} in session {session_id} completed for type {:?}. Inner thread took {:?} ms",
                         fhe_type,
                         time.as_millis()
                     );
