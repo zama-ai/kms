@@ -65,7 +65,7 @@ pub trait SendingService: Send + Sync {
     /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
     async fn add_connection(
         &self,
-        other: Identity,
+        other: &Identity,
     ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>>;
 
     ///Adds multiple connections at once
@@ -97,9 +97,9 @@ impl GrpcSendingService {
     /// or retrieve it if one already exists
     pub(crate) async fn connect_to_party(
         &self,
-        receiver: Identity,
+        receiver: &Identity,
     ) -> anyhow::Result<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>> {
-        if let Some(channel) = self.channel_map.read().await.get(&receiver) {
+        if let Some(channel) = self.channel_map.read().await.get(receiver) {
             tracing::debug!("Channel to {:?} already existed, retrieving it.", receiver);
             return Ok(channel.clone());
         }
@@ -210,6 +210,7 @@ impl GrpcSendingService {
         mut receiver: UnboundedReceiver<ArcSendValueRequest>,
         network_channel: GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
         exponential_backoff: ExponentialBackoff<SystemClock>,
+        other: &Identity,
     ) {
         let mut received_request = 0;
         let mut incorrectly_sent = 0;
@@ -235,7 +236,7 @@ impl GrpcSendingService {
 
             let on_network_fail = |e, duration: Duration| {
                 tracing::debug!(
-                    "Network retry for message: {e:?} - Duration {:?} secs",
+                    "Network retry for message: {e:?} - Duration {:?} secs. Talking to {other}.",
                     duration.as_secs()
                 );
             };
@@ -246,7 +247,7 @@ impl GrpcSendingService {
             if let Err(status) = res {
                 incorrectly_sent += 1;
                 tracing::warn!(
-                    "Failed to send message after retries: {} - {}",
+                    "Failed to send message to {other} after {incorrectly_sent} retries: {} - {}",
                     status.code(),
                     status.message()
                 );
@@ -255,15 +256,19 @@ impl GrpcSendingService {
 
         if received_request == 0 {
             // This is not necessarily an error since we may use the network to only receive in certain protocols
-            tracing::info!("No more listeners, nothing happened, shutting down network task");
+            tracing::debug!(
+                "No more listeners on {other}, nothing happened, shutting down network task without errors."
+            );
         } else if incorrectly_sent == received_request {
-            tracing::error!("No more listeners, everything failed, {incorrectly_sent} errors, shutting down network task");
+            tracing::error!("No more listeners on {other}, everything failed, {incorrectly_sent} errors, shutting down network task");
         } else if incorrectly_sent > 0 {
             tracing::warn!(
-                "Network task finished with: {incorrectly_sent}/{received_request} errors"
+                "Network task with {other} finished with: {incorrectly_sent}/{received_request} errors"
             );
         } else {
-            tracing::info!("Network task succeeded and transmitted {received_request} values");
+            tracing::debug!(
+                "Network task with {other} succeeded and transmitted {received_request} values"
+            );
         }
     }
 
@@ -308,7 +313,7 @@ impl SendingService for GrpcSendingService {
     /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
     async fn add_connection(
         &self,
-        other: Identity,
+        other: &Identity,
     ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>> {
         // 1. Create channel first (no allocation issues)
         let (sender, receiver) = unbounded_channel::<ArcSendValueRequest>();
@@ -326,9 +331,10 @@ impl SendingService for GrpcSendingService {
         };
 
         // 4. Single spawn with integrated error handling (eliminates double-spawn overhead)
+        let other = other.clone();
         let handle = tokio::spawn(async move {
             // Run the actual network task (already logs completion status)
-            Self::run_network_task(receiver, network_channel, exponential_backoff).await;
+            Self::run_network_task(receiver, network_channel, exponential_backoff, &other).await;
         });
 
         // 5. Minimize lock scope - acquire write lock last and release immediately
@@ -346,7 +352,7 @@ impl SendingService for GrpcSendingService {
         let mut result = HashMap::with_capacity(others.len());
 
         for (other_role, other_id) in others.iter() {
-            match self.add_connection(other_id.clone()).await {
+            match self.add_connection(other_id).await {
                 Ok(sender) => {
                     result.insert(other_role.get_role_kind(), sender);
                 }
