@@ -10,31 +10,67 @@ use aes_prng::AesRng;
 #[cfg(not(feature = "measure_memory"))]
 use criterion::{measurement::WallTime, BenchmarkGroup, Criterion};
 use rand::prelude::*;
-use std::ops::{Add, Mul};
-use tfhe::prelude::*;
-use tfhe::{set_server_key, ClientKey, FheBool, FheUint64, ServerKey};
+use tfhe::{prelude::*, CompactPublicKey, ReRandomizationContext};
+use tfhe::{set_server_key, ClientKey, FheUint64, ServerKey};
 use utilities::ALL_PARAMS;
+#[cfg(not(feature = "measure_memory"))]
+use x509_parser::public_key;
 
 /// This one uses overflowing sub to remove the need for comparison
 /// it also uses the 'boolean' multiplication
-fn transfer_overflow<FheType>(
-    from_amount: &FheType,
-    to_amount: &FheType,
-    amount: &FheType,
-) -> (FheType, FheType)
-where
-    FheType: CastFrom<FheBool> + for<'a> FheOrd<&'a FheType>,
-    FheBool: IfThenElse<FheType>,
-    for<'a> &'a FheType: Add<FheType, Output = FheType>
-        + OverflowingSub<&'a FheType, Output = FheType>
-        + Mul<FheType, Output = FheType>,
-{
+fn transfer_overflow(
+    from_amount: &mut FheUint64,
+    to_amount: &mut FheUint64,
+    amount: &mut FheUint64,
+    compact_pk: &CompactPublicKey,
+) -> (FheUint64, FheUint64) {
+    /* FIRST: Proceed with rerandomization of the inputs */
+    // Simulate a 256 bits hash added as metadata
+    let rand_a: [u8; 256 / 8] = core::array::from_fn(|_| rand::random());
+    let rand_b: [u8; 256 / 8] = core::array::from_fn(|_| rand::random());
+    let rand_c: [u8; 256 / 8] = core::array::from_fn(|_| rand::random());
+
+    from_amount
+        .re_randomization_metadata_mut()
+        .set_data(&rand_a);
+    to_amount.re_randomization_metadata_mut().set_data(&rand_b);
+    amount.re_randomization_metadata_mut().set_data(&rand_c);
+
+    // Simulate a 256 bits nonce
+    let nonce: [u8; 256 / 8] = core::array::from_fn(|_| rand::random());
+
+    let mut re_rand_context = ReRandomizationContext::new(
+        *b"TFHE.Rrd",
+        // First is the function description, second is a nonce
+        [b"ERC20Transfer".as_slice(), nonce.as_slice()],
+        *b"TFHE.Enc",
+    );
+
+    re_rand_context.add_ciphertext(from_amount);
+    re_rand_context.add_ciphertext(to_amount);
+    re_rand_context.add_ciphertext(amount);
+    let mut seed_gen = re_rand_context.finalize();
+    from_amount
+        .re_randomize(compact_pk, seed_gen.next_seed().unwrap())
+        .unwrap();
+    to_amount
+        .re_randomize(compact_pk, seed_gen.next_seed().unwrap())
+        .unwrap();
+    amount
+        .re_randomize(compact_pk, seed_gen.next_seed().unwrap())
+        .unwrap();
+
+    let from_amount = &*from_amount;
+    let to_amount = &*to_amount;
+    let amount = &*amount;
+
+    /* SECOND: Compute the new balances */
     let (new_from, did_not_have_enough) = (from_amount).overflowing_sub(amount);
 
     let new_from_amount = did_not_have_enough.if_then_else(from_amount, &new_from);
 
     let had_enough_funds = !did_not_have_enough;
-    let new_to_amount = to_amount + (amount * FheType::cast_from(had_enough_funds));
+    let new_to_amount = to_amount + (amount * FheUint64::cast_from(had_enough_funds));
 
     (new_from_amount, new_to_amount)
 }
@@ -43,6 +79,7 @@ where
 fn bench_transfer_latency<FheType, F>(
     c: &mut BenchmarkGroup<'_, WallTime>,
     client_key: &ClientKey,
+    public_key: &CompactPublicKey,
     bench_name: &str,
     type_name: &str,
     fn_name: &str,
@@ -60,7 +97,7 @@ fn bench_transfer_latency<FheType, F>(
         let amount = FheType::encrypt(rng.gen::<u64>(), client_key);
 
         b.iter(|| {
-            let (_, _) = transfer_func(&from_amount, &to_amount, &amount);
+            let (_, _) = transfer_func(&from_amount, &to_amount, &amount, public_key);
         })
     });
 }
@@ -73,6 +110,7 @@ fn main() {
 
         let cks = ClientKey::generate(config);
         let sks = ServerKey::new(&cks);
+        let public_key = tfhe::CompactPublicKey::new(&cks);
 
         rayon::broadcast(|_| set_server_key(sks.clone()));
         set_server_key(sks);
@@ -87,6 +125,7 @@ fn main() {
             bench_transfer_latency(
                 &mut group,
                 &cks,
+                &public_key,
                 &bench_name,
                 "FheUint64",
                 "overflow",
@@ -108,8 +147,13 @@ pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
 fn main() {
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
-    let transfer = |(from_amount, to_amount, amount): (FheUint64, FheUint64, FheUint64)| {
-        transfer_overflow(&from_amount, &to_amount, &amount)
+    let transfer = |(mut from_amount, mut to_amount, mut amount, public_key): (
+        FheUint64,
+        FheUint64,
+        FheUint64,
+        CompactPublicKey,
+    )| {
+        transfer_overflow(&mut from_amount, &mut to_amount, &mut amount, &public_key)
     };
 
     for (name, params) in ALL_PARAMS {
@@ -121,6 +165,7 @@ fn main() {
 
         let cks = ClientKey::generate(config);
         let sks = ServerKey::new(&cks);
+        let public_key = tfhe::CompactPublicKey::new(&cks);
 
         rayon::broadcast(|_| set_server_key(sks.clone()));
         set_server_key(sks);
@@ -130,6 +175,10 @@ fn main() {
         let to_amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
         let amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
 
-        bench_memory(transfer, (from_amount, to_amount, amount), bench_name);
+        bench_memory(
+            transfer,
+            (from_amount, to_amount, amount, public_key),
+            bench_name,
+        );
     }
 }
