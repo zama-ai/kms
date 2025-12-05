@@ -38,7 +38,7 @@ pub struct RealSingleSharing<Z, S: LocalSingleShare> {
 
 impl<Z, S: LocalSingleShare> ProtocolDescription for RealSingleSharing<Z, S> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-RealSingleSharing:\n{}",
             indent,

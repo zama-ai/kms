@@ -31,7 +31,7 @@ pub struct MaliciousPrssDrop {}
 
 impl ProtocolDescription for MaliciousPrssDrop {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-MaliciousPrssDrop")
     }
 }
@@ -134,7 +134,7 @@ impl<
     > ProtocolDescription for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-MaliciousPrssHonestInitRobustThenRandom:\n{}\n{}\n{}",
             indent,
@@ -310,7 +310,7 @@ impl<
     > ProtocolDescription for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-MaliciousPrssHonestInitLieAll:\n{}\n{}\n{}",
             indent,
@@ -400,7 +400,7 @@ pub struct EmptyPrss {}
 
 impl ProtocolDescription for EmptyPrss {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-EmptyPrss")
     }
 }
@@ -425,7 +425,7 @@ pub struct FailingPrss {}
 
 impl ProtocolDescription for FailingPrss {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-FailingPrss")
     }
 }

@@ -5,16 +5,17 @@ use std::sync::Arc;
 use tonic::async_trait;
 
 use crate::{
-    algebra::structure_traits::Ring,
+    algebra::{poly::Poly, structure_traits::Ring},
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::{
             broadcast::{
                 cast_threshold_vote, gather_votes, receive_contribution_from_all_senders,
-                receive_echos_from_all_batched, Broadcast, RoleValueMap,
+                receive_echos_from_all_batched, Broadcast, RoleValueMap, SyncReliableBroadcast,
             },
             p2p::send_to_all,
         },
+        large_execution::{local_single_share::MapsSharesChallenges, vss::ValueOrPoly},
         runtime::{party::Role, sessions::base_session::BaseSessionHandles},
     },
     networking::value::{BroadcastValue, NetworkValue},
@@ -28,7 +29,7 @@ pub struct MaliciousBroadcastDrop {}
 
 impl ProtocolDescription for MaliciousBroadcastDrop {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-MaliciousBroadcastDrop")
     }
 }
@@ -53,7 +54,7 @@ pub struct MaliciousBroadcastSender {}
 
 impl ProtocolDescription for MaliciousBroadcastSender {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-MaliciousBroadcastSender")
     }
 }
@@ -196,7 +197,7 @@ pub struct MaliciousBroadcastSenderEcho {}
 
 impl ProtocolDescription for MaliciousBroadcastSenderEcho {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-MaliciousBroadcastSenderEcho")
     }
 }
@@ -303,5 +304,145 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
 
         //Stop voting now
         Ok(round1_data)
+    }
+}
+
+/// Malicious implementation of the [`Broadcast`] protocol where the
+/// party (P_i), when acting as the sender, honestly broadcasts a random message (of the same variant) instead of its prescribed input
+#[derive(Default, Clone)]
+pub struct MaliciousBroadcastRandomizer {}
+
+impl ProtocolDescription for MaliciousBroadcastRandomizer {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = Self::INDENT_STRING.repeat(depth);
+        format!("{indent}-MaliciousBroadcastRandomizer")
+    }
+}
+
+#[async_trait]
+impl Broadcast for MaliciousBroadcastRandomizer {
+    async fn execute<Z: Ring, B: BaseSessionHandles>(
+        &self,
+        session: &mut B,
+        senders: &HashSet<Role>,
+        my_message: Option<BroadcastValue<Z>>,
+    ) -> anyhow::Result<RoleValueMap<Z>> {
+        let rng = session.rng();
+        let my_message = my_message.map(|value| match value {
+            BroadcastValue::Bot => BroadcastValue::Bot,
+            BroadcastValue::RingVector(items) => {
+                BroadcastValue::RingVector(items.into_iter().map(|_| Z::sample(rng)).collect())
+            }
+            BroadcastValue::RingValue(_) => BroadcastValue::RingValue(Z::sample(rng)),
+            BroadcastValue::PRSSVotes(items) => BroadcastValue::PRSSVotes(
+                items
+                    .into_iter()
+                    .map(|v| (v.0, v.1.iter().map(|_| Z::sample(rng)).collect()))
+                    .collect(),
+            ),
+            BroadcastValue::Round2VSS(items) => BroadcastValue::Round2VSS(
+                items
+                    .into_iter()
+                    .map(|v| {
+                        v.into_iter()
+                            .map(|v| {
+                                v.into_iter()
+                                    .map(|_| (Z::sample(rng), Z::sample(rng)))
+                                    .collect()
+                            })
+                            .collect()
+                    })
+                    .collect(),
+            ),
+            BroadcastValue::Round3VSS(btree_map) => BroadcastValue::Round3VSS(
+                btree_map
+                    .into_iter()
+                    .map(|(role, vec_of_vec)| {
+                        (
+                            role,
+                            vec_of_vec.into_iter().map(|_| Z::sample(rng)).collect(),
+                        )
+                    })
+                    .collect(),
+            ),
+            BroadcastValue::Round4VSS(btree_map) => BroadcastValue::Round4VSS(
+                btree_map
+                    .into_iter()
+                    .map(|(role, val_or_poly)| {
+                        (
+                            role,
+                            match val_or_poly {
+                                ValueOrPoly::Value(items) => ValueOrPoly::Value(
+                                    items.into_iter().map(|_| Z::sample(rng)).collect(),
+                                ),
+                                ValueOrPoly::Poly(items) => ValueOrPoly::Poly(
+                                    items
+                                        .into_iter()
+                                        .map(|poly| {
+                                            Poly::from_coefs(
+                                                poly.coefs()
+                                                    .iter()
+                                                    .map(|_| Z::sample(rng))
+                                                    .collect(),
+                                            )
+                                        })
+                                        .collect(),
+                                ),
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
+            BroadcastValue::LocalSingleShare(maps_shares_challenges) => {
+                let MapsSharesChallenges {
+                    checks_for_all,
+                    checks_for_mine,
+                } = maps_shares_challenges;
+                let new_checks_for_all = checks_for_all
+                    .into_keys()
+                    .map(|role| (role, Z::sample(rng)))
+                    .collect();
+                let new_checks_for_mine = checks_for_mine
+                    .into_keys()
+                    .map(|role| (role, Z::sample(rng)))
+                    .collect();
+                BroadcastValue::LocalSingleShare(MapsSharesChallenges {
+                    checks_for_all: new_checks_for_all,
+                    checks_for_mine: new_checks_for_mine,
+                })
+            }
+            BroadcastValue::LocalDoubleShare((map_1, map_2, map_3, map_4)) => {
+                BroadcastValue::LocalDoubleShare((
+                    map_1
+                        .into_keys()
+                        .map(|role| (role, Z::sample(rng)))
+                        .collect(),
+                    map_2
+                        .into_keys()
+                        .map(|role| (role, Z::sample(rng)))
+                        .collect(),
+                    map_3
+                        .into_keys()
+                        .map(|role| (role, Z::sample(rng)))
+                        .collect(),
+                    map_4
+                        .into_keys()
+                        .map(|role| (role, Z::sample(rng)))
+                        .collect(),
+                ))
+            }
+            BroadcastValue::PartialProof(_partial_proof) => {
+                todo!("Non trivial to randomize")
+            }
+            BroadcastValue::MapRingVector(btree_map) => BroadcastValue::MapRingVector(
+                btree_map
+                    .into_iter()
+                    .map(|(role, vec)| (role, vec.into_iter().map(|_| Z::sample(rng)).collect()))
+                    .collect(),
+            ),
+        });
+        SyncReliableBroadcast::default()
+            .execute(session, senders, my_message)
+            .await
     }
 }

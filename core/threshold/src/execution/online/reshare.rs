@@ -36,9 +36,16 @@ use tokio::task::JoinSet;
 use tonic::async_trait;
 use zeroize::Zeroize;
 
-#[derive(Default)]
 pub struct NotExpected<T> {
     pub _marker: std::marker::PhantomData<T>,
+}
+
+impl<T> Default for NotExpected<T> {
+    fn default() -> Self {
+        NotExpected {
+            _marker: std::marker::PhantomData,
+        }
+    }
 }
 
 pub struct Expected<T>(pub T);
@@ -151,7 +158,7 @@ impl<Ses: BaseSessionHandles, OpenProtocol: RobustOpen, BroadcastProtocol: Broad
     ProtocolDescription for RealSameSetsReshare<Ses, OpenProtocol, BroadcastProtocol>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{indent}-SameSetsReshare:\n{}\n{}",
             OpenProtocol::protocol_desc(depth + 1),
@@ -253,7 +260,7 @@ impl<
     for RealTwoSetsReshareAsSet1<TwoSetsSes, OpenProtocol, BroadcastProtocol>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{indent}-SameSetsReshareAsSet1:\n{}\n{}",
             OpenProtocol::protocol_desc(depth + 1),
@@ -375,7 +382,7 @@ impl<
     for RealTwoSetsReshareAsSet2<TwoSetsSes, OneSetSes, RobustOpenProtocol, BroadcastProtocol>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{indent}-SameSetsReshareAsSet2:\n{}\n{}",
             RobustOpenProtocol::protocol_desc(depth + 1),
@@ -497,7 +504,7 @@ impl<
     for RealTwoSetsReshareAsBothSets<TwoSetsSes, OneSetSes, RobustOpenProtocol, BroadcastProtocol>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{indent}-SameSetsReshareAsBothSets:\n{}\n{}",
             RobustOpenProtocol::protocol_desc(depth + 1),
@@ -640,15 +647,15 @@ where
                 )));
             }
             let mut vj = Vec::with_capacity(expected_input_len);
-            for (r, s) in rs_opened.iter().zip_eq(input_shares.clone()) {
+            for (r, s) in rs_opened.iter().zip_eq(input_shares.iter()) {
                 vj.push(*r + s.value());
             }
 
             // erase the memory of sk_share and rj
-            for share in input_shares {
+            for share in input_shares.iter_mut() {
                 share.zeroize();
             }
-            for r in &mut rs_opened {
+            for r in rs_opened.iter_mut() {
                 r.zeroize();
             }
 
@@ -1034,6 +1041,13 @@ fn take_majority_vote_on_broadcasts<
                             *candidate_for_role_in_s1.entry(value.coefs).or_default() += 1_usize;
                         }
                     }
+                } else {
+                    // Note that this may be because the sender sent an empty vec (or nothing)
+                    tracing::warn!(
+                        "During resharing, party {:?} did not provide values for party {:?}",
+                        sender_in_s2,
+                        role_in_s1
+                    );
                 }
             }
         } else {
@@ -1064,10 +1078,10 @@ fn take_majority_vote_on_broadcasts<
                 );
                 agreed_values.push(ResiduePoly::from_array(value));
             } else {
-                return Err(anyhow_error_and_log(format!(
+                tracing::warn!(
                     "During resharing, no majority vote could be found for party {:?}",
                     role_in_s1
-                )));
+                );
             }
         }
         agreed_contributions_from_s1.insert(role_in_s1, agreed_values);
@@ -1203,124 +1217,379 @@ mod tests {
     use crate::algebra::base_ring::Z128;
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use crate::algebra::structure_traits::FromU128;
+    use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::triple::open_list;
-    use crate::execution::runtime::party::TwoSetsThreshold;
-    use crate::execution::runtime::sessions::base_session::{BaseSession, TwoSetsBaseSession};
+    use crate::execution::runtime::party::{DualRole, TwoSetsThreshold};
+    use crate::execution::runtime::sessions::base_session::{
+        BaseSession, GenericBaseSession, TwoSetsBaseSession,
+    };
     use crate::execution::sharing::open::test::deterministically_compute_my_shares;
+    use crate::execution::{
+        online::preprocessing::dummy::DummyPreprocessing,
+        runtime::sessions::session_parameters::GenericParameterHandles,
+    };
+    use crate::malicious_execution::communication::malicious_broadcast::{
+        MaliciousBroadcastDrop, MaliciousBroadcastRandomizer, MaliciousBroadcastSender,
+        MaliciousBroadcastSenderEcho,
+    };
+    use crate::malicious_execution::online::malicious_reshare::{
+        DropReshareAsBothSets, DropReshareAsSet1, DropReshareAsSet2,
+    };
+    use crate::malicious_execution::open::malicious_open::{
+        MaliciousRobustOpenDrop, MaliciousRobustOpenLie,
+    };
     use crate::networking::NetworkMode;
-    use crate::tests::helper::tests_and_benches::{
-        execute_protocol_two_sets, TwoSetsExpectedRounds,
-    };
-    use crate::{
-        algebra::structure_traits::Sample,
-        execution::{
-            online::preprocessing::dummy::DummyPreprocessing,
-            runtime::sessions::session_parameters::GenericParameterHandles,
-        },
-    };
+    use crate::tests::helper::tests::execute_protocol_two_sets_w_malicious;
+
     use std::collections::HashMap;
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_reshare_two_sets() {
-        let num_parties_s1 = 7;
-        let num_parties_s2 = 4;
-        let intersection_size = 3;
-        let threshold = TwoSetsThreshold {
-            threshold_set_1: 2,
-            threshold_set_2: 1,
+    async fn test_reshare_two_sets_honest() {
+        test_reshare_two_sets::<Z128, _, _, _, 4>(
+            7,
+            4,
+            3,
+            TwoSetsThreshold {
+                threshold_set_1: 2,
+                threshold_set_2: 1,
+            },
+            HashSet::new(),
+            SecureTwoSetsReshareAsSet1::default(),
+            SecureTwoSetsReshareAsSet2::default(),
+            SecureTwoSetsReshareAsBothSets::default(),
+        )
+        .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_reshare_two_sets_drop() {
+        test_reshare_two_sets::<Z128, _, _, _, 4>(
+            7,
+            4,
+            2,
+            TwoSetsThreshold {
+                threshold_set_1: 2,
+                threshold_set_2: 1,
+            },
+            HashSet::from([
+                TwoSetsRole::Set1(Role::indexed_from_one(4)),
+                TwoSetsRole::Both(DualRole {
+                    role_set_1: Role::indexed_from_one(2),
+                    role_set_2: Role::indexed_from_one(3),
+                }),
+            ]),
+            DropReshareAsSet1,
+            DropReshareAsSet2,
+            DropReshareAsBothSets,
+        )
+        .await;
+    }
+
+    #[rstest::rstest]
+    async fn test_reshare_malicious_subprotocols<
+        RO: RobustOpen + 'static,
+        BC: Broadcast + 'static,
+    >(
+        #[values((
+            7,
+            4,
+            2,
+            TwoSetsThreshold {
+                threshold_set_1: 2,
+                threshold_set_2: 1,
+            },
+            HashSet::from([
+                TwoSetsRole::Set1(Role::indexed_from_one(4)),
+                TwoSetsRole::Both(DualRole {
+                    role_set_1: Role::indexed_from_one(2),
+                    role_set_2: Role::indexed_from_one(3),
+                }),
+            ])),
+            (
+            4,
+            7,
+            4,
+            TwoSetsThreshold {
+                threshold_set_1: 1,
+                threshold_set_2: 2,
+            },
+            HashSet::from([
+                TwoSetsRole::Set2(Role::indexed_from_one(6)),
+                TwoSetsRole::Both(DualRole {
+                    role_set_1: Role::indexed_from_one(3),
+                    role_set_2: Role::indexed_from_one(4),
+                }),
+            ])
+
+        ))]
+        (num_parties_s1, num_parties_s2, intersection_size, threshold, malicious_roles): (
+            usize,
+            usize,
+            usize,
+            TwoSetsThreshold,
+            HashSet<TwoSetsRole>,
+        ),
+        #[values(MaliciousRobustOpenDrop::default(), MaliciousRobustOpenLie::default())]
+        open_protocol: RO,
+        #[values(
+            MaliciousBroadcastDrop::default(),
+            MaliciousBroadcastSender::default(),
+            MaliciousBroadcastSenderEcho::default(),
+            MaliciousBroadcastRandomizer::default()
+        )]
+        broadcast_protocol: BC,
+    ) {
+        let reshare_s1 = RealTwoSetsReshareAsSet1 {
+            open_protocol: open_protocol.clone(),
+            broadcast_protocol: broadcast_protocol.clone(),
+            two_sets_session_marker: std::marker::PhantomData::<GenericBaseSession<TwoSetsRole>>,
         };
 
+        let reshare_s2 = RealTwoSetsReshareAsSet2 {
+            open_protocol: open_protocol.clone(),
+            broadcast_protocol: broadcast_protocol.clone(),
+            two_sets_session_marker: std::marker::PhantomData::<GenericBaseSession<TwoSetsRole>>,
+            one_set_session_marker: std::marker::PhantomData::<BaseSession>,
+        };
+
+        let reshare_both = RealTwoSetsReshareAsBothSets {
+            open_protocol,
+            broadcast_protocol,
+            two_sets_session_marker: std::marker::PhantomData::<GenericBaseSession<TwoSetsRole>>,
+            one_set_session_marker: std::marker::PhantomData::<BaseSession>,
+        };
+
+        test_reshare_two_sets::<Z128, _, _, _, 4>(
+            num_parties_s1,
+            num_parties_s2,
+            intersection_size,
+            threshold,
+            malicious_roles,
+            reshare_s1,
+            reshare_s2,
+            reshare_both,
+        )
+        .await;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn test_reshare_two_sets<
+        Z: BaseRing + Zeroize,
+    // Restrict the strateies to meaningful inputs
+        R1: for<'a> Reshare<
+            ReshareSessions = GenericBaseSession<TwoSetsRole>,
+            MaybeExpectedInputShares<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>> = Expected<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>>,
+            MaybeExpectedPreprocessing<&'a mut InMemoryBasePreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>> = NotExpected<
+                &'a mut InMemoryBasePreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>,
+            >,
+        > + 'static,
+        R2: for<'a> Reshare<
+            ReshareSessions = (GenericBaseSession<TwoSetsRole>,BaseSession),
+            MaybeExpectedInputShares<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>> = NotExpected<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>>,
+            MaybeExpectedPreprocessing<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>> = Expected<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>>,
+        > + 'static,
+        R3: for<'a> Reshare<
+            ReshareSessions = (GenericBaseSession<TwoSetsRole>,BaseSession),
+            MaybeExpectedInputShares<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>> = Expected<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>>,
+            MaybeExpectedPreprocessing<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>> = Expected<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>>,
+        > + 'static,
+        const EXTENSION_DEGREE: usize,
+    >(
+        num_parties_s1: usize,
+        num_parties_s2: usize,
+        intersection_size: usize,
+        threshold: TwoSetsThreshold,
+        malicious_parties: HashSet<TwoSetsRole>,
+        malicious_reshare_set_1: R1,
+        malicious_reshare_set_2: R2,
+        malicious_reshare_both_sets: R3,
+    ) where ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome{
         let num_secrets = 10;
 
-        let mut task = |mut two_sets_session: TwoSetsBaseSession,
-                        set_1_session: Option<BaseSession>,
-                        mut set_2_session: Option<BaseSession>| async move {
-            let s1_roles_cheat = [Role::indexed_from_one(2), Role::indexed_from_one(3)];
-            let (mut my_shares, inner_secrets) = if let Some(mut set_1_session) = set_1_session {
-                let (inner_secrets, shares) =
-                    deterministically_compute_my_shares::<ResiduePolyF4Z128>(
-                        num_secrets,
-                        set_1_session.my_role(),
-                        set_1_session.num_parties(),
-                        set_1_session.threshold() as usize,
-                        42,
-                    );
-                let my_role = set_1_session.my_role();
-                let my_shares = shares
-                    .into_iter()
-                    .map(|v| {
-                        if s1_roles_cheat.contains(&my_role) {
-                            let error = ResiduePolyF4Z128::sample(set_1_session.rng());
-                            Share::new(set_1_session.my_role(), v + error)
-                        } else {
-                            Share::new(set_1_session.my_role(), v)
-                        }
-                    })
-                    .collect_vec();
-                (Some(my_shares), Some(inner_secrets))
-            } else {
-                (None, None)
-            };
-
-            let mut preproc = if let Some(set_2_session) = set_2_session.as_ref() {
-                let preproc = DummyPreprocessing::<ResiduePolyF4Z128>::new(42, set_2_session);
-                Some(preproc)
-            } else {
-                None
-            };
-
-            let reshare_result = reshare_two_sets(
-                &mut two_sets_session,
-                set_2_session.as_mut(),
-                preproc.as_mut(),
-                my_shares.as_mut(),
+        let mut task_honest = |two_sets_session: TwoSetsBaseSession,
+                               set_1_session: Option<BaseSession>,
+                               set_2_session: Option<BaseSession>| async move {
+            generic_task(
+                two_sets_session,
+                set_1_session,
+                set_2_session,
+                SecureTwoSetsReshareAsSet1::default(),
+                SecureTwoSetsReshareAsSet2::default(),
+                SecureTwoSetsReshareAsBothSets::default(),
                 num_secrets,
-                &SecureRobustOpen::default(),
-                &SyncReliableBroadcast::default(),
             )
-            .await;
-
-            if let Some(set_2_session) = set_2_session {
-                let reshare_result = reshare_result.unwrap().unwrap();
-                let opened_reshared = open_list(&reshare_result, &set_2_session).await.unwrap();
-                (two_sets_session.my_role(), opened_reshared)
-            } else {
-                assert!(reshare_result.unwrap().is_none());
-                (two_sets_session.my_role(), inner_secrets.unwrap())
-            }
+            .await
         };
 
-        let mut results = execute_protocol_two_sets::<
+        let mut task_malicious = |two_sets_session: TwoSetsBaseSession,
+                                  set_1_session: Option<BaseSession>,
+                                  set_2_session: Option<BaseSession>,
+                                  (
+            malicious_reshare_set_1,
+            malicious_reshare_set_2,
+            malicious_reshare_both_sets,
+        ): (R1, R2, R3)| async move {
+            generic_task(
+                two_sets_session,
+                set_1_session,
+                set_2_session,
+                malicious_reshare_set_1,
+                malicious_reshare_set_2,
+                malicious_reshare_both_sets,
+                num_secrets,
+            )
+            .await
+        };
+        let (result_honests, _result_malicious) = execute_protocol_two_sets_w_malicious::<
             _,
             _,
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            _,
+            _,
+            _,
+            ResiduePoly<Z, EXTENSION_DEGREE>,
+            EXTENSION_DEGREE,
         >(
             num_parties_s1,
             num_parties_s2,
             intersection_size,
             threshold,
-            Some(TwoSetsExpectedRounds {
-                num_rounds_within_s1: 0,
-                num_rounds_within_s2: (threshold.threshold_set_2 as usize + 3) + 1 + 1, // Broadcast + Open syndrome + Open inside the test
-                num_rounds_across_sets: 2, // Multicast from S2 to S1 and back
-            }),
+            malicious_parties.clone(),
+            (
+                malicious_reshare_set_1,
+                malicious_reshare_set_2,
+                malicious_reshare_both_sets,
+            ),
             NetworkMode::Sync,
-            &mut task,
+            &mut task_honest,
+            &mut task_malicious,
         )
         .await;
 
         assert_eq!(
-            results.len(),
-            num_parties_s2 + num_parties_s1 - intersection_size
+            result_honests.len(),
+            num_parties_s2 + num_parties_s1 - intersection_size - malicious_parties.len()
         );
-        let pivot = results.pop().unwrap();
-        for (role, inner_secrets) in results {
+        let mut honest_iter = result_honests.into_iter();
+        let pivot = honest_iter.next().unwrap();
+        for (role, inner_secrets) in honest_iter {
             assert_eq!(
                 inner_secrets, pivot.1,
                 "mismatch between pivot role {} and role {}",
                 pivot.0, role
             );
+        }
+    }
+
+    async fn generic_task<
+        Z: BaseRing + Zeroize,
+    // Restrict the strateies to meaningful inputs
+        R1: for<'a> Reshare<
+            ReshareSessions = GenericBaseSession<TwoSetsRole>,
+            MaybeExpectedInputShares<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>> = Expected<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>>,
+            MaybeExpectedPreprocessing<&'a mut InMemoryBasePreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>> = NotExpected<
+                &'a mut InMemoryBasePreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>,
+            >,
+        > + 'static,
+        R2: for<'a> Reshare<
+            ReshareSessions = (GenericBaseSession<TwoSetsRole>,BaseSession),
+            MaybeExpectedInputShares<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>> = NotExpected<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>>,
+            MaybeExpectedPreprocessing<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>> = Expected<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>>,
+        > + 'static,
+        R3: for<'a> Reshare<
+            ReshareSessions = (GenericBaseSession<TwoSetsRole>,BaseSession),
+            MaybeExpectedInputShares<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>> = Expected<&'a mut Vec<Share<ResiduePoly<Z,EXTENSION_DEGREE>>>>,
+            MaybeExpectedPreprocessing<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>> = Expected<&'a mut DummyPreprocessing<ResiduePoly<Z,EXTENSION_DEGREE>>>,
+        > + 'static,
+        const EXTENSION_DEGREE: usize,
+    >(
+        mut two_sets_session: TwoSetsBaseSession,
+        set_1_session: Option<BaseSession>,
+        set_2_session: Option<BaseSession>,
+        malicious_reshare_set_1: R1,
+        malicious_reshare_set_2: R2,
+        malicious_resahre_both_sets: R3,
+        num_secrets: usize,
+    ) -> Vec<ResiduePoly<Z, EXTENSION_DEGREE>>
+    where ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect + Invert + Syndrome
+    {
+        let (my_shares, inner_secrets) = if let Some(set_1_session) = set_1_session {
+            let (inner_secrets, shares) =
+                deterministically_compute_my_shares::<ResiduePoly<Z, EXTENSION_DEGREE>>(
+                    num_secrets,
+                    set_1_session.my_role(),
+                    set_1_session.num_parties(),
+                    set_1_session.threshold() as usize,
+                    42,
+                );
+            let my_shares = shares
+                .into_iter()
+                .map(|v| Share::new(set_1_session.my_role(), v))
+                .collect_vec();
+            (Some(my_shares), Some(inner_secrets))
+        } else {
+            (None, None)
+        };
+
+        let mut preproc = if let Some(set_2_session) = set_2_session.as_ref() {
+            let preproc =
+                DummyPreprocessing::<ResiduePoly<Z, EXTENSION_DEGREE>>::new(42, set_2_session);
+            Some(preproc)
+        } else {
+            None
+        };
+
+        let (reshare_result, set_2_session) = match two_sets_session.my_role() {
+            TwoSetsRole::Set1(_) => (
+                malicious_reshare_set_1
+                    .execute(
+                        &mut two_sets_session,
+                        &mut NotExpected::<&mut InMemoryBasePreprocessing<_>>::default(),
+                        &mut Expected(&mut my_shares.unwrap()),
+                        num_secrets,
+                    )
+                    .await
+                    .map(|res| res.into()),
+                None,
+            ),
+            TwoSetsRole::Set2(_) => {
+                let mut sessions = (two_sets_session, set_2_session.unwrap());
+                (
+                    malicious_reshare_set_2
+                        .execute(
+                            &mut sessions,
+                            &mut Expected(preproc.as_mut().unwrap()),
+                            &mut NotExpected::default(),
+                            num_secrets,
+                        )
+                        .await
+                        .map(|res| res.into()),
+                    Some(sessions.1),
+                )
+            }
+            TwoSetsRole::Both(_) => {
+                let mut sessions = (two_sets_session, set_2_session.unwrap());
+                (
+                    malicious_resahre_both_sets
+                        .execute(
+                            &mut sessions,
+                            &mut Expected(preproc.as_mut().unwrap()),
+                            &mut Expected(&mut my_shares.unwrap()),
+                            num_secrets,
+                        )
+                        .await
+                        .map(|res| res.into()),
+                    Some(sessions.1),
+                )
+            }
+        };
+
+        if let Some(set_2_session) = set_2_session {
+            let reshare_result = reshare_result.unwrap().unwrap();
+            let opened_reshared = open_list(&reshare_result, &set_2_session).await.unwrap();
+            opened_reshared
+        } else {
+            assert!(reshare_result.unwrap().is_none());
+            inner_secrets.unwrap()
         }
     }
 

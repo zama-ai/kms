@@ -149,7 +149,7 @@ pub struct DummyVss {}
 
 impl ProtocolDescription for DummyVss {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-DummyVss")
     }
 }
@@ -216,7 +216,7 @@ pub struct RealVss<BCast: Broadcast> {
 
 impl<BCast: Broadcast> ProtocolDescription for RealVss<BCast> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{}-RealVss:\n{}", indent, BCast::protocol_desc(depth + 1))
     }
 }
