@@ -2027,7 +2027,8 @@ pub const NIST_PARAMS_P8_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
     )),
     compression_decompression_parameters: None,
     secret_key_deviations: Some(SecretKeyDeviations{ log2_failure_proba: -80, pmax: 0.798 }),
-    cpk_re_randomization_ksk_params: Some(super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128)
+    // No support for rerand for PBS-KS type of keys
+    cpk_re_randomization_ksk_params: None,
 };
 
 pub const NIST_PARAMS_P8_NO_SNS_LWE: DKGParams = DKGParams::WithoutSnS(NIST_PARAMS_P8_INTERNAL_LWE);
@@ -2050,7 +2051,8 @@ pub const NIST_PARAMS_P32_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
     )),
     compression_decompression_parameters: None,
     secret_key_deviations: Some(SecretKeyDeviations{ log2_failure_proba: -80, pmax: 0.8044 }),
-    cpk_re_randomization_ksk_params: Some(super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128)
+    // No support for rerand for PBS-KS type of keys
+    cpk_re_randomization_ksk_params: None,
 };
 
 pub const NIST_PARAMS_P32_NO_SNS_LWE: DKGParams =

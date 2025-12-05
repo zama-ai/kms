@@ -76,41 +76,19 @@ fn transfer_overflow(
 }
 
 #[cfg(not(feature = "measure_memory"))]
-fn bench_transfer_latency<FheType, F>(
-    c: &mut BenchmarkGroup<'_, WallTime>,
-    client_key: &ClientKey,
-    public_key: &CompactPublicKey,
-    bench_name: &str,
-    type_name: &str,
-    fn_name: &str,
-    transfer_func: F,
-) where
-    FheType: FheEncrypt<u64, ClientKey>,
-    F: for<'a> Fn(&'a FheType, &'a FheType, &'a FheType) -> (FheType, FheType),
-{
-    let bench_id = format!("{bench_name}::{fn_name}::{type_name}");
-    c.bench_function(&bench_id, |b| {
-        let mut rng = AesRng::from_entropy();
-
-        let from_amount = FheType::encrypt(rng.gen::<u64>(), client_key);
-        let to_amount = FheType::encrypt(rng.gen::<u64>(), client_key);
-        let amount = FheType::encrypt(rng.gen::<u64>(), client_key);
-
-        b.iter(|| {
-            let (_, _) = transfer_func(&from_amount, &to_amount, &amount, public_key);
-        })
-    });
-}
-
-#[cfg(not(feature = "measure_memory"))]
 #[allow(unused_mut)]
 fn main() {
     for (name, params) in ALL_PARAMS {
         let config = params.to_tfhe_config();
 
+        let mut rng = AesRng::from_entropy();
         let cks = ClientKey::generate(config);
         let sks = ServerKey::new(&cks);
         let public_key = tfhe::CompactPublicKey::new(&cks);
+
+        let mut from_amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
+        let mut to_amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
+        let mut amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
 
         rayon::broadcast(|_| set_server_key(sks.clone()));
         set_server_key(sks);
@@ -122,15 +100,17 @@ fn main() {
         {
             let mut group = c.benchmark_group(&bench_name);
 
-            bench_transfer_latency(
-                &mut group,
-                &cks,
-                &public_key,
-                &bench_name,
-                "FheUint64",
-                "overflow",
-                transfer_overflow::<FheUint64>,
-            );
+            let bench_id = format!("{bench_name}::overflow::FheUint64");
+            group.bench_function(&bench_id, |b| {
+                b.iter(|| {
+                    let (_, _) = transfer_overflow(
+                        &mut from_amount.clone(),
+                        &mut to_amount.clone(),
+                        &mut amount.clone(),
+                        &public_key,
+                    );
+                })
+            });
 
             group.finish();
         }
@@ -157,6 +137,14 @@ fn main() {
     };
 
     for (name, params) in ALL_PARAMS {
+        if params
+            .get_params_basics_handle()
+            .get_rerand_params()
+            .is_none()
+        {
+            // Rerandomization is required for this bench
+            continue;
+        }
         use crate::utilities::bench_memory;
 
         let bench_name = format!("non-threshold_erc20_{name}_memory");
