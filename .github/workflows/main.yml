@@ -161,7 +161,7 @@ jobs:
     if: >-
       needs.check-changes.outputs.changes-helm-chart == 'true' &&
       github.event_name != 'schedule' &&
-      (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
+      github.ref == 'refs/heads/main'
     uses: ./.github/workflows/helm-release.yml
 
   ############################################################################
