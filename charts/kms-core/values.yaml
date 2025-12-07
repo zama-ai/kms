@@ -94,6 +94,7 @@ kmsCore:
     maxElapsedTime: 300
     networkTimeout: 300
     initialIntervalMs: 100
+    maxOpenedInactiveSessionsPerParty: 1000
     enableSysMetrics: true
     refreshIntervalMs: 5000
     tokioWorkerThreads: 6
