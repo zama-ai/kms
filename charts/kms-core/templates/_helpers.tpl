@@ -47,15 +47,9 @@ restartPolicy: Always
 command:
   - socat
 args:
+  - -d0
   - {{ .from }}
   - {{ .to }}
-securityContext:
-  runAsUser: 0
-  runAsGroup: 1001
-  allowPrivilegeEscalation: false
-volumeMounts:
-  - mountPath: /dev/vsock
-    name: vsock-device
 {{- end -}}
 
 {{/* takes a (dict "name" string
