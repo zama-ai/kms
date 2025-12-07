@@ -50,7 +50,9 @@ args:
   - {{ .from }}
   - {{ .to }}
 securityContext:
+  runAsUser: 0
   runAsGroup: 1001
+  allowPrivilegeEscalation: false
 volumeMounts:
   - mountPath: /dev/vsock
     name: vsock-device
