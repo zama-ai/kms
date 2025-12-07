@@ -49,6 +49,8 @@ command:
 args:
   - {{ .from }}
   - {{ .to }}
+securityContext:
+  runAsGroup: 1001
 volumeMounts:
   - mountPath: /dev/vsock
     name: vsock-device
