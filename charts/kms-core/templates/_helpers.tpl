@@ -62,7 +62,7 @@ volumeMounts:
 {{- include "socatContainer"
       (dict "name" .name
             "image" .image
-            "from" (printf "VSOCK-LISTEN:%d,fork,reuseaddr" (int .vsockPort))
+            "from" (printf "VSOCK-LISTEN:%d,fork,reuseaddr,shut-down" (int .vsockPort))
 	        "to" .to) }}
 {{- end -}}
 
@@ -100,7 +100,7 @@ volumeMounts:
 {{- include "proxyToEnclave"
       (dict "name" .name
             "image" .image
-            "from" (printf "TCP-LISTEN:%d,fork,nodelay,reuseaddr" (int .port))
+            "from" (printf "TCP-LISTEN:%d,fork,nodelay,reuseaddr,shut-down" (int .port))
             "cid" .cid
 	        "port" .port) }}
 {{- end -}}
