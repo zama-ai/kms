@@ -48,6 +48,7 @@ command:
   - socat
 args:
   - -d0
+  - -T60
   - {{ .from }}
   - {{ .to }}
 {{- end -}}
