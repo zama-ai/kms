@@ -191,6 +191,7 @@ spec:
                      "image" .Values.kubeUtils.image
                      "vsockPort" 4000
                      "to" (printf "OPEN:kms-server.toml,rdonly")
+                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
@@ -202,6 +203,7 @@ spec:
                      "image" .Values.kubeUtils.image
                      "vsockPort" 3000
                      "to" "STDOUT"
+                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                ) | indent 10 | trim }}
         {{- if .Values.kmsCore.nitroEnclave.ports.imds }}
         {{- /* Init AWS IMDS Proxy Socket */}}
@@ -211,6 +213,7 @@ spec:
                      "vsockPort" .Values.kmsCore.nitroEnclave.ports.imds
                      "address" "169.254.169.254"
                      "port" 80
+                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
         {{- end }}
         {{- if .Values.kmsCore.nitroEnclave.ports.sts }}
@@ -219,8 +222,9 @@ spec:
                (dict "name" "enclave-web-identity-token"
                      "image" .Values.kubeUtils.image
                      "vsockPort" 4100
-          "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
-          ) | indent 10 | trim }}
+                     "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
+                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
+               ) | indent 10 | trim }}
         {{- /* Init AWS STS Proxy Socket */}}
         - {{ include "proxyFromEnclaveTcp"
                (dict "name" "aws-sts-proxy"
@@ -228,6 +232,7 @@ spec:
                      "vsockPort" .Values.kmsCore.nitroEnclave.ports.sts
                      "address" (printf "sts.%s.amazonaws.com" .Values.kmsCore.aws.region)
                      "port" 443
+                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
         {{- end }}
         {{- /* Init AWS S3 Proxy Socket */}}
@@ -237,6 +242,7 @@ spec:
                      "vsockPort" .Values.kmsCore.nitroEnclave.ports.s3
                      "address" (printf "s3.%s.amazonaws.com" .Values.kmsCore.aws.region)
                      "port" 443
+                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
         {{- /* Init AWS KMS Proxy Socket */}}
         - {{ include "proxyFromEnclaveTcp"
@@ -245,6 +251,7 @@ spec:
                      "vsockPort" .Values.kmsCore.nitroEnclave.ports.awskms
                      "address" (printf "kms.%s.amazonaws.com" .Values.kmsCore.aws.region)
                      "port" 443
+                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
         {{- /* Init Metrics Endpoint Proxy Socket */}}
         - {{ include "proxyToEnclaveTcp"
@@ -252,6 +259,7 @@ spec:
                      "image" .Values.kubeUtils.image
                      "cid" .Values.kmsCore.nitroEnclave.cid
                      "port" .Values.kmsCore.ports.metrics
+                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
         {{- /* Init Enclave Tracing Socket */}}
         - {{ include "proxyFromEnclave"
@@ -259,6 +267,7 @@ spec:
                      "image" .Values.kubeUtils.image
                      "vsockPort" .Values.kmsCore.nitroEnclave.ports.tracing
                      "to" (printf "TCP:%s" (urlParse .Values.tracing.endpoint).host)
+                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
         {{- /* Init GRPC Client Proxy Socket */}}
         - {{ include "proxyToEnclaveTcp"
@@ -266,6 +275,7 @@ spec:
                      "image" .Values.kubeUtils.image
                      "cid" .Values.kmsCore.nitroEnclave.cid
                      "port" .Values.kmsCore.ports.client
+                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
         {{- if .Values.kmsCore.thresholdMode.enabled }}
         {{- /* Init GRPC Local Peer Proxy Socket */}}
@@ -274,6 +284,7 @@ spec:
                      "image" .Values.kubeUtils.image
                      "cid" .Values.kmsCore.nitroEnclave.cid
                      "port" .Values.kmsCore.ports.peer
+                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
           {{- with .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources }}
           resources:
@@ -288,6 +299,7 @@ spec:
                      "vsockPort" (add $.Values.kmsCore.nitroEnclave.ports.peer .id)
                      "address" .host
                      "port" .port
+                     "timeout" $.Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
           {{- with $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources }}
           resources:
@@ -302,6 +314,7 @@ spec:
                      "vsockPort" (add $.Values.kmsCore.nitroEnclave.ports.peer $i)
                      "address" (printf "%s-%d" $kmsCoreName (int $i))
                      "port" $.Values.kmsCore.ports.peer
+                     "timeout" $.Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
           {{- with $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources }}
           resources:
