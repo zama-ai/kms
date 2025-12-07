@@ -751,6 +751,10 @@ spec:
           hostPath:
             path: /dev/nitro_enclaves
             type: CharDevice
+        - name: vsock-device
+          hostPath:
+            path: /dev/vsock
+            type: CharDevice
         {{- end }}
   {{- if not .Values.kmsCore.privateVault.s3.enabled }}
   volumeClaimTemplates:
