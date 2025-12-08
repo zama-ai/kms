@@ -2,6 +2,7 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
 
 // === External Crates ===
+use alloy_primitives::U256;
 use anyhow::anyhow;
 use itertools::Itertools;
 use kms_grpc::{
@@ -236,19 +237,19 @@ impl<
                     Some(raw_decryption) => *raw_decryption,
                     None => {
                         return Err(anyhow!(
-                            "Decryption with session ID {} could not be retrived",
+                            "Public Decryption with session ID {} could not be retrived",
                             session_id.to_string()
                         ))
                     }
                 };
                 tracing::info!(
-                    "Decryption completed on {:?}. Inner thread took {:?} ms",
+                    "Public decryption in session {session_id} completed on {:?}. Inner thread took {:?} ms",
                     my_identity,
                     time.as_millis()
                 );
                 raw_decryption
             }
-            Err(e) => return Err(anyhow!("Failed decryption with noiseflooding: {e}")),
+            Err(e) => return Err(anyhow!("Failed public decryption with noiseflooding: {e}")),
         };
         Ok(raw_decryption)
     }
@@ -408,7 +409,9 @@ impl<
             )?;
 
             let hex_req_id = hex::encode(req_id.as_bytes());
-            let decimal_req_id: u128 = req_id.try_into().unwrap_or(0);
+            let decimal_req_id = U256::try_from_be_slice(req_id.as_bytes())
+                .unwrap_or(U256::ZERO)
+                .to_string();
             tracing::info!(
                 request_id = hex_req_id,
                 request_id_decimal = decimal_req_id,

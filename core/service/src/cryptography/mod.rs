@@ -41,7 +41,8 @@ pub(crate) fn compute_user_decrypt_message(
     user_pk: &UnifiedPublicEncKey,
     extra_data: Vec<u8>,
 ) -> anyhow::Result<UserDecryptResponseVerification> {
-    let external_handles: Vec<_> = payload
+    // convert external_handles back to 256-bit bytes32 to be signed
+    let external_handles_bytes32: Vec<_> = payload
         .signcrypted_ciphertexts
         .iter()
         .enumerate()
@@ -68,9 +69,15 @@ pub(crate) fn compute_user_decrypt_message(
         .to_legacy_bytes()
         .map_err(|e| anyhow::anyhow!("serialization error: {e}"))?;
 
+    tracing::info!(
+        "Computed UserDecryptResponseVerification for handles {:?} and extra data \"{}\".",
+        external_handles_bytes32,
+        hex::encode(&extra_data)
+    );
+
     Ok(UserDecryptResponseVerification {
         publicKey: user_pk_buf.into(),
-        ctHandles: external_handles,
+        ctHandles: external_handles_bytes32,
         userDecryptedShare: user_decrypted_share_buf.into(),
         extraData: extra_data.into(),
     })
