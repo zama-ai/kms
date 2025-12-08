@@ -6,6 +6,7 @@
 #[path = "../utilities.rs"]
 mod utilities;
 
+use crate::utilities::set_plan;
 use aes_prng::AesRng;
 #[cfg(not(feature = "measure_memory"))]
 use criterion::{measurement::WallTime, BenchmarkGroup, Criterion};
@@ -78,6 +79,7 @@ fn transfer_overflow(
 #[cfg(not(feature = "measure_memory"))]
 #[allow(unused_mut)]
 fn main() {
+    set_plan();
     for (name, params) in ALL_PARAMS {
         if params
             .get_params_basics_handle()
@@ -133,6 +135,7 @@ pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
 
 #[cfg(feature = "measure_memory")]
 fn main() {
+    set_plan();
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
     let transfer = |(mut from_amount, mut to_amount, mut amount, public_key): (
