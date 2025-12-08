@@ -43,6 +43,33 @@ The scripts support both **macOS** and **Linux**:
 
 Platform-specific commands (like `base64`) are automatically detected and adjusted.
 
+### Token for private image pulls
+
+To pull private images and helm charts from GitHub Container Registry, you need to create a `dockerconfig.yaml` file with your Personal Access Token from github:
+
+```bash
+# Replace <your_username> and <your_token> with your GitHub credentials
+# Token needs 'read:packages' permission
+cat > ${HOME}/dockerconfig.yaml <<EOF
+apiVersion: v1
+data:
+  .dockerconfigjson: $(cat <<JSON | base64 -w 0
+{
+  "auths": {
+    "ghcr.io": {
+      "auth": "$(echo -n "<your_username>:<your_token>" | base64 -w 0)"
+    }
+  }
+}
+JSON
+)
+kind: Secret
+metadata:
+  name: registry-credentials
+type: kubernetes.io/dockerconfigjson
+EOF
+```
+
 ## Local Usage
 
 ### Basic Setup
@@ -93,33 +120,6 @@ export KMS_CORE_IMAGE_TAG="v0.12.0"
 export KMS_CORE_CLIENT_IMAGE_TAG="v0.12.0"
 export DEPLOYMENT_TYPE="threshold"
 export NUM_PARTIES="4"
-```
-
-### Token for private image pulls
-
-To pull private images and helm charts from GitHub Container Registry, you need to create a `dockerconfig.yaml` file with your Personal Access Token:
-
-```bash
-# Replace <your_username> and <your_token> with your GitHub credentials
-# Token needs 'read:packages' permission
-cat > ${HOME}/dockerconfig.yaml <<EOF
-apiVersion: v1
-data:
-  .dockerconfigjson: $(cat <<JSON | base64 -w 0
-{
-  "auths": {
-    "ghcr.io": {
-      "auth": "$(echo -n "<your_username>:<your_token>" | base64 -w 0)"
-    }
-  }
-}
-JSON
-)
-kind: Secret
-metadata:
-  name: registry-credentials
-type: kubernetes.io/dockerconfigjson
-EOF
 ```
 
 Then run the setup script with `--local` flag:
@@ -542,6 +542,8 @@ Located in `infra/` directory:
 ## Troubleshooting
 
 ### Cluster Already Exists
+
+`Error from server (AlreadyExists): namespaces “kms-test” already exists`
 
 ```bash
 # Delete existing cluster
