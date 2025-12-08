@@ -274,6 +274,7 @@ spec:
                      "image" .Values.kubeUtils.image
                      "cid" .Values.kmsCore.nitroEnclave.cid
                      "port" .Values.kmsCore.ports.peer
+                     "timeout" (int .Values.kmsCore.nitroEnclave.socat.timeout)
                 ) | indent 10 | trim }}
           {{- with .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources }}
           resources:
