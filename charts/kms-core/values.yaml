@@ -292,10 +292,10 @@ rustLog: info
 
 podSecurityContext:
   # To set when the image will support non root user
-   runAsUser: 10003
-   runAsGroup: 10002
-   fsGroup: 10002
-   runAsNonRoot: true
+  runAsUser: 10003
+  runAsGroup: 10002
+  fsGroup: 10002
+  runAsNonRoot: true
 containerSecurityContext:
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
@@ -305,11 +305,11 @@ containerSecurityContext:
   privileged: false
 
 podSecurityContextForEnclave:
-   runAsUser: 10003
-   runAsGroup: 10002
-   fsGroup: 1001
-   supplementalGroups: [1001]
-   runAsNonRoot: true
+  runAsUser: 10003
+  runAsGroup: 10002
+  fsGroup: 1001
+  supplementalGroups: [1001]
+  runAsNonRoot: true
 
 kyverno:
   enabled: false
