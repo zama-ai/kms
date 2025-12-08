@@ -37,8 +37,10 @@ centralized
 
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
+     	     	   "timeout" int
      	     	   "from" string
-		           "to" string) */}}
+		      "to" string
+		      "timeout" int (optional, defaults to 60)) */}}
 {{- define "socatContainer" -}}
 name: {{ .name }}
 image: {{ .image.name }}:{{ .image.tag }}
@@ -48,6 +50,7 @@ command:
   - socat
 args:
   - -d0
+  - -T{{ default 60 .timeout }}
   - {{ .from }}
   - {{ .to }}
 {{- end -}}
@@ -55,13 +58,15 @@ args:
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
                    "vsockPort" int
-		           "to" string) */}}
+		           "to" string
+		           "timeout" int) */}}
 {{- define "proxyFromEnclave" -}}
 {{- include "socatContainer"
       (dict "name" .name
             "image" .image
             "from" (printf "VSOCK-LISTEN:%d,fork,reuseaddr,shut-down" (int .vsockPort))
-	        "to" .to) }}
+	      "to" .to
+	      "timeout" .timeout) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
@@ -74,7 +79,8 @@ args:
       (dict "name" .name
             "image" .image
             "vsockPort" .vsockPort
-	        "to" (printf "TCP:%s:%d,nodelay" .address (int .port))) }}
+	      "to" (printf "TCP:%s:%d,nodelay" .address (int .port))
+	      "timeout" .timeout) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
@@ -87,7 +93,8 @@ args:
       (dict "name" .name
             "image" .image
             "from" .from
-	        "to" (printf "VSOCK-CONNECT:%d:%d" (int .cid) (int .port))) }}
+	      "to" (printf "VSOCK-CONNECT:%d:%d" (int .cid) (int .port))
+	      "timeout" .timeout) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
@@ -100,7 +107,8 @@ args:
             "image" .image
             "from" (printf "TCP-LISTEN:%d,fork,nodelay,reuseaddr,shut-down" (int .port))
             "cid" .cid
-	        "port" .port) }}
+	      "port" .port
+	      "timeout" .timeout) }}
 {{- end -}}
 
 {{- define "kmsInitJobName" -}}
