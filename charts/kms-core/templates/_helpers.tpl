@@ -61,7 +61,7 @@ args:
 {{- include "socatContainer"
       (dict "name" .name
             "image" .image
-            "from" (printf "VSOCK-LISTEN:%d,fork,reuseaddr" (int .vsockPort))
+            "from" (printf "-T60 VSOCK-LISTEN:%d,fork,reuseaddr" (int .vsockPort))
 	      "to" .to) }}
 {{- end -}}
 
@@ -95,16 +95,12 @@ args:
      	     	   "image" (dict "name" string "tag" string)
 		           "cid" int
                    "port" int
-                   "timeout" string (optional, only used if name is "grpc-peer-proxy")) */}}
+                   "timeout" int (optional, defaults to 60)) */}}
 {{- define "proxyToEnclaveTcp" -}}
-{{- $from := printf "TCP-LISTEN:%d,fork,nodelay,reuseaddr" (int .port) -}}
-{{- if and (eq .name "grpc-peer-proxy") .timeout -}}
-{{- $from = printf "%s %s" .timeout $from -}}
-{{- end -}}
 {{- include "proxyToEnclave"
       (dict "name" .name
             "image" .image
-            "from" $from
+            "from" (printf "-T60 TCP-LISTEN:%d,fork,nodelay,reuseaddr" (int .port))
             "cid" .cid
 	      "port" .port) }}
 {{- end -}}

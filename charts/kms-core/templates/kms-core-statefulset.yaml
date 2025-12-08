@@ -274,7 +274,6 @@ spec:
                      "image" .Values.kubeUtils.image
                      "cid" .Values.kmsCore.nitroEnclave.cid
                      "port" .Values.kmsCore.ports.peer
-                     "timeout" (printf "-T%d" (int .Values.kmsCore.nitroEnclave.socat.timeout))
                 ) | indent 10 | trim }}
           {{- with .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources }}
           resources:
@@ -303,7 +302,6 @@ spec:
                      "vsockPort" (add $.Values.kmsCore.nitroEnclave.ports.peer $i)
                      "address" (printf "%s-%d" $kmsCoreName (int $i))
                      "port" $.Values.kmsCore.ports.peer
-                     "timeout" (printf "-T%d" $.Values.kmsCore.nitroEnclave.socat.timeout)
                 ) | indent 10 | trim }}
           {{- with $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources }}
           resources:
