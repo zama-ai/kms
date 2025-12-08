@@ -497,6 +497,8 @@ spec:
       containers:
         - image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
           imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           {{- if .Values.kmsCore.nitroEnclave.enabled }}
           name: kms-core-enclave
           command:
