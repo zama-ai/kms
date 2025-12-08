@@ -132,7 +132,7 @@ jobs:
     if: >-
       needs.check-changes.outputs.changes-helm-chart == 'true' &&
       github.event_name != 'schedule' &&
-      (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
+      (github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
     uses: ./.github/workflows/helm-test.yml
 
   lint-helm-chart:
@@ -147,7 +147,7 @@ jobs:
     if: >-
       needs.check-changes.outputs.changes-helm-chart == 'true' &&
       github.event_name != 'schedule' &&
-      (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
+      (github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
     uses: ./.github/workflows/helm-lint.yml
 
   release-helm-chart:
@@ -161,7 +161,7 @@ jobs:
     if: >-
       needs.check-changes.outputs.changes-helm-chart == 'true' &&
       github.event_name != 'schedule' &&
-      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release/*')
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
     uses: ./.github/workflows/helm-release.yml
 
   ############################################################################
