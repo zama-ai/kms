@@ -1,6 +1,7 @@
 #[path = "../utilities.rs"]
 mod utilities;
 
+use crate::utilities::set_plan;
 #[cfg(not(feature = "measure_memory"))]
 use criterion::measurement::WallTime;
 #[cfg(not(feature = "measure_memory"))]
@@ -30,6 +31,7 @@ fn bench_keygen(c: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
 
 #[cfg(not(feature = "measure_memory"))]
 fn main() {
+    set_plan();
     for (name, params) in ALL_PARAMS {
         let mut c = Criterion::default().sample_size(10).configure_from_args();
 
@@ -53,6 +55,7 @@ pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
 
 #[cfg(feature = "measure_memory")]
 fn main() {
+    set_plan();
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
     for (name, params) in ALL_PARAMS {
