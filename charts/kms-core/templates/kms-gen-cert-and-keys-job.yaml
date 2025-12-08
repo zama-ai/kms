@@ -89,7 +89,6 @@ spec:
                      "image" .Values.kubeUtils.image
                      "vsockPort" 4000
                      "to" (printf "OPEN:kms-gen-keys.toml,rdonly")
-                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
@@ -101,7 +100,6 @@ spec:
                      "image" .Values.kubeUtils.image
                      "vsockPort" 3000
                      "to" "STDOUT"
-                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                ) | indent 10 | trim }}
         {{- /* Init AWS IMDS Proxy Socket */}}
         - {{ include "proxyFromEnclaveTcp"
@@ -110,7 +108,6 @@ spec:
                      "vsockPort" .Values.kmsCore.nitroEnclave.ports.imds
                      "address" "169.254.169.254"
                      "port" 80
-                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
         {{- /* Init Enclave Web Identity Token Socket, hardcoded to 4100 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
         - {{ include "proxyFromEnclave"
@@ -118,7 +115,6 @@ spec:
                      "image" .Values.kubeUtils.image
                      "vsockPort" 4100
           "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
-          "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
           ) | indent 10 | trim }}
         {{- /* Init AWS STS Proxy Socket */}}
         - {{ include "proxyFromEnclaveTcp"
@@ -127,7 +123,6 @@ spec:
                      "vsockPort" .Values.kmsCore.nitroEnclave.ports.sts
                      "address" (printf "sts.%s.amazonaws.com" .Values.kmsCore.aws.region)
                      "port" 443
-                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
         {{- /* Init AWS S3 Proxy Socket */}}
         - {{ include "proxyFromEnclaveTcp"
@@ -136,7 +131,6 @@ spec:
                      "vsockPort" .Values.kmsCore.nitroEnclave.ports.s3
                      "address" (printf "s3.%s.amazonaws.com" .Values.kmsCore.aws.region)
                      "port" 443
-                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
         {{- /* Init AWS KMS Proxy Socket */}}
         - {{ include "proxyFromEnclaveTcp"
@@ -145,7 +139,6 @@ spec:
                      "vsockPort" .Values.kmsCore.nitroEnclave.ports.awskms
                      "address" (printf "kms.%s.amazonaws.com" .Values.kmsCore.aws.region)
                      "port" 443
-                     "timeout" .Values.kmsCore.nitroEnclave.socat.timeout
                 ) | indent 10 | trim }}
         {{- /* Generate signing key and CA certificate */}}
       containers:
