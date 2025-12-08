@@ -717,6 +717,10 @@ spec:
             failureThreshold: 10
             initialDelaySeconds: 30
             periodSeconds: 10
+          livenessProbe:
+            grpc:
+              port: {{ .Values.kmsCore.ports.client }}
+            initialDelaySeconds: 10
             timeoutSeconds: 5
           {{- if .Values.kmsCore.nitroEnclave.enabled }}
           lifecycle:
