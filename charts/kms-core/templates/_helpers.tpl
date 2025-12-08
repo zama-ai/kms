@@ -56,56 +56,57 @@ args:
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
                    "vsockPort" int
-		           "to" string
-		           "timeout" int (optional, defaults to 60)) */}}
+		           "to" string) */}}
 {{- define "proxyFromEnclave" -}}
 {{- include "socatContainer"
       (dict "name" .name
             "image" .image
-            "from" (printf "-T%d VSOCK-LISTEN:%d,fork,reuseaddr" (int $.Values.kmsCore.nitroEnclave.socat.timeout | default 60) (int .vsockPort))
-	        "to" .to) }}
+            "from" (printf "VSOCK-LISTEN:%d,fork,reuseaddr" (int .vsockPort))
+	      "to" .to) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
                    "image" (dict "name" string "tag" string)
                    "vsockPort" int
 		           "address" string
-		           "port" int
-		           "timeout" int (optional, defaults to 60)) */}}
+		           "port" int) */}}
 {{- define "proxyFromEnclaveTcp" -}}
 {{- include "proxyFromEnclave"
       (dict "name" .name
             "image" .image
             "vsockPort" .vsockPort
-	        "to" (printf "TCP:%s:%d,nodelay" .address (int .port))) }}
+	      "to" (printf "TCP:%s:%d,nodelay" .address (int .port))) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
 		           "from" string
 		           "cid" int
-                   "port" int
-                   "timeout" int (optional, defaults to 60)) */}}
+                   "port" int) */}}
 {{- define "proxyToEnclave" -}}
 {{- include "socatContainer"
       (dict "name" .name
             "image" .image
             "from" .from
-	        "to" (printf "VSOCK-CONNECT:%d:%d" (int .cid) (int .port))) }}
+	      "to" (printf "VSOCK-CONNECT:%d:%d" (int .cid) (int .port))) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
 		           "cid" int
                    "port" int
-                   "timeout" int (optional, defaults to 60)) */}}
+                   "timeout" string (optional, only used if name is "grpc-peer-proxy")) */}}
 {{- define "proxyToEnclaveTcp" -}}
+{{- $from := printf "TCP-LISTEN:%d,fork,nodelay,reuseaddr" (int .port) -}}
+{{- if and (eq .name "grpc-peer-proxy") .timeout -}}
+{{- $from = printf "%s %s" .timeout $from -}}
+{{- end -}}
 {{- include "proxyToEnclave"
       (dict "name" .name
             "image" .image
-            "from" (printf "-T%d TCP-LISTEN:%d,fork,nodelay,reuseaddr" (int $.Values.kmsCore.nitroEnclave.socat.timeout | default 60) (int .port))
+            "from" $from
             "cid" .cid
-	        "port" .port) }}
+	      "port" .port) }}
 {{- end -}}
 
 {{- define "kmsInitJobName" -}}

@@ -44,23 +44,23 @@ kmsCore:
     bucketSize: 50000
   # Add the following to enable threshold mode:
   thresholdMode:
-    enabled: false
+    enabled: true
     # If left unset, the chart will generate the list automatically based on pod replicas of the statefulset
-    peersList: []
-    #  - id: 1
-    #    host: kms-core-1
-    #    port: 50001
-    #    ca_certificate:
-    #      pem: |
-    #        -----BEGIN CERTIFICATE-----
-    #        -----END CERTIFICATE-----
-    #  - id: 2
-    #    host: kms-core-2
-    #    port: 50001
-    #    ca_certificate:
-    #      pem: |
-    #        -----BEGIN CERTIFICATE-----
-    #        -----END CERTIFICATE-----
+    peersList:
+     - id: 1
+       host: kms-core-1
+       port: 50001
+       ca_certificate:
+         pem: |
+           -----BEGIN CERTIFICATE-----
+           -----END CERTIFICATE-----
+     - id: 2
+       host: kms-core-2
+       port: 50001
+       ca_certificate:
+         pem: |
+           -----BEGIN CERTIFICATE-----
+           -----END CERTIFICATE-----
 
     # If enabled, the core will communicate with other cores over TLS
     tls:
@@ -110,7 +110,7 @@ kmsCore:
   # Add the following to enable nitro enclave:
   # Nitro enclave needs specific instance types
   nitroEnclave:
-    enabled: false
+    enabled: true
     # Socat proxy configuration
     socat:
       # Inactivity timeout in seconds for socat proxies
@@ -241,7 +241,7 @@ kmsInit:
   tolerations:
 
 kmsGenCertAndKeys:
-  enabled: false
+  enabled: true
   nameOverride:
 
 # Automatic Key Generation job
