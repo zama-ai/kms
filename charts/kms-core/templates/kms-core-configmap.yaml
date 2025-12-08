@@ -122,7 +122,7 @@ data:
     session_cleanup_interval_secs = 3600
     discard_inactive_sessions_interval = 900
     max_waiting_time_for_message_queue = 60
-    max_opened_inactive_sessions_per_party = 100
+    max_opened_inactive_sessions_per_party = {{ int .Values.kmsCore.thresholdMode.maxOpenedInactiveSessionsPerParty }}
 
       {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
         {{- if $.Values.kmsCore.nitroEnclave.enabled }}
