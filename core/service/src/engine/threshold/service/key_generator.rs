@@ -6,7 +6,7 @@ use itertools::Itertools;
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{self, Empty, KeyDigest, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
-    rpc_types::optional_protobuf_to_alloy_domain,
+    rpc_types::{ok_or_error_helper, optional_protobuf_to_alloy_domain},
     RequestId,
 };
 use observability::{
@@ -391,7 +391,13 @@ impl<
         let request_id =
             parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::KeyGenRequest)?;
 
-        let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
+        let eip712_domain = ok_or_error_helper(
+            optional_protobuf_to_alloy_domain(inner.domain.as_ref()),
+            Some(&request_id),
+            OP_KEYGEN,
+            Some("EIP712 domain validation for inner key generation"),
+            tonic::Code::InvalidArgument,
+        )?;
 
         let internal_keyset_config =
             InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info.clone())

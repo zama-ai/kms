@@ -4,6 +4,7 @@ use kms_grpc::kms::v1::{
     Empty, PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
     UserDecryptionRequest, UserDecryptionResponse,
 };
+use kms_grpc::rpc_types::ok_or_error_helper;
 use observability::metrics::METRICS;
 use observability::metrics_names::{
     ERR_KEY_NOT_FOUND, ERR_PUBLIC_DECRYPTION_FAILED, ERR_USER_DECRYPTION_FAILED,
@@ -246,11 +247,14 @@ pub async fn public_decrypt_impl<
     let start = tokio::time::Instant::now();
     let inner = request.into_inner();
 
-    let (ciphertexts, key_id, request_id, eip712_domain) = validate_public_decrypt_req(&inner)
-        .map_err(|e| {
-            tracing::error!("Failed to validate public decryption request: {inner:?}, error: {e}");
-            Status::invalid_argument("Failed to validate public decryption request: {e:?}")
-        })?;
+    let (ciphertexts, request_id, key_id, _context_id, _epoch_id, eip712_domain) =
+        ok_or_error_helper(
+            validate_public_decrypt_req(&inner),
+            None,
+            OP_PUBLIC_DECRYPT_REQUEST,
+            Some("Failed to validate public decryption request"),
+            tonic::Code::InvalidArgument,
+        )?;
 
     tracing::info!(
         "Decrypting {} ciphertexts using key {} with request id {}",
@@ -264,7 +268,7 @@ pub async fn public_decrypt_impl<
         let found = service
             .crypto_storage
             .inner
-            .fhe_keys_exist(&key_id)
+            .fhe_keys_exist(&key_id.into())
             .await
             .map_err(|e| {
                 Status::aborted(format!(
@@ -311,7 +315,9 @@ pub async fn public_decrypt_impl<
     let crypto_storage = service.crypto_storage.clone();
 
     ok_or_tonic_abort(
-        crypto_storage.refresh_centralized_fhe_keys(&key_id).await,
+        crypto_storage
+            .refresh_centralized_fhe_keys(&key_id.into())
+            .await,
         format!("Cannot find centralized keys with key ID {key_id}"),
     )?;
 
@@ -326,7 +332,7 @@ pub async fn public_decrypt_impl<
             let _timer = timer;
             let _permit = permit;
             let keys = match crypto_storage
-                .read_cloned_centralized_fhe_keys_from_cache(&key_id)
+                .read_cloned_centralized_fhe_keys_from_cache(&key_id.into())
                 .await
             {
                 Ok(k) => k,

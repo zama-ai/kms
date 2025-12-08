@@ -2,7 +2,7 @@ use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
-use kms_grpc::rpc_types::optional_protobuf_to_alloy_domain;
+use kms_grpc::rpc_types::{ok_or_error_helper, optional_protobuf_to_alloy_domain};
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{ERR_KEYGEN_FAILED, ERR_KEY_EXISTS, OP_KEYGEN};
@@ -67,7 +67,13 @@ pub async fn key_gen_impl<
             )
         })?;
 
-    let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
+    let eip712_domain = ok_or_error_helper(
+        optional_protobuf_to_alloy_domain(inner.domain.as_ref()),
+        None,
+        OP_KEYGEN,
+        Some("EIP712 domain validation for key generation"),
+        tonic::Code::InvalidArgument,
+    )?;
 
     // Check for existance of request preprocessing ID
     // also check that the request ID is not used yet

@@ -10,14 +10,15 @@ use kms_grpc::{
         self, CiphertextFormat, Empty, PublicDecryptionRequest, PublicDecryptionResponse,
         PublicDecryptionResponsePayload, TypedPlaintext,
     },
-    utils::tonic_result::BoxedStatus,
-    IdentifierError, RequestId,
+    rpc_types::{error_helper, ok_or_error_helper},
+    RequestId,
 };
 use observability::{
-    metrics,
+    metrics::{self},
     metrics_names::{
         ERR_PUBLIC_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
-        TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+        TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND,
+        TAG_REQUEST_ID, TAG_TFHE_TYPE,
     },
 };
 use tfhe::FheTypes;
@@ -47,7 +48,6 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
     cryptography::internal_crypto_types::LegacySerialization,
     engine::{
         base::{
@@ -275,64 +275,54 @@ impl<
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         let inner = Arc::new(request.into_inner());
-        tracing::info!(
-            request_id = ?inner.request_id,
-            "Received new decryption request"
-        );
-
-        // TODO(zama-ai/kms-internal/issues/2758)
-        // remove the default context when all of context is ready
-        let context_id: ContextId = match &inner.context_id {
-            Some(c) => c
-                .try_into()
-                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
-            None => *DEFAULT_MPC_CONTEXT,
-        };
-        let epoch_id: EpochId = match &inner.epoch_id {
-            Some(c) => c
-                .try_into()
-                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
-            None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
-        };
-
-        // Start timing and counting before any operations
-        let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
-            tonic::Status::internal(format!(
-                "Failed to get my role for context {context_id}: {e:?}"
-            ))
-        })?;
-        let mut timer = metrics::METRICS
-            .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
-            .tag(TAG_PARTY_ID, my_role.to_string())
-            .start();
-
-        let (ciphertexts, key_id, req_id, eip712_domain) = {
+        // Check and extract the parameters from the request in a separate thread
+        let (ciphertexts, req_id, key_id, context_id, epoch_id, eip712_domain) = {
             let inner_compute = Arc::clone(&inner);
-            spawn_compute_bound(move || validate_public_decrypt_req(&inner_compute))
-                .await
-                .map_err(|_| {
-                    BoxedStatus::from(tonic::Status::new(
-                        tonic::Code::Internal,
-                        "Error delegating validate_public_decrypt_req to rayon".to_string(),
-                    ))
-                })?
-        }
-        .inspect_err(|e| {
-            tracing::error!(
-                error = ?e,
-                request_id = ?inner.request_id,
-                "Failed to validate decrypt request"
-            );
-        })?;
-
+            ok_or_error_helper(
+                spawn_compute_bound(move || {
+                    ok_or_error_helper(
+                        validate_public_decrypt_req(&inner_compute),
+                        None,
+                        OP_PUBLIC_DECRYPT_REQUEST,
+                        Some("Paramter parsing and validation"),
+                        tonic::Code::InvalidArgument,
+                    )
+                })
+                .await,
+                None,
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some("Failed to execute parameter parsing thread"),
+                tonic::Code::Internal,
+            )
+        }??;
+        let my_role = ok_or_error_helper(
+            self.session_maker.my_role(&context_id).await,
+            Some(&req_id),
+            OP_PUBLIC_DECRYPT_REQUEST,
+            Some("Could not retrieve my role for context"),
+            tonic::Code::Internal,
+        )?;
+        let timer = metrics::METRICS
+            .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
+            .tags([
+                (TAG_PARTY_ID, my_role.to_string()),
+                (TAG_REQUEST_ID, req_id.to_string()),
+                (TAG_KEY_ID, key_id.as_str()),
+                (TAG_CONTEXT_ID, context_id.as_str()),
+                (TAG_EPOCH_ID, epoch_id.as_str()),
+            ])
+            .start();
         // Do some checks before we start modifying the database
         {
             let guarded_meta_store = self.pub_dec_meta_store.read().await;
-
             if guarded_meta_store.exists(&req_id) {
-                return Err(Status::already_exists(format!(
-                    "Public decryption request with ID {req_id} already exists"
-                )));
+                return Err(error_helper(
+                    Some(&req_id),
+                    OP_PUBLIC_DECRYPT_REQUEST,
+                    Some("Public decryption with this request ID already exists in the meta store"),
+                    tonic::Code::AlreadyExists,
+                    anyhow!("Duplicate request ID"),
+                ));
             }
         }
 
@@ -341,15 +331,16 @@ impl<
         // but the errors above cannot be tried again.
         let permit = self.rate_limiter.start_pub_decrypt().await?;
 
-        self.crypto_storage
-            .refresh_threshold_fhe_keys(&key_id)
-            .await
-            .map_err(|e| {
-                tracing::warn!(error=?e, key_id=?key_id, "Failed to refresh threshold FHE keys");
-                Status::not_found(format!("Threshold FHE keys with key ID {key_id} not found"))
-            })?;
+        ok_or_error_helper(
+            self.crypto_storage
+                .refresh_threshold_fhe_keys(&key_id.into())
+                .await,
+            Some(&req_id),
+            OP_PUBLIC_DECRYPT_REQUEST,
+            Some("Failed to refresh threshold FHE keys. Threshold FHE keys not found"),
+            tonic::Code::NotFound,
+        )?;
 
-        timer.tags([(TAG_KEY_ID, key_id.as_str())]);
         tracing::debug!(
             request_id = ?req_id,
             key_id = ?key_id,
@@ -367,9 +358,12 @@ impl<
             let lock_start = std::time::Instant::now();
             let mut guarded_meta_store = self.pub_dec_meta_store.write().await;
             let lock_acquired_time = lock_start.elapsed();
-            ok_or_tonic_abort(
+            ok_or_error_helper(
                 guarded_meta_store.insert(&req_id),
-                "Could not insert decryption into meta store".to_string(),
+                Some(&req_id),
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some("Failed to insert new public decryption call into meta store"),
+                tonic::Code::Aborted,
             )?;
             let total_lock_time = lock_start.elapsed();
             (lock_acquired_time, total_lock_time)
@@ -377,8 +371,8 @@ impl<
 
         // Log after lock is released
         tracing::info!(
-            "MetaStore INITIAL insert - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
-            req_id, key_id, my_role, ciphertexts.len(), lock_acquired_time, total_lock_time
+            "MetaStore INITIAL insert - req_id={}, key_id={}, context_id={}, epoch_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
+            req_id, key_id, context_id, epoch_id, my_role, ciphertexts.len(), lock_acquired_time, total_lock_time
         );
 
         let ext_handles_bytes = ciphertexts
@@ -395,16 +389,22 @@ impl<
                 .time_operation(OP_PUBLIC_DECRYPT_INNER)
                 .tags([
                     (TAG_PARTY_ID, my_role.to_string()),
+                    (TAG_REQUEST_ID, req_id.to_string()),
                     (TAG_KEY_ID, key_id.as_str()),
+                    (TAG_CONTEXT_ID, context_id.as_str()),
+                    (TAG_EPOCH_ID, epoch_id.as_str()),
                     (
                         TAG_PUBLIC_DECRYPTION_KIND,
                         dec_mode.as_str_name().to_string(),
                     ),
                 ])
                 .start();
-            let internal_sid = ok_or_tonic_abort(
+            let internal_sid = ok_or_error_helper(
                 req_id.derive_session_id_with_counter(ctr as u64),
-                "failed to derive session ID from counter".to_string(),
+                Some(&req_id),
+                OP_PUBLIC_DECRYPT_INNER,
+                Some("failed to derive session ID from counter"),
+                tonic::Code::Aborted,
             )?;
 
             let hex_req_id = hex::encode(req_id.as_bytes());
@@ -439,7 +439,7 @@ impl<
                 let ct_format = typed_ciphertext.ciphertext_format();
                 let ciphertext = typed_ciphertext.ciphertext;
                 let fhe_keys_rlock = crypto_storage
-                    .read_guarded_threshold_fhe_keys_from_cache(&key_id)
+                    .read_guarded_threshold_fhe_keys_from_cache(&key_id.into())
                     .await?;
 
                 let res_plaintext = match fhe_type {
@@ -552,9 +552,10 @@ impl<
                     )
                     .await
                     .map(|x| TypedPlaintext::new(x as u128, fhe_type)),
-                    unsupported_fhe_type => {
-                        anyhow::bail!("Unsupported fhe type {:?}", unsupported_fhe_type);
-                    }
+                    unsupported_fhe_type => Err(anyhow_error_and_log(format!(
+                        "Unsupported fhe type {:?}",
+                        unsupported_fhe_type
+                    ))),
                 };
                 // We don't update the error counter here but rather in the signature task
                 // so we only update it once even if there are multiple decryption task that fail
@@ -573,11 +574,13 @@ impl<
 
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
-        let sigkey = self.base_kms.sig_key().map_err(|e| {
-            tonic::Status::internal(format!(
-                "Failed to get signing key for public decryption request {req_id}: {e:?}"
-            ))
-        })?;
+        let sigkey = ok_or_error_helper(
+            self.base_kms.sig_key(),
+            Some(&req_id),
+            OP_PUBLIC_DECRYPT_REQUEST,
+            Some("Failed to get signing key for public decryption request"),
+            tonic::Code::Internal,
+        )?;
         let dec_sig_future = move |_permit| async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
@@ -751,7 +754,7 @@ mod tests {
     };
 
     use crate::{
-        consts::TEST_PARAM,
+        consts::{DEFAULT_MPC_CONTEXT, TEST_PARAM},
         cryptography::signatures::gen_sig_keys,
         dummy_domain,
         engine::{

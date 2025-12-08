@@ -6,9 +6,10 @@ use kms_grpc::{
     kms::v1::{
         InitiateResharingRequest, InitiateResharingResponse, KeyDigest, ResharingResultResponse,
     },
-    rpc_types::{optional_protobuf_to_alloy_domain, WrappedPublicKeyOwned},
+    rpc_types::{ok_or_error_helper, optional_protobuf_to_alloy_domain, WrappedPublicKeyOwned},
     IdentifierError,
 };
+use observability::metrics_names::OP_INITIATE_RESHARING;
 use threshold_fhe::{
     execution::{
         endpoints::reshare_sk::{
@@ -103,7 +104,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             RequestIdParsingErr::ReshareRequest,
         )?;
 
-        let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
+        let eip712_domain = ok_or_error_helper(
+            optional_protobuf_to_alloy_domain(inner.domain.as_ref()),
+            Some(&request_id),
+            OP_INITIATE_RESHARING,
+            Some("EIP712 domain validation for initiate resharing"),
+            tonic::Code::InvalidArgument,
+        )?;
 
         let dkg_params = retrieve_parameters(Some(inner.key_parameters))?;
 

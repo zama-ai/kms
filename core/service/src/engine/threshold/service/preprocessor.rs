@@ -5,7 +5,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
-    rpc_types::optional_protobuf_to_alloy_domain,
+    rpc_types::{ok_or_error_helper, optional_protobuf_to_alloy_domain},
     RequestId,
 };
 use observability::{
@@ -320,10 +320,16 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
     ) -> Result<Response<Empty>, Status> {
-        let domain = optional_protobuf_to_alloy_domain(request.domain.as_ref())?;
         let request_id = parse_optional_proto_request_id(
             &request.request_id,
             RequestIdParsingErr::PreprocRequest,
+        )?;
+        let domain = ok_or_error_helper(
+            optional_protobuf_to_alloy_domain(request.domain.as_ref()),
+            Some(&request_id),
+            OP_KEYGEN_PREPROC_REQUEST,
+            Some("EIP712 domain validation for inner preprocessing"),
+            tonic::Code::InvalidArgument,
         )?;
 
         //Retrieve the DKG parameters

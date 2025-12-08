@@ -12,9 +12,10 @@ use crate::{
 };
 use kms_grpc::{
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
-    rpc_types::optional_protobuf_to_alloy_domain,
+    rpc_types::{ok_or_error_helper, optional_protobuf_to_alloy_domain},
     utils::tonic_result::ok_or_tonic_abort,
 };
+use observability::metrics_names::OP_KEYGEN_PREPROC_REQUEST;
 use tonic::{Request, Response, Status};
 
 /// Handles preprocessing requests for centralized KMS key generation.
@@ -49,10 +50,15 @@ pub async fn preprocessing_impl<
     request: Request<KeyGenPreprocRequest>,
 ) -> Result<Response<Empty>, Status> {
     let inner = request.into_inner();
-    let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
     let request_id =
         parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::PreprocRequest)?;
-
+    let domain = ok_or_error_helper(
+        optional_protobuf_to_alloy_domain(inner.domain.as_ref()),
+        Some(&request_id),
+        OP_KEYGEN_PREPROC_REQUEST,
+        Some("EIP712 domain validation for key preprocessing"),
+        tonic::Code::InvalidArgument,
+    )?;
     // context_id is not used in the centralized KMS, but we validate it if present
     let _context_id = match &inner.context_id {
         Some(ctx) => Some(parse_proto_request_id(ctx, RequestIdParsingErr::Context)?),

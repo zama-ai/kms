@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID};
 use crate::engine::base::retrieve_parameters;
 use crate::{
     anyhow_error_and_log,
@@ -11,10 +12,10 @@ use crate::{
 };
 use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
-use kms_grpc::identifiers::ContextId;
+use kms_grpc::identifiers::{ContextId, EpochId};
 use kms_grpc::kms::v1::CrsGenRequest;
+use kms_grpc::rpc_types::{error_helper, ok_or_error_helper};
 use kms_grpc::utils::tonic_result::BoxedStatus;
-use kms_grpc::RequestId;
 use kms_grpc::{
     kms::v1::{
         PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
@@ -22,6 +23,8 @@ use kms_grpc::{
     },
     rpc_types::optional_protobuf_to_alloy_domain,
 };
+use kms_grpc::{KeyId, RequestId};
+use observability::metrics_names::{OP_CRS_GEN_REQUEST, OP_PUBLIC_DECRYPT_REQUEST};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::hashing::DomainSep;
 
@@ -125,6 +128,18 @@ impl std::fmt::Display for RequestIdParsingErr {
             }
         }
     }
+}
+
+pub(crate) fn optional_proto_request_id(
+    request_id: &Option<kms_grpc::kms::v1::RequestId>,
+    id_type: RequestIdParsingErr,
+) -> anyhow::Result<RequestId> {
+    let req_id = request_id.clone().ok_or(anyhow::anyhow!(
+        "Request ID not present: {id_type}: {request_id:?}"
+    ))?;
+    req_id
+        .try_into()
+        .map_err(|e| anyhow::anyhow!("Request ID invalid: {id_type}: {request_id:?}: {e}"))
 }
 
 /// Parse a protobuf request ID and returns an appropriate tonic error if it is invalid.
@@ -260,24 +275,80 @@ pub fn validate_user_decrypt_req(
 #[allow(clippy::type_complexity)]
 pub fn validate_public_decrypt_req(
     req: &PublicDecryptionRequest,
-) -> Result<(Vec<TypedCiphertext>, RequestId, RequestId, Eip712Domain), BoxedStatus> {
-    let key_id = parse_optional_proto_request_id(
-        &req.key_id,
-        RequestIdParsingErr::PublicDecRequestBadKeyId,
-    )?;
-    let request_id =
-        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::PublicDecRequest)?;
+) -> Result<
+    (
+        Vec<TypedCiphertext>,
+        RequestId,
+        KeyId,
+        ContextId,
+        EpochId,
+        Eip712Domain,
+    ),
+    Box<dyn std::error::Error + Send + Sync>,
+> {
+    let req_id: RequestId =
+        optional_proto_request_id(&req.request_id, RequestIdParsingErr::PublicDecRequest)?;
+
+    tracing::info!(
+        request_id = ?req_id,
+        "Received new decryption request"
+    );
+
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // remove the default context when all of context is ready
+    let context_id: ContextId = match &req.context_id {
+        Some(context_id) => context_id.try_into()?,
+        None => *DEFAULT_MPC_CONTEXT,
+    };
+    let epoch_id: EpochId = match &req.epoch_id {
+        Some(epoch_id) => epoch_id.try_into()?,
+        // ok_or_error_helper(
+        //     epoch_id.try_into(),
+        //     Some(&req_id),
+        //     OP_PUBLIC_DECRYPT_REQUEST,
+        //     Some("Epoch parameter validation"),
+        //     tonic::Code::InvalidArgument,
+        // )?,
+        None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
+    };
+    let key_id: KeyId = req
+        .request_id
+        .clone()
+        .ok_or(anyhow::anyhow!(
+            "No key ID provided: {}",
+            RequestIdParsingErr::PublicDecRequestBadKeyId
+        ))?
+        .try_into()?;
 
     if req.ciphertexts.is_empty() {
-        return Err(BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("{ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS} (Request ID: {request_id})"),
-        )));
+        return Err(anyhow::anyhow!(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS).into());
+        // return Err(error_helper(
+        //     Some(&req_id),
+        //     OP_PUBLIC_DECRYPT_REQUEST,
+        //     Some("Ciphertexts argument validation"),
+        //     tonic::Code::InvalidArgument,
+        //     anyhow::anyhow!(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS),
+        // )
+        // .into());
     }
 
-    let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+    let eip712_domain = 
+    // ok_or_error_helper(
+        optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+    //     Some(&req_id),
+    //     OP_PUBLIC_DECRYPT_REQUEST,
+    //     Some("Eip712 domain validation"),
+    //     tonic::Code::InvalidArgument,
+    // )?;
 
-    Ok((req.ciphertexts.clone(), key_id, request_id, eip712_domain))
+    Ok((
+        req.ciphertexts.clone(),
+        req_id,
+        key_id,
+        context_id,
+        epoch_id,
+        eip712_domain,
+    ))
 }
 
 /// Verify the EIP-712 encoded payload in the request.
@@ -528,7 +599,13 @@ pub(crate) fn validate_crs_gen_request(
         None => None,
     };
 
-    let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+    let eip712_domain = ok_or_error_helper(
+        optional_protobuf_to_alloy_domain(req.domain.as_ref()),
+        Some(&req_id),
+        OP_CRS_GEN_REQUEST,
+        Some("Eip712 domain validation"),
+        tonic::Code::InvalidArgument,
+    )?;
 
     Ok((req_id, params, eip712_domain, context_id))
 }
@@ -689,7 +766,7 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            let (_, _, _, _domain) = validate_public_decrypt_req(&req).unwrap();
+            let (_, _, _, _, _, _domain) = validate_public_decrypt_req(&req).unwrap();
         }
     }
 

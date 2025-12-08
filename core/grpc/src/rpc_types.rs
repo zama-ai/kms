@@ -5,6 +5,8 @@ use crate::kms::v1::{
 };
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
+use observability::metrics::METRICS;
+use observability::metrics_names::map_tonic_code_to_metric_tag;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self};
 use strum::IntoEnumIterator;
@@ -16,6 +18,7 @@ use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::{
     Unversionize, UnversionizeError, Upgrade, Version, VersionizeOwned, VersionsDispatch,
 };
+use tonic::Status;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
@@ -98,6 +101,64 @@ impl SignedPubDataHandleInternal {
     }
 }
 
+#[allow(clippy::result_large_err)]
+pub fn error_helper<E>(
+    req_id: Option<&RequestId>,
+    metric_scope: &str,
+    context_info: Option<&str>,
+    return_code: tonic::Code,
+    error: E,
+) -> Status
+where
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    let error = error.into(); // converts anyhow::Error or any other error
+
+    let error_string = if let Some(info) = context_info {
+        format!("Failed for metric {}: {}", metric_scope, info)
+    } else {
+        format!("Failed for metric {}:", metric_scope)
+    };
+
+    tracing::error!(
+        error = ?error,
+        request_id = ?req_id,
+        error_string,
+    );
+
+    METRICS.increment_error_counter(metric_scope, map_tonic_code_to_metric_tag(return_code));
+    tonic::Status::new(return_code, error_string)
+}
+
+#[allow(clippy::result_large_err)]
+pub fn ok_or_error_helper<T, E>(
+    result: Result<T, E>,
+    req_id: Option<&RequestId>,
+    metric_scope: &str,
+    context_info: Option<&str>,
+    return_code: tonic::Code,
+) -> Result<T, Status>
+where
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    result.map_err(|e| error_helper(req_id, metric_scope, context_info, return_code, e))
+}
+
+#[allow(clippy::result_large_err)]
+pub fn some_or_error_helper<T, E>(
+    option: Option<T>,
+    req_id: Option<&RequestId>,
+    metric_scope: &str,
+    context_info: Option<&str>,
+    return_code: tonic::Code,
+    error: E,
+) -> Result<T, Status>
+where
+    E: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    option.ok_or_else(|| error_helper(req_id, metric_scope, context_info, return_code, error))
+}
+
 /// Wrapper struct to allow upgrading of CrsGenMetadata.
 /// This is needed because `SignedPubDataHandleInternal`
 /// still need to be supported for other types so it cannot derive Version.
@@ -111,13 +172,10 @@ pub struct CrsGenSignedPubDataHandleInternalWrapper(pub SignedPubDataHandleInter
 #[cfg(feature = "non-wasm")]
 pub fn optional_protobuf_to_alloy_domain(
     domain_ref: Option<&Eip712DomainMsg>,
-) -> Result<Eip712Domain, crate::utils::tonic_result::BoxedStatus> {
-    let inner = domain_ref.ok_or(tonic::Status::invalid_argument("missing domain"))?;
-    let out = protobuf_to_alloy_domain(inner).map_err(|e| {
-        tonic::Status::invalid_argument(format!(
-            "failed to convert protobuf domain to alloy domain: {e}"
-        ))
-    })?;
+) -> anyhow::Result<Eip712Domain> {
+    let inner = domain_ref.ok_or(anyhow::anyhow!("missing domain"))?;
+    let out = protobuf_to_alloy_domain(inner)
+        .map_err(|e| anyhow::anyhow!("failed to convert protobuf domain to alloy domain: {e}"))?;
     Ok(out)
 }
 
