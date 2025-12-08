@@ -74,6 +74,8 @@ services:
       - keys:/app/kms/core/service/keys
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
+      - ./lsof-mon.sh:/app/kms/core/service/lsof-mon.sh
+      - ./lsof-output:/app/kms/core/service/lsof-output
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
@@ -93,6 +95,7 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
+      bash -c \"./lsof-mon.sh lsof-output 1 &\" && sleep 1 &&
       kms-server --config-file config/compose_1.toml
       "
 
@@ -122,6 +125,8 @@ services:
       - keys:/app/kms/core/service/keys
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
+      - ./lsof-mon.sh:/app/kms/core/service/lsof-mon.sh
+      - ./lsof-output:/app/kms/core/service/lsof-output
     env_file:
       - "docker-compose-kms-core.env"
     environment:
@@ -133,6 +138,7 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
+      bash -c \"./lsof-mon.sh lsof-output 2 &\" && sleep 1 &&
       kms-server --config-file config/compose_2.toml
       "
     depends_on:
@@ -167,6 +173,8 @@ services:
       - keys:/app/kms/core/service/keys
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
+      - ./lsof-mon.sh:/app/kms/core/service/lsof-mon.sh
+      - ./lsof-output:/app/kms/core/service/lsof-output
     env_file:
       - "docker-compose-kms-core.env"
     environment:
@@ -178,6 +186,7 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
+      bash -c \"./lsof-mon.sh lsof-output 3 &\" && sleep 1 &&
       kms-server --config-file config/compose_3.toml
       "
     depends_on:
@@ -212,6 +221,8 @@ services:
       - keys:/app/kms/core/service/keys
       - certs:/app/kms/core/service/certs
       - minio_secrets:/minio_secrets
+      - ./lsof-mon.sh:/app/kms/core/service/lsof-mon.sh
+      - ./lsof-output:/app/kms/core/service/lsof-output
     env_file:
       - "docker-compose-kms-core.env"
     environment:
@@ -223,6 +234,7 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Starting kms service' &&
+      bash -c \"./lsof-mon.sh lsof-output 4 &\" && sleep 1 &&
       kms-server --config-file config/compose_4.toml
       "
     depends_on:
