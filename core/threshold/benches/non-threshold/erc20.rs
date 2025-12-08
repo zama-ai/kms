@@ -79,6 +79,14 @@ fn transfer_overflow(
 #[allow(unused_mut)]
 fn main() {
     for (name, params) in ALL_PARAMS {
+        if params
+            .get_params_basics_handle()
+            .get_rerand_params()
+            .is_none()
+        {
+            // Rerandomization is required for this bench
+            continue;
+        }
         let config = params.to_tfhe_config();
 
         let mut rng = AesRng::from_entropy();

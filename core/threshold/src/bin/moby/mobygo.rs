@@ -247,6 +247,10 @@ struct ThresholdDecryptResultArgs {
     /// (Output of the threshold-decrypt command)
     #[clap(long = "sid")]
     session_id_decrypt: u128,
+
+    /// Optional argument to check the received value against expected plaintexts.
+    #[clap(long = "expected-values")]
+    expected_values: Option<Vec<u64>>,
 }
 
 #[derive(Args, Debug)]
@@ -755,10 +759,29 @@ async fn threshold_decrypt_result_command(
         )
         .await?;
 
-    println!(
-        "Retrieved plaintexts for session ID {}: \n\t {:?}",
-        params.session_id_decrypt, ptxts
-    );
+    if let Some(expected_values) = params.expected_values {
+        if ptxts.len() == expected_values.len()
+            && ptxts
+                .iter()
+                .zip(expected_values.iter())
+                .all(|(ptxt, expected)| ptxt.0 == *expected)
+        {
+            println!(
+                "✅ Plaintext for session ID {} matches expected value",
+                params.session_id_decrypt
+            );
+        } else {
+            println!(
+                "❌ Plaintext for session ID {} does NOT match expected value: {:?} (got {:?})",
+                params.session_id_decrypt, expected_values, ptxts
+            );
+        }
+    } else {
+        println!(
+            "Retrieved plaintexts for session ID {}: \n\t {:?}",
+            params.session_id_decrypt, ptxts
+        );
+    }
     Ok(())
 }
 
