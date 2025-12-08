@@ -49,6 +49,7 @@ command:
   - socat
 args:
   - -d0
+  - -T{{ .Values.kmsCore.nitroEnclave.socat.timeout }}
   - {{ .from }}
   - {{ .to }}
 {{- end -}}
@@ -61,7 +62,7 @@ args:
 {{- include "socatContainer"
       (dict "name" .name
             "image" .image
-            "from" (printf "-T60 VSOCK-LISTEN:%d,fork,reuseaddr" (int .vsockPort))
+            "from" (printf "VSOCK-LISTEN:%d,fork,reuseaddr" (int .vsockPort))
 	      "to" .to) }}
 {{- end -}}
 
@@ -100,7 +101,7 @@ args:
 {{- include "proxyToEnclave"
       (dict "name" .name
             "image" .image
-            "from" (printf "-T60 TCP-LISTEN:%d,fork,nodelay,reuseaddr" (int .port))
+            "from" (printf "TCP-LISTEN:%d,fork,nodelay,reuseaddr" (int .port))
             "cid" .cid
 	      "port" .port) }}
 {{- end -}}
