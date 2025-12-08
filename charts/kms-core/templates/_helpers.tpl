@@ -63,7 +63,7 @@ args:
 {{- include "socatContainer"
       (dict "name" .name
             "image" .image
-            "from" (printf "VSOCK-LISTEN:%d,fork,reuseaddr,shut-down" (int .vsockPort))
+            "from" (printf "VSOCK-LISTEN:%d,fork,reuseaddr,shut-close" (int .vsockPort))
 	        "to" .to
 	        "timeout" .timeout) }}
 {{- end -}}
@@ -107,7 +107,7 @@ args:
 {{- include "proxyToEnclave"
       (dict "name" .name
             "image" .image
-            "from" (printf "TCP-LISTEN:%d,fork,nodelay,reuseaddr,shut-down" (int .port))
+            "from" (printf "TCP-LISTEN:%d,fork,nodelay,reuseaddr,shut-close" (int .port))
             "cid" .cid
 	        "port" .port
 	        "timeout" .timeout) }}
