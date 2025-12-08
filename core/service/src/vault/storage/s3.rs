@@ -619,6 +619,86 @@ mod tests {
     }
 }
 
+pub(crate) trait ReadOnlyS3StorageGetter<R> {
+    fn get_storage(
+        &self,
+        s3_client: S3Client,
+        bucket: String,
+        prefix: Option<String>,
+        storage_type: StorageType,
+        party_role: Option<Role>,
+        cache: Option<StorageCache>,
+    ) -> anyhow::Result<R>;
+}
+
+pub(crate) struct RealReadOnlyS3StorageGetter;
+
+impl ReadOnlyS3StorageGetter<S3StorageReadOnly> for RealReadOnlyS3StorageGetter {
+    fn get_storage(
+        &self,
+        s3_client: S3Client,
+        bucket: String,
+        prefix: Option<String>,
+        storage_type: StorageType,
+        party_role: Option<Role>,
+        cache: Option<StorageCache>,
+    ) -> anyhow::Result<S3StorageReadOnly> {
+        S3StorageReadOnly::new(s3_client, bucket, prefix, storage_type, party_role, cache)
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct DummyRealReadOnlyS3StorageGetter {
+    pub(crate) ram_storage: crate::vault::storage::ram::RamStorage,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct DummyS3StorageReadOnly {
+    pub(crate) ram_storage: crate::vault::storage::ram::RamStorage,
+}
+
+#[cfg(test)]
+impl ReadOnlyS3StorageGetter<DummyS3StorageReadOnly> for DummyRealReadOnlyS3StorageGetter {
+    fn get_storage(
+        &self,
+        _s3_client: S3Client,
+        _bucket: String,
+        _prefix: Option<String>,
+        _storage_type: StorageType,
+        _party_role: Option<Role>,
+        _cache: Option<StorageCache>,
+    ) -> anyhow::Result<DummyS3StorageReadOnly> {
+        Ok(DummyS3StorageReadOnly {
+            ram_storage: self.ram_storage.clone(),
+        })
+    }
+}
+
+#[cfg(test)]
+impl StorageReader for DummyS3StorageReadOnly {
+    async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
+        self.ram_storage.data_exists(data_id, data_type).await
+    }
+
+    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<T> {
+        self.ram_storage.read_data(data_id, data_type).await
+    }
+
+    async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
+        self.ram_storage.all_data_ids(data_type).await
+    }
+
+    fn info(&self) -> String {
+        self.ram_storage.info()
+    }
+}
+
 #[tokio::test]
 async fn test_s3_anon() {
     let s3_client = build_anonymous_s3_client(Some(

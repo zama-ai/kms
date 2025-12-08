@@ -69,6 +69,7 @@ async fn threshold_handles_w_vaults(
         .await
         .unwrap();
     }
+
     let (kms_servers, kms_clients) = crate::client::test_tools::setup_threshold(
         threshold as u8,
         pub_storage,

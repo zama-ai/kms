@@ -243,6 +243,7 @@ async fn run_reshare(
             preproc_req_id,
             Some(parameters),
             &domain,
+            &HashMap::new(),
         )
         .unwrap();
 
