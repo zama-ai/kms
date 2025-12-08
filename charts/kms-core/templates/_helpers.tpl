@@ -49,7 +49,6 @@ command:
   - socat
 args:
   - -d0
-  - -T{{ default 60 .timeout }}
   - {{ .from }}
   - {{ .to }}
 {{- end -}}
@@ -63,9 +62,8 @@ args:
 {{- include "socatContainer"
       (dict "name" .name
             "image" .image
-            "from" (printf "VSOCK-LISTEN:%d,fork,reuseaddr" (int .vsockPort))
-	        "to" .to
-	        "timeout" .timeout) }}
+            "from" (printf "-T%d VSOCK-LISTEN:%d,fork,reuseaddr" (int $.Values.kmsCore.nitroEnclave.socat.timeout) (int .vsockPort))
+	        "to" .to) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
@@ -79,8 +77,7 @@ args:
       (dict "name" .name
             "image" .image
             "vsockPort" .vsockPort
-	        "to" (printf "TCP:%s:%d,nodelay" .address (int .port))
-	        "timeout" .timeout) }}
+	        "to" (printf "TCP:%s:%d,nodelay" .address (int .port))) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
@@ -94,8 +91,7 @@ args:
       (dict "name" .name
             "image" .image
             "from" .from
-	        "to" (printf "VSOCK-CONNECT:%d:%d" (int .cid) (int .port))
-	        "timeout" .timeout) }}
+	        "to" (printf "VSOCK-CONNECT:%d:%d" (int .cid) (int .port))) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
@@ -107,10 +103,9 @@ args:
 {{- include "proxyToEnclave"
       (dict "name" .name
             "image" .image
-            "from" (printf "TCP-LISTEN:%d,fork,nodelay,reuseaddr" (int .port))
+            "from" (printf "-T%d TCP-LISTEN:%d,fork,nodelay,reuseaddr" (int $.Values.kmsCore.nitroEnclave.socat.timeout) (int .port))
             "cid" .cid
-	        "port" .port
-	        "timeout" .timeout) }}
+	        "port" .port) }}
 {{- end -}}
 
 {{- define "kmsInitJobName" -}}
