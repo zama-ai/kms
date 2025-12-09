@@ -1,6 +1,6 @@
 //! Isolated threshold backup and restore tests
 //!
-//! These tests use isolated test material (TestMaterialManager). Each test runs
+//! These tests use the consolidated testing module. Each test runs
 //! in its own temporary directory with pre-generated cryptographic material.
 //!
 //! ## Tests Included
@@ -15,45 +15,35 @@
 //! - Native KMS servers spawned in-process
 //! - Automatic cleanup via RAII (Drop trait)
 
-use crate::client::test_tools::{domain_to_msg, setup_threshold_isolated, ThresholdTestConfig};
+use crate::client::test_tools::setup_threshold_isolated;
 #[cfg(feature = "insecure")]
 use crate::client::tests::threshold::common::threshold_key_gen_isolated;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
-use crate::util::key_setup::test_material_manager::TestMaterialManager;
-use crate::util::key_setup::test_material_spec::TestMaterialSpec;
-use crate::vault::storage::{
-    delete_all_at_request_id, file::FileStorage, StorageReader, StorageType,
-};
+use crate::testing::helpers::domain_to_msg;
+use crate::testing::prelude::*;
+use crate::vault::storage::{delete_all_at_request_id, StorageReader};
 use crate::vault::Vault;
-use anyhow::Result;
 use kms_grpc::kms::v1::{Empty, FheParameter};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PrivDataType;
 use std::collections::HashMap;
-use tempfile::TempDir;
-use threshold_fhe::execution::runtime::party::Role;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
 /// Helper function to setup isolated threshold test environment for backup tests
+/// Note: This helper is kept for backup-specific setup (backup vault configuration per party)
 async fn setup_isolated_threshold_backup_test(
     test_name: &str,
     party_count: usize,
 ) -> Result<(
     TempDir,
-    HashMap<u32, crate::client::test_tools::ServerHandle>,
+    HashMap<u32, ServerHandle>,
     HashMap<u32, CoreServiceEndpointClient<Channel>>,
 )> {
     use crate::vault::storage::make_storage;
 
-    let source_path = std::env::current_dir()?
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("test-material");
-    let manager = TestMaterialManager::new(Some(source_path));
+    let manager = create_test_material_manager();
     let spec = TestMaterialSpec::threshold_basic(party_count);
     let material_dir = manager.setup_test_material(&spec, test_name).await?;
 
@@ -91,7 +81,7 @@ async fn setup_isolated_threshold_backup_test(
     }
 
     let threshold = ((party_count - 1) / 3).max(1);
-    let (servers, clients) = setup_threshold_isolated(
+    let (servers, clients) = crate::client::test_tools::setup_threshold_isolated(
         threshold as u8,
         pub_storages,
         priv_storages,

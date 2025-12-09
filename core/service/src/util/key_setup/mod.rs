@@ -1,8 +1,16 @@
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
-        pub mod test_tools;
-        pub mod test_material_spec;
-        pub mod test_material_manager;
+        // Re-export from testing module (canonical location)
+        // This maintains backward compatibility for existing imports
+        pub mod test_tools {
+            pub use crate::testing::utils::*;
+        }
+        pub mod test_material_spec {
+            pub use crate::testing::material::{TestMaterialSpec, MaterialType, KeyType};
+        }
+        pub mod test_material_manager {
+            pub use crate::testing::material::{TestMaterialManager, TestMaterialHandle};
+        }
 
         use crate::dummy_domain;
         use crate::engine::base::INSECURE_PREPROCESSING_ID;

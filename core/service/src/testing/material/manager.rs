@@ -3,7 +3,7 @@
 //! This module provides utilities for copying pre-generated test material
 //! into isolated temporary directories for each test.
 
-use super::test_material_spec::{KeyType, MaterialType, TestMaterialSpec};
+use super::spec::{KeyType, MaterialType, TestMaterialSpec};
 use crate::consts::{
     DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_10P,
     DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P,
@@ -136,8 +136,8 @@ impl TestMaterialManager {
 
         // Determine subdirectory based on material type
         let material_subdir = match spec.material_type {
-            super::test_material_spec::MaterialType::Testing => "testing",
-            super::test_material_spec::MaterialType::Default => "default",
+            super::spec::MaterialType::Testing => "testing",
+            super::spec::MaterialType::Default => "default",
         };
 
         let material_path = source_path.join(material_subdir);
@@ -196,7 +196,7 @@ impl TestMaterialManager {
     /// Verify that source material exists for the requested material type
     #[cfg(any(test, feature = "testing"))]
     fn verify_material_exists(&self, spec: &TestMaterialSpec) -> Result<()> {
-        use crate::util::key_setup::test_material_spec::MaterialType;
+        use super::spec::MaterialType;
 
         // If no source path is configured, skip verification
         // This allows tests to work without pre-generated material

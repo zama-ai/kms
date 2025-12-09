@@ -1,6 +1,6 @@
 //! Isolated centralized backup and restore tests
 //!
-//! These tests use isolated test material (TestMaterialManager). Each test runs
+//! These tests use the consolidated testing module. Each test runs
 //! in its own temporary directory with pre-generated cryptographic material.
 //!
 //! ## Tests Included
@@ -15,72 +15,39 @@
 //! - Native KMS server spawned in-process
 //! - Automatic cleanup via RAII (Drop trait)
 
-use crate::client::test_tools::{domain_to_msg, setup_centralized_isolated};
-use crate::consts::{OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM};
+use crate::client::test_tools::setup_centralized_isolated;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
-use crate::util::key_setup::ensure_central_keys_exist;
-use crate::util::key_setup::test_material_manager::TestMaterialManager;
-use crate::util::key_setup::test_material_spec::TestMaterialSpec;
+use crate::testing::helpers::domain_to_msg;
+use crate::testing::prelude::*;
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
-use crate::vault::storage::{
-    delete_all_at_request_id, file::FileStorage, Storage, StorageReader, StorageType,
-};
-use anyhow::Result;
+use crate::vault::storage::{delete_all_at_request_id, StorageReader};
 use kms_grpc::kms::v1::{Empty, FheParameter, TypedCiphertext};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::RequestId;
 use std::path::Path;
-use tempfile::TempDir;
 use tonic::transport::Channel;
 
 /// Helper function to setup isolated centralized test environment for backup tests
+/// Note: This helper is kept for backup-specific setup (backup vault configuration)
 async fn setup_isolated_centralized_backup_test(
     test_name: &str,
-) -> Result<(
-    TempDir,
-    crate::client::test_tools::ServerHandle,
-    kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient<
-        tonic::transport::Channel,
-    >,
-)> {
+) -> Result<(TempDir, ServerHandle, CoreServiceEndpointClient<Channel>)> {
     use crate::vault::storage::make_storage;
     use crate::vault::Vault;
 
-    let source_path = std::env::current_dir()?
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("test-material");
-    let manager = TestMaterialManager::new(Some(source_path));
+    let manager = create_test_material_manager();
     let mut spec = TestMaterialSpec::centralized_basic();
     // Add server signing keys needed for backup operations
-    spec.required_keys
-        .insert(crate::util::key_setup::test_material_spec::KeyType::ServerSigningKeys);
+    spec.required_keys.insert(KeyType::ServerSigningKeys);
     let material_dir = manager.setup_test_material(&spec, test_name).await?;
 
     let mut pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
     let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
 
     // Regenerate central keys with correct RequestIds
-    let _ = pub_storage
-        .delete_data(&TEST_CENTRAL_KEY_ID, &PubDataType::PublicKey.to_string())
-        .await;
-    let _ = pub_storage
-        .delete_data(&OTHER_CENTRAL_TEST_ID, &PubDataType::PublicKey.to_string())
-        .await;
-    ensure_central_keys_exist(
-        &mut pub_storage,
-        &mut priv_storage,
-        TEST_PARAM,
-        &TEST_CENTRAL_KEY_ID,
-        &OTHER_CENTRAL_TEST_ID,
-        true,
-        true,
-    )
-    .await;
+    fix_centralized_public_keys(&mut pub_storage, &mut priv_storage).await?;
 
     // Create backup vault for backup/restore tests
     let backup_storage = make_storage(
@@ -97,14 +64,9 @@ async fn setup_isolated_centralized_backup_test(
         keychain: None,
     });
 
-    let (server, client) = setup_centralized_isolated(
-        pub_storage,
-        priv_storage,
-        backup_vault,
-        None,
-        Some(material_dir.path()),
-    )
-    .await;
+    let (server, client) =
+        crate::client::test_tools::setup_centralized(pub_storage, priv_storage, backup_vault, None)
+            .await;
 
     Ok((material_dir, server, client))
 }
