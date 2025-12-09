@@ -31,7 +31,7 @@ The setup includes:
 Ensure the following tools are installed:
 - `aws` - AWS CLI
 - `kubectl` - Kubernetes CLI
-- `helm` - Kubernetes package manager
+- `helm v3` - Package manager to deploy application
 - `kind` - Kubernetes in Docker
 - `docker` - Container runtime
 
@@ -47,6 +47,33 @@ Platform-specific commands (like `base64`) are automatically detected and adjust
 
 To pull private images and helm charts from GitHub Container Registry, you need to create a `dockerconfig.yaml` file with your Personal Access Token from github:
 
+**Note**: The script automatically handles platform differences (macOS uses `base64`, Linux uses `base64 -w 0`), but for manual creation:
+
+**macOS:**
+```bash
+# Replace <your_username> and <your_token> with your GitHub credentials
+# Token needs 'read:packages' permission
+cat > ${HOME}/dockerconfig.yaml <<EOF
+apiVersion: v1
+data:
+  .dockerconfigjson: $(cat <<JSON | base64
+{
+  "auths": {
+    "ghcr.io": {
+      "auth": "$(echo -n "<your_username>:<your_token>" | base64)"
+    }
+  }
+}
+JSON
+)
+kind: Secret
+metadata:
+  name: registry-credentials
+type: kubernetes.io/dockerconfigjson
+EOF
+```
+
+**Linux:**
 ```bash
 # Replace <your_username> and <your_token> with your GitHub credentials
 # Token needs 'read:packages' permission
@@ -71,6 +98,17 @@ EOF
 ```
 
 ## Local Usage
+
+### Quick Start
+
+For a quick test with minimal resources:
+
+```bash
+cd /path/to/kms
+./ci/kube-testing/scripts/setup_kms_in_kind.sh --local
+# Choose option 2 when prompted to adjust resources
+# Enter: 4Gi memory, 2 CPU per core
+```
 
 ### Basic Setup
 
@@ -181,7 +219,9 @@ KMS Core Client CPU (current: 12, recommended: 2): 2
 ```
 
 The script will:
-- Create local values files with your custom settings
+- Remove any existing local values files (if present)
+- Create fresh local values files with your custom settings
+- **Automatically replace `<namespace>` placeholders** with the actual namespace
 - Use these files for deployment
 - Show the new total resource requirements
 - Apply FHE parameter settings to all files
@@ -195,8 +235,10 @@ These files are:
 - ✅ **Automatically created** from the interactive prompt
 - ✅ **Git-ignored** (won't be committed to the repository)
 - ✅ **Used only for local development** (CI uses default values)
-- ✅ **Safe to delete** (will be recreated on next run)
+- ✅ **Safe to delete** (will be recreated on next interactive run)
 - ✅ **Include FHE parameter customization** (e.g., Test, Default)
+- ✅ **Namespace placeholders automatically replaced** (`<namespace>` → actual namespace)
+- ✅ **Automatically cleaned up** when choosing option 2 again (old files removed before creating new ones)
 
 **Option 3: Cancel** - Exits the script so you can manually edit values files
 
@@ -265,6 +307,51 @@ When prompted with the interactive menu (option 2), the script will:
 **Configuration file:**
 - Default: `ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml`
 - Local: `ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml` (auto-generated)
+
+### Common Workflows
+
+**Workflow 1: First-time Local Setup with Resource Adjustment**
+```bash
+# Start with local mode
+./ci/kube-testing/scripts/setup_kms_in_kind.sh --local
+
+# When prompted:
+# 1. Review resource requirements
+# 2. Choose option 2 (Interactive Adjustment)
+# 3. Enter lower values (e.g., 4Gi memory, 2 CPU)
+# 4. Script creates local files and deploys
+```
+
+**Workflow 2: Re-adjust Resources After Initial Setup**
+```bash
+# If you need to change resources again
+./ci/kube-testing/scripts/setup_kms_in_kind.sh --local
+
+# Choose option 2 again - old local files are automatically removed
+# Enter new values, script recreates files with your settings
+```
+
+**Workflow 3: Quick Test with Pre-configured Resources**
+```bash
+# If local files already exist from previous run
+./ci/kube-testing/scripts/setup_kms_in_kind.sh --local
+
+# Choose option 1 (Continue) - uses existing local files
+# No prompts, faster startup
+```
+
+**Workflow 4: Development with Key Generation**
+```bash
+# For testing threshold mode with pre-generated keys
+./ci/kube-testing/scripts/setup_kms_in_kind.sh \
+  --local \
+  --gen-keys \
+  --deployment-type threshold \
+  --num-parties 4
+
+# Choose option 2 to adjust resources
+# Script creates all three local files (core, init, gen-keys)
+```
 
 ### Example: Custom Number of Parties
 
@@ -453,16 +540,19 @@ env:
 **Purpose**: Main setup script that creates and configures the Kind cluster.
 
 **Key Functions**:
-- `detect_platform` - Detects the platform (macOS or Linux)
-- `validate_config` - Validates configuration
-- `check_local_resources` - Adjusts resources for local development
-- `setup_kind_cluster` - Creates Kind cluster
+- `detect_platform` - Detects the platform (macOS or Linux) and adjusts commands accordingly
+- `validate_config` - Validates configuration parameters
+- `check_local_resources` - Interactive resource adjustment for local development
+- `replace_namespace_in_files` - Replaces `<namespace>` placeholders in values files
+- `setup_kind_cluster` - Creates Kind cluster with control-plane and worker nodes
 - `setup_namespace` - Creates Kubernetes namespace
-- `deploy_minio` - Deploys MinIO object storage
-- `deploy_threshold_mode` - Deploys multi-party KMS
+- `setup_registry_credentials` - Configures Docker registry authentication
+- `deploy_localstack` - Deploys Localstack for S3 object storage
+- `deploy_threshold_mode` - Deploys multi-party KMS with configurable number of parties
 - `deploy_centralized_mode` - Deploys single-party KMS
-- `setup_port_forwarding` - Configures port-forwards
-- `cleanup` - Triggered by SIGINT/SIGTERM (Ctrl+C)
+- `setup_port_forwarding` - Configures port-forwards for local access
+- `collect_logs` - Collects logs from all KMS pods
+- `cleanup` - Triggered by SIGINT/SIGTERM (Ctrl+C) for graceful shutdown
 
 **Behavior**:
 - Runs in foreground with infinite loop
@@ -514,6 +604,13 @@ These local files are:
 - Ignored by git (listed in `.gitignore`)
 - Safe to delete (will be recreated on next interactive run)
 - The gen-keys local file is only created when using `--gen-keys` flag
+- **Namespace placeholders automatically replaced** during creation
+- **Automatically removed and recreated** when choosing interactive adjustment again (option 2)
+
+**Important Notes:**
+- Local files are created by copying base files and then applying your customizations
+- The `<namespace>` placeholder in base files is automatically replaced with the actual namespace
+- If you manually edit local files, they won't be overwritten unless you choose option 2 again
 
 **Resource Configuration Sections:**
 
@@ -537,7 +634,9 @@ resources:
 
 Located in `infra/` directory:
 
-- `minio-values.yaml` - MinIO configuration
+- `localstack-s3-values.yaml` - Localstack S3 configuration (replaces MinIO)
+
+**Note**: The setup uses Localstack for S3-compatible object storage, accessible at `http://localstack:4566` within the cluster and `http://localhost:9000` via port-forwarding.
 
 ## Troubleshooting
 
@@ -586,6 +685,36 @@ kubectl logs <pod-name> -n kms-test
 # Describe pod for events
 kubectl describe pod <pod-name> -n kms-test
 ```
+
+### Namespace Placeholder Not Replaced
+
+If you see `<namespace>` in pod names or service URLs instead of the actual namespace:
+
+**Symptoms:**
+- Pod names contain literal `<namespace>` text
+- Service URLs show `kms-service-threshold-1-<namespace>-core-1`
+- Connection errors when accessing services
+
+**Solution:**
+The script automatically replaces `<namespace>` placeholders in values files. If you see this issue:
+
+1. **Check if local files exist and have correct namespace:**
+   ```bash
+   grep -r "<namespace>" ci/kube-testing/kms/local-values-*.yaml
+   ```
+
+2. **Recreate local files with interactive adjustment:**
+   ```bash
+   ./ci/kube-testing/scripts/setup_kms_in_kind.sh --local
+   # Choose option 2 to recreate files with namespace replacement
+   ```
+
+3. **Manually replace if needed:**
+   ```bash
+   # Replace in all local files
+   sed -i '' "s|<namespace>|kms-test|g" ci/kube-testing/kms/local-values-*.yaml
+   # On Linux, use: sed -i "s|<namespace>|kms-test|g" ci/kube-testing/kms/local-values-*.yaml
+   ```
 
 ### Insufficient Resources (OOMKilled, Pending Pods)
 
@@ -673,6 +802,62 @@ kind export logs --name kms-test
 kind delete cluster --name kms-test
 ./ci/kube-testing/scripts/setup_kms_in_kind.sh
 ```
+
+## Understanding the Setup Process
+
+### Execution Flow
+
+When you run the setup script, it follows this sequence:
+
+1. **Validation Phase**
+   - Checks prerequisites (kubectl, helm, kind, docker)
+   - Validates configuration parameters
+   - Detects platform (macOS/Linux) for command compatibility
+
+2. **Resource Check Phase** (Local mode only)
+   - Analyzes resource requirements from values files
+   - Prompts for interactive adjustment if needed
+   - Creates/updates local values files with customizations
+   - **Replaces namespace placeholders** in local files
+
+3. **Cluster Setup Phase**
+   - Creates Kind cluster
+   - Sets up Kubernetes namespace
+   - Configures registry credentials (if GITHUB_TOKEN provided)
+
+4. **Infrastructure Deployment Phase**
+   - Deploys Localstack for S3 storage
+   - Waits for infrastructure to be ready
+
+5. **Image Build Phase** (if `--build` flag used)
+   - Builds Docker images locally
+   - Loads images into Kind cluster
+
+6. **KMS Deployment Phase**
+   - Deploys KMS Core services (threshold or centralized)
+   - Replaces namespace placeholders in values files (if not already done)
+   - Waits for pods to be ready
+   - Deploys initialization job
+   - Deploys key generation job (if `--gen-keys` used)
+
+7. **Port Forwarding Phase**
+   - Sets up port-forwards for local access
+   - Keeps script running until interrupted
+
+8. **Cleanup Phase** (on Ctrl+C)
+   - Collects logs from all pods
+   - Stops port-forwards
+   - In local mode: deletes cluster and cleans up
+   - In CI mode: lightweight cleanup (CI handles cluster deletion)
+
+### Namespace Replacement
+
+The script automatically replaces `<namespace>` placeholders in values files with the actual namespace value. This happens:
+
+- **During interactive adjustment** (option 2): Immediately after creating local files
+- **During deployment**: Before deploying Helm charts (as a safety measure)
+
+The replacement uses the pattern `s|<namespace>|${NAMESPACE}|g` with `|` as delimiter to avoid conflicts with file paths.
 
 ## Advanced Usage
 
