@@ -70,7 +70,7 @@ pub struct CoreMetrics {
     socat_processes_gauge: TaggedMetric<Gauge<u64>>,
     thread_gauge: TaggedMetric<Gauge<u64>>,
     // Internal system gauges
-    // TODO rate limiter, session gause and meta store should actually be counters but we need to add decorators to ensure it is always updated
+    // TODO rate limiter, session gauge and meta store should actually be counters but we need to add decorators to ensure it is always updated
     rate_limiter_gauge: TaggedMetric<Gauge<u64>>,
     session_gauge: TaggedMetric<Gauge<u64>>,
     meta_storage_pub_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing public decryptions in meta storage
