@@ -194,67 +194,151 @@ validate_config() {
     fi
 }
 
+#=============================================================================
+# Helper Functions for Local Resource Management
+#=============================================================================
+
+# Get file paths (local or base) - sets variables via reference
+get_values_file_paths() {
+    local use_local="${1:-false}"
+    local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
+
+    if [[ "${use_local}" == "true" ]]; then
+        echo "${base_dir}/local-values-kms-test.yaml"
+        echo "${base_dir}/local-values-kms-service-init-kms-test.yaml"
+        if [[ "${GEN_KEYS}" == "true" ]]; then
+            echo "${base_dir}/local-values-kms-service-gen-keys-kms-test.yaml"
+        fi
+    else
+        echo "${base_dir}/values-kms-test.yaml"
+        echo "${base_dir}/values-kms-service-init-kms-test.yaml"
+        if [[ "${GEN_KEYS}" == "true" ]]; then
+            echo "${base_dir}/values-kms-service-gen-keys-kms-test.yaml"
+        fi
+    fi
+}
+
+# Check if all required values files exist and are non-empty
+check_values_files_exist() {
+    local core_file="$1"
+    local client_init_file="$2"
+    local client_gen_keys_file="${3:-}"
+
+    local files_missing=false
+    if [[ ! -s "${core_file}" ]] || [[ ! -s "${client_init_file}" ]]; then
+        files_missing=true
+    fi
+    if [[ -n "${client_gen_keys_file}" ]] && [[ ! -s "${client_gen_keys_file}" ]]; then
+        files_missing=true
+    fi
+
+    echo "${files_missing}"
+}
+
+# Remove local values files if they exist
+remove_local_values_files() {
+    local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
+    local files_to_remove=(
+        "${base_dir}/local-values-kms-test.yaml"
+        "${base_dir}/local-values-kms-service-init-kms-test.yaml"
+    )
+
+    if [[ "${GEN_KEYS}" == "true" ]]; then
+        files_to_remove+=("${base_dir}/local-values-kms-service-gen-keys-kms-test.yaml")
+    fi
+
+    local any_exist=false
+    for file in "${files_to_remove[@]}"; do
+        if [[ -f "${file}" ]]; then
+            any_exist=true
+            break
+        fi
+    done
+
+    if [[ "${any_exist}" == "true" ]]; then
+        log_info "Removing existing local values files..."
+        for file in "${files_to_remove[@]}"; do
+            rm -f "${file}"
+        done
+    fi
+}
+
+# Copy base values files to local values files
+copy_to_local_values_files() {
+    local core_base="$1"
+    local client_init_base="$2"
+    local client_gen_keys_base="${3:-}"
+
+    local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
+
+    log_info "Creating local values files..."
+    cp "${core_base}" "${base_dir}/local-values-kms-test.yaml"
+    cp "${client_init_base}" "${base_dir}/local-values-kms-service-init-kms-test.yaml"
+
+    if [[ -n "${client_gen_keys_base}" ]]; then
+        cp "${client_gen_keys_base}" "${base_dir}/local-values-kms-service-gen-keys-kms-test.yaml"
+    fi
+}
+
 check_local_resources() {
     # Check resource requirements for local development
-    if [[ "${LOCAL}" == "true" ]]; then
+    if [[ "${LOCAL}" != "true" ]]; then
+        return 0
+    fi
 
-        # Extract resource values from values files
-        local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
-        local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
+    local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
+
+    # Try local files first, fallback to base files
+    local KMS_CORE_VALUES="${base_dir}/local-values-kms-test.yaml"
+    local KMS_CORE_CLIENT_INIT_VALUES="${base_dir}/local-values-kms-service-init-kms-test.yaml"
+    local KMS_CORE_CLIENT_GEN_KEYS_VALUES=""
+    if [[ "${GEN_KEYS}" == "true" ]]; then
+        KMS_CORE_CLIENT_GEN_KEYS_VALUES="${base_dir}/local-values-kms-service-gen-keys-kms-test.yaml"
+    fi
+
+    # Check if files exist
+    local files_missing=$(check_values_files_exist "${KMS_CORE_VALUES}" "${KMS_CORE_CLIENT_INIT_VALUES}" "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}")
+
+    if [[ "${files_missing}" == "true" ]]; then
+        log_error "One or more local values files are missing or empty:"
+        log_error "KMS Core values: ${KMS_CORE_VALUES}"
+        log_error "KMS Core Client init values: ${KMS_CORE_CLIENT_INIT_VALUES}"
+        if [[ -n "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}" ]]; then
+            log_error "KMS Core Client gen keys values: ${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
+        fi
+        # Fallback to base files
+        KMS_CORE_VALUES="${base_dir}/values-kms-test.yaml"
+        KMS_CORE_CLIENT_INIT_VALUES="${base_dir}/values-kms-service-init-kms-test.yaml"
         if [[ "${GEN_KEYS}" == "true" ]]; then
-            local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
+            KMS_CORE_CLIENT_GEN_KEYS_VALUES="${base_dir}/values-kms-service-gen-keys-kms-test.yaml"
         fi
-
-        # Check if files exist (conditionally check gen-keys file only if GEN_KEYS is true)
-        local files_missing=false
-        if [[ ! -s "${KMS_CORE_VALUES}" ]] || [[ ! -s "${KMS_CORE_CLIENT_INIT_VALUES}" ]]; then
-            files_missing=true
+    else
+        log_info "Values files found:"
+        log_info "KMS Core values: ${KMS_CORE_VALUES}"
+        log_info "KMS Core Client init values: ${KMS_CORE_CLIENT_INIT_VALUES}"
+        if [[ -n "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}" ]]; then
+            log_info "KMS Core Client gen keys values: ${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
         fi
-        if [[ "${GEN_KEYS}" == "true" ]] && [[ ! -s "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}" ]]; then
-            files_missing=true
-        fi
+        log_info "You're are going to use the existing local values files for resource adjustment"
+    fi
 
-        if [[ "${files_missing}" == "true" ]]; then
-            log_error "One or more local values files are missing or empty:"
-            log_error "KMS Core values: ${KMS_CORE_VALUES}"
-            log_error "KMS Core Client init values: ${KMS_CORE_CLIENT_INIT_VALUES}"
-            if [[ "${GEN_KEYS}" == "true" ]]; then
-                log_error "KMS Core Client gen keys values: ${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
-            fi
-            # Extract resource values from values files
-            local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
-            local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
-            if [[ "${GEN_KEYS}" == "true" ]]; then
-                local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml"
-            fi
-        else
-            log_info "Values files found:"
-            log_info "KMS Core values: ${KMS_CORE_VALUES}"
-            log_info "KMS Core Client init values: ${KMS_CORE_CLIENT_INIT_VALUES}"
-            if [[ "${GEN_KEYS}" == "true" ]]; then
-                log_info "KMS Core Client gen keys values: ${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
-            fi
-            log_info "You're are going to use the existing local values files for resource adjustment"
-        fi
+    # Parse memory and CPU from kms-core values (matching original inline code)
+    local KMS_CORE_MEMORY=$(grep -A 10 "resources:" "${KMS_CORE_VALUES}" | grep "memory:" | head -1 | awk '{print $2}' | sed 's/Gi//')
+    local KMS_CORE_CPU=$(grep -A 10 "resources:" "${KMS_CORE_VALUES}" | grep "cpu:" | head -1 | awk '{print $2}')
 
-        # Parse memory and CPU from kms-core values (values-kms-test.yaml)
-        local KMS_CORE_MEMORY=$(grep -A 10 "resources:" "${KMS_CORE_VALUES}" | grep "memory:" | head -1 | awk '{print $2}' | sed 's/Gi//')
-        local KMS_CORE_CPU=$(grep -A 10 "resources:" "${KMS_CORE_VALUES}" | grep "cpu:" | head -1 | awk '{print $2}')
+    # Parse memory and CPU from kms-core-client values (matching original inline code)
+    local KMS_CORE_CLIENT_MEMORY=$(grep -A 10 "resources:" "${KMS_CORE_CLIENT_INIT_VALUES}" | grep "memory:" | head -1 | awk '{print $2}' | sed 's/Gi//')
+    local KMS_CORE_CLIENT_CPU=$(grep -A 10 "resources:" "${KMS_CORE_CLIENT_INIT_VALUES}" | grep "cpu:" | head -1 | awk '{print $2}')
 
-        # Parse memory and CPU from kms-core-client values (values-kms-service-init-kms-test.yaml)
-        local KMS_CORE_CLIENT_MEMORY=$(grep -A 10 "resources:" "${KMS_CORE_CLIENT_INIT_VALUES}" | grep "memory:" | head -1 | awk '{print $2}' | sed 's/Gi//')
-        local KMS_CORE_CLIENT_CPU=$(grep -A 10 "resources:" "${KMS_CORE_CLIENT_INIT_VALUES}" | grep "cpu:" | head -1 | awk '{print $2}')
+    # Calculate total resources
+    local TOTAL_KMS_CORE_MEMORY=$((KMS_CORE_MEMORY * NUM_PARTIES))
+    local TOTAL_KMS_CORE_CPU=$((KMS_CORE_CPU * NUM_PARTIES))
+    local TOTAL_MEMORY=$((TOTAL_KMS_CORE_MEMORY + KMS_CORE_CLIENT_MEMORY))
+    local TOTAL_CPU=$((TOTAL_KMS_CORE_CPU + KMS_CORE_CLIENT_CPU))
 
-        # Calculate total resources
-        local TOTAL_KMS_CORE_MEMORY=$((KMS_CORE_MEMORY * NUM_PARTIES))
-        local TOTAL_KMS_CORE_CPU=$((KMS_CORE_CPU * NUM_PARTIES))
-        local TOTAL_MEMORY=$((TOTAL_KMS_CORE_MEMORY + KMS_CORE_CLIENT_MEMORY))
-        local TOTAL_CPU=$((TOTAL_KMS_CORE_CPU + KMS_CORE_CLIENT_CPU))
-
-        # Retrieve num_seccion_preproc
-        local NUM_SESSIN_PREPROC=$(grep "numSessionsPreproc:" "${KMS_CORE_VALUES}" | head -1 | awk '{print $2}')
-        # Retrieve FHE_PARAMS
-        local FHE_PARAMS=$(grep "fhe_parameter:" "${KMS_CORE_CLIENT_INIT_VALUES}" | head -1 | awk '{print $2}')
+    # Retrieve num_sessions_preproc and FHE_PARAMS (matching original inline code)
+    local NUM_SESSIN_PREPROC=$(grep "numSessionsPreproc:" "${KMS_CORE_VALUES}" | head -1 | awk '{print $2}')
+    local FHE_PARAMS=$(grep "fhe_parameter:" "${KMS_CORE_CLIENT_INIT_VALUES}" | head -1 | awk '{print $2}')
 
         log_warn "========================================="
         log_warn "Running in LOCAL mode"
@@ -310,33 +394,26 @@ check_local_resources() {
             2)
                 log_info "Interactive resource adjustment..."
                 echo ""
-                # Remove existing local values files if they exist
-                local local_files_exist=false
-                if [[ -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-test.yaml ]] || \
-                   [[ -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml ]] || \
-                   ([[ "${GEN_KEYS}" == "true" ]] && [[ -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml ]]); then
-                    local_files_exist=true
-                    log_info "Removing existing local values files..."
-                    rm -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-test.yaml
-                    rm -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml
-                    if [[ "${GEN_KEYS}" == "true" ]]; then
-                        rm -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml
-                    fi
-                    local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
-                    local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
-                    if [[ "${GEN_KEYS}" == "true" ]]; then
-                        local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml"
-                    fi
-                fi
-                # Create local values files
-                log_info "Creating local values files..."
-                cp "${KMS_CORE_VALUES}" "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-test.yaml
-                KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
-                cp "${KMS_CORE_CLIENT_INIT_VALUES}" "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml
-                KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
+                # Get base file paths for copying
+                local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
+                local BASE_CORE_VALUES="${base_dir}/values-kms-test.yaml"
+                local BASE_CLIENT_INIT_VALUES="${base_dir}/values-kms-service-init-kms-test.yaml"
+                local BASE_CLIENT_GEN_KEYS_VALUES=""
                 if [[ "${GEN_KEYS}" == "true" ]]; then
-                    cp "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}" "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml
-                    KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
+                    BASE_CLIENT_GEN_KEYS_VALUES="${base_dir}/values-kms-service-gen-keys-kms-test.yaml"
+                fi
+
+                # Remove existing local values files if they exist
+                remove_local_values_files
+
+                # Copy base files to local files
+                copy_to_local_values_files "${BASE_CORE_VALUES}" "${BASE_CLIENT_INIT_VALUES}" "${BASE_CLIENT_GEN_KEYS_VALUES}"
+
+                # Update variables to point to local files
+                KMS_CORE_VALUES="${base_dir}/local-values-kms-test.yaml"
+                KMS_CORE_CLIENT_INIT_VALUES="${base_dir}/local-values-kms-service-init-kms-test.yaml"
+                if [[ "${GEN_KEYS}" == "true" ]]; then
+                    KMS_CORE_CLIENT_GEN_KEYS_VALUES="${base_dir}/local-values-kms-service-gen-keys-kms-test.yaml"
                 fi
 
 
@@ -407,7 +484,6 @@ check_local_resources() {
                 exit 1
                 ;;
         esac
-    fi
 }
 
 #=============================================================================
