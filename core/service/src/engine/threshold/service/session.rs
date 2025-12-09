@@ -599,8 +599,8 @@ impl ImmutableSessionMaker {
         self.inner.threshold(context_id).await
     }
 
-    /// Returns the number of active sessions.
-    /// This is the sum of active sessions with _each_ other party.
+    /// Returns the number of opened sessions.
+    /// This is the sum of opened sessions with _each_ other party.
     pub(crate) async fn active_sessions(&self) -> u64 {
         self.inner.active_sessions().await
     }

@@ -66,12 +66,12 @@ pub struct CoreMetrics {
     gauge: TaggedMetric<Gauge<i64>>,
     cpu_load_gauge: TaggedMetric<Gauge<f64>>,
     memory_usage_gauge: TaggedMetric<Gauge<u64>>,
-    file_descriptor_gauge: TaggedMetric<Gauge<u64>>,
-    socat_processes_gauge: TaggedMetric<Gauge<u64>>,
-    thread_gauge: TaggedMetric<Gauge<u64>>,
+    file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of file descriptors of the KMS
+    socat_processes_gauge: TaggedMetric<Gauge<u64>>, // Number of socat file descriptors
+    thread_gauge: TaggedMetric<Gauge<u64>>,          // Numbers active child processes of the KMS
     // Internal system gauges
     // TODO rate limiter, session gauge and meta store should actually be counters but we need to add decorators to ensure it is always updated
-    rate_limiter_gauge: TaggedMetric<Gauge<u64>>,
+    rate_limiter_gauge: TaggedMetric<Gauge<u64>>, // Number tokens used in the rate limiter
     session_gauge: TaggedMetric<Gauge<u64>>,
     meta_storage_pub_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing public decryptions in meta storage
     meta_storage_user_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing user decryptions in meta storage
@@ -392,6 +392,7 @@ impl CoreMetrics {
             .record(usage, &self.memory_usage_gauge.with_tags(&[]));
     }
 
+    ///
     pub fn record_threads(&self, count: u64) {
         self.thread_gauge
             .metric

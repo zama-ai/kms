@@ -116,19 +116,17 @@ fn get_thread_count(system: &sysinfo::System) -> u64 {
 /// Get the number of running socat child processes
 /// TODO this only works on Linux, need alternative for other OSes
 fn get_socat_count(system: &sysinfo::System) -> u64 {
-    let mut count = 0;
     for process in system.processes().values() {
         if process.name() == "socat" {
-            let children = match process.tasks() {
-                Some(tasks) => tasks,
-                None => {
-                    tracing::error!(
-                        "System does not appear to be Linux and hence cannot get the amount of child processes for socat.");
-                    &HashSet::new()
-                }
-            };
-            count += children.len() as u64;
+            let pid = process.pid();
+            let entries= fs::read_dir(format!("/proc/{pid}/fd")).map(|res| res.count())
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to read /proc/{pid}/fd with error and hence cannot get file descriptor count. Defaulting to 0. Error was: {e}");
+                    0
+                });
+            return entries as u64;
         }
     }
-    count
+    tracing::error!("Could not find any running socat process and hence cannot get socat process count. Using 0 by default");
+    0
 }
