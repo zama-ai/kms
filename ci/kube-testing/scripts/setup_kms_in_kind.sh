@@ -205,11 +205,22 @@ check_local_resources() {
             local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
         fi
 
-        if [[ ! -s "${KMS_CORE_VALUES}" || ! -s "${KMS_CORE_CLIENT_INIT_VALUES}" || ! -s "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}" ]]; then
+        # Check if files exist (conditionally check gen-keys file only if GEN_KEYS is true)
+        local files_missing=false
+        if [[ ! -s "${KMS_CORE_VALUES}" ]] || [[ ! -s "${KMS_CORE_CLIENT_INIT_VALUES}" ]]; then
+            files_missing=true
+        fi
+        if [[ "${GEN_KEYS}" == "true" ]] && [[ ! -s "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}" ]]; then
+            files_missing=true
+        fi
+
+        if [[ "${files_missing}" == "true" ]]; then
             log_error "One or more local values files are missing or empty:"
             log_error "KMS Core values: ${KMS_CORE_VALUES}"
             log_error "KMS Core Client init values: ${KMS_CORE_CLIENT_INIT_VALUES}"
-            log_error "KMS Core Client gen keys values: ${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
+            if [[ "${GEN_KEYS}" == "true" ]]; then
+                log_error "KMS Core Client gen keys values: ${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
+            fi
             # Extract resource values from values files
             local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
             local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
@@ -220,7 +231,9 @@ check_local_resources() {
             log_info "Values files found:"
             log_info "KMS Core values: ${KMS_CORE_VALUES}"
             log_info "KMS Core Client init values: ${KMS_CORE_CLIENT_INIT_VALUES}"
-            log_info "KMS Core Client gen keys values: ${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
+            if [[ "${GEN_KEYS}" == "true" ]]; then
+                log_info "KMS Core Client gen keys values: ${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
+            fi
             log_info "You're are going to use the existing local values files for resource adjustment"
         fi
 
@@ -297,6 +310,21 @@ check_local_resources() {
             2)
                 log_info "Interactive resource adjustment..."
                 echo ""
+                # Remove existing local values files if they exist
+                local local_files_exist=false
+                if [[ -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-test.yaml ]] || \
+                   [[ -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml ]] || \
+                   ([[ "${GEN_KEYS}" == "true" ]] && [[ -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml ]]); then
+                    local_files_exist=true
+                fi
+                if [[ "${local_files_exist}" == "true" ]]; then
+                    log_info "Removing existing local values files..."
+                fi
+                rm -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-test.yaml
+                rm -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml
+                if [[ "${GEN_KEYS}" == "true" ]]; then
+                    rm -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml
+                fi
                 # Create local values files
                 log_info "Creating local values files..."
                 cp "${KMS_CORE_VALUES}" "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-test.yaml
@@ -349,7 +377,9 @@ check_local_resources() {
                 log_info "New local values files created successfully:"
                 log_info "- ${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
                 log_info "- ${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
-                log_info "- ${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
+                if [[ "${GEN_KEYS}" == "true" ]]; then
+                    log_info "- ${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
+                fi
 
                 # Calculate new totals
                 local NEW_TOTAL_MEM=$((NEW_CORE_MEM * NUM_PARTIES + NEW_CLIENT_MEM))
