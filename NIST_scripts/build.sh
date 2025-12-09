@@ -64,5 +64,4 @@ fi
 cd "$TARGET_DIR"
 
 # NOTE: This makes the script stop
-bash NIST_scripts/build.sh
 sudo su $USER
