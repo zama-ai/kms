@@ -31,7 +31,7 @@ pub mod grpc;
 /// ```
 /// use kms_lib::testing::prelude::*;
 /// ```
-#[cfg(any(test, feature = "testing"))]
+#[cfg(all(feature = "non-wasm", any(test, feature = "testing")))]
 pub mod testing;
 #[cfg(feature = "non-wasm")]
 pub mod vault;
