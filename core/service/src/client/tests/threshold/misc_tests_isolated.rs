@@ -2,9 +2,9 @@
 //!
 //! This file uses the consolidated testing module for clean, maintainable tests.
 
-use crate::client::test_tools::{get_health_client, get_status};
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::testing::prelude::*;
+use crate::testing::utils::{get_health_client, get_status};
 use threshold_fhe::networking::grpc::GrpcServer;
 use tonic::server::NamedService;
 use tonic_health::pb::health_check_response::ServingStatus;

@@ -3,15 +3,17 @@
 //! This tool generates all necessary cryptographic material for KMS tests
 //! in advance, eliminating the need for Docker and shared state during test execution.
 
+use std::path::{Path, PathBuf};
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use kms_lib::util::key_setup::test_material_spec::{MaterialType, TestMaterialSpec};
-#[cfg(feature = "slow_tests")]
-use kms_lib::util::key_setup::test_tools::setup::ensure_default_material_exists_to_path;
-use kms_lib::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use path_absolutize::Absolutize;
-use std::path::{Path, PathBuf};
 use tracing::{info, warn};
+
+use kms_lib::testing::material::{MaterialType, TestMaterialSpec};
+#[cfg(feature = "slow_tests")]
+use kms_lib::testing::utils::setup::ensure_default_material_exists_to_path;
+use kms_lib::testing::utils::setup::ensure_testing_material_exists;
 
 #[derive(Parser)]
 #[command(name = "generate-test-material")]

@@ -6,7 +6,7 @@
 use crate::testing::helpers::{create_test_material_manager, fix_centralized_public_keys};
 use crate::testing::material::{TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
-use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
+use crate::testing::utils::setup::ensure_testing_material_exists;
 use crate::vault::storage::{file::FileStorage, StorageType};
 use anyhow::Result;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;

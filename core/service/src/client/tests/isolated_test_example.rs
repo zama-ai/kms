@@ -155,7 +155,7 @@ async fn test_material_validation() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::util::key_setup::test_material_spec::{KeyType, TestMaterialSpec};
+    use crate::testing::material::{KeyType, TestMaterialSpec};
 
     #[test]
     fn test_material_spec_creation() {

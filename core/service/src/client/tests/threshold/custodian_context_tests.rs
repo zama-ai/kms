@@ -1,9 +1,9 @@
 use crate::client::client_wasm::Client;
 use crate::client::tests::threshold::common::threshold_handles_custodian_backup;
 use crate::consts::{BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID};
-use crate::util::key_setup::test_tools::backup_exists;
-use crate::util::key_setup::test_tools::read_custodian_backup_files;
-use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
+use crate::testing::utils::backup_exists;
+use crate::testing::utils::read_custodian_backup_files;
+use crate::testing::utils::setup::ensure_testing_material_exists;
 use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
 };
