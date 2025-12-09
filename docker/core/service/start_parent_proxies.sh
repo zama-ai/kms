@@ -39,14 +39,14 @@ start_tcp_proxy_out() {
     local VSOCK_PORT="$2"
     local TCP_DST="$3"
     echo "start_proxies: starting parent-side $NAME proxy"
-    socat -T60 VSOCK-LISTEN:"$VSOCK_PORT",fork,reuseaddr TCP:"$TCP_DST",nodelay &
+    socat VSOCK-LISTEN:"$VSOCK_PORT",fork,reuseaddr,keepalive TCP:"$TCP_DST",nodelay,keepalive,keepidle=30,keepintvl=10,keepcnt=3 &
 }
 
 start_tcp_proxy_in() {
     local NAME="$1"
     local PORT="$2"
     echo "start_proxies: starting parent-side $NAME proxy"
-    socat -T60 TCP-LISTEN:"$PORT",fork,nodelay,reuseaddr VSOCK-CONNECT:"$ENCLAVE_CID":"$PORT"
+    socat TCP-LISTEN:"$PORT",fork,nodelay,reuseaddr,keepalive,keepidle=30,keepintvl=10,keepcnt=3 VSOCK-CONNECT:"$ENCLAVE_CID":"$PORT",keepalive
 }
 
 # start the log stream for the enclave
