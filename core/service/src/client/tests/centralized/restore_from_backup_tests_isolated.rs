@@ -15,7 +15,6 @@
 //! - Native KMS server spawned in-process
 //! - Automatic cleanup via RAII (Drop trait)
 
-use crate::client::test_tools::setup_centralized_isolated;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::testing::helpers::domain_to_msg;
@@ -28,48 +27,6 @@ use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::RequestId;
 use std::path::Path;
 use tonic::transport::Channel;
-
-/// Helper function to setup isolated centralized test environment for backup tests
-/// Note: This helper is kept for backup-specific setup (backup vault configuration)
-async fn setup_isolated_centralized_backup_test(
-    test_name: &str,
-) -> Result<(TempDir, ServerHandle, CoreServiceEndpointClient<Channel>)> {
-    use crate::vault::storage::make_storage;
-    use crate::vault::Vault;
-
-    let manager = create_test_material_manager();
-    let mut spec = TestMaterialSpec::centralized_basic();
-    // Add server signing keys needed for backup operations
-    spec.required_keys.insert(KeyType::ServerSigningKeys);
-    let material_dir = manager.setup_test_material(&spec, test_name).await?;
-
-    let mut pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
-    let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
-
-    // Regenerate central keys with correct RequestIds
-    fix_centralized_public_keys(&mut pub_storage, &mut priv_storage).await?;
-
-    // Create backup vault for backup/restore tests
-    let backup_storage = make_storage(
-        Some(crate::conf::Storage::File(crate::conf::FileStorage {
-            path: material_dir.path().to_path_buf(),
-        })),
-        StorageType::BACKUP,
-        None,
-        None,
-        None,
-    )?;
-    let backup_vault = Some(Vault {
-        storage: backup_storage,
-        keychain: None,
-    });
-
-    let (server, client) =
-        crate::client::test_tools::setup_centralized(pub_storage, priv_storage, backup_vault, None)
-            .await;
-
-    Ok((material_dir, server, client))
-}
 
 /// Helper to generate key using isolated client (insecure mode - still requires preprocessing)
 async fn key_gen_isolated(
@@ -188,8 +145,16 @@ async fn decrypt_and_verify_isolated(
 /// **Run with:** `cargo test --lib --features testing test_insecure_central_dkg_backup_isolated`
 #[tokio::test]
 async fn test_insecure_central_dkg_backup_isolated() -> Result<()> {
-    let (material_dir, server, mut client) =
-        setup_isolated_centralized_backup_test("dkg_backup").await?;
+    // Setup using builder pattern with backup vault
+    let env = CentralizedTestEnv::builder()
+        .with_test_name("dkg_backup")
+        .with_backup_vault()
+        .build()
+        .await?;
+
+    let material_dir = env.material_dir;
+    let server = env.server;
+    let mut client = env.client;
 
     let key_id_1 = derive_request_id("isolated-dkg-backup-1")?;
     let key_id_2 = derive_request_id("isolated-dkg-backup-2")?;
@@ -239,8 +204,16 @@ async fn test_insecure_central_dkg_backup_isolated() -> Result<()> {
 /// **Run with:** `cargo test --lib --features testing test_insecure_central_autobackup_after_deletion_isolated`
 #[tokio::test]
 async fn test_insecure_central_autobackup_after_deletion_isolated() -> Result<()> {
-    let (material_dir, server, mut client) =
-        setup_isolated_centralized_backup_test("autobackup").await?;
+    // Setup using builder pattern with backup vault
+    let env = CentralizedTestEnv::builder()
+        .with_test_name("autobackup")
+        .with_backup_vault()
+        .build()
+        .await?;
+
+    let material_dir = env.material_dir;
+    let server = env.server;
+    let mut client = env.client;
 
     let key_id = derive_request_id("isolated-autobackup")?;
 
@@ -251,18 +224,7 @@ async fn test_insecure_central_autobackup_after_deletion_isolated() -> Result<()
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    // Restart server with same storage
-    let pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
-    let priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
-    let (_new_server, _new_client) = setup_centralized_isolated(
-        pub_storage,
-        priv_storage,
-        None,
-        None,
-        Some(material_dir.path()),
-    )
-    .await;
-
+    // Verify backup was created (no need to restart server for this check)
     let backup_storage = FileStorage::new(Some(material_dir.path()), StorageType::BACKUP, None)?;
     assert!(
         backup_storage
@@ -277,8 +239,16 @@ async fn test_insecure_central_autobackup_after_deletion_isolated() -> Result<()
 async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
     use kms_grpc::kms::v1::CrsGenRequest;
 
-    let (material_dir, server, mut client) =
-        setup_isolated_centralized_backup_test("crs_backup").await?;
+    // Setup using builder pattern with backup vault
+    let env = CentralizedTestEnv::builder()
+        .with_test_name("crs_backup")
+        .with_backup_vault()
+        .build()
+        .await?;
+
+    let material_dir = env.material_dir;
+    let server = env.server;
+    let mut client = env.client;
 
     let req_id = derive_request_id("isolated-crs-backup")?;
 

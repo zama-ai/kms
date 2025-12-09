@@ -1,3 +1,30 @@
+//! Legacy test infrastructure for non-isolated tests
+//!
+//! # TODO: Future Refactoring
+//!
+//! This module contains legacy test setup functions that are still used by non-isolated tests.
+//! These tests use shared test material and manual server setup instead of the modern builder pattern.
+//!
+//! ## For New Tests:
+//! **Use the modern testing infrastructure instead:**
+//! ```rust
+//! use crate::testing::prelude::*;
+//!
+//! #[tokio::test]
+//! async fn my_test() -> Result<()> {
+//!     let env = ThresholdTestEnv::builder()
+//!         .with_test_name("my_test")
+//!         .with_party_count(4)
+//!         .with_backup_vault()        // Optional
+//!         .with_custodian_keychain()  // Optional
+//!         .build()
+//!         .await?;
+//!     
+//!     // Use env.clients, env.servers, env.material_dir
+//!     Ok(())
+//! }
+//! ```
+
 use crate::client::client_wasm::Client;
 use crate::conf::{init_conf, CoreConfig, Keychain, SecretSharingKeychain};
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
@@ -5,8 +32,8 @@ use crate::engine::base::BaseKmsStruct;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::threshold::service::new_real_threshold_kms;
 use crate::engine::{run_server, Shutdown};
-use crate::util::key_setup::test_tools::file_backup_vault;
-use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
+use crate::testing::utils::file_backup_vault;
+use crate::testing::utils::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::{
     crypto_material::get_core_signing_key, file::FileStorage, Storage, StorageType,
@@ -39,7 +66,7 @@ use tonic_health::pb::HealthCheckRequest;
 use tonic_health::ServingStatus;
 
 #[cfg(feature = "slow_tests")]
-use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
+use crate::testing::utils::setup::ensure_default_material_exists;
 
 // Put gRPC size limit to 100 MB.
 // We need a high limit because ciphertexts may be large after SnS.

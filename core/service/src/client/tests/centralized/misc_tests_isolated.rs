@@ -2,11 +2,11 @@
 //!
 //! This file uses the consolidated testing module for clean, maintainable tests.
 
-use crate::client::test_tools::{get_health_client, get_status};
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::testing::prelude::*;
+use crate::testing::utils::{get_health_client, get_status};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use std::collections::HashMap;
 use tonic::server::NamedService;

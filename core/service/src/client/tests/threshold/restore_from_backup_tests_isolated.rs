@@ -15,7 +15,6 @@
 //! - Native KMS servers spawned in-process
 //! - Automatic cleanup via RAII (Drop trait)
 
-use crate::client::test_tools::setup_threshold_isolated;
 #[cfg(feature = "insecure")]
 use crate::client::tests::threshold::common::threshold_key_gen_isolated;
 use crate::dummy_domain;
@@ -23,78 +22,9 @@ use crate::engine::base::derive_request_id;
 use crate::testing::helpers::domain_to_msg;
 use crate::testing::prelude::*;
 use crate::vault::storage::{delete_all_at_request_id, StorageReader};
-use crate::vault::Vault;
 use kms_grpc::kms::v1::{Empty, FheParameter};
-use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PrivDataType;
-use std::collections::HashMap;
 use tokio::task::JoinSet;
-use tonic::transport::Channel;
-
-/// Helper function to setup isolated threshold test environment for backup tests
-/// Note: This helper is kept for backup-specific setup (backup vault configuration per party)
-async fn setup_isolated_threshold_backup_test(
-    test_name: &str,
-    party_count: usize,
-) -> Result<(
-    TempDir,
-    HashMap<u32, ServerHandle>,
-    HashMap<u32, CoreServiceEndpointClient<Channel>>,
-)> {
-    use crate::vault::storage::make_storage;
-
-    let manager = create_test_material_manager();
-    let spec = TestMaterialSpec::threshold_basic(party_count);
-    let material_dir = manager.setup_test_material(&spec, test_name).await?;
-
-    let mut pub_storages = Vec::new();
-    let mut priv_storages = Vec::new();
-    let mut backup_vaults = Vec::new();
-
-    for i in 1..=party_count {
-        let role = Role::indexed_from_one(i);
-        pub_storages.push(FileStorage::new(
-            Some(material_dir.path()),
-            StorageType::PUB,
-            Some(role),
-        )?);
-        priv_storages.push(FileStorage::new(
-            Some(material_dir.path()),
-            StorageType::PRIV,
-            Some(role),
-        )?);
-
-        // Create backup vault for each party
-        let backup_storage = make_storage(
-            Some(crate::conf::Storage::File(crate::conf::FileStorage {
-                path: material_dir.path().to_path_buf(),
-            })),
-            StorageType::BACKUP,
-            Some(role),
-            None,
-            None,
-        )?;
-        backup_vaults.push(Some(Vault {
-            storage: backup_storage,
-            keychain: None,
-        }));
-    }
-
-    let threshold = ((party_count - 1) / 3).max(1);
-    let (servers, clients) = crate::client::test_tools::setup_threshold_isolated(
-        threshold as u8,
-        pub_storages,
-        priv_storages,
-        backup_vaults,
-        ThresholdTestConfig {
-            test_material_path: Some(material_dir.path()),
-            ..Default::default()
-        },
-    )
-    .await;
-
-    Ok((material_dir, servers, clients))
-}
 
 /// Test threshold DKG backup and restore flow.
 ///
@@ -114,9 +44,17 @@ async fn setup_isolated_threshold_backup_test(
 #[tokio::test]
 #[cfg(feature = "insecure")]
 async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
-    let party_count = 4;
-    let (material_dir, servers, clients) =
-        setup_isolated_threshold_backup_test("threshold_dkg_backup", party_count).await?;
+    // Setup using builder pattern with backup vault
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("threshold_dkg_backup")
+        .with_party_count(4)
+        .with_backup_vault()
+        .build()
+        .await?;
+
+    let material_dir = env.material_dir;
+    let servers = env.servers;
+    let clients = env.clients;
 
     let key_id_1 = derive_request_id("isolated-threshold-dkg-backup-1")?;
     let key_id_2 = derive_request_id("isolated-threshold-dkg-backup-2")?;
@@ -125,7 +63,7 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
     threshold_key_gen_isolated(&clients, &key_id_2, FheParameter::Test).await?;
 
     // Delete private storage for both keys on all parties
-    for i in 1..=party_count {
+    for i in 1..=4 {
         let mut priv_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::PRIV,
@@ -164,7 +102,7 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
     }
 
     // Verify restoration (threshold uses FheKeyInfo, not FhePrivateKey)
-    for i in 1..=party_count {
+    for i in 1..=4 {
         let priv_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::PRIV,
@@ -201,9 +139,17 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
 #[tokio::test]
 #[cfg(feature = "insecure")]
 async fn nightly_test_insecure_threshold_autobackup_after_deletion_isolated() -> Result<()> {
-    let party_count = 4;
-    let (material_dir, servers, clients) =
-        setup_isolated_threshold_backup_test("threshold_autobackup", party_count).await?;
+    // Setup using builder pattern with backup vault
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("threshold_autobackup")
+        .with_party_count(4)
+        .with_backup_vault()
+        .build()
+        .await?;
+
+    let material_dir = env.material_dir;
+    let servers = env.servers;
+    let clients = env.clients;
 
     let key_id = derive_request_id("isolated-threshold-autobackup")?;
 
@@ -217,38 +163,8 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion_isolated() ->
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    // Restart servers with same storage
-    let mut pub_storages = Vec::new();
-    let mut priv_storages = Vec::new();
-    for i in 1..=party_count {
-        let role = Role::indexed_from_one(i);
-        pub_storages.push(FileStorage::new(
-            Some(material_dir.path()),
-            StorageType::PUB,
-            Some(role),
-        )?);
-        priv_storages.push(FileStorage::new(
-            Some(material_dir.path()),
-            StorageType::PRIV,
-            Some(role),
-        )?);
-    }
-
-    let threshold = ((party_count - 1) / 3).max(1);
-    let (_new_servers, _new_clients) = setup_threshold_isolated(
-        threshold as u8,
-        pub_storages,
-        priv_storages,
-        (0..party_count).map(|_| None).collect(),
-        ThresholdTestConfig {
-            test_material_path: Some(material_dir.path()),
-            ..Default::default()
-        },
-    )
-    .await;
-
-    // Verify backup was auto-created on restart (threshold uses FheKeyInfo)
-    for i in 1..=party_count {
+    // Verify backup was auto-created on shutdown (threshold uses FheKeyInfo)
+    for i in 1..=4 {
         let backup_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::BACKUP,
@@ -283,9 +199,17 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion_isolated() ->
 async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
     use kms_grpc::kms::v1::CrsGenRequest;
 
-    let party_count = 4;
-    let (material_dir, servers, clients) =
-        setup_isolated_threshold_backup_test("threshold_crs_backup", party_count).await?;
+    // Setup using builder pattern with backup vault
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("threshold_crs_backup")
+        .with_party_count(4)
+        .with_backup_vault()
+        .build()
+        .await?;
+
+    let material_dir = env.material_dir;
+    let servers = env.servers;
+    let clients = env.clients;
 
     let req_id = derive_request_id("isolated-threshold-crs-backup")?;
 
@@ -324,7 +248,7 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
     }
 
     // Delete CRS from private storage on all parties
-    for i in 1..=party_count {
+    for i in 1..=4 {
         let mut priv_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::PRIV,
@@ -356,7 +280,7 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
     }
 
     // Verify backup still exists and CRS was restored
-    for i in 1..=party_count {
+    for i in 1..=4 {
         let backup_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::BACKUP,

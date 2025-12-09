@@ -864,3 +864,34 @@ async fn test_purge() {
         .unwrap()
         .is_empty());
 }
+
+// ============================================================================
+// HEALTH CHECK UTILITIES
+// ============================================================================
+
+/// Get a health check client for a server on the given port
+pub async fn get_health_client(
+    port: u16,
+) -> anyhow::Result<tonic_health::pb::health_client::HealthClient<tonic::transport::Channel>> {
+    use crate::consts::{DEFAULT_PROTOCOL, DEFAULT_URL};
+    use tonic::transport::Channel;
+
+    let server_address = &format!("{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{port}");
+    let channel_builder = Channel::from_shared(server_address.to_string())?;
+    let channel = channel_builder.connect().await?;
+    Ok(tonic_health::pb::health_client::HealthClient::new(channel))
+}
+
+/// Get the health status of a service
+pub async fn get_status(
+    health_client: &mut tonic_health::pb::health_client::HealthClient<tonic::transport::Channel>,
+    service_name: &str,
+) -> Result<i32, tonic::Status> {
+    use tonic_health::pb::HealthCheckRequest;
+
+    let request = tonic::Request::new(HealthCheckRequest {
+        service: service_name.to_string(),
+    });
+    let response = health_client.check(request).await?;
+    Ok(response.into_inner().status)
+}
