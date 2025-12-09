@@ -3,6 +3,7 @@ use crate::kms::v1::UserDecryptionResponsePayload;
 use crate::kms::v1::{
     Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
 };
+use crate::utils::tonic_result::top_1k_chars;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use observability::metrics::METRICS;
@@ -18,7 +19,7 @@ use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::{
     Unversionize, UnversionizeError, Upgrade, Version, VersionizeOwned, VersionsDispatch,
 };
-use tonic::Status;
+use tonic::{Response, Status};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
@@ -100,6 +101,77 @@ impl SignedPubDataHandleInternal {
         }
     }
 }
+pub struct MetricedError {
+    pub scope: Box<&'static str>,
+    pub request_id: Option<RequestId>,
+    pub internal_error: Box<dyn std::error::Error + Send + Sync>,
+    pub error_code: tonic::Code,
+    pub extra_context: Option<&'static str>,
+}
+
+impl MetricedError {
+    pub fn new<E: Into<Box<dyn std::error::Error + Send + Sync>>>(
+        metric_scope: &'static str,
+        request_id: Option<RequestId>,
+        internal_error: E,
+        error_code: tonic::Code,
+    ) -> Self {
+        let error = internal_error.into(); // converts anyhow::Error or any other error
+        let error_string = format!("Failed for metric {}:", metric_scope);
+
+        tracing::error!(
+            error = ?error,
+            request_id = ?request_id,
+            error_string,
+        );
+
+        METRICS.increment_error_counter(metric_scope, map_tonic_code_to_metric_tag(error_code));
+        Self {
+            scope: Box::new(metric_scope),
+            request_id,
+            internal_error: error,
+            error_code,
+            extra_context: None,
+        }
+    }
+    pub fn with_context<E: Into<Box<dyn std::error::Error + Send + Sync>>>(
+        metric_scope: &'static str,
+        request_id: Option<RequestId>,
+        internal_error: E,
+        error_code: tonic::Code,
+        extra_context: &'static str,
+    ) -> Self {
+        let error = internal_error.into(); // converts anyhow::Error or any other error
+        let error_string = format!("Failed for metric {}: {}", metric_scope, extra_context);
+
+        tracing::error!(
+            error = ?error,
+            request_id = ?request_id,
+            error_string,
+        );
+
+        METRICS.increment_error_counter(metric_scope, map_tonic_code_to_metric_tag(error_code));
+        Self {
+            scope: Box::new(metric_scope),
+            request_id,
+            internal_error: error,
+            error_code,
+            extra_context: None,
+        }
+    }
+}
+
+impl Into<Status> for MetricedError {
+    fn into(self) -> Status {
+        let error_string = if let Some(info) = self.extra_context {
+            top_1k_chars(format!("Failed for metric {}: {}", self.scope, info))
+        } else {
+            top_1k_chars(format!("Failed for metric {}:", self.scope))
+        };
+
+        tonic::Status::new(self.error_code, error_string)
+    }
+}
 
 #[allow(clippy::result_large_err)]
 pub fn error_helper<E>(
@@ -130,6 +202,47 @@ where
     tonic::Status::new(return_code, error_string)
 }
 
+// pub fn handle_metriced_error<T>(
+//     result: Result<Response<T>, MetricedError>,
+// ) -> Result<Response<T>, Status> {
+//     match result {
+//         Ok(response) => Ok(response),
+//         Err(metriced_error) => {
+//             let err_string = handle_orphaned_error(
+//                 &metriced_error.scope,
+//                 metriced_error.request_id,
+//                 metriced_error.extra_context,
+//                 metriced_error.internal_error,
+//             );
+//             METRICS.increment_error_counter(
+//                 *metriced_error.scope,
+//                 map_tonic_code_to_metric_tag(metriced_error.code),
+//             );
+//             Err(tonic::Status::new(metriced_error.code, err_string))
+//         }
+//     }
+// }
+
+// pub fn handle_orphaned_error(
+//     metric_scope: &'static str,
+//     request_id: Option<RequestId>,
+//     extra_context: Option<&'static str>,
+//     error: Box<dyn std::error::Error + Send + Sync>,
+// ) -> String {
+//     let error_string = if let Some(info) = extra_context.as_deref() {
+//         format!("Failed for metric {}: {}", metric_scope, info)
+//     } else {
+//         format!("Failed for metric {}:", metric_scope)
+//     };
+
+//     tracing::error!(
+//         request_id = ?request_id,
+//         error = ?error,
+//         error_string,
+//     );
+//     error_string
+// }
+
 #[allow(clippy::result_large_err)]
 pub fn ok_or_error_helper<T, E>(
     result: Result<T, E>,
@@ -144,20 +257,20 @@ where
     result.map_err(|e| error_helper(req_id, metric_scope, context_info, return_code, e))
 }
 
-#[allow(clippy::result_large_err)]
-pub fn some_or_error_helper<T, E>(
-    option: Option<T>,
-    req_id: Option<&RequestId>,
-    metric_scope: &str,
-    context_info: Option<&str>,
-    return_code: tonic::Code,
-    error: E,
-) -> Result<T, Status>
-where
-    E: Into<Box<dyn std::error::Error + Send + Sync>>,
-{
-    option.ok_or_else(|| error_helper(req_id, metric_scope, context_info, return_code, error))
-}
+// #[allow(clippy::result_large_err)]
+// pub fn some_or_error_helper<T, E>(
+//     option: Option<T>,
+//     req_id: Option<&RequestId>,
+//     metric_scope: &str,
+//     context_info: Option<&str>,
+//     return_code: tonic::Code,
+//     error: E,
+// ) -> Result<T, Status>
+// where
+//     E: Into<Box<dyn std::error::Error + Send + Sync>>,
+// {
+//     option.ok_or_else(|| error_helper(req_id, metric_scope, context_info, return_code, error))
+// }
 
 /// Wrapper struct to allow upgrading of CrsGenMetadata.
 /// This is needed because `SignedPubDataHandleInternal`

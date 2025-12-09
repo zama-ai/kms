@@ -10,15 +10,15 @@ use kms_grpc::{
         self, CiphertextFormat, Empty, PublicDecryptionRequest, PublicDecryptionResponse,
         PublicDecryptionResponsePayload, TypedPlaintext,
     },
-    rpc_types::{error_helper, ok_or_error_helper},
+    rpc_types::{error_helper, ok_or_error_helper, MetricedError},
     RequestId,
 };
 use observability::{
     metrics::{self},
     metrics_names::{
         ERR_PUBLIC_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
-        TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND,
-        TAG_REQUEST_ID, TAG_TFHE_TYPE,
+        OP_PUBLIC_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
+        TAG_PUBLIC_DECRYPTION_KIND, TAG_REQUEST_ID, TAG_TFHE_TYPE,
     },
 };
 use tfhe::FheTypes;
@@ -57,8 +57,8 @@ use crate::{
         threshold::{service::session::ImmutableSessionMaker, traits::PublicDecryptor},
         traits::BaseKms,
         validation::{
-            parse_proto_request_id, validate_public_decrypt_req, RequestIdParsingErr,
-            DSEP_PUBLIC_DECRYPTION,
+            optional_proto_request_id, parse_proto_request_id, proto_request_id,
+            validate_public_decrypt_req, RequestIdParsingErr, DSEP_PUBLIC_DECRYPTION,
         },
     },
     ok_or_tonic_abort,
@@ -274,470 +274,557 @@ impl<
         &self,
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let inner = Arc::new(request.into_inner());
-        // Check and extract the parameters from the request in a separate thread
-        let (ciphertexts, req_id, key_id, context_id, epoch_id, eip712_domain) = {
-            let inner_compute = Arc::clone(&inner);
-            ok_or_error_helper(
-                spawn_compute_bound(move || {
-                    ok_or_error_helper(
-                        validate_public_decrypt_req(&inner_compute),
-                        None,
-                        OP_PUBLIC_DECRYPT_REQUEST,
-                        Some("Paramter parsing and validation"),
-                        tonic::Code::InvalidArgument,
-                    )
-                })
-                .await,
-                None,
-                OP_PUBLIC_DECRYPT_REQUEST,
-                Some("Failed to execute parameter parsing thread"),
-                tonic::Code::Internal,
-            )
-        }??;
-        let my_role = ok_or_error_helper(
-            self.session_maker.my_role(&context_id).await,
-            Some(&req_id),
-            OP_PUBLIC_DECRYPT_REQUEST,
-            Some("Could not retrieve my role for context"),
-            tonic::Code::Internal,
-        )?;
-        let timer = metrics::METRICS
-            .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
-            .tags([
-                (TAG_PARTY_ID, my_role.to_string()),
-                (TAG_REQUEST_ID, req_id.to_string()),
-                (TAG_KEY_ID, key_id.as_str()),
-                (TAG_CONTEXT_ID, context_id.as_str()),
-                (TAG_EPOCH_ID, epoch_id.as_str()),
-            ])
-            .start();
-        // Do some checks before we start modifying the database
-        {
-            let guarded_meta_store = self.pub_dec_meta_store.read().await;
-            if guarded_meta_store.exists(&req_id) {
-                return Err(error_helper(
-                    Some(&req_id),
-                    OP_PUBLIC_DECRYPT_REQUEST,
-                    Some("Public decryption with this request ID already exists in the meta store"),
-                    tonic::Code::AlreadyExists,
-                    anyhow!("Duplicate request ID"),
-                ));
-            }
-        }
-
-        // Check for resource exhaustion once all the other checks are ok
-        // because resource exhaustion can be recovered by sending the exact same request
-        // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_pub_decrypt().await?;
-
-        ok_or_error_helper(
-            self.crypto_storage
-                .refresh_threshold_fhe_keys(&key_id.into())
-                .await,
-            Some(&req_id),
-            OP_PUBLIC_DECRYPT_REQUEST,
-            Some("Failed to refresh threshold FHE keys. Threshold FHE keys not found"),
-            tonic::Code::NotFound,
-        )?;
-
-        tracing::debug!(
-            request_id = ?req_id,
-            key_id = ?key_id,
-            ciphertexts_count = ciphertexts.len(),
-            "Starting decryption process"
-        );
-
-        // Below we write to the meta-store.
-        // After writing, the the meta-store on this [req_id] will be in the "Started" state
-        // So we need to update it everytime something bad happens,
-        // or put all the code that may error before the first write to the meta-store,
-        // otherwise it'll be in the "Started" state forever.
-        // Optimize lock hold time by minimizing operations under lock
-        let (lock_acquired_time, total_lock_time) = {
-            let lock_start = std::time::Instant::now();
-            let mut guarded_meta_store = self.pub_dec_meta_store.write().await;
-            let lock_acquired_time = lock_start.elapsed();
-            ok_or_error_helper(
-                guarded_meta_store.insert(&req_id),
-                Some(&req_id),
-                OP_PUBLIC_DECRYPT_REQUEST,
-                Some("Failed to insert new public decryption call into meta store"),
-                tonic::Code::Aborted,
-            )?;
-            let total_lock_time = lock_start.elapsed();
-            (lock_acquired_time, total_lock_time)
-        };
-
-        // Log after lock is released
-        tracing::info!(
-            "MetaStore INITIAL insert - req_id={}, key_id={}, context_id={}, epoch_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
-            req_id, key_id, context_id, epoch_id, my_role, ciphertexts.len(), lock_acquired_time, total_lock_time
-        );
-
-        let ext_handles_bytes = ciphertexts
-            .iter()
-            .map(|c| c.external_handle.to_owned())
-            .collect::<Vec<_>>();
-
-        let mut dec_tasks = Vec::new();
-        let dec_mode = self.decryption_mode;
-
-        // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
-        for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
-            let inner_timer = metrics::METRICS
-                .time_operation(OP_PUBLIC_DECRYPT_INNER)
-                .tags([
-                    (TAG_PARTY_ID, my_role.to_string()),
-                    (TAG_REQUEST_ID, req_id.to_string()),
-                    (TAG_KEY_ID, key_id.as_str()),
-                    (TAG_CONTEXT_ID, context_id.as_str()),
-                    (TAG_EPOCH_ID, epoch_id.as_str()),
-                    (
-                        TAG_PUBLIC_DECRYPTION_KIND,
-                        dec_mode.as_str_name().to_string(),
-                    ),
-                ])
-                .start();
-            let internal_sid = ok_or_error_helper(
-                req_id.derive_session_id_with_counter(ctr as u64),
-                Some(&req_id),
-                OP_PUBLIC_DECRYPT_INNER,
-                Some("failed to derive session ID from counter"),
-                tonic::Code::Aborted,
-            )?;
-
-            let hex_req_id = hex::encode(req_id.as_bytes());
-            let decimal_req_id: u128 = req_id.try_into().unwrap_or(0);
-            tracing::info!(
-                request_id = hex_req_id,
-                request_id_decimal = decimal_req_id,
-                "Public Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {internal_sid}. Handle: {}",
-                hex::encode(&typed_ciphertext.external_handle)
-            );
-
-            let crypto_storage = self.crypto_storage.clone();
-
-            // we do not need to hold the handle,
-            // the result of the computation is tracked by the pub_dec_meta_store
-            let session_maker = self.session_maker.clone();
-            let decrypt_future = || async move {
-                let fhe_type_string = typed_ciphertext.fhe_type_string();
-                let fhe_type = if let Ok(f) = typed_ciphertext.fhe_type() {
-                    f
-                } else {
-                    return Err(anyhow_error_and_log(format!(
-                        "Threshold decryption failed due to wrong fhe type: {}",
-                        typed_ciphertext.fhe_type
-                    )));
-                };
-                // Capture the inner_timer inside the decryption tasks, such that when the task
-                // exits, the timer is dropped and thus exported
-                let mut inner_timer = inner_timer;
-                inner_timer.tag(TAG_TFHE_TYPE, fhe_type_string);
-
-                let ct_format = typed_ciphertext.ciphertext_format();
-                let ciphertext = typed_ciphertext.ciphertext;
-                let fhe_keys_rlock = crypto_storage
-                    .read_guarded_threshold_fhe_keys_from_cache(&key_id.into())
-                    .await?;
-
-                let res_plaintext = match fhe_type {
-                    FheTypes::Uint2048 => Self::inner_decrypt::<tfhe::integer::bigint::U2048>(
-                        internal_sid,
-                        context_id,
-                        epoch_id,
-                        session_maker,
-                        ciphertext,
-                        fhe_type,
-                        ct_format,
-                        fhe_keys_rlock,
-                        dec_mode,
-                    )
-                    .await
-                    .map(TypedPlaintext::from_u2048),
-                    FheTypes::Uint1024 => Self::inner_decrypt::<tfhe::integer::bigint::U1024>(
-                        internal_sid,
-                        context_id,
-                        epoch_id,
-                        session_maker,
-                        ciphertext,
-                        fhe_type,
-                        ct_format,
-                        fhe_keys_rlock,
-                        dec_mode,
-                    )
-                    .await
-                    .map(TypedPlaintext::from_u1024),
-                    FheTypes::Uint512 => Self::inner_decrypt::<tfhe::integer::bigint::U512>(
-                        internal_sid,
-                        context_id,
-                        epoch_id,
-                        session_maker,
-                        ciphertext,
-                        fhe_type,
-                        ct_format,
-                        fhe_keys_rlock,
-                        dec_mode,
-                    )
-                    .await
-                    .map(TypedPlaintext::from_u512),
-                    FheTypes::Uint256 => Self::inner_decrypt::<tfhe::integer::U256>(
-                        internal_sid,
-                        context_id,
-                        epoch_id,
-                        session_maker,
-                        ciphertext,
-                        fhe_type,
-                        ct_format,
-                        fhe_keys_rlock,
-                        dec_mode,
-                    )
-                    .await
-                    .map(TypedPlaintext::from_u256),
-                    FheTypes::Uint160 => Self::inner_decrypt::<tfhe::integer::U256>(
-                        internal_sid,
-                        context_id,
-                        epoch_id,
-                        session_maker,
-                        ciphertext,
-                        fhe_type,
-                        ct_format,
-                        fhe_keys_rlock,
-                        dec_mode,
-                    )
-                    .await
-                    .map(TypedPlaintext::from_u160),
-                    FheTypes::Uint128 => Self::inner_decrypt::<u128>(
-                        internal_sid,
-                        context_id,
-                        epoch_id,
-                        session_maker,
-                        ciphertext,
-                        fhe_type,
-                        ct_format,
-                        fhe_keys_rlock,
-                        dec_mode,
-                    )
-                    .await
-                    .map(|x| TypedPlaintext::new(x, fhe_type)),
-                    FheTypes::Uint80 => Self::inner_decrypt::<u128>(
-                        internal_sid,
-                        context_id,
-                        epoch_id,
-                        session_maker,
-                        ciphertext,
-                        fhe_type,
-                        ct_format,
-                        fhe_keys_rlock,
-                        dec_mode,
-                    )
-                    .await
-                    .map(TypedPlaintext::from_u80),
-                    FheTypes::Bool
-                    | FheTypes::Uint4
-                    | FheTypes::Uint8
-                    | FheTypes::Uint16
-                    | FheTypes::Uint32
-                    | FheTypes::Uint64 => Self::inner_decrypt::<u64>(
-                        internal_sid,
-                        context_id,
-                        epoch_id,
-                        session_maker,
-                        ciphertext,
-                        fhe_type,
-                        ct_format,
-                        fhe_keys_rlock,
-                        dec_mode,
-                    )
-                    .await
-                    .map(|x| TypedPlaintext::new(x as u128, fhe_type)),
-                    unsupported_fhe_type => Err(anyhow_error_and_log(format!(
-                        "Unsupported fhe type {:?}",
-                        unsupported_fhe_type
-                    ))),
-                };
-                // We don't update the error counter here but rather in the signature task
-                // so we only update it once even if there are multiple decryption task that fail
-                match res_plaintext {
-                    Ok(plaintext) => Ok((ctr, plaintext)),
-                    Result::Err(e) => Err(anyhow_error_and_log(format!(
-                        "Threshold decryption failed:{e}"
-                    ))),
-                }
-            };
-            dec_tasks.push(
-                self.tracker
-                    .spawn(decrypt_future().instrument(tracing::Span::current())),
-            );
-        }
-
-        // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
-        let meta_store = Arc::clone(&self.pub_dec_meta_store);
-        let sigkey = ok_or_error_helper(
-            self.base_kms.sig_key(),
-            Some(&req_id),
-            OP_PUBLIC_DECRYPT_REQUEST,
-            Some("Failed to get signing key for public decryption request"),
-            tonic::Code::Internal,
-        )?;
-        let dec_sig_future = move |_permit| async move {
-            // Move the timer to the management task's context, so as to drop
-            // it when decryptions are available
-            let _timer = timer;
-            // NOTE: _permit should be dropped at the end of this function
-            let mut decs = HashMap::new();
-
-            // Collect all results first, without holding any locks
-            while let Some(resp) = dec_tasks.pop() {
-                match resp.await {
-                    Ok(Ok((idx, plaintext))) => {
-                        decs.insert(idx, plaintext);
-                    }
-                    Ok(Err(e)) => {
-                        let msg = format!("Failed decryption {req_id} with err: {e:?}");
-                        tracing::error!(msg);
-                        let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store.update(&req_id, Err(msg));
-                        // exit mgmt task early in case of error
-                        return Err(());
-                    }
-                    Err(e) => {
-                        let msg = format!("Failed decryption {req_id} with JoinError: {e:?}");
-                        tracing::error!(msg);
-                        let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store.update(&req_id, Err(msg));
-                        // exit mgmt task early in case of error
-                        return Err(());
-                    }
-                }
-            }
-
-            // Prepare success data outside of lock
-            let pts: Vec<_> = decs
-                .keys()
-                .sorted()
-                .map(|idx| decs.get(idx).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
-                .collect();
-
-            // NOTE: extra data is not used at the moment
-            let extra_data = vec![];
-
-            // Compute expensive signature OUTSIDE the lock
-            let external_sig = {
-                let extra_data = extra_data.clone();
-                let pts = pts.clone();
-                spawn_compute_bound(move || {
-                    compute_external_pt_signature(
-                        &sigkey,
-                        ext_handles_bytes,
-                        &pts,
-                        extra_data.clone(),
-                        eip712_domain,
-                    )
-                })
-                .await
-            };
-            let external_sig = match external_sig {
-                Ok(Ok(sig)) => sig,
-                Err(e) | Ok(Err(e)) => {
-                    let msg = format!(
-                        "Failed to compute external signature for decryption request {req_id}: {e:?}"
-                    );
-                    tracing::error!(msg);
-                    // Update meta-store with the failure so clients are unblocked
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(&req_id, Err(msg));
-                    return Err(());
-                }
-            };
-
-            // Single success update with minimal lock hold time
-            let pts_len = pts.len();
-            let success_result = Ok((req_id, pts, external_sig, extra_data));
-
-            let (lock_acquired_time, total_lock_time) = {
-                let lock_start = std::time::Instant::now();
-                let mut guarded_meta_store = meta_store.write().await;
-                let lock_acquired_time = lock_start.elapsed();
-                guarded_meta_store
-                    .update(&req_id, success_result)
-                    .map_err(|_| ())?;
-                let total_lock_time = lock_start.elapsed();
-                (lock_acquired_time, total_lock_time)
-            };
-            // Log after lock is released
-            tracing::info!(
-                "MetaStore SUCCESS update - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
-                req_id, key_id, my_role, pts_len, lock_acquired_time, total_lock_time
-            );
-            Ok(())
-        };
-        // Increment the error counter if ever the task fails
-        self.tracker.spawn(async move {
-            let res = dec_sig_future(permit)
-                .instrument(tracing::Span::current())
-                .await;
-            if res.is_err() {
-                metrics::METRICS.increment_error_counter(
-                    OP_PUBLIC_DECRYPT_REQUEST,
-                    ERR_PUBLIC_DECRYPTION_FAILED,
-                );
-            }
-        });
-
-        Ok(Response::new(Empty {}))
+        public_decrypt_metriced(self, request)
+            .await
+            .map_err(|e| e.into())
     }
 
     async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<PublicDecryptionResponse>, Status> {
-        let request_id = parse_proto_request_id(
-            &request.into_inner(),
-            RequestIdParsingErr::PublicDecResponse,
-        )?;
-        let status = {
-            let guarded_meta_store = self.pub_dec_meta_store.read().await;
-            guarded_meta_store.retrieve(&request_id)
-        };
-        let (retrieved_req_id, plaintexts, external_signature, extra_data) =
-            handle_res_mapping(status, &request_id, "Decryption").await?;
+        get_result_metriced(self, request)
+            .await
+            .map_err(|e| e.into())
+    }
+}
 
-        if request_id != retrieved_req_id {
-            return Err(Status::not_found(format!(
-                "Request ID mismatch: expected {request_id}, got {retrieved_req_id}",
-            )));
+async fn public_decrypt_metriced<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+    Dec: NoiseFloodDecryptor<
+            Prep = SmallOfflineNoiseFloodSession<
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                SmallSession<ResiduePolyF4Z128>,
+            >,
+        > + 'static,
+>(
+    decryptor: &RealPublicDecryptor<PubS, PrivS, Dec>,
+    request: Request<PublicDecryptionRequest>,
+) -> Result<Response<Empty>, MetricedError> {
+    let inner = Arc::new(request.into_inner());
+    // Check and extract the parameters from the request in a separate thread
+    let (ciphertexts, req_id, key_id, context_id, epoch_id, eip712_domain) = {
+        let inner_compute = Arc::clone(&inner);
+        spawn_compute_bound(move || {
+            validate_public_decrypt_req(&inner_compute).map_err(|e| {
+                MetricedError::new(
+                    OP_PUBLIC_DECRYPT_REQUEST,
+                    None,
+                    e,
+                    tonic::Code::InvalidArgument,
+                )
+            })
+        })
+        .await
+        .map_err(|e| {
+            MetricedError::new(OP_PUBLIC_DECRYPT_REQUEST, None, e, tonic::Code::Internal)
+        })?
+    }?;
+    let my_role = decryptor
+        .session_maker
+        .my_role(&context_id)
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some(req_id),
+                e,
+                tonic::Code::Internal,
+            )
+        })?;
+    let timer = metrics::METRICS
+        .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
+        .tags([
+            (TAG_PARTY_ID, my_role.to_string()),
+            (TAG_REQUEST_ID, req_id.to_string()),
+            (TAG_KEY_ID, key_id.as_str()),
+            (TAG_CONTEXT_ID, context_id.as_str()),
+            (TAG_EPOCH_ID, epoch_id.as_str()),
+        ])
+        .start();
+    // Do some checks before we start modifying the database
+    {
+        let guarded_meta_store = decryptor.pub_dec_meta_store.read().await;
+        if guarded_meta_store.exists(&req_id) {
+            return Err(MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some(req_id),
+                anyhow!("Duplicate request ID in meta store"),
+                tonic::Code::AlreadyExists,
+            ));
+        }
+    }
+
+    // Check for resource exhaustion once all the other checks are ok
+    // because resource exhaustion can be recovered by sending the exact same request
+    // but the errors above cannot be tried again.
+    let permit = decryptor
+        .rate_limiter
+        .start_pub_decrypt()
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_INNER,
+                Some(req_id),
+                anyhow::anyhow!("Resource exhaustion rate limit"), // TODO
+                tonic::Code::ResourceExhausted,
+            )
+        })?;
+
+    decryptor
+        .crypto_storage
+        .refresh_threshold_fhe_keys(&key_id.into())
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some(req_id),
+                e,
+                tonic::Code::NotFound,
+            )
+        })?;
+
+    tracing::debug!(
+        request_id = ?req_id,
+        key_id = ?key_id,
+        ciphertexts_count = ciphertexts.len(),
+        "Starting decryption process"
+    );
+
+    // Below we write to the meta-store.
+    // After writing, the the meta-store on this [req_id] will be in the "Started" state
+    // So we need to update it everytime something bad happens,
+    // or put all the code that may error before the first write to the meta-store,
+    // otherwise it'll be in the "Started" state forever.
+    // Optimize lock hold time by minimizing operations under lock
+    let (lock_acquired_time, total_lock_time) = {
+        let lock_start = std::time::Instant::now();
+        let mut guarded_meta_store = decryptor.pub_dec_meta_store.write().await;
+        let lock_acquired_time = lock_start.elapsed();
+        guarded_meta_store.insert(&req_id).map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_INNER,
+                Some(req_id),
+                e,
+                tonic::Code::Aborted,
+            )
+        })?;
+        let total_lock_time = lock_start.elapsed();
+        (lock_acquired_time, total_lock_time)
+    };
+
+    // Log after lock is released
+    tracing::info!(
+            "MetaStore INITIAL insert - req_id={}, key_id={}, context_id={}, epoch_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
+            req_id, key_id, context_id, epoch_id, my_role, ciphertexts.len(), lock_acquired_time, total_lock_time
+        );
+
+    let ext_handles_bytes = ciphertexts
+        .iter()
+        .map(|c| c.external_handle.to_owned())
+        .collect::<Vec<_>>();
+
+    let mut dec_tasks = Vec::new();
+    let dec_mode = decryptor.decryption_mode;
+
+    // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
+    for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
+        let inner_timer = metrics::METRICS
+            .time_operation(OP_PUBLIC_DECRYPT_INNER)
+            .tags([
+                (TAG_PARTY_ID, my_role.to_string()),
+                (TAG_REQUEST_ID, req_id.to_string()),
+                (TAG_KEY_ID, key_id.as_str()),
+                (TAG_CONTEXT_ID, context_id.as_str()),
+                (TAG_EPOCH_ID, epoch_id.as_str()),
+                (
+                    TAG_PUBLIC_DECRYPTION_KIND,
+                    dec_mode.as_str_name().to_string(),
+                ),
+            ])
+            .start();
+        let internal_sid = req_id
+            .derive_session_id_with_counter(ctr as u64)
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_PUBLIC_DECRYPT_INNER,
+                    Some(req_id),
+                    e,
+                    tonic::Code::Aborted,
+                )
+            })?;
+
+        let hex_req_id = hex::encode(req_id.as_bytes());
+        let decimal_req_id: u128 = req_id.try_into().unwrap_or(0);
+        tracing::info!(
+                request_id = hex_req_id,
+                request_id_decimal = decimal_req_id,
+                "Public Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {internal_sid}. Handle: {}",
+                hex::encode(&typed_ciphertext.external_handle)
+            );
+
+        let crypto_storage = decryptor.crypto_storage.clone();
+
+        // we do not need to hold the handle,
+        // the result of the computation is tracked by the pub_dec_meta_store
+        let session_maker = decryptor.session_maker.clone();
+        let decrypt_future = || async move {
+            let fhe_type_string = typed_ciphertext.fhe_type_string();
+            let fhe_type = if let Ok(f) = typed_ciphertext.fhe_type() {
+                f
+            } else {
+                return Err(anyhow::anyhow!(format!(
+                    "Threshold decryption failed due to wrong fhe type: {}",
+                    typed_ciphertext.fhe_type
+                )));
+            };
+            // Capture the inner_timer inside the decryption tasks, such that when the task
+            // exits, the timer is dropped and thus exported
+            let mut inner_timer = inner_timer;
+            inner_timer.tag(TAG_TFHE_TYPE, fhe_type_string);
+
+            let ct_format = typed_ciphertext.ciphertext_format();
+            let ciphertext = typed_ciphertext.ciphertext;
+            let fhe_keys_rlock = crypto_storage
+                .read_guarded_threshold_fhe_keys_from_cache(&key_id.into())
+                .await?;
+
+            let res_plaintext = match fhe_type {
+                FheTypes::Uint2048 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
+                    tfhe::integer::bigint::U2048,
+                >(
+                    internal_sid,
+                    context_id,
+                    epoch_id,
+                    session_maker,
+                    ciphertext,
+                    fhe_type,
+                    ct_format,
+                    fhe_keys_rlock,
+                    dec_mode,
+                )
+                .await
+                .map(TypedPlaintext::from_u2048),
+                FheTypes::Uint1024 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
+                    tfhe::integer::bigint::U1024,
+                >(
+                    internal_sid,
+                    context_id,
+                    epoch_id,
+                    session_maker,
+                    ciphertext,
+                    fhe_type,
+                    ct_format,
+                    fhe_keys_rlock,
+                    dec_mode,
+                )
+                .await
+                .map(TypedPlaintext::from_u1024),
+                FheTypes::Uint512 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
+                    tfhe::integer::bigint::U512,
+                >(
+                    internal_sid,
+                    context_id,
+                    epoch_id,
+                    session_maker,
+                    ciphertext,
+                    fhe_type,
+                    ct_format,
+                    fhe_keys_rlock,
+                    dec_mode,
+                )
+                .await
+                .map(TypedPlaintext::from_u512),
+                FheTypes::Uint256 => {
+                    RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<tfhe::integer::U256>(
+                        internal_sid,
+                        context_id,
+                        epoch_id,
+                        session_maker,
+                        ciphertext,
+                        fhe_type,
+                        ct_format,
+                        fhe_keys_rlock,
+                        dec_mode,
+                    )
+                    .await
+                    .map(TypedPlaintext::from_u256)
+                }
+                FheTypes::Uint160 => {
+                    RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<tfhe::integer::U256>(
+                        internal_sid,
+                        context_id,
+                        epoch_id,
+                        session_maker,
+                        ciphertext,
+                        fhe_type,
+                        ct_format,
+                        fhe_keys_rlock,
+                        dec_mode,
+                    )
+                    .await
+                    .map(TypedPlaintext::from_u160)
+                }
+                FheTypes::Uint128 => {
+                    RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u128>(
+                        internal_sid,
+                        context_id,
+                        epoch_id,
+                        session_maker,
+                        ciphertext,
+                        fhe_type,
+                        ct_format,
+                        fhe_keys_rlock,
+                        dec_mode,
+                    )
+                    .await
+                    .map(|x| TypedPlaintext::new(x, fhe_type))
+                }
+                FheTypes::Uint80 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u128>(
+                    internal_sid,
+                    context_id,
+                    epoch_id,
+                    session_maker,
+                    ciphertext,
+                    fhe_type,
+                    ct_format,
+                    fhe_keys_rlock,
+                    dec_mode,
+                )
+                .await
+                .map(TypedPlaintext::from_u80),
+                FheTypes::Bool
+                | FheTypes::Uint4
+                | FheTypes::Uint8
+                | FheTypes::Uint16
+                | FheTypes::Uint32
+                | FheTypes::Uint64 => {
+                    RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<u64>(
+                        internal_sid,
+                        context_id,
+                        epoch_id,
+                        session_maker,
+                        ciphertext,
+                        fhe_type,
+                        ct_format,
+                        fhe_keys_rlock,
+                        dec_mode,
+                    )
+                    .await
+                    .map(|x| TypedPlaintext::new(x as u128, fhe_type))
+                }
+                // TODO handle error here
+                unsupported_fhe_type => Err(anyhow_error_and_log(format!(
+                    "Unsupported fhe type {:?}",
+                    unsupported_fhe_type
+                ))),
+            };
+            // We don't update the error counter here but rather in the signature task
+            // so we only update it once even if there are multiple decryption task that fail
+            match res_plaintext {
+                Ok(plaintext) => Ok((ctr, plaintext)),
+                Result::Err(e) => Err(anyhow_error_and_log(format!(
+                    "Threshold decryption failed:{e}"
+                ))),
+            }
+        };
+        dec_tasks.push(
+            decryptor
+                .tracker
+                .spawn(decrypt_future().instrument(tracing::Span::current())),
+        );
+    }
+
+    // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
+    let meta_store = Arc::clone(&decryptor.pub_dec_meta_store);
+    let sigkey = decryptor.base_kms.sig_key().map_err(|e| {
+        MetricedError::new(
+            OP_PUBLIC_DECRYPT_REQUEST,
+            Some(req_id),
+            e,
+            tonic::Code::Internal,
+        )
+    })?;
+    let dec_sig_future = move |_permit| async move {
+        // Move the timer to the management task's context, so as to drop
+        // it when decryptions are available
+        let _timer = timer;
+        // NOTE: _permit should be dropped at the end of this function
+        let mut decs = HashMap::new();
+
+        // Collect all results first, without holding any locks
+        while let Some(resp) = dec_tasks.pop() {
+            match resp.await {
+                Ok(Ok((idx, plaintext))) => {
+                    decs.insert(idx, plaintext);
+                }
+                Ok(Err(e)) => {
+                    let msg = format!("Failed decryption {req_id} with err: {e:?}");
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store.update(&req_id, Err(msg.clone()));
+                    // exit mgmt task early in case of error
+                    return Err(msg);
+                }
+                Err(e) => {
+                    let msg = format!("Failed decryption {req_id} with JoinError: {e:?}");
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store.update(&req_id, Err(msg.clone()));
+                    // exit mgmt task early in case of error
+                    return Err(msg);
+                }
+            }
         }
 
-        let server_verf_key = self.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
+        // Prepare success data outside of lock
+        let pts: Vec<_> = decs
+            .keys()
+            .sorted()
+            .map(|idx| decs.get(idx).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
+            .collect();
+
+        // NOTE: extra data is not used at the moment
+        let extra_data = vec![];
+
+        // Compute expensive signature OUTSIDE the lock
+        let external_sig = {
+            let extra_data = extra_data.clone();
+            let pts = pts.clone();
+            spawn_compute_bound(move || {
+                compute_external_pt_signature(
+                    &sigkey,
+                    ext_handles_bytes,
+                    &pts,
+                    extra_data.clone(),
+                    eip712_domain,
+                )
+            })
+            .await
+        };
+        let external_sig = match external_sig {
+            Ok(Ok(sig)) => sig,
+            Err(e) | Ok(Err(e)) => {
+                let msg = format!(
+                    "Failed to compute external signature for decryption request {req_id}: {e:?}"
+                );
+                // Update meta-store with the failure so clients are unblocked
+                let mut guarded_meta_store = meta_store.write().await;
+                let _ = guarded_meta_store.update(&req_id, Err(msg.clone()));
+                return Err(msg);
+            }
+        };
+
+        // Single success update with minimal lock hold time
+        let pts_len = pts.len();
+        let success_result = Ok((req_id, pts, external_sig, extra_data));
+
+        let (lock_acquired_time, total_lock_time) = {
+            let lock_start = std::time::Instant::now();
+            let mut guarded_meta_store = meta_store.write().await;
+            let lock_acquired_time = lock_start.elapsed();
+            guarded_meta_store
+                .update(&req_id, success_result)
+                .map_err(|e| format!("Failed to update meta store: {e}"))?;
+            let total_lock_time = lock_start.elapsed();
+            (lock_acquired_time, total_lock_time)
+        };
+        // Log after lock is released
+        tracing::info!(
+                "MetaStore SUCCESS update - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
+                req_id, key_id, my_role, pts_len, lock_acquired_time, total_lock_time
+            );
+        Ok(())
+    };
+    // Increment the error counter if ever the task fails
+    decryptor.tracker.spawn(async move {
+        // Ignore the result since this is a background thread. The `MetricedError` constructor ensures logging and metrics update
+        let _ = dec_sig_future(permit)
+            .instrument(tracing::Span::current())
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_PUBLIC_DECRYPT_INNER,
+                    Some(req_id),
+                    anyhow::anyhow!("Decryption thread results in error: {e}"),
+                    tonic::Code::Internal,
+                )
+            });
+    });
+
+    Ok(Response::new(Empty {}))
+}
+
+async fn get_result_metriced<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+    Dec: NoiseFloodDecryptor<
+            Prep = SmallOfflineNoiseFloodSession<
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                SmallSession<ResiduePolyF4Z128>,
+            >,
+        > + 'static,
+>(
+    decryptor: &RealPublicDecryptor<PubS, PrivS, Dec>,
+    request: Request<v1::RequestId>,
+) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
+    let request_id = proto_request_id(
+        &request.into_inner(),
+        RequestIdParsingErr::PublicDecResponse,
+    )
+    .map_err(|e| {
+        MetricedError::new(
+            OP_PUBLIC_DECRYPT_RESULT,
+            None,
+            e,
+            tonic::Code::InvalidArgument,
+        )
+    })?;
+
+    let status = {
+        let guarded_meta_store = decryptor.pub_dec_meta_store.read().await;
+        guarded_meta_store.retrieve(&request_id)
+    };
+    let (retrieved_req_id, plaintexts, external_signature, extra_data) =
+        handle_res_mapping(status, &request_id, "Decryption").await?;
+
+    if request_id != retrieved_req_id {
+        return Err(Status::not_found(format!(
+            "Request ID mismatch: expected {request_id}, got {retrieved_req_id}",
+        )));
+    }
+
+    let server_verf_key = decryptor
+        .base_kms
+        .verf_key()
+        .to_legacy_bytes()
+        .map_err(|e| {
             Status::failed_precondition(format!(
                 "Failed to serialize server verification key: {e:?}"
             ))
         })?;
-        let sig_payload = PublicDecryptionResponsePayload {
-            plaintexts,
-            verification_key: server_verf_key,
-            request_id: Some(retrieved_req_id.into()),
-        };
+    let sig_payload = PublicDecryptionResponsePayload {
+        plaintexts,
+        verification_key: server_verf_key,
+        request_id: Some(retrieved_req_id.into()),
+    };
 
-        let sig_payload_vec = ok_or_tonic_abort(
-            bc2wrap::serialize(&sig_payload),
-            format!("Could not convert payload to bytes {sig_payload:?}"),
-        )?;
+    let sig_payload_vec = ok_or_tonic_abort(
+        bc2wrap::serialize(&sig_payload),
+        format!("Could not convert payload to bytes {sig_payload:?}"),
+    )?;
 
-        let sig = ok_or_tonic_abort(
-            self.base_kms
-                .sign(&DSEP_PUBLIC_DECRYPTION, &sig_payload_vec),
-            format!("Could not sign payload {sig_payload:?}"),
-        )?;
-        Ok(Response::new(PublicDecryptionResponse {
-            signature: sig.sig.to_vec(),
-            payload: Some(sig_payload),
-            external_signature,
-            extra_data,
-        }))
-    }
+    let sig = ok_or_tonic_abort(
+        decryptor
+            .base_kms
+            .sign(&DSEP_PUBLIC_DECRYPTION, &sig_payload_vec),
+        format!("Could not sign payload {sig_payload:?}"),
+    )?;
+    Ok(Response::new(PublicDecryptionResponse {
+        signature: sig.sig.to_vec(),
+        payload: Some(sig_payload),
+        external_signature,
+        extra_data,
+    }))
 }
 
 #[cfg(test)]

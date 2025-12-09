@@ -13,7 +13,7 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
 
     let total_ram = system.total_memory();
     let free_ram = system.free_memory();
-
+    // todo add file descriptors and shit
     tracing::info!("Starting system metrics collection...\n Running on {} CPUs. Total memory: {} bytes, Free memory: {} bytes.",
         num_cpus, total_ram, free_ram);
 

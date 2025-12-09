@@ -14,7 +14,7 @@ use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
 use kms_grpc::kms::v1::CrsGenRequest;
-use kms_grpc::rpc_types::{error_helper, ok_or_error_helper};
+use kms_grpc::rpc_types::ok_or_error_helper;
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::{
     kms::v1::{
@@ -24,7 +24,7 @@ use kms_grpc::{
     rpc_types::optional_protobuf_to_alloy_domain,
 };
 use kms_grpc::{KeyId, RequestId};
-use observability::metrics_names::{OP_CRS_GEN_REQUEST, OP_PUBLIC_DECRYPT_REQUEST};
+use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::hashing::DomainSep;
 
@@ -137,9 +137,18 @@ pub(crate) fn optional_proto_request_id(
     let req_id = request_id.clone().ok_or(anyhow::anyhow!(
         "Request ID not present: {id_type}: {request_id:?}"
     ))?;
-    req_id
-        .try_into()
-        .map_err(|e| anyhow::anyhow!("Request ID invalid: {id_type}: {request_id:?}: {e}"))
+    proto_request_id(&req_id, id_type)
+}
+
+pub(crate) fn proto_request_id(
+    request_id: &kms_grpc::kms::v1::RequestId,
+    id_type: RequestIdParsingErr,
+) -> anyhow::Result<RequestId> {
+    request_id.try_into().map_err(|e| {
+        anyhow::anyhow!(format!(
+            "Invalid request ID: {id_type}: {request_id:?}: {e}"
+        ))
+    })
 }
 
 /// Parse a protobuf request ID and returns an appropriate tonic error if it is invalid.
@@ -302,45 +311,17 @@ pub fn validate_public_decrypt_req(
     };
     let epoch_id: EpochId = match &req.epoch_id {
         Some(epoch_id) => epoch_id.try_into()?,
-        // ok_or_error_helper(
-        //     epoch_id.try_into(),
-        //     Some(&req_id),
-        //     OP_PUBLIC_DECRYPT_REQUEST,
-        //     Some("Epoch parameter validation"),
-        //     tonic::Code::InvalidArgument,
-        // )?,
         None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
     };
-    let key_id: KeyId = req
-        .request_id
-        .clone()
-        .ok_or(anyhow::anyhow!(
-            "No key ID provided: {}",
-            RequestIdParsingErr::PublicDecRequestBadKeyId
-        ))?
-        .try_into()?;
+    let key_id: KeyId =
+        optional_proto_request_id(&req.key_id, RequestIdParsingErr::PublicDecRequestBadKeyId)?
+            .into();
 
     if req.ciphertexts.is_empty() {
         return Err(anyhow::anyhow!(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS).into());
-        // return Err(error_helper(
-        //     Some(&req_id),
-        //     OP_PUBLIC_DECRYPT_REQUEST,
-        //     Some("Ciphertexts argument validation"),
-        //     tonic::Code::InvalidArgument,
-        //     anyhow::anyhow!(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS),
-        // )
-        // .into());
     }
 
-    let eip712_domain = 
-    // ok_or_error_helper(
-        optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
-    //     Some(&req_id),
-    //     OP_PUBLIC_DECRYPT_REQUEST,
-    //     Some("Eip712 domain validation"),
-    //     tonic::Code::InvalidArgument,
-    // )?;
-
+    let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
     Ok((
         req.ciphertexts.clone(),
         req_id,
