@@ -207,7 +207,7 @@ impl CoreMetrics {
             .with_unit("processes")
             .build();
         //Record 0 just to make sure the histogram is exported
-        file_descriptor_gauge.record(0, &[]);
+        socat_processes_gauge.record(0, &[]);
 
         let thread_gauge = meter
             .u64_gauge(thread_metric)
