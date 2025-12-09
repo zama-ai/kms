@@ -72,7 +72,6 @@ pub struct CoreMetrics {
     // Internal system gauges
     // TODO rate limiter, session gause and meta store should actually be counters but we need to add decorators to ensure it is always updated
     rate_limiter_gauge: TaggedMetric<Gauge<u64>>,
-    session_gauge: TaggedMetric<Gauge<u64>>,
     meta_storage_pub_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing public decryptions in meta storage
     meta_storage_user_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing user decryptions in meta storage
     // Trace guard for file-based logging
@@ -203,7 +202,7 @@ impl CoreMetrics {
 
         let socat_processes_gauge = meter
             .u64_gauge(socat_processes_metric)
-            .with_description("Number of socat child processes")
+            .with_description("Number of socat file descriptors")
             .with_unit("processes")
             .build();
         //Record 0 just to make sure the histogram is exported
@@ -270,7 +269,6 @@ impl CoreMetrics {
             socat_processes_gauge: TaggedMetric::new(socat_processes_gauge, "socat_processes"),
             thread_gauge: TaggedMetric::new(thread_gauge, "threads"),
             rate_limiter_gauge: TaggedMetric::new(rate_limiter_gauge, "rate_limit_usage"),
-            session_gauge: TaggedMetric::new(session_gauge, "live_sessions"),
             meta_storage_pub_dec_gauge: TaggedMetric::new(
                 meta_storage_pub_dec_gauge,
                 "public_decryptions",
@@ -414,12 +412,6 @@ impl CoreMetrics {
         self.rate_limiter_gauge
             .metric
             .record(count, &self.rate_limiter_gauge.with_tags(&[]));
-    }
-
-    pub fn record_live_sessions(&self, count: u64) {
-        self.session_gauge
-            .metric
-            .record(count, &self.session_gauge.with_tags(&[]));
     }
 
     pub fn record_meta_storage_user_decryptions(&self, count: u64) {

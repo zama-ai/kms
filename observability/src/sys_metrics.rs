@@ -1,14 +1,13 @@
-use std::{collections::HashSet, fs, time::Duration};
-
-use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
-
 use crate::metrics::METRICS;
+use std::{ffi::OsStr, fs, time::Duration};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind, RefreshKind, System};
 
 pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Result<()> {
     // Only fail for info we'll actually poll later on
     let specifics = RefreshKind::nothing()
         .with_cpu(CpuRefreshKind::nothing())
-        .with_memory(MemoryRefreshKind::nothing().with_ram());
+        .with_memory(MemoryRefreshKind::nothing().with_ram())
+        .with_processes(ProcessRefreshKind::nothing());
     let mut system = sysinfo::System::new_with_specifics(specifics);
 
     let num_cpus = system.cpus().len() as f64;
@@ -113,22 +112,18 @@ fn get_thread_count(system: &sysinfo::System) -> u64 {
     }
 }
 
-/// Get the number of running socat child processes
+/// Get the number of running socat file descriptors
 /// TODO this only works on Linux, need alternative for other OSes
 fn get_socat_count(system: &sysinfo::System) -> u64 {
     let mut count = 0;
-    for process in system.processes().values() {
-        if process.name() == "socat" {
-            let children = match process.tasks() {
-                Some(tasks) => tasks,
-                None => {
-                    tracing::error!(
-                        "System does not appear to be Linux and hence cannot get the amount of child processes for socat.");
-                    &HashSet::new()
-                }
-            };
-            count += children.len() as u64;
-        }
+    for process in system.processes_by_name(OsStr::new("socat")) {
+        let pid = process.pid();
+        let entries= fs::read_dir(format!("/proc/{pid}/fd")).map(|res| res.count())
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to read /proc/{pid}/fd with error and hence cannot get file descriptor count. Defaulting to 0. Error was: {e}");
+                    0
+                });
+        count += entries as u64;
     }
     count
 }
