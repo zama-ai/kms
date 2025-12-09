@@ -52,7 +52,7 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             // TODO this only works on Linux, need alternative for other OSes
             let entries = fs::read_dir("/proc/self/fd").map(|res| res.count())
                 .unwrap_or_else(|e| {
-                    tracing::error!("Failed to read /proc/self/fd with error and hence cannot get file descriptor count. Defaulting to 0. Erro was: {e}");
+                    tracing::error!("Failed to read /proc/self/fd with error and hence cannot get file descriptor count. Defaulting to 0. Error was: {e}");
                     0
                 });
             METRICS.record_open_file_descriptors(entries as u64);
