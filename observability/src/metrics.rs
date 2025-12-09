@@ -392,43 +392,49 @@ impl CoreMetrics {
             .record(usage, &self.memory_usage_gauge.with_tags(&[]));
     }
 
-    ///
+    /// Record the current number of tasks into the gauge
     pub fn record_threads(&self, count: u64) {
         self.thread_gauge
             .metric
             .record(count, &self.thread_gauge.with_tags(&[]));
     }
 
+    /// Record the current number of open file descriptors into the gauge
     pub fn record_open_file_descriptors(&self, count: u64) {
         self.file_descriptor_gauge
             .metric
             .record(count, &self.file_descriptor_gauge.with_tags(&[]));
     }
 
+    /// Record the current number of socat file descriptors into the gauge
     pub fn record_socat_processes(&self, count: u64) {
         self.socat_processes_gauge
             .metric
             .record(count, &self.socat_processes_gauge.with_tags(&[]));
     }
 
+    /// Record the current rate limiter usage into the gauge
     pub fn record_rate_limiter_usage(&self, count: u64) {
         self.rate_limiter_gauge
             .metric
             .record(count, &self.rate_limiter_gauge.with_tags(&[]));
     }
 
+    /// Record the sum of open sessions done with other parties into the gauge
     pub fn record_live_sessions(&self, count: u64) {
         self.session_gauge
             .metric
             .record(count, &self.session_gauge.with_tags(&[]));
     }
 
+    /// Record the current number of ongoing public decryptions into the gauge
     pub fn record_meta_storage_user_decryptions(&self, count: u64) {
         self.meta_storage_user_dec_gauge
             .metric
             .record(count, &self.meta_storage_user_dec_gauge.with_tags(&[]));
     }
 
+    /// Record the current number of ongoing user decryptions into the gauge
     pub fn record_meta_storage_public_decryptions(&self, count: u64) {
         self.meta_storage_pub_dec_gauge
             .metric
