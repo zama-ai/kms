@@ -316,14 +316,17 @@ check_local_resources() {
                    [[ -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml ]] || \
                    ([[ "${GEN_KEYS}" == "true" ]] && [[ -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml ]]); then
                     local_files_exist=true
-                fi
-                if [[ "${local_files_exist}" == "true" ]]; then
                     log_info "Removing existing local values files..."
-                fi
-                rm -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-test.yaml
-                rm -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml
-                if [[ "${GEN_KEYS}" == "true" ]]; then
-                    rm -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml
+                    rm -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-test.yaml
+                    rm -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml
+                    if [[ "${GEN_KEYS}" == "true" ]]; then
+                        rm -f "${REPO_ROOT}"/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml
+                    fi
+                    local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
+                    local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
+                    if [[ "${GEN_KEYS}" == "true" ]]; then
+                        local KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml"
+                    fi
                 fi
                 # Create local values files
                 log_info "Creating local values files..."
