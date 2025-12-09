@@ -67,6 +67,12 @@ pub struct CoreMetrics {
     cpu_load_gauge: TaggedMetric<Gauge<f64>>,
     memory_usage_gauge: TaggedMetric<Gauge<u64>>,
     file_descriptor_gauge: TaggedMetric<Gauge<u64>>,
+    thread_gauge: TaggedMetric<Gauge<u64>>,
+    // Internal system gauges
+    // TODO rate limiter, session gause and meta store should actually be counters but we need to add decorators to ensure it is always updated
+    rate_limiter_gauge: TaggedMetric<Gauge<u64>>,
+    session_gauge: TaggedMetric<Gauge<u64>>,
+    meta_storage_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing decryptions in meta storage
     // Trace guard for file-based logging
     trace_guard: Arc<Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>>,
 }
@@ -183,6 +189,38 @@ impl CoreMetrics {
         //Record 0 just to make sure the histogram is exported
         file_descriptor_gauge.record(0, &[]);
 
+        let thread_gauge = meter
+            .u64_gauge(format!("{}_threads", config.prefix))
+            .with_description("Number of threads used by the KMS")
+            .with_unit("threads")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        thread_gauge.record(0, &[]);
+
+        let rate_limiter_gauge = meter
+            .u64_gauge(format!("{}_rate_limit_usage", config.prefix))
+            .with_description("Rate limiter usage for the KMS")
+            .with_unit("requests")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        rate_limiter_gauge.record(0, &[]);
+
+        let session_gauge = meter
+            .u64_gauge(format!("{}_live_sessions", config.prefix))
+            .with_description("Number of live sessions in the KMS")
+            .with_unit("sessions")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        session_gauge.record(0, &[]);
+
+        let meta_storage_dec_gauge = meter
+            .u64_gauge(format!("{}_meta_storage_decryptions", config.prefix))
+            .with_description("Number of ONGOING decryptions in meta storage")
+            .with_unit("decryptions")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        meta_storage_dec_gauge.record(0, &[]);
+
         let gauge = meter
             .i64_gauge(gauge)
             .with_description("An instrument that records independent values")
@@ -192,7 +230,6 @@ impl CoreMetrics {
         gauge.record(0, &[]);
 
         Self {
-            file_descriptor_gauge: TaggedMetric::new(file_descriptor_gauge, "file_descriptors"),
             request_counter: TaggedMetric::new(request_counter, "operations"),
             error_counter: TaggedMetric::new(error_counter, "errors"),
             network_rx_counter: TaggedMetric::new(network_rx_counter, "network_rx"),
@@ -201,6 +238,14 @@ impl CoreMetrics {
             size_histogram: TaggedMetric::new(size_histogram, "size"),
             cpu_load_gauge: TaggedMetric::new(cpu_gauge, "cpu_load"),
             memory_usage_gauge: TaggedMetric::new(memory_gauge, "memory_usage"),
+            file_descriptor_gauge: TaggedMetric::new(file_descriptor_gauge, "file_descriptors"),
+            thread_gauge: TaggedMetric::new(thread_gauge, "threads"),
+            rate_limiter_gauge: TaggedMetric::new(rate_limiter_gauge, "rate_limit_usage"),
+            session_gauge: TaggedMetric::new(session_gauge, "live_sessions"),
+            meta_storage_dec_gauge: TaggedMetric::new(
+                meta_storage_dec_gauge,
+                "meta_storage_decryptions",
+            ),
             gauge: TaggedMetric::new(gauge, "active_operations"),
             trace_guard: Arc::new(Mutex::new(None)),
         }
@@ -314,10 +359,34 @@ impl CoreMetrics {
             .record(usage, &self.memory_usage_gauge.with_tags(&[]));
     }
 
+    pub fn record_threads(&self, count: u64) {
+        self.thread_gauge
+            .metric
+            .record(count, &self.thread_gauge.with_tags(&[]));
+    }
+
     pub fn record_open_file_descriptors(&self, count: u64) {
         self.file_descriptor_gauge
             .metric
             .record(count, &self.file_descriptor_gauge.with_tags(&[]));
+    }
+
+    pub fn record_rate_limiter_usage(&self, count: u64) {
+        self.rate_limiter_gauge
+            .metric
+            .record(count, &self.rate_limiter_gauge.with_tags(&[]));
+    }
+
+    pub fn record_live_sessions(&self, count: u64) {
+        self.session_gauge
+            .metric
+            .record(count, &self.session_gauge.with_tags(&[]));
+    }
+
+    pub fn record_meta_storage_decryptions(&self, count: u64) {
+        self.meta_storage_dec_gauge
+            .metric
+            .record(count, &self.meta_storage_dec_gauge.with_tags(&[]));
     }
 }
 

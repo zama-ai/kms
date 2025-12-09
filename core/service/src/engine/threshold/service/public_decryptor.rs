@@ -686,6 +686,12 @@ impl<
             }
         });
 
+        // Update internal system metrics
+        metrics::METRICS.record_rate_limiter_usage(self.rate_limiter.tokens_used());
+        metrics::METRICS.record_meta_storage_decryptions(
+            self.pub_dec_meta_store.read().await.get_processing_count() as u64,
+        );
+        metrics::METRICS.record_live_sessions(self.session_maker.active_sessions().await);
         Ok(Response::new(Empty {}))
     }
 
