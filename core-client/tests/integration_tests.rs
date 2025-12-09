@@ -201,18 +201,9 @@ use futures::future::join_all;
 use kms_core_client::*;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::KeyId;
-use kms_lib::client::test_tools::{
-    setup_centralized_isolated, setup_threshold_isolated, ServerHandle, ThresholdTestConfig,
-};
-use kms_lib::consts::{
-    ID_LENGTH, OTHER_CENTRAL_TEST_ID, SAFE_SER_SIZE_LIMIT, TEST_CENTRAL_KEY_ID, TEST_PARAM,
-};
-use kms_lib::util::key_setup::test_material_manager::TestMaterialManager;
-use kms_lib::util::key_setup::test_material_spec::{MaterialType, TestMaterialSpec};
-use kms_lib::util::key_setup::{
-    ensure_central_keys_exist, ensure_central_server_signing_keys_exist,
-};
-use kms_lib::vault::storage::{file::FileStorage, StorageType};
+use kms_lib::client::test_tools::ServerHandle;
+use kms_lib::consts::{ID_LENGTH, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
+use kms_lib::testing::prelude::*;
 use serial_test::serial;
 use std::collections::HashMap;
 use std::fs::write;
@@ -226,45 +217,13 @@ use kms_core_client::mpc_context::create_test_context_info_from_core_config;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::{ContextId, RequestId};
 use kms_lib::backup::SEED_PHRASE_DESC;
-use kms_lib::conf::{Keychain, SecretSharingKeychain};
-use kms_lib::consts::SIGNING_KEY_ID;
-use kms_lib::vault::keychain::make_keychain_proxy;
-use kms_lib::vault::storage::make_storage;
-use kms_lib::vault::Vault;
 use std::fs::create_dir_all;
 use std::process::{Command, Output};
 use tfhe::safe_serialization::safe_serialize;
-use threshold_fhe::execution::runtime::party::Role;
 
 // ============================================================================
-// SETUP HELPERS
+// CLI TEST SETUP FUNCTIONS
 // ============================================================================
-
-/// Create test material manager with workspace test-material path
-fn create_test_material_manager() -> TestMaterialManager {
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    TestMaterialManager::new(Some(workspace_root.join("test-material")))
-}
-
-/// Create file storage proxy for given path and type
-fn create_file_storage(
-    path: &Path,
-    storage_type: StorageType,
-    role: Option<Role>,
-) -> Result<kms_lib::vault::storage::StorageProxy> {
-    make_storage(
-        Some(kms_lib::conf::Storage::File(kms_lib::conf::FileStorage {
-            path: path.to_path_buf(),
-        })),
-        storage_type,
-        role,
-        None,
-        None,
-    )
-}
 
 /// Helper to setup isolated centralized KMS for CLI testing (without backup vault)
 ///
@@ -301,85 +260,12 @@ async fn setup_isolated_centralized_cli_test_with_custodian_backup(
     setup_isolated_centralized_cli_test_impl(test_name, true, true, "Test").await
 }
 
-/// Internal implementation for centralized CLI test setup
-async fn setup_isolated_centralized_cli_test_impl(
-    test_name: &str,
-    with_backup_vault: bool,
-    with_custodian_keychain: bool,
+/// Generate CLI config file for centralized KMS
+fn generate_centralized_cli_config(
+    material_dir: &TempDir,
+    server: &ServerHandle,
     fhe_params: &str,
-) -> Result<(TempDir, ServerHandle, PathBuf)> {
-    let manager = create_test_material_manager();
-    // Create minimal test material - just directory structure
-    // All keys will be generated fresh with test-specific RequestIds
-    let spec = TestMaterialSpec {
-        material_type: MaterialType::Testing,
-        required_keys: std::collections::HashSet::new(),
-        party_count: None,
-        include_slow_material: false,
-    };
-    let material_dir = manager.setup_test_material(&spec, test_name).await?;
-
-    let mut pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
-    let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
-
-    // Generate all keys fresh with test-specific RequestIds
-    ensure_central_keys_exist(
-        &mut pub_storage,
-        &mut priv_storage,
-        TEST_PARAM,
-        &TEST_CENTRAL_KEY_ID,
-        &OTHER_CENTRAL_TEST_ID,
-        true,
-        true,
-    )
-    .await;
-
-    ensure_central_server_signing_keys_exist(
-        &mut pub_storage,
-        &mut priv_storage,
-        &SIGNING_KEY_ID,
-        true,
-    )
-    .await;
-
-    let backup_vault = if with_backup_vault {
-        // Create BACKUP directory if needed
-        let backup_dir = material_dir.path().join("BACKUP");
-        std::fs::create_dir_all(&backup_dir)?;
-
-        let backup_proxy = create_file_storage(material_dir.path(), StorageType::BACKUP, None)?;
-        let keychain = if with_custodian_keychain {
-            let pub_proxy = create_file_storage(material_dir.path(), StorageType::PUB, None)?;
-            Some(
-                make_keychain_proxy(
-                    &Keychain::SecretSharing(SecretSharingKeychain {}),
-                    None,
-                    None,
-                    Some(&pub_proxy),
-                )
-                .await?,
-            )
-        } else {
-            None
-        };
-        Some(Vault {
-            storage: backup_proxy,
-            keychain,
-        })
-    } else {
-        None
-    };
-
-    let (server, _client) = setup_centralized_isolated(
-        pub_storage,
-        priv_storage,
-        backup_vault,
-        None,
-        None, // Don't pass material_dir since we already set it up above
-    )
-    .await;
-
-    // Generate CLI config file pointing to local test material
+) -> Result<PathBuf> {
     let config_path = material_dir.path().join("client_config.toml");
     let config_content = format!(
         r#"
@@ -406,6 +292,35 @@ object_folder = "PUB"
         material_dir.path().display()
     );
     write(&config_path, config_content)?;
+    Ok(config_path)
+}
+
+/// Internal implementation for centralized CLI test setup
+async fn setup_isolated_centralized_cli_test_impl(
+    test_name: &str,
+    with_backup_vault: bool,
+    with_custodian_keychain: bool,
+    fhe_params: &str,
+) -> Result<(TempDir, ServerHandle, PathBuf)> {
+    // Use builder pattern with full feature support
+    let mut builder = CentralizedTestEnv::builder().with_test_name(test_name);
+
+    if with_backup_vault {
+        builder = builder.with_backup_vault();
+    }
+
+    if with_custodian_keychain {
+        builder = builder.with_custodian_keychain();
+    }
+
+    let env = builder.build().await?;
+
+    // Extract components for CLI usage
+    let material_dir = env.material_dir;
+    let server = env.server;
+
+    // Generate CLI config file pointing to local test material
+    let config_path = generate_centralized_cli_config(&material_dir, &server, fhe_params)?;
 
     Ok((material_dir, server, config_path))
 }
@@ -523,105 +438,13 @@ async fn setup_isolated_threshold_cli_test_with_prss_default(
         .await
 }
 
-/// Internal implementation for threshold CLI test setup
-async fn setup_isolated_threshold_cli_test_impl(
-    test_name: &str,
+/// Generate CLI config files for threshold KMS
+fn generate_threshold_cli_config(
+    material_dir: &TempDir,
+    servers: &HashMap<u32, ServerHandle>,
     party_count: usize,
-    run_prss: bool,
-    with_backup_vault: bool,
-    with_custodian_keychain: bool,
     fhe_params: &str,
-) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
-    let manager = create_test_material_manager();
-    // Create minimal test material - threshold tests generate their own FHE keys
-    // via insecure_key_gen or real_preproc_and_keygen, and PRSS is initialized dynamically
-    let spec = TestMaterialSpec {
-        material_type: MaterialType::Testing,
-        required_keys: {
-            let mut keys = std::collections::HashSet::new();
-            keys.insert(kms_lib::util::key_setup::test_material_spec::KeyType::ClientKeys);
-            keys.insert(kms_lib::util::key_setup::test_material_spec::KeyType::SigningKeys);
-            keys.insert(kms_lib::util::key_setup::test_material_spec::KeyType::ServerSigningKeys);
-            // Don't copy FheKeys - tests generate them via CLI
-            // Don't copy PrssSetup - initialized dynamically when run_prss=true
-            keys
-        },
-        party_count: Some(party_count),
-        include_slow_material: false,
-    };
-    let material_dir = manager.setup_test_material(&spec, test_name).await?;
-
-    let mut pub_storages = Vec::new();
-    let mut priv_storages = Vec::new();
-    for i in 1..=party_count {
-        let role = Role::indexed_from_one(i);
-        pub_storages.push(FileStorage::new(
-            Some(material_dir.path()),
-            StorageType::PUB,
-            Some(role),
-        )?);
-        priv_storages.push(FileStorage::new(
-            Some(material_dir.path()),
-            StorageType::PRIV,
-            Some(role),
-        )?);
-    }
-
-    let mut vaults: Vec<Option<Vault>> = Vec::new();
-    for i in 1..=party_count {
-        if with_backup_vault {
-            let role = Role::indexed_from_one(i);
-            // Create BACKUP directory for this party
-            let backup_dir = material_dir.path().join(format!("BACKUP-p{}", i));
-            std::fs::create_dir_all(&backup_dir)?;
-
-            let backup_proxy =
-                create_file_storage(material_dir.path(), StorageType::BACKUP, Some(role))?;
-            let keychain = if with_custodian_keychain {
-                let pub_proxy =
-                    create_file_storage(material_dir.path(), StorageType::PUB, Some(role))?;
-                Some(
-                    make_keychain_proxy(
-                        &Keychain::SecretSharing(SecretSharingKeychain {}),
-                        None,
-                        None,
-                        Some(&pub_proxy),
-                    )
-                    .await?,
-                )
-            } else {
-                None
-            };
-            vaults.push(Some(Vault {
-                storage: backup_proxy,
-                keychain,
-            }));
-        } else {
-            vaults.push(None);
-        }
-    }
-    // Calculate threshold using KMS formula: ceil(party_count / 3) - 1
-    // This matches the threshold used in test material generation
-    let threshold = party_count.div_ceil(3) - 1; // equivalent to ceil(party_count / 3) - 1
-
-    let (servers, _clients) = setup_threshold_isolated(
-        threshold as u8,
-        pub_storages,
-        priv_storages,
-        vaults,
-        ThresholdTestConfig {
-            run_prss, // PRSS enabled/disabled based on test requirements
-            ..Default::default()
-        },
-    )
-    .await;
-
-    // Wait for PRSS initialization if enabled
-    if run_prss {
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-    }
-
-    // Generate CLI config file pointing to local test material
+) -> Result<PathBuf> {
     let config_path = material_dir.path().join("client_config.toml");
     let mut config_content = format!(
         r#"
@@ -643,7 +466,8 @@ file_storage_path = "{}"
     );
 
     // Create minimal server config files for each party (needed for MPC context creation)
-    // These files contain PCR values and peer configurations required by create_test_context_info_from_core_config
+    let threshold_value = party_count.div_ceil(3) - 1;
+
     for i in 1..=party_count {
         let server = servers
             .get(&(i as u32))
@@ -671,9 +495,6 @@ port = {}
         }
 
         // Create minimal server config with mock enclave PCR values
-        // Note: threshold must match what the servers were initialized with
-        // Use KMS formula: ceil(party_count / 3) - 1
-        let threshold_value = party_count.div_ceil(3) - 1;
         let server_config_content = format!(
             r#"
 mock_enclave = true
@@ -730,6 +551,44 @@ config_path = "{}"
     }
 
     write(&config_path, config_content)?;
+    Ok(config_path)
+}
+
+/// Internal implementation for threshold CLI test setup
+async fn setup_isolated_threshold_cli_test_impl(
+    test_name: &str,
+    party_count: usize,
+    run_prss: bool,
+    with_backup_vault: bool,
+    with_custodian_keychain: bool,
+    fhe_params: &str,
+) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
+    // Use builder pattern with full feature support
+    let mut builder = ThresholdTestEnv::builder()
+        .with_test_name(test_name)
+        .with_party_count(party_count);
+
+    if run_prss {
+        builder = builder.with_prss();
+    }
+
+    if with_backup_vault {
+        builder = builder.with_backup_vault();
+    }
+
+    if with_custodian_keychain {
+        builder = builder.with_custodian_keychain();
+    }
+
+    let env = builder.build().await?;
+
+    // Extract components for CLI usage
+    let material_dir = env.material_dir;
+    let servers = env.servers;
+
+    // Generate CLI config files
+    let config_path =
+        generate_threshold_cli_config(&material_dir, &servers, party_count, fhe_params)?;
 
     Ok((material_dir, servers, config_path))
 }
@@ -890,6 +749,7 @@ async fn restore_from_backup_isolated(config_path: &Path, test_path: &Path) -> R
 
 /// Helper to run preprocessing and keygen via CLI (isolated version)
 /// Only used by PRSS tests which are gated by k8s_tests feature
+#[cfg(feature = "k8s_tests")]
 async fn real_preproc_and_keygen_isolated(config_path: &Path, test_path: &Path) -> Result<String> {
     // Step 1: Preprocessing
     let preproc_config = CmdConfig {
@@ -1512,9 +1372,9 @@ async fn test_threshold_insecure() -> Result<()> {
 }
 
 /// Nightly test - threshold sequential preprocessing and keygen with nightly parameters
+#[cfg(feature = "k8s_tests")]
 #[tokio::test]
 #[serial] // PRSS requires sequential execution
-#[cfg_attr(not(feature = "k8s_tests"), ignore)] // Run only in K8s CI - enable locally with: cargo test --features k8s_tests -- --test-threads=1
 async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
     init_testing();
 
@@ -1534,9 +1394,9 @@ async fn nightly_tests_threshold_sequential_preproc_keygen() -> Result<()> {
 }
 
 /// Test threshold concurrent preprocessing and keygen operations
+#[cfg(feature = "k8s_tests")]
 #[tokio::test]
 #[serial] // PRSS requires sequential execution
-#[cfg_attr(not(feature = "k8s_tests"), ignore)] // Run only in K8s CI - enable locally with: cargo test --features k8s_tests -- --test-threads=1
 async fn test_threshold_concurrent_preproc_keygen() -> Result<()> {
     init_testing();
 
@@ -1702,9 +1562,9 @@ async fn test_threshold_custodian_backup() -> Result<()> {
 }
 
 /// Full generation test - threshold sequential preprocessing and keygen
+#[cfg(feature = "k8s_tests")]
 #[tokio::test]
 #[serial] // PRSS requires sequential execution
-#[cfg_attr(not(feature = "k8s_tests"), ignore)] // Run only in K8s CI - enable locally with: cargo test --features k8s_tests -- --test-threads=1
 async fn full_gen_tests_default_threshold_sequential_preproc_keygen() -> Result<()> {
     init_testing();
 

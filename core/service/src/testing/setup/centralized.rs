@@ -40,6 +40,7 @@ pub struct CentralizedTestEnvBuilder {
     material_spec: Option<TestMaterialSpec>,
     material_manager: Option<TestMaterialManager>,
     with_backup_vault: bool,
+    with_custodian_keychain: bool,
     rate_limiter_conf: Option<crate::util::rate_limiter::RateLimiterConfig>,
 }
 
@@ -65,6 +66,13 @@ impl CentralizedTestEnvBuilder {
     /// Enable backup vault
     pub fn with_backup_vault(mut self) -> Self {
         self.with_backup_vault = true;
+        self
+    }
+
+    /// Enable custodian keychain (requires backup vault)
+    pub fn with_custodian_keychain(mut self) -> Self {
+        self.with_backup_vault = true; // Custodian requires backup vault
+        self.with_custodian_keychain = true;
         self
     }
 
@@ -99,10 +107,46 @@ impl CentralizedTestEnvBuilder {
         // Fix public key RequestIds
         fix_centralized_public_keys(&mut pub_storage, &mut priv_storage).await?;
 
-        // Setup KMS server
+        // Setup KMS server with optional backup vault
         let backup_vault = if self.with_backup_vault {
-            // TODO: Implement backup vault setup
-            None
+            use crate::conf::{Keychain, SecretSharingKeychain};
+            use crate::vault::keychain::make_keychain_proxy;
+            use crate::vault::Vault;
+            use std::fs;
+
+            // Create BACKUP directory
+            let backup_dir = material_dir.path().join("BACKUP");
+            fs::create_dir_all(&backup_dir)?;
+
+            let backup_proxy = crate::vault::storage::StorageProxy::from(FileStorage::new(
+                Some(material_dir.path()),
+                StorageType::BACKUP,
+                None,
+            )?);
+
+            let keychain = if self.with_custodian_keychain {
+                let pub_proxy = crate::vault::storage::StorageProxy::from(FileStorage::new(
+                    Some(material_dir.path()),
+                    StorageType::PUB,
+                    None,
+                )?);
+                Some(
+                    make_keychain_proxy(
+                        &Keychain::SecretSharing(SecretSharingKeychain {}),
+                        None,
+                        None,
+                        Some(&pub_proxy),
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
+
+            Some(Vault {
+                storage: backup_proxy,
+                keychain,
+            })
         } else {
             None
         };
