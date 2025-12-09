@@ -114,6 +114,8 @@ pub struct ThresholdTestEnvBuilder {
     material_spec: Option<TestMaterialSpec>,
     material_manager: Option<TestMaterialManager>,
     run_prss: bool,
+    with_backup_vault: bool,
+    with_custodian_keychain: bool,
     rate_limiter_conf: Option<crate::util::rate_limiter::RateLimiterConfig>,
     decryption_mode: Option<threshold_fhe::execution::endpoints::decryption::DecryptionMode>,
 }
@@ -127,6 +129,8 @@ impl Default for ThresholdTestEnvBuilder {
             material_spec: None,
             material_manager: None,
             run_prss: false,
+            with_backup_vault: false,
+            with_custodian_keychain: false,
             rate_limiter_conf: None,
             decryption_mode: None,
         }
@@ -167,6 +171,19 @@ impl ThresholdTestEnvBuilder {
     /// Enable PRSS initialization (required for secure key generation)
     pub fn with_prss(mut self) -> Self {
         self.run_prss = true;
+        self
+    }
+
+    /// Enable backup vault for all parties
+    pub fn with_backup_vault(mut self) -> Self {
+        self.with_backup_vault = true;
+        self
+    }
+
+    /// Enable custodian keychain for all parties (requires backup vault)
+    pub fn with_custodian_keychain(mut self) -> Self {
+        self.with_backup_vault = true; // Custodian requires backup vault
+        self.with_custodian_keychain = true;
         self
     }
 
@@ -217,6 +234,56 @@ impl ThresholdTestEnvBuilder {
             )?);
         }
 
+        // Create backup vaults for each party if requested
+        let vaults: Vec<Option<crate::vault::Vault>> = if self.with_backup_vault {
+            use crate::conf::{Keychain, SecretSharingKeychain};
+            use crate::vault::keychain::make_keychain_proxy;
+            use crate::vault::Vault;
+            use std::fs;
+
+            let mut vaults = Vec::new();
+            for i in 1..=self.party_count {
+                let role = Role::indexed_from_one(i);
+
+                // Create BACKUP directory for this party
+                let backup_dir = material_dir.path().join(format!("BACKUP-p{}", i));
+                fs::create_dir_all(&backup_dir)?;
+
+                let backup_proxy = crate::vault::storage::StorageProxy::from(FileStorage::new(
+                    Some(material_dir.path()),
+                    StorageType::BACKUP,
+                    Some(role),
+                )?);
+
+                let keychain = if self.with_custodian_keychain {
+                    let pub_proxy = crate::vault::storage::StorageProxy::from(FileStorage::new(
+                        Some(material_dir.path()),
+                        StorageType::PUB,
+                        Some(role),
+                    )?);
+                    Some(
+                        make_keychain_proxy(
+                            &Keychain::SecretSharing(SecretSharingKeychain {}),
+                            None,
+                            None,
+                            Some(&pub_proxy),
+                        )
+                        .await?,
+                    )
+                } else {
+                    None
+                };
+
+                vaults.push(Some(Vault {
+                    storage: backup_proxy,
+                    keychain,
+                }));
+            }
+            vaults
+        } else {
+            (0..self.party_count).map(|_| None).collect()
+        };
+
         // Compute threshold if not provided
         let threshold = self
             .threshold
@@ -234,7 +301,7 @@ impl ThresholdTestEnvBuilder {
             threshold,
             pub_storages,
             priv_storages,
-            (0..self.party_count).map(|_| None).collect(),
+            vaults,
             config,
         )
         .await;

@@ -31,7 +31,6 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
         .with_test_name("insecure_dkg")
         .with_party_count(4)
         .with_threshold(2)
-        .with_prss()
         .build()
         .await?;
 
@@ -83,7 +82,6 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
         .with_party_count(4)
         .with_threshold(2)
         .with_material_spec(spec)
-        .with_prss()
         .build()
         .await?;
 
