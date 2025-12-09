@@ -66,6 +66,7 @@ pub struct CoreMetrics {
     gauge: TaggedMetric<Gauge<i64>>,
     cpu_load_gauge: TaggedMetric<Gauge<f64>>,
     memory_usage_gauge: TaggedMetric<Gauge<u64>>,
+    file_descriptor_gauge: TaggedMetric<Gauge<u64>>,
     // Trace guard for file-based logging
     trace_guard: Arc<Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>>,
 }
@@ -106,6 +107,8 @@ impl CoreMetrics {
             format!("{}_network_rx_bytes", config.prefix).into();
         let network_tx_metric: Cow<'static, str> =
             format!("{}_network_tx_bytes", config.prefix).into();
+        let file_descriptors_metric: Cow<'static, str> =
+            format!("{}_file_descriptors", config.prefix).into();
         let gauge: Cow<'static, str> = format!("{}_gauge", config.prefix).into();
 
         let request_counter = meter
@@ -172,6 +175,14 @@ impl CoreMetrics {
         //Record 0 just to make sure the histogram is exported
         memory_gauge.record(0, &[]);
 
+        let file_descriptor_gauge = meter
+            .u64_gauge(file_descriptors_metric)
+            .with_description("File descriptor usage for the KMS")
+            .with_unit("file_descriptors")
+            .build();
+        //Record 0 just to make sure the histogram is exported
+        file_descriptor_gauge.record(0, &[]);
+
         let gauge = meter
             .i64_gauge(gauge)
             .with_description("An instrument that records independent values")
@@ -181,6 +192,7 @@ impl CoreMetrics {
         gauge.record(0, &[]);
 
         Self {
+            file_descriptor_gauge: TaggedMetric::new(file_descriptor_gauge, "file_descriptors"),
             request_counter: TaggedMetric::new(request_counter, "operations"),
             error_counter: TaggedMetric::new(error_counter, "errors"),
             network_rx_counter: TaggedMetric::new(network_rx_counter, "network_rx"),
@@ -300,6 +312,12 @@ impl CoreMetrics {
         self.memory_usage_gauge
             .metric
             .record(usage, &self.memory_usage_gauge.with_tags(&[]));
+    }
+
+    pub fn record_open_file_descriptors(&self, count: u64) {
+        self.file_descriptor_gauge
+            .metric
+            .record(count, &self.file_descriptor_gauge.with_tags(&[]));
     }
 }
 

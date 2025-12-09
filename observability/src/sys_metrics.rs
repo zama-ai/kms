@@ -1,5 +1,5 @@
 use crate::metrics::METRICS;
-use std::time::Duration;
+use std::{fs, time::Duration};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Result<()> {
@@ -48,6 +48,13 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             last_rx_bytes = total_rx;
             last_tx_bytes = total_tx;
 
+            // Update file descriptor count
+            let entries = fs::read_dir("/proc/self/fd").map(|res| res.count())
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to read /proc/self/fd with error and hence cannot get file descriptor count. Defaulting to 0. Erro was: {e}");
+                    0
+                });
+            METRICS.record_open_file_descriptors(entries as u64);
             tokio::time::sleep(refresh_interval).await;
         }
     });
