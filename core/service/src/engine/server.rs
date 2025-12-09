@@ -1,11 +1,13 @@
+use crate::util::meta_store::MetaStore;
+use crate::util::rate_limiter::RateLimiter;
 use crate::{anyhow_error_and_log, conf::ServiceEndpoint};
-
 use kms_grpc::kms_service::v1::core_service_endpoint_server::{
     CoreServiceEndpoint, CoreServiceEndpointServer,
 };
 use kms_grpc::metastore_status::v1::meta_store_status_service_server::{
     MetaStoreStatusService, MetaStoreStatusServiceServer,
 };
+use observability::metrics;
 use observability::telemetry::make_span;
 use std::sync::Arc;
 use std::time::Duration;
@@ -180,5 +182,23 @@ pub async fn run_server<
                 anyhow_error_and_log(format!("KMS core on {socket_addr} stopped with error: {e}"));
             Err(err)
         }
+    }
+}
+
+/// Method to update the internal system metrics of the KMS.
+/// This should be done once per call, or at regular intervals.
+pub(crate) async fn update_system_metrics<T: Clone>(
+    rate_limiter: &RateLimiter,
+    user_meta_store: Option<&MetaStore<T>>,
+    public_meta_store: Option<&MetaStore<T>>,
+) {
+    metrics::METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
+    if let Some(user_meta_store) = user_meta_store {
+        metrics::METRICS
+            .record_meta_storage_user_decryptions(user_meta_store.get_processing_count() as u64);
+    }
+    if let Some(public_meta_store) = public_meta_store {
+        metrics::METRICS
+            .record_meta_storage_public_decryptions(public_meta_store.get_processing_count() as u64);
     }
 }

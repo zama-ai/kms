@@ -56,6 +56,7 @@ use crate::{
         },
         threshold::{service::session::SessionPreparerGetter, traits::PublicDecryptor},
         traits::BaseKms,
+        update_system_metrics,
         validation::{
             parse_proto_request_id, validate_public_decrypt_req, RequestIdParsingErr,
             DSEP_PUBLIC_DECRYPTION,
@@ -271,6 +272,11 @@ impl<
         &self,
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
+        {
+            // TODO should probably be called at regular intervals and setup with the KMS in kms_impl
+            let meta_store = self.pub_dec_meta_store.read().await;
+            update_system_metrics(&self.rate_limiter, None, Some(&meta_store)).await;
+        }
         let inner = Arc::new(request.into_inner());
         tracing::info!(
             request_id = ?inner.request_id,

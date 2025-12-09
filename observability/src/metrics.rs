@@ -66,6 +66,15 @@ pub struct CoreMetrics {
     gauge: TaggedMetric<Gauge<i64>>,
     cpu_load_gauge: TaggedMetric<Gauge<f64>>,
     memory_usage_gauge: TaggedMetric<Gauge<u64>>,
+    file_descriptor_gauge: TaggedMetric<Gauge<u64>>,
+    socat_processes_gauge: TaggedMetric<Gauge<u64>>,
+    thread_gauge: TaggedMetric<Gauge<u64>>,
+    // Internal system gauges
+    // TODO rate limiter, session gause and meta store should actually be counters but we need to add decorators to ensure it is always updated
+    rate_limiter_gauge: TaggedMetric<Gauge<u64>>,
+    session_gauge: TaggedMetric<Gauge<u64>>,
+    meta_storage_pub_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing public decryptions in meta storage
+    meta_storage_user_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing user decryptions in meta storage
     // Trace guard for file-based logging
     trace_guard: Arc<Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>>,
 }
@@ -106,6 +115,18 @@ impl CoreMetrics {
             format!("{}_network_rx_bytes", config.prefix).into();
         let network_tx_metric: Cow<'static, str> =
             format!("{}_network_tx_bytes", config.prefix).into();
+        let file_descriptors_metric: Cow<'static, str> =
+            format!("{}_file_descriptors", config.prefix).into();
+        let socat_processes_metric: Cow<'static, str> =
+            format!("{}_socat_processes", config.prefix).into();
+        let thread_metric: Cow<'static, str> = format!("{}_threads", config.prefix).into();
+        let rate_limiter_metric: Cow<'static, str> =
+            format!("{}_rate_limiter_usage", config.prefix).into();
+        let session_metric: Cow<'static, str> = format!("{}_live_sessions", config.prefix).into();
+        let meta_store_user_metric: Cow<'static, str> =
+            format!("{}_meta_storage_user_decryptions", config.prefix).into();
+        let meta_store_pub_metric: Cow<'static, str> =
+            format!("{}_meta_storage_pub_decryptions", config.prefix).into();
         let gauge: Cow<'static, str> = format!("{}_gauge", config.prefix).into();
 
         let request_counter = meter
@@ -172,6 +193,62 @@ impl CoreMetrics {
         //Record 0 just to make sure the histogram is exported
         memory_gauge.record(0, &[]);
 
+        let file_descriptor_gauge = meter
+            .u64_gauge(file_descriptors_metric)
+            .with_description("File descriptor usage for the KMS")
+            .with_unit("file_descriptors")
+            .build();
+        //Record 0 just to make sure the histogram is exported
+        file_descriptor_gauge.record(0, &[]);
+
+        let socat_processes_gauge = meter
+            .u64_gauge(socat_processes_metric)
+            .with_description("Number of socat child processes")
+            .with_unit("processes")
+            .build();
+        //Record 0 just to make sure the histogram is exported
+        socat_processes_gauge.record(0, &[]);
+
+        let thread_gauge = meter
+            .u64_gauge(thread_metric)
+            .with_description("Number of threads used by the KMS")
+            .with_unit("threads")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        thread_gauge.record(0, &[]);
+
+        let rate_limiter_gauge = meter
+            .u64_gauge(rate_limiter_metric)
+            .with_description("Rate limiter usage for the KMS")
+            .with_unit("requests")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        rate_limiter_gauge.record(0, &[]);
+
+        let session_gauge = meter
+            .u64_gauge(session_metric)
+            .with_description("Number of live sessions in the KMS")
+            .with_unit("sessions")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        session_gauge.record(0, &[]);
+
+        let meta_storage_user_dec_gauge = meter
+            .u64_gauge(meta_store_user_metric)
+            .with_description("Number of ONGOING user decryptions in meta storage")
+            .with_unit("user decryptions")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        meta_storage_user_dec_gauge.record(0, &[]);
+
+        let meta_storage_pub_dec_gauge = meter
+            .u64_gauge(meta_store_pub_metric)
+            .with_description("Number of ONGOING public decryptions in meta storage")
+            .with_unit("public decryptions")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        meta_storage_pub_dec_gauge.record(0, &[]);
+
         let gauge = meter
             .i64_gauge(gauge)
             .with_description("An instrument that records independent values")
@@ -189,6 +266,19 @@ impl CoreMetrics {
             size_histogram: TaggedMetric::new(size_histogram, "size"),
             cpu_load_gauge: TaggedMetric::new(cpu_gauge, "cpu_load"),
             memory_usage_gauge: TaggedMetric::new(memory_gauge, "memory_usage"),
+            file_descriptor_gauge: TaggedMetric::new(file_descriptor_gauge, "file_descriptors"),
+            socat_processes_gauge: TaggedMetric::new(socat_processes_gauge, "socat_processes"),
+            thread_gauge: TaggedMetric::new(thread_gauge, "threads"),
+            rate_limiter_gauge: TaggedMetric::new(rate_limiter_gauge, "rate_limit_usage"),
+            session_gauge: TaggedMetric::new(session_gauge, "live_sessions"),
+            meta_storage_pub_dec_gauge: TaggedMetric::new(
+                meta_storage_pub_dec_gauge,
+                "public_decryptions",
+            ),
+            meta_storage_user_dec_gauge: TaggedMetric::new(
+                meta_storage_user_dec_gauge,
+                "user_decryptions",
+            ),
             gauge: TaggedMetric::new(gauge, "active_operations"),
             trace_guard: Arc::new(Mutex::new(None)),
         }
@@ -300,6 +390,48 @@ impl CoreMetrics {
         self.memory_usage_gauge
             .metric
             .record(usage, &self.memory_usage_gauge.with_tags(&[]));
+    }
+
+    pub fn record_threads(&self, count: u64) {
+        self.thread_gauge
+            .metric
+            .record(count, &self.thread_gauge.with_tags(&[]));
+    }
+
+    pub fn record_open_file_descriptors(&self, count: u64) {
+        self.file_descriptor_gauge
+            .metric
+            .record(count, &self.file_descriptor_gauge.with_tags(&[]));
+    }
+
+    pub fn record_socat_processes(&self, count: u64) {
+        self.socat_processes_gauge
+            .metric
+            .record(count, &self.socat_processes_gauge.with_tags(&[]));
+    }
+
+    pub fn record_rate_limiter_usage(&self, count: u64) {
+        self.rate_limiter_gauge
+            .metric
+            .record(count, &self.rate_limiter_gauge.with_tags(&[]));
+    }
+
+    pub fn record_live_sessions(&self, count: u64) {
+        self.session_gauge
+            .metric
+            .record(count, &self.session_gauge.with_tags(&[]));
+    }
+
+    pub fn record_meta_storage_user_decryptions(&self, count: u64) {
+        self.meta_storage_user_dec_gauge
+            .metric
+            .record(count, &self.meta_storage_user_dec_gauge.with_tags(&[]));
+    }
+
+    pub fn record_meta_storage_public_decryptions(&self, count: u64) {
+        self.meta_storage_pub_dec_gauge
+            .metric
+            .record(count, &self.meta_storage_pub_dec_gauge.with_tags(&[]));
     }
 }
 
