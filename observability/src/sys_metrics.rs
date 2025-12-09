@@ -1,5 +1,5 @@
 use crate::metrics::METRICS;
-use std::{fs, time::Duration};
+use std::{collections::HashSet, fs, time::Duration};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Result<()> {
@@ -61,6 +61,10 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             let thread_count = get_thread_count(&system);
             METRICS.record_threads(thread_count);
 
+            // Update socat process count
+            let socat_count = get_socat_count(&system);
+            METRICS.record_socat_processes(socat_count);
+
             tokio::time::sleep(refresh_interval).await;
         }
     });
@@ -93,4 +97,24 @@ fn get_thread_count(system: &sysinfo::System) -> u64 {
             0
         }
     }
+}
+
+/// Get the number of running socat child processes
+/// TODO this only works on Linux, need alternative for other OSes
+fn get_socat_count(system: &sysinfo::System) -> u64 {
+    let mut count = 0;
+    for process in system.processes().values() {
+        if process.name() == "socat" {
+            let children = match process.tasks() {
+                Some(tasks) => tasks,
+                None => {
+                    tracing::error!(
+                        "System does not appear to be Linux and hence cannot get the amount of child processes for socat.");
+                    &HashSet::new()
+                }
+            };
+            count += children.len() as u64;
+        }
+    }
+    count
 }
