@@ -1,9 +1,7 @@
 name: kind-testing
 
 on:
-  push:
-    branches:
-      - 'maksym/refactor/2761/tests-setup'  # TEMPORARY: Enable K8s tests on this branch
+  pull_request:
   schedule:
     - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
 
@@ -16,7 +14,7 @@ jobs:
   # for testing purposes when needed.
   ############################################################################
   docker-build:
-    if: github.event_name == 'pull_request' || github.event_name == 'push'  # TEMPORARY: Allow push events
+    if: github.event_name == 'pull_request'
     name: kind-testing/docker-build
     permissions:
       actions: read # Read workflow run information
