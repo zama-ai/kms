@@ -280,6 +280,33 @@ copy_to_local_values_files() {
     fi
 }
 
+# Replace namespace placeholder in values files
+replace_namespace_in_files() {
+    local core_file="$1"
+    local client_init_file="$2"
+    local client_gen_keys_file="${3:-}"
+
+    # Use '|' as delimiter to avoid conflicts with paths that might contain '/'
+    if [[ -f "${core_file}" ]]; then
+        if grep -q "<namespace>" "${core_file}" 2>/dev/null; then
+            sed_inplace "s|<namespace>|${NAMESPACE}|g" "${core_file}"
+            log_info "Replaced <namespace> with ${NAMESPACE} in ${core_file}"
+        fi
+    fi
+    if [[ -f "${client_init_file}" ]]; then
+        if grep -q "<namespace>" "${client_init_file}" 2>/dev/null; then
+            sed_inplace "s|<namespace>|${NAMESPACE}|g" "${client_init_file}"
+            log_info "Replaced <namespace> with ${NAMESPACE} in ${client_init_file}"
+        fi
+    fi
+    if [[ -n "${client_gen_keys_file}" ]] && [[ -f "${client_gen_keys_file}" ]]; then
+        if grep -q "<namespace>" "${client_gen_keys_file}" 2>/dev/null; then
+            sed_inplace "s|<namespace>|${NAMESPACE}|g" "${client_gen_keys_file}"
+            log_info "Replaced <namespace> with ${NAMESPACE} in ${client_gen_keys_file}"
+        fi
+    fi
+}
+
 check_local_resources() {
     # Check resource requirements for local development
     if [[ "${LOCAL}" != "true" ]]; then
@@ -416,6 +443,8 @@ check_local_resources() {
                     KMS_CORE_CLIENT_GEN_KEYS_VALUES="${base_dir}/local-values-kms-service-gen-keys-kms-test.yaml"
                 fi
 
+                # Replace namespace placeholder in the newly created local files
+                replace_namespace_in_files "${KMS_CORE_VALUES}" "${KMS_CORE_CLIENT_INIT_VALUES}" "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
 
                 # Adjust KMS Core resources
                 echo ""
@@ -737,11 +766,7 @@ deploy_threshold_mode() {
     fi
 
     # Replace namespace placeholder with actual namespace
-    sed_inplace "s/<namespace>/${NAMESPACE}/g" "${KMS_CORE_VALUES}"
-    sed_inplace "s/<namespace>/${NAMESPACE}/g" "${KMS_CORE_CLIENT_INIT_VALUES}"
-    if [[ "${GEN_KEYS}" == "true" ]]; then
-        sed_inplace "s/<namespace>/${NAMESPACE}/g" "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
-    fi
+    replace_namespace_in_files "${KMS_CORE_VALUES}" "${KMS_CORE_CLIENT_INIT_VALUES}" "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
 
     for i in $(seq 1 "${NUM_PARTIES}"); do
         log_info "Deploying KMS Core party ${i}/${NUM_PARTIES}..."
@@ -814,6 +839,9 @@ deploy_centralized_mode() {
       local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
       local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
     fi
+
+    # Replace namespace placeholder with actual namespace
+    replace_namespace_in_files "${KMS_CORE_VALUES}" "${KMS_CORE_CLIENT_INIT_VALUES}"
 
     helm upgrade --install kms \
         "${REPO_ROOT}/charts/kms-core" \
