@@ -57,6 +57,7 @@ use crate::{
         },
         threshold::{service::session::ImmutableSessionMaker, traits::PublicDecryptor},
         traits::BaseKms,
+        update_system_metrics,
         validation::{
             parse_proto_request_id, validate_public_decrypt_req, RequestIdParsingErr,
             DSEP_PUBLIC_DECRYPTION,
@@ -275,6 +276,17 @@ impl<
         &self,
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
+        {
+            // TODO should probably be called at regular intervals and setup with the KMS in kms_impl
+            let meta_store = self.pub_dec_meta_store.read().await;
+            update_system_metrics(
+                &self.rate_limiter,
+                &self.session_maker,
+                None,
+                Some(&meta_store),
+            )
+            .await;
+        }
         let inner = Arc::new(request.into_inner());
         tracing::info!(
             request_id = ?inner.request_id,
@@ -685,13 +697,6 @@ impl<
                 );
             }
         });
-
-        // Update internal system metrics
-        metrics::METRICS.record_rate_limiter_usage(self.rate_limiter.tokens_used());
-        metrics::METRICS.record_meta_storage_decryptions(
-            self.pub_dec_meta_store.read().await.get_processing_count() as u64,
-        );
-        metrics::METRICS.record_live_sessions(self.session_maker.active_sessions().await);
         Ok(Response::new(Empty {}))
     }
 
