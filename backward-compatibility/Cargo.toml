@@ -1,6 +1,6 @@
 [package]
 name = "backward-compatibility"
-version = "0.12.6"
+version = "0.12.7"
 publish = false
 authors = ["Zama"]
 edition = "2021"
