@@ -604,7 +604,7 @@ impl ImmutableSessionMaker {
     pub(crate) async fn active_sessions(&self) -> u64 {
         self.inner.active_sessions().await
     }
-    // Returns the an health check session per context.
+    // Returns a health check session per context.
     pub(crate) async fn get_healthcheck_session_all_contexts(
         &self,
     ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession<Role>>> {
