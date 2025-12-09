@@ -174,7 +174,7 @@ impl CoreMetrics {
             .with_description("Size of KMS operation payloads")
             .with_unit("bytes")
             .build();
-        //Record 0 just to make sure the histogram is exported
+        //Record 0 just to make sure the gauge is exported
         size_histogram.record(0.0, &[]);
 
         let cpu_gauge = meter
@@ -182,7 +182,7 @@ impl CoreMetrics {
             .with_description("CPU load for KMS (averaged over all CPUs)")
             .with_unit("percentage")
             .build();
-        //Record 0 just to make sure the histogram is exported
+        //Record 0 just to make sure the gauge is exported
         cpu_gauge.record(0.0, &[]);
 
         let memory_gauge = meter
@@ -190,7 +190,7 @@ impl CoreMetrics {
             .with_description("Memory used for KMS")
             .with_unit("bytes")
             .build();
-        //Record 0 just to make sure the histogram is exported
+        //Record 0 just to make sure the gauge is exported
         memory_gauge.record(0, &[]);
 
         let file_descriptor_gauge = meter
@@ -198,7 +198,7 @@ impl CoreMetrics {
             .with_description("File descriptor usage for the KMS")
             .with_unit("file_descriptors")
             .build();
-        //Record 0 just to make sure the histogram is exported
+        //Record 0 just to make sure the gauge is exported
         file_descriptor_gauge.record(0, &[]);
 
         let socat_processes_gauge = meter
@@ -206,7 +206,7 @@ impl CoreMetrics {
             .with_description("Number of socat child processes")
             .with_unit("processes")
             .build();
-        //Record 0 just to make sure the histogram is exported
+        //Record 0 just to make sure the gauge is exported
         socat_processes_gauge.record(0, &[]);
 
         let thread_gauge = meter
