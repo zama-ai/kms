@@ -175,6 +175,10 @@ impl GrpcSendingService {
                 // then this should be changed
                 let endpoint = Channel::builder(endpoint)
                     .http2_adaptive_window(true)
+                    .keep_alive_while_idle(true)
+                    .http2_keep_alive_interval(self.config.get_http2_keep_alive_interval())
+                    .keep_alive_timeout(self.config.get_http2_keep_alive_timeout())
+                    .tcp_keepalive(Some(self.config.get_tcp_keep_alive()))
                     .tcp_nodelay(true);
                 // we have to pass a custom TLS connector to
                 // tonic::transport::Channel to be able to use a custom rustls
@@ -195,6 +199,10 @@ impl GrpcSendingService {
                 // then this should be changed
                 Channel::builder(endpoint)
                     .http2_adaptive_window(true)
+                    .keep_alive_while_idle(true)
+                    .http2_keep_alive_interval(self.config.get_http2_keep_alive_interval())
+                    .keep_alive_timeout(self.config.get_http2_keep_alive_timeout())
+                    .tcp_keepalive(Some(self.config.get_tcp_keep_alive()))
                     .tcp_nodelay(true)
                     .connect_lazy()
             }

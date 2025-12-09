@@ -76,6 +76,12 @@ pub struct ServiceEndpoint {
     // maximum gRPC message size in bytes
     #[validate(range(min = 1, max = 2147483647))]
     pub grpc_max_message_size: usize,
+    #[validate(range(min = 1))]
+    pub http2_keep_alive_interval_secs: Option<u64>,
+    #[validate(range(min = 1))]
+    pub http2_keep_alive_timeout_secs: Option<u64>,
+    #[validate(range(min = 1))]
+    pub tcp_keep_alive_secs: Option<u64>,
 }
 
 pub trait ConfigTracing {

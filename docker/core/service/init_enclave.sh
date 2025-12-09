@@ -8,6 +8,9 @@ CONFIG_PORT=4000
 TOKEN_PORT=4100
 KMS_SERVER_CONFIG_FILE="config.toml"
 AWS_WEB_IDENTITY_TOKEN_FILE="token"
+KEEPIDLE=30
+KEEPINTVL=10
+KEEPCNT=3
 export AWS_WEB_IDENTITY_TOKEN_FILE
 
 logger() {
@@ -45,7 +48,8 @@ start_tcp_proxy_out() {
     local NAME="$1"
     local PORT="$2"
     log "starting enclave-side $NAME proxy"
-    socat TCP-LISTEN:"$PORT",fork,nodelay,reuseaddr,keepalive,keepidle=30,keepintvl=10,keepcnt=3 \
+    socat \
+	TCP-LISTEN:"$PORT",fork,nodelay,reuseaddr,keepalive,keepidle="$KEEPIDLE",keepintvl="$KEEPINTVL",keepcnt="$KEEPCNT" \
 	VSOCK-CONNECT:$PARENT_CID:"$PORT",keepalive \
 	|& logger &
 }
@@ -54,8 +58,9 @@ start_tcp_proxy_in() {
     local NAME="$1"
     local PORT="$2"
     log "starting enclave-side $NAME proxy"
-    socat VSOCK-LISTEN:"$PORT",fork,reuseaddr,keepalive \
-	TCP:127.0.0.1:"$PORT",nodelay,keepalive,keepidle=30,keepintvl=10,keepcnt=3 \
+    socat \
+	VSOCK-LISTEN:"$PORT",fork,reuseaddr,keepalive \
+	TCP:127.0.0.1:"$PORT",nodelay,keepalive,keepidle="$KEEPIDLE",keepintvl="$KEEPINTVL",keepcnt="$KEEPCNT" \
 	|& logger &
 }
 

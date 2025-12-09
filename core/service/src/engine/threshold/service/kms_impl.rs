@@ -28,7 +28,7 @@ use threshold_fhe::{
         zk::ceremony::SecureCeremony,
     },
     networking::{
-        grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
+        grpc::{GrpcNetworkingManager, GrpcServer, OptionConfigWrapper, TlsExtensionGetter},
         tls::AttestedVerifier,
     },
 };
@@ -280,8 +280,12 @@ where
         .write()
         .await
         .new_server(TlsExtensionGetter::SslConnectInfo);
+    let p2p_config: OptionConfigWrapper = config.core_to_core_net.into();
     let router = Server::builder()
         .http2_adaptive_window(Some(true))
+        .http2_keepalive_interval(Some(p2p_config.get_http2_keep_alive_interval()))
+        .http2_keepalive_timeout(Some(p2p_config.get_http2_keep_alive_timeout()))
+        .tcp_keepalive(Some(p2p_config.get_tcp_keep_alive()))
         .add_service(networking_server)
         .add_service(threshold_health_service);
 

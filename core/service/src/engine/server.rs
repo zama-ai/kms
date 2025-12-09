@@ -117,6 +117,17 @@ pub async fn run_server<
     );
     let server = Server::builder()
         .http2_adaptive_window(Some(true))
+        .http2_keepalive_interval(
+            config
+                .http2_keep_alive_interval_secs
+                .map(Duration::from_secs),
+        )
+        .http2_keepalive_timeout(
+            config
+                .http2_keep_alive_timeout_secs
+                .map(Duration::from_secs),
+        )
+        .tcp_keepalive(config.tcp_keep_alive_secs.map(Duration::from_secs))
         .layer(trace_request)
         // Make sure we never abort because we spent too much time on the blocking part of the get result
         // as we mean to do it.

@@ -14,6 +14,9 @@ ENCLAVE_CID="$1"
 ENCLAVE_LOG_PORT="$2"
 ENCLAVE_CONFIG_PORT="$3"
 KMS_SERVER_CONFIG_FILE="$4"
+KEEPIDLE=30
+KEEPINTVL=10
+KEEPCNT=3
 
 get_configured_host_and_port() {
     local SERVICE_NAME="$1"
@@ -39,14 +42,14 @@ start_tcp_proxy_out() {
     local VSOCK_PORT="$2"
     local TCP_DST="$3"
     echo "start_proxies: starting parent-side $NAME proxy"
-    socat VSOCK-LISTEN:"$VSOCK_PORT",fork,reuseaddr,keepalive TCP:"$TCP_DST",nodelay,keepalive,keepidle=30,keepintvl=10,keepcnt=3 &
+    socat VSOCK-LISTEN:"$VSOCK_PORT",fork,reuseaddr,keepalive TCP:"$TCP_DST",nodelay,keepalive,keepidle="$KEEPIDLE",keepintvl="$KEEPINTVL",keepcnt="$KEEPCNT" &
 }
 
 start_tcp_proxy_in() {
     local NAME="$1"
     local PORT="$2"
     echo "start_proxies: starting parent-side $NAME proxy"
-    socat TCP-LISTEN:"$PORT",fork,nodelay,reuseaddr,keepalive,keepidle=30,keepintvl=10,keepcnt=3 VSOCK-CONNECT:"$ENCLAVE_CID":"$PORT",keepalive
+    socat TCP-LISTEN:"$PORT",fork,nodelay,reuseaddr,keepalive,keepidle="$KEEPIDLE",keepintvl="$KEEPINTVL",keepcnt="$KEEPCNT" VSOCK-CONNECT:"$ENCLAVE_CID":"$PORT",keepalive
 }
 
 # start the log stream for the enclave

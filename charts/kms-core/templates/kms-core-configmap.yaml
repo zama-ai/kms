@@ -93,6 +93,9 @@ data:
     listen_port = {{ int .Values.kmsCore.ports.client }}
     timeout_secs = {{ int .Values.kmsCore.resources.limits.grpcTimeout }}
     grpc_max_message_size = {{ int .Values.kmsCore.resources.limits.grpcMaxMessageSize }}
+    http2_keep_alive_interval_secs = {{ int .Values.kmsCore.resources.keepalive.Http2KeepAliveIntervalSecs }}
+    http2_keep_alive_timeout_secs = {{ int .Values.kmsCore.resources.keepalive.Http2KeepAliveTimeoutSecs }}
+    tcp_keep_alive_secs = {{ int .Values.kmsCore.resources.keepalive.TcpKeepAliveSecs }}
 
     {{ if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]
@@ -123,6 +126,9 @@ data:
     discard_inactive_sessions_interval = 900
     max_waiting_time_for_message_queue = 60
     max_opened_inactive_sessions_per_party = {{ int .Values.kmsCore.thresholdMode.maxOpenedInactiveSessionsPerParty }}
+    http2_keep_alive_interval_secs = {{ int .Values.kmsCore.thresholdMode.Http2KeepAliveIntervalSecs }}
+    http2_keep_alive_timeout_secs = {{ int .Values.kmsCore.thresholdMode.Http2KeepAliveTimeoutSecs }}
+    tcp_keep_alive_secs = {{ int .Values.kmsCore.thresholdMode.TcpKeepAliveSecs }}
 
       {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
         {{- if $.Values.kmsCore.nitroEnclave.enabled }}
