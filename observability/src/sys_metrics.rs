@@ -1,14 +1,13 @@
-use std::time::Duration;
-
-use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
-
 use crate::metrics::METRICS;
+use std::{ffi::OsStr, fs, time::Duration};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind, RefreshKind, System};
 
 pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Result<()> {
     // Only fail for info we'll actually poll later on
     let specifics = RefreshKind::nothing()
         .with_cpu(CpuRefreshKind::nothing())
-        .with_memory(MemoryRefreshKind::nothing().with_ram());
+        .with_memory(MemoryRefreshKind::nothing().with_ram())
+        .with_processes(ProcessRefreshKind::nothing());
     let mut system = sysinfo::System::new_with_specifics(specifics);
 
     let num_cpus = system.cpus().len() as f64;
@@ -50,9 +49,81 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             last_rx_bytes = total_rx;
             last_tx_bytes = total_tx;
 
+            // Update file descriptor count
+            // TODO this only works on Linux, need alternative for other OSes
+            let fd_count = get_file_descriptor_count();
+            METRICS.record_open_file_descriptors(fd_count);
+
+            // Update thread count
+            let thread_count = get_thread_count(&system);
+            METRICS.record_threads(thread_count);
+
+            // Update socat process count
+            let socat_count = get_socat_count(&system);
+            METRICS.record_socat_processes(socat_count);
+
             tokio::time::sleep(refresh_interval).await;
         }
     });
 
     Ok(())
+}
+
+fn get_file_descriptor_count() -> u64 {
+    let pid = match sysinfo::get_current_pid() {
+        Ok(pid) => pid,
+        Err(e) => {
+            tracing::error!("Could not get current PID and hence cannot evaluate file descriptors. Using 0 by default. Error was: {e}");
+            return 0;
+        }
+    };
+    let entries = fs::read_dir(format!("/proc/{pid}/fd")).map(|res| res.count())
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to read /proc/{pid}/fd with error and hence cannot get file descriptor count. Defaulting to 0. Error was: {e}");
+            0
+        });
+    entries as u64
+}
+
+/// Get the number of child threads for the current process
+/// TODO this only works on Linux, need alternative for other OSes
+fn get_thread_count(system: &sysinfo::System) -> u64 {
+    let pid = match sysinfo::get_current_pid() {
+        Ok(pid) => pid,
+        Err(e) => {
+            tracing::error!("Could not get current PID and hence cannot evaluate amount of child threads. Using 0 by default. Error was: {e}");
+            return 0;
+        }
+    };
+    let process = match system.process(pid) {
+        Some(process) => process,
+        None => {
+            tracing::error!("Could not get current process info from sysinfo and hence cannot evaluate amount of child threads. Using 0 by default");
+            return 0;
+        }
+    };
+    match process.tasks() {
+        Some(tasks) => tasks.len() as u64,
+        None => {
+            tracing::error!(
+                "System does not appear to be Linux and hence cannot get the amount of child threads. Using 0 by default");
+            0
+        }
+    }
+}
+
+/// Get the number of running socat file descriptors
+/// TODO this only works on Linux, need alternative for other OSes
+fn get_socat_count(system: &sysinfo::System) -> u64 {
+    let mut count = 0;
+    for process in system.processes_by_name(OsStr::new("socat")) {
+        let pid = process.pid();
+        let entries= fs::read_dir(format!("/proc/{pid}/fd")).map(|res| res.count())
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to read /proc/{pid}/fd with error and hence cannot get file descriptor count. Defaulting to 0. Error was: {e}");
+                    0
+                });
+        count += entries as u64;
+    }
+    count
 }
