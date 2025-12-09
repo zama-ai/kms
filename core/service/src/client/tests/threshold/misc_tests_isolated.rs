@@ -1,94 +1,32 @@
 //! Isolated versions of threshold misc tests
 //!
-//! This file demonstrates the migration pattern from shared test material
-//! to isolated test material using TestMaterialManager.
+//! This file uses the consolidated testing module for clean, maintainable tests.
 
-use crate::client::test_tools::{
-    get_health_client, get_status, setup_threshold_isolated, ThresholdTestConfig,
-};
+use crate::client::test_tools::{get_health_client, get_status};
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
-use crate::util::key_setup::test_material_manager::TestMaterialManager;
-use crate::util::key_setup::test_material_spec::TestMaterialSpec;
-use crate::vault::storage::{file::FileStorage, StorageType};
-use anyhow::Result;
-use std::collections::HashMap;
-use tempfile::TempDir;
-use threshold_fhe::execution::runtime::party::Role;
+use crate::testing::prelude::*;
 use threshold_fhe::networking::grpc::GrpcServer;
 use tonic::server::NamedService;
 use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::HealthCheckRequest;
-
-/// Helper function to setup isolated threshold test environment
-async fn setup_isolated_threshold_test(
-    test_name: &str,
-    party_count: usize,
-) -> Result<(
-    TempDir,
-    HashMap<u32, crate::client::test_tools::ServerHandle>,
-    HashMap<
-        u32,
-        kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient<
-            tonic::transport::Channel,
-        >,
-    >,
-)> {
-    // Use the test-material directory where we generated the material
-    // Need to go up two levels from core/service to reach the root
-    let source_path = std::env::current_dir()?
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("test-material");
-    let manager = TestMaterialManager::new(Some(source_path));
-    let spec = TestMaterialSpec::threshold_basic(party_count);
-    let material_dir = manager.setup_test_material(&spec, test_name).await?;
-
-    let mut pub_storages = Vec::new();
-    let mut priv_storages = Vec::new();
-    for i in 1..=party_count {
-        let role = Role::indexed_from_one(i);
-        pub_storages.push(FileStorage::new(
-            Some(material_dir.path()),
-            StorageType::PUB,
-            Some(role),
-        )?);
-        priv_storages.push(FileStorage::new(
-            Some(material_dir.path()),
-            StorageType::PRIV,
-            Some(role),
-        )?);
-    }
-
-    let (servers, clients) = setup_threshold_isolated(
-        2, // threshold
-        pub_storages,
-        priv_storages,
-        (0..party_count).map(|_| None).collect(),
-        ThresholdTestConfig {
-            test_material_path: Some(material_dir.path()),
-            ..Default::default()
-        },
-    )
-    .await;
-
-    Ok((material_dir, servers, clients))
-}
 
 /// ISOLATED VERSION: Check that the threshold health service is serving as soon as boot is completed.
 ///
 /// - Each test gets its own temporary directory with pre-generated material
 #[tokio::test]
 async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
-    let (_material_dir, servers, _clients) =
-        setup_isolated_threshold_test("health_endpoint", 4).await?;
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("health_endpoint")
+        .with_party_count(4)
+        .with_threshold(2)
+        .build()
+        .await?;
 
     // Give threshold servers more time to initialize
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS * 3)).await;
 
     // Test health endpoint for the first server
-    let server = servers.get(&1).expect("Server 1 should exist");
+    let server = env.servers.get(&1).expect("Server 1 should exist");
     let health_port = server.mpc_port.unwrap_or(server.service_port);
     let mut health_client = get_health_client(health_port)
         .await
@@ -120,10 +58,15 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
 async fn test_threshold_close_after_drop_isolated() -> Result<()> {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
 
-    let (_material_dir, mut servers, _clients) =
-        setup_isolated_threshold_test("close_after_drop", 4).await?;
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("close_after_drop")
+        .with_party_count(4)
+        .with_threshold(2)
+        .build()
+        .await?;
 
     // Test with the first server
+    let mut servers = env.servers;
     let server = servers.remove(&1).expect("Server 1 should exist");
     let health_port = server.mpc_port.unwrap_or(server.service_port);
     let mut health_client = get_health_client(health_port)
@@ -166,10 +109,15 @@ async fn test_threshold_close_after_drop_isolated() -> Result<()> {
 /// ISOLATED VERSION: Test threshold server shutdown
 #[tokio::test]
 async fn test_threshold_shutdown_isolated() -> Result<()> {
-    let (_material_dir, servers, _clients) = setup_isolated_threshold_test("shutdown", 4).await?;
+    let env = ThresholdTestEnv::builder()
+        .with_test_name("shutdown")
+        .with_party_count(4)
+        .with_threshold(2)
+        .build()
+        .await?;
 
     // Test shutdown for all servers
-    for (party_id, server) in servers {
+    for (party_id, server) in env.into_servers_with_id() {
         tracing::info!("Testing shutdown for party {}", party_id);
         server.assert_shutdown().await;
     }

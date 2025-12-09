@@ -14,6 +14,7 @@ pub mod util {
     pub mod rate_limiter;
     pub mod retry;
 }
+
 #[cfg(feature = "non-wasm")]
 pub mod backup;
 #[cfg(feature = "non-wasm")]
@@ -22,6 +23,16 @@ pub mod cryptography;
 pub mod engine;
 #[cfg(feature = "non-wasm")]
 pub mod grpc;
+/// Consolidated testing infrastructure
+///
+/// This module provides a unified API for writing isolated tests.
+/// Import the prelude in your test files:
+///
+/// ```
+/// use kms_lib::testing::prelude::*;
+/// ```
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 #[cfg(feature = "non-wasm")]
 pub mod vault;
 

@@ -1,23 +1,14 @@
 //! Isolated versions of centralized misc tests
 //!
-//! This file demonstrates the migration pattern from shared test material
-//! to isolated test material using TestMaterialManager.
+//! This file uses the consolidated testing module for clean, maintainable tests.
 
-use crate::client::test_tools::{get_health_client, get_status, setup_centralized_isolated};
+use crate::client::test_tools::{get_health_client, get_status};
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
-use crate::consts::{OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM};
+use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
-use crate::util::key_setup::ensure_central_keys_exist;
-use crate::util::key_setup::test_material_manager::TestMaterialManager;
-use crate::util::key_setup::test_material_spec::TestMaterialSpec;
-use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
-use crate::vault::storage::Storage;
-use crate::vault::storage::{file::FileStorage, StorageType};
-use anyhow::Result;
+use crate::testing::prelude::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
-use kms_grpc::rpc_types::PubDataType;
 use std::collections::HashMap;
-use tempfile::TempDir;
 use tonic::server::NamedService;
 use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::HealthCheckRequest;
@@ -40,76 +31,16 @@ cfg_if::cfg_if! {
     }
 }
 
-/// Helper to fix public key RequestIds for centralized tests.
-/// Ensures public keys are stored with correct RequestIds that match private keys.
-async fn fix_centralized_public_keys(
-    pub_storage: &mut FileStorage,
-    priv_storage: &mut FileStorage,
-) -> Result<()> {
-    // Clear existing public keys to force regeneration with correct RequestIds
-    let _ = pub_storage
-        .delete_data(&TEST_CENTRAL_KEY_ID, &PubDataType::PublicKey.to_string())
-        .await;
-    let _ = pub_storage
-        .delete_data(&OTHER_CENTRAL_TEST_ID, &PubDataType::PublicKey.to_string())
-        .await;
-
-    ensure_central_keys_exist(
-        pub_storage,
-        priv_storage,
-        TEST_PARAM,
-        &TEST_CENTRAL_KEY_ID,
-        &OTHER_CENTRAL_TEST_ID,
-        true, // deterministic
-        true, // write_privkey
-    )
-    .await;
-
-    Ok(())
-}
-
-/// Helper function to setup isolated centralized test environment
-async fn setup_isolated_centralized_test(
-    test_name: &str,
-) -> Result<(
-    TempDir,
-    crate::client::test_tools::ServerHandle,
-    kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient<
-        tonic::transport::Channel,
-    >,
-)> {
-    let manager = TestMaterialManager::new(None);
-    let spec = TestMaterialSpec::centralized_basic();
-    let material_dir = manager.setup_test_material(&spec, test_name).await?;
-
-    // Generate material with correct RequestIds
-    ensure_testing_material_exists(Some(material_dir.path())).await;
-
-    let mut pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
-    let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
-
-    // Fix public key RequestIds
-    fix_centralized_public_keys(&mut pub_storage, &mut priv_storage).await?;
-
-    let (server, client) = crate::client::test_tools::setup_centralized(
-        pub_storage,
-        priv_storage,
-        None, // No backup vault
-        None, // No rate limiter
-    )
-    .await;
-
-    Ok((material_dir, server, client))
-}
-
 /// Check that the centralized health service is serving as soon as boot is completed.
 #[tokio::test]
 async fn test_central_health_endpoint_availability_isolated() -> Result<()> {
-    let (_material_dir, kms_server, _kms_client) =
-        setup_isolated_centralized_test("health_endpoint").await?;
+    let env = CentralizedTestEnv::builder()
+        .with_test_name("health_endpoint")
+        .build()
+        .await?;
 
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let mut health_client = get_health_client(kms_server.service_port)
+    let mut health_client = get_health_client(env.server.service_port)
         .await
         .expect("Failed to get health client");
     let service_name = <CoreServiceEndpointServer<
@@ -137,31 +68,19 @@ async fn test_central_health_endpoint_availability_isolated() -> Result<()> {
 /// Validate that dropping the server signal triggers the server to shut down
 #[tokio::test]
 async fn test_central_close_after_drop_isolated() -> Result<()> {
+    use crate::consts::TEST_PARAM;
+
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
 
-    let manager = TestMaterialManager::new(None);
-    let spec = TestMaterialSpec::centralized_basic();
-    let material_dir = manager
-        .setup_test_material(&spec, "close_after_drop")
+    let env = CentralizedTestEnv::builder()
+        .with_test_name("close_after_drop")
+        .build()
         .await?;
 
-    ensure_testing_material_exists(Some(material_dir.path())).await;
-
-    let mut pub_storage = FileStorage::new(Some(material_dir.path()), StorageType::PUB, None)?;
-    let mut priv_storage = FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
-    let client_storage = FileStorage::new(Some(material_dir.path()), StorageType::CLIENT, None)?;
-
-    // Fix public key RequestIds
-    fix_centralized_public_keys(&mut pub_storage, &mut priv_storage).await?;
-
-    let (kms_server, kms_client) = setup_centralized_isolated(
-        pub_storage.clone(),
-        priv_storage,
-        None,
-        None,
-        Some(material_dir.path()),
-    )
-    .await;
+    // Create additional storage instances for internal client
+    let pub_storage = FileStorage::new(Some(env.material_dir.path()), StorageType::PUB, None)?;
+    let client_storage =
+        FileStorage::new(Some(env.material_dir.path()), StorageType::CLIENT, None)?;
 
     // Create internal client with isolated material
     let pub_storage_map = HashMap::from([(1, pub_storage)]);
@@ -172,6 +91,9 @@ async fn test_central_close_after_drop_isolated() -> Result<()> {
         None,
     )
     .await?;
+
+    let kms_server = env.server;
+    let kms_client = env.client;
 
     let mut health_client = get_health_client(kms_server.service_port)
         .await
