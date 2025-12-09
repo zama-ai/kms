@@ -52,12 +52,8 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
 
             // Update file descriptor count
             // TODO this only works on Linux, need alternative for other OSes
-            let entries = fs::read_dir("/proc/self/fd").map(|res| res.count())
-                .unwrap_or_else(|e| {
-                    tracing::error!("Failed to read /proc/self/fd with error and hence cannot get file descriptor count. Defaulting to 0. Error was: {e}");
-                    0
-                });
-            METRICS.record_open_file_descriptors(entries as u64);
+            let fd_count = get_file_descriptor_count();
+            METRICS.record_open_file_descriptors(fd_count);
 
             // Update thread count
             let thread_count = get_thread_count(&system);
@@ -72,6 +68,22 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
     });
 
     Ok(())
+}
+
+fn get_file_descriptor_count() -> u64 {
+    let pid = match sysinfo::get_current_pid() {
+        Ok(pid) => pid,
+        Err(e) => {
+            tracing::error!("Could not get current PID and hence cannot evaluate file descriptors. Using 0 by default. Error was: {e}");
+            return 0;
+        }
+    };
+    let entries = fs::read_dir(format!("/proc/{pid}/fd")).map(|res| res.count())
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to read /proc/{pid}/fd with error and hence cannot get file descriptor count. Defaulting to 0. Error was: {e}");
+            0
+        });
+    entries as u64
 }
 
 /// Get the number of child threads for the current process
