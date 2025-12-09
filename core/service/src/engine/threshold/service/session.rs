@@ -600,7 +600,7 @@ impl ImmutableSessionMaker {
     }
 
     /// Returns the number of active sessions.
-    /// This is the sum of active sessions with _each_ party other.
+    /// This is the sum of active sessions with _each_ other party.
     pub(crate) async fn active_sessions(&self) -> u64 {
         self.inner.active_sessions().await
     }
