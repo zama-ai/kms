@@ -56,6 +56,14 @@ on:
         type: string
         required: false
         default: ''  # Empty = let nextest decide (respects #[serial] attribute)
+      enable-shared-material:
+        type: boolean
+        required: false
+        default: false  # If true, set KMS_TEST_SHARED_MATERIAL=1 to use shared material (no copying)
+      use-pregenerated-material:
+        type: boolean
+        required: false
+        default: false  # If true, download test material from artifacts instead of generating
     secrets:
       CODECOV_TOKEN:
         required: false
@@ -247,10 +255,19 @@ jobs:
       - name: Linting dylint
         run: cargo dylint --all
 
-      # Generate test material required by isolated tests
+      # Download pre-generated test material if available (saves ~30GB generation per job)
+      - name: Download Test Material
+        if: ${{ inputs.use-pregenerated-material }}
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: test-material-${{ github.run_id }}
+          path: ./test-material
+
+      # Generate test material if not using pre-generated
       # Must run from workspace root, not working-directory
       # Generate default material if slow_tests feature is enabled, otherwise just testing material
       - name: Generate Test Material
+        if: ${{ ! inputs.use-pregenerated-material }}
         working-directory: .
         env:
           ARGS_TESTS: ${{ inputs.args-tests }}
@@ -291,6 +308,7 @@ jobs:
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_RETRIES: 3
           NEXTEST_TEST_THREADS_INPUT: ${{ inputs.nextest-test-threads }}
+          ENABLE_SHARED_MATERIAL: ${{ inputs.enable-shared-material }}
           EVENT_NAME: ${{ github.event_name }}
           RUNNER_TEMP: ${{ runner.temp }}
         run: |
@@ -302,13 +320,15 @@ jobs:
             echo "NEXTEST_TEST_THREADS not set (using nextest default)"
           fi
           
-          # Enable shared test material mode for slow_tests to save disk space
-          # Tests run sequentially (NEXTEST_TEST_THREADS=1) so no conflicts
-          if [[ "${ARGS_TESTS}" == *"slow_tests"* ]]; then
+          # Enable shared test material mode if requested to save disk space
+          # IMPORTANT: Only use with sequential execution (NEXTEST_TEST_THREADS=1)
+          # Shared mode uses material in-place without copying to temp directories
+          if [[ "${ENABLE_SHARED_MATERIAL}" == "true" ]]; then
             export KMS_TEST_SHARED_MATERIAL=1
-            echo "KMS_TEST_SHARED_MATERIAL enabled for slow_tests (using shared material, no copying)"
+            echo "KMS_TEST_SHARED_MATERIAL=1 (using shared material in-place, no copying)"
+            echo "This saves ~80GB+ disk space by avoiding material duplication"
           else
-            echo "KMS_TEST_SHARED_MATERIAL not set (using isolated material with copying)"
+            echo "KMS_TEST_SHARED_MATERIAL not set (using isolated material with copying to temp dirs)"
           fi
           
           mkdir -p ~/.aws/ &&
