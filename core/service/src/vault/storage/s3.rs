@@ -621,6 +621,11 @@ mod tests {
     }
 }
 
+/// This is a trait to abstract over getting different ReadOnlyS3Storage implementations,
+/// It is mostly needed for mocking the read only s3 storage in tests.
+///
+/// Calling [Self::get_storage] on the real implementation simply constructs a new ReadOnlyS3Storage,
+/// only one getter is needed to construct different ReadOnlyS3Storage objects.
 pub(crate) trait ReadOnlyS3StorageGetter<R> {
     fn get_storage(
         &self,
@@ -723,7 +728,6 @@ async fn test_s3_anon() {
     .unwrap();
 
     let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
-    println!("public_key_ids: {:?}", public_key_ids);
     // at least one public key should be present in the bucket
     assert!(!public_key_ids.is_empty());
 }
