@@ -1,6 +1,7 @@
 use crate::{anyhow_error_and_log, consts::DURATION_WAITING_ON_RESULT_SECONDS, some_or_err};
+use anyhow::anyhow;
 use async_cell::sync::AsyncCell;
-use kms_grpc::RequestId;
+use kms_grpc::{rpc_types::MetricedError, RequestId};
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
@@ -266,6 +267,68 @@ impl<T: Clone> MetaStore<T> {
                 }
             })
             .collect()
+    }
+}
+
+/// Helper method for retrieving the result of a request from an appropriate meta store
+/// [req_id] is the request ID to retrieve
+/// [request_type] is a free-form string used only for error logging the origin of the failure
+pub(crate) async fn handle_res_metric_mapping<T: Clone>(
+    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
+    metric_scope: &'static str,
+    req_id: &RequestId,
+    request_type_info: &str,
+) -> Result<T, MetricedError> {
+    match handle {
+        None => {
+            let msg = format!(
+                "Could not retrieve {request_type_info} with request ID {req_id}. It does not exist"
+            );
+            tracing::warn!(msg);
+            Err(MetricedError::new(
+                metric_scope,
+                Some(*req_id),
+                anyhow!(msg),
+                tonic::Code::NotFound,
+            ))
+        }
+        Some(cell) => {
+            let result = tokio::time::timeout(
+                tokio::time::Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS),
+                cell.get(),
+            )
+            .await;
+            // Peel off the potential errors
+            if let Ok(result) = result {
+                match result {
+                    Ok(result) => Ok(result),
+                    Err(e) => {
+                        let msg = format!(
+                                "Could not retrieve {request_type_info} with request ID {req_id} since it finished with an error: {e}"
+                            );
+                        tracing::warn!(msg);
+                        Err(MetricedError::new(
+                            metric_scope,
+                            Some(*req_id),
+                            anyhow!(msg),
+                            tonic::Code::Internal,
+                        ))
+                    }
+                }
+            } else {
+                let msg = format!(
+                    "Could not retrieve {request_type_info} with request ID {req_id} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
+                );
+                tracing::info!(msg);
+                Err(MetricedError::new(
+                    metric_scope,
+                    Some(*req_id),
+                    anyhow!(msg),
+                    tonic::Code::Unavailable,
+                ))
+            }
+            // Note that this is not logged as an error as we expect calls to take some time to be completed
+        }
     }
 }
 

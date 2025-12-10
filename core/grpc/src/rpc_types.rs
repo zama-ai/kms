@@ -7,7 +7,7 @@ use crate::utils::tonic_result::top_1k_chars;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use observability::metrics::METRICS;
-use observability::metrics_names::map_tonic_code_to_metric_tag;
+use observability::metrics_names::{map_scope_to_metric_err_tag, map_tonic_code_to_metric_err_tag};
 use serde::{Deserialize, Serialize};
 use std::fmt::{self};
 use strum::IntoEnumIterator;
@@ -19,7 +19,7 @@ use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::{
     Unversionize, UnversionizeError, Upgrade, Version, VersionizeOwned, VersionsDispatch,
 };
-use tonic::{Response, Status};
+use tonic::Status;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
@@ -102,11 +102,12 @@ impl SignedPubDataHandleInternal {
     }
 }
 pub struct MetricedError {
-    pub scope: Box<&'static str>,
-    pub request_id: Option<RequestId>,
-    pub internal_error: Box<dyn std::error::Error + Send + Sync>,
-    pub error_code: tonic::Code,
-    pub extra_context: Option<&'static str>,
+    scope: Box<&'static str>,
+    request_id: Option<RequestId>,
+    // Currently we do not return the internal error to the client
+    #[allow(unused)]
+    internal_error: Box<dyn std::error::Error + Send + Sync>,
+    error_code: tonic::Code,
 }
 
 impl MetricedError {
@@ -117,7 +118,12 @@ impl MetricedError {
         error_code: tonic::Code,
     ) -> Self {
         let error = internal_error.into(); // converts anyhow::Error or any other error
-        let error_string = format!("Failed for metric {}:", metric_scope);
+        let error_string = format!(
+            "Failure on requestID {} with metric {}. Error: {}",
+            request_id.unwrap_or_default(),
+            metric_scope,
+            error
+        );
 
         tracing::error!(
             error = ?error,
@@ -125,49 +131,26 @@ impl MetricedError {
             error_string,
         );
 
-        METRICS.increment_error_counter(metric_scope, map_tonic_code_to_metric_tag(error_code));
+        // Increment the error code metric
+        METRICS.increment_error_counter(metric_scope, map_tonic_code_to_metric_err_tag(error_code));
+        // Increment the method specific metric
+        METRICS.increment_error_counter(metric_scope, map_scope_to_metric_err_tag(metric_scope));
+
         Self {
             scope: Box::new(metric_scope),
             request_id,
             internal_error: error,
             error_code,
-            extra_context: None,
-        }
-    }
-    pub fn with_context<E: Into<Box<dyn std::error::Error + Send + Sync>>>(
-        metric_scope: &'static str,
-        request_id: Option<RequestId>,
-        internal_error: E,
-        error_code: tonic::Code,
-        extra_context: &'static str,
-    ) -> Self {
-        let error = internal_error.into(); // converts anyhow::Error or any other error
-        let error_string = format!("Failed for metric {}: {}", metric_scope, extra_context);
-
-        tracing::error!(
-            error = ?error,
-            request_id = ?request_id,
-            error_string,
-        );
-
-        METRICS.increment_error_counter(metric_scope, map_tonic_code_to_metric_tag(error_code));
-        Self {
-            scope: Box::new(metric_scope),
-            request_id,
-            internal_error: error,
-            error_code,
-            extra_context: None,
         }
     }
 }
-
 impl Into<Status> for MetricedError {
     fn into(self) -> Status {
-        let error_string = if let Some(info) = self.extra_context {
-            top_1k_chars(format!("Failed for metric {}: {}", self.scope, info))
-        } else {
-            top_1k_chars(format!("Failed for metric {}:", self.scope))
-        };
+        let error_string = top_1k_chars(format!(
+            "Failed on requestID {} with metric {}",
+            self.request_id.unwrap_or_default(),
+            self.scope,
+        ));
 
         tonic::Status::new(self.error_code, error_string)
     }
@@ -198,7 +181,7 @@ where
         error_string,
     );
 
-    METRICS.increment_error_counter(metric_scope, map_tonic_code_to_metric_tag(return_code));
+    METRICS.increment_error_counter(metric_scope, map_tonic_code_to_metric_err_tag(return_code));
     tonic::Status::new(return_code, error_string)
 }
 
