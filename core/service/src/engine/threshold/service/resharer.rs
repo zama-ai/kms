@@ -66,20 +66,10 @@ fn bucket_from_domain(url: &url::Url) -> anyhow::Result<String> {
     Ok(domain_parts[0].to_owned())
 }
 
-// copied from
+// adapted from
 // https://github.com/zama-ai/fhevm/blob/dac153662361758c9a563e766473692f8acf1074/coprocessor/fhevm-engine/gw-listener/src/aws_s3.rs#L140C1-L174C1
 fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String)> {
-    // e.g BBBBBB.s3.bla.bli.amazonaws.blu, the bucket is part of the domain
-    let s3_bucket_url = if s3_bucket_url.contains("minio:9000") {
-        // TODO: replace by docker configuration
-        tracing::warn!(s3_bucket_url, "Using localhost for minio access");
-        s3_bucket_url
-            .replace("minio:9000", "172.17.0.1:9000")
-            .to_owned()
-    } else {
-        s3_bucket_url.to_owned()
-    };
-    let parsed_url_and_bucket = url::Url::parse(&s3_bucket_url)?;
+    let parsed_url_and_bucket = url::Url::parse(s3_bucket_url)?;
     let mut bucket = parsed_url_and_bucket
         .path()
         .trim_start_matches('/')
@@ -115,6 +105,15 @@ async fn fetch_public_materials_from_peers<
     key_digests: &HashMap<PubDataType, Vec<u8>>,
     ro_storage_getter: &G,
 ) -> anyhow::Result<FhePubKeySet> {
+    // obtain the digests
+    let expected_public_key_digest = key_digests
+        .get(&PubDataType::PublicKey)
+        .ok_or(anyhow::anyhow!("missing digest for public key"))?;
+
+    let expected_server_key_digest = key_digests
+        .get(&PubDataType::ServerKey)
+        .ok_or(anyhow::anyhow!("missing digest for server key"))?;
+
     // fetch the context info
     let context = {
         let priv_storage = crypto_storage.get_private_storage();
@@ -160,18 +159,10 @@ async fn fetch_public_materials_from_peers<
                 let actual_public_key_digest =
                     safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key)?;
 
-                // verify the digests
-                let expected_public_key_digest = key_digests
-                    .get(&PubDataType::PublicKey)
-                    .ok_or(anyhow::anyhow!("missing digest for public key"))?;
                 if actual_public_key_digest != *expected_public_key_digest {
                     tracing::warn!("Public key digest mismatch from peer {}", node.party_id);
                     continue;
                 }
-
-                let expected_server_key_digest = key_digests
-                    .get(&PubDataType::ServerKey)
-                    .ok_or(anyhow::anyhow!("missing digest for server key"))?;
 
                 if actual_server_key_digest != *expected_server_key_digest {
                     tracing::warn!("No expected server key digest provided for verification");
@@ -202,11 +193,6 @@ async fn fetch_public_materials_from_peers<
 }
 
 /// Attempt to get and verify the public materials needed for resharing.
-///
-/// If the public materials are in my own private storage, no verification is done as we trust our own storage.
-/// As such, the key_digests can be empty in that case.
-///
-/// Otherwise, the public materials are fetched from the public storages of the other parties given by the context ID.
 async fn get_verified_public_materials<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
@@ -252,7 +238,7 @@ async fn get_verified_public_materials<
 
     match (public_key_res, server_key_res) {
         (Ok(public_key), Ok(server_key)) => {
-            // no need to verify the digest as those came from my own storage
+            // TODO(zama-ai/kms-internal/issues/2843) verification will come once integration tests are working
             Ok(FhePubKeySet {
                 public_key,
                 server_key,
