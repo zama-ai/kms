@@ -467,25 +467,7 @@ async fn public_decrypt_metriced<
             .collect::<Vec<_>>();
 
         let mut dec_tasks = Vec::new();
-        let dec_mode = self.decryption_mode;
-
-        // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
-        for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
-            let inner_timer = metrics::METRICS
-                .time_operation(OP_PUBLIC_DECRYPT_INNER)
-                .tags([
-                    (TAG_PARTY_ID, my_role.to_string()),
-                    (TAG_KEY_ID, key_id.as_str()),
-                    (
-                        TAG_PUBLIC_DECRYPTION_KIND,
-                        dec_mode.as_str_name().to_string(),
-                    ),
-                ])
-                .start();
-            let internal_sid = ok_or_tonic_abort(
-                req_id.derive_session_id_with_counter(ctr as u64),
-                "failed to derive session ID from counter".to_string(),
-            )?;
+        let dec_mode = decryptor.decryption_mode;
 
         let crypto_storage = decryptor.crypto_storage.clone();
 
