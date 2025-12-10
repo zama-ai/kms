@@ -555,7 +555,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     .into_iter()
                     .sorted_by_key(|x| x.0)
                     .map(|(key, digest)| KeyDigest {
-                        key_type: key.to_string(), // TODO should this be a string?
+                        key_type: key.to_string(),
                         digest,
                     })
                     .collect::<Vec<_>>();
