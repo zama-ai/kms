@@ -13,8 +13,6 @@ on:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
-      NPM_TOKEN:
-        required: false
 
 env:
   NPM_TAG: 'test'
@@ -111,7 +109,6 @@ jobs:
       - name: NPM publish Node package
         uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
         with:
-          token: ${{ secrets.NPM_TOKEN }}
           package: ./core/service/pkg/package.json
           dry-run: true
           provenance: true
@@ -129,7 +126,6 @@ jobs:
       - name: NPM publish web package
         uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
         with:
-          token: ${{ secrets.NPM_TOKEN }}
           package: ./core/service/pkg/package.json
           dry-run: true
           provenance: true

@@ -221,7 +221,7 @@ Our CI uses intelligent change detection to only run tests for modified componen
   - `node-tkms`: Node.js target with `--target nodejs`
   - `tkms`: Web target with `--target web`
 - 🔄 **Version Tagging**: Automatic latest/prerelease tag assignment
-- 🔐 **Security**: Uses NPM_TOKEN for authentication
+- 🔐 **Security**: Uses [NPM trusted publishers](https://docs.npmjs.com/trusted-publishers) for authentication
 
 ### 2. 🐳 Release Docker Images
 [`.github/workflows/on-release-images.yml`](on-release-images.yml)
