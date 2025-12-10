@@ -42,6 +42,9 @@ jobs:
         with:
           node-version: 20
 
+      - name: Update npm
+        run: npm install -g npm@11.7.0
+
       # NPM package handling
       - name: Set NPM version tag to latest
         if: ${{ !github.event.release.prerelease }}
