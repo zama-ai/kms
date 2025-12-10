@@ -2,6 +2,7 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
 
 // === External Crates ===
+use alloy_primitives::U256;
 use anyhow::anyhow;
 use itertools::Itertools;
 use kms_grpc::{
@@ -236,19 +237,19 @@ impl<
                     Some(raw_decryption) => *raw_decryption,
                     None => {
                         return Err(anyhow!(
-                            "Decryption with session ID {} could not be retrived",
+                            "Public Decryption with session ID {} could not be retrived",
                             session_id.to_string()
                         ))
                     }
                 };
                 tracing::info!(
-                    "Decryption completed on {:?}. Inner thread took {:?} ms",
+                    "Public decryption in session {session_id} completed on {:?}. Inner thread took {:?} ms",
                     my_identity,
                     time.as_millis()
                 );
                 raw_decryption
             }
-            Err(e) => return Err(anyhow!("Failed decryption with noiseflooding: {e}")),
+            Err(e) => return Err(anyhow!("Failed public decryption with noiseflooding: {e}")),
         };
         Ok(raw_decryption)
     }
@@ -456,11 +457,35 @@ async fn public_decrypt_metriced<
         let hex_req_id = hex::encode(req_id.as_bytes());
         let decimal_req_id: u128 = req_id.try_into().unwrap_or(0);
         tracing::info!(
-                request_id = hex_req_id,
-                request_id_decimal = decimal_req_id,
-                "Public Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {internal_sid}. Handle: {}",
-                hex::encode(&typed_ciphertext.external_handle)
-            );
+            "MetaStore INITIAL insert - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
+            req_id, key_id, my_role, ciphertexts.len(), lock_acquired_time, total_lock_time
+        );
+
+        let ext_handles_bytes = ciphertexts
+            .iter()
+            .map(|c| c.external_handle.to_owned())
+            .collect::<Vec<_>>();
+
+        let mut dec_tasks = Vec::new();
+        let dec_mode = self.decryption_mode;
+
+        // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
+        for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
+            let inner_timer = metrics::METRICS
+                .time_operation(OP_PUBLIC_DECRYPT_INNER)
+                .tags([
+                    (TAG_PARTY_ID, my_role.to_string()),
+                    (TAG_KEY_ID, key_id.as_str()),
+                    (
+                        TAG_PUBLIC_DECRYPTION_KIND,
+                        dec_mode.as_str_name().to_string(),
+                    ),
+                ])
+                .start();
+            let internal_sid = ok_or_tonic_abort(
+                req_id.derive_session_id_with_counter(ctr as u64),
+                "failed to derive session ID from counter".to_string(),
+            )?;
 
         let crypto_storage = decryptor.crypto_storage.clone();
 
