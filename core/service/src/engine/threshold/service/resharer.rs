@@ -29,6 +29,27 @@ const ERR_SERVER_KEY_DIGEST_MISMATCH: &str = "Server key digest mismatch";
 const ERR_PUBLIC_KEY_DIGEST_MISMATCH: &str = "Public key digest mismatch";
 const ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS: &str = "Failed to fetch public materials";
 
+fn verify_key_digest(
+    server_key: &ServerKey,
+    public_key: &tfhe::CompactPublicKey,
+    expected_server_key_digest: &[u8],
+    expected_public_key_digest: &[u8],
+) -> anyhow::Result<()> {
+    let actual_server_key_digest =
+        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
+    let actual_public_key_digest =
+        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
+
+    if actual_server_key_digest != expected_server_key_digest {
+        anyhow::bail!(ERR_SERVER_KEY_DIGEST_MISMATCH);
+    }
+    if actual_public_key_digest != expected_public_key_digest {
+        anyhow::bail!(ERR_PUBLIC_KEY_DIGEST_MISMATCH);
+    }
+
+    Ok(())
+}
+
 use crate::{
     consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
     engine::{
@@ -79,7 +100,8 @@ fn bucket_from_domain(url: &url::Url) -> anyhow::Result<String> {
 /// Code is adapted from
 /// https://github.com/zama-ai/fhevm/blob/dac153662361758c9a563e766473692f8acf1074/coprocessor/fhevm-engine/gw-listener/src/aws_s3.rs#L140C1-L174C1
 fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String)> {
-    let parsed_url_and_bucket = url::Url::parse(s3_bucket_url)?;
+    // e.g BBBBBB.s3.bla.bli.amazonaws.blu, the bucket is part of the domain
+    let parsed_url_and_bucket = url::Url::parse(s3_bucket_url.as_str())?;
     let mut bucket = parsed_url_and_bucket
         .path()
         .trim_start_matches('/')
@@ -166,35 +188,25 @@ async fn fetch_public_materials_from_peers<
 
         match (public_key, server_key) {
             (Ok(public_key), Ok(server_key)) => {
-                let actual_server_key_digest =
-                    safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key)?;
-                let actual_public_key_digest =
-                    safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key)?;
-
-                if actual_public_key_digest != *expected_public_key_digest {
-                    let msg = format!(
-                        "{} from peer {}",
-                        ERR_PUBLIC_KEY_DIGEST_MISMATCH, node.party_id
-                    );
-                    tracing::warn!(msg);
-                    errors.push(msg);
-                    continue;
+                match verify_key_digest(
+                    &server_key,
+                    &public_key,
+                    expected_server_key_digest,
+                    expected_public_key_digest,
+                ) {
+                    Ok(()) => {
+                        return Ok(FhePubKeySet {
+                            public_key,
+                            server_key,
+                        });
+                    }
+                    Err(e) => {
+                        let msg = format!("Verification failed from peer {}: {}", node.party_id, e);
+                        tracing::warn!(msg);
+                        errors.push(msg);
+                        continue;
+                    }
                 }
-
-                if actual_server_key_digest != *expected_server_key_digest {
-                    let msg = format!(
-                        "{} from peer {}",
-                        ERR_SERVER_KEY_DIGEST_MISMATCH, node.party_id
-                    );
-                    tracing::warn!(msg);
-                    errors.push(msg);
-                    continue;
-                }
-
-                return Ok(FhePubKeySet {
-                    public_key,
-                    server_key,
-                });
             }
             (Err(e), _) => {
                 let msg = format!(
@@ -267,9 +279,37 @@ async fn get_verified_public_materials<
             )
         });
 
+    let verify_keys_from_own_pub_storage = |public_key,
+                                            server_key,
+                                            key_digests: &HashMap<PubDataType, Vec<u8>>|
+     -> anyhow::Result<()> {
+        // obtain the digests
+        let expected_public_key_digest = key_digests
+            .get(&PubDataType::PublicKey)
+            .ok_or(anyhow::anyhow!("missing digest for public key"))?;
+
+        let expected_server_key_digest = key_digests
+            .get(&PubDataType::ServerKey)
+            .ok_or(anyhow::anyhow!("missing digest for server key"))?;
+
+        verify_key_digest(
+            server_key,
+            public_key,
+            expected_server_key_digest,
+            expected_public_key_digest,
+        )
+    };
+
     match (public_key_res, server_key_res) {
         (Ok(public_key), Ok(server_key)) => {
-            // TODO(zama-ai/kms-internal/issues/2843) verification will come once integration tests are working
+            verify_keys_from_own_pub_storage(&public_key, &server_key, key_digests).map_err(
+                |e| {
+                    tonic::Status::new(
+                        tonic::Code::Internal,
+                        format!("Key digest verification failed: {}", e),
+                    )
+                },
+            )?;
             Ok(FhePubKeySet {
                 public_key,
                 server_key,
@@ -483,7 +523,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
                 fhe_pubkeys.server_key.clone().into_raw_parts();
 
-            //Compute all the info required for storing
+            // Compute all the info required for storing
             // using the same IDs and domain as we should've had the
             // DKG went through successfully
             let info = match compute_info_standard_keygen(
@@ -621,7 +661,7 @@ mod tests {
     use crate::engine::threshold::service::resharer::fetch_public_materials_from_peers;
     use crate::engine::threshold::service::resharer::get_verified_public_materials;
     use crate::engine::threshold::service::resharer::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
-    use crate::engine::threshold::service::resharer::ERR_PUBLIC_KEY_DIGEST_MISMATCH;
+    use crate::engine::threshold::service::resharer::ERR_SERVER_KEY_DIGEST_MISMATCH;
     use crate::vault::storage::crypto_material::ThresholdCryptoMaterialStorage;
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;
@@ -827,7 +867,7 @@ mod tests {
             )
             .await
             .unwrap_err();
-            assert!(err.to_string().contains(ERR_PUBLIC_KEY_DIGEST_MISMATCH));
+            assert!(err.to_string().contains(ERR_SERVER_KEY_DIGEST_MISMATCH));
         }
     }
 
@@ -879,11 +919,62 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sunshine_get_verified_public_materials() {
+    async fn bad_digests_get_verified_public_materials() {
         let mut rng = AesRng::seed_from_u64(2332);
         let key_id = RequestId::new_random(&mut rng);
         let context_id = ContextId::new_random(&mut rng);
         let (crypto_storage, _key_digests, ro_storage_getter, (server_key, public_key)) =
+            setup_public_materials_test(key_id, context_id, false).await;
+
+        {
+            // we make sure that keys are present in my own public storage
+            let public_storage = crypto_storage.inner.get_public_storage();
+            {
+                let mut guard_storage = public_storage.lock().await;
+                store_pk_at_request_id(
+                    &mut (*guard_storage),
+                    &key_id,
+                    WrappedPublicKey::Compact(&public_key),
+                )
+                .await
+                .unwrap();
+                store_versioned_at_request_id(
+                    &mut (*guard_storage),
+                    &key_id,
+                    &server_key,
+                    &PubDataType::ServerKey.to_string(),
+                )
+                .await
+                .unwrap();
+            }
+
+            let bad_key_digests: HashMap<PubDataType, Vec<u8>> = HashMap::from_iter([
+                (PubDataType::ServerKey, vec![9, 8, 7, 6]),
+                (PubDataType::PublicKey, vec![5, 4, 3, 2]),
+            ]);
+            let err = get_verified_public_materials(
+                &crypto_storage,
+                key_id,
+                &context_id,
+                &bad_key_digests,
+                &ro_storage_getter,
+            )
+            .await
+            .unwrap_err();
+
+            assert!(err.to_string().contains(ERR_SERVER_KEY_DIGEST_MISMATCH));
+
+            // we should've used the public storage directly, so the counter here should be 0
+            assert_eq!(*ro_storage_getter.counter.borrow(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn sunshine_get_verified_public_materials() {
+        let mut rng = AesRng::seed_from_u64(2332);
+        let key_id = RequestId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng);
+        let (crypto_storage, key_digests, ro_storage_getter, (server_key, public_key)) =
             setup_public_materials_test(key_id, context_id, false).await;
 
         {
@@ -914,7 +1005,7 @@ mod tests {
                 &crypto_storage,
                 key_id,
                 &context_id,
-                &HashMap::new(),
+                &key_digests,
                 &ro_storage_getter,
             )
             .await

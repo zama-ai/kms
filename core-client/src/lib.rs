@@ -11,6 +11,9 @@ mod prss_init;
 mod reshare;
 mod s3_operations;
 
+// reexport fetch_public_elements for integration test
+pub use crate::s3_operations::fetch_public_elements;
+
 use crate::backup::{
     do_custodian_backup_recovery, do_custodian_recovery_init, do_get_operator_pub_keys,
     do_new_custodian_context, do_restore_from_backup,
@@ -24,7 +27,6 @@ use crate::keygen::{
 use crate::mpc_context::do_new_mpc_context;
 use crate::prss_init::do_prss_init;
 use crate::reshare::do_reshare;
-use crate::s3_operations::fetch_elements;
 use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
@@ -605,6 +607,17 @@ pub enum NewMpcContextParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct NewTestingMpcContextFileParameters {
+    /// The context ID to use for the new MPC context.
+    #[clap(long)]
+    pub context_id: ContextId,
+
+    /// The path to store the context.
+    #[clap(long)]
+    pub context_path: PathBuf,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct ResultParameters {
     #[clap(long, short = 'i')]
     pub request_id: RequestId,
@@ -635,9 +648,28 @@ pub struct ReshareParameters {
     /// ID of the key to reshare
     #[clap(long, short = 'k')]
     pub key_id: RequestId,
+
     /// ID of the preprocessing used to generate the key
     #[clap(long, short = 'i')]
     pub preproc_id: RequestId,
+
+    /// The context ID to do the resharing from.
+    /// If it's not given then the default context is used.
+    #[clap(long)]
+    pub from_context_id: Option<ContextId>,
+
+    /// The epoch ID to do the resharing from.
+    /// If it's not given then the default epoch is used.
+    #[clap(long)]
+    pub from_epoch_id: Option<EpochId>,
+
+    /// The hex-encoded server key digest to use for resharing.
+    #[clap(long)]
+    pub server_key_digest: String,
+
+    /// The hex-encoded public key digest to use for resharing.
+    #[clap(long)]
+    pub public_key_digest: String,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -694,6 +726,8 @@ pub enum CCCommand {
     #[clap(subcommand)]
     NewMpcContext(NewMpcContextParameters),
     PrssInit(PrssInitParameters),
+    #[cfg(feature = "testing")]
+    NewTestingMpcContextFile(NewTestingMpcContextFileParameters),
     DoNothing(NoParameters),
 }
 
@@ -1004,7 +1038,7 @@ pub async fn execute_cmd(
         // Otherwise always fetch the public verfication keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
         tracing::info!("Fetching verification keys. ({command:?})");
         let public_verf_types = vec![PubDataType::VerfAddress, PubDataType::VerfKey];
-        let _ = fetch_elements(
+        let _ = fetch_public_elements(
             &SIGNING_KEY_ID.to_string(),
             &public_verf_types,
             &cc_conf,
@@ -1183,7 +1217,7 @@ pub async fn execute_cmd(
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
                     tracing::info!("Fetching keys {key_types:?}. ({command:?})");
-                    let party_ids = fetch_elements(
+                    let party_ids = fetch_public_elements(
                         &cipher_parameters.key_id.as_str(),
                         &key_types,
                         &cc_conf,
@@ -1250,7 +1284,7 @@ pub async fn execute_cmd(
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
                     tracing::info!("Fetching keys {key_types:?}. ({command:?})");
-                    let party_ids = fetch_elements(
+                    let party_ids = fetch_public_elements(
                         &cipher_parameters.key_id.as_str(),
                         &key_types,
                         &cc_conf,
@@ -1444,7 +1478,7 @@ pub async fn execute_cmd(
         }
         CCCommand::Encrypt(cipher_parameters) => {
             tracing::info!("Fetching keys {key_types:?}. ({command:?})");
-            let party_ids = fetch_elements(
+            let party_ids = fetch_public_elements(
                 &cipher_parameters.key_id.as_str(),
                 &key_types,
                 &cc_conf,
@@ -1691,7 +1725,14 @@ pub async fn execute_cmd(
             do_restore_from_backup(&mut core_endpoints_req).await?;
             vec![(None, "backup restore complete".to_string())]
         }
-        CCCommand::Reshare(ReshareParameters { key_id, preproc_id }) => {
+        CCCommand::Reshare(ReshareParameters {
+            key_id,
+            preproc_id,
+            from_context_id,
+            from_epoch_id,
+            server_key_digest,
+            public_key_digest,
+        }) => {
             let request_id = do_reshare(
                 &mut internal_client.expect("Reshare requires a KMS client"),
                 &core_endpoints_req,
@@ -1704,6 +1745,10 @@ pub async fn execute_cmd(
                 fhe_params,
                 *key_id,
                 *preproc_id,
+                from_context_id.as_ref(),
+                from_epoch_id.as_ref(),
+                server_key_digest.as_ref(),
+                public_key_digest.as_ref(),
             )
             .await
             .unwrap();
@@ -1725,6 +1770,36 @@ pub async fn execute_cmd(
                 unimplemented!("Creating new MPC context from TOML is not yet implemented");
             }
         },
+        #[cfg(feature = "testing")]
+        CCCommand::NewTestingMpcContextFile(NewTestingMpcContextFileParameters {
+            context_id,
+            context_path,
+        }) => {
+            // import stuff here because we're in the testing feature
+            use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
+            use std::io::Write;
+
+            let context = crate::mpc_context::create_test_context_info_from_core_config(
+                *context_id,
+                &cc_conf,
+            )
+            .await?;
+
+            let mut buf = Vec::new();
+            tfhe::safe_serialization::safe_serialize(&context, &mut buf, SAFE_SER_SIZE_LIMIT)
+                .unwrap();
+
+            let mut file = std::fs::File::create(context_path).unwrap();
+            file.write_all(&buf).unwrap();
+
+            vec![(
+                Some((*context_id).into()),
+                format!(
+                    "new testing mpc context created and stored to file {:?}",
+                    context_path
+                ),
+            )]
+        }
         CCCommand::PrssInit(PrssInitParameters {
             context_id,
             epoch_id,

@@ -92,13 +92,47 @@ pub async fn create_test_context_info_from_core_config(
             sk.sk(),
         )?;
 
+        // build the s3 endpoint URL
+        let s3_endpoint = match (core_config.public_vault.as_ref(), core_config.aws.as_ref()) {
+            (Some(public_vault), Some(aws_conf)) => {
+                let bucket = match &public_vault.storage {
+                    kms_lib::conf::Storage::S3(s3_storage) => &s3_storage.bucket,
+                    _ => {
+                        return Err(anyhow::anyhow!(
+                            "Public vault storage is not S3 for core {}",
+                            c.party_id
+                        ));
+                    }
+                };
+
+                let s3_endpoint = aws_conf.s3_endpoint.as_ref().ok_or(anyhow::anyhow!(
+                    "No public S3 endpoint found for core {}",
+                    c.party_id
+                ))?;
+
+                // we try to detect whether the s3 endpoint is a custom one or a standard AWS one
+                if s3_endpoint.as_str().contains("dev-s3-mock:9000") {
+                    s3_endpoint.to_string()
+                } else {
+                    // if it's the s3 endpoint, we need to build the full bucket URL
+                    format!("https://{}.s3.{}.amazonaws.com", bucket, aws_conf.region)
+                }
+            }
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "No public S3 endpoint or AWS config found for core {}",
+                    c.party_id
+                ));
+            }
+        };
+
         mpc_nodes.push(NodeInfo {
             mpc_identity: mpc_identity.to_string(),
             party_id: role.one_based() as u32,
             verification_key: Some(verification_key.clone()),
             external_url: format!("https://{}:{}", identity.hostname(), identity.port()),
             ca_cert: Some(ca_cert.pem().as_bytes().to_vec()),
-            public_storage_url: c.s3_endpoint.clone(),
+            public_storage_url: s3_endpoint,
             extra_verification_keys: vec![],
         });
 
