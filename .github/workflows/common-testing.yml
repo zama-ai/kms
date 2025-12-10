@@ -63,8 +63,6 @@ on:
         required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
-      NPM_TOKEN:
-        required: false
       AWS_ACCESS_KEY_S3_USER:
         required: true
       AWS_SECRET_KEY_S3_USER:
