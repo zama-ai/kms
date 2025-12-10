@@ -15,6 +15,8 @@ use http_legacy::{header::HOST, HeaderValue};
 use hyper_rustls::HttpsConnectorBuilder;
 use kms_grpc::RequestId;
 use serde::{de::DeserializeOwned, Serialize};
+#[cfg(test)]
+use std::cell::RefCell;
 use std::sync::Arc;
 use std::{collections::HashSet, str::FromStr};
 use tfhe::{
@@ -38,11 +40,11 @@ pub struct S3Storage {
 }
 
 /// Read-only S3 storage wrapper, should not implement Storage trait.
-pub struct S3StorageReadOnly {
+pub struct ReadOnlyS3Storage {
     inner: S3Storage,
 }
 
-impl S3StorageReadOnly {
+impl ReadOnlyS3Storage {
     pub fn new(
         s3_client: S3Client,
         bucket: String,
@@ -57,7 +59,7 @@ impl S3StorageReadOnly {
     }
 }
 
-impl StorageReader for S3StorageReadOnly {
+impl StorageReader for ReadOnlyS3Storage {
     async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
         self.inner.data_exists(data_id, data_type).await
     }
@@ -633,7 +635,7 @@ pub(crate) trait ReadOnlyS3StorageGetter<R> {
 
 pub(crate) struct RealReadOnlyS3StorageGetter;
 
-impl ReadOnlyS3StorageGetter<S3StorageReadOnly> for RealReadOnlyS3StorageGetter {
+impl ReadOnlyS3StorageGetter<ReadOnlyS3Storage> for RealReadOnlyS3StorageGetter {
     fn get_storage(
         &self,
         s3_client: S3Client,
@@ -642,25 +644,26 @@ impl ReadOnlyS3StorageGetter<S3StorageReadOnly> for RealReadOnlyS3StorageGetter 
         storage_type: StorageType,
         party_role: Option<Role>,
         cache: Option<StorageCache>,
-    ) -> anyhow::Result<S3StorageReadOnly> {
-        S3StorageReadOnly::new(s3_client, bucket, prefix, storage_type, party_role, cache)
+    ) -> anyhow::Result<ReadOnlyS3Storage> {
+        ReadOnlyS3Storage::new(s3_client, bucket, prefix, storage_type, party_role, cache)
     }
 }
 
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct DummyRealReadOnlyS3StorageGetter {
-    pub(crate) ram_storage: crate::vault::storage::ram::RamStorage,
+pub(crate) struct DummyReadOnlyS3StorageGetter {
+    pub(crate) counter: RefCell<usize>,
+    pub(crate) ram_storages: Vec<crate::vault::storage::ram::RamStorage>,
 }
 
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct DummyS3StorageReadOnly {
+pub(crate) struct DummyReadOnlyS3Storage {
     pub(crate) ram_storage: crate::vault::storage::ram::RamStorage,
 }
 
 #[cfg(test)]
-impl ReadOnlyS3StorageGetter<DummyS3StorageReadOnly> for DummyRealReadOnlyS3StorageGetter {
+impl ReadOnlyS3StorageGetter<DummyReadOnlyS3Storage> for DummyReadOnlyS3StorageGetter {
     fn get_storage(
         &self,
         _s3_client: S3Client,
@@ -669,15 +672,18 @@ impl ReadOnlyS3StorageGetter<DummyS3StorageReadOnly> for DummyRealReadOnlyS3Stor
         _storage_type: StorageType,
         _party_role: Option<Role>,
         _cache: Option<StorageCache>,
-    ) -> anyhow::Result<DummyS3StorageReadOnly> {
-        Ok(DummyS3StorageReadOnly {
-            ram_storage: self.ram_storage.clone(),
-        })
+    ) -> anyhow::Result<DummyReadOnlyS3Storage> {
+        let val = { *self.counter.borrow() };
+        let out = DummyReadOnlyS3Storage {
+            ram_storage: self.ram_storages[val].clone(),
+        };
+        self.counter.replace(val + 1);
+        Ok(out)
     }
 }
 
 #[cfg(test)]
-impl StorageReader for DummyS3StorageReadOnly {
+impl StorageReader for DummyReadOnlyS3Storage {
     async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
         self.ram_storage.data_exists(data_id, data_type).await
     }
@@ -706,7 +712,7 @@ async fn test_s3_anon() {
     ))
     .await
     .unwrap();
-    let pub_storage = S3StorageReadOnly::new(
+    let pub_storage = ReadOnlyS3Storage::new(
         s3_client,
         "zama-zws-dev-kms-fhevm-dev-lh7tg".to_string(),
         None,

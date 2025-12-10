@@ -25,6 +25,10 @@ use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response, Status};
 
+const ERR_SERVER_KEY_DIGEST_MISMATCH: &str = "Server key digest mismatch";
+const ERR_PUBLIC_KEY_DIGEST_MISMATCH: &str = "Public key digest mismatch";
+const ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS: &str = "Failed to fetch public materials";
+
 use crate::{
     consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
     engine::{
@@ -48,8 +52,8 @@ use crate::{
         crypto_material::ThresholdCryptoMaterialStorage,
         read_context_at_id, read_pk_at_request_id, read_versioned_at_request_id,
         s3::{
-            build_anonymous_s3_client, ReadOnlyS3StorageGetter, RealReadOnlyS3StorageGetter,
-            S3StorageReadOnly,
+            build_anonymous_s3_client, ReadOnlyS3Storage, ReadOnlyS3StorageGetter,
+            RealReadOnlyS3StorageGetter,
         },
         Storage, StorageReader, StorageType,
     },
@@ -120,6 +124,8 @@ async fn fetch_public_materials_from_peers<
         let guard_storage = priv_storage.lock().await;
         read_context_at_id(&(*guard_storage), context_id).await?
     };
+
+    let mut errors = Vec::new();
     for node in context.mpc_nodes {
         // so simplify logic, it's ok to iterate over myself too
         //
@@ -160,12 +166,22 @@ async fn fetch_public_materials_from_peers<
                     safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key)?;
 
                 if actual_public_key_digest != *expected_public_key_digest {
-                    tracing::warn!("Public key digest mismatch from peer {}", node.party_id);
+                    let msg = format!(
+                        "{} from peer {}",
+                        ERR_PUBLIC_KEY_DIGEST_MISMATCH, node.party_id
+                    );
+                    tracing::warn!(msg);
+                    errors.push(msg);
                     continue;
                 }
 
                 if actual_server_key_digest != *expected_server_key_digest {
-                    tracing::warn!("No expected server key digest provided for verification");
+                    let msg = format!(
+                        "{} from peer {}",
+                        ERR_SERVER_KEY_DIGEST_MISMATCH, node.party_id
+                    );
+                    tracing::warn!(msg);
+                    errors.push(msg);
                     continue;
                 }
 
@@ -175,21 +191,30 @@ async fn fetch_public_materials_from_peers<
                 });
             }
             (Err(e), _) => {
-                tracing::warn!(
-                    "Failed to fetch public materials from peer {}: {e}",
-                    node.party_id
+                let msg = format!(
+                    "{} from peer {}: {e:?}",
+                    ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS, node.party_id
                 );
+                tracing::warn!(msg);
+                errors.push(msg);
             }
             (_, Err(e)) => {
-                tracing::warn!(
-                    "Failed to fetch public materials from peer {}: {e}",
-                    node.party_id
+                let msg = format!(
+                    "{} from peer {}: {e:?}",
+                    ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS, node.party_id
                 );
+                tracing::warn!(msg);
+                errors.push(msg);
             }
         }
     }
 
-    anyhow::bail!("Failed to fetch valid public materials from any peer");
+    anyhow::bail!(
+        "Failed to fetch valid public materials from any peer, error count: {}, first error: {:?}, last error: {:?}",
+        errors.len(),
+        errors[0],
+        errors[errors.len() - 1],
+    );
 }
 
 /// Attempt to get and verify the public materials needed for resharing.
@@ -441,7 +466,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             .await?;
 
             // use the real instantiation here for ReadOnlyS3StorageGetter
-            let fhe_pubkeys = get_verified_public_materials::<_, _, _, S3StorageReadOnly>(
+            let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
                 &crypto_storage,
                 key_id_to_reshare,
                 &old_context, // it should be the old context ID as that's where the public materials are
@@ -580,6 +605,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::collections::HashMap;
 
     use crate::engine::base::safe_serialize_hash_element_versioned;
@@ -588,10 +614,12 @@ mod tests {
     use crate::engine::context::SoftwareVersion;
     use crate::engine::threshold::service::resharer::fetch_public_materials_from_peers;
     use crate::engine::threshold::service::resharer::get_verified_public_materials;
+    use crate::engine::threshold::service::resharer::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
+    use crate::engine::threshold::service::resharer::ERR_PUBLIC_KEY_DIGEST_MISMATCH;
     use crate::vault::storage::crypto_material::ThresholdCryptoMaterialStorage;
     use crate::vault::storage::ram::RamStorage;
-    use crate::vault::storage::s3::DummyRealReadOnlyS3StorageGetter;
-    use crate::vault::storage::s3::DummyS3StorageReadOnly;
+    use crate::vault::storage::s3::DummyReadOnlyS3Storage;
+    use crate::vault::storage::s3::DummyReadOnlyS3StorageGetter;
     use crate::vault::storage::store_pk_at_request_id;
     use crate::vault::storage::store_versioned_at_request_id;
     use aes_prng::AesRng;
@@ -602,6 +630,7 @@ mod tests {
     use rand::SeedableRng;
     use tfhe::shortint::ClassicPBSParameters;
     use tfhe::CompactPublicKey;
+    use tfhe::ServerKey;
 
     #[test]
     fn test_split_devnet_url() {
@@ -613,8 +642,16 @@ mod tests {
         assert_eq!(bucket.as_str(), "zama-zws-dev-tkms-b6q87");
     }
 
-    #[tokio::test]
-    async fn test_fetch_public_materials_from_peers() {
+    async fn setup_public_materials_test(
+        key_id: RequestId,
+        context_id: ContextId,
+        two_nodes: bool,
+    ) -> (
+        ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+        HashMap<PubDataType, Vec<u8>>,
+        DummyReadOnlyS3StorageGetter,
+        (ServerKey, CompactPublicKey),
+    ) {
         // create memory storage that contains a public key and server key
         let mut ram_storage = RamStorage::new();
 
@@ -645,8 +682,6 @@ mod tests {
         ]);
 
         // store the keys in ram storage
-        let mut rng = AesRng::seed_from_u64(2332);
-        let key_id = RequestId::new_random(&mut rng);
         store_pk_at_request_id(
             &mut ram_storage,
             &key_id,
@@ -673,19 +708,37 @@ mod tests {
             HashMap::new(),
         );
 
-        let context_id = ContextId::new_random(&mut rng);
         let context_info = ContextInfo {
-            mpc_nodes: vec![NodeInfo {
-                mpc_identity: "Node1".to_string(),
-                party_id: 1,
-                verification_key: None,
-                external_url: "http://localhost:12345".to_string(),
-                ca_cert: None,
-                // the storage url does not matter as we're using the mock
-                public_storage_url: "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/"
-                    .to_string(),
-                extra_verification_keys: vec![],
-            }],
+            mpc_nodes: [
+                vec![NodeInfo {
+                    mpc_identity: "Node1".to_string(),
+                    party_id: 1,
+                    verification_key: None,
+                    external_url: "http://localhost:12345".to_string(),
+                    ca_cert: None,
+                    // the storage url does not matter as we're using the mock
+                    public_storage_url:
+                        "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
+                    extra_verification_keys: vec![],
+                }],
+                if two_nodes {
+                    vec![NodeInfo {
+                        mpc_identity: "Node2".to_string(),
+                        party_id: 2,
+                        verification_key: None,
+                        external_url: "http://localhost:12345".to_string(),
+                        ca_cert: None,
+                        // the storage url does not matter as we're using the mock
+                        public_storage_url:
+                            "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/"
+                                .to_string(),
+                        extra_verification_keys: vec![],
+                    }]
+                } else {
+                    vec![]
+                },
+            ]
+            .concat(),
             context_id,
             software_version: SoftwareVersion {
                 major: 0,
@@ -703,11 +756,34 @@ mod tests {
             .await
             .unwrap();
 
-        let ro_storage_getter = DummyRealReadOnlyS3StorageGetter { ram_storage };
+        let ro_storage_getter = DummyReadOnlyS3StorageGetter {
+            counter: RefCell::new(0),
+            ram_storages: vec![ram_storage],
+        };
+
+        (
+            crypto_storage,
+            key_digests,
+            ro_storage_getter,
+            (server_key, public_key),
+        )
+    }
+
+    #[tokio::test]
+    async fn empty_storage_fetch_public_materials_from_peers() {
+        let mut rng = AesRng::seed_from_u64(2332);
+        let key_id = RequestId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng);
+        let (crypto_storage, key_digests, _ro_storage_getter, _) =
+            setup_public_materials_test(key_id, context_id, false).await;
         {
-            // sunshine
-            // use the dummy s3 storage to fetch the keys from ram storage
-            let _keyset = fetch_public_materials_from_peers::<_, _, _, DummyS3StorageReadOnly>(
+            // negative test
+            // use empty storage to trigger error
+            let ro_storage_getter = DummyReadOnlyS3StorageGetter {
+                counter: RefCell::new(0),
+                ram_storages: vec![RamStorage::new()],
+            };
+            let err = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
                 key_id,
                 &context_id,
@@ -715,8 +791,20 @@ mod tests {
                 &ro_storage_getter,
             )
             .await
-            .unwrap();
+            .unwrap_err();
+            assert!(err
+                .to_string()
+                .contains(ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS));
         }
+    }
+
+    #[tokio::test]
+    async fn wrong_digest_fetch_public_materials_from_peers() {
+        let mut rng = AesRng::seed_from_u64(2332);
+        let key_id = RequestId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng);
+        let (crypto_storage, _key_digests, ro_storage_getter, _) =
+            setup_public_materials_test(key_id, context_id, false).await;
         {
             // negative test
             // use wrong digests to trigger error
@@ -724,7 +812,7 @@ mod tests {
                 (PubDataType::ServerKey, vec![0, 1, 2, 4]),
                 (PubDataType::PublicKey, vec![3, 4, 5, 6]),
             ]);
-            let _keyset = fetch_public_materials_from_peers::<_, _, _, DummyS3StorageReadOnly>(
+            let err = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
                 key_id,
                 &context_id,
@@ -733,14 +821,22 @@ mod tests {
             )
             .await
             .unwrap_err();
+            assert!(err.to_string().contains(ERR_PUBLIC_KEY_DIGEST_MISMATCH));
         }
+    }
+
+    #[tokio::test]
+    async fn sunshine_fetch_public_materials_from_peers() {
+        let mut rng = AesRng::seed_from_u64(2332);
+        let key_id = RequestId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng);
+        let (crypto_storage, key_digests, ro_storage_getter, _) =
+            setup_public_materials_test(key_id, context_id, true).await;
+
         {
-            // negative test
-            // use empty storage to trigger error
-            let ro_storage_getter = DummyRealReadOnlyS3StorageGetter {
-                ram_storage: RamStorage::new(),
-            };
-            let _keyset = fetch_public_materials_from_peers::<_, _, _, DummyS3StorageReadOnly>(
+            // sunshine
+            // use the dummy s3 storage to fetch the keys from ram storage
+            let _keyset = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
                 key_id,
                 &context_id,
@@ -748,8 +844,42 @@ mod tests {
                 &ro_storage_getter,
             )
             .await
-            .unwrap_err();
+            .unwrap();
+
+            // we should've used the read-only storage, so counter should be 1
+            assert_eq!(*ro_storage_getter.counter.borrow(), 1);
         }
+        {
+            // sunshine
+            // use two dummy s3 storage, where the first one is broken, so ro_storage_getter should be called twice
+            let two_ro_storage_getter = DummyReadOnlyS3StorageGetter {
+                counter: RefCell::new(0),
+                ram_storages: vec![RamStorage::new(), ro_storage_getter.ram_storages[0].clone()],
+            };
+
+            let _keyset = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+                &crypto_storage,
+                key_id,
+                &context_id,
+                &key_digests,
+                &two_ro_storage_getter,
+            )
+            .await
+            .unwrap();
+
+            // the first storage should've failed, the second one should work, so counter should be 2
+            assert_eq!(*two_ro_storage_getter.counter.borrow(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn sunshine_get_verified_public_materials() {
+        let mut rng = AesRng::seed_from_u64(2332);
+        let key_id = RequestId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng);
+        let (crypto_storage, _key_digests, ro_storage_getter, (server_key, public_key)) =
+            setup_public_materials_test(key_id, context_id, false).await;
+
         {
             // sunshine
             // if key materials are present locally, we expect giving an empty RO storage getter
@@ -779,12 +909,13 @@ mod tests {
                 key_id,
                 &context_id,
                 &HashMap::new(),
-                &DummyRealReadOnlyS3StorageGetter {
-                    ram_storage: RamStorage::new(),
-                },
+                &ro_storage_getter,
             )
             .await
             .unwrap();
+
+            // we should've used the public storage directly, so the counter here should be 0
+            assert_eq!(*ro_storage_getter.counter.borrow(), 0);
         }
     }
 }
