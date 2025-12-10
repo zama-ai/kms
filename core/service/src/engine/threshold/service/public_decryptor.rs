@@ -2,7 +2,6 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
 
 // === External Crates ===
-use alloy_primitives::U256;
 use anyhow::anyhow;
 use itertools::Itertools;
 use kms_grpc::{
@@ -428,6 +427,7 @@ async fn public_decrypt_metriced<
     let mut dec_tasks = Vec::new();
     let dec_mode = decryptor.decryption_mode;
 
+    let ciphertext_amount = ciphertexts.len();
     // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
     for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
         let inner_timer = metrics::METRICS
@@ -454,20 +454,10 @@ async fn public_decrypt_metriced<
                 )
             })?;
 
-        let hex_req_id = hex::encode(req_id.as_bytes());
-        let decimal_req_id: u128 = req_id.try_into().unwrap_or(0);
         tracing::info!(
             "MetaStore INITIAL insert - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
-            req_id, key_id, my_role, ciphertexts.len(), lock_acquired_time, total_lock_time
+            req_id, key_id, my_role, ciphertext_amount, lock_acquired_time, total_lock_time
         );
-
-        let ext_handles_bytes = ciphertexts
-            .iter()
-            .map(|c| c.external_handle.to_owned())
-            .collect::<Vec<_>>();
-
-        let mut dec_tasks = Vec::new();
-        let dec_mode = decryptor.decryption_mode;
 
         let crypto_storage = decryptor.crypto_storage.clone();
 
