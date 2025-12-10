@@ -54,9 +54,9 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             let entries = get_file_descriptor_count();
             METRICS.record_open_file_descriptors(entries);
 
-            // Update thread count
-            let thread_count = get_thread_count(&system);
-            METRICS.record_threads(thread_count);
+            // Update task count
+            let task_count = get_task_count(&system);
+            METRICS.record_tasks(task_count);
 
             // Update socat process count
             let socat_count = get_socat_count(&system);
@@ -87,20 +87,20 @@ fn get_file_descriptor_count() -> u64 {
     entries as u64
 }
 
-/// Get the number of child threads for the current process
+/// Get the number of tasks for the current process
 /// TODO this only works on Linux, need alternative for other OSes
-fn get_thread_count(system: &sysinfo::System) -> u64 {
+fn get_task_count(system: &sysinfo::System) -> u64 {
     let pid = match sysinfo::get_current_pid() {
         Ok(pid) => pid,
         Err(e) => {
-            tracing::error!("Could not get current PID and hence cannot evaluate amount of child threads. Using 0 by default. Error was: {e}");
+            tracing::error!("Could not get current PID and hence cannot evaluate amount of tasks. Using 0 by default. Error was: {e}");
             return 0;
         }
     };
     let process = match system.process(pid) {
         Some(process) => process,
         None => {
-            tracing::error!("Could not get current process info from sysinfo and hence cannot evaluate amount of child threads. Using 0 by default");
+            tracing::error!("Could not get current process info from sysinfo and hence cannot evaluate amount of tasks. Using 0 by default");
             return 0;
         }
     };
@@ -108,7 +108,7 @@ fn get_thread_count(system: &sysinfo::System) -> u64 {
         Some(tasks) => tasks.len() as u64,
         None => {
             tracing::error!(
-                "System does not appear to be Linux and hence cannot get the amount of child threads. Using 0 by default");
+                "System does not appear to be Linux and hence cannot get the amount of tasks. Using 0 by default");
             0
         }
     }
@@ -150,7 +150,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_thread_count() {
+    fn test_task_count() {
         // Ensure that there is at least one thread spawned
         thread::spawn(|| {
             sleep(Duration::from_secs(10));
@@ -161,7 +161,7 @@ pub(crate) mod tests {
             .with_memory(MemoryRefreshKind::nothing().with_ram())
             .with_processes(ProcessRefreshKind::everything());
         let system = sysinfo::System::new_with_specifics(specifics);
-        let thread_count = super::get_thread_count(&system);
-        assert!(thread_count > 0, "Thread count should be greater than 0");
+        let task_count = super::get_task_count(&system);
+        assert!(task_count > 0, "Task count should be greater than 0");
     }
 }

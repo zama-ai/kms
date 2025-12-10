@@ -68,7 +68,7 @@ pub struct CoreMetrics {
     memory_usage_gauge: TaggedMetric<Gauge<u64>>,
     file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of file descriptors of the KMS
     socat_processes_gauge: TaggedMetric<Gauge<u64>>, // Number of socat file descriptors
-    thread_gauge: TaggedMetric<Gauge<u64>>,          // Numbers active child processes of the KMS
+    task_gauge: TaggedMetric<Gauge<u64>>,            // Numbers active child processes of the KMS
     // Internal system gauges
     // TODO rate limiter, session gauge and meta store should actually be counters but we need to add decorators to ensure it is always updated
     rate_limiter_gauge: TaggedMetric<Gauge<u64>>, // Number tokens used in the rate limiter
@@ -119,7 +119,7 @@ impl CoreMetrics {
             format!("{}_file_descriptors", config.prefix).into();
         let socat_processes_metric: Cow<'static, str> =
             format!("{}_socat_processes", config.prefix).into();
-        let thread_metric: Cow<'static, str> = format!("{}_threads", config.prefix).into();
+        let tasks_metric: Cow<'static, str> = format!("{}_tasks", config.prefix).into();
         let rate_limiter_metric: Cow<'static, str> =
             format!("{}_rate_limiter_usage", config.prefix).into();
         let session_metric: Cow<'static, str> = format!("{}_live_sessions", config.prefix).into();
@@ -209,13 +209,13 @@ impl CoreMetrics {
         //Record 0 just to make sure the gauge is exported
         socat_processes_gauge.record(0, &[]);
 
-        let thread_gauge = meter
-            .u64_gauge(thread_metric)
-            .with_description("Number of threads used by the KMS")
-            .with_unit("threads")
+        let task_gauge = meter
+            .u64_gauge(tasks_metric)
+            .with_description("Number of started by the KMS")
+            .with_unit("tasks")
             .build();
         //Record 0 just to make sure the gauge is exported
-        thread_gauge.record(0, &[]);
+        task_gauge.record(0, &[]);
 
         let rate_limiter_gauge = meter
             .u64_gauge(rate_limiter_metric)
@@ -268,7 +268,7 @@ impl CoreMetrics {
             memory_usage_gauge: TaggedMetric::new(memory_gauge, "memory_usage"),
             file_descriptor_gauge: TaggedMetric::new(file_descriptor_gauge, "file_descriptors"),
             socat_processes_gauge: TaggedMetric::new(socat_processes_gauge, "socat_processes"),
-            thread_gauge: TaggedMetric::new(thread_gauge, "threads"),
+            task_gauge: TaggedMetric::new(task_gauge, "tasks"),
             rate_limiter_gauge: TaggedMetric::new(rate_limiter_gauge, "rate_limit_usage"),
             session_gauge: TaggedMetric::new(session_gauge, "live_sessions"),
             meta_storage_pub_dec_gauge: TaggedMetric::new(
@@ -393,10 +393,10 @@ impl CoreMetrics {
     }
 
     /// Record the current number of tasks into the gauge
-    pub fn record_threads(&self, count: u64) {
-        self.thread_gauge
+    pub fn record_tasks(&self, count: u64) {
+        self.task_gauge
             .metric
-            .record(count, &self.thread_gauge.with_tags(&[]));
+            .record(count, &self.task_gauge.with_tags(&[]));
     }
 
     /// Record the current number of open file descriptors into the gauge
