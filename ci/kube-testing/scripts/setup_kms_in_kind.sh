@@ -644,6 +644,9 @@ deploy_threshold_mode() {
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --set kmsPeers.id="${i}" \
+            --set kmsCore.publicVault.s3.prefix=PUB-p"${i}" \
+            --set kmsCore.privateVault.s3.prefix=PRIV-p"${i}" \
+            --set kmsCore.backupVault.s3.prefix=BACKUP-p"${i}" \
             --wait \
             --timeout 10m &
     done
