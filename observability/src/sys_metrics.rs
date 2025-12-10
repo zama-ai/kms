@@ -1,12 +1,13 @@
 use crate::metrics::METRICS;
-use std::{collections::HashSet, fs, time::Duration};
-use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
+use std::{ffi::OsStr, fs, time::Duration};
+use sysinfo::{CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind, RefreshKind, System};
 
 pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Result<()> {
     // Only fail for info we'll actually poll later on
     let specifics = RefreshKind::nothing()
         .with_cpu(CpuRefreshKind::nothing())
-        .with_memory(MemoryRefreshKind::nothing().with_ram());
+        .with_memory(MemoryRefreshKind::nothing().with_ram())
+        .with_processes(ProcessRefreshKind::nothing());
     let mut system = sysinfo::System::new_with_specifics(specifics);
 
     let num_cpus = system.cpus().len();
@@ -113,20 +114,54 @@ fn get_thread_count(system: &sysinfo::System) -> u64 {
     }
 }
 
-/// Get the number of running socat child processes
+/// Get the number of running socat file descriptors
 /// TODO this only works on Linux, need alternative for other OSes
 fn get_socat_count(system: &sysinfo::System) -> u64 {
-    for process in system.processes().values() {
-        if process.name() == "socat" {
-            let pid = process.pid();
-            let entries= fs::read_dir(format!("/proc/{pid}/fd")).map(|res| res.count())
+    let mut count = 0;
+    for process in system.processes_by_name(OsStr::new("socat")) {
+        let pid = process.pid();
+        let entries= fs::read_dir(format!("/proc/{pid}/fd")).map(|res| res.count())
                 .unwrap_or_else(|e| {
                     tracing::error!("Failed to read /proc/{pid}/fd with error and hence cannot get file descriptor count. Defaulting to 0. Error was: {e}");
                     0
                 });
-            return entries as u64;
-        }
+        count += entries as u64;
     }
-    tracing::error!("Could not find any running socat process and hence cannot get socat process count. Using 0 by default");
-    0
+    count
+}
+
+/// Tests are only compatible with Linux
+#[cfg(target_os = "linux")]
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::{
+        thread::{self, sleep},
+        time::Duration,
+    };
+    use sysinfo::{CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind, RefreshKind};
+
+    #[test]
+    fn test_file_descriptor_count() {
+        // Ensure that there is an open file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let _file = std::fs::File::create(temp_dir.path().join("test_fd.txt")).unwrap();
+        let count = super::get_file_descriptor_count();
+        assert!(count > 0, "File descriptor count should be greater than 0");
+    }
+
+    #[test]
+    fn test_thread_count() {
+        // Ensure that there is at least one thread spawned
+        thread::spawn(|| {
+            sleep(Duration::from_secs(10));
+        });
+        sleep(Duration::from_secs(1));
+        let specifics = RefreshKind::nothing()
+            .with_cpu(CpuRefreshKind::nothing())
+            .with_memory(MemoryRefreshKind::nothing().with_ram())
+            .with_processes(ProcessRefreshKind::everything());
+        let system = sysinfo::System::new_with_specifics(specifics);
+        let thread_count = super::get_thread_count(&system);
+        assert!(thread_count > 0, "Thread count should be greater than 0");
+    }
 }
