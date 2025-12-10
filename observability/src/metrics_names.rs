@@ -58,24 +58,38 @@ pub const TAG_EPOCH_ID: &str = "epoch_id";
 pub const TAG_ALGORITHM: &str = "algorithm";
 pub const TAG_OPERATION_TYPE: &str = "operation_type";
 pub const TAG_PARTY_ID: &str = "party_id";
-pub const TAG_REQUEST_ID: &str = "request_id";
 pub const TAG_TFHE_TYPE: &str = "tfhe_type";
 pub const TAG_PUBLIC_DECRYPTION_KIND: &str = "public_decryption_mode";
 
 // Common error values
 // NOTE: make sure to update docs/operations/advanced/metrics.md when changing
+// TODO should probably be an enum somewhere
 pub const ERR_RATE_LIMIT_EXCEEDED: &str = "rate_limit_exceeded";
 pub const ERR_KEY_EXISTS: &str = "key_already_exists";
 pub const ERR_KEY_NOT_FOUND: &str = "key_not_found";
-pub const ERR_PUBLIC_DECRYPTION_FAILED: &str = "public_decryption_failed";
-pub const ERR_USER_DECRYPTION_FAILED: &str = "user_decryption_failed";
-pub const ERR_USER_PREPROC_FAILED: &str = "preproc_failed";
 pub const ERR_PREPROC_NOT_FOUND: &str = "preproc_not_found";
-pub const ERR_KEYGEN_FAILED: &str = "keygen_failed";
 pub const ERR_VERIFICATION_FAILED: &str = "verification_failed";
-pub const ERR_CRS_GEN_FAILED: &str = "crs_gen_failed";
 pub const ERR_WITH_META_STORAGE: &str = "meta_storage_error";
 pub const ERR_INVALID_REQUEST: &str = "invalid_request";
+// Specific operation errors
+pub const ERR_PUBLIC_DECRYPTION_FAILED: &str = "public_decryption_failed";
+pub const ERR_PUBLIC_DECRYPTION_RESULT_FAILED: &str = "public_decryption_result_failed";
+pub const ERR_USER_DECRYPTION_FAILED: &str = "user_decryption_failed";
+pub const ERR_USER_DECRYPTION_RESULT_FAILED: &str = "user_decryption_result_failed";
+pub const ERR_USER_PREPROC_FAILED: &str = "preproc_failed";
+pub const ERR_USER_PREPROC_RESULT_FAILED: &str = "preproc_result_failed";
+pub const ERR_KEYGEN_FAILED: &str = "keygen_failed";
+pub const ERR_KEYGEN_RESULT_FAILED: &str = "keygen_result_failed";
+pub const ERR_INSECURE_KEYGEN_FAILED: &str = "insecure_keygen_failed";
+pub const ERR_INSECURE_KEYGEN_RESULT_FAILED: &str = "insecure_keygen_result_failed";
+pub const ERR_CRS_GEN_FAILED: &str = "crs_gen_failed";
+pub const ERR_CRS_GEN_RESULT_FAILED: &str = "crs_gen_result_failed";
+pub const ERR_INSECURE_CRS_GEN_FAILED: &str = "insecure_crs_gen_failed";
+pub const ERR_INSECURE_CRS_GEN_RESULT_FAILED: &str = "insecure_crs_gen_result_failed";
+
+// gRPC errors
+pub const ERR_FAILED_PRECONDITION: &str = "failed_precondition";
+pub const ERR_RESOURCE_EXHAUSTED: &str = "resource_exhausted";
 pub const ERR_CANCELLED: &str = "cancelled";
 pub const ERR_INVALID_ARGUMENT: &str = "invalid_argument";
 pub const ERR_ABORTED: &str = "aborted";
@@ -91,14 +105,37 @@ pub const OP_TYPE_LOAD_CRS_PK: &str = "load_crs_pk";
 pub const OP_TYPE_PROOF_VERIFICATION: &str = "proof_verification";
 pub const OP_TYPE_CT_PROOF: &str = "ct_proof";
 
-pub fn map_tonic_code_to_metric_tag(code: tonic::Code) -> &'static str {
+pub fn map_tonic_code_to_metric_err_tag(code: tonic::Code) -> &'static str {
     match code {
+        tonic::Code::FailedPrecondition => ERR_FAILED_PRECONDITION,
+        tonic::Code::ResourceExhausted => ERR_RESOURCE_EXHAUSTED,
+        tonic::Code::Cancelled => ERR_CANCELLED,
         tonic::Code::InvalidArgument => ERR_INVALID_ARGUMENT,
+        tonic::Code::Aborted => ERR_ABORTED,
+        tonic::Code::AlreadyExists => ERR_ALREADY_EXISTS,
         tonic::Code::NotFound => ERR_NOT_FOUND,
         tonic::Code::Internal => ERR_INTERNAL,
         tonic::Code::Unavailable => ERR_UNAVAILABLE,
-        tonic::Code::Aborted => ERR_ABORTED,
-        tonic::Code::AlreadyExists => ERR_ALREADY_EXISTS,
+        _ => ERR_OTHER,
+    }
+}
+
+pub fn map_scope_to_metric_err_tag(scope: &'static str) -> &'static str {
+    match scope {
+        OP_PUBLIC_DECRYPT_REQUEST => ERR_PUBLIC_DECRYPTION_FAILED,
+        OP_PUBLIC_DECRYPT_INNER => ERR_PUBLIC_DECRYPTION_FAILED,
+        OP_PUBLIC_DECRYPT_RESULT => ERR_PUBLIC_DECRYPTION_RESULT_FAILED,
+        OP_USER_DECRYPT_REQUEST => ERR_USER_DECRYPTION_FAILED,
+        OP_USER_DECRYPT_INNER => ERR_USER_DECRYPTION_FAILED,
+        OP_USER_DECRYPT_RESULT => ERR_USER_DECRYPTION_RESULT_FAILED,
+        OP_KEYGEN_REQUEST => ERR_KEYGEN_FAILED,
+        OP_KEYGEN_RESULT => ERR_KEYGEN_RESULT_FAILED,
+        OP_INSECURE_KEYGEN_REQUEST => ERR_INSECURE_KEYGEN_FAILED,
+        OP_INSECURE_KEYGEN_RESULT => ERR_INSECURE_KEYGEN_RESULT_FAILED,
+        OP_CRS_GEN_REQUEST => ERR_CRS_GEN_FAILED,
+        OP_CRS_GEN_RESULT => ERR_CRS_GEN_RESULT_FAILED,
+        OP_INSECURE_CRS_GEN_REQUEST => ERR_INSECURE_CRS_GEN_FAILED,
+        OP_INSECURE_CRS_GEN_RESULT => ERR_INSECURE_CRS_GEN_RESULT_FAILED,
         _ => ERR_OTHER,
     }
 }

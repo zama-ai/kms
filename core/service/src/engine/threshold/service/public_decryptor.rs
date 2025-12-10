@@ -10,15 +10,15 @@ use kms_grpc::{
         self, CiphertextFormat, Empty, PublicDecryptionRequest, PublicDecryptionResponse,
         PublicDecryptionResponsePayload, TypedPlaintext,
     },
-    rpc_types::{error_helper, ok_or_error_helper, MetricedError},
+    rpc_types::MetricedError,
     RequestId,
 };
 use observability::{
     metrics::{self},
     metrics_names::{
-        ERR_PUBLIC_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
-        OP_PUBLIC_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
-        TAG_PUBLIC_DECRYPTION_KIND, TAG_REQUEST_ID, TAG_TFHE_TYPE,
+        OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
+        OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
+        TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
     },
 };
 use tfhe::FheTypes;
@@ -57,13 +57,13 @@ use crate::{
         threshold::{service::session::ImmutableSessionMaker, traits::PublicDecryptor},
         traits::BaseKms,
         validation::{
-            optional_proto_request_id, parse_proto_request_id, proto_request_id,
-            validate_public_decrypt_req, RequestIdParsingErr, DSEP_PUBLIC_DECRYPTION,
+            proto_request_id, validate_public_decrypt_req, RequestIdParsingErr,
+            DSEP_PUBLIC_DECRYPTION,
         },
     },
     ok_or_tonic_abort,
     util::{
-        meta_store::{handle_res_mapping, MetaStore},
+        meta_store::{handle_res_metric_mapping, MetaStore},
         rate_limiter::RateLimiter,
     },
     vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
@@ -337,7 +337,6 @@ async fn public_decrypt_metriced<
         .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
         .tags([
             (TAG_PARTY_ID, my_role.to_string()),
-            (TAG_REQUEST_ID, req_id.to_string()),
             (TAG_KEY_ID, key_id.as_str()),
             (TAG_CONTEXT_ID, context_id.as_str()),
             (TAG_EPOCH_ID, epoch_id.as_str()),
@@ -367,7 +366,7 @@ async fn public_decrypt_metriced<
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_INNER,
                 Some(req_id),
-                anyhow::anyhow!("Resource exhaustion rate limit"), // TODO
+                e,
                 tonic::Code::ResourceExhausted,
             )
         })?;
@@ -434,8 +433,7 @@ async fn public_decrypt_metriced<
             .time_operation(OP_PUBLIC_DECRYPT_INNER)
             .tags([
                 (TAG_PARTY_ID, my_role.to_string()),
-                (TAG_REQUEST_ID, req_id.to_string()),
-                (TAG_KEY_ID, key_id.as_str()),
+                (TAG_KEY_ID, key_id.as_str()), // TODO will this be too many labels or does it make sense to keep key, conetxt and epoch
                 (TAG_CONTEXT_ID, context_id.as_str()),
                 (TAG_EPOCH_ID, epoch_id.as_str()),
                 (
@@ -737,11 +735,13 @@ async fn public_decrypt_metriced<
     };
     // Increment the error counter if ever the task fails
     decryptor.tracker.spawn(async move {
-        // Ignore the result since this is a background thread. The `MetricedError` constructor ensures logging and metrics update
+        // Ignore the result since this is a background thread.
         let _ = dec_sig_future(permit)
             .instrument(tracing::Span::current())
             .await
             .map_err(|e| {
+                // The `MetricedError` constructor ensures logging and metrics updates
+                // Note that we also process the error here to increment the error counter
                 MetricedError::new(
                     OP_PUBLIC_DECRYPT_INNER,
                     Some(req_id),
@@ -785,12 +785,16 @@ async fn get_result_metriced<
         guarded_meta_store.retrieve(&request_id)
     };
     let (retrieved_req_id, plaintexts, external_signature, extra_data) =
-        handle_res_mapping(status, &request_id, "Decryption").await?;
+        handle_res_metric_mapping(status, OP_USER_DECRYPT_RESULT, &request_id, "Decryption")
+            .await?;
 
     if request_id != retrieved_req_id {
-        return Err(Status::not_found(format!(
-            "Request ID mismatch: expected {request_id}, got {retrieved_req_id}",
-        )));
+        return Err(MetricedError::new(
+            OP_PUBLIC_DECRYPT_RESULT,
+            Some(request_id),
+            anyhow!("Request ID mismatch: expected {request_id}, got {retrieved_req_id}"),
+            tonic::Code::NotFound,
+        ));
     }
 
     let server_verf_key = decryptor
@@ -798,9 +802,12 @@ async fn get_result_metriced<
         .verf_key()
         .to_legacy_bytes()
         .map_err(|e| {
-            Status::failed_precondition(format!(
-                "Failed to serialize server verification key: {e:?}"
-            ))
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_RESULT,
+                Some(request_id),
+                anyhow!("Failed to serialize server verification key: {e:?}"),
+                tonic::Code::Internal,
+            )
         })?;
     let sig_payload = PublicDecryptionResponsePayload {
         plaintexts,
@@ -808,17 +815,27 @@ async fn get_result_metriced<
         request_id: Some(retrieved_req_id.into()),
     };
 
-    let sig_payload_vec = ok_or_tonic_abort(
-        bc2wrap::serialize(&sig_payload),
-        format!("Could not convert payload to bytes {sig_payload:?}"),
-    )?;
+    let sig_payload_vec = bc2wrap::serialize(&sig_payload).map_err(|e| {
+        MetricedError::new(
+            OP_PUBLIC_DECRYPT_RESULT,
+            Some(request_id),
+            anyhow!("Could not convert payload to bytes {sig_payload:?}: {e:?}"),
+            tonic::Code::Aborted,
+        )
+    })?;
 
-    let sig = ok_or_tonic_abort(
-        decryptor
-            .base_kms
-            .sign(&DSEP_PUBLIC_DECRYPTION, &sig_payload_vec),
-        format!("Could not sign payload {sig_payload:?}"),
-    )?;
+    let sig = decryptor
+        .base_kms
+        .sign(&DSEP_PUBLIC_DECRYPTION, &sig_payload_vec)
+        .map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_RESULT,
+                Some(request_id),
+                anyhow!("Could not sign payload {sig_payload:?}: {e:?}"),
+                tonic::Code::Aborted,
+            )
+        })?;
+
     Ok(Response::new(PublicDecryptionResponse {
         signature: sig.sig.to_vec(),
         payload: Some(sig_payload),
