@@ -60,15 +60,13 @@ args:
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
                    "vsockPort" int
-		           "to" string
-		           "timeout" int) */}}
+		           "to" string) */}}
 {{- define "proxyFromEnclave" -}}
 {{- include "socatContainer"
       (dict "name" .name
             "image" .image
             "from" (printf "VSOCK-LISTEN:%d,fork,reuseaddr" (int .vsockPort))
-	      "to" .to
-	      "timeout" .timeout) }}
+	      "to" .to) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
@@ -81,14 +79,14 @@ args:
       (dict "name" .name
             "image" .image
             "vsockPort" .vsockPort
-	      "to" (printf "TCP:%s:%d,nodelay" .address (int .port))
-	      "timeout" .timeout) }}
+	      "to" (printf "TCP:%s:%d,nodelay" .address (int .port))) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
 		           "from" string
 		           "cid" int
+                   "port" int
                    "timeout" int (optional, only used if name is "grpc-peer-proxy")) */}}
 {{- define "proxyToEnclave" -}}
 {{- include "socatContainer"
