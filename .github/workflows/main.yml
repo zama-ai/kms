@@ -480,67 +480,6 @@ jobs:
   # 4. ArgoCD staging update: Updates the staging environment (nightly only)
   ############################################################################
 
-  # Generates default test material once for slow_tests jobs
-  # Testing material is small (~1GB) and fast to generate, so each job generates its own
-  # Default material is large (~30GB) and slow to generate, so we pre-generate and share via artifact
-  generate-test-material:
-    name: main/generate-test-material
-    needs: check-changes
-    if: >-
-      needs.check-changes.outputs.changes-core-service == 'true' ||
-      github.ref == 'refs/heads/main' ||
-      needs.check-changes.outputs.changes-ci == 'true'
-    runs-on: runs-on=${{ github.run_id }}/runner=32cpu-linux-x64/spot=false/volume=200gb
-    steps:
-      - name: Checkout Project
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          submodules: true
-          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          persist-credentials: true
-
-      - name: Get Rust version
-        run: |
-          version="$(cat toolchain.txt)"
-          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
-
-      - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
-        with:
-          toolchain: ${{ env.RUST_IMAGE_VERSION }}
-          cache: false
-
-      - name: Install Protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
-        with:
-          version: '26.x'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup usage of private repo
-        env:
-          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-        run: git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
-
-      - name: Generate Test Material
-        run: |
-          echo "Generating default test material only (for slow_tests jobs)..."
-          cargo run -p generate-test-material --features slow_tests -- --output ./test-material --verbose default
-          echo "Material generated successfully"
-          du -sh ./test-material/*
-
-      - name: Compress Test Material
-        run: |
-          echo "Compressing default test material..."
-          tar -czf test-material-default.tar.gz -C ./test-material default
-          ls -lh test-material-default.tar.gz
-
-      - name: Upload Test Material (Default)
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: test-material-default-${{ github.run_id }}
-          path: ./test-material-default.tar.gz
-          retention-days: 1
-
   # Prepares test matrix with different configurations:
   # - For scheduled runs: Runs comprehensive nightly tests in release mode
   # - For other events: Runs multiple test suites in parallel with specific features
@@ -587,7 +526,6 @@ jobs:
     needs:
       - check-changes
       - prepare-matrix
-      - generate-test-material
     if: >-
       needs.check-changes.outputs.changes-core-service == 'true' ||
       github.ref == 'refs/heads/main' ||
@@ -614,7 +552,6 @@ jobs:
       runs-on: '64cpu-linux-x64'
       nextest-test-threads: "1"  # Required for #[serial] tests (slow_tests with shared state)
       enable-shared-material: true  # Use shared material mode (no copying)
-      use-pregenerated-material: true  # Download material from generate-test-material job
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
