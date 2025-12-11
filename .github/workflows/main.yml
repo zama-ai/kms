@@ -489,7 +489,7 @@ jobs:
       needs.check-changes.outputs.changes-core-service == 'true' ||
       github.ref == 'refs/heads/main' ||
       needs.check-changes.outputs.changes-ci == 'true'
-    runs-on: ubuntu-latest
+    runs-on: runs-on=${{ github.run_id }}/runner=32cpu-linux-x64/spot=false/volume=200gb
     steps:
       - name: Checkout Project
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
