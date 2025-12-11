@@ -509,9 +509,6 @@ jobs:
           toolchain: ${{ env.RUST_IMAGE_VERSION }}
           cache: false
 
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
-
       - name: Install Protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
