@@ -475,7 +475,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
         let mut local_packet = loop {
             let packet = tokio::select! {
                     _ = log_interval.tick() => {
-                        tracing::warn!("Still waiting to receive from party {:?}", sender);
+                        tracing::warn!("Still waiting to receive from party {:?} for session {:?}", sender, self.session_id);
                         None
                     },
                     local_packet = rx.recv() => Some(local_packet)
