@@ -33,8 +33,8 @@ set -euo pipefail
 # Configuration Variables
 #=============================================================================
 NAMESPACE="${NAMESPACE:-kms-test}"
-KMS_CORE_IMAGE_TAG="${KMS_CORE_IMAGE_TAG:-latest}"
-KMS_CORE_CLIENT_IMAGE_TAG="${KMS_CORE_CLIENT_IMAGE_TAG:-latest}"
+KMS_CORE_IMAGE_TAG="${KMS_CORE_IMAGE_TAG:-latest-dev}"
+KMS_CORE_CLIENT_IMAGE_TAG="${KMS_CORE_CLIENT_IMAGE_TAG:-latest-dev}"
 DEPLOYMENT_TYPE="${DEPLOYMENT_TYPE:-threshold}"
 NUM_PARTIES="${NUM_PARTIES:-$([ "${DEPLOYMENT_TYPE}" = "centralized" ] && echo "1" || echo "4")}"
 KUBE_CONFIG="${HOME}/.kube/kind_config_${DEPLOYMENT_TYPE}"
@@ -185,11 +185,29 @@ validate_config() {
     fi
 
     # Check if image tags are provided or build flag is set
-    if [[ "${KMS_CORE_IMAGE_TAG}" == "latest" ]] || [[ "${KMS_CORE_CLIENT_IMAGE_TAG}" == "latest" ]]; then
-        if [[ "${BUILD}" != "true" ]]; then
-            log_error "Image tags are set to 'latest' but --build flag is not set"
-            log_error "Either provide specific image tags (--kms-core-tag, --kms-core-client-tag) or use --build to build locally"
-            exit 1
+    if [[ "${KMS_CORE_IMAGE_TAG}" == "latest-dev" ]] || [[ "${KMS_CORE_CLIENT_IMAGE_TAG}" == "latest-dev" ]]; then
+        if [[ "${LOCAL}" == "true" ]] && [[ "${BUILD}" != "true" ]]; then
+            log_warn "Image tags are set to 'latest-dev' but --build flag is not set"
+            log_warn "We're checking if latest-dev image is available locally"
+            if $(docker image inspect "ghcr.io/zama-ai/kms/core-service:latest-dev" > /dev/null 2>&1); then
+                log_info "latest-dev image is available locally"
+            else
+                log_error "latest-dev image is not available locally"
+                log_error "You can build it locally with --build flag"
+            fi
+            if $(docker image inspect "ghcr.io/zama-ai/kms/core-client:latest-dev" > /dev/null 2>&1); then
+                log_info "latest-dev image is available locally"
+            else
+                log_error "latest-dev image is not available locally"
+                log_error "You can build it locally with --build flag"
+            fi
+            read -p "Do you want to use existing images locally? (y/n): " -r EXISTING_IMAGES
+            if [[ "${EXISTING_IMAGES}" != "y" ]]; then
+                log_error "If you want to build the images locally next time, you need to use --build flag"
+                exit 1
+            else
+                log_info "Using existing images locally"
+            fi
         fi
     fi
 }
