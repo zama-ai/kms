@@ -292,10 +292,10 @@ rustLog: info
 
 podSecurityContext:
   # To set when the image will support non root user
-  runAsUser: 10003
-  runAsGroup: 10002
-  fsGroup: 10002
-  runAsNonRoot: true
+  #  runAsUser: 1000
+  #  runAsGroup: 1000
+  #  fsGroup: 1000
+  #  runAsNonRoot: true
 containerSecurityContext:
   allowPrivilegeEscalation: false
   capabilities:
@@ -304,11 +304,8 @@ containerSecurityContext:
   privileged: false
 
 podSecurityContextForEnclave:
-  runAsUser: 10003
-  runAsGroup: 10002
-  fsGroup: 10002
-  supplementalGroups: [1001]
-  runAsNonRoot: true
+  fsGroup: 1001     # Keep this as 1001 to match device group
+  supplementalGroups: [1001]  # Add device group as supplemental
 
 kyverno:
   enabled: false
