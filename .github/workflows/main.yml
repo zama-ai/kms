@@ -480,8 +480,9 @@ jobs:
   # 4. ArgoCD staging update: Updates the staging environment (nightly only)
   ############################################################################
 
-  # Generates test material once for all core-service test jobs
-  # This avoids each parallel job generating 20-30GB of material independently
+  # Generates default test material once for slow_tests jobs
+  # Testing material is small (~1GB) and fast to generate, so each job generates its own
+  # Default material is large (~30GB) and slow to generate, so we pre-generate and share via artifact
   generate-test-material:
     name: main/generate-test-material
     needs: check-changes
@@ -522,16 +523,22 @@ jobs:
 
       - name: Generate Test Material
         run: |
-          echo "Generating all test material (testing + default)..."
-          cargo run -p generate-test-material --features slow_tests -- --output ./test-material --verbose all
+          echo "Generating default test material only (for slow_tests jobs)..."
+          cargo run -p generate-test-material --features slow_tests -- --output ./test-material --verbose default
           echo "Material generated successfully"
           du -sh ./test-material/*
 
-      - name: Upload Test Material
+      - name: Compress Test Material
+        run: |
+          echo "Compressing default test material..."
+          tar -czf test-material-default.tar.gz -C ./test-material default
+          ls -lh test-material-default.tar.gz
+
+      - name: Upload Test Material (Default)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: test-material-${{ github.run_id }}
-          path: ./test-material
+          name: test-material-default-${{ github.run_id }}
+          path: ./test-material-default.tar.gz
           retention-days: 1
 
   # Prepares test matrix with different configurations:
