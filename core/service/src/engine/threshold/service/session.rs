@@ -1,5 +1,8 @@
 // === Standard Library ===
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    sync::Arc,
+};
 
 use aes_prng::AesRng;
 // === External Crates ===
@@ -12,10 +15,15 @@ use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
         runtime::{
-            party::{Identity, MpcIdentity, Role, RoleAssignment},
+            party::{
+                DualRole, Identity, MpcIdentity, Role, RoleAssignment, TwoSetsRole,
+                TwoSetsThreshold,
+            },
             sessions::{
                 base_session::{BaseSession, TwoSetsBaseSession},
-                session_parameters::{SessionParameters, TwoSetsSessionParameters},
+                session_parameters::{
+                    GenericParameterHandles, SessionParameters, TwoSetsSessionParameters,
+                },
                 small_session::SmallSession,
             },
         },
@@ -468,13 +476,29 @@ impl SessionMaker {
         Ok(session)
     }
 
-    async fn make_two_sets_session(
+    pub(crate) async fn make_two_sets_session(
         &self,
         session_id: SessionId,
-        context_id: ContextId,
+        context_id_set1: ContextId,
+        context_id_set2: ContextId,
         network_mode: NetworkMode,
     ) -> anyhow::Result<TwoSetsBaseSession> {
-        todo!()
+        let (session_params, role_assignment) = self
+            .get_session_params_two_sets(session_id, &context_id_set1, &context_id_set2)
+            .await?;
+
+        let network = self
+            .get_networking_two_sets(
+                session_id,
+                role_assignment,
+                session_params.my_role(),
+                context_id_set1,
+                context_id_set2,
+                network_mode,
+            )
+            .await?;
+
+        TwoSetsBaseSession::new(session_params, network, self.new_rng().await)
     }
 
     async fn get_networking(
@@ -518,21 +542,101 @@ impl SessionMaker {
     async fn get_networking_two_sets(
         &self,
         session_id: SessionId,
+        role_assignment: RoleAssignment<TwoSetsRole>,
+        my_role: TwoSetsRole,
         context_id_set1: ContextId,
         context_id_set2: ContextId,
         network_mode: NetworkMode,
     ) -> anyhow::Result<
         threshold_fhe::execution::runtime::sessions::base_session::TwoSetsNetworkingImpl,
     > {
-        todo!()
+        let nm = self.networking_manager.read().await;
+        let networking = nm
+            .make_network_session(session_id, &role_assignment, my_role, network_mode)
+            .await?;
+        tracing::debug!(
+            "Getting networking for session_id={}, context_id_1={:?}, context_id_2={:?}, my_role={:?}, network_mode={:?}",
+                session_id,
+                context_id_set1,
+                context_id_set2,
+                my_role,
+                network_mode
+            );
+        Ok(networking)
     }
 
     async fn get_session_params_two_sets(
         &self,
+        session_id: SessionId,
         context_id_set1: &ContextId,
         context_id_set2: &ContextId,
-    ) -> anyhow::Result<TwoSetsSessionParameters> {
-        todo!()
+    ) -> anyhow::Result<(TwoSetsSessionParameters, RoleAssignment<TwoSetsRole>)> {
+        let context_map_guard = self.context_map.read().await;
+        let context_info_s1 = context_map_guard.get(context_id_set1).ok_or_else(|| {
+            anyhow::anyhow!("Context {} not found in context map", context_id_set1)
+        })?;
+        let context_info_s2 = context_map_guard.get(context_id_set2).ok_or_else(|| {
+            anyhow::anyhow!("Context {} not found in context map", context_id_set2)
+        })?;
+
+        let threshold = TwoSetsThreshold {
+            threshold_set_1: context_info_s1.threshold,
+            threshold_set_2: context_info_s2.threshold,
+        };
+
+        let role_assignment_s1 = context_info_s1.role_assignment.clone().inner;
+        let role_assignment_s2 = context_info_s2.role_assignment.clone().inner;
+
+        let my_role_both_sets = match (context_info_s1.my_role, context_info_s2.my_role) {
+            (None, None) => return Err(anyhow::anyhow!("Trying to get parameters for a two sets session, but I am not part of any of the two context {} ,{}",context_id_set1,context_id_set2)),
+            (None, Some(role)) => TwoSetsRole::Set2(role),
+            (Some(role), None) => TwoSetsRole::Set1(role),
+            (Some(role_set_1), Some(role_set_2)) => TwoSetsRole::Both(DualRole{ role_set_1, role_set_2 }),
+        };
+
+        // Go over role_assignment_s1 and role_assignment_s2, if one of the value is common to both return
+        // TwoSetsRole::Both, else TwoSetsRole::Set1 or TwoSetsRole::Set2
+        let mut reversed_role_assignment_both_sets = role_assignment_s1
+            .into_iter()
+            .map(|(role, id)| (id, TwoSetsRole::Set1(role)))
+            .collect::<HashMap<_, _>>();
+
+        role_assignment_s2.into_iter().for_each(|(role, id)| {
+            match reversed_role_assignment_both_sets.entry(id) {
+                Entry::Occupied(occupied_entry) => {
+                    let role_set_1 = occupied_entry.into_mut();
+                    match role_set_1 {
+                        TwoSetsRole::Set1(role1) => {
+                            *role_set_1 = TwoSetsRole::Both(DualRole {
+                                role_set_1: *role1,
+                                role_set_2: role,
+                            });
+                        }
+                        _ => {
+                            panic!("Inconsistent state in role assignment for two sets session");
+                        }
+                    }
+                }
+                Entry::Vacant(vacant_entry) => {
+                    let _ = vacant_entry.insert(TwoSetsRole::Set2(role));
+                }
+            }
+        });
+
+        let role_assignment_both_sets = RoleAssignment {
+            inner: reversed_role_assignment_both_sets
+                .into_iter()
+                .map(|(id, role)| (role, id))
+                .collect(),
+        };
+        let session_parameters = TwoSetsSessionParameters::new(
+            threshold,
+            session_id,
+            my_role_both_sets,
+            role_assignment_both_sets.keys().cloned().collect(),
+        )?;
+
+        Ok((session_parameters, role_assignment_both_sets))
     }
 
     // If I don't belong to the context, this returns an error.
@@ -644,6 +748,18 @@ impl ImmutableSessionMaker {
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z64>> {
         self.inner
             .make_small_sync_session_z64(session_id, context_id, epoch_id)
+            .await
+    }
+
+    pub(crate) async fn make_two_sets_session(
+        &self,
+        session_id: SessionId,
+        context_id_set1: ContextId,
+        context_id_set2: ContextId,
+        network_mode: NetworkMode,
+    ) -> anyhow::Result<TwoSetsBaseSession> {
+        self.inner
+            .make_two_sets_session(session_id, context_id_set1, context_id_set2, network_mode)
             .await
     }
 
