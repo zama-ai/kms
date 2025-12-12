@@ -216,27 +216,17 @@ impl ContextInfo {
 
     /// Most of these checks are simply sanity checks because
     /// before the context passed to the KMS, it should have been validated on the gateway.
-    pub async fn verify<S: StorageReader>(&self, storage: &S) -> anyhow::Result<Role> {
+    pub async fn verify<S: StorageReader>(&self, storage: &S) -> anyhow::Result<Option<Role>> {
         // Check the signing key is consistent with the private key in storage.
         let signing_key = get_core_signing_key(storage).await?;
         let verification_key = signing_key.verf_key();
 
-        let my_node = self
-            .mpc_nodes
-            .iter()
-            .find(|node| {
-                node.verification_key
-                    .as_ref()
-                    .map(|inner| inner == &verification_key)
-                    .unwrap_or(false)
-            })
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Node with verification key {:?} not found in context {}",
-                    verification_key,
-                    self.context_id()
-                )
-            })?;
+        let my_node = self.mpc_nodes.iter().find(|node| {
+            node.verification_key
+                .as_ref()
+                .map(|inner| inner == &verification_key)
+                .unwrap_or(false)
+        });
 
         // check mpc_nodes have unique party_ids
         let party_ids: std::collections::HashSet<_> =
@@ -311,7 +301,7 @@ impl ContextInfo {
                 .ok_or_else(|| anyhow::anyhow!("missing port"))?;
         }
 
-        Ok(Role::indexed_from_one(my_node.party_id as usize))
+        Ok(my_node.map(|node| Role::indexed_from_one(node.party_id as usize)))
     }
 }
 

@@ -14,7 +14,8 @@ use threshold_fhe::{
         runtime::{
             party::{Identity, MpcIdentity, Role, RoleAssignment},
             sessions::{
-                base_session::BaseSession, session_parameters::SessionParameters,
+                base_session::{BaseSession, TwoSetsBaseSession},
+                session_parameters::{SessionParameters, TwoSetsSessionParameters},
                 small_session::SmallSession,
             },
         },
@@ -31,7 +32,10 @@ use tokio::sync::{Mutex, RwLock};
 use crate::engine::context::ContextInfo;
 
 struct Context {
-    my_role: Role,
+    // I may not belong to all the context I am aware of
+    // especially in the case of resharing where I only belong
+    // in one of the two contexts at play.
+    my_role: Option<Role>,
     // A Context always hold only a RoleAssignment on Role
     // to build a RoleAssignment on a TwoSetRole,
     // we need 2 contexts
@@ -143,7 +147,7 @@ impl SessionMaker {
         let default_context_id = *DEFAULT_MPC_CONTEXT;
         let default_context = Context {
             threshold: 1,
-            my_role: Role::indexed_from_one(1),
+            my_role: Some(Role::indexed_from_one(1)),
             role_assignment,
         };
 
@@ -173,14 +177,16 @@ impl SessionMaker {
         }
     }
 
-    // Returns the an health check session per context.
+    // Returns an health check session per context I belong to.
     async fn get_healthcheck_session_all_contexts(
         &self,
     ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession<Role>>> {
         let mut health_check_sessions = HashMap::new();
-        for (context_id, _) in self.context_map.read().await.iter() {
-            health_check_sessions
-                .insert(*context_id, self.get_healthcheck_session(context_id).await?);
+        for (context_id, context) in self.context_map.read().await.iter() {
+            if context.my_role.is_some() {
+                health_check_sessions
+                    .insert(*context_id, self.get_healthcheck_session(context_id).await?);
+            }
         }
         Ok(health_check_sessions)
     }
@@ -193,10 +199,14 @@ impl SessionMaker {
         let role_assignment = self.get_role_assignment(context_id).await?;
         let my_role = self.my_role(context_id).await?;
 
-        let health_check_session = nm
-            .make_healthcheck_session(&role_assignment, my_role)
-            .await?;
-        Ok(health_check_session)
+        if let Some(role) = my_role {
+            Ok(nm.make_healthcheck_session(&role_assignment, role).await?)
+        } else {
+            Err(anyhow::anyhow!(
+                "My role is not defined for context {}",
+                context_id
+            ))
+        }
     }
 
     async fn get_role_assignment(
@@ -219,7 +229,7 @@ impl SessionMaker {
     async fn add_context(
         &self,
         context_id: ContextId,
-        my_role: Role,
+        my_role: Option<Role>,
         role_assignment: RoleAssignment<Role>,
         threshold: u8,
     ) {
@@ -237,7 +247,7 @@ impl SessionMaker {
     /// Adds information given by [ContextInfo] struct into the session maker.
     pub(crate) async fn add_context_info(
         &self,
-        my_role: Role,
+        my_role: Option<Role>,
         info: &ContextInfo,
     ) -> anyhow::Result<()> {
         let mut role_assignment_map = HashMap::new();
@@ -353,7 +363,9 @@ impl SessionMaker {
         let parameters = SessionParameters::new(
             context_info.threshold,
             session_id,
-            context_info.my_role,
+            context_info.my_role.ok_or_else(|| {
+                anyhow::anyhow!("My role is not defined for context {}", context_id)
+            })?,
             context_info.role_assignment.keys().cloned().collect(),
         )?;
 
@@ -456,6 +468,15 @@ impl SessionMaker {
         Ok(session)
     }
 
+    async fn make_two_sets_session(
+        &self,
+        session_id: SessionId,
+        context_id: ContextId,
+        network_mode: NetworkMode,
+    ) -> anyhow::Result<TwoSetsBaseSession> {
+        todo!()
+    }
+
     async fn get_networking(
         &self,
         session_id: SessionId,
@@ -474,31 +495,69 @@ impl SessionMaker {
             (context_info.role_assignment.clone(), context_info.my_role)
         };
 
-        let networking = nm
-            .make_network_session(session_id, &role_assignment, my_role, network_mode)
-            .await?;
-        tracing::debug!(
-            "Created networking for session_id={}, context_id={:?}, network_mode={:?}",
-            session_id,
-            context_id,
-            network_mode
-        );
-        Ok(networking)
+        if let Some(role) = my_role {
+            let networking = nm
+                .make_network_session(session_id, &role_assignment, role, network_mode)
+                .await?;
+            tracing::debug!(
+                "Getting networking for session_id={}, context_id={:?}, my_role={:?}, network_mode={:?}",
+                session_id,
+                context_id,
+                role,
+                network_mode
+            );
+            Ok(networking)
+        } else {
+            Err(anyhow::anyhow!(
+                "My role is not defined for context {}",
+                context_id
+            ))
+        }
     }
 
+    async fn get_networking_two_sets(
+        &self,
+        session_id: SessionId,
+        context_id_set1: ContextId,
+        context_id_set2: ContextId,
+        network_mode: NetworkMode,
+    ) -> anyhow::Result<
+        threshold_fhe::execution::runtime::sessions::base_session::TwoSetsNetworkingImpl,
+    > {
+        todo!()
+    }
+
+    async fn get_session_params_two_sets(
+        &self,
+        context_id_set1: &ContextId,
+        context_id_set2: &ContextId,
+    ) -> anyhow::Result<TwoSetsSessionParameters> {
+        todo!()
+    }
+
+    // If I don't belong to the context, this returns an error.
+    // Qu to reviewer: do we want this ? Or return Option<Identity> ?
     pub(crate) async fn my_identity(&self, context_id: &ContextId) -> anyhow::Result<Identity> {
         let context_map_guard = self.context_map.read().await;
         let context_info = context_map_guard
             .get(context_id)
             .ok_or_else(|| anyhow::anyhow!("Context {} not found in context map", context_id))?;
+
         let id = context_info
-            .role_assignment
-            .get(&context_info.my_role)
-            .ok_or_else(|| anyhow::anyhow!("Could not find my own identity in role assignments"))?;
+            .my_role
+            .and_then(|my_role| context_info.role_assignment.get(&my_role))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Could not find my own identity in role assignments in context {}",
+                    context_id
+                )
+            })?;
         Ok(id.to_owned())
     }
 
-    pub(crate) async fn my_role(&self, context_id: &ContextId) -> anyhow::Result<Role> {
+    // If I don't belong to the context, this returns None.
+    // Qu to reviewer: do we want this ? Or return an error instead ? (once we decide, probably unify behavior with my_identity)
+    pub(crate) async fn my_role(&self, context_id: &ContextId) -> anyhow::Result<Option<Role>> {
         let context_map_guard = self.context_map.read().await;
         let context_info = context_map_guard
             .get(context_id)
@@ -592,8 +651,12 @@ impl ImmutableSessionMaker {
         self.inner.my_identity(context_id).await
     }
 
+    /// Note at here we consider that if the role is None, this is an error.
     pub(crate) async fn my_role(&self, context_id: &ContextId) -> anyhow::Result<Role> {
-        self.inner.my_role(context_id).await
+        self.inner
+            .my_role(context_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("My role is not defined for context {}", context_id))
     }
 
     pub(crate) async fn threshold(&self, context_id: &ContextId) -> anyhow::Result<u8> {
