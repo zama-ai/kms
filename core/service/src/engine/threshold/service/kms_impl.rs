@@ -679,7 +679,8 @@ fn update_threshold_kms_system_metrics(
     tokio::spawn(async move {
         loop {
             metrics::METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
-            metrics::METRICS.record_live_sessions(session_maker.active_sessions().await);
+            metrics::METRICS.record_active_sessions(session_maker.active_sessions().await);
+            metrics::METRICS.record_inactive_sessions(session_maker.inactive_sessions().await);
             {
                 let user_meta_store_guard = user_meta_store.read().await;
                 metrics::METRICS.record_meta_storage_user_decryptions(

@@ -85,14 +85,15 @@ impl SessionMaker {
     }
 
     /// Returns the number of active sessions.
-    /// This is the sum of active sessions with _each_ other party.
     pub async fn active_sessions(&self) -> u64 {
         let reader_guard = self.networking_manager.read().await;
-        let mut count = 0;
-        for cur in reader_guard.opened_sessions_tracker.iter() {
-            count += *cur.value();
-        }
-        count
+        reader_guard.active_session_count().await
+    }
+
+    /// Returns the number of inactive sessions.
+    pub async fn inactive_sessions(&self) -> u64 {
+        let reader_guard = self.networking_manager.read().await;
+        reader_guard.inactive_session_count().await
     }
 
     #[cfg(test)]
@@ -599,11 +600,16 @@ impl ImmutableSessionMaker {
         self.inner.threshold(context_id).await
     }
 
-    /// Returns the number of opened sessions.
-    /// This is the sum of opened sessions with _each_ other party.
+    /// Returns the number of active sessions.
     pub(crate) async fn active_sessions(&self) -> u64 {
         self.inner.active_sessions().await
     }
+
+    /// Returns the number of inactive sessions.
+    pub(crate) async fn inactive_sessions(&self) -> u64 {
+        self.inner.inactive_sessions().await
+    }
+
     // Returns a health check session per context.
     pub(crate) async fn get_healthcheck_session_all_contexts(
         &self,

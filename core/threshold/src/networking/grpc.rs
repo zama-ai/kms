@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 
 use tokio::sync::{
@@ -200,6 +201,8 @@ impl OptionConfigWrapper {
 pub struct GrpcNetworkingManager {
     // Session reference storage to prevent premature cleanup under high concurrency
     pub(crate) session_store: Arc<SessionStore>,
+    inactive_session_count: Arc<AtomicU64>,
+    active_session_count: Arc<AtomicU64>,
     // Keeps tracks of how many sessions were opened by each party
     // NOTE: Always lock session_store before opened_sessions_tracker to prevent deadlocks
     pub opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
@@ -239,8 +242,12 @@ impl GrpcNetworkingManager {
     ///
     /// It also updates the status of active sessions by checking if their weak references are still valid,
     /// and if not, marks them as completed.
+    ///
+    /// Finally it also updates the counts of inactive and active sessions.
     fn start_background_cleaning_task(
         session_store: Arc<SessionStore>,
+        inactive_session_count: Arc<AtomicU64>,
+        active_session_count: Arc<AtomicU64>,
         update_interval: Duration,
         cleanup_interval: Duration,
         discard_inactive_interval: Duration,
@@ -250,6 +257,8 @@ impl GrpcNetworkingManager {
             loop {
                 interval.tick().await;
 
+                let mut internal_inactive_sessions_count = 0;
+                let mut internal_active_sessions_count = 0;
                 session_store.retain(|session_id, status| match status {
                     SessionStatus::Completed(started) => started.elapsed() < cleanup_interval,
                     SessionStatus::Inactive((_, started)) => {
@@ -261,16 +270,21 @@ impl GrpcNetworkingManager {
                             );
                             false
                         } else {
+                            internal_inactive_sessions_count += 1;
                             true
                         }
                     }
                     SessionStatus::Active(session) => {
                         if session.upgrade().is_none() {
                             *status = SessionStatus::Completed(Instant::now());
+                        } else {
+                            internal_active_sessions_count += 1;
                         }
                         true
                     }
                 });
+                inactive_session_count.store(internal_inactive_sessions_count, Ordering::Relaxed);
+                active_session_count.store(internal_active_sessions_count, Ordering::Relaxed);
             }
         });
     }
@@ -303,8 +317,12 @@ impl GrpcNetworkingManager {
         let update_interval = conf.get_session_update_interval();
         let cleanup_interval = conf.get_session_cleanup_interval();
         let discard_inactive_interval = conf.get_discard_inactive_sessions_interval();
+        let inactive_session_count = Arc::new(AtomicU64::new(0));
+        let active_session_count = Arc::new(AtomicU64::new(0));
         Self::start_background_cleaning_task(
             cleanup_session_store,
+            Arc::clone(&inactive_session_count),
+            Arc::clone(&active_session_count),
             update_interval,
             cleanup_interval,
             discard_inactive_interval,
@@ -312,6 +330,8 @@ impl GrpcNetworkingManager {
 
         Ok(GrpcNetworkingManager {
             session_store,
+            inactive_session_count,
+            active_session_count,
             opened_sessions_tracker: Arc::new(DashMap::new()),
             conf,
             sending_service: GrpcSendingService::new(tls_conf, conf, peer_tcp_proxy)?,
@@ -473,6 +493,14 @@ impl GrpcNetworkingManager {
         );
 
         Ok(session)
+    }
+
+    pub async fn active_session_count(&self) -> u64 {
+        self.active_session_count.load(Ordering::Relaxed)
+    }
+
+    pub async fn inactive_session_count(&self) -> u64 {
+        self.inactive_session_count.load(Ordering::Relaxed)
     }
 }
 
