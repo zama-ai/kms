@@ -303,6 +303,7 @@ jobs:
         env:
           # If we want to enable the coverage again we can use the snippets below:
           # COVERAGE
+          RUST_LOG: error
           # if [[ "${EVENT_NAME}" == 'schedule' ]]; then
           #   export RUSTFLAGS="-Cinstrument-coverage"
           #   export LLVM_PROFILE_FILE="cargo-test-%p-%m.profraw"
