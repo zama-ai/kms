@@ -58,15 +58,20 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             let task_count = get_task_count(&system);
             METRICS.record_tasks(task_count);
 
-            // Update socat process count
-            let socat_count = get_socat_count(&system);
-            METRICS.record_socat_processes(socat_count);
+            // Update socat task count
+            let socat_count = get_socat_task_count(&system);
+            METRICS.record_socat_tasks(socat_count);
+
+            // Update socat file descriptor count
+            let socat_count = get_socat_file_descriptor_count(&system);
+            METRICS.record_socat_file_descriptors(socat_count);
 
             tokio::time::sleep(refresh_interval).await;
         }
     });
 
     Ok(())
+    //  todo add socat tasks as well
 }
 
 /// Get the number of open file descriptors for the current process
@@ -114,9 +119,27 @@ fn get_task_count(system: &sysinfo::System) -> u64 {
     }
 }
 
+/// Get the number of running socat tasks
+/// TODO this only works on Linux, need alternative for other OSes
+fn get_socat_task_count(system: &sysinfo::System) -> u64 {
+    let mut count = 0;
+    for process in system.processes_by_name(OsStr::new("socat")) {
+        let entries = match process.tasks() {
+            Some(tasks) => tasks.len() as u64,
+            None => {
+                tracing::error!(
+                "System does not appear to be Linux and hence cannot get the amount of socat tasks. Using 0 by default");
+                0
+            }
+        };
+        count += entries;
+    }
+    count
+}
+
 /// Get the number of running socat file descriptors
 /// TODO this only works on Linux, need alternative for other OSes
-fn get_socat_count(system: &sysinfo::System) -> u64 {
+fn get_socat_file_descriptor_count(system: &sysinfo::System) -> u64 {
     let mut count = 0;
     for process in system.processes_by_name(OsStr::new("socat")) {
         let pid = process.pid();

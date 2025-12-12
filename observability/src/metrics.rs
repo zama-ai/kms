@@ -67,7 +67,8 @@ pub struct CoreMetrics {
     cpu_load_gauge: TaggedMetric<Gauge<f64>>,
     memory_usage_gauge: TaggedMetric<Gauge<u64>>,
     file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of file descriptors of the KMS
-    socat_processes_gauge: TaggedMetric<Gauge<u64>>, // Number of socat file descriptors
+    socat_file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of socat file descriptors
+    socat_task_gauge: TaggedMetric<Gauge<u64>>,      // Number of socat file descriptors
     task_gauge: TaggedMetric<Gauge<u64>>,            // Numbers active child processes of the KMS
     // Internal system gauges
     // TODO rate limiter, session gauge and meta store should actually be counters but we need to add decorators to ensure it is always updated
@@ -118,8 +119,9 @@ impl CoreMetrics {
             format!("{}_network_tx_bytes", config.prefix).into();
         let file_descriptors_metric: Cow<'static, str> =
             format!("{}_file_descriptors", config.prefix).into();
-        let socat_processes_metric: Cow<'static, str> =
-            format!("{}_socat_processes", config.prefix).into();
+        let socat_task_metric: Cow<'static, str> = format!("{}_socat_tasks", config.prefix).into();
+        let socat_file_descriptor_metric: Cow<'static, str> =
+            format!("{}_socat_file_descriptors", config.prefix).into();
         let tasks_metric: Cow<'static, str> = format!("{}_tasks", config.prefix).into();
         let rate_limiter_metric: Cow<'static, str> =
             format!("{}_rate_limiter_usage", config.prefix).into();
@@ -205,13 +207,21 @@ impl CoreMetrics {
         //Record 0 just to make sure the gauge is exported
         file_descriptor_gauge.record(0, &[]);
 
-        let socat_processes_gauge = meter
-            .u64_gauge(socat_processes_metric)
-            .with_description("Number of socat child processes")
-            .with_unit("processes")
+        let socat_file_descriptor_gauge = meter
+            .u64_gauge(socat_file_descriptor_metric)
+            .with_description("Number of socat file descriptors")
+            .with_unit("file descriptors")
             .build();
         //Record 0 just to make sure the gauge is exported
-        socat_processes_gauge.record(0, &[]);
+        socat_file_descriptor_gauge.record(0, &[]);
+
+        let socat_task_gauge = meter
+            .u64_gauge(socat_task_metric)
+            .with_description("Number of socat tasks")
+            .with_unit("tasks")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        socat_task_gauge.record(0, &[]);
 
         let task_gauge = meter
             .u64_gauge(tasks_metric)
@@ -279,7 +289,11 @@ impl CoreMetrics {
             cpu_load_gauge: TaggedMetric::new(cpu_gauge, "cpu_load"),
             memory_usage_gauge: TaggedMetric::new(memory_gauge, "memory_usage"),
             file_descriptor_gauge: TaggedMetric::new(file_descriptor_gauge, "file_descriptors"),
-            socat_processes_gauge: TaggedMetric::new(socat_processes_gauge, "socat_processes"),
+            socat_file_descriptor_gauge: TaggedMetric::new(
+                socat_file_descriptor_gauge,
+                "socat_file_descriptors",
+            ),
+            socat_task_gauge: TaggedMetric::new(socat_task_gauge, "socat_tasks"),
             task_gauge: TaggedMetric::new(task_gauge, "tasks"),
             rate_limiter_gauge: TaggedMetric::new(rate_limiter_gauge, "rate_limit_usage"),
             active_session_gauge: TaggedMetric::new(active_session_gauge, "active_sessions"),
@@ -420,10 +434,17 @@ impl CoreMetrics {
     }
 
     /// Record the current number of socat file descriptors into the gauge
-    pub fn record_socat_processes(&self, count: u64) {
-        self.socat_processes_gauge
+    pub fn record_socat_file_descriptors(&self, count: u64) {
+        self.socat_file_descriptor_gauge
             .metric
-            .record(count, &self.socat_processes_gauge.with_tags(&[]));
+            .record(count, &self.socat_file_descriptor_gauge.with_tags(&[]));
+    }
+
+    /// Record the current number of socat tasks into the gauge
+    pub fn record_socat_tasks(&self, count: u64) {
+        self.socat_task_gauge
+            .metric
+            .record(count, &self.socat_task_gauge.with_tags(&[]));
     }
 
     /// Record the current rate limiter usage into the gauge
