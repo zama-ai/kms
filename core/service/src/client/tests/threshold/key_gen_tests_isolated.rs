@@ -127,7 +127,7 @@ async fn secure_threshold_keygen_isolated() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("secure_threshold_keygen")
         .with_party_count(4)
-        .with_threshold(2)
+        .with_threshold(1)
         .with_prss()
         .build()
         .await?;
@@ -177,7 +177,7 @@ async fn secure_threshold_keygen_crash_online_isolated() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("secure_keygen_crash_online")
         .with_party_count(4)
-        .with_threshold(2)
+        .with_threshold(1)
         .with_prss()
         .build()
         .await?;
@@ -292,7 +292,7 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("secure_keygen_crash_preproc")
         .with_party_count(4)
-        .with_threshold(2)
+        .with_threshold(1)
         .with_prss()
         .build()
         .await?;
@@ -414,7 +414,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("decompression_keygen")
         .with_party_count(4)
-        .with_threshold(2)
+        .with_threshold(1)
         .with_prss()
         .build()
         .await?;
