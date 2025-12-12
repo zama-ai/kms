@@ -541,6 +541,7 @@ jobs:
       # slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
       runner-volume: '400gb'
+      rust-log-level: 'info'
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)
