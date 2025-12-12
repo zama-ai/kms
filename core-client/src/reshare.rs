@@ -33,6 +33,10 @@ pub(crate) async fn do_reshare(
 ) -> anyhow::Result<RequestId> {
     let max_iter = cmd_conf.max_iter;
     let request_id = RequestId::new_random(rng);
+
+    // TODO(zama-ai/kms-internal/issues/2843): pass in real digests when we have integration setup
+    let key_digests = HashMap::new();
+
     // Create the request
     let request = internal_client.reshare_request(
         &request_id,
@@ -40,6 +44,7 @@ pub(crate) async fn do_reshare(
         &preproc_id,
         Some(param),
         &dummy_domain(),
+        &key_digests,
     )?;
 
     // Send the request

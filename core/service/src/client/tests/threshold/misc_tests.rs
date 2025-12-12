@@ -67,8 +67,8 @@ async fn test_threshold_health_endpoint_availability() {
         .await
         .expect("Failed to get core health client");
     let core_service_name = <CoreServiceEndpointServer<
-            RealThresholdKms<FileStorage, FileStorage>,
-        > as NamedService>::NAME;
+        RealThresholdKms<FileStorage, FileStorage>,
+    > as NamedService>::NAME;
     let status = get_status(&mut main_health_client, core_service_name)
         .await
         .unwrap();
@@ -164,8 +164,8 @@ async fn test_threshold_close_after_drop() {
         .await
         .expect("Failed to get core health client");
     let core_service_name = <CoreServiceEndpointServer<
-            RealThresholdKms<FileStorage, FileStorage>,
-        > as NamedService>::NAME;
+        RealThresholdKms<FileStorage, FileStorage>,
+    > as NamedService>::NAME;
     // Get health client for main server 1
     let mut threshold_health_client =
         get_health_client(kms_servers.get(&1).unwrap().mpc_port.unwrap())
@@ -215,8 +215,8 @@ async fn test_threshold_shutdown() {
     // Ensure that the servers are ready
     for cur_handle in kms_servers.values() {
         let service_name = <CoreServiceEndpointServer<
-                RealThresholdKms<FileStorage, FileStorage>,
-            > as NamedService>::NAME;
+            RealThresholdKms<FileStorage, FileStorage>,
+        > as NamedService>::NAME;
         await_server_ready(service_name, cur_handle.service_port).await;
     }
     let mpc_port = kms_servers.get(&1).unwrap().mpc_port.unwrap();
@@ -226,8 +226,8 @@ async fn test_threshold_shutdown() {
         .await
         .expect("Failed to get core health client");
     let core_service_name = <CoreServiceEndpointServer<
-            RealThresholdKms<FileStorage, FileStorage>,
-        > as NamedService>::NAME;
+        RealThresholdKms<FileStorage, FileStorage>,
+    > as NamedService>::NAME;
     let status = get_status(&mut core_health_client, core_service_name)
         .await
         .unwrap();
