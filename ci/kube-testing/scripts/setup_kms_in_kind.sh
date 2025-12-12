@@ -190,15 +190,15 @@ validate_config() {
             log_warn "Image tags are set to 'latest-dev' but --build flag is not set"
             log_warn "We're checking if latest-dev image is available locally"
             if $(docker image inspect "ghcr.io/zama-ai/kms/core-service:latest-dev" > /dev/null 2>&1); then
-                log_info "latest-dev image is available locally"
+                log_info "core-service:latest-dev image is available locally"
             else
-                log_error "latest-dev image is not available locally"
+                log_error "core-service:latest-dev image is not available locally"
                 log_error "You can build it locally with --build flag"
             fi
             if $(docker image inspect "ghcr.io/zama-ai/kms/core-client:latest-dev" > /dev/null 2>&1); then
-                log_info "latest-dev image is available locally"
+                log_info "core-client:latest-dev image is available locally"
             else
-                log_error "latest-dev image is not available locally"
+                log_error "core-client:latest-dev image is not available locally"
                 log_error "You can build it locally with --build flag"
             fi
             read -p "Do you want to use existing images locally? (y/n): " -r EXISTING_IMAGES
@@ -375,10 +375,10 @@ check_local_resources() {
     local KMS_CORE_CLIENT_MEMORY=$(grep -A 10 "resources:" "${KMS_CORE_CLIENT_INIT_VALUES}" | grep "memory:" | head -1 | awk '{print $2}' | sed 's/Gi//')
     local KMS_CORE_CLIENT_CPU=$(grep -A 10 "resources:" "${KMS_CORE_CLIENT_INIT_VALUES}" | grep "cpu:" | head -1 | awk '{print $2}')
 
-    # Calculate total resources
-    local TOTAL_KMS_CORE_MEMORY=$((KMS_CORE_MEMORY * NUM_PARTIES))
+    # Calculate total resources (using bc for floating-point arithmetic)
+    local TOTAL_KMS_CORE_MEMORY=$(echo "${KMS_CORE_MEMORY} * ${NUM_PARTIES}" | bc)
     local TOTAL_KMS_CORE_CPU=$((KMS_CORE_CPU * NUM_PARTIES))
-    local TOTAL_MEMORY=$((TOTAL_KMS_CORE_MEMORY + KMS_CORE_CLIENT_MEMORY))
+    local TOTAL_MEMORY=$(echo "${TOTAL_KMS_CORE_MEMORY} + ${KMS_CORE_CLIENT_MEMORY}" | bc)
     local TOTAL_CPU=$((TOTAL_KMS_CORE_CPU + KMS_CORE_CLIENT_CPU))
 
     # Retrieve num_sessions_preproc and FHE_PARAMS (matching original inline code)
@@ -508,8 +508,8 @@ check_local_resources() {
                     log_info "- ${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
                 fi
 
-                # Calculate new totals
-                local NEW_TOTAL_MEM=$((NEW_CORE_MEM * NUM_PARTIES + NEW_CLIENT_MEM))
+                # Calculate new totals (using bc for floating-point arithmetic)
+                local NEW_TOTAL_MEM=$(echo "${NEW_CORE_MEM} * ${NUM_PARTIES} + ${NEW_CLIENT_MEM}" | bc)
                 local NEW_TOTAL_CPU=$((NEW_CORE_CPU * NUM_PARTIES + NEW_CLIENT_CPU))
                 local NEW_TOTAL_NUM_SESSIN_PREPROC=${NEW_NUM_SESSIN_PREPROC}
                 local NEW_TOTAL_FHE_PARAMS=${NEW_FHE_PARAMS}
@@ -708,12 +708,11 @@ build_container() {
   log_info "Loading container for core-service in kind ..."
   kind load docker-image "ghcr.io/zama-ai/kms/core-service:latest-dev" \
     -n "${NAMESPACE}" \
-    --kubeconfig "${KUBE_CONFIG}" \
     --nodes "${NAMESPACE}"-worker
 
   log_info "Building container for core-client ..."
   docker buildx build -t "ghcr.io/zama-ai/kms/core-client:latest-dev" \
-    -f "${REPO_ROOT}/docker/core/client/Dockerfile" \
+    -f "${REPO_ROOT}/docker/core-client/Dockerfile" \
     --build-arg RUST_IMAGE_VERSION=${RUST_IMAGE_VERSION} \
     "${REPO_ROOT}/" \
     --load
@@ -721,7 +720,6 @@ build_container() {
   log_info "Loading container for core-client in kind ..."
   kind load docker-image "ghcr.io/zama-ai/kms/core-client:latest-dev" \
     -n "${NAMESPACE}" \
-    --kubeconfig "${KUBE_CONFIG}" \
     --nodes "${NAMESPACE}"-worker
 }
 

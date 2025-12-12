@@ -8,7 +8,7 @@ minio:
   password: kms-secret-access-key
 
 kmsCoreClient:
-  enabled: true
+  enabled: false
   nameOverride: kms-core-client
   image:
     name: ghcr.io/zama-ai/kms/core-client
