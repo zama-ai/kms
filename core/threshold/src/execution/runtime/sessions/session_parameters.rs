@@ -1,6 +1,6 @@
 use crate::{
     error::error_handler::anyhow_error_and_log,
-    execution::runtime::party::{Role, RoleTrait},
+    execution::runtime::party::{Role, RoleTrait, TwoSetsRole},
     session_id::SessionId,
 };
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,7 @@ pub struct GenericSessionParameters<R: RoleTrait> {
 }
 
 pub type SessionParameters = GenericSessionParameters<Role>;
+pub type TwoSetsSessionParameters = GenericSessionParameters<TwoSetsRole>;
 
 impl<R: RoleTrait> GenericSessionParameters<R> {
     pub fn new(
