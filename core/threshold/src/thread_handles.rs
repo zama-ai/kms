@@ -11,7 +11,7 @@ use crate::error::error_handler::anyhow_error_and_log;
 
 #[derive(Debug, Default)]
 pub struct ThreadHandleGroup {
-    handles: Vec<JoinHandle<()>>,
+    handles: Vec<JoinHandle<Result<(), String>>>,
 }
 
 impl ThreadHandleGroup {
@@ -23,7 +23,7 @@ impl ThreadHandleGroup {
     }
 
     /// Add a new handle to the group
-    pub fn add(&mut self, handle: JoinHandle<()>) {
+    pub fn add(&mut self, handle: JoinHandle<Result<(), String>>) {
         self.handles.push(handle);
     }
 

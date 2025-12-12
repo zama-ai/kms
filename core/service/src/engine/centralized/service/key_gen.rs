@@ -167,6 +167,7 @@ pub async fn key_gen_impl<
                     req_id
                 );
             }
+            Ok(()) // todo
         }
         .instrument(tracing::Span::current()),
     );

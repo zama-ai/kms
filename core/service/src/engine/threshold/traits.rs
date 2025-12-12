@@ -1,4 +1,4 @@
-use kms_grpc::kms::v1::*;
+use kms_grpc::{kms::v1::*, rpc_types::MetricedError};
 use tonic::{Request, Response, Status};
 
 #[tonic::async_trait]
@@ -11,11 +11,11 @@ pub trait UserDecryptor {
     async fn user_decrypt(
         &self,
         request: Request<UserDecryptionRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<UserDecryptionResponse>, Status>;
+    ) -> Result<Response<UserDecryptionResponse>, MetricedError>;
 }
 
 #[tonic::async_trait]
@@ -23,11 +23,11 @@ pub trait PublicDecryptor {
     async fn public_decrypt(
         &self,
         request: Request<PublicDecryptionRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<PublicDecryptionResponse>, Status>;
+    ) -> Result<Response<PublicDecryptionResponse>, MetricedError>;
 }
 
 #[tonic::async_trait]

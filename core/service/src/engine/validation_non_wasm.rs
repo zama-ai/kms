@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use crate::consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID};
 use crate::engine::base::retrieve_parameters;
 use crate::{
@@ -25,6 +23,7 @@ use kms_grpc::{
 };
 use kms_grpc::{KeyId, RequestId};
 use observability::metrics_names::OP_CRS_GEN_REQUEST;
+use std::collections::{HashMap, HashSet};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::hashing::DomainSep;
 
@@ -207,61 +206,47 @@ pub fn validate_user_decrypt_req(
         UnifiedPublicEncKey,
         alloy_primitives::Address,
         RequestId,
-        RequestId,
+        KeyId,
+        ContextId,
+        EpochId,
         alloy_sol_types::Eip712Domain,
     ),
-    BoxedStatus,
+    Box<dyn std::error::Error + Send + Sync>,
 > {
-    let key_id =
-        parse_optional_proto_request_id(&req.key_id, RequestIdParsingErr::UserDecRequestBadKeyId)?;
     let request_id =
         parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::UserDecRequest)?;
+    let key_id =
+        parse_optional_proto_request_id(&req.key_id, RequestIdParsingErr::UserDecRequestBadKeyId)?
+            .into();
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // remove the default context when all of context is ready
+    let context_id: ContextId = match &req.context_id {
+        Some(context_id) => context_id.try_into()?,
+        None => *DEFAULT_MPC_CONTEXT,
+    };
+    let epoch_id: EpochId = match &req.epoch_id {
+        Some(epoch_id) => epoch_id.try_into()?,
+        None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
+    };
 
     if req.typed_ciphertexts.is_empty() {
-        return Err(BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("{ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS} (Request ID: {request_id})"),
-        )));
+        return Err(anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS).into());
     }
 
-    let client_verf_key = alloy_primitives::Address::parse_checksummed(&req.client_address, None)
-        .map_err(|e| {
-        BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!(
-                "Error parsing checksummed client address: {} - {e}",
-                &req.client_address
-            ),
-        ))
-    })?;
+    let client_verf_key = alloy_primitives::Address::parse_checksummed(&req.client_address, None)?;
 
     let domain = match verify_user_decrypt_eip712(req) {
         Ok(domain) => {
             tracing::debug!("🔒 Signature verified successfully");
             domain
         }
-        Err(e) => {
-            return Err(BoxedStatus::from(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!(
-                    "Signature verification failed with error {e} for request: {:?}",
-                    req.request_id,
-                ),
-            )));
-        }
+        Err(e) => return Err(anyhow::anyhow!("Failed to verify the EIP-712 domain: {e}").into()),
     };
 
-    let (link, _) = req.compute_link_checked().map_err(|e| {
-        BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("Error computing link: {e}"),
-        ))
-    })?;
+    let (link, _) = req.compute_link_checked()?;
     let client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(&req.enc_key).map_err(|e| {
-        tracing::error!("Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}");
-        BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"),
+        Into::<Box<dyn std::error::Error + Send + Sync>>::into(anyhow::anyhow!(
+            "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
         ))
     })?;
     Ok((
@@ -269,8 +254,10 @@ pub fn validate_user_decrypt_req(
         link,
         client_enc_key,
         client_verf_key,
-        key_id,
         request_id,
+        key_id,
+        context_id,
+        epoch_id,
         domain,
     ))
 }

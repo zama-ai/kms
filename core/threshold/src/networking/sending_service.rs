@@ -335,6 +335,7 @@ impl SendingService for GrpcSendingService {
         let handle = tokio::spawn(async move {
             // Run the actual network task (already logs completion status)
             Self::run_network_task(receiver, network_channel, exponential_backoff, &other).await;
+            Ok(())
         });
 
         // 5. Minimize lock scope - acquire write lock last and release immediately

@@ -166,10 +166,7 @@ impl<
         request: Request<kms_grpc::kms::v1::UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
-        user_decrypt_impl(self, request).await.inspect_err(|err| {
-            let tag = map_tonic_code_to_metric_err_tag(err.code());
-            let _ = METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, tag);
-        })
+        user_decrypt_impl(self, request).await.map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -180,10 +177,7 @@ impl<
         METRICS.increment_request_counter(OP_USER_DECRYPT_RESULT);
         get_user_decryption_result_impl(self, request)
             .await
-            .inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_USER_DECRYPT_RESULT, tag);
-            })
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -192,10 +186,9 @@ impl<
         request: Request<kms_grpc::kms::v1::PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
-        public_decrypt_impl(self, request).await.inspect_err(|err| {
-            let tag = map_tonic_code_to_metric_err_tag(err.code());
-            let _ = METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, tag);
-        })
+        public_decrypt_impl(self, request)
+            .await
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -206,10 +199,7 @@ impl<
         METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_RESULT);
         get_public_decryption_result_impl(self, request)
             .await
-            .inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_RESULT, tag);
-            })
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]

@@ -101,6 +101,7 @@ impl SignedPubDataHandleInternal {
         }
     }
 }
+#[derive(Debug)]
 pub struct MetricedError {
     scope: Box<&'static str>,
     request_id: Option<RequestId>,
@@ -142,6 +143,10 @@ impl MetricedError {
             internal_error: error,
             error_code,
         }
+    }
+
+    pub fn code(&self) -> tonic::Code {
+        self.error_code
     }
 }
 impl Into<Status> for MetricedError {

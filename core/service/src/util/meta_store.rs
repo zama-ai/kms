@@ -277,12 +277,11 @@ pub(crate) async fn handle_res_metric_mapping<T: Clone>(
     handle: Option<Arc<AsyncCell<Result<T, String>>>>,
     metric_scope: &'static str,
     req_id: &RequestId,
-    request_type_info: &str,
 ) -> Result<T, MetricedError> {
     match handle {
         None => {
             let msg = format!(
-                "Could not retrieve {request_type_info} with request ID {req_id}. It does not exist"
+                "Could not retrieve the result in scope {metric_scope} with request ID {req_id}. It does not exist"
             );
             tracing::warn!(msg);
             Err(MetricedError::new(
@@ -304,7 +303,7 @@ pub(crate) async fn handle_res_metric_mapping<T: Clone>(
                     Ok(result) => Ok(result),
                     Err(e) => {
                         let msg = format!(
-                                "Could not retrieve {request_type_info} with request ID {req_id} since it finished with an error: {e}"
+                                "Could not retrievethe result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
                             );
                         tracing::warn!(msg);
                         Err(MetricedError::new(
@@ -317,7 +316,7 @@ pub(crate) async fn handle_res_metric_mapping<T: Clone>(
                 }
             } else {
                 let msg = format!(
-                    "Could not retrieve {request_type_info} with request ID {req_id} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
+                    "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
                 );
                 tracing::info!(msg);
                 Err(MetricedError::new(

@@ -149,11 +149,7 @@ impl_endpoint! {
             request: Request<UserDecryptionRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
-            self.user_decryptor.user_decrypt(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_USER_DECRYPT_REQUEST, tag);
-            })
+            self.user_decryptor.user_decrypt(request).await.map_err(|e| e.into())
 
         }
 
@@ -163,11 +159,7 @@ impl_endpoint! {
             request: Request<RequestId>,
         ) -> Result<Response<UserDecryptionResponse>, Status> {
             METRICS.increment_request_counter(OP_USER_DECRYPT_RESULT);
-            self.user_decryptor.get_result(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_USER_DECRYPT_RESULT, tag);
-            })
+            self.user_decryptor.get_result(request).await.map_err(|e| e.into())
 
 
         }
@@ -178,12 +170,7 @@ impl_endpoint! {
             request: Request<PublicDecryptionRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
-            self.decryptor.public_decrypt(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, tag);
-            })
-
+            self.decryptor.public_decrypt(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -192,11 +179,7 @@ impl_endpoint! {
             request: Request<RequestId>,
         ) -> Result<Response<PublicDecryptionResponse>, Status> {
             METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_RESULT);
-            self.decryptor.get_result(request).await .inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_PUBLIC_DECRYPT_RESULT, tag);
-            })
+            self.decryptor.get_result(request).await.map_err(|e| e.into())
        }
 
 
