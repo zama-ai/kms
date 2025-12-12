@@ -70,8 +70,14 @@ fn bucket_from_domain(url: &url::Url) -> anyhow::Result<String> {
     Ok(domain_parts[0].to_owned())
 }
 
-// adapted from
-// https://github.com/zama-ai/fhevm/blob/dac153662361758c9a563e766473692f8acf1074/coprocessor/fhevm-engine/gw-listener/src/aws_s3.rs#L140C1-L174C1
+/// Split an S3 URL into its base URL and bucket name.
+/// For example:
+/// The URL https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/ will be split into
+/// https://s3.eu-west-1.amazonaws.com and zama-zws-dev-tkms-b6q87
+/// where the first part is the URL and the second part is the bucket name.
+///
+/// Code is adapted from
+/// https://github.com/zama-ai/fhevm/blob/dac153662361758c9a563e766473692f8acf1074/coprocessor/fhevm-engine/gw-listener/src/aws_s3.rs#L140C1-L174C1
 fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String)> {
     let parsed_url_and_bucket = url::Url::parse(s3_bucket_url)?;
     let mut bucket = parsed_url_and_bucket

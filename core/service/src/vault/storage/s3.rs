@@ -657,6 +657,9 @@ impl ReadOnlyS3StorageGetter<ReadOnlyS3Storage> for RealReadOnlyS3StorageGetter 
 #[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct DummyReadOnlyS3StorageGetter {
+    // A counter that's incremented each time get_storage is called
+    // it also selects which ram storage to return, i.e., the nth call to get_storage
+    // returns the nth ram storage in the ram_storages vector
     pub(crate) counter: RefCell<usize>,
     pub(crate) ram_storages: Vec<crate::vault::storage::ram::RamStorage>,
 }
