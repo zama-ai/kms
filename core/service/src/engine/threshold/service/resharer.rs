@@ -320,19 +320,19 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
         tracing::info!(
             "Received initiate resharing request in context {:?} for Key ID {:?} with request ID {:?}",
-            inner.context_id,
+            inner.from_context_id,
             inner.key_id,
             inner.request_id
         );
 
-        let old_context: ContextId = match &inner.context_id {
+        let old_context: ContextId = match &inner.from_context_id {
             Some(c) => c
                 .try_into()
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
             None => *DEFAULT_MPC_CONTEXT,
         };
 
-        let new_epoch_id: EpochId = match &inner.epoch_id {
+        let new_epoch_id: EpochId = match &inner.to_epoch_id {
             Some(c) => c
                 .try_into()
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,

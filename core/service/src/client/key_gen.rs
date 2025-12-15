@@ -134,12 +134,14 @@ impl Client {
         let domain = alloy_to_protobuf_domain(domain)?;
         Ok(InitiateResharingRequest {
             request_id: Some((*request_id).into()),
-            context_id: None,
+            from_context_id: None,
+            to_context_id: None,
             key_id: Some((*key_id).into()),
             key_parameters: param.unwrap_or_default().into(),
             domain: Some(domain),
             preproc_id: Some((*preproc_id).into()),
-            epoch_id: None,
+            from_epoch_id: None,
+            to_epoch_id: None,
             key_digests: key_digests
                 .iter()
                 .map(|(k, v)| kms_grpc::kms::v1::KeyDigest {
