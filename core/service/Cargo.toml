@@ -49,6 +49,7 @@ alloy-signer-local.workspace = true
 alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 anyhow.workspace = true
 async_cell.workspace = true
+attestation-doc-validation = { workspace = true, optional = true}
 aws-config = { workspace = true, optional = true }
 aws-nitro-enclaves-nsm-api = { workspace = true, optional = true }
 aws-sdk-kms = { workspace = true, optional = true }
@@ -150,6 +151,7 @@ testing = []
 non-wasm = [
     "threshold-fhe/non-wasm",
     "kms-grpc/non-wasm",
+    "dep:attestation-doc-validation",
     "dep:aws-config",
     "dep:aws-nitro-enclaves-nsm-api",
     "dep:aws-sdk-kms",

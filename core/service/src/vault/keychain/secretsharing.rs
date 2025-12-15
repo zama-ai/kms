@@ -11,6 +11,7 @@ use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
 use serde::{de::DeserializeOwned, Serialize};
+use std::sync::Arc;
 use tfhe::{named::Named, safe_serialization::safe_serialize, Unversionize, Versionize};
 
 /// A keychain for managing secret shares.
@@ -206,8 +207,8 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
         }
     }
 
-    fn root_key_measurements(&self) -> &RootKeyMeasurements {
-        &RootKeyMeasurements::SecretSharing {}
+    fn root_key_measurements(&self) -> Arc<RootKeyMeasurements> {
+        Arc::new(RootKeyMeasurements::SecretSharing {})
     }
 }
 

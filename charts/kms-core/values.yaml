@@ -87,7 +87,7 @@ kmsCore:
           pcr1: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
           pcr2: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
       # Allows to ignore the results of AWS CA chain check (use with caution!)
-      ignoreAwsCaChain: true
+      ignoreAwsCaChain: false
       # Enables mutual attestation of private vault root key policies
       attestPrivateVaultRootKey: false
     # This value appears in the config file as `threshold`.
