@@ -49,6 +49,8 @@ pub async fn create_test_context_info_from_core_config(
                 trusted_releases,
                 ignore_aws_ca_chain: _,
                 attest_private_vault_root_key: _,
+                renew_slack_after_expiration: _,
+                renew_fail_retry_timeout: _,
             } => {
                 pcr_values.insert(c.party_id, trusted_releases);
             }

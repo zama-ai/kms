@@ -81,9 +81,9 @@ During the TLS handshake and **upon receiving any message during the MPC protoco
 
 **TODO** : *Should be checked and modified by Nikita. Maybe also describe how exactly do we produce and export the certificate (it seems to be using the `SemiAuto` or `FullAuto` conf. but it'd be nice to add some more details).*
 
-For enhanced security in cloud environments, the system supports TLS integrated with AWS Nitro Enclave attestation. In this mode (`SemiAuto` or `FullAuto`), the TLS certificate is extended to include a cryptographically signed attestation document from the enclave. This document proves:
-*   The exact code (PCR hashes) running inside the enclave.
-*   That the private key used for the TLS session was generated inside and has never left the enclave.
+For enhanced security in cloud environments, the system supports TLS integrated with AWS Nitro Enclave attestation. In this mode (`Auto`), the TLS certificate is extended to include an attestation document signed by thne AWS Nitro security module. This document establishes:
+*   The code version running inside the enclave (through the hashes of the kernel, boot ramdisk and the rootfs image represented as the PCR values).
+*   The public key used for the TLS session that corresponds to the private key generated inside and has never left the enclave.
 
 The custom TLS verifier (`AttestedServerVerifier` and `AttestedClientVerifier`) validates the standard certificate chain and additionally checks the attestation document and its PCR values against a list of trusted software releases.
 

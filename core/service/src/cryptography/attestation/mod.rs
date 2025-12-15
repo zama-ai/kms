@@ -272,7 +272,7 @@ pub struct AutoRefreshCertResolver {
 
 impl std::fmt::Debug for AutoRefreshCertResolver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut f = f.debug_struct("AttestedVerifier");
+        let mut f = f.debug_struct("AutoRefreshCertResolver");
         f.finish()
     }
 }
@@ -283,6 +283,8 @@ impl AutoRefreshCertResolver {
         ca_cert: Pem,
         security_module: Arc<SecurityModuleProxy>,
         private_vault_root_key_measurements: Option<Arc<RootKeyMeasurements>>,
+        renew_slack_after_expiration: u64,
+        renew_fail_retry_timeout: u64,
     ) -> anyhow::Result<Self> {
         let (certified_key, expiration) = AutoRefreshCertResolver::refresh(
             sk.clone(),
@@ -333,17 +335,25 @@ impl AutoRefreshCertResolver {
                 .await
                 {
                     Ok((certified_key, expiration)) => {
-                        let mut certified_key_with_expiration =
-                            certified_key_with_expiration.write().await;
-                        certified_key_with_expiration.0 = certified_key.clone();
-                        certified_key_with_expiration.1 = expiration;
-                        drop(certified_key_with_expiration);
+                        tracing::info!(
+                            "Issued new TLS certificate valid for {} s",
+                            expiration.as_secs()
+                        );
 
-                        tokio::time::sleep(expiration).await;
+                        let mut guarded_certified_key_with_expiration =
+                            certified_key_with_expiration.write().await;
+                        guarded_certified_key_with_expiration.0 = certified_key.clone();
+                        guarded_certified_key_with_expiration.1 = expiration;
+                        drop(guarded_certified_key_with_expiration);
+
+                        tokio::time::sleep(
+                            expiration + Duration::from_secs(renew_slack_after_expiration),
+                        )
+                        .await;
                     }
                     Err(e) => {
                         tracing::error!("Could not renew ephemeral TLS certificate: {e}");
-                        tokio::time::sleep(Duration::from_secs(60)).await;
+                        tokio::time::sleep(Duration::from_secs(renew_fail_retry_timeout)).await;
                     }
                 }
             }

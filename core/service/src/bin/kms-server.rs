@@ -210,6 +210,8 @@ async fn build_tls_config(
             ref trusted_releases,
             ref ignore_aws_ca_chain,
             ref attest_private_vault_root_key,
+            ref renew_slack_after_expiration,
+            ref renew_fail_retry_timeout,
         } => {
             let security_module = security_module
                 .as_ref()
@@ -269,6 +271,8 @@ async fn build_tls_config(
                     ca_cert,
                     security_module.clone(),
                     private_vault_root_key_measurements,
+                    renew_slack_after_expiration.unwrap_or(5),
+                    renew_fail_retry_timeout.unwrap_or(60),
                 )
                 .await?,
             ));

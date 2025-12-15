@@ -426,15 +426,20 @@ where
                     }
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            let pcr_values = config.tls.and_then(|tls_conf| match tls_conf {
-                crate::conf::threshold::TlsConf::Manual { cert: _, key: _ } => None,
-                crate::conf::threshold::TlsConf::Auto {
-                    eif_signing_cert: _,
-                    trusted_releases,
-                    ignore_aws_ca_chain: _,
-                    attest_private_vault_root_key: _,
-                } => Some(trusted_releases),
-            });
+            let pcr_values = threshold_config
+                .tls
+                .to_owned()
+                .and_then(|tls_conf| match tls_conf {
+                    crate::conf::threshold::TlsConf::Manual { cert: _, key: _ } => None,
+                    crate::conf::threshold::TlsConf::Auto {
+                        eif_signing_cert: _,
+                        trusted_releases,
+                        ignore_aws_ca_chain: _,
+                        attest_private_vault_root_key: _,
+                        renew_slack_after_expiration: _,
+                        renew_fail_retry_timeout: _,
+                    } => Some(trusted_releases),
+                });
             let context_info = ContextInfo {
                 mpc_nodes,
                 context_id,
