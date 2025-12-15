@@ -278,6 +278,7 @@ impl<
         // Check and extract the parameters from the request in a separate thread
         let (ciphertexts, req_id, key_id, context_id, epoch_id, eip712_domain) = {
             let inner_compute = Arc::clone(&inner);
+            // TODO does it make sense to spawn this as a thread? It is just parsing the parameters
             spawn_compute_bound(move || {
                 validate_public_decrypt_req(&inner_compute).map_err(|e| {
                     MetricedError::new(

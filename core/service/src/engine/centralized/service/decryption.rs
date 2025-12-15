@@ -1,3 +1,4 @@
+use futures_util::TryFutureExt;
 use kms_grpc::kms::v1::{
     Empty, PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
     UserDecryptionRequest, UserDecryptionResponse,
@@ -319,6 +320,7 @@ pub async fn public_decrypt_impl<
     // if the request already exists, then return the AlreadyExists error
     // otherwise attempt to insert it to the meta store
     {
+        // TOdo make into helper
         let mut guarded_meta_store = service.pub_dec_meta_store.write().await;
         if guarded_meta_store.exists(&request_id) {
             metrics::METRICS
@@ -371,11 +373,10 @@ pub async fn public_decrypt_impl<
                 Err(e) => {
                     let mut guarded_meta_store = meta_store.write().await;
                     METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
-                    let _ = guarded_meta_store.update(
+                    return guarded_meta_store.update(
                         &request_id,
                         Err(format!("Failed to get key ID {key_id} with error {e:?}")),
                     );
-                    return;
                 }
             };
             tracing::info!(
@@ -408,39 +409,33 @@ pub async fn public_decrypt_impl<
                         &pts,
                         extra_data.clone(),
                         eip712_domain,
-                    )
-                    {
+                    ) {
                         Ok(sig) => sig,
                         Err(e) => {
-                            tracing::error!(
-                                "Failed to compute external signature for public decrypt request {request_id}: {e:?}"
-                            );
                             METRICS.increment_error_counter(
                                 OP_PUBLIC_DECRYPT_REQUEST,
                                 ERR_PUBLIC_DECRYPTION_FAILED,
                             );
                             let mut guarded_meta_store = meta_store.write().await;
-                            let _ = guarded_meta_store.update(
+                            return guarded_meta_store.update(
                                 &request_id,
-                                Err(format!(
-                                    "Failed to compute external signature: {e:?}"
-                                )),
-                            ); // TODO proper error handling
-                            return;
+                                Err(format!("Failed to compute external signature: {e:?}")),
+                            );
                         }
                     };
 
                     let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store
+                    let res = guarded_meta_store
                         .update(&request_id, Ok((request_id, pts, external_sig, extra_data)));
                     tracing::info!(
                         "⏱️ Core Event Time for decryption computation: {:?}",
                         start.elapsed()
                     );
+                    return res;
                 }
                 Err(e) => {
                     let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
+                    return guarded_meta_store.update(
                         &request_id,
                         Err(format!("Error collecting decrypt result: {e:?}")),
                     );
@@ -451,14 +446,24 @@ pub async fn public_decrypt_impl<
                         OP_PUBLIC_DECRYPT_REQUEST,
                         ERR_PUBLIC_DECRYPTION_FAILED,
                     );
-                    let _ = guarded_meta_store.update(
+                    return guarded_meta_store.update(
                         &request_id,
                         Err(format!("Error during decryption computation: {e}")),
                     );
                 }
             }
         }
-        .instrument(tracing::Span::current()),
+        .instrument(tracing::Span::current())
+        .inspect_err(move |e| {
+            // The `MetricedError` constructor ensures logging and metrics updates
+            // Note that we also process the error here to increment the error counter
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some(request_id),
+                anyhow::anyhow!("{}", e),
+                tonic::Code::Internal,
+            );
+        }),
     );
 
     Ok(Response::new(Empty {}))
