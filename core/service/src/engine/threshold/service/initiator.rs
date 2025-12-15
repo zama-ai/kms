@@ -260,7 +260,10 @@ impl<
             + Default,
     > Initiator for RealInitiator<PrivS, Init>
 {
-    async fn init(&self, request: Request<v1::InitRequest>) -> Result<Response<Empty>, Status> {
+    async fn init(
+        &self,
+        request: Request<v1::NewMpcEpochRequest>,
+    ) -> Result<Response<Empty>, Status> {
         // TODO set the correct context ID here as it should be contained in the InitRequest.
         // since the connector is not giving us a context yet, we read it from file
         // eventually this piece of code will move to the context endpoint and this
@@ -327,7 +330,7 @@ mod tests {
         vault::storage::{file::FileStorage, ram, StorageType},
     };
     use aes_prng::AesRng;
-    use kms_grpc::{kms::v1::InitRequest, rpc_types::KMSType};
+    use kms_grpc::{kms::v1::NewMpcEpochRequest, rpc_types::KMSType};
     use rand::SeedableRng;
     use threshold_fhe::malicious_execution::small_execution::malicious_prss::{
         EmptyPrss, FailingPrss,
@@ -566,11 +569,14 @@ mod tests {
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(42);
         let initiator = make_initiator::<EmptyPrss>(&mut rng).await;
+        let request_id = RequestId::new_random(&mut rng);
         let epoch_id = EpochId::new_random(&mut rng);
         initiator
-            .init(tonic::Request::new(InitRequest {
-                request_id: Some(epoch_id.into()),
+            .init(tonic::Request::new(NewMpcEpochRequest {
+                request_id: Some(request_id.into()),
+                epoch_id: Some(epoch_id.into()),
                 context_id: None,
+                previous_context: None,
             }))
             .await
             .unwrap();
@@ -586,11 +592,14 @@ mod tests {
             let bad_req_id = kms_grpc::kms::v1::RequestId {
                 request_id: "bad req id".to_string(),
             };
+            let epoch_id = EpochId::new_random(&mut rng);
             assert_eq!(
                 initiator
-                    .init(tonic::Request::new(InitRequest {
+                    .init(tonic::Request::new(NewMpcEpochRequest {
                         request_id: Some(bad_req_id),
+                        epoch_id: Some(epoch_id.into()),
                         context_id: None,
+                        previous_context: None,
                     }))
                     .await
                     .unwrap_err()
@@ -602,9 +611,11 @@ mod tests {
             // missing request ID
             assert_eq!(
                 initiator
-                    .init(tonic::Request::new(InitRequest {
+                    .init(tonic::Request::new(NewMpcEpochRequest {
                         request_id: None,
+                        epoch_id: None,
                         context_id: None,
+                        previous_context: None,
                     }))
                     .await
                     .unwrap_err()
@@ -619,12 +630,15 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let initiator = make_initiator::<EmptyPrss>(&mut rng).await;
 
+        let request_id = RequestId::new_random(&mut rng);
         let epoch_id = EpochId::new_random(&mut rng);
         let context_id = ContextId::new_random(&mut rng); // should not exist
         let err = initiator
-            .init(tonic::Request::new(InitRequest {
-                request_id: Some(epoch_id.into()),
+            .init(tonic::Request::new(NewMpcEpochRequest {
+                request_id: Some(request_id.into()),
+                epoch_id: Some(epoch_id.into()),
                 context_id: Some(context_id.into()),
+                previous_context: None,
             }))
             .await
             .unwrap_err();
@@ -638,10 +652,13 @@ mod tests {
         let initiator = make_initiator::<EmptyPrss>(&mut rng).await;
 
         let epoch_id = EpochId::new_random(&mut rng);
+        let request_id = RequestId::new_random(&mut rng);
         initiator
-            .init(tonic::Request::new(InitRequest {
-                request_id: Some(epoch_id.into()),
+            .init(tonic::Request::new(NewMpcEpochRequest {
+                request_id: Some(request_id.into()),
+                epoch_id: Some(epoch_id.into()),
                 context_id: None,
+                previous_context: None,
             }))
             .await
             .unwrap();
@@ -649,9 +666,11 @@ mod tests {
         // try the same again and we should see an AlreadyExists error
         assert_eq!(
             initiator
-                .init(tonic::Request::new(InitRequest {
-                    request_id: Some(epoch_id.into()),
+                .init(tonic::Request::new(NewMpcEpochRequest {
+                    request_id: Some(request_id.into()),
+                    epoch_id: Some(epoch_id.into()),
                     context_id: None,
+                    previous_context: None,
                 }))
                 .await
                 .unwrap_err()
@@ -665,12 +684,15 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let initiator = make_initiator::<FailingPrss>(&mut rng).await;
 
+        let request_id = RequestId::new_random(&mut rng);
         let epoch_id = EpochId::new_random(&mut rng);
         assert_eq!(
             initiator
-                .init(tonic::Request::new(InitRequest {
-                    request_id: Some(epoch_id.into()),
+                .init(tonic::Request::new(NewMpcEpochRequest {
+                    request_id: Some(request_id.into()),
+                    epoch_id: Some(epoch_id.into()),
                     context_id: None,
+                    previous_context: None,
                 }))
                 .await
                 .unwrap_err()

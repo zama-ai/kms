@@ -30,13 +30,11 @@ use crate::{
 };
 use itertools::Itertools;
 use kms_grpc::{
-    kms::v1::{
-        InitiateResharingRequest, InitiateResharingResponse, KeyDigest, ResharingResultResponse,
-    },
+    kms::v1::{Empty, EpochResultResponse, KeyDigest, NewMpcEpochRequest},
     rpc_types::{optional_protobuf_to_alloy_domain, PubDataType},
     ContextId, EpochId, IdentifierError, RequestId,
 };
-use observability::metrics_names::OP_INITIATE_RESHARING;
+use observability::metrics_names::OP_RESHARING;
 use std::{collections::HashMap, sync::Arc};
 use tfhe::ServerKey;
 use threshold_fhe::{
@@ -265,7 +263,7 @@ async fn get_verified_public_materials<
     // obtain the digests
     let expected_public_key_digest = key_digests.get(&PubDataType::PublicKey).ok_or_else(|| {
         MetricedError::new(
-            OP_INITIATE_RESHARING,
+            OP_RESHARING,
             Some(*request_id),
             anyhow::anyhow!("missing digest for public key"),
             tonic::Code::Internal,
@@ -274,7 +272,7 @@ async fn get_verified_public_materials<
 
     let expected_server_key_digest = key_digests.get(&PubDataType::ServerKey).ok_or_else(|| {
         MetricedError::new(
-            OP_INITIATE_RESHARING,
+            OP_RESHARING,
             Some(*request_id),
             anyhow::anyhow!("missing digest for server key"),
             tonic::Code::Internal,
@@ -312,7 +310,7 @@ async fn get_verified_public_materials<
             )
             .map_err(|e| {
                 MetricedError::new(
-                    OP_INITIATE_RESHARING,
+                    OP_RESHARING,
                     Some(*request_id),
                     anyhow::anyhow!("Key digest verification failed: {}", e),
                     tonic::Code::Internal,
@@ -326,7 +324,7 @@ async fn get_verified_public_materials<
             )
             .map_err(|e| {
                 MetricedError::new(
-                    OP_INITIATE_RESHARING,
+                    OP_RESHARING,
                     Some(*request_id),
                     anyhow::anyhow!("Failed to deserialize public key: {}", e),
                     tonic::Code::Internal,
@@ -339,7 +337,7 @@ async fn get_verified_public_materials<
             )
             .map_err(|e| {
                 MetricedError::new(
-                    OP_INITIATE_RESHARING,
+                    OP_RESHARING,
                     Some(*request_id),
                     anyhow::anyhow!("Failed to deserialize server key: {}", e),
                     tonic::Code::Internal,
@@ -363,7 +361,7 @@ async fn get_verified_public_materials<
             .await
             .map_err(|e| {
                 MetricedError::new(
-                    OP_INITIATE_RESHARING,
+                    OP_RESHARING,
                     Some(*request_id),
                     anyhow::anyhow!("Failed to fetch public materials from peers: {}", e),
                     tonic::Code::Internal,
@@ -392,38 +390,71 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 {
     async fn initiate_resharing(
         &self,
-        request: Request<InitiateResharingRequest>,
-    ) -> Result<Response<InitiateResharingResponse>, Status> {
+        request: Request<NewMpcEpochRequest>,
+    ) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
 
+        let previous_context = if let Some(previous_context) = inner.previous_context {
+            previous_context
+        } else {
+            // No need to do resharing if there is no previous context
+            return Ok(Response::new(Empty {}));
+        };
+
         tracing::info!(
-            "Received initiate resharing request in context {:?} for Key ID {:?} with request ID {:?}",
+            "Received initiate resharing request in from context {:?} to context {:?} for Key ID {:?} with request ID {:?}",
+            previous_context.context_id,
             inner.context_id,
-            inner.key_id,
+            previous_context.key_id,
             inner.request_id
         );
 
-        let old_context: ContextId = match &inner.context_id {
+        let old_context: ContextId = match &previous_context.context_id {
             Some(c) => c
                 .try_into()
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
             None => *DEFAULT_MPC_CONTEXT,
         };
 
+        let new_context: ContextId = match &inner.context_id {
+            Some(c) => c
+                .try_into()
+                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
+            None => *DEFAULT_MPC_CONTEXT,
+        };
+
+        // For now we only support resharing within the same context
+        assert_eq!(
+            old_context, new_context,
+            "Resharing between different contexts is not supported yet"
+        );
+
         // TODO(zama-ai/kms-internal/issues/2788)
         // grpc messages need to be changed to support both epoch IDs
-        let old_epoch_id: EpochId = match &inner.epoch_id {
+        let old_epoch_id: EpochId = match &previous_context.epoch_id {
             Some(c) => c
                 .try_into()
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
             None => *DEFAULT_EPOCH_ID,
         };
 
-        let key_id_to_reshare =
-            parse_optional_proto_request_id(&inner.key_id, RequestIdParsingErr::ReshareRequest)?;
+        let new_epoch_id: EpochId = match &inner.epoch_id {
+            Some(c) => c
+                .try_into()
+                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
+            None => *DEFAULT_EPOCH_ID,
+        };
 
+        let key_id_to_reshare = parse_optional_proto_request_id(
+            &previous_context.key_id,
+            RequestIdParsingErr::ReshareRequest,
+        )?;
+
+        // TODO: Wondering what the PreprocId for the MetaData should be
+        // when we reshare ?
+        // Using the old PreprocId of the key request for now.
         let preproc_id = parse_optional_proto_request_id(
-            &inner.preproc_id,
+            &previous_context.preproc_id,
             RequestIdParsingErr::ReshareRequest,
         )?;
 
@@ -432,17 +463,17 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             RequestIdParsingErr::ReshareRequest,
         )?;
 
-        let eip712_domain =
-            optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
+        let eip712_domain = optional_protobuf_to_alloy_domain(previous_context.domain.as_ref())
+            .map_err(|e| {
                 MetricedError::new(
-                    OP_INITIATE_RESHARING,
+                    OP_RESHARING,
                     Some(request_id),
                     anyhow::anyhow!("EIP712 domain parsing for initiate resharing: {}", e),
                     tonic::Code::InvalidArgument,
                 )
             })?;
 
-        let dkg_params = retrieve_parameters(Some(inner.key_parameters))?;
+        let dkg_params = retrieve_parameters(Some(previous_context.key_parameters))?;
 
         // Check for resource exhaustion once all the other checks are ok
         // because resource exhaustion can be recovered by sending the exact same request
@@ -461,7 +492,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
 
         // collect key digests
-        let key_digests: HashMap<PubDataType, Vec<u8>> = inner
+        let key_digests: HashMap<PubDataType, Vec<u8>> = previous_context
             .key_digests
             .into_iter()
             .map(|kd| {
@@ -520,11 +551,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             // TODO(zama-ai/kms-internal/issues/2810)
             // when resharing is fully implemented, we need to use the new context *and* the old context
             let mut session_z64 = session_maker
-                .make_small_sync_session_z64(session_id_z64, old_context, old_epoch_id)
+                .make_small_sync_session_z64(session_id_z64, new_context, new_epoch_id)
                 .await?;
 
             let mut session_z128 = session_maker
-                .make_small_sync_session_z128(session_id_z128, old_context, old_epoch_id)
+                .make_small_sync_session_z128(session_id_z128, new_context, new_epoch_id)
                 .await?;
 
             // Figure out how much preprocessing we need
@@ -622,7 +653,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 .write_threshold_keys_with_reshare_meta_store(
                     &request_id,
                     &key_id_to_reshare,
-                    &old_epoch_id,
+                    &new_epoch_id,
                     threshold_fhe_keys,
                     fhe_pubkeys,
                     info.clone(),
@@ -647,15 +678,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 ),
             }
         });
-        Ok(Response::new(InitiateResharingResponse {
-            request_id: Some(request_id.into()),
-        }))
+        Ok(Response::new(Empty {}))
     }
 
     async fn get_resharing_result(
         &self,
         request: Request<kms_grpc::kms::v1::RequestId>,
-    ) -> Result<Response<ResharingResultResponse>, Status> {
+    ) -> Result<Response<EpochResultResponse>, Status> {
         let request_id =
             parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::ReshareResponse)?;
 
@@ -686,7 +715,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     })
                     .collect::<Vec<_>>();
 
-                Ok(Response::new(ResharingResultResponse {
+                Ok(Response::new(EpochResultResponse {
                     request_id: Some(request_id.into()),
                     key_id: Some(res.key_id.into()),
                     preprocessing_id: Some(res.preprocessing_id.into()),
