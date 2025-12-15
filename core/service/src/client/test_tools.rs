@@ -145,7 +145,9 @@ pub async fn setup_threshold_no_client<
         ) = tokio::sync::oneshot::channel();
         mpc_shutdown_txs.push(mpc_core_tx);
         // Make a configuration based on the default, but customized with the needed changes for the test setup
-        let mut core_config: CoreConfig = init_conf("config/default_1").expect("config must parse");
+        // Use CARGO_MANIFEST_DIR to get absolute path to config file
+        let config_path = format!("{}/config/default_1", env!("CARGO_MANIFEST_DIR"));
+        let mut core_config: CoreConfig = init_conf(&config_path).expect("config must parse");
         let threshold_party_config = ThresholdPartyConf {
             listen_address: mpc_conf[i - 1].address.clone(),
             listen_port: mpc_conf[i - 1].port,
