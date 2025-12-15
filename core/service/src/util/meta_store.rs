@@ -2,10 +2,12 @@ use crate::{anyhow_error_and_log, consts::DURATION_WAITING_ON_RESULT_SECONDS, so
 use anyhow::anyhow;
 use async_cell::sync::AsyncCell;
 use kms_grpc::{rpc_types::MetricedError, RequestId};
+use observability::{metrics, metrics_names::ERR_WITH_META_STORAGE};
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
 };
+use tokio::sync::RwLockWriteGuard;
 use tonic::Status;
 use tracing;
 
@@ -268,6 +270,27 @@ impl<T: Clone> MetaStore<T> {
             })
             .collect()
     }
+}
+
+pub(crate) async fn add_req_to_meta_store<T: Clone>(
+    meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
+    req_id: RequestId,
+    request_metric: &'static str,
+) -> Result<(), MetricedError> {
+    if meta_store.exists(&req_id) {
+        metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
+        return Err(MetricedError::new(
+            request_metric,
+            Some(req_id),
+            anyhow::anyhow!("Duplicate request ID in meta store"),
+            tonic::Code::AlreadyExists,
+        ));
+    }
+    meta_store.insert(&req_id).map_err(|e| {
+        metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
+        MetricedError::new(request_metric, Some(req_id), e, tonic::Code::Aborted)
+    })?;
+    Ok(())
 }
 
 /// Helper method for retrieving the result of a request from an appropriate meta store

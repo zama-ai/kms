@@ -27,7 +27,6 @@ use crate::engine::validation::{
 };
 use crate::ok_or_tonic_abort;
 use crate::util::meta_store::{handle_res_mapping, handle_res_metric_mapping};
-use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::Storage;
 
 /// Implementation of the user_decrypt endpoint
@@ -74,7 +73,21 @@ pub async fn user_decrypt_impl<
         .start();
 
     // check that the key exists and refresh the cache if needed
-    validate_fhe_key_material(&service.crypto_storage, &key_id.into(), &request_id).await?;
+    // Refresh the cache to ensure the keys are loaded from private storage
+    service
+        .crypto_storage
+        .refresh_centralized_fhe_keys(&key_id.into())
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some(request_id.clone()),
+                anyhow::anyhow!(
+                "Failed to refresh FHE keys for key_id {key_id} and request_id {request_id}: {e:?}"
+            ),
+                tonic::Code::Aborted,
+            )
+        })?;
 
     // if the request already exists, then return the AlreadyExists error
     // otherwise attempt to insert it to the meta store
@@ -314,8 +327,20 @@ pub async fn public_decrypt_impl<
     );
 
     // check that the key exists
-    // TODO can we load at the same time?
-    validate_fhe_key_material(&service.crypto_storage, &key_id.into(), &request_id).await?;
+    service
+        .crypto_storage
+        .refresh_centralized_fhe_keys(&key_id.into())
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some(request_id.clone()),
+                anyhow::anyhow!(
+                "Failed to refresh FHE keys for key_id {key_id} and request_id {request_id}: {e:?}"
+            ),
+                tonic::Code::Aborted,
+            )
+        })?;
 
     // if the request already exists, then return the AlreadyExists error
     // otherwise attempt to insert it to the meta store
@@ -561,54 +586,6 @@ pub async fn get_public_decryption_result_impl<
     }))
 }
 
-/// Ensure that the private FHE key exists for the given key ID, refresh the cache if needed,
-/// and return an appropriate metriced error if not.
-async fn validate_fhe_key_material<PubS: Storage + Send + Sync, PrivS: Storage + Send + Sync>(
-    crypto_storage: &CentralizedCryptoMaterialStorage<PubS, PrivS>,
-    key_id: &kms_grpc::RequestId,
-    request_id: &kms_grpc::RequestId,
-) -> Result<(), MetricedError> {
-    // TODO do we actually want to spend time at every requset to validate the key material exists in public storage? I think it would be sufficient to just refresh
-    // Validate that the key exists in both public and private storage
-    let found = crypto_storage
-        .inner
-        .fhe_keys_exist(key_id)
-        .await
-        .map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                Some(request_id.clone()),
-                anyhow::anyhow!(
-                    "Existence failed for key_id {key_id} and request_id {request_id}: {e:?}"
-                ),
-                tonic::Code::Aborted,
-            )
-        })?;
-    if !found {
-        return Err(MetricedError::new(
-            OP_PUBLIC_DECRYPT_REQUEST,
-            Some(request_id.clone()),
-            anyhow::anyhow!("Key ID {key_id} not found for public decryption request {request_id}"),
-            tonic::Code::NotFound,
-        ));
-    }
-    // Refresh the cache to ensure the keys are loaded from private storage
-    crypto_storage
-        .refresh_centralized_fhe_keys(key_id)
-        .await
-        .map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                Some(request_id.clone()),
-                anyhow::anyhow!(
-                "Failed to refresh FHE keys for key_id {key_id} and request_id {request_id}: {e:?}"
-            ),
-                tonic::Code::Aborted,
-            )
-        })?;
-
-    Ok(())
-}
 #[cfg(test)]
 pub(crate) mod tests {
     use aes_prng::AesRng;

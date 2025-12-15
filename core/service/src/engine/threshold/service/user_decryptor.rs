@@ -441,6 +441,22 @@ impl<
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
+        // Check for resource exhaustion once all the other checks are ok
+        // because resource exhaustion can be recovered by sending the exact same request
+        // but the errors above cannot be tried again.
+        let permit = self.rate_limiter.start_user_decrypt().await.map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                None,
+                e,
+                tonic::Code::ResourceExhausted,
+            )
+        })?;
+        // Start timing and counting before any operations
+        let mut timer = metrics::METRICS
+            .time_operation(OP_USER_DECRYPT_REQUEST)
+            .start();
+
         let inner = Arc::new(request.into_inner());
         tracing::info!("{}", format_user_request(&inner));
 
@@ -476,7 +492,6 @@ impl<
                 )
             })?
         }?;
-
         let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
             MetricedError::new(
                 OP_USER_DECRYPT_REQUEST,
@@ -485,29 +500,12 @@ impl<
                 tonic::Code::Internal,
             )
         })?;
-
-        // Start timing and counting before any operations
-        let timer = metrics::METRICS
-            .time_operation(OP_USER_DECRYPT_REQUEST)
-            .tags([
-                (TAG_PARTY_ID, my_role.to_string()),
-                (TAG_KEY_ID, key_id.as_str()),
-                (TAG_CONTEXT_ID, context_id.as_str()),
-                (TAG_EPOCH_ID, epoch_id.as_str()),
-            ])
-            .start();
-
-        // Check for resource exhaustion once all the other checks are ok
-        // because resource exhaustion can be recovered by sending the exact same request
-        // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_user_decrypt().await.map_err(|e| {
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                Some(req_id),
-                e,
-                tonic::Code::ResourceExhausted,
-            )
-        })?;
+        timer.tags([
+            (TAG_PARTY_ID, my_role.to_string()),
+            (TAG_KEY_ID, key_id.as_str()),
+            (TAG_CONTEXT_ID, context_id.as_str()),
+            (TAG_EPOCH_ID, epoch_id.as_str()),
+        ]);
 
         // Do some checks before we start modifying the database
         {
@@ -527,19 +525,6 @@ impl<
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let rng = self.base_kms.new_rng().await;
-
-        self.crypto_storage
-            .refresh_threshold_fhe_keys(&key_id.into())
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_USER_DECRYPT_REQUEST,
-                    Some(req_id),
-                    e,
-                    tonic::Code::NotFound,
-                )
-            })?;
-
         // Below we write to the meta-store.
         // After writing, the the meta-store on this [req_id] will be in the "Started" state
         // So we need to update it everytime something bad happens,
@@ -593,7 +578,7 @@ impl<
             // but this should be ok since write locks
             // happen rarely as keygen is a rare event.
             let fhe_keys_rlock = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&key_id.into())
+                .read_guarded_threshold_fhe_keys(&key_id.into())
                 .await;
             let tmp = match fhe_keys_rlock {
                 Ok(k) => {

@@ -343,18 +343,6 @@ impl<
             )
         })?;
 
-        self.crypto_storage
-            .refresh_threshold_fhe_keys(&key_id.into())
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_PUBLIC_DECRYPT_REQUEST,
-                    Some(req_id),
-                    e,
-                    tonic::Code::NotFound,
-                )
-            })?;
-
         tracing::debug!(
             request_id = ?req_id,
             key_id = ?key_id,
@@ -465,7 +453,7 @@ impl<
                 let ct_format = typed_ciphertext.ciphertext_format();
                 let ciphertext = typed_ciphertext.ciphertext;
                 let fhe_keys_rlock = crypto_storage
-                    .read_guarded_threshold_fhe_keys_from_cache(&key_id.into())
+                    .read_guarded_threshold_fhe_keys(&key_id.into())
                     .await?;
 
                 let res_plaintext = match fhe_type {

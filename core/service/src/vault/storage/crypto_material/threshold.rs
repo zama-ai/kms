@@ -321,6 +321,22 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         .await
     }
 
+    /// Read the key materials for decryption in the threshold case.
+    /// The object [ThresholdFheKeys] is big so
+    /// we return a lock guard instead of the whole object to avoid copying.
+    ///
+    /// This function ensures that the keys will be in the cache. If it is not already there it will be fethced first.
+    pub async fn read_guarded_threshold_fhe_keys(
+        &self,
+        req_id: &RequestId, // TODO change to keyid
+    ) -> anyhow::Result<OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>>
+    {
+        // First ensure the keys are in the cache
+        self.refresh_threshold_fhe_keys(req_id).await?;
+        self.read_guarded_threshold_fhe_keys_from_cache(req_id)
+            .await
+    }
+
     /// Check if the threshold FHE keys exist in the storage.
     pub async fn threshold_fhe_keys_exists(&self, req_id: &RequestId) -> anyhow::Result<bool> {
         CryptoMaterialStorage::<PubS, PrivS>::threshold_fhe_keys_exist(&self.inner, req_id).await
