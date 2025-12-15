@@ -5,6 +5,7 @@ use kms_grpc::{rpc_types::MetricedError, RequestId};
 use observability::{metrics, metrics_names::ERR_WITH_META_STORAGE};
 use std::{
     collections::{HashMap, VecDeque},
+    fmt::{self},
     sync::Arc,
 };
 use tokio::sync::RwLockWriteGuard;
@@ -274,22 +275,65 @@ impl<T: Clone> MetaStore<T> {
 
 pub(crate) async fn add_req_to_meta_store<T: Clone>(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
-    req_id: RequestId,
+    req_id: &RequestId,
     request_metric: &'static str,
 ) -> Result<(), MetricedError> {
-    if meta_store.exists(&req_id) {
+    if meta_store.exists(req_id) {
         metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
         return Err(MetricedError::new(
             request_metric,
-            Some(req_id),
+            Some(*req_id),
             anyhow::anyhow!("Duplicate request ID in meta store"),
             tonic::Code::AlreadyExists,
         ));
     }
-    meta_store.insert(&req_id).map_err(|e| {
+    meta_store.insert(req_id).map_err(|e| {
         metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
-        MetricedError::new(request_metric, Some(req_id), e, tonic::Code::Aborted)
+        MetricedError::new(request_metric, Some(*req_id), e, tonic::Code::Aborted)
     })?;
+    Ok(())
+}
+
+pub(crate) async fn update_req_in_meta_store<
+    T: Clone,
+    E: Into<Box<dyn std::error::Error + Send + Sync>> + fmt::Debug,
+>(
+    meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
+    req_id: &RequestId,
+    result: Result<T, E>,
+    request_metric: &'static str,
+) -> Result<(), MetricedError> {
+    match result {
+        Ok(res) => {
+            meta_store.update(&req_id, Ok(res)).map_err(|e| {
+                metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
+                MetricedError::new(
+                    request_metric,
+                    Some(*req_id),
+                    anyhow::anyhow!(
+                        "Failed to update meta store with the sucessfull decryption result: {e}"
+                    ),
+                    tonic::Code::Internal,
+                )
+            })?;
+        }
+        Result::Err(e) => {
+            // We cannot do much if updating the storage fails at this point...
+            meta_store
+                .update(&req_id, Err(format!("Failed decryption: {:?}", e)))
+                .map_err(|e| {
+                    metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
+                    MetricedError::new(
+                        request_metric,
+                        Some(*req_id),
+                        anyhow::anyhow!(
+                        "Failed to update meta store with the sucessfull decryption result: {e}"
+                    ),
+                        tonic::Code::Internal,
+                    )
+                })?;
+        }
+    }
     Ok(())
 }
 

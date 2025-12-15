@@ -20,9 +20,8 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_WITH_META_STORAGE, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST,
-        OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
-        TAG_TFHE_TYPE, TAG_USER_DECRYPTION_KIND,
+        OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID,
+        TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID, TAG_TFHE_TYPE, TAG_USER_DECRYPTION_KIND,
     },
 };
 use rand::{CryptoRng, RngCore};
@@ -70,7 +69,9 @@ use crate::{
     },
     ok_or_tonic_abort,
     util::{
-        meta_store::{handle_res_metric_mapping, MetaStore},
+        meta_store::{
+            add_req_to_meta_store, handle_res_metric_mapping, update_req_in_meta_store, MetaStore,
+        },
         rate_limiter::RateLimiter,
     },
     vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
@@ -500,27 +501,15 @@ impl<
                 tonic::Code::Internal,
             )
         })?;
-        timer.tags([
+        let dec_mode = self.decryption_mode;
+        let metric_tags = vec![
             (TAG_PARTY_ID, my_role.to_string()),
-            (TAG_KEY_ID, key_id.as_str()),
+            (TAG_KEY_ID, key_id.as_str()), // TODO will this be too many labels or does it make sense to keep key, conetxt and epoch
             (TAG_CONTEXT_ID, context_id.as_str()),
             (TAG_EPOCH_ID, epoch_id.as_str()),
-        ]);
-
-        // Do some checks before we start modifying the database
-        {
-            let guarded_meta_store = self.user_decrypt_meta_store.read().await;
-            if guarded_meta_store.exists(&req_id) {
-                metrics::METRICS
-                    .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_WITH_META_STORAGE);
-                return Err(MetricedError::new(
-                    OP_USER_DECRYPT_REQUEST,
-                    Some(req_id),
-                    anyhow!("Duplicate request ID in meta store"),
-                    tonic::Code::AlreadyExists,
-                ));
-            }
-        }
+            (TAG_USER_DECRYPTION_KIND, dec_mode.as_str_name().to_string()),
+        ];
+        timer.tags(metric_tags.clone());
 
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
@@ -530,29 +519,13 @@ impl<
         // So we need to update it everytime something bad happens,
         // or put all the code that may error before the first write to the meta-store,
         // otherwise it'll be in the "Started" state forever.
-        {
-            let mut guarded_meta_store = self.user_decrypt_meta_store.write().await;
-            guarded_meta_store.insert(&req_id).map_err(|e| {
-                metrics::METRICS
-                    .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_WITH_META_STORAGE);
-                MetricedError::new(
-                    OP_USER_DECRYPT_REQUEST,
-                    Some(req_id),
-                    e,
-                    tonic::Code::Aborted,
-                )
-            })?;
-        }
+        add_req_to_meta_store(
+            &mut meta_store.write().await,
+            &req_id,
+            OP_USER_DECRYPT_REQUEST,
+        )
+        .await?;
 
-        let dec_mode = self.decryption_mode;
-
-        let metric_tags = vec![
-            (TAG_PARTY_ID, my_role.to_string()),
-            (TAG_KEY_ID, key_id.as_str()), // TODO will this be too many labels or does it make sense to keep key, conetxt and epoch
-            (TAG_CONTEXT_ID, context_id.as_str()),
-            (TAG_EPOCH_ID, epoch_id.as_str()),
-            (TAG_USER_DECRYPTION_KIND, dec_mode.as_str_name().to_string()),
-        ];
         let sk = (*self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(
                 OP_USER_DECRYPT_REQUEST,
@@ -580,7 +553,7 @@ impl<
             let fhe_keys_rlock = crypto_storage
                 .read_guarded_threshold_fhe_keys(&key_id.into())
                 .await;
-            let tmp = match fhe_keys_rlock {
+            let result = match fhe_keys_rlock {
                 Ok(k) => {
                     Self::inner_user_decrypt(
                         &req_id,
@@ -600,48 +573,19 @@ impl<
                 }
                 Err(e) => Err(e),
             };
-            let mut guarded_meta_store = meta_store.write().await;
-            match tmp {
-                Ok((payload, sig, extra_data)) => {
-                    guarded_meta_store
-                            .update(&req_id, Ok((payload, sig, extra_data)))
-                            .map_err(|e| {
-                                metrics::METRICS.increment_error_counter(
-                                    OP_USER_DECRYPT_REQUEST,
-                                    ERR_WITH_META_STORAGE,
-                                );
-                                format!("Failed to update meta store with the sucessfull decryption result: {e}")
-                            })?;
-                }
-                Result::Err(e) => {
-                    // We cannot do much if updating the storage fails at this point...
-                    guarded_meta_store
-                            .update(&req_id, Err(format!("Failed decryption: {e}"))).map_err(|e| {
-                                metrics::METRICS.increment_error_counter(
-                                    OP_USER_DECRYPT_REQUEST,
-                                    ERR_WITH_META_STORAGE,
-                                );
-                                format!("Failed to update meta store with the sucessfull decryption result: {e}")
-                            })?;
-                }
-            }
-            Ok::<(), String>(())
+            update_req_in_meta_store(
+                &mut meta_store.write().await,
+                &req_id,
+                result,
+                OP_USER_DECRYPT_REQUEST,
+            )
+            .await
         };
         self.tracker.spawn(async move {
             // Ignore the result since this is a background thread.
             let _ = inner_dec_future(permit)
                 .instrument(tracing::Span::current())
-                .await
-                .map_err(|e| {
-                    // The `MetricedError` constructor ensures logging and metrics updates
-                    // Note that we also process the error here to increment the error counter
-                    MetricedError::new(
-                        OP_USER_DECRYPT_REQUEST,
-                        Some(req_id),
-                        anyhow::anyhow!("Decryption thread results in error: {e}"),
-                        tonic::Code::Internal,
-                    )
-                });
+                .await;
         });
         Ok(Response::new(Empty {}))
     }
