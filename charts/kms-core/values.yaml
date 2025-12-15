@@ -296,8 +296,8 @@ podSecurityContext:
   #  runAsGroup: 1000
   #  fsGroup: 1000
   #  runAsNonRoot: true
+containerSecurityContext:
   allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: true
   capabilities:
     drop:
       - ALL
