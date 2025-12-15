@@ -4928,6 +4928,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "sysinfo",
+ "tempfile",
  "thiserror 2.0.12",
  "tokio",
  "tonic 0.13.1",

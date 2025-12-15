@@ -448,7 +448,10 @@ async fn main_exec() -> anyhow::Result<()> {
                 aws_sdk_config
                     .as_ref()
                     .expect("AWS configuration must be provided"),
-                core_config.aws.and_then(|aws| aws.awskms_endpoint),
+                core_config
+                    .aws
+                    .as_ref()
+                    .and_then(|aws| aws.awskms_endpoint.clone()),
             )
             .await,
         )
@@ -488,7 +491,7 @@ async fn main_exec() -> anyhow::Result<()> {
 
     // public vault
     let public_storage = make_storage(
-        core_config.public_vault.map(|v| v.storage),
+        core_config.public_vault.as_ref().map(|v| v.storage.clone()),
         StorageType::PUB,
         party_role,
         public_storage_cache,
@@ -633,8 +636,8 @@ async fn main_exec() -> anyhow::Result<()> {
     );
 
     match core_config.threshold {
-        Some(threshold_config) => {
-            let mpc_listener = make_mpc_listener(&threshold_config).await;
+        Some(ref threshold_config) => {
+            let mpc_listener = make_mpc_listener(threshold_config).await;
 
             let tls_identity = match &threshold_config.tls {
                 Some(tls_config) => Some({
@@ -673,9 +676,9 @@ async fn main_exec() -> anyhow::Result<()> {
             } else {
                 tracing::warn!("KMS server will connect to peers directly");
             };
-
+            let service_config = core_config.service.clone();
             let (kms, health_service, metastore_status_service) = new_real_threshold_kms(
-                threshold_config,
+                core_config,
                 public_vault,
                 private_vault,
                 backup_vault,
@@ -685,7 +688,6 @@ async fn main_exec() -> anyhow::Result<()> {
                 tls_identity,
                 need_peer_tcp_proxy,
                 false,
-                core_config.rate_limiter_conf,
                 std::future::pending(),
             )
             .await?;
@@ -695,7 +697,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 env!("CARGO_PKG_VERSION"),
             );
             run_server(
-                core_config.service,
+                service_config,
                 service_listener,
                 Arc::new(kms),
                 meta_store_status_service,

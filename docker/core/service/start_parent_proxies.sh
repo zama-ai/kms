@@ -39,23 +39,23 @@ start_tcp_proxy_out() {
     local VSOCK_PORT="$2"
     local TCP_DST="$3"
     echo "start_proxies: starting parent-side $NAME proxy"
-    socat VSOCK-LISTEN:"$VSOCK_PORT",fork,reuseaddr TCP:"$TCP_DST",nodelay &
+    socat -T60 VSOCK-LISTEN:"$VSOCK_PORT",fork,reuseaddr TCP:"$TCP_DST",nodelay &
 }
 
 start_tcp_proxy_in() {
     local NAME="$1"
     local PORT="$2"
     echo "start_proxies: starting parent-side $NAME proxy"
-    socat TCP-LISTEN:"$PORT",fork,nodelay,reuseaddr VSOCK-CONNECT:"$ENCLAVE_CID":"$PORT"
+    socat -T60 TCP-LISTEN:"$PORT",fork,nodelay,reuseaddr VSOCK-CONNECT:"$ENCLAVE_CID":"$PORT"
 }
 
 # start the log stream for the enclave
 echo "start_proxies: starting enclave log stream"
-socat -u VSOCK-LISTEN:"$ENCLAVE_LOG_PORT",fork STDOUT &
+socat -T60 -u VSOCK-LISTEN:"$ENCLAVE_LOG_PORT",fork STDOUT &
 
 # start the config stream for the enclave
 echo "start_proxies: starting enclave config stream"
-socat VSOCK-LISTEN:"$ENCLAVE_CONFIG_PORT",fork,reuseaddr OPEN:"$KMS_SERVER_CONFIG_FILE",rdonly &
+socat -T60 VSOCK-LISTEN:"$ENCLAVE_CONFIG_PORT",fork,reuseaddr OPEN:"$KMS_SERVER_CONFIG_FILE",rdonly &
 
 # start TCP proxies to let the enclave use tracing and AWS APIs
 AWS_REGION=$(get_value "aws.region")

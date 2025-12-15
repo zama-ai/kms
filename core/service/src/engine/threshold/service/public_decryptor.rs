@@ -710,7 +710,6 @@ impl<
                 .instrument(tracing::Span::current())
                 .await;
         });
-
         Ok(Response::new(Empty {}))
     }
 
