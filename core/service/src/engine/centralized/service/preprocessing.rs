@@ -8,7 +8,7 @@ use crate::{
         },
     },
     util::meta_store::handle_res_mapping,
-    vault::storage::Storage,
+    vault::storage::{Storage, StorageExt},
 };
 use kms_grpc::{
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
@@ -41,7 +41,7 @@ use tonic::{Request, Response, Status};
 /// This is a dummy method for interface consistency; no actual preprocessing is performed.
 pub async fn preprocessing_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
@@ -129,7 +129,7 @@ pub async fn preprocessing_impl<
 /// This is a dummy method for interface consistency; no actual retrieval is performed.
 pub async fn get_preprocessing_res_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(

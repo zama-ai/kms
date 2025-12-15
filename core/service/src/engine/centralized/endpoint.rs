@@ -4,7 +4,7 @@ use crate::engine::centralized::service::{
 };
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::query_key_material_availability;
-use crate::vault::storage::Storage;
+use crate::vault::storage::{Storage, StorageExt};
 use kms_grpc::kms::v1::{
     self, CustodianRecoveryRequest, Empty, HealthStatusResponse, InitRequest, KeyGenPreprocRequest,
     KeyGenPreprocResult, KeyMaterialAvailabilityResponse, NodeType, OperatorPublicKey,
@@ -36,7 +36,7 @@ use observability::{
 #[tonic::async_trait]
 impl<
         PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
+        PrivS: StorageExt + Sync + Send + 'static,
         CM: ContextManager + Sync + Send + 'static,
         BO: BackupOperator + Sync + Send + 'static,
     > CoreServiceEndpoint for CentralizedKms<PubS, PrivS, CM, BO>

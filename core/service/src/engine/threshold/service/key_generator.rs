@@ -4,7 +4,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 use itertools::Itertools;
 // === External Crates ===
 use kms_grpc::{
-    identifiers::ContextId,
+    identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyDigest, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
     rpc_types::optional_protobuf_to_alloy_domain,
     RequestId,
@@ -66,7 +66,7 @@ use crate::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
     },
-    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
+    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage, StorageExt},
 };
 
 // === Current Module Imports ===
@@ -87,7 +87,7 @@ use threshold_fhe::execution::tfhe_internals::{
 
 pub struct RealKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
 > {
     pub base_kms: BaseKmsStruct,
@@ -113,7 +113,7 @@ pub struct RealKeyGenerator<
 #[cfg(feature = "insecure")]
 pub struct RealInsecureKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
 > {
     pub real_key_generator: RealKeyGenerator<PubS, PrivS, KG>,
@@ -122,7 +122,7 @@ pub struct RealInsecureKeyGenerator<
 #[cfg(feature = "insecure")]
 impl<
         PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
+        PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     > RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
@@ -147,7 +147,7 @@ impl<
 #[tonic::async_trait]
 impl<
         PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
+        PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     > InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
@@ -199,7 +199,7 @@ fn convert_to_bit(input: Vec<ResiduePolyF4Z128>) -> anyhow::Result<Vec<u64>> {
 
 impl<
         PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
+        PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     > RealKeyGenerator<PubS, PrivS, KG>
 {
@@ -223,7 +223,9 @@ impl<
         // TODO(zama-ai/kms-internal/issues/2809)
         // we don't need epoch ID for the actual keygen
         // but it will be needed when we store the key material
-        let _epoch_id = epoch_id.unwrap_or(RequestId::try_from(PRSS_INIT_REQ_ID).unwrap());
+        let epoch_id: EpochId = epoch_id
+            .unwrap_or(RequestId::try_from(PRSS_INIT_REQ_ID).unwrap())
+            .into();
 
         //Retrieve the right metric tag
         let op_tag = match (
@@ -288,6 +290,7 @@ impl<
 
         // we need to clone the req ID because async closures are not stable
         let req_id_clone = req_id;
+        let epoch_id_clone = epoch_id;
         let opt_compression_key_id = internal_keyset_config.get_compression_id()?;
 
         // right before keygen starts, we delete the preprocessing entry from the bucket
@@ -307,6 +310,7 @@ impl<
                 ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
                     Self::key_gen_background(
                         &req_id_clone,
+                        &epoch_id_clone,
                         base_session,
                         meta_store,
                         crypto_storage,
@@ -323,6 +327,7 @@ impl<
                 ddec_keyset_config::KeySetConfig::DecompressionOnly => {
                     Self::decompression_key_gen_background(
                         &req_id_clone,
+                        &epoch_id_clone,
                         base_session,
                         meta_store,
                         crypto_storage,
@@ -574,6 +579,7 @@ impl<
     }
 
     async fn decompression_key_gen_closure<P>(
+        epoch_id: &EpochId,
         base_session: &mut BaseSession,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
@@ -602,7 +608,7 @@ impl<
 
         let private_compression_share = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&from_key_id)
+                .read_guarded_threshold_fhe_keys_from_cache(&from_key_id, epoch_id)
                 .await?;
             let compression_sk_share = threshold_keys
                 .private_keys
@@ -618,7 +624,7 @@ impl<
         };
         let private_glwe_compute_share = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&to_key_id)
+                .read_guarded_threshold_fhe_keys_from_cache(&to_key_id, epoch_id)
                 .await?;
             match threshold_keys.private_keys.glwe_secret_key_share.clone() {
                 GlweSecretKeyShareEnum::Z64(_share) => {
@@ -641,6 +647,7 @@ impl<
     #[cfg(feature = "insecure")]
     async fn get_glwe_and_compression_key_shares(
         keyset_added_info: KeySetAddedInfo,
+        epoch_id: &EpochId,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     ) -> anyhow::Result<(
         GlweSecretKeyShare<Z128, 4>,
@@ -663,11 +670,11 @@ impl<
         })?;
 
         crypto_storage
-            .refresh_threshold_fhe_keys(&glwe_req_id)
+            .refresh_threshold_fhe_keys(&glwe_req_id, epoch_id)
             .await?;
         let glwe_shares = {
             let guard = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&glwe_req_id)
+                .read_guarded_threshold_fhe_keys_from_cache(&glwe_req_id, epoch_id)
                 .await?;
             match &guard.private_keys.glwe_secret_key_share {
                 GlweSecretKeyShareEnum::Z64(_) => anyhow::bail!("expected glwe shares to be z128"),
@@ -676,11 +683,11 @@ impl<
         };
 
         crypto_storage
-            .refresh_threshold_fhe_keys(&compression_req_id)
+            .refresh_threshold_fhe_keys(&compression_req_id, epoch_id)
             .await?;
         let compression_shares = {
             let guard = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&compression_req_id)
+                .read_guarded_threshold_fhe_keys_from_cache(&compression_req_id, epoch_id)
                 .await?;
             match &guard.private_keys.glwe_secret_key_share_compression {
                 Some(compression_enum) => match compression_enum {
@@ -815,6 +822,7 @@ impl<
     #[allow(clippy::too_many_arguments)]
     pub async fn decompression_key_gen_background(
         req_id: &RequestId,
+        epoch_id: &EpochId,
         mut base_session: BaseSession,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -840,6 +848,7 @@ impl<
                         *INSECURE_PREPROCESSING_ID,
                         match Self::get_glwe_and_compression_key_shares(
                             keyset_added_info,
+                            epoch_id,
                             crypto_storage.clone(),
                         )
                         .await
@@ -864,6 +873,7 @@ impl<
                 (
                     prep_id,
                     Self::decompression_key_gen_closure(
+                        epoch_id,
                         &mut base_session,
                         crypto_storage.clone(),
                         params,
@@ -921,6 +931,7 @@ impl<
 
     async fn key_gen_from_existing_compression_sk<P>(
         req_id: &RequestId,
+        epoch_id: &EpochId,
         base_session: &mut BaseSession,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
@@ -932,7 +943,7 @@ impl<
     {
         let existing_compression_sk = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&compression_key_id)
+                .read_guarded_threshold_fhe_keys_from_cache(&compression_key_id, epoch_id)
                 .await?;
             let compression_sk_share = threshold_keys
                 .private_keys
@@ -959,6 +970,7 @@ impl<
     #[allow(clippy::too_many_arguments)]
     async fn key_gen_background(
         req_id: &RequestId,
+        epoch_id: &EpochId,
         mut base_session: BaseSession,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -1030,6 +1042,7 @@ impl<
                     ) => {
                         Self::key_gen_from_existing_compression_sk(
                             req_id,
+                            epoch_id,
                             &mut base_session,
                             crypto_storage.clone(),
                             params,
@@ -1104,6 +1117,7 @@ impl<
         crypto_storage
             .write_threshold_keys_with_dkg_meta_store(
                 req_id,
+                epoch_id,
                 threshold_fhe_keys,
                 pub_key_set,
                 info,
@@ -1122,7 +1136,7 @@ impl<
 #[tonic::async_trait]
 impl<
         PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
+        PrivS: StorageExt + Sync + Send + 'static,
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     > KeyGenerator for RealKeyGenerator<PubS, PrivS, KG>
 {
@@ -1140,6 +1154,8 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use kms_grpc::{
         kms::v1::{FheParameter, KeySetConfig},
         rpc_types::{alloy_to_protobuf_domain, KMSType},
@@ -1161,7 +1177,7 @@ mod tests {
 
     impl<
             PubS: Storage + Sync + Send + 'static,
-            PrivS: Storage + Sync + Send + 'static,
+            PrivS: StorageExt + Sync + Send + 'static,
             KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
         > RealKeyGenerator<PubS, PrivS, KG>
     {
@@ -1226,9 +1242,10 @@ mod tests {
     ) {
         use crate::cryptography::signatures::gen_sig_keys;
         let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, base_kms.new_rng().await);
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
         let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
             base_kms,
             session_maker.make_immutable(),

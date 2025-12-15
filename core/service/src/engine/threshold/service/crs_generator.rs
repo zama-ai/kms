@@ -45,7 +45,7 @@ use crate::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
     },
-    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
+    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage, StorageExt},
 };
 
 // === Insecure Feature-Specific Imports ===
@@ -65,7 +65,7 @@ cfg_if::cfg_if! {
 
 pub struct RealCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
 > {
     pub base_kms: BaseKmsStruct,
@@ -82,7 +82,7 @@ pub struct RealCrsGenerator<
 
 impl<
         PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
+        PrivS: StorageExt + Send + Sync + 'static,
         C: Ceremony + Send + Sync + 'static,
     > RealCrsGenerator<PubS, PrivS, C>
 {
@@ -392,7 +392,7 @@ impl<
 #[tonic::async_trait]
 impl<
         PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
+        PrivS: StorageExt + Send + Sync + 'static,
         C: Ceremony + Send + Sync + 'static,
     > CrsGenerator for RealCrsGenerator<PubS, PrivS, C>
 {
@@ -411,7 +411,7 @@ impl<
 #[cfg(feature = "insecure")]
 pub struct RealInsecureCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
     C: Ceremony + Send + Sync + 'static,
 > {
     pub real_crs_generator: RealCrsGenerator<PubS, PrivS, C>,
@@ -420,7 +420,7 @@ pub struct RealInsecureCrsGenerator<
 #[cfg(feature = "insecure")]
 impl<
         PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
+        PrivS: StorageExt + Send + Sync + 'static,
         C: Ceremony + Send + Sync + 'static,
     > RealInsecureCrsGenerator<PubS, PrivS, C>
 {
@@ -444,7 +444,7 @@ impl<
 #[tonic::async_trait]
 impl<
         PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
+        PrivS: StorageExt + Send + Sync + 'static,
         C: Ceremony + Send + Sync + 'static,
     > InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS, C>
 {
@@ -468,11 +468,12 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{str::FromStr, time::Duration};
 
     use kms_grpc::{
         kms::v1::FheParameter,
         rpc_types::{alloy_to_protobuf_domain, KMSType},
+        EpochId,
     };
     use rand::SeedableRng;
     use threshold_fhe::{
@@ -484,15 +485,17 @@ mod tests {
     };
 
     use crate::{
-        consts::DURATION_WAITING_ON_RESULT_SECONDS, cryptography::signatures::gen_sig_keys,
-        dummy_domain, engine::threshold::service::session::SessionMaker,
+        consts::{DURATION_WAITING_ON_RESULT_SECONDS, PRSS_INIT_REQ_ID},
+        cryptography::signatures::gen_sig_keys,
+        dummy_domain,
+        engine::threshold::service::session::SessionMaker,
     };
 
     use super::*;
 
     impl<
             PubS: Storage + Send + Sync + 'static,
-            PrivS: Storage + Send + Sync + 'static,
+            PrivS: StorageExt + Send + Sync + 'static,
             C: Ceremony + Send + Sync + 'static,
         > RealCrsGenerator<PubS, PrivS, C>
     {
@@ -577,9 +580,11 @@ mod tests {
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
+        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
         let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,
+            &epoch_id,
             base_kms.new_rng().await,
         );
 

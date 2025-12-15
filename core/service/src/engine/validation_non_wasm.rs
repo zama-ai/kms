@@ -50,6 +50,7 @@ const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user dec
 pub(crate) enum RequestIdParsingErr {
     Other(String),
     Context,
+    Epoch,
     Init,
 
     CrsGenRequest,
@@ -79,6 +80,7 @@ impl std::fmt::Display for RequestIdParsingErr {
         match self {
             RequestIdParsingErr::Other(msg) => write!(f, "Other request ID error: {msg}"),
             RequestIdParsingErr::Context => write!(f, "Invalid context ID"),
+            RequestIdParsingErr::Epoch => write!(f, "Invalid epoch ID"),
             RequestIdParsingErr::Init => write!(f, "Invalid init ID"),
             RequestIdParsingErr::CrsGenRequest => write!(f, "Invalid CRS generation request ID"),
             RequestIdParsingErr::PreprocRequest => write!(f, "Invalid pre-processing request ID"),

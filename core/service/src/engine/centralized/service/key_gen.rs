@@ -1,6 +1,7 @@
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use itertools::Itertools;
+use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
 use kms_grpc::rpc_types::optional_protobuf_to_alloy_domain;
 use kms_grpc::RequestId;
@@ -13,6 +14,7 @@ use tokio::sync::{OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
+use crate::consts::PRSS_INIT_REQ_ID;
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{
     compute_info_decompression_keygen, retrieve_parameters, KeyGenMetadata, DSEP_PUBDATA_KEY,
@@ -28,12 +30,12 @@ use crate::engine::validation::{
 use crate::ok_or_tonic_abort;
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
-use crate::vault::storage::Storage;
+use crate::vault::storage::{Storage, StorageExt};
 
 /// Implementation of the key_gen endpoint
 pub async fn key_gen_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
@@ -57,6 +59,11 @@ pub async fn key_gen_impl<
     let _context_id = match &inner.context_id {
         Some(ctx) => Some(parse_proto_request_id(ctx, RequestIdParsingErr::Context)?),
         None => None,
+    };
+
+    let epoch_id: EpochId = match &inner.epoch_id {
+        Some(ctx) => parse_proto_request_id(ctx, RequestIdParsingErr::Epoch)?.into(),
+        None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
     };
 
     let internal_keyset_config =
@@ -143,6 +150,7 @@ pub async fn key_gen_impl<
             if let Err(e) = key_gen_background(
                 &req_id,
                 &preproc_id,
+                &epoch_id,
                 meta_store,
                 crypto_storage,
                 sk,
@@ -172,7 +180,7 @@ pub async fn key_gen_impl<
 /// Implementation of the get_key_gen_result endpoint
 pub async fn get_key_gen_result_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
@@ -239,10 +247,11 @@ pub async fn get_key_gen_result_impl<
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn key_gen_background<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
 >(
     req_id: &RequestId,
     preproc_id: &RequestId,
+    epoch_id: &EpochId,
     meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     sk: Arc<PrivateSigKey>,
@@ -256,7 +265,7 @@ pub(crate) async fn key_gen_background<
     {
         // Check if the key already exists
         if crypto_storage
-            .read_cloned_centralized_fhe_keys_from_cache(req_id)
+            .read_cloned_centralized_fhe_keys_from_cache(req_id, epoch_id)
             .await
             .is_ok()
         {
@@ -281,6 +290,7 @@ pub(crate) async fn key_gen_background<
                 internal_keyset_config.get_compression_id()?,
                 req_id,
                 preproc_id,
+                epoch_id,
                 None,
                 eip712_domain,
             )
@@ -300,7 +310,13 @@ pub(crate) async fn key_gen_background<
             };
 
             crypto_storage
-                .write_centralized_keys_with_meta_store(req_id, key_info, fhe_key_set, meta_store)
+                .write_centralized_keys_with_meta_store(
+                    req_id,
+                    epoch_id,
+                    key_info,
+                    fhe_key_set,
+                    meta_store,
+                )
                 .await;
 
             tracing::info!("⏱️ Core Event Time for Keygen: {:?}", start.elapsed());
@@ -309,7 +325,8 @@ pub(crate) async fn key_gen_background<
         KeySetConfig::DecompressionOnly => {
             let (from, to) = internal_keyset_config.get_from_and_to()?;
             let decompression_key =
-                async_generate_decompression_keys(crypto_storage.clone(), &from, &to).await?;
+                async_generate_decompression_keys(crypto_storage.clone(), epoch_id, &from, &to)
+                    .await?;
             let info = match compute_info_decompression_keygen(
                 &sk,
                 &DSEP_PUBDATA_KEY,

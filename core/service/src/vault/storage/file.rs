@@ -3,9 +3,10 @@ use crate::consts::KEY_PATH_PREFIX;
 use crate::util::file_handling::{
     safe_read_element_versioned, safe_write_element_versioned, write_bytes,
 };
+use crate::vault::storage::{StorageExt, StorageReaderExt};
 use crate::vault::storage_prefix_safety;
 use crate::{anyhow_error_and_log, some_or_err};
-use anyhow::anyhow;
+use kms_grpc::identifiers::EpochId;
 use kms_grpc::RequestId;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
@@ -66,7 +67,7 @@ impl FileStorage {
                 "The path {} already exists. Keeping the data without overwriting",
                 url_path
                     .to_str()
-                    .ok_or_else(|| anyhow!("Could not convert path to string"))?
+                    .ok_or_else(|| anyhow::anyhow!("Could not convert path to string"))?
             );
             return Ok(());
         }
@@ -85,35 +86,33 @@ impl FileStorage {
         Ok(())
     }
 
-    pub fn item_path(&self, data_id: &RequestId, data_type: &str) -> PathBuf {
+    fn item_path(&self, data_id: &RequestId, data_type: &str) -> PathBuf {
         self.root_dir().join(data_type).join(data_id.to_string())
     }
-}
 
-impl StorageReader for FileStorage {
-    async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
-        let path = self.item_path(data_id, data_type);
-        let res = path
-            .as_path()
-            .try_exists()
-            .map_err(|_| anyhow_error_and_log(format!("Path {} does not exist", path.display())))?;
-        Ok(res)
-    }
-
-    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
+    fn item_path_at_epoch(
         &self,
         data_id: &RequestId,
+        epoch_id: &EpochId,
         data_type: &str,
-    ) -> anyhow::Result<T> {
-        let path = self.item_path(data_id, data_type);
-        let res: T = safe_read_element_versioned(&path).await?;
-        Ok(res)
+    ) -> PathBuf {
+        self.root_dir()
+            .join(data_type)
+            .join(epoch_id.to_string())
+            .join(data_id.to_string())
     }
 
-    /// Return all elements stored of a specific type as a hashmap of the `data_ptr` as key and the
-    /// `url` as value.
-    async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
-        let path = self.root_dir().join(data_type);
+    async fn item_exists_at_path(&self, path: &Path) -> anyhow::Result<bool> {
+        tokio::fs::try_exists(path)
+            .await
+            .map_err(|_| anyhow_error_and_log(format!("Path {} does not exist", path.display())))
+    }
+
+    async fn all_data_from_path(
+        &self,
+        path: &Path,
+        ensure_file: bool,
+    ) -> anyhow::Result<HashSet<RequestId>> {
         if !path.try_exists()? {
             // If the path does not exist, then return an empty hashmap.
             tracing::info!(
@@ -126,9 +125,15 @@ impl StorageReader for FileStorage {
         let mut res = HashSet::new();
         let mut files = tokio::fs::read_dir(path)
             .await
-            .map_err(|e| anyhow!("Could not read directory due to error {}!", e))?;
+            .map_err(|e| anyhow::anyhow!("Could not read directory due to error {}!", e))?;
         while let Some(cur_file) = files.next_entry().await? {
             let cur_path = cur_file.path();
+
+            // if ensure_file is true, only consider files, else only consider directories
+            if (ensure_file && !cur_path.is_file()) || !ensure_file && !cur_path.is_dir() {
+                continue;
+            }
+
             let data_ptr = some_or_err(
                 some_or_err(
                     cur_path.file_name(),
@@ -146,12 +151,78 @@ impl StorageReader for FileStorage {
         }
         Ok(res)
     }
+}
+
+impl StorageReader for FileStorage {
+    async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
+        let path = self.item_path(data_id, data_type);
+        self.item_exists_at_path(path.as_path()).await
+    }
+
+    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<T> {
+        let path = self.item_path(data_id, data_type);
+        let res: T = safe_read_element_versioned(&path).await?;
+        Ok(res)
+    }
+
+    /// Return all elements stored of a specific type as a hashmap of the `data_ptr` as key and the
+    /// `url` as value.
+    async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
+        let path = self.root_dir().join(data_type);
+        self.all_data_from_path(path.as_path(), true).await
+    }
 
     fn info(&self) -> String {
         format!(
             "file storage with root_path \'{}\'",
             self.root_dir().display()
         )
+    }
+}
+
+impl StorageReaderExt for FileStorage {
+    async fn data_exists_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<bool> {
+        let path = self.item_path_at_epoch(data_id, epoch_id, data_type);
+        self.item_exists_at_path(path.as_path()).await
+    }
+
+    async fn read_data_at_epoch<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<T> {
+        let path = self.item_path_at_epoch(data_id, epoch_id, data_type);
+        let res: T = safe_read_element_versioned(&path).await?;
+        Ok(res)
+    }
+
+    async fn all_data_ids_at_epoch(
+        &self,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<HashSet<RequestId>> {
+        let path = self.root_dir().join(data_type).join(epoch_id.to_string());
+        self.all_data_from_path(path.as_path(), true).await
+    }
+
+    async fn all_epoch_ids_for_data(&self, data_type: &str) -> anyhow::Result<HashSet<EpochId>> {
+        let path = self.root_dir().join(data_type);
+        Ok(self
+            .all_data_from_path(path.as_path(), false)
+            .await?
+            .into_iter()
+            .map(|inner| inner.into())
+            .collect())
     }
 }
 
@@ -219,6 +290,52 @@ impl Storage for FileStorage {
 
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
         let path = self.item_path(data_id, data_type);
+        Ok(tokio::fs::remove_file(&path).await?)
+    }
+}
+
+impl StorageExt for FileStorage {
+    async fn store_data_at_epoch<T: Serialize + Versionize + Named + Send + Sync>(
+        &mut self,
+        data: &T,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        let path = self.item_path_at_epoch(data_id, epoch_id, data_type);
+        self.setup_dirs(&path).await?;
+        if self
+            .data_exists_at_epoch(data_id, epoch_id, data_type)
+            .await?
+        {
+            tracing::warn!(
+                "The path {} already exists. Keeping the data without overwriting",
+                path.display()
+            );
+            return Ok(());
+        }
+        println!(
+            "storing data {} at epoch {:?} at path {}",
+            data_type,
+            epoch_id,
+            path.display()
+        );
+        safe_write_element_versioned(&path, data)
+            .await
+            .map_err(|e| {
+                tracing::warn!("Could not write to path {}: {}", path.display(), e);
+                e
+            })?;
+        Ok(())
+    }
+
+    async fn delete_data_at_epoch(
+        &mut self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        let path = self.item_path_at_epoch(data_id, epoch_id, data_type);
         Ok(tokio::fs::remove_file(&path).await?)
     }
 }
@@ -371,5 +488,13 @@ pub mod tests {
         assert!(logs_contain(
             "already exists. Keeping the data without overwriting"
         ));
+    }
+
+    #[tokio::test]
+    async fn test_epoch_storage() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path();
+        let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
+        test_epoch_methods(&mut storage).await;
     }
 }

@@ -42,7 +42,7 @@ async fn test_threshold_health_endpoint_availability() {
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     // make sure the store does not contain any PRSS info (currently stored under ID PRSS_INIT_REQ_ID)
-    let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID.to_string()).unwrap();
+    let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
     purge(
         None,
         None,

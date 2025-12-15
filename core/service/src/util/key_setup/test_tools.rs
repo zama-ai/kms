@@ -528,6 +528,7 @@ pub async fn purge_recovery_material(path: Option<&Path>, storage_prefixes: &[Op
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod setup {
+    use crate::consts::PRSS_INIT_REQ_ID;
     use crate::consts::{
         PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
     };
@@ -552,8 +553,10 @@ pub(crate) mod setup {
         },
         vault::storage::{file::FileStorage, StorageType},
     };
+    use kms_grpc::identifiers::EpochId;
     use kms_grpc::RequestId;
     use std::path::Path;
+    use std::str::FromStr;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 
     pub async fn ensure_dir_exist(path: Option<&Path>) {
@@ -575,21 +578,25 @@ pub(crate) mod setup {
 
     async fn testing_material(path: Option<&Path>) {
         ensure_dir_exist(path).await;
+        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
         ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
         central_material(
             &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_TEST_ID,
             &TEST_CENTRAL_CRS_ID,
+            &epoch_id,
             path,
         )
         .await;
+        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
         threshold_material(
             &TEST_PARAM,
             &TEST_THRESHOLD_KEY_ID_4P,
             &TEST_THRESHOLD_CRS_ID_4P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
+            &epoch_id,
             path,
         )
         .await;
@@ -599,6 +606,7 @@ pub(crate) mod setup {
             &TEST_THRESHOLD_CRS_ID_10P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
+            &epoch_id,
             path,
         )
         .await;
@@ -609,6 +617,7 @@ pub(crate) mod setup {
             &TEST_THRESHOLD_CRS_ID_13P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
+            &epoch_id,
             path,
         )
         .await;
@@ -627,12 +636,14 @@ pub(crate) mod setup {
             DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
         };
         ensure_dir_exist(None).await;
+        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
         ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
         central_material(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_DEFAULT_ID,
             &DEFAULT_CENTRAL_CRS_ID,
+            &epoch_id,
             None,
         )
         .await;
@@ -642,6 +653,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_CRS_ID_4P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
+            &epoch_id,
             None,
         )
         .await;
@@ -651,6 +663,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_CRS_ID_10P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
+            &epoch_id,
             None,
         )
         .await;
@@ -660,6 +673,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_CRS_ID_13P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
+            &epoch_id,
             None,
         )
         .await;
@@ -670,6 +684,7 @@ pub(crate) mod setup {
         fhe_key_id: &RequestId,
         other_fhe_key_id: &RequestId,
         crs_id: &RequestId,
+        epoch_id: &EpochId,
         path: Option<&Path>,
     ) {
         let mut central_pub_storage = FileStorage::new(path, StorageType::PUB, None).unwrap();
@@ -688,6 +703,7 @@ pub(crate) mod setup {
             params.to_owned(),
             fhe_key_id,
             other_fhe_key_id,
+            epoch_id,
             true,
             false,
         )
@@ -708,6 +724,7 @@ pub(crate) mod setup {
         crs_id: &RequestId,
         public_storage_prefixes: &[Option<String>],
         private_storage_prefixes: &[Option<String>],
+        epoch_id: &EpochId,
         path: Option<&Path>,
     ) {
         assert_eq!(
@@ -743,6 +760,7 @@ pub(crate) mod setup {
             &mut threshold_priv_storages,
             params.to_owned(),
             fhe_key_id,
+            epoch_id,
             true,
         )
         .await;

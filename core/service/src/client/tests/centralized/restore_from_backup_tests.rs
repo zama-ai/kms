@@ -3,6 +3,7 @@ use crate::{
         crs_gen_tests::crs_gen_centralized, key_gen_tests::key_gen_centralized,
         public_decryption_tests::decryption_centralized,
     },
+    consts::PRSS_INIT_REQ_ID,
     cryptography::internal_crypto_types::WrappedDKGParams,
     engine::base::derive_request_id,
     util::key_setup::test_tools::{
@@ -13,6 +14,7 @@ use crate::{
     },
 };
 use kms_grpc::{
+    identifiers::EpochId,
     kms::v1::{Empty, FheParameter},
     rpc_types::PrivDataType,
     RequestId,
@@ -26,12 +28,13 @@ async fn test_insecure_central_dkg_backup() {
     let dkg_param: WrappedDKGParams = param.into();
     let key_id_1 = derive_request_id("test_insecure_central_dkg_backup-1").unwrap();
     let key_id_2 = derive_request_id("test_insecure_central_dkg_backup-2").unwrap();
+    let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID).unwrap();
     // Delete potentially old data
     purge(None, None, &key_id_1, &[None], &[None]).await;
     purge(None, None, &key_id_2, &[None], &[None]).await;
     purge_backup(None, &[None]).await;
-    key_gen_centralized(&key_id_1, param, None, None).await;
-    key_gen_centralized(&key_id_2, param, None, None).await;
+    key_gen_centralized(&key_id_1, &epoch_id, param, None, None).await;
+    key_gen_centralized(&key_id_2, &epoch_id, param, None, None).await;
     // Generated key, delete private storage
     let mut priv_storage: FileStorage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
     delete_all_at_request_id(&mut priv_storage, &key_id_1)
@@ -83,10 +86,11 @@ async fn test_insecure_central_autobackup_after_deletion() {
     let param = FheParameter::Test;
     let dkg_param: WrappedDKGParams = param.into();
     let key_id = derive_request_id("test_insecure_central_autobackup_after_deletion").unwrap();
+    let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID).unwrap();
     // Delete potentially old data
     purge(None, None, &key_id, &[None], &[None]).await;
     purge_backup(None, &[None]).await;
-    key_gen_centralized(&key_id, param, None, None).await;
+    key_gen_centralized(&key_id, &epoch_id, param, None, None).await;
     // Sleep to ensure the servers are properly shut down
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Start the servers again

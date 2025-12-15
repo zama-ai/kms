@@ -16,7 +16,7 @@ use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::{
     delete_at_request_id, delete_context_at_id, delete_custodian_context_at_id,
-    store_versioned_at_request_id,
+    store_versioned_at_request_id, StorageExt,
 };
 use crate::vault::Vault;
 use crate::{
@@ -39,7 +39,7 @@ use tonic::{Response, Status};
 /// This is a shared data structure for both centralized and threshold context managers.
 struct SharedContextManager<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 > {
     base_kms: BaseKmsStruct,
     crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
@@ -49,7 +49,7 @@ struct SharedContextManager<
 impl<PubS, PrivS> SharedContextManager<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 {
     async fn verify_and_extract_new_mpc_context(
         &self,
@@ -253,6 +253,7 @@ where
                         .await?;
                     }
                     PrivDataType::FhePrivateKey => {
+                        // TODO needs fixing
                         backup_priv_data::<PrivS, KmsFheKeyHandles>(
                             &guarded_priv_storage,
                             &mut guarded_backup_vault,
@@ -307,7 +308,7 @@ where
 
 pub struct CentralizedContextManager<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 > {
     inner: SharedContextManager<PubS, PrivS>,
 }
@@ -315,7 +316,7 @@ pub struct CentralizedContextManager<
 impl<PubS, PrivS> CentralizedContextManager<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 {
     pub(crate) fn new(
         base_kms: BaseKmsStruct,
@@ -336,7 +337,7 @@ where
 impl<PubS, PrivS> ContextManager for CentralizedContextManager<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 {
     async fn new_mpc_context(
         &self,
@@ -431,7 +432,7 @@ where
 
 pub struct ThresholdContextManager<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 > {
     inner: SharedContextManager<PubS, PrivS>,
     session_maker: SessionMaker,
@@ -440,7 +441,7 @@ pub struct ThresholdContextManager<
 impl<PubS, PrivS> ThresholdContextManager<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 {
     pub(crate) fn new(
         base_kms: BaseKmsStruct,
@@ -489,7 +490,7 @@ where
 /// This function should only be used in the threshold setting since SessionMaker does not exist in centralized mode.
 async fn atomic_update_context<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 >(
     session_maker: &SessionMaker,
     crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
@@ -525,7 +526,7 @@ async fn atomic_update_context<
 impl<PubS, PrivS> ContextManager for ThresholdContextManager<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 {
     async fn new_mpc_context(
         &self,
@@ -692,7 +693,10 @@ async fn gen_recovery_validation(
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::{
+        str::FromStr,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use super::*;
     use crate::{
@@ -701,6 +705,7 @@ mod tests {
             operator::InternalRecoveryRequest,
             seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
         },
+        consts::PRSS_INIT_REQ_ID,
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{gen_sig_keys, PublicSigKey},
@@ -725,7 +730,7 @@ mod tests {
             NewMpcContextRequest,
         },
         rpc_types::{KMSType, PrivDataType, PubDataType},
-        RequestId,
+        EpochId, RequestId,
     };
     use rand::{rngs::OsRng, SeedableRng};
     use tokio::sync::Mutex;
@@ -809,8 +814,9 @@ mod tests {
         let request = Request::new(NewMpcContextRequest {
             new_context: Some(new_context.clone().try_into().unwrap()),
         });
+        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, base_kms.new_rng().await);
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
         let context_manager = ThresholdContextManager::new(
             base_kms,
             crypto_storage.clone(),
@@ -962,6 +968,7 @@ mod tests {
         let amount_custodians = 2 * threshold + 1; // Minimum amount of custodians is 2 * threshold + 1
         let mut setup_msgs = Vec::new();
         let mut rng = AesRng::seed_from_u64(42);
+        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
         for custodian_index in 1..=amount_custodians {
             let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
             let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
@@ -992,8 +999,12 @@ mod tests {
             let request = Request::new(NewCustodianContextRequest {
                 new_context: Some(first_context),
             });
-            let session_maker =
-                SessionMaker::four_party_dummy_session(None, None, base_kms.new_rng().await);
+            let session_maker = SessionMaker::four_party_dummy_session(
+                None,
+                None,
+                &epoch_id,
+                base_kms.new_rng().await,
+            );
             let context_manager = ThresholdContextManager::new(
                 base_kms,
                 crypto_storage.clone(),

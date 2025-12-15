@@ -7,6 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 
 use kms_grpc::{
+    identifiers::EpochId,
     rpc_types::{KMSType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
     RequestId,
 };
@@ -17,7 +18,10 @@ use crate::{
     engine::base::{CrsGenMetadata, KeyGenMetadata, KmsFheKeyHandles},
     util::meta_store::MetaStore,
     vault::{
-        storage::{store_pk_at_request_id, store_versioned_at_request_id, Storage},
+        storage::{
+            store_pk_at_request_id, store_versioned_at_request_and_epoch_id,
+            store_versioned_at_request_id, Storage, StorageExt,
+        },
         Vault,
     },
 };
@@ -28,13 +32,13 @@ use super::base::CryptoMaterialStorage;
 /// Cloning this object is cheap since it uses Arc internally.
 pub struct CentralizedCryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
 > {
     pub(crate) inner: CryptoMaterialStorage<PubS, PrivS>,
-    fhe_keys: Arc<RwLock<HashMap<RequestId, KmsFheKeyHandles>>>,
+    fhe_keys: Arc<RwLock<HashMap<(RequestId, EpochId), KmsFheKeyHandles>>>,
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
     CentralizedCryptoMaterialStorage<PubS, PrivS>
 {
     /// Create a new cached storage device for centralized KMS.
@@ -43,7 +47,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         private_storage: PrivS,
         backup_vault: Option<Vault>,
         pk_cache: HashMap<RequestId, WrappedPublicKeyOwned>,
-        fhe_keys: HashMap<RequestId, KmsFheKeyHandles>,
+        fhe_keys: HashMap<(RequestId, EpochId), KmsFheKeyHandles>,
     ) -> Self {
         Self {
             inner: CryptoMaterialStorage {
@@ -94,6 +98,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     pub async fn write_centralized_keys_with_meta_store(
         &self,
         key_id: &RequestId,
+        epoch_id: &EpochId,
         key_info: KmsFheKeyHandles,
         fhe_key_set: FhePubKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
@@ -116,9 +121,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 Some(ref x) => Some(x.lock().await),
                 None => None,
             };
-            let store_result_1 = store_versioned_at_request_id(
+            let store_result_1 = store_versioned_at_request_and_epoch_id(
                 &mut (*priv_storage),
                 key_id,
+                epoch_id,
                 &key_info,
                 &PrivDataType::FhePrivateKey.to_string(),
             )
@@ -134,9 +140,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
             let store_err_2 = match back_vault {
                 Some(mut x) => {
-                    let result = store_versioned_at_request_id(
+                    let result = store_versioned_at_request_and_epoch_id(
                         &mut (*x),
                         key_id,
+                        epoch_id,
                         &key_info,
                         &PrivDataType::FhePrivateKey.to_string(),
                     )
@@ -211,7 +218,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             }
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
-                let previous = guarded_fhe_keys.insert(*key_id, key_info);
+                let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), key_info);
                 if previous.is_some() {
                     tracing::warn!(
                         "FHE keys already exist in cache for {}, overwriting",
@@ -238,10 +245,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     pub async fn read_cloned_centralized_fhe_keys_from_cache(
         &self,
         req_id: &RequestId,
+        epoch_id: &EpochId,
     ) -> anyhow::Result<KmsFheKeyHandles> {
-        CryptoMaterialStorage::<PubS, PrivS>::read_cloned_crypto_material_from_cache(
+        CryptoMaterialStorage::<PubS, PrivS>::read_cloned_private_fhe_material_from_cache(
             self.fhe_keys.clone(),
             req_id,
+            epoch_id,
         )
         .await
     }
@@ -254,42 +263,23 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     /// with calls to [read_centralized_fhe_keys] on the same tokio task
     /// since it's easy to deadlock, it's a consequence of RwLocks.
     /// see https://docs.rs/tokio/latest/tokio/sync/struct.RwLock.html#method.read_owned
-    pub async fn refresh_centralized_fhe_keys(&self, req_id: &RequestId) -> anyhow::Result<()> {
-        CryptoMaterialStorage::<PubS, PrivS>::refresh_crypto_material::<KmsFheKeyHandles, _>(
+    pub async fn refresh_centralized_fhe_keys(
+        &self,
+        req_id: &RequestId,
+        epoch_id: &EpochId,
+    ) -> anyhow::Result<()> {
+        CryptoMaterialStorage::<PubS, PrivS>::refresh_fhe_private_material::<KmsFheKeyHandles, _>(
             self.fhe_keys.clone(),
             req_id,
+            epoch_id,
             self.inner.private_storage.clone(),
         )
         .await
     }
-
-    #[cfg(test)]
-    pub(crate) async fn set_wrong_cached_client_key(
-        &self,
-        key_handle: &RequestId,
-        wrong_client_key: tfhe::ClientKey,
-    ) -> anyhow::Result<()> {
-        use crate::anyhow_error_and_warn_log;
-
-        let mut key_info = self.fhe_keys.write().await;
-        let x = key_info.get_mut(key_handle).ok_or_else(|| {
-            anyhow_error_and_warn_log(format!(
-                "Cannot find key handle {key_handle} in cache to set wrong client key"
-            ))
-        })?;
-
-        let wrong_handles = KmsFheKeyHandles {
-            client_key: wrong_client_key,
-            decompression_key: x.decompression_key.clone(),
-            public_key_info: x.public_key_info.clone(),
-        };
-        *x = wrong_handles;
-        Ok(())
-    }
 }
 
 // we need to manually implement clone, see  https://github.com/rust-lang/rust/issues/26925
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> Clone
+impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static> Clone
     for CentralizedCryptoMaterialStorage<PubS, PrivS>
 {
     fn clone(&self) -> Self {
@@ -300,7 +290,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     }
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
     From<&CentralizedCryptoMaterialStorage<PubS, PrivS>> for CryptoMaterialStorage<PubS, PrivS>
 {
     fn from(value: &CentralizedCryptoMaterialStorage<PubS, PrivS>) -> Self {

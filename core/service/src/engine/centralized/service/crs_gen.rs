@@ -22,12 +22,12 @@ use crate::engine::validation::{
 use crate::ok_or_tonic_abort;
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
-use crate::vault::storage::Storage;
+use crate::vault::storage::{Storage, StorageExt};
 
 /// Implementation of the crs_gen endpoint
 pub async fn crs_gen_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
@@ -106,7 +106,7 @@ pub async fn crs_gen_impl<
 /// Implementation of the get_crs_gen_result endpoint
 pub async fn get_crs_gen_result_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
@@ -165,7 +165,7 @@ pub async fn get_crs_gen_result_impl<
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn crs_gen_background<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
 >(
     req_id: &RequestId,
     rng: AesRng,

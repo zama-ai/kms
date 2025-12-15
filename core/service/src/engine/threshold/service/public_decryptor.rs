@@ -67,7 +67,7 @@ use crate::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
     },
-    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
+    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage, StorageExt},
 };
 
 // === Current Module Imports ===
@@ -123,7 +123,7 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
 
 pub struct RealPublicDecryptor<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
     Dec: NoiseFloodDecryptor<
             Prep = SmallOfflineNoiseFloodSession<
                 { ResiduePolyF4Z128::EXTENSION_DEGREE },
@@ -143,7 +143,7 @@ pub struct RealPublicDecryptor<
 
 impl<
         PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
+        PrivS: StorageExt + Send + Sync + 'static,
         Dec: NoiseFloodDecryptor<
                 Prep = SmallOfflineNoiseFloodSession<
                     { ResiduePolyF4Z128::EXTENSION_DEGREE },
@@ -163,7 +163,10 @@ impl<
         ct: Vec<u8>,
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
-        fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
+        fhe_keys: OwnedRwLockReadGuard<
+            HashMap<(RequestId, EpochId), ThresholdFheKeys>,
+            ThresholdFheKeys,
+        >,
         dec_mode: DecryptionMode,
     ) -> anyhow::Result<T>
     where
@@ -258,7 +261,7 @@ impl<
 #[tonic::async_trait]
 impl<
         PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
+        PrivS: StorageExt + Send + Sync + 'static,
         Dec: NoiseFloodDecryptor<
                 Prep = SmallOfflineNoiseFloodSession<
                     { ResiduePolyF4Z128::EXTENSION_DEGREE },
@@ -289,10 +292,9 @@ impl<
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
             None => *DEFAULT_MPC_CONTEXT,
         };
+
         let epoch_id: EpochId = match &inner.epoch_id {
-            Some(c) => c
-                .try_into()
-                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
+            Some(ctx) => parse_proto_request_id(ctx, RequestIdParsingErr::Epoch)?.into(),
             None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
         };
 
@@ -343,7 +345,7 @@ impl<
         let permit = self.rate_limiter.start_pub_decrypt().await?;
 
         self.crypto_storage
-            .refresh_threshold_fhe_keys(&key_id)
+            .refresh_threshold_fhe_keys(&key_id, &epoch_id)
             .await
             .map_err(|e| {
                 tracing::warn!(error=?e, key_id=?key_id, "Failed to refresh threshold FHE keys");
@@ -442,7 +444,7 @@ impl<
                 let ct_format = typed_ciphertext.ciphertext_format();
                 let ciphertext = typed_ciphertext.ciphertext;
                 let fhe_keys_rlock = crypto_storage
-                    .read_guarded_threshold_fhe_keys_from_cache(&key_id)
+                    .read_guarded_threshold_fhe_keys_from_cache(&key_id, &epoch_id)
                     .await?;
 
                 let res_plaintext = match fhe_type {
@@ -799,7 +801,7 @@ mod tests {
 
     impl<
             PubS: Storage + Send + Sync + 'static,
-            PrivS: Storage + Send + Sync + 'static,
+            PrivS: StorageExt + Send + Sync + 'static,
             Dec: NoiseFloodDecryptor<
                     Prep = SmallOfflineNoiseFloodSession<
                         { ResiduePolyF4Z128::EXTENSION_DEGREE },
@@ -861,18 +863,21 @@ mod tests {
         rng: &mut AesRng,
     ) -> (
         RequestId,
+        EpochId,
         Vec<u8>,
         RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
         let param = TEST_PARAM;
+        let epoch_id = EpochId::new_random(rng);
 
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,
+            &epoch_id,
             base_kms.new_rng().await,
         );
 
@@ -921,6 +926,7 @@ mod tests {
             .crypto_storage
             .write_threshold_keys_with_dkg_meta_store(
                 &key_id,
+                &epoch_id,
                 threshold_fhe_keys,
                 fhe_key_set,
                 info,
@@ -932,12 +938,12 @@ mod tests {
             // check existance
             let _guard = public_decryptor
                 .crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&key_id)
+                .read_guarded_threshold_fhe_keys_from_cache(&key_id, &epoch_id)
                 .await
                 .unwrap();
         }
 
-        (key_id, ct_buf, public_decryptor)
+        (key_id, epoch_id, ct_buf, public_decryptor)
     }
 
     #[tokio::test]
@@ -945,7 +951,8 @@ mod tests {
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
         let mut rng = AesRng::seed_from_u64(12);
 
-        let (key_id, ct_buf, mut public_decryptor) = setup_public_decryptor(&mut rng).await;
+        let (key_id, epoch_id, ct_buf, mut public_decryptor) =
+            setup_public_decryptor(&mut rng).await;
 
         // Set bucket size to zero, so no operations are allowed
         public_decryptor.set_bucket_size(0);
@@ -964,7 +971,7 @@ mod tests {
             domain: Some(domain),
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: None,
+            epoch_id: Some(epoch_id.into()),
         });
         assert_eq!(
             public_decryptor
@@ -982,7 +989,7 @@ mod tests {
     #[tokio::test]
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(12);
-        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
+        let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = PublicDecryptionRequest {
@@ -997,7 +1004,7 @@ mod tests {
             domain: Some(domain),
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: None,
+            epoch_id: Some(epoch_id.into()),
         };
         public_decryptor
             .public_decrypt(Request::new(request.clone()))
@@ -1016,32 +1023,64 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         let mut rng = AesRng::seed_from_u64(1123);
-        let (_key_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
-        let req_id = RequestId::new_random(&mut rng);
-        let bad_key_id = RequestId::new_random(&mut rng);
+        let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let request = Request::new(PublicDecryptionRequest {
-            request_id: Some(req_id.into()),
-            ciphertexts: vec![TypedCiphertext {
-                ciphertext: ct_buf,
-                fhe_type: FheTypes::Uint8 as i32,
-                external_handle: vec![],
-                ciphertext_format: CiphertextFormat::SmallExpanded as i32,
-            }],
-            key_id: Some(bad_key_id.into()),
-            domain: Some(domain),
-            extra_data: vec![],
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: None,
-        });
-        assert_eq!(
-            public_decryptor
-                .public_decrypt(request)
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::NotFound
-        );
+
+        {
+            // bad key ID
+            let req_id = RequestId::new_random(&mut rng);
+            let bad_key_id = RequestId::new_random(&mut rng);
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(req_id.into()),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf.clone(),
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+                }],
+                key_id: Some(bad_key_id.into()),
+                domain: Some(domain.clone()),
+                extra_data: vec![],
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: Some(epoch_id.into()),
+            });
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::NotFound
+            );
+        }
+
+        {
+            // bad epoch ID
+            let req_id = RequestId::new_random(&mut rng);
+            let bad_epoch_id = EpochId::new_random(&mut rng);
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(req_id.into()),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf,
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+                }],
+                key_id: Some(key_id.into()),
+                domain: Some(domain),
+                extra_data: vec![],
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: Some(bad_epoch_id.into()),
+            });
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::NotFound
+            );
+        }
 
         // try to get result for a non-existing request ID
         let another_req_id = RequestId::new_random(&mut rng);
@@ -1058,7 +1097,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(13);
-        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
+        let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
         {
             // Bad request ID
             let bad_req_id = kms_grpc::kms::v1::RequestId {
@@ -1077,7 +1116,7 @@ mod tests {
                 domain: Some(domain),
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-                epoch_id: None,
+                epoch_id: Some(epoch_id.into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1099,7 +1138,7 @@ mod tests {
                 domain: Some(domain),
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-                epoch_id: None,
+                epoch_id: Some(epoch_id.into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1129,7 +1168,7 @@ mod tests {
                 domain: Some(domain),
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-                epoch_id: None,
+                epoch_id: Some(epoch_id.into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1155,7 +1194,7 @@ mod tests {
                 domain: None,
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-                epoch_id: None,
+                epoch_id: Some(epoch_id.into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1183,7 +1222,7 @@ mod tests {
                 domain: Some(domain),
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-                epoch_id: None,
+                epoch_id: Some(epoch_id.into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1212,7 +1251,7 @@ mod tests {
     #[tokio::test]
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(13);
-        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
+        let (key_id, epoch_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = Request::new(PublicDecryptionRequest {
@@ -1229,7 +1268,7 @@ mod tests {
             domain: Some(domain),
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            epoch_id: None,
+            epoch_id: Some(epoch_id.into()),
         });
         public_decryptor.public_decrypt(request).await.unwrap();
         // there's no need to check the decryption result since it's a dummy protocol

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{
     Empty, PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
     UserDecryptionRequest, UserDecryptionResponse,
@@ -13,6 +14,7 @@ use observability::metrics_names::{
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
+use crate::consts::PRSS_INIT_REQ_ID;
 use crate::cryptography::internal_crypto_types::LegacySerialization;
 use crate::engine::base::compute_external_pt_signature;
 use crate::engine::centralized::central_kms::{
@@ -25,12 +27,12 @@ use crate::engine::validation::{
 };
 use crate::ok_or_tonic_abort;
 use crate::util::meta_store::handle_res_mapping;
-use crate::vault::storage::Storage;
+use crate::vault::storage::{Storage, StorageExt};
 
 /// Implementation of the user_decrypt endpoint
 pub async fn user_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
@@ -49,10 +51,19 @@ pub async fn user_decrypt_impl<
     let (typed_ciphertexts, link, client_enc_key, client_address, key_id, request_id, domain) =
         validate_user_decrypt_req(&inner)?;
 
+    let epoch_id: EpochId = match &inner.epoch_id {
+        Some(ctx) => parse_proto_request_id(ctx, RequestIdParsingErr::Epoch)?.into(),
+        None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
+    };
+
     // check that the key exists
     {
         if !ok_or_tonic_abort(
-            service.crypto_storage.inner.fhe_keys_exist(&key_id).await,
+            service
+                .crypto_storage
+                .inner
+                .fhe_keys_exist(&key_id, &epoch_id)
+                .await,
             format!("Existence check failed for key_id {key_id} and request_id {request_id}"),
         )? {
             return Err(Status::not_found(format!(
@@ -102,7 +113,9 @@ pub async fn user_decrypt_impl<
     let mut rng = service.base_kms.new_rng().await;
 
     ok_or_tonic_abort(
-        crypto_storage.refresh_centralized_fhe_keys(&key_id).await,
+        crypto_storage
+            .refresh_centralized_fhe_keys(&key_id, &epoch_id)
+            .await,
         format!("Cannot find centralized keys with key ID {key_id}"),
     )?;
 
@@ -124,7 +137,7 @@ pub async fn user_decrypt_impl<
             let _timer = timer;
             let _permit = permit;
             let keys = match crypto_storage
-                .read_cloned_centralized_fhe_keys_from_cache(&key_id)
+                .read_cloned_centralized_fhe_keys_from_cache(&key_id, &epoch_id)
                 .await
             {
                 Ok(k) => k,
@@ -187,7 +200,7 @@ pub async fn user_decrypt_impl<
 /// Implementation of the get_user_decryption_result endpoint
 pub async fn get_user_decryption_result_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
@@ -227,7 +240,7 @@ pub async fn get_user_decryption_result_impl<
 /// Implementation of the public_decrypt endpoint
 pub async fn public_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
@@ -252,6 +265,11 @@ pub async fn public_decrypt_impl<
             Status::invalid_argument("Failed to validate public decryption request: {e:?}")
         })?;
 
+    let epoch_id: EpochId = match &inner.epoch_id {
+        Some(ctx) => parse_proto_request_id(ctx, RequestIdParsingErr::Epoch)?.into(),
+        None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
+    };
+
     tracing::info!(
         "Decrypting {} ciphertexts using key {} with request id {}",
         ciphertexts.len(),
@@ -264,7 +282,7 @@ pub async fn public_decrypt_impl<
         let found = service
             .crypto_storage
             .inner
-            .fhe_keys_exist(&key_id)
+            .fhe_keys_exist(&key_id, &epoch_id)
             .await
             .map_err(|e| {
                 Status::aborted(format!(
@@ -311,7 +329,9 @@ pub async fn public_decrypt_impl<
     let crypto_storage = service.crypto_storage.clone();
 
     ok_or_tonic_abort(
-        crypto_storage.refresh_centralized_fhe_keys(&key_id).await,
+        crypto_storage
+            .refresh_centralized_fhe_keys(&key_id, &epoch_id)
+            .await,
         format!("Cannot find centralized keys with key ID {key_id}"),
     )?;
 
@@ -326,7 +346,7 @@ pub async fn public_decrypt_impl<
             let _timer = timer;
             let _permit = permit;
             let keys = match crypto_storage
-                .read_cloned_centralized_fhe_keys_from_cache(&key_id)
+                .read_cloned_centralized_fhe_keys_from_cache(&key_id, &epoch_id)
                 .await
             {
                 Ok(k) => k,
@@ -429,7 +449,7 @@ pub async fn public_decrypt_impl<
 /// Implementation of the get_public_decryption_result endpoint
 pub async fn get_public_decryption_result_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(

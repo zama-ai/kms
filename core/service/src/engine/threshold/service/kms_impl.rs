@@ -72,7 +72,8 @@ use crate::{
     vault::{
         storage::{
             crypto_material::ThresholdCryptoMaterialStorage, delete_context_at_id,
-            read_all_data_versioned, read_pk_at_request_id, store_context_at_id, Storage,
+            read_all_data_form_all_epochs_versioned, read_all_data_versioned,
+            read_pk_at_request_id, store_context_at_id, Storage, StorageExt,
         },
         Vault,
     },
@@ -234,7 +235,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
 )>
 where
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
     let threshold_config = config.threshold.as_ref().ok_or_else(|| {
@@ -246,20 +247,26 @@ where
         .unwrap_or_else(|| TelemetryConfig::builder().build());
 
     // load keys from storage
-    let key_info_versioned: HashMap<RequestId, ThresholdFheKeys> =
-        read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
+    let key_info_versioned: HashMap<(RequestId, EpochId), ThresholdFheKeys> =
+        read_all_data_form_all_epochs_versioned(
+            &private_storage,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await?;
+
     let mut public_key_info = HashMap::new();
     let mut pk_map = HashMap::new();
     let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
+
     // Validate the recovery material against the provided verification key
     for (cur_req_id, cur_rec_material) in &validation_material {
         if !cur_rec_material.validate(&base_kms.verf_key()) {
             anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
         }
     }
-    for (id, info) in key_info_versioned.clone().into_iter() {
+    for ((id, _), info) in key_info_versioned.clone().into_iter() {
         public_key_info.insert(id, info.meta_data.clone());
 
         let pk = read_pk_at_request_id(&public_storage, &id).await?;
@@ -642,11 +649,13 @@ where
         // for reshared key (so the meta store has to be empty for that key id)
         reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
     };
+
     // Update backup vault if it exists
     // This ensures that all files in the private storage are also in the backup vault
     // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
     // Note however that the data in the vault is not checked for corruption.
     backup_operator.update_backup_vault().await?;
+
     // Start updating system metrics
     update_threshold_kms_system_metrics(
         rate_limiter.clone(),

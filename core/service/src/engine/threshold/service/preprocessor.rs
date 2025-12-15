@@ -442,6 +442,8 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
     use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
     use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
@@ -491,6 +493,7 @@ mod tests {
         rng: &mut AesRng,
         use_prss: bool,
     ) -> RealPreprocessor<P> {
+        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
         let prss_setup_z128 = if use_prss {
@@ -507,6 +510,7 @@ mod tests {
         let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,
+            &epoch_id,
             base_kms.new_rng().await,
         );
         RealPreprocessor::<P>::init_test(base_kms, session_maker.make_immutable())
