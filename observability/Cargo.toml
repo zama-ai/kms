@@ -39,6 +39,9 @@ typed-builder.workspace = true
 uuid.workspace = true
 validator.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [package.metadata.cargo-machete]
 ignored = ["strum"]
 

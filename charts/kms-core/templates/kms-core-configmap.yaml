@@ -126,7 +126,7 @@ data:
 
       {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
         {{- if $.Values.kmsCore.nitroEnclave.enabled }}
-    [threshold.tls.full_auto]
+    [threshold.tls.auto]
            {{- if .Values.kmsCore.thresholdMode.tls.ignoreAwsCaChain }}
     ignore_aws_ca_chain = true
            {{- else }}
@@ -139,7 +139,7 @@ data:
            {{- end }}
            {{- if .Values.kmsCore.thresholdMode.tls.trustedReleases }}
              {{ range .Values.kmsCore.thresholdMode.tls.trustedReleases }}
-    [[threshold.tls.full_auto.trusted_releases]]
+    [[threshold.tls.auto.trusted_releases]]
     pcr0 = {{ .pcr0 | quote }}
     pcr1 = {{ .pcr1 | quote }}
     pcr2 = {{ .pcr2 | quote }}

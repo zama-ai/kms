@@ -233,6 +233,21 @@ pub enum PubDataType {
     RecoveryMaterial, // Recovery material for the backup vault
 }
 
+impl std::str::FromStr for PubDataType {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        for pub_data_type in PubDataType::iter() {
+            if value.to_ascii_lowercase().trim()
+                == pub_data_type.to_string().to_ascii_lowercase().trim()
+            {
+                return Ok(pub_data_type);
+            }
+        }
+        Err(anyhow::anyhow!("Unknown PubDataType: {}", value))
+    }
+}
+
 impl fmt::Display for PubDataType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {

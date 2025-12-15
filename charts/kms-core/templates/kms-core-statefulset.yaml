@@ -219,8 +219,8 @@ spec:
                (dict "name" "enclave-web-identity-token"
                      "image" .Values.kubeUtils.image
                      "vsockPort" 4100
-          "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
-          ) | indent 10 | trim }}
+                    "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
+                    ) | indent 10 | trim }}
         {{- /* Init AWS STS Proxy Socket */}}
         - {{ include "proxyFromEnclaveTcp"
                (dict "name" "aws-sts-proxy"
@@ -274,6 +274,7 @@ spec:
                      "image" .Values.kubeUtils.image
                      "cid" .Values.kmsCore.nitroEnclave.cid
                      "port" .Values.kmsCore.ports.peer
+                     "timeout" (int $.Values.kmsCore.nitroEnclave.socat.timeout)
                 ) | indent 10 | trim }}
           {{- with .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources }}
           resources:
@@ -717,6 +718,10 @@ spec:
             failureThreshold: 10
             initialDelaySeconds: 30
             periodSeconds: 10
+          livenessProbe:
+            grpc:
+              port: {{ .Values.kmsCore.ports.client }}
+            initialDelaySeconds: 10
             timeoutSeconds: 5
           {{- if .Values.kmsCore.nitroEnclave.enabled }}
           lifecycle:
