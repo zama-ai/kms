@@ -74,11 +74,14 @@ pub trait KeyGenPreprocessor {
 
 #[tonic::async_trait]
 pub trait CrsGenerator {
-    async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status>;
+    async fn crs_gen(
+        &self,
+        request: Request<CrsGenRequest>,
+    ) -> Result<Response<Empty>, MetricedError>;
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<CrsGenResult>, Status>;
+    ) -> Result<Response<CrsGenResult>, MetricedError>;
 }
 
 #[cfg(feature = "insecure")]
@@ -87,11 +90,11 @@ pub trait InsecureCrsGenerator {
     async fn insecure_crs_gen(
         &self,
         request: Request<CrsGenRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<CrsGenResult>, Status>;
+    ) -> Result<Response<CrsGenResult>, MetricedError>;
 }
 
 #[tonic::async_trait]

@@ -118,6 +118,27 @@ impl MetricedError {
         internal_error: E,
         error_code: tonic::Code,
     ) -> Self {
+        let error = Self::error_handler(metric_scope, request_id, internal_error);
+        // Increment the error code metric
+        METRICS.increment_error_counter(metric_scope, map_tonic_code_to_metric_err_tag(error_code));
+
+        Self {
+            scope: Box::new(metric_scope),
+            request_id,
+            internal_error: error,
+            error_code,
+        }
+    }
+
+    pub fn code(&self) -> tonic::Code {
+        self.error_code
+    }
+
+    pub fn error_handler<E: Into<Box<dyn std::error::Error + Send + Sync>>>(
+        metric_scope: &'static str,
+        request_id: Option<RequestId>,
+        internal_error: E,
+    ) -> Box<dyn std::error::Error + Send + Sync> {
         let error = internal_error.into(); // converts anyhow::Error or any other error
         let error_string = format!(
             "Failure on requestID {} with metric {}. Error: {}",
@@ -132,21 +153,9 @@ impl MetricedError {
             error_string,
         );
 
-        // Increment the error code metric
-        METRICS.increment_error_counter(metric_scope, map_tonic_code_to_metric_err_tag(error_code));
         // Increment the method specific metric
         METRICS.increment_error_counter(metric_scope, map_scope_to_metric_err_tag(metric_scope));
-
-        Self {
-            scope: Box::new(metric_scope),
-            request_id,
-            internal_error: error,
-            error_code,
-        }
-    }
-
-    pub fn code(&self) -> tonic::Code {
-        self.error_code
+        error
     }
 }
 impl Into<Status> for MetricedError {

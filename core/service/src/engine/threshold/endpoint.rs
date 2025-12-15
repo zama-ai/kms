@@ -186,12 +186,7 @@ impl_endpoint! {
         #[tracing::instrument(skip(self, request))]
         async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_CRS_GEN_REQUEST);
-            self.crs_generator.crs_gen(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_CRS_GEN_REQUEST, tag);
-            })
-
+            self.crs_generator.crs_gen(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -200,13 +195,7 @@ impl_endpoint! {
             request: Request<RequestId>,
         ) -> Result<Response<CrsGenResult>, Status> {
             METRICS.increment_request_counter(OP_CRS_GEN_RESULT);
-            self.crs_generator.get_result(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_CRS_GEN_RESULT, tag);
-            })
-
-
+            self.crs_generator.get_result(request).await.map_err(|e| e.into())
         }
 
         #[cfg(feature = "insecure")]
@@ -241,12 +230,7 @@ impl_endpoint! {
         #[tracing::instrument(skip(self, request))]
         async fn insecure_crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_REQUEST);
-            self.insecure_crs_generator.insecure_crs_gen(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_REQUEST, tag);
-            })
-
+            self.insecure_crs_generator.insecure_crs_gen(request).await.map_err(|e| e.into())
         }
 
         #[cfg(feature = "insecure")]
@@ -256,13 +240,7 @@ impl_endpoint! {
             request: Request<RequestId>,
         ) -> Result<Response<CrsGenResult>, Status> {
             METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_RESULT);
-            self.insecure_crs_generator.get_result(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_RESULT, tag);
-            })
-
-
+            self.insecure_crs_generator.get_result(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]

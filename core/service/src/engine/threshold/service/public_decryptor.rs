@@ -593,20 +593,29 @@ impl<
                         format!("Failed join inner decryption threads on {req_id} with JoinError: {e:?}")
                     }
                 };
+                // Something went wrong during decryption so ensure the metrics are updated and this is logged
                 let mut guarded_meta_store = meta_store.write().await;
-                guarded_meta_store
+                MetricedError::error_handler(
+                    OP_PUBLIC_DECRYPT_INNER,
+                    Some(req_id),
+                    anyhow::anyhow!(err_msg.clone()),
+                );
+                // Error cannot be returned so we ignore it and just log it
+                let _ = guarded_meta_store
                     .update(&req_id, Err(err_msg.clone()))
-                    .map_err(|e| {
+                    .inspect_err(|e| {
                         // Update error counter for meta-store update failure
                         metrics::METRICS.increment_error_counter(
-                            OP_PUBLIC_DECRYPT_INNER, // TODO should we use OP_PUBLIC_DECRYPT_REQUEST here? Or do we want to trace depending on when in decryption the error happens?
+                            OP_PUBLIC_DECRYPT_INNER,
                             ERR_WITH_META_STORAGE,
                         );
-                        format!("Failed to update meta with decryption error :{e}")
-                    })?;
+                        // Log the error as well
+                        tracing::error!("Failed to update meta store on request ID {req_id} with decryption error: {e}")
+                    });
                 // exit mgmt task early in case of error
-                return Err(err_msg);
+                return;
             }
+            // All the inner decrypts succeeded ok...
 
             // Prepare success data outside of lock
             let pts: Vec<_> = decs
@@ -641,17 +650,29 @@ impl<
                 );
                     // Update meta-store with the failure so clients are unblocked
                     let mut guarded_meta_store = meta_store.write().await;
-                    guarded_meta_store
-                        .update(&req_id, Err(msg.clone()))
-                        .map_err(|e| {
-                            // Update error counter for meta-store update failure
-                            metrics::METRICS.increment_error_counter(
-                                OP_PUBLIC_DECRYPT_INNER,
-                                ERR_WITH_META_STORAGE,
-                            );
-                            format!("Failed to update meta with external signature error: {e}")
-                        })?;
-                    return Err(msg);
+                    MetricedError::error_handler(
+                        OP_PUBLIC_DECRYPT_INNER,
+                        Some(req_id),
+                        anyhow::anyhow!(msg.clone()),
+                    );
+                    // Error cannot be returned so we ignore it and just log it
+                    let _ = guarded_meta_store
+                    .update(&req_id, Err(msg.clone()))
+                    .inspect_err(|e| {
+                        // Update error counter for meta-store update failure
+                        metrics::METRICS.increment_error_counter(
+                            OP_PUBLIC_DECRYPT_INNER,
+                            ERR_WITH_META_STORAGE,
+                        );
+                        // Log the error as well
+                        tracing::error!("Failed to update meta store on request ID {req_id} with external signature with error: {e}")
+                    });
+                    MetricedError::error_handler(
+                        OP_PUBLIC_DECRYPT_INNER,
+                        Some(req_id),
+                        anyhow::anyhow!(msg.clone()),
+                    );
+                    return;
                 }
             };
 
@@ -663,16 +684,16 @@ impl<
                 let lock_start = std::time::Instant::now();
                 let mut guarded_meta_store = meta_store.write().await;
                 let lock_acquired_time = lock_start.elapsed();
-                guarded_meta_store
+                let _ = guarded_meta_store
                     .update(&req_id, success_result)
-                    .map_err(|e| {
+                    .inspect_err(|e| {
                          // Update error counter for meta-store update failure
                             metrics::METRICS.increment_error_counter(
                                 OP_PUBLIC_DECRYPT_INNER,
                                 ERR_WITH_META_STORAGE,
                             );
-                            format!("Failed to update meta store with the sucessfull decryption result: {e}")
-                        })?;
+                            tracing::error!("Failed to update meta store on request ID {req_id} with successfull result: {e}")
+                        });
                 let total_lock_time = lock_start.elapsed();
                 (lock_acquired_time, total_lock_time)
             };
@@ -681,24 +702,13 @@ impl<
                 "MetaStore SUCCESS update - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
                 req_id, key_id, my_role, pts_len, lock_acquired_time, total_lock_time
             );
-            Ok(())
         };
         // Increment the error counter if ever the task fails
         self.tracker.spawn(async move {
             // Ignore the result since this is a background thread.
             let _ = dec_sig_future(permit)
                 .instrument(tracing::Span::current())
-                .await
-                .map_err(|e| {
-                    // The `MetricedError` constructor ensures logging and metrics updates
-                    // Note that we also process the error here to increment the error counter
-                    MetricedError::new(
-                        OP_PUBLIC_DECRYPT_INNER,
-                        Some(req_id),
-                        anyhow::anyhow!("Decryption thread results in error: {e}"),
-                        tonic::Code::Internal,
-                    )
-                });
+                .await;
         });
 
         Ok(Response::new(Empty {}))

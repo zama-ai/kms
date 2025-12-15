@@ -26,8 +26,10 @@ pub const OP_USER_DECRYPT_INNER: &str = "user_decrypt_inner";
 
 // CRS Operations
 pub const OP_CRS_GEN_REQUEST: &str = "crs_gen_request";
+pub const OP_CRS_GEN_INNER: &str = "crs_gen_inner";
 pub const OP_CRS_GEN_RESULT: &str = "crs_gen_result";
 pub const OP_INSECURE_CRS_GEN_REQUEST: &str = "insecure_crs_gen_request";
+pub const OP_INSECURE_CRS_GEN_INNER: &str = "insecure_crs_gen_inner";
 pub const OP_INSECURE_CRS_GEN_RESULT: &str = "insecure_crs_gen_result";
 
 // PRSS init
@@ -53,6 +55,7 @@ pub const OP_FETCH_PK: &str = "fetch_pk";
 pub const TAG_OPERATION: &str = "operation";
 pub const TAG_ERROR: &str = "error";
 pub const TAG_KEY_ID: &str = "key_id";
+pub const TAG_CRS_ID: &str = "crs_id";
 pub const TAG_CONTEXT_ID: &str = "context_id";
 pub const TAG_EPOCH_ID: &str = "epoch_id";
 pub const TAG_ALGORITHM: &str = "algorithm";
@@ -74,8 +77,10 @@ pub const ERR_WITH_META_STORAGE: &str = "meta_storage_error";
 pub const ERR_INVALID_REQUEST: &str = "invalid_request";
 // Specific operation errors
 pub const ERR_PUBLIC_DECRYPTION_FAILED: &str = "public_decryption_failed";
+pub const ERR_PUBLIC_DECRYPTION_INNER_FAILED: &str = "public_decryption_inner_failed";
 pub const ERR_PUBLIC_DECRYPTION_RESULT_FAILED: &str = "public_decryption_result_failed";
 pub const ERR_USER_DECRYPTION_FAILED: &str = "user_decryption_failed";
+pub const ERR_USER_DECRYPTION_INNER_FAILED: &str = "user_decryption_inner_failed";
 pub const ERR_USER_DECRYPTION_RESULT_FAILED: &str = "user_decryption_result_failed";
 pub const ERR_USER_PREPROC_FAILED: &str = "preproc_failed";
 pub const ERR_USER_PREPROC_RESULT_FAILED: &str = "preproc_result_failed";
@@ -84,8 +89,10 @@ pub const ERR_KEYGEN_RESULT_FAILED: &str = "keygen_result_failed";
 pub const ERR_INSECURE_KEYGEN_FAILED: &str = "insecure_keygen_failed";
 pub const ERR_INSECURE_KEYGEN_RESULT_FAILED: &str = "insecure_keygen_result_failed";
 pub const ERR_CRS_GEN_FAILED: &str = "crs_gen_failed";
+pub const ERR_CRS_GEN_INNER_FAILED: &str = "crs_gen_inner_failed";
 pub const ERR_CRS_GEN_RESULT_FAILED: &str = "crs_gen_result_failed";
 pub const ERR_INSECURE_CRS_GEN_FAILED: &str = "insecure_crs_gen_failed";
+pub const ERR_INSECURE_CRS_GEN_INNER_FAILED: &str = "insecure_crs_gen_inner_failed";
 pub const ERR_INSECURE_CRS_GEN_RESULT_FAILED: &str = "insecure_crs_gen_result_failed";
 
 // gRPC errors
@@ -124,18 +131,20 @@ pub fn map_tonic_code_to_metric_err_tag(code: tonic::Code) -> &'static str {
 pub fn map_scope_to_metric_err_tag(scope: &'static str) -> &'static str {
     match scope {
         OP_PUBLIC_DECRYPT_REQUEST => ERR_PUBLIC_DECRYPTION_FAILED,
-        OP_PUBLIC_DECRYPT_INNER => ERR_PUBLIC_DECRYPTION_FAILED,
+        OP_PUBLIC_DECRYPT_INNER => ERR_PUBLIC_DECRYPTION_INNER_FAILED,
         OP_PUBLIC_DECRYPT_RESULT => ERR_PUBLIC_DECRYPTION_RESULT_FAILED,
         OP_USER_DECRYPT_REQUEST => ERR_USER_DECRYPTION_FAILED,
-        OP_USER_DECRYPT_INNER => ERR_USER_DECRYPTION_FAILED,
+        OP_USER_DECRYPT_INNER => ERR_USER_DECRYPTION_INNER_FAILED,
         OP_USER_DECRYPT_RESULT => ERR_USER_DECRYPTION_RESULT_FAILED,
         OP_KEYGEN_REQUEST => ERR_KEYGEN_FAILED,
         OP_KEYGEN_RESULT => ERR_KEYGEN_RESULT_FAILED,
         OP_INSECURE_KEYGEN_REQUEST => ERR_INSECURE_KEYGEN_FAILED,
         OP_INSECURE_KEYGEN_RESULT => ERR_INSECURE_KEYGEN_RESULT_FAILED,
         OP_CRS_GEN_REQUEST => ERR_CRS_GEN_FAILED,
+        OP_CRS_GEN_INNER => ERR_CRS_GEN_INNER_FAILED,
         OP_CRS_GEN_RESULT => ERR_CRS_GEN_RESULT_FAILED,
         OP_INSECURE_CRS_GEN_REQUEST => ERR_INSECURE_CRS_GEN_FAILED,
+        OP_INSECURE_CRS_GEN_INNER => ERR_INSECURE_CRS_GEN_INNER_FAILED,
         OP_INSECURE_CRS_GEN_RESULT => ERR_INSECURE_CRS_GEN_RESULT_FAILED,
         _ => ERR_OTHER,
     }

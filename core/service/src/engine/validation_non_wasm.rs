@@ -549,7 +549,7 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
 
 pub(crate) fn validate_crs_gen_request(
     req: CrsGenRequest,
-) -> Result<(RequestId, DKGParams, Eip712Domain, Option<ContextId>), BoxedStatus> {
+) -> Result<(RequestId, ContextId, DKGParams, Eip712Domain), BoxedStatus> {
     let req_id =
         parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
     let params = retrieve_parameters(Some(req.params))?;
@@ -563,8 +563,8 @@ pub(crate) fn validate_crs_gen_request(
 
     // context_id is not used at the moment, but we validate it if present
     let context_id = match &req.context_id {
-        Some(ctx) => Some(parse_proto_context_id(ctx, RequestIdParsingErr::Context)?),
-        None => None,
+        Some(ctx) => parse_proto_context_id(ctx, RequestIdParsingErr::Context)?,
+        None => *DEFAULT_MPC_CONTEXT,
     };
 
     let eip712_domain = ok_or_error_helper(
@@ -575,7 +575,7 @@ pub(crate) fn validate_crs_gen_request(
         tonic::Code::InvalidArgument,
     )?;
 
-    Ok((req_id, params, eip712_domain, context_id))
+    Ok((req_id, context_id, params, eip712_domain))
 }
 
 /// The max_num_bits should be a power of 2 between 1 and 2048 (inclusive)

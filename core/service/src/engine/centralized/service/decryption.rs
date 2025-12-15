@@ -26,7 +26,9 @@ use crate::engine::validation::{
     validate_user_decrypt_req, RequestIdParsingErr, DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
 };
 use crate::ok_or_tonic_abort;
-use crate::util::meta_store::{handle_res_mapping, handle_res_metric_mapping};
+use crate::util::meta_store::{
+    add_req_to_meta_store, handle_res_mapping, handle_res_metric_mapping,
+};
 use crate::vault::storage::Storage;
 
 /// Implementation of the user_decrypt endpoint
@@ -344,34 +346,12 @@ pub async fn public_decrypt_impl<
 
     // if the request already exists, then return the AlreadyExists error
     // otherwise attempt to insert it to the meta store
-    {
-        // TOdo make into helper
-        let mut guarded_meta_store = service.pub_dec_meta_store.write().await;
-        if guarded_meta_store.exists(&request_id) {
-            metrics::METRICS
-                .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_WITH_META_STORAGE);
-            return Err(MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                Some(request_id.clone()),
-                anyhow::anyhow!(
-                    "Public decryption request with ID {} already exists",
-                    request_id
-                ),
-                tonic::Code::AlreadyExists,
-            ));
-        }
-
-        guarded_meta_store.insert(&request_id).map_err(|e| {
-            metrics::METRICS
-                .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_WITH_META_STORAGE);
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                Some(request_id),
-                e,
-                tonic::Code::Aborted,
-            )
-        })?;
-    }
+    add_req_to_meta_store(
+        &mut service.pub_dec_meta_store.write().await,
+        &request_id,
+        OP_PUBLIC_DECRYPT_REQUEST,
+    )
+    .await?;
 
     let meta_store = Arc::clone(&service.pub_dec_meta_store);
     let crypto_storage = service.crypto_storage.clone();
@@ -460,6 +440,10 @@ pub async fn public_decrypt_impl<
                 }
                 Err(e) => {
                     let mut guarded_meta_store = meta_store.write().await;
+                    METRICS.increment_error_counter(
+                        OP_PUBLIC_DECRYPT_REQUEST,
+                        ERR_PUBLIC_DECRYPTION_FAILED,
+                    );
                     return guarded_meta_store.update(
                         &request_id,
                         Err(format!("Error collecting decrypt result: {e:?}")),
