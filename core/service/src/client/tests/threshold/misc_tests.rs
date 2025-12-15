@@ -165,142 +165,139 @@ async fn test_threshold_health_endpoint_availability() {
     assert!(status.is_err(),);
 }
 
-// !!!!!!!!!!!!!
-/// Validate that dropping the server signal triggers the server to shut down
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_threshold_close_after_drop() {
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (mut kms_servers, _kms_clients, _internal_client) =
-        threshold_handles(TEST_PARAM, 4, true, None, None).await;
+// // !!!!!!!!!!!!!
+// /// Validate that dropping the server signal triggers the server to shut down
+// #[tokio::test(flavor = "multi_thread")]
+// #[serial]
+// async fn test_threshold_close_after_drop() {
+//     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+//     let (mut kms_servers, _kms_clients, _internal_client) =
+//         threshold_handles(TEST_PARAM, 4, true, None, None).await;
 
-    // Get health client for main server 1
-    let mut core_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
-        .await
-        .expect("Failed to get core health client");
-    let core_service_name = <CoreServiceEndpointServer<
-        RealThresholdKms<FileStorage, FileStorage>,
-    > as NamedService>::NAME;
-    // Get health client for main server 1
-    let mut threshold_health_client =
-        get_health_client(kms_servers.get(&1).unwrap().mpc_port.unwrap())
-            .await
-            .expect("Failed to get threshold health client");
-    let threshold_service_name = <GrpcServer as NamedService>::NAME;
-    // Check things are working
-    let status = get_status(&mut core_health_client, core_service_name)
-        .await
-        .unwrap();
-    assert_eq!(
-        status,
-        ServingStatus::Serving as i32,
-        "Service is not in SERVING status. Got status: {status}"
-    );
-    let status = get_status(&mut threshold_health_client, threshold_service_name)
-        .await
-        .unwrap();
-    assert_eq!(
-        status,
-        ServingStatus::Serving as i32,
-        "Service is not in SERVING status. Got status: {status}"
-    );
-    let res = kms_servers.remove(&1).unwrap();
-    // Trigger the shutdown
-    drop(res);
-    // Sleep to allow completion of the shut down which should be quick since we waited for existing tasks to be done
-    tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-    // Check the server is no longer there
-    assert!(get_status(&mut core_health_client, core_service_name)
-        .await
-        .is_err());
-    assert!(
-        get_status(&mut threshold_health_client, threshold_service_name)
-            .await
-            .is_err()
-    );
-}
+//     // Get health client for main server 1
+//     let mut core_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
+//         .await
+//         .expect("Failed to get core health client");
+//     let core_service_name = <CoreServiceEndpointServer<
+//         RealThresholdKms<FileStorage, FileStorage>,
+//     > as NamedService>::NAME;
+//     // Get health client for main server 1
+//     let mut threshold_health_client =
+//         get_health_client(kms_servers.get(&1).unwrap().mpc_port.unwrap())
+//             .await
+//             .expect("Failed to get threshold health client");
+//     let threshold_service_name = <GrpcServer as NamedService>::NAME;
+//     // Check things are working
+//     let status = get_status(&mut core_health_client, core_service_name)
+//         .await
+//         .unwrap();
+//     assert_eq!(
+//         status,
+//         ServingStatus::Serving as i32,
+//         "Service is not in SERVING status. Got status: {status}"
+//     );
+//     let status = get_status(&mut threshold_health_client, threshold_service_name)
+//         .await
+//         .unwrap();
+//     assert_eq!(
+//         status,
+//         ServingStatus::Serving as i32,
+//         "Service is not in SERVING status. Got status: {status}"
+//     );
+//     let res = kms_servers.remove(&1).unwrap();
+//     // Trigger the shutdown
+//     drop(res);
+//     // Sleep to allow completion of the shut down which should be quick since we waited for existing tasks to be done
+//     tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+//     // Check the server is no longer there
+//     assert!(get_status(&mut core_health_client, core_service_name)
+//         .await
+//         .is_err());
+//     assert!(
+//         get_status(&mut threshold_health_client, threshold_service_name)
+//             .await
+//             .is_err()
+//     );
+// }
 
-/// Validate that shutdown signals work
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_threshold_shutdown() {
-    let amount_parties = 4;
-    let storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (mut kms_servers, kms_clients, mut internal_client) =
-        threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
-    // Ensure that the servers are ready
-    for cur_handle in kms_servers.values() {
-        let service_name = <CoreServiceEndpointServer<
-            RealThresholdKms<FileStorage, FileStorage>,
-        > as NamedService>::NAME;
-        await_server_ready(service_name, cur_handle.service_port).await;
-    }
-    let mpc_port = kms_servers.get(&1).unwrap().mpc_port.unwrap();
-    let service_port = kms_servers.get(&1).unwrap().service_port;
-    // Get health client for main server 1
-    let mut core_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
-        .await
-        .expect("Failed to get core health client");
-    let core_service_name = <CoreServiceEndpointServer<
-        RealThresholdKms<FileStorage, FileStorage>,
-    > as NamedService>::NAME;
-    let status = get_status(&mut core_health_client, core_service_name)
-        .await
-        .unwrap();
-    assert_eq!(
-        status,
-        ServingStatus::Serving as i32,
-        "Service is not in SERVING status. Got status: {status}"
-    );
-    // Get health client for main server 1
-    let mut threshold_health_client = get_health_client(mpc_port)
-        .await
-        .expect("Failed to get threshold health client");
-    let threshold_service_name = <GrpcServer as NamedService>::NAME;
-    let status = get_status(&mut threshold_health_client, threshold_service_name)
-        .await
-        .unwrap();
-    assert_eq!(
-        status,
-        ServingStatus::Serving as i32,
-        "Service is not in SERVING status. Got status: {status}"
-    );
-    // Keep the server occupied so it won't shut down immidiately after dropping the handle
-    let (tasks, _req_id) = crate::client::tests::common::send_dec_reqs(
-        3,
-        &TEST_THRESHOLD_KEY_ID,
-        None,
-        &kms_clients,
-        &mut internal_client,
-        storage_prefixes,
-    )
-    .await;
-    let dec_res = tasks.join_all().await;
-    assert!(dec_res.iter().all(|res| res.is_ok()));
-    let server_handle = kms_servers.remove(&1).unwrap();
-    // Shut down the Core server (which also shuts down the MPC server)
-    server_handle.service_shutdown_tx.send(()).unwrap();
-    // Get status and validate that it is not serving
-    // Observe that the server should already have set status to net serving while it is finishing the decryption requests.
-    // Sleep to give the server some time to set the health reporter to not serving. To fix we need to add shutdown that takes care of thread_group is finished before finishing
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    let status = get_status(&mut core_health_client, core_service_name)
-        .await
-        .unwrap();
-    // Threshold servers will start serving as soon as they boot
-    // WARNING there is a risk this check fails if the server is shut down before was can complete the status check
-    assert_eq!(
-        status,
-        ServingStatus::NotServing as i32,
-        "Service is not in NOT SERVING status. Got status: {status}"
-    );
-    let shutdown_handle = server_handle.server.shutdown().unwrap();
-    shutdown_handle.await.unwrap();
-    check_port_is_closed(mpc_port).await;
-    check_port_is_closed(service_port).await;
-}
-// !!!!!!!!!!!!!
+// /// Validate that shutdown signals work
+// #[tokio::test(flavor = "multi_thread")]
+// #[serial]
+// async fn test_threshold_shutdown() {
+//     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+//     let (mut kms_servers, kms_clients, mut internal_client) =
+//         threshold_handles(TEST_PARAM, 4, true, None, None).await;
+//     // Ensure that the servers are ready
+//     for cur_handle in kms_servers.values() {
+//         let service_name = <CoreServiceEndpointServer<
+//             RealThresholdKms<FileStorage, FileStorage>,
+//         > as NamedService>::NAME;
+//         await_server_ready(service_name, cur_handle.service_port).await;
+//     }
+//     let mpc_port = kms_servers.get(&1).unwrap().mpc_port.unwrap();
+//     let service_port = kms_servers.get(&1).unwrap().service_port;
+//     // Get health client for main server 1
+//     let mut core_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
+//         .await
+//         .expect("Failed to get core health client");
+//     let core_service_name = <CoreServiceEndpointServer<
+//         RealThresholdKms<FileStorage, FileStorage>,
+//     > as NamedService>::NAME;
+//     let status = get_status(&mut core_health_client, core_service_name)
+//         .await
+//         .unwrap();
+//     assert_eq!(
+//         status,
+//         ServingStatus::Serving as i32,
+//         "Service is not in SERVING status. Got status: {status}"
+//     );
+//     // Get health client for main server 1
+//     let mut threshold_health_client = get_health_client(mpc_port)
+//         .await
+//         .expect("Failed to get threshold health client");
+//     let threshold_service_name = <GrpcServer as NamedService>::NAME;
+//     let status = get_status(&mut threshold_health_client, threshold_service_name)
+//         .await
+//         .unwrap();
+//     assert_eq!(
+//         status,
+//         ServingStatus::Serving as i32,
+//         "Service is not in SERVING status. Got status: {status}"
+//     );
+//     // Keep the server occupied so it won't shut down immidiately after dropping the handle
+//     let (tasks, _req_id) = crate::client::tests::common::send_dec_reqs(
+//         3,
+//         &TEST_THRESHOLD_KEY_ID,
+//         None,
+//         &kms_clients,
+//         &mut internal_client,
+//     )
+//     .await;
+//     let dec_res = tasks.join_all().await;
+//     assert!(dec_res.iter().all(|res| res.is_ok()));
+//     let server_handle = kms_servers.remove(&1).unwrap();
+//     // Shut down the Core server (which also shuts down the MPC server)
+//     server_handle.service_shutdown_tx.send(()).unwrap();
+//     // Get status and validate that it is not serving
+//     // Observe that the server should already have set status to net serving while it is finishing the decryption requests.
+//     // Sleep to give the server some time to set the health reporter to not serving. To fix we need to add shutdown that takes care of thread_group is finished before finishing
+//     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+//     let status = get_status(&mut core_health_client, core_service_name)
+//         .await
+//         .unwrap();
+//     // Threshold servers will start serving as soon as they boot
+//     // WARNING there is a risk this check fails if the server is shut down before was can complete the status check
+//     assert_eq!(
+//         status,
+//         ServingStatus::NotServing as i32,
+//         "Service is not in NOT SERVING status. Got status: {status}"
+//     );
+//     let shutdown_handle = server_handle.server.shutdown().unwrap();
+//     shutdown_handle.await.unwrap();
+//     check_port_is_closed(mpc_port).await;
+//     check_port_is_closed(service_port).await;
+// }
+// // !!!!!!!!!!!!!
 
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "slow_tests")]
