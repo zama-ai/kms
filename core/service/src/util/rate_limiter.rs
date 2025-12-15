@@ -110,6 +110,10 @@ impl RateLimiter {
         Self { config, bucket }
     }
 
+    pub fn tokens_used(&self) -> u64 {
+        (self.config.bucket_size - self.bucket.available_permits()) as u64
+    }
+
     // NOTE: unfortunately macro easily cannot add prefix/suffix to identifiers
     // without using nightly or introducing extra dependencies,
     // so we we need to repeat XXX in (start_XXX, XXX).

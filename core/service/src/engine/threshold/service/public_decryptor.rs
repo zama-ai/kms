@@ -685,7 +685,6 @@ impl<
                 );
             }
         });
-
         Ok(Response::new(Empty {}))
     }
 
