@@ -6,27 +6,9 @@ use crate::engine::threshold::traits::{
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::traits::{BackupOperator, ContextManager};
-use kms_grpc::kms::v1::{
-    CrsGenRequest, CrsGenResult, DestroyMpcContextRequest, Empty, HealthStatus, InitRequest,
-    InitiateResharingRequest, InitiateResharingResponse, KeyGenPreprocRequest, KeyGenPreprocResult,
-    KeyGenRequest, KeyGenResult, KeyMaterialAvailabilityResponse, NewMpcContextRequest, NodeType,
-    PeersFromContext, PublicDecryptionRequest, PublicDecryptionResponse, RequestId,
-    ResharingResultResponse, UserDecryptionRequest, UserDecryptionResponse,
-};
-use kms_grpc::kms::v1::{HealthStatusResponse, PeerHealth};
+use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
-use observability::{
-    metrics::METRICS,
-    metrics_names::{
-        map_tonic_code_to_metric_err_tag, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
-        OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_DESTROY_CUSTODIAN_CONTEXT,
-        OP_DESTROY_MPC_CONTEXT, OP_FETCH_PK, OP_GET_INITIATE_RESHARING_RESULT, OP_INIT,
-        OP_INITIATE_RESHARING, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT,
-        OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_MPC_CONTEXT,
-        OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_RESTORE_FROM_BACKUP,
-        OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
-    },
-};
+use observability::{metrics::METRICS, metrics_names::*};
 use threshold_fhe::networking::health_check::HealthCheckStatus;
 use tonic::{Request, Response, Status};
 
@@ -67,15 +49,15 @@ macro_rules! impl_endpoint {
 impl_endpoint! {
     // See the proto file for the documentation of each method.
     impl CoreServiceEndpoint {
-        async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
-            METRICS.increment_request_counter(OP_INIT);
-            self.initiator.init(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_INIT, tag);
-            })
+        //async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+        //    METRICS.increment_request_counter(OP_INIT);
+        //    self.initiator.init(request).await.inspect_err(|err| {
+        //        let tag = map_tonic_code_to_metric_err_tag(err.code());
+        //        let _ = METRICS
+        //            .increment_error_counter(OP_INIT, tag);
+        //    })
 
-        }
+        //}
 
         #[tracing::instrument(skip(self, request))]
         async fn key_gen_preproc(
@@ -271,30 +253,51 @@ impl_endpoint! {
 
         }
 
-        #[tracing::instrument(skip(self, request))]
-        async fn initiate_resharing(
+        // TODO: Should this be called "new_mpc_epoch" instead of
+        // initiate_resharing ?
+        // Do we then also wnat a "destroy_mpc_epoch" endpoint, to let KMS core
+        // know it's time to delete the shares of the sks?
+        #[tracing::instrument(skip_all)]
+        async fn new_mpc_epoch(
             &self,
-            request: Request<InitiateResharingRequest>,
-        ) -> Result<Response<InitiateResharingResponse>, Status> {
-            METRICS.increment_request_counter(OP_INITIATE_RESHARING);
-            self.resharer.initiate_resharing(request).await.inspect_err(|err| {
+            request: Request<NewMpcEpochRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            //TODO: First thing to do in resharing is to
+            // do the PRSS init (which also means, we want to deprecatet the init endpoint)
+            let inner = request.into_inner();
+            METRICS.increment_request_counter(OP_NEW_EPOCH);
+            self.initiator.init(Request::new(inner.clone())).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_err_tag(err.code());
                 let _ = METRICS
-                    .increment_error_counter(OP_INITIATE_RESHARING, tag);
+                    .increment_error_counter(OP_NEW_EPOCH, tag);
+            })?;
+            self.resharer.initiate_resharing(Request::new(inner.clone())).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_err_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_NEW_EPOCH, tag);
             })
         }
 
-        #[tracing::instrument(skip(self, request))]
-        async fn get_resharing_result(
+        #[tracing::instrument(skip_all)]
+        async fn get_epoch_result(
             &self,
             request: Request<RequestId>,
-        ) -> Result<Response<ResharingResultResponse>, Status> {
-            METRICS.increment_request_counter(OP_GET_INITIATE_RESHARING_RESULT);
+        ) -> Result<Response<EpochResultResponse>, Status> {
+            METRICS.increment_request_counter(OP_GET_EPOCH_RESULT);
             self.resharer.get_resharing_result(request).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_err_tag(err.code());
                 let _ = METRICS
-                    .increment_error_counter(OP_GET_INITIATE_RESHARING_RESULT, tag);
+                    .increment_error_counter(OP_GET_EPOCH_RESULT, tag);
             })
+        }
+
+        async fn destroy_mpc_epoch(
+            &self,
+            _request: Request<DestroyMpcEpochRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            METRICS.increment_request_counter(OP_DESTROY_EPOCH);
+            // Currently no-op
+            Ok(Response::new(Empty {}))
         }
 
         #[tracing::instrument(skip(self, request))]

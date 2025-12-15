@@ -1,5 +1,5 @@
 use clap::Parser;
-use kms_grpc::kms::v1::{InitRequest, RequestId};
+use kms_grpc::kms::v1::{NewMpcEpochRequest, RequestId};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_lib::consts::DEFAULT_EPOCH_ID;
 use observability::conf::TelemetryConfig;
@@ -45,11 +45,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 request_id: DEFAULT_EPOCH_ID.to_string(),
             };
 
-            let request = InitRequest {
-                request_id: Some(req_id),
+            let request = NewMpcEpochRequest {
+                request_id: Some(req_id.clone()),
+                epoch_id: Some(req_id),
                 context_id: None,
+                previous_context: None,
             };
-            let _ = kms_client.init(request).await.unwrap();
+            let _ = kms_client.new_mpc_epoch(request).await.unwrap();
         }));
     }
 

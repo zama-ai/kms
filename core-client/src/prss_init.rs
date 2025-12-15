@@ -1,4 +1,4 @@
-use kms_grpc::kms::v1::InitRequest;
+use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::{identifiers::EpochId, ContextId};
 use std::collections::HashMap;
@@ -13,11 +13,13 @@ pub(crate) async fn do_prss_init(
     let mut join_set = tokio::task::JoinSet::new();
     for (_party_id, client) in core_endpoints.iter() {
         let mut client = client.clone();
-        let request = InitRequest {
+        let request = NewMpcEpochRequest {
             context_id: Some((*context_id).into()),
             request_id: Some((*epoch_id).into()),
+            epoch_id: Some((*epoch_id).into()),
+            previous_context: None,
         };
-        join_set.spawn(async move { client.init(request).await });
+        join_set.spawn(async move { client.new_mpc_epoch(request).await });
     }
 
     let results = join_set.join_all().await;

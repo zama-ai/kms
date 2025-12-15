@@ -10,7 +10,7 @@ use crate::{
     vault::storage::{Storage, StorageExt},
 };
 use kms_grpc::{
-    kms::v1::{Empty, InitRequest},
+    kms::v1::{Empty, NewMpcEpochRequest},
     utils::tonic_result::ok_or_tonic_abort,
     ContextId,
 };
@@ -44,7 +44,7 @@ pub async fn init_impl<
     BO: BackupOperator + Sync + Send + 'static,
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
-    request: Request<InitRequest>,
+    request: Request<NewMpcEpochRequest>,
 ) -> Result<Response<Empty>, Status> {
     let inner = request.into_inner();
     let epoch_id = parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::Init)?;
@@ -103,9 +103,11 @@ mod tests {
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_init_sunshine").unwrap();
 
-        let preproc_req = InitRequest {
+        let preproc_req = NewMpcEpochRequest {
             request_id: Some((req_id).into()),
             context_id: None,
+            epoch_id: None,
+            previous_context: None,
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         let _ = result.unwrap();
@@ -119,17 +121,21 @@ mod tests {
         let req_id2 = derive_request_id("test_init_already_exists_2").unwrap();
 
         // First initialization should succeed
-        let preproc_req1 = InitRequest {
+        let preproc_req1 = NewMpcEpochRequest {
             request_id: Some(req_id1.into()),
             context_id: None,
+            epoch_id: None,
+            previous_context: None,
         };
         let result1 = init_impl(&kms, Request::new(preproc_req1)).await;
         let _ = result1.unwrap();
 
         // Second initialization should fail with AlreadyExists
-        let preproc_req2 = InitRequest {
+        let preproc_req2 = NewMpcEpochRequest {
             request_id: Some(req_id2.into()),
             context_id: None,
+            epoch_id: None,
+            previous_context: None,
         };
         let result2 = init_impl(&kms, Request::new(preproc_req2)).await;
         let status = result2.unwrap_err();
@@ -140,9 +146,11 @@ mod tests {
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
-        let preproc_req = InitRequest {
+        let preproc_req = NewMpcEpochRequest {
             request_id: None,
             context_id: None,
+            epoch_id: None,
+            previous_context: None,
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         let status = result.unwrap_err();

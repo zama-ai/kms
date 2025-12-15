@@ -16,6 +16,7 @@ pub use kms_impl::*;
 
 // Module components
 mod crs_generator;
+mod epoch_manager;
 mod initiator;
 mod key_generator;
 mod preprocessor;

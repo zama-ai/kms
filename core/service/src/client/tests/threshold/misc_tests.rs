@@ -18,7 +18,7 @@ cfg_if::cfg_if! {
         use crate::util::rate_limiter::RateLimiterConfig;
     }
 }
-use kms_grpc::kms::v1::InitRequest;
+use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::RequestId;
 use serial_test::serial;
@@ -114,9 +114,11 @@ async fn test_threshold_health_endpoint_availability() {
         req_tasks.spawn(async move {
             let req_id: RequestId = (*DEFAULT_EPOCH_ID).into();
             cur_client
-                .init(tonic::Request::new(InitRequest {
+                .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                     request_id: Some(req_id.into()),
+                    epoch_id: Some(req_id.into()),
                     context_id: None,
+                    previous_context: None,
                 }))
                 .await
         });
