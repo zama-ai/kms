@@ -310,12 +310,18 @@ impl_endpoint! {
 
         }
 
+        // TODO: Should this be called "new_mpc_epoch" instead of
+        // initiate_resharing ?
+        // Do we then also wnat a "destroy_mpc_epoch" endpoint, to let KMS core
+        // know it's time to delete the shares of the sks?
         #[tracing::instrument(skip(self, request))]
         async fn initiate_resharing(
             &self,
             request: Request<InitiateResharingRequest>,
         ) -> Result<Response<InitiateResharingResponse>, Status> {
             METRICS.increment_request_counter(OP_INITIATE_RESHARING);
+            //TODO: First thing to do in resharing is to
+            // do the PRSS init (which also means, we want to deprecatet the init endpoint)
             self.resharer.initiate_resharing(request).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
                 let _ = METRICS
