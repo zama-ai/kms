@@ -63,7 +63,7 @@ use crate::{
     },
     ok_or_tonic_abort,
     util::{
-        meta_store::{handle_res_metric_mapping, MetaStore},
+        meta_store::{add_req_to_meta_store, handle_res_metric_mapping, MetaStore},
         rate_limiter::RateLimiter,
     },
     vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
@@ -274,7 +274,24 @@ impl<
         &self,
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, MetricedError> {
+        // Check for resource exhaustion once all the other checks are ok
+        // because resource exhaustion can be recovered by sending the exact same request
+        // but the errors above cannot be tried again.
+        let permit = self.rate_limiter.start_pub_decrypt().await.map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                None,
+                e,
+                tonic::Code::ResourceExhausted,
+            )
+        })?;
+        let mut timer = metrics::METRICS
+            .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
+            .start();
+
         let inner = Arc::new(request.into_inner());
+        tracing::info!("{}", format_public_request(&inner));
+
         // Check and extract the parameters from the request in a separate thread
         let (ciphertexts, req_id, key_id, context_id, epoch_id, eip712_domain) = {
             let inner_compute = Arc::clone(&inner);
@@ -307,41 +324,18 @@ impl<
                 tonic::Code::Internal,
             )
         })?;
-        let timer = metrics::METRICS
-            .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
-            .tags([
-                (TAG_PARTY_ID, my_role.to_string()),
-                (TAG_KEY_ID, key_id.as_str()),
-                (TAG_CONTEXT_ID, context_id.as_str()),
-                (TAG_EPOCH_ID, epoch_id.as_str()),
-            ])
-            .start();
-        // Do some checks before we start modifying the database
-        {
-            let guarded_meta_store = self.pub_dec_meta_store.read().await;
-            if guarded_meta_store.exists(&req_id) {
-                metrics::METRICS
-                    .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_WITH_META_STORAGE);
-                return Err(MetricedError::new(
-                    OP_PUBLIC_DECRYPT_REQUEST,
-                    Some(req_id),
-                    anyhow!("Duplicate request ID in meta store"),
-                    tonic::Code::AlreadyExists,
-                ));
-            }
-        }
-
-        // Check for resource exhaustion once all the other checks are ok
-        // because resource exhaustion can be recovered by sending the exact same request
-        // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_pub_decrypt().await.map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                Some(req_id),
-                e,
-                tonic::Code::ResourceExhausted,
-            )
-        })?;
+        let dec_mode = self.decryption_mode;
+        let metric_tags = vec![
+            (TAG_PARTY_ID, my_role.to_string()),
+            (TAG_KEY_ID, key_id.as_str()),
+            (TAG_CONTEXT_ID, context_id.as_str()),
+            (TAG_EPOCH_ID, epoch_id.as_str()),
+            (
+                TAG_PUBLIC_DECRYPTION_KIND,
+                dec_mode.as_str_name().to_string(),
+            ),
+        ];
+        timer.tags(metric_tags.clone());
 
         tracing::debug!(
             request_id = ?req_id,
@@ -360,22 +354,15 @@ impl<
             let lock_start = std::time::Instant::now();
             let mut guarded_meta_store = self.pub_dec_meta_store.write().await;
             let lock_acquired_time = lock_start.elapsed();
-            guarded_meta_store.insert(&req_id).map_err(|e| {
-                metrics::METRICS
-                    .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_WITH_META_STORAGE);
-                MetricedError::new(
-                    OP_PUBLIC_DECRYPT_REQUEST,
-                    Some(req_id),
-                    e,
-                    tonic::Code::Aborted,
-                )
-            })?;
+            add_req_to_meta_store(&mut guarded_meta_store, &req_id, OP_PUBLIC_DECRYPT_REQUEST)
+                .await?;
             let total_lock_time = lock_start.elapsed();
             (lock_acquired_time, total_lock_time)
         };
 
+        // TODO do we still want to log these log times?
         // Log after lock is released
-        tracing::info!(
+        tracing::debug!(
             "MetaStore INITIAL insert - req_id={}, key_id={}, context_id={}, epoch_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
             req_id, key_id, context_id, epoch_id, my_role, ciphertexts.len(), lock_acquired_time, total_lock_time
         );
@@ -396,23 +383,12 @@ impl<
         })?;
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
         let mut dec_tasks = Vec::new();
-        let dec_mode = self.decryption_mode;
 
-        let ciphertext_amount = ciphertexts.len();
         // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
         for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
             let inner_timer = metrics::METRICS
                 .time_operation(OP_PUBLIC_DECRYPT_INNER)
-                .tags([
-                    (TAG_PARTY_ID, my_role.to_string()),
-                    (TAG_KEY_ID, key_id.as_str()), // TODO will this be too many labels or does it make sense to keep key, conetxt and epoch
-                    (TAG_CONTEXT_ID, context_id.as_str()),
-                    (TAG_EPOCH_ID, epoch_id.as_str()),
-                    (
-                        TAG_PUBLIC_DECRYPTION_KIND,
-                        dec_mode.as_str_name().to_string(),
-                    ),
-                ])
+                .tags(metric_tags.clone())
                 .start();
             let internal_sid = req_id
                 .derive_session_id_with_counter(ctr as u64)
@@ -425,13 +401,7 @@ impl<
                     )
                 })?;
 
-            tracing::info!(
-            "MetaStore INITIAL insert - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
-            req_id, key_id, my_role, ciphertext_amount, lock_acquired_time, total_lock_time
-        );
-
             let crypto_storage = self.crypto_storage.clone();
-
             // we do not need to hold the handle,
             // the result of the computation is tracked by the pub_dec_meta_store
             let session_maker = self.session_maker.clone();
@@ -600,7 +570,7 @@ impl<
                     .spawn(decrypt_future().instrument(tracing::Span::current())),
             );
         }
-
+        // TODO the code below could be simplified a lot of we don't want to log individual lock time and do so many tiny threads
         let dec_sig_future = move |_permit| async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
@@ -811,6 +781,13 @@ impl<
     }
 }
 
+// We want most of the metadata but not the actual ciphertexts
+fn format_public_request(request: &PublicDecryptionRequest) -> String {
+    format!(
+        "PublicDecryptionRequest {{ request_id: {:?}, key_id: {:?}, context_id: {:?}, epoch_id: {:?}, ciphertext_count: {:?} }}",
+        request.request_id, request.key_id, request.context_id, request.epoch_id, request.ciphertexts.len()
+    )
+}
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
