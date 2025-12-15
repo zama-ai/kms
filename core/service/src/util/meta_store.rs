@@ -305,7 +305,7 @@ pub(crate) async fn update_req_in_meta_store<
 ) -> Result<(), MetricedError> {
     match result {
         Ok(res) => {
-            meta_store.update(&req_id, Ok(res)).map_err(|e| {
+            meta_store.update(req_id, Ok(res)).map_err(|e| {
                 metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
                 MetricedError::new(
                     request_metric,
@@ -320,7 +320,7 @@ pub(crate) async fn update_req_in_meta_store<
         Result::Err(e) => {
             // We cannot do much if updating the storage fails at this point...
             meta_store
-                .update(&req_id, Err(format!("Failed decryption: {:?}", e)))
+                .update(req_id, Err(format!("Failed decryption: {:?}", e)))
                 .map_err(|e| {
                     metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
                     MetricedError::new(

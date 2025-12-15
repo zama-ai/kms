@@ -103,7 +103,7 @@ impl SignedPubDataHandleInternal {
 }
 #[derive(Debug)]
 pub struct MetricedError {
-    scope: Box<&'static str>,
+    scope: &'static str,
     request_id: Option<RequestId>,
     // Currently we do not return the internal error to the client
     #[allow(unused)]
@@ -123,7 +123,7 @@ impl MetricedError {
         METRICS.increment_error_counter(metric_scope, map_tonic_code_to_metric_err_tag(error_code));
 
         Self {
-            scope: Box::new(metric_scope),
+            scope: metric_scope,
             request_id,
             internal_error: error,
             error_code,
@@ -158,15 +158,16 @@ impl MetricedError {
         error
     }
 }
-impl Into<Status> for MetricedError {
-    fn into(self) -> Status {
+
+impl From<MetricedError> for Status {
+    fn from(metriced_error: MetricedError) -> Self {
         let error_string = top_1k_chars(format!(
             "Failed on requestID {} with metric {}",
-            self.request_id.unwrap_or_default(),
-            self.scope,
+            metriced_error.request_id.unwrap_or_default(),
+            metriced_error.scope,
         ));
 
-        tonic::Status::new(self.error_code, error_string)
+        tonic::Status::new(metriced_error.error_code, error_string)
     }
 }
 

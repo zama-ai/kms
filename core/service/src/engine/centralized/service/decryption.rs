@@ -1,3 +1,15 @@
+use crate::cryptography::internal_crypto_types::LegacySerialization;
+use crate::engine::base::compute_external_pt_signature;
+use crate::engine::centralized::central_kms::{
+    async_user_decrypt, central_public_decrypt, CentralizedKms,
+};
+use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
+use crate::engine::validation::{
+    proto_request_id, validate_public_decrypt_req, validate_user_decrypt_req, RequestIdParsingErr,
+    DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
+};
+use crate::util::meta_store::{add_req_to_meta_store, handle_res_metric_mapping};
+use crate::vault::storage::Storage;
 use futures_util::TryFutureExt;
 use kms_grpc::kms::v1::{
     Empty, PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
@@ -8,28 +20,12 @@ use observability::metrics::{self, METRICS};
 use observability::metrics_names::{
     ERR_KEY_NOT_FOUND, ERR_PUBLIC_DECRYPTION_FAILED, ERR_USER_DECRYPTION_FAILED,
     ERR_WITH_META_STORAGE, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
-    OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID,
-    TAG_PARTY_ID,
+    OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID,
+    TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
 };
 use std::sync::Arc;
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response};
 use tracing::Instrument;
-
-use crate::cryptography::internal_crypto_types::LegacySerialization;
-use crate::engine::base::compute_external_pt_signature;
-use crate::engine::centralized::central_kms::{
-    async_user_decrypt, central_public_decrypt, CentralizedKms,
-};
-use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
-use crate::engine::validation::{
-    parse_proto_request_id, proto_request_id, validate_public_decrypt_req,
-    validate_user_decrypt_req, RequestIdParsingErr, DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
-};
-use crate::ok_or_tonic_abort;
-use crate::util::meta_store::{
-    add_req_to_meta_store, handle_res_mapping, handle_res_metric_mapping,
-};
-use crate::vault::storage::Storage;
 
 /// Implementation of the user_decrypt endpoint
 pub async fn user_decrypt_impl<
@@ -83,7 +79,7 @@ pub async fn user_decrypt_impl<
         .map_err(|e| {
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_REQUEST,
-                Some(request_id.clone()),
+                Some(request_id),
                 anyhow::anyhow!(
                 "Failed to refresh FHE keys for key_id {key_id} and request_id {request_id}: {e:?}"
             ),
@@ -114,7 +110,7 @@ pub async fn user_decrypt_impl<
                 .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_WITH_META_STORAGE);
             return Err(MetricedError::new(
                 OP_USER_DECRYPT_REQUEST,
-                Some(request_id.clone()),
+                Some(request_id),
                 anyhow::anyhow!(
                     "Public decryption request with ID {} already exists",
                     request_id
@@ -244,9 +240,16 @@ pub async fn get_user_decryption_result_impl<
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
-) -> Result<Response<UserDecryptionResponse>, Status> {
-    let request_id =
-        parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecResponse)?;
+) -> Result<Response<UserDecryptionResponse>, MetricedError> {
+    let request_id = proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecRequest)
+        .map_err(|e| {
+        MetricedError::new(
+            OP_USER_DECRYPT_RESULT,
+            None,
+            e,
+            tonic::Code::InvalidArgument,
+        )
+    })?;
 
     let status = {
         let guarded_meta_store = service.user_dec_meta_store.read().await;
@@ -254,18 +257,28 @@ pub async fn get_user_decryption_result_impl<
     };
 
     let (payload, external_signature, extra_data) =
-        handle_res_mapping(status, &request_id, "UserDecryption").await?;
+        handle_res_metric_mapping(status, OP_USER_DECRYPT_RESULT, &request_id).await?;
 
     // sign the response
-    let sig_payload_vec = ok_or_tonic_abort(
-        bc2wrap::serialize(&payload),
-        format!("Could not convert payload to bytes {payload:?}"),
-    )?;
+    let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
+        MetricedError::new(
+            OP_USER_DECRYPT_RESULT,
+            Some(request_id),
+            anyhow::anyhow!("Could not serialize user decryption payload: {e}"),
+            tonic::Code::Aborted,
+        )
+    })?;
 
-    let sig = ok_or_tonic_abort(
-        service.sign(&DSEP_USER_DECRYPTION, &sig_payload_vec),
-        format!("Could not sign payload {payload:?}"),
-    )?;
+    let sig = service
+        .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
+        .map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_RESULT,
+                Some(request_id),
+                anyhow::anyhow!("Could not sign user decryption payload: {e}"),
+                tonic::Code::Aborted,
+            )
+        })?;
 
     Ok(Response::new(UserDecryptionResponse {
         signature: sig.sig.to_vec(),
@@ -336,7 +349,7 @@ pub async fn public_decrypt_impl<
         .map_err(|e| {
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_REQUEST,
-                Some(request_id.clone()),
+                Some(request_id),
                 anyhow::anyhow!(
                 "Failed to refresh FHE keys for key_id {key_id} and request_id {request_id}: {e:?}"
             ),
@@ -436,7 +449,7 @@ pub async fn public_decrypt_impl<
                         "⏱️ Core Event Time for decryption computation: {:?}",
                         start.elapsed()
                     );
-                    return res;
+                    res
                 }
                 Err(e) => {
                     let mut guarded_meta_store = meta_store.write().await;
@@ -444,10 +457,10 @@ pub async fn public_decrypt_impl<
                         OP_PUBLIC_DECRYPT_REQUEST,
                         ERR_PUBLIC_DECRYPTION_FAILED,
                     );
-                    return guarded_meta_store.update(
+                    guarded_meta_store.update(
                         &request_id,
                         Err(format!("Error collecting decrypt result: {e:?}")),
-                    );
+                    )
                 }
                 Ok(Err(e)) => {
                     let mut guarded_meta_store = meta_store.write().await;
@@ -455,10 +468,10 @@ pub async fn public_decrypt_impl<
                         OP_PUBLIC_DECRYPT_REQUEST,
                         ERR_PUBLIC_DECRYPTION_FAILED,
                     );
-                    return guarded_meta_store.update(
+                    guarded_meta_store.update(
                         &request_id,
                         Err(format!("Error during decryption computation: {e}")),
-                    );
+                    )
                 }
             }
         }
