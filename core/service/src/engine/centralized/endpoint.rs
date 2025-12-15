@@ -208,10 +208,7 @@ impl<
         request: Request<kms_grpc::kms::v1::CrsGenRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_CRS_GEN_REQUEST);
-        crs_gen_impl(self, request).await.inspect_err(|err| {
-            let tag = map_tonic_code_to_metric_err_tag(err.code());
-            let _ = METRICS.increment_error_counter(OP_CRS_GEN_REQUEST, tag);
-        })
+        crs_gen_impl(self, request).await.map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -220,12 +217,9 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::CrsGenResult>, Status> {
         METRICS.increment_request_counter(OP_CRS_GEN_RESULT);
-        get_crs_gen_result_impl(self, request)
+        get_crs_gen_result_impl(self, request) //todo ADD OP since we also have insecure
             .await
-            .inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_CRS_GEN_RESULT, tag);
-            })
+            .map_err(|e| e.into())
     }
 
     #[cfg(feature = "insecure")]
@@ -236,13 +230,7 @@ impl<
     ) -> Result<Response<Empty>, Status> {
         METRICS
             .increment_request_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_REQUEST);
-        self.crs_gen(request).await.inspect_err(|err| {
-            let tag = map_tonic_code_to_metric_err_tag(err.code());
-            let _ = METRICS.increment_error_counter(
-                observability::metrics_names::OP_INSECURE_CRS_GEN_REQUEST,
-                tag,
-            );
-        })
+        self.crs_gen(request).await
     }
 
     #[cfg(feature = "insecure")]
@@ -252,13 +240,7 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::CrsGenResult>, Status> {
         METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_RESULT);
-        self.get_crs_gen_result(request).await.inspect_err(|err| {
-            let tag = map_tonic_code_to_metric_err_tag(err.code());
-            let _ = METRICS.increment_error_counter(
-                observability::metrics_names::OP_INSECURE_CRS_GEN_RESULT,
-                tag,
-            );
-        })
+        self.get_crs_gen_result(request).await
     }
 
     #[tracing::instrument(skip(self, request))]

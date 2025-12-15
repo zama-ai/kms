@@ -14,7 +14,6 @@ use kms_grpc::{
         self, Empty, TypedCiphertext, TypedSigncryptedCiphertext, UserDecryptionRequest,
         UserDecryptionResponse, UserDecryptionResponsePayload,
     },
-    rpc_types::MetricedError,
     RequestId,
 };
 use observability::{
@@ -63,6 +62,7 @@ use crate::{
         base::{deserialize_to_low_level, BaseKmsStruct, UserDecryptCallValues},
         threshold::{service::session::ImmutableSessionMaker, traits::UserDecryptor},
         traits::BaseKms,
+        utils::MetricedError,
         validation::{
             proto_request_id, validate_user_decrypt_req, RequestIdParsingErr, DSEP_USER_DECRYPTION,
         },

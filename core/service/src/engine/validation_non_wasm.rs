@@ -12,7 +12,6 @@ use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
 use kms_grpc::kms::v1::CrsGenRequest;
-use kms_grpc::rpc_types::ok_or_error_helper;
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::{
     kms::v1::{
@@ -22,7 +21,6 @@ use kms_grpc::{
     rpc_types::optional_protobuf_to_alloy_domain,
 };
 use kms_grpc::{KeyId, RequestId};
-use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use std::collections::{HashMap, HashSet};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::hashing::DomainSep;
@@ -549,7 +547,7 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
 
 pub(crate) fn validate_crs_gen_request(
     req: CrsGenRequest,
-) -> Result<(RequestId, ContextId, DKGParams, Eip712Domain), BoxedStatus> {
+) -> anyhow::Result<(RequestId, ContextId, DKGParams, Eip712Domain)> {
     let req_id =
         parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
     let params = retrieve_parameters(Some(req.params))?;
@@ -567,27 +565,20 @@ pub(crate) fn validate_crs_gen_request(
         None => *DEFAULT_MPC_CONTEXT,
     };
 
-    let eip712_domain = ok_or_error_helper(
-        optional_protobuf_to_alloy_domain(req.domain.as_ref()),
-        Some(&req_id),
-        OP_CRS_GEN_REQUEST,
-        Some("Eip712 domain validation"),
-        tonic::Code::InvalidArgument,
-    )?;
+    let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
     Ok((req_id, context_id, params, eip712_domain))
 }
 
 /// The max_num_bits should be a power of 2 between 1 and 2048 (inclusive)
-fn verify_max_num_bits(max_num_bits: usize) -> Result<(), BoxedStatus> {
+fn verify_max_num_bits(max_num_bits: usize) -> anyhow::Result<()> {
     if max_num_bits > 0 && max_num_bits <= 2048 && usize::is_power_of_two(max_num_bits) {
         Ok(())
     } else {
-        Err(tonic::Status::invalid_argument(format!(
+        Err(anyhow::anyhow!(
             "max_num_bits must be a power of 2 between 1 and 2048, got {}",
             max_num_bits
         ))
-        .into())
     }
 }
 

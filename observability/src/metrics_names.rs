@@ -3,6 +3,7 @@
 //
 // Key Generation Operations
 pub const OP_KEYGEN_REQUEST: &str = "keygen_request";
+pub const OP_KEYGEN_INNER: &str = "keygen_inner";
 pub const OP_KEYGEN_RESULT: &str = "keygen_result";
 pub const OP_INSECURE_KEYGEN_REQUEST: &str = "insecure_keygen_request";
 pub const OP_INSECURE_KEYGEN_RESULT: &str = "insecure_keygen_result";
@@ -85,6 +86,7 @@ pub const ERR_USER_DECRYPTION_RESULT_FAILED: &str = "user_decryption_result_fail
 pub const ERR_USER_PREPROC_FAILED: &str = "preproc_failed";
 pub const ERR_USER_PREPROC_RESULT_FAILED: &str = "preproc_result_failed";
 pub const ERR_KEYGEN_FAILED: &str = "keygen_failed";
+pub const ERR_KEYGEN_INNER_FAILED: &str = "keygen_inner_failed";
 pub const ERR_KEYGEN_RESULT_FAILED: &str = "keygen_result_failed";
 pub const ERR_INSECURE_KEYGEN_FAILED: &str = "insecure_keygen_failed";
 pub const ERR_INSECURE_KEYGEN_RESULT_FAILED: &str = "insecure_keygen_result_failed";
@@ -137,6 +139,7 @@ pub fn map_scope_to_metric_err_tag(scope: &'static str) -> &'static str {
         OP_USER_DECRYPT_INNER => ERR_USER_DECRYPTION_INNER_FAILED,
         OP_USER_DECRYPT_RESULT => ERR_USER_DECRYPTION_RESULT_FAILED,
         OP_KEYGEN_REQUEST => ERR_KEYGEN_FAILED,
+        OP_KEYGEN_INNER => ERR_KEYGEN_INNER_FAILED,
         OP_KEYGEN_RESULT => ERR_KEYGEN_RESULT_FAILED,
         OP_INSECURE_KEYGEN_REQUEST => ERR_INSECURE_KEYGEN_FAILED,
         OP_INSECURE_KEYGEN_RESULT => ERR_INSECURE_KEYGEN_RESULT_FAILED,

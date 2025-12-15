@@ -7,7 +7,6 @@ use anyhow::anyhow;
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
-    rpc_types::MetricedError,
     RequestId,
 };
 use observability::{
@@ -39,6 +38,7 @@ use crate::{
     engine::{
         base::{compute_info_crs, BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS},
         threshold::{service::session::ImmutableSessionMaker, traits::CrsGenerator},
+        utils::MetricedError,
         validation::{proto_request_id, validate_crs_gen_request, RequestIdParsingErr},
     },
     util::{

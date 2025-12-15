@@ -1,5 +1,6 @@
-use kms_grpc::{kms::v1::*, rpc_types::MetricedError};
+use kms_grpc::kms::v1::*;
 use tonic::{Request, Response, Status};
+use crate::engine::utils::MetricedError;
 
 #[tonic::async_trait]
 pub trait Initiator {

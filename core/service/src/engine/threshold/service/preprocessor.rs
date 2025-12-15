@@ -5,7 +5,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
-    rpc_types::{ok_or_error_helper, optional_protobuf_to_alloy_domain},
+    rpc_types::optional_protobuf_to_alloy_domain,
     RequestId,
 };
 use observability::{
@@ -41,6 +41,7 @@ use crate::{
         base::{compute_external_signature_preprocessing, retrieve_parameters, BaseKmsStruct},
         keyset_configuration::preproc_proto_to_keyset_config,
         threshold::{service::session::ImmutableSessionMaker, traits::KeyGenPreprocessor},
+        utils::MetricedError,
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -324,13 +325,14 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             &request.request_id,
             RequestIdParsingErr::PreprocRequest,
         )?;
-        let domain = ok_or_error_helper(
-            optional_protobuf_to_alloy_domain(request.domain.as_ref()),
-            Some(&request_id),
-            OP_KEYGEN_PREPROC_REQUEST,
-            Some("EIP712 domain validation for inner preprocessing"),
-            tonic::Code::InvalidArgument,
-        )?;
+        let domain = optional_protobuf_to_alloy_domain(request.domain.as_ref()).map_err(|e| {
+            MetricedError::new(
+                OP_KEYGEN_PREPROC_REQUEST,
+                Some(request_id),
+                e,
+                tonic::Code::InvalidArgument,
+            )
+        })?;
 
         //Retrieve the DKG parameters
         let dkg_params = retrieve_parameters(Some(request.params))?;

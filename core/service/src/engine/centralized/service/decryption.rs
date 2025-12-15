@@ -4,6 +4,7 @@ use crate::engine::centralized::central_kms::{
     async_user_decrypt, central_public_decrypt, CentralizedKms,
 };
 use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
+use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     proto_request_id, validate_public_decrypt_req, validate_user_decrypt_req, RequestIdParsingErr,
     DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
@@ -15,7 +16,6 @@ use kms_grpc::kms::v1::{
     Empty, PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
     UserDecryptionRequest, UserDecryptionResponse,
 };
-use kms_grpc::rpc_types::MetricedError;
 use observability::metrics::{self, METRICS};
 use observability::metrics_names::{
     ERR_KEY_NOT_FOUND, ERR_PUBLIC_DECRYPTION_FAILED, ERR_USER_DECRYPTION_FAILED,
@@ -141,7 +141,7 @@ pub async fn user_decrypt_impl<
             OP_PUBLIC_DECRYPT_REQUEST,
             Some(request_id),
             anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
-            tonic::Code::Internal,
+            tonic::Code::FailedPrecondition,
         )
     })?;
 
@@ -373,7 +373,7 @@ pub async fn public_decrypt_impl<
             OP_PUBLIC_DECRYPT_REQUEST,
             Some(request_id),
             anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
-            tonic::Code::Internal,
+            tonic::Code::FailedPrecondition,
         )
     })?;
 

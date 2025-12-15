@@ -6,14 +6,15 @@ use itertools::Itertools;
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{self, Empty, KeyDigest, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
-    rpc_types::{ok_or_error_helper, optional_protobuf_to_alloy_domain},
+    rpc_types::optional_protobuf_to_alloy_domain,
     RequestId,
 };
 use observability::{
     metrics,
     metrics_names::{
         ERR_CANCELLED, ERR_KEYGEN_FAILED, OP_DECOMPRESSION_KEYGEN,
-        OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN, OP_KEYGEN, TAG_PARTY_ID,
+        OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN, OP_KEYGEN, OP_KEYGEN_INNER,
+        TAG_PARTY_ID,
     },
 };
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -57,6 +58,7 @@ use crate::{
             service::{session::ImmutableSessionMaker, ThresholdFheKeys},
             traits::KeyGenerator,
         },
+        utils::MetricedError,
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -391,13 +393,15 @@ impl<
         let request_id =
             parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::KeyGenRequest)?;
 
-        let eip712_domain = ok_or_error_helper(
-            optional_protobuf_to_alloy_domain(inner.domain.as_ref()),
-            Some(&request_id),
-            OP_KEYGEN,
-            Some("EIP712 domain validation for inner key generation"),
-            tonic::Code::InvalidArgument,
-        )?;
+        let eip712_domain =
+            optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
+                MetricedError::new(
+                    OP_KEYGEN_INNER,
+                    Some(request_id),
+                    anyhow::anyhow!("EIP712 domain validation for inner key generation: {e}"),
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
 
         let internal_keyset_config =
             InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info.clone())

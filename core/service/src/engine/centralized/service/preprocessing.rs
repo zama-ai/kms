@@ -3,6 +3,7 @@ use crate::{
         base::{compute_external_signature_preprocessing, retrieve_parameters},
         centralized::central_kms::{CentralizedKms, CentralizedPreprocBucket},
         traits::{BackupOperator, ContextManager},
+        utils::MetricedError,
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -12,7 +13,7 @@ use crate::{
 };
 use kms_grpc::{
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
-    rpc_types::{ok_or_error_helper, optional_protobuf_to_alloy_domain},
+    rpc_types::optional_protobuf_to_alloy_domain,
     utils::tonic_result::ok_or_tonic_abort,
 };
 use observability::metrics_names::OP_KEYGEN_PREPROC_REQUEST;
@@ -52,13 +53,14 @@ pub async fn preprocessing_impl<
     let inner = request.into_inner();
     let request_id =
         parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::PreprocRequest)?;
-    let domain = ok_or_error_helper(
-        optional_protobuf_to_alloy_domain(inner.domain.as_ref()),
-        Some(&request_id),
-        OP_KEYGEN_PREPROC_REQUEST,
-        Some("EIP712 domain validation for key preprocessing"),
-        tonic::Code::InvalidArgument,
-    )?;
+    let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
+        MetricedError::new(
+            OP_KEYGEN_PREPROC_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("EIP712 domain validation for key preprocessing: {e}"),
+            tonic::Code::InvalidArgument,
+        )
+    })?;
     // context_id is not used in the centralized KMS, but we validate it if present
     let _context_id = match &inner.context_id {
         Some(ctx) => Some(parse_proto_request_id(ctx, RequestIdParsingErr::Context)?),

@@ -10,7 +10,6 @@ use kms_grpc::{
         self, CiphertextFormat, Empty, PublicDecryptionRequest, PublicDecryptionResponse,
         PublicDecryptionResponsePayload, TypedPlaintext,
     },
-    rpc_types::MetricedError,
     RequestId,
 };
 use observability::{
@@ -56,6 +55,7 @@ use crate::{
         },
         threshold::{service::session::ImmutableSessionMaker, traits::PublicDecryptor},
         traits::BaseKms,
+        utils::MetricedError,
         validation::{
             proto_request_id, validate_public_decrypt_req, RequestIdParsingErr,
             DSEP_PUBLIC_DECRYPTION,

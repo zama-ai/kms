@@ -1,16 +1,22 @@
 use crate::{anyhow_error_and_log, consts::DURATION_WAITING_ON_RESULT_SECONDS, some_or_err};
-use anyhow::anyhow;
 use async_cell::sync::AsyncCell;
-use kms_grpc::{rpc_types::MetricedError, RequestId};
-use observability::{metrics, metrics_names::ERR_WITH_META_STORAGE};
+use kms_grpc::RequestId;
 use std::{
     collections::{HashMap, VecDeque},
-    fmt::{self},
     sync::Arc,
 };
-use tokio::sync::RwLockWriteGuard;
-use tonic::Status;
 use tracing;
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "non-wasm")] {
+        use crate::engine::utils::MetricedError;
+        use anyhow::anyhow;
+        use std::fmt::{self};
+        use observability::{metrics, metrics_names::ERR_WITH_META_STORAGE};
+        use tokio::sync::RwLockWriteGuard;
+        use tonic::Status;
+    }
+}
 
 /// Data structure that stores elements that are being processed and their status (Started, Done, Error).
 /// It holds elements up to a given capacity, and once it is full, it will remove old elements that have status [Done]/[Error], if there are sufficiently many.
@@ -273,6 +279,7 @@ impl<T: Clone> MetaStore<T> {
     }
 }
 
+#[cfg(feature = "non-wasm")]
 pub(crate) async fn add_req_to_meta_store<T: Clone>(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
     req_id: &RequestId,
@@ -294,6 +301,7 @@ pub(crate) async fn add_req_to_meta_store<T: Clone>(
     Ok(())
 }
 
+#[cfg(feature = "non-wasm")]
 pub(crate) async fn update_req_in_meta_store<
     T: Clone,
     E: Into<Box<dyn std::error::Error + Send + Sync>> + fmt::Debug,
@@ -340,6 +348,7 @@ pub(crate) async fn update_req_in_meta_store<
 /// Helper method for retrieving the result of a request from an appropriate meta store
 /// [req_id] is the request ID to retrieve
 /// [request_type] is a free-form string used only for error logging the origin of the failure
+#[cfg(feature = "non-wasm")]
 pub(crate) async fn handle_res_metric_mapping<T: Clone>(
     handle: Option<Arc<AsyncCell<Result<T, String>>>>,
     metric_scope: &'static str,
@@ -347,6 +356,8 @@ pub(crate) async fn handle_res_metric_mapping<T: Clone>(
 ) -> Result<T, MetricedError> {
     match handle {
         None => {
+            use crate::engine::utils::MetricedError;
+
             let msg = format!(
                 "Could not retrieve the result in scope {metric_scope} with request ID {req_id}. It does not exist"
             );
@@ -369,6 +380,8 @@ pub(crate) async fn handle_res_metric_mapping<T: Clone>(
                 match result {
                     Ok(result) => Ok(result),
                     Err(e) => {
+                        use crate::engine::utils::MetricedError;
+
                         let msg = format!(
                                 "Could not retrievethe result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
                             );
@@ -382,6 +395,8 @@ pub(crate) async fn handle_res_metric_mapping<T: Clone>(
                     }
                 }
             } else {
+                use crate::engine::utils::MetricedError;
+
                 let msg = format!(
                     "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
                 );
@@ -401,6 +416,7 @@ pub(crate) async fn handle_res_metric_mapping<T: Clone>(
 /// Helper method for retrieving the result of a request from an appropriate meta store
 /// [req_id] is the request ID to retrieve
 /// [request_type] is a free-form string used only for error logging the origin of the failure
+#[cfg(feature = "non-wasm")]
 pub(crate) async fn handle_res_mapping<T: Clone>(
     handle: Option<Arc<AsyncCell<Result<T, String>>>>,
     req_id: &RequestId,

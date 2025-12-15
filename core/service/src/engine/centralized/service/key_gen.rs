@@ -1,18 +1,3 @@
-use alloy_sol_types::Eip712Domain;
-use anyhow::Result;
-use itertools::Itertools;
-use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
-use kms_grpc::rpc_types::{ok_or_error_helper, optional_protobuf_to_alloy_domain};
-use kms_grpc::RequestId;
-use observability::metrics::METRICS;
-use observability::metrics_names::{ERR_KEYGEN_FAILED, ERR_KEY_EXISTS, OP_KEYGEN};
-use std::sync::Arc;
-use threshold_fhe::execution::keyset_config::KeySetConfig;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use tokio::sync::{OwnedSemaphorePermit, RwLock};
-use tonic::{Request, Response, Status};
-use tracing::Instrument;
-
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{
     compute_info_decompression_keygen, retrieve_parameters, KeyGenMetadata, DSEP_PUBDATA_KEY,
@@ -22,6 +7,7 @@ use crate::engine::centralized::central_kms::{
 };
 use crate::engine::keyset_configuration::InternalKeySetConfig;
 use crate::engine::traits::{BackupOperator, ContextManager};
+use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
 };
@@ -29,6 +15,20 @@ use crate::ok_or_tonic_abort;
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::Storage;
+use alloy_sol_types::Eip712Domain;
+use anyhow::Result;
+use itertools::Itertools;
+use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
+use kms_grpc::rpc_types::optional_protobuf_to_alloy_domain;
+use kms_grpc::RequestId;
+use observability::metrics::METRICS;
+use observability::metrics_names::{ERR_KEYGEN_FAILED, ERR_KEY_EXISTS, OP_KEYGEN};
+use std::sync::Arc;
+use threshold_fhe::execution::keyset_config::KeySetConfig;
+use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use tokio::sync::{OwnedSemaphorePermit, RwLock};
+use tonic::{Request, Response, Status};
+use tracing::Instrument;
 
 /// Implementation of the key_gen endpoint
 pub async fn key_gen_impl<
@@ -67,13 +67,14 @@ pub async fn key_gen_impl<
             )
         })?;
 
-    let eip712_domain = ok_or_error_helper(
-        optional_protobuf_to_alloy_domain(inner.domain.as_ref()),
-        None,
-        OP_KEYGEN,
-        Some("EIP712 domain validation for key generation"),
-        tonic::Code::InvalidArgument,
-    )?;
+    let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
+        MetricedError::new(
+            OP_KEYGEN,
+            Some(req_id),
+            anyhow::anyhow!("EIP712 domain validation for key generation: {e}"),
+            tonic::Code::InvalidArgument,
+        )
+    })?;
 
     // Check for existance of request preprocessing ID
     // also check that the request ID is not used yet

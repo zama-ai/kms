@@ -4318,7 +4318,6 @@ dependencies = [
  "bc2wrap",
  "cfg-if",
  "hex",
- "observability",
  "prost",
  "rand 0.8.5",
  "serde",
