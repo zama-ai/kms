@@ -785,6 +785,19 @@ deploy_threshold_mode() {
     # Replace namespace placeholder with actual namespace
     replace_namespace_in_files "${KMS_CORE_VALUES}" "${KMS_CORE_CLIENT_INIT_VALUES}" "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
 
+    # Generate peersList dynamically based on NUM_PARTIES
+    # Each peer entry needs: id, host, port
+    # Host format: kms-service-threshold-{id}-{namespace}-core-{id}
+    local PEERS_JSON="["
+    for j in $(seq 1 "${NUM_PARTIES}"); do
+        if [[ $j -gt 1 ]]; then
+            PEERS_JSON+=","
+        fi
+        PEERS_JSON+="{\"id\":${j},\"host\":\"kms-service-threshold-${j}-${NAMESPACE}-core-${j}\",\"port\":50001}"
+    done
+    PEERS_JSON+="]"
+    log_info "Generated peersList: ${PEERS_JSON}"
+
     for i in $(seq 1 "${NUM_PARTIES}"); do
         log_info "Deploying KMS Core party ${i}/${NUM_PARTIES}..."
         helm upgrade --install "kms-service-threshold-${i}-${NAMESPACE}" \
@@ -795,9 +808,8 @@ deploy_threshold_mode() {
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --set kmsPeers.id="${i}" \
-            --set kmsCore.publicVault.s3.prefix=PUB-p"${i}" \
-            --set kmsCore.privateVault.s3.prefix=PRIV-p"${i}" \
-            --set kmsCore.backupVault.s3.prefix=BACKUP-p"${i}" \
+            --set kmsPeers.count="${NUM_PARTIES}" \
+            --set-json "kmsCore.thresholdMode.peersList=${PEERS_JSON}" \
             --wait \
             --timeout 10m &
     done
@@ -819,6 +831,7 @@ deploy_threshold_mode() {
         -f "${KMS_CORE_CLIENT_INIT_VALUES}" \
         --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
         --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+        --set-json "kmsCore.thresholdMode.peersList=${PEERS_JSON}" \
         --wait \
         --wait-for-jobs \
         --timeout 20m
@@ -837,6 +850,7 @@ deploy_threshold_mode() {
           -f "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}" \
           --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
           --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+          --set-json "kmsCore.thresholdMode.peersList=${PEERS_JSON}" \
           --wait \
           --wait-for-jobs \
           --timeout 40m
