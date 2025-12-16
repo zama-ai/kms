@@ -47,7 +47,7 @@ start_setup() {
 
     # Wait for setup to complete
     echo "Waiting for KMS setup to complete..."
-    TIMEOUT=600  # 10 minutes timeout
+    TIMEOUT=1200  # 20 minutes timeout (pods need time to pull images and become ready)
     ELAPSED=0
 
     while [ $ELAPSED -lt $TIMEOUT ]; do

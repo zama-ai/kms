@@ -798,6 +798,9 @@ deploy_threshold_mode() {
     PEERS_JSON+="]"
     log_info "Generated peersList: ${PEERS_JSON}"
 
+    # Deploy all parties in parallel WITHOUT --wait flag
+    # In threshold mode, pods need to connect to each other for health checks,
+    # so we must deploy all releases first, then wait for pods to become ready together
     for i in $(seq 1 "${NUM_PARTIES}"); do
         log_info "Deploying KMS Core party ${i}/${NUM_PARTIES}..."
         helm upgrade --install "kms-service-threshold-${i}-${NAMESPACE}" \
@@ -808,18 +811,19 @@ deploy_threshold_mode() {
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --set kmsPeers.id="${i}" \
-            --set kmsPeers.count="${NUM_PARTIES}" \
             --set-json "kmsCore.thresholdMode.peersList=${PEERS_JSON}" \
-            --wait \
             --timeout 10m &
     done
     wait
+    log_info "All Helm releases deployed, waiting for pods to become ready..."
 
-    log_info "Waiting for KMS Core pods to be ready..."
+    # Wait for all pods to become ready together (they need each other for health checks)
+    kubectl wait --for=condition=ready pod -l app=kms-core \
+        -n "${NAMESPACE}" --timeout=15m --kubeconfig "${KUBE_CONFIG}"
+
+    log_info "All KMS Core pods are ready, collecting logs..."
     for i in $(seq 1 "${NUM_PARTIES}"); do
-        kubectl wait --for=condition=ready pod -l app=kms-core \
-            -n "${NAMESPACE}" --timeout=10m --kubeconfig "${KUBE_CONFIG}"
-        kubectl logs kms-service-threshold-${i}-${NAMESPACE}-core-${i} -n ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
+        kubectl logs "kms-service-threshold-${i}-${NAMESPACE}-core-${i}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" || true
     done
 
     # Deploy initialization job
