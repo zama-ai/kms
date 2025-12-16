@@ -54,6 +54,12 @@ kmsCore:
       - id: 4
         host: kms-service-threshold-4-<namespace>-core-4
         port: 50001
+      - id: 5
+        host: kms-service-threshold-5-<namespace>-core-5
+        port: 50001
+      - id: 6
+        host: kms-service-threshold-6-<namespace>-core-6
+        port: 50001
 
 kmsGenKeys:
   enabled: false
