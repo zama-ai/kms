@@ -162,7 +162,7 @@ impl ChoreoRuntime {
 
         let threshold_keygen_result_params = bc2wrap::serialize(&ThresholdKeyGenResultParams {
             session_id,
-            gen_params: gen_params.map_or_else(|| false, |v| v),
+            gen_params: gen_params.unwrap_or(false),
         })?;
 
         let mut join_set = JoinSet::new();
