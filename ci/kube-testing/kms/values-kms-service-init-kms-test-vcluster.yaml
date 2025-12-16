@@ -1,5 +1,10 @@
 kmsInit:
   enabled: true
+  tolerations:
+    - key: karpenter.sh/nodepool
+      effect: NoSchedule
+      operator: Equal
+      value: kms-vcluster-pool
 
 minio:
   enabled: true
@@ -8,10 +13,10 @@ minio:
   password: kms-secret-access-key
 
 kmsCoreClient:
-  enabled: false
+  enabled: true
   nameOverride: kms-core-client
   image:
-    name: ghcr.io/zama-ai/kms/core-client
+    name: hub.zama.org/dev-kms/core-client
     tag:
   num_majority: 2 # 2 when 4 parties and 5 when 13 parties
   num_reconstruct: 3 # 3 when 4 parties and 9 when 13 parties
@@ -29,6 +34,12 @@ kmsCoreClient:
       memory: 24Gi
       cpu: 12
   #=============================================================
+  tolerations:
+    - key: karpenter.sh/nodepool
+      effect: NoSchedule
+      operator: Equal
+      value: kms-vcluster-pool
+
 kubeUtils:
   image:
     name: ghcr.io/zama-ai/security-hub/infra/kube-utils
@@ -43,17 +54,22 @@ kmsCore:
       enabled: true
     peersList:
       - id: 1
-        host: kms-service-threshold-1-<namespace>-core-1
+        host: kms-service-threshold-1-kms-test-core-1
         port: 50001
       - id: 2
-        host: kms-service-threshold-2-<namespace>-core-2
+        host: kms-service-threshold-2-kms-test-core-2
         port: 50001
       - id: 3
-        host: kms-service-threshold-3-<namespace>-core-3
+        host: kms-service-threshold-3-kms-test-core-3
         port: 50001
       - id: 4
-        host: kms-service-threshold-4-<namespace>-core-4
+        host: kms-service-threshold-4-kms-test-core-4
         port: 50001
+  tolerations:
+    - key: karpenter.sh/nodepool
+      effect: NoSchedule
+      operator: Equal
+      value: kms-vcluster-pool
 
 kmsGenKeys:
   enabled: false
