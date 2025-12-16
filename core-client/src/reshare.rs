@@ -1,12 +1,13 @@
 use crate::{
-    dummy_domain, keygen::check_standard_keyset_ext_signature, s3_operations::fetch_elements,
-    CmdConfig, CoreClientConfig, SLEEP_TIME_BETWEEN_REQUESTS_MS,
+    dummy_domain, keygen::check_standard_keyset_ext_signature,
+    s3_operations::fetch_public_elements, CmdConfig, CoreClientConfig,
+    SLEEP_TIME_BETWEEN_REQUESTS_MS,
 };
 use aes_prng::AesRng;
 use kms_grpc::{
-    kms::v1::FheParameter,
+    identifiers::EpochId, kms::v1::FheParameter,
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
-    rpc_types::PubDataType, RequestId,
+    rpc_types::PubDataType, ContextId, RequestId,
 };
 use kms_lib::{
     client::client_wasm::Client,
@@ -30,18 +31,25 @@ pub(crate) async fn do_reshare(
     param: FheParameter,
     key_id: RequestId,
     preproc_id: RequestId,
+    context_id: Option<&ContextId>,
+    epoch_id: Option<&EpochId>,
+    server_key_digest: &str,
+    public_key_digest: &str,
 ) -> anyhow::Result<RequestId> {
     let max_iter = cmd_conf.max_iter;
     let request_id = RequestId::new_random(rng);
 
-    // TODO(zama-ai/kms-internal/issues/2843): pass in real digests when we have integration setup
-    let key_digests = HashMap::new();
-
+    let key_digests = HashMap::from_iter([
+        (PubDataType::ServerKey, hex::decode(server_key_digest)?),
+        (PubDataType::PublicKey, hex::decode(public_key_digest)?),
+    ]);
     // Create the request
     let request = internal_client.reshare_request(
         &request_id,
         &key_id,
         &preproc_id,
+        context_id,
+        epoch_id,
         Some(param),
         &dummy_domain(),
         &key_digests,
@@ -130,7 +138,7 @@ pub(crate) async fn do_reshare(
         PubDataType::ServerKey,
     ];
     // We try to download all because all parties needed to respond for a successful resharing
-    let party_ids = fetch_elements(
+    let party_ids = fetch_public_elements(
         &key_id.to_string(),
         &key_types,
         cc_conf,
