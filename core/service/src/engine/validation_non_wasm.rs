@@ -231,7 +231,13 @@ pub fn validate_user_decrypt_req(
         return Err(anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS).into());
     }
 
-    let client_verf_key = alloy_primitives::Address::parse_checksummed(&req.client_address, None)?;
+    let client_verf_key = alloy_primitives::Address::parse_checksummed(&req.client_address, None)
+        .map_err(|e| {
+        anyhow::anyhow!(
+            "Error parsing checksummed client address: {} - {e}",
+            &req.client_address
+        )
+    })?;
 
     let domain = match verify_user_decrypt_eip712(req) {
         Ok(domain) => {
@@ -729,6 +735,7 @@ mod tests {
         }
     }
 
+    #[tracing_test::traced_test]
     #[test]
     fn test_validate_user_decrypt_req() {
         // setup data we're going to use in this test
