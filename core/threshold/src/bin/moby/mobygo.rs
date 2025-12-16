@@ -765,7 +765,7 @@ async fn status_check_command(
     params: StatusCheckArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let session_id = SessionId::from(params.session_id);
-    let retry = params.retry.map_or_else(|| false, |val| val);
+    let retry = params.retry.unwrap_or(false);
     let interval = params.interval.map_or_else(
         || tokio::time::Duration::from_secs(10),
         tokio::time::Duration::from_secs,
