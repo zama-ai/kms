@@ -39,16 +39,16 @@ kmsCore:
     #=============================================================
     peersList:
       - id: 1
-        host: kms-service-threshold-1-<namespace>-core-1
+        host: kms-service-threshold-1-kms-test-core-1
         port: 50001
       - id: 2
-        host: kms-service-threshold-2-<namespace>-core-2
+        host: kms-service-threshold-2-kms-test-core-2
         port: 50001
       - id: 3
-        host: kms-service-threshold-3-<namespace>-core-3
+        host: kms-service-threshold-3-kms-test-core-3
         port: 50001
       - id: 4
-        host: kms-service-threshold-4-<namespace>-core-4
+        host: kms-service-threshold-4-kms-test-core-4
         port: 50001
   publicVault:
     s3:
