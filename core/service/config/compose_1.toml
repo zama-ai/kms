@@ -7,6 +7,9 @@ listen_address = "0.0.0.0"
 listen_port = 50100
 timeout_secs = 360
 grpc_max_message_size = 104857600 # 100 MiB
+http2_keep_alive_interval_secs = 30
+http2_keep_alive_timeout_secs = 10
+tcp_keep_alive_secs = 30
 
 [aws]
 region = "us-east-1"
@@ -86,6 +89,9 @@ session_cleanup_interval_secs = 3600
 discard_inactive_sessions_interval = 900
 max_waiting_time_for_message_queue = 60
 max_opened_inactive_sessions_per_party = 100
+http2_keep_alive_interval_secs = 30
+http2_keep_alive_timeout_secs = 10
+tcp_keep_alive_secs = 30
 
 
 # [threshold.preproc_redis]

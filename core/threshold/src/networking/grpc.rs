@@ -7,11 +7,12 @@ use super::tls::extract_subject_from_cert;
 use super::NetworkMode;
 use crate::execution::runtime::party::{MpcIdentity, RoleAssignment, RoleKind, RoleTrait};
 use crate::networking::constants::{
-    DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_ELAPSED_TIME,
+    DISCARD_INACTIVE_SESSION_INTERVAL_SECS, HTTP2_KEEP_ALIVE_INTERVAL_SEC,
+    HTTP2_KEEP_ALIVE_TIMEOUT_SEC, INITIAL_INTERVAL_MS, MAX_ELAPSED_TIME,
     MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL, MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY,
     MAX_WAITING_TIME_MESSAGE_QUEUE, MESSAGE_LIMIT, MULTIPLIER, NETWORK_TIMEOUT_ASYNC,
     NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
-    SESSION_CLEANUP_INTERVAL_SECS, SESSION_STATUS_UPDATE_INTERVAL_SECS,
+    SESSION_CLEANUP_INTERVAL_SECS, SESSION_STATUS_UPDATE_INTERVAL_SECS, TCP_KEEP_ALIVE_SEC,
 };
 use crate::networking::health_check::HealthCheckSession;
 use crate::networking::Networking;
@@ -56,11 +57,26 @@ pub struct CoreToCoreNetworkConfig {
     pub max_waiting_time_for_message_queue: Option<u64>,
     /// Maximum number of "Inactive" sessions a party can open before I refuse to open more (default: 100)
     pub max_opened_inactive_sessions_per_party: Option<u64>,
+    pub http2_keep_alive_interval_secs: Option<u64>,
+    pub http2_keep_alive_timeout_secs: Option<u64>,
+    pub tcp_keep_alive_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct OptionConfigWrapper {
     pub conf: Option<CoreToCoreNetworkConfig>,
+}
+
+impl From<Option<CoreToCoreNetworkConfig>> for OptionConfigWrapper {
+    fn from(val: Option<CoreToCoreNetworkConfig>) -> Self {
+        OptionConfigWrapper { conf: val }
+    }
+}
+
+impl From<CoreToCoreNetworkConfig> for OptionConfigWrapper {
+    fn from(val: CoreToCoreNetworkConfig) -> Self {
+        OptionConfigWrapper { conf: Some(val) }
+    }
 }
 
 impl OptionConfigWrapper {
@@ -190,6 +206,36 @@ impl OptionConfigWrapper {
             )
         } else {
             Duration::from_secs(MAX_WAITING_TIME_MESSAGE_QUEUE) // Default to 60 seconds if not specified
+        }
+    }
+
+    pub fn get_http2_keep_alive_interval(&self) -> Duration {
+        if let Some(conf) = self.conf {
+            Duration::from_secs(
+                conf.http2_keep_alive_interval_secs
+                    .unwrap_or(HTTP2_KEEP_ALIVE_INTERVAL_SEC),
+            )
+        } else {
+            Duration::from_secs(HTTP2_KEEP_ALIVE_INTERVAL_SEC)
+        }
+    }
+
+    pub fn get_http2_keep_alive_timeout(&self) -> Duration {
+        if let Some(conf) = self.conf {
+            Duration::from_secs(
+                conf.http2_keep_alive_timeout_secs
+                    .unwrap_or(HTTP2_KEEP_ALIVE_TIMEOUT_SEC),
+            )
+        } else {
+            Duration::from_secs(HTTP2_KEEP_ALIVE_TIMEOUT_SEC)
+        }
+    }
+
+    pub fn get_tcp_keep_alive(&self) -> Duration {
+        if let Some(conf) = self.conf {
+            Duration::from_secs(conf.tcp_keep_alive_secs.unwrap_or(TCP_KEEP_ALIVE_SEC))
+        } else {
+            Duration::from_secs(TCP_KEEP_ALIVE_SEC)
         }
     }
 }

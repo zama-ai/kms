@@ -101,6 +101,9 @@ kmsCore:
     refreshIntervalMs: 5000
     tokioWorkerThreads: 10
     rayonNumThreads: 40
+    Http2KeepAliveIntervalSecs: 30
+    Http2KeepAliveTimeoutSecs: 10
+    TcpKeepAliveSecs: 30
     # Threshold value is the number of corruptions that the protocol handles.
     # 1 for 4 parties, 4 for 13 parties
     thresholdValue: 4
@@ -201,6 +204,10 @@ kmsCore:
       grpcTimeout: 360
       # 100MB
       grpcMaxMessageSize: 104857600
+    keepalive:
+      Http2KeepAliveIntervalSecs: 30
+      Http2KeepAliveTimeoutSecs: 10
+      TcpKeepAliveSecs: 30
   nodeSelector:
   affinity:
   tolerations:

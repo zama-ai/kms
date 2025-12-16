@@ -107,6 +107,9 @@ pub async fn setup_threshold_no_client<
             listen_port: service_ports[i - 1],
             timeout_secs: 60u64,
             grpc_max_message_size: GRPC_MAX_MESSAGE_SIZE,
+            http2_keep_alive_interval_secs: Some(30),
+            http2_keep_alive_timeout_secs: Some(10),
+            tcp_keep_alive_secs: Some(30),
         };
         let mpc_conf = mpc_confs.clone();
 
@@ -442,6 +445,9 @@ pub async fn setup_centralized_no_client<
             listen_port,
             timeout_secs: 360,
             grpc_max_message_size: GRPC_MAX_MESSAGE_SIZE,
+            http2_keep_alive_interval_secs: Some(30),
+            http2_keep_alive_timeout_secs: Some(10),
+            tcp_keep_alive_secs: Some(30),
         };
 
         run_server(
