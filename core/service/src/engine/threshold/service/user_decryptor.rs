@@ -19,8 +19,9 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID,
-        TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID, TAG_TFHE_TYPE, TAG_USER_DECRYPTION_KIND,
+        ERR_KEY_NOT_FOUND, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
+        TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID, TAG_TFHE_TYPE,
+        TAG_USER_DECRYPTION_KIND,
     },
 };
 use rand::{CryptoRng, RngCore};
@@ -571,15 +572,18 @@ impl<
                     )
                     .await
                 }
-                Err(e) => Err(e),
+                Err(e) => {
+                    metrics::METRICS
+                        .increment_error_counter(OP_USER_DECRYPT_INNER, ERR_KEY_NOT_FOUND);
+                    Err(e)
+                }
             };
             update_req_in_meta_store(
                 &mut meta_store.write().await,
                 &req_id,
                 result,
                 OP_USER_DECRYPT_REQUEST,
-            )
-            .await
+            );
         };
         self.tracker.spawn(async move {
             // Ignore the result since this is a background thread.

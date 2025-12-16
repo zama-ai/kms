@@ -15,7 +15,7 @@ use kms_grpc::{
 use observability::{
     metrics::{self},
     metrics_names::{
-        ERR_WITH_META_STORAGE, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
+        ERR_KEY_NOT_FOUND, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
         OP_PUBLIC_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
         TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
     },
@@ -63,7 +63,10 @@ use crate::{
     },
     ok_or_tonic_abort,
     util::{
-        meta_store::{add_req_to_meta_store, handle_res_metric_mapping, MetaStore},
+        meta_store::{
+            add_req_to_meta_store, handle_res_metric_mapping, update_err_req_in_meta_store,
+            update_req_in_meta_store, MetaStore,
+        },
         rate_limiter::RateLimiter,
     },
     vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
@@ -424,7 +427,11 @@ impl<
                 let ciphertext = typed_ciphertext.ciphertext;
                 let fhe_keys_rlock = crypto_storage
                     .read_guarded_threshold_fhe_keys(&key_id.into())
-                    .await?;
+                    .await
+                    .inspect_err(|_e| {
+                        metrics::METRICS
+                            .increment_error_counter(OP_PUBLIC_DECRYPT_INNER, ERR_KEY_NOT_FOUND)
+                    })?;
 
                 let res_plaintext = match fhe_type {
                     FheTypes::Uint2048 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
@@ -593,27 +600,12 @@ impl<
                         format!("Failed join inner decryption threads on {req_id} with JoinError: {e:?}")
                     }
                 };
-                // Something went wrong during decryption so ensure the metrics are updated and this is logged
-                let mut guarded_meta_store = meta_store.write().await;
-                MetricedError::error_handler(
+                return update_err_req_in_meta_store(
+                    &mut meta_store.write().await,
+                    &req_id,
+                    err_msg,
                     OP_PUBLIC_DECRYPT_INNER,
-                    Some(req_id),
-                    anyhow::anyhow!(err_msg.clone()),
                 );
-                // Error cannot be returned so we ignore it and just log it
-                let _ = guarded_meta_store
-                    .update(&req_id, Err(err_msg.clone()))
-                    .inspect_err(|e| {
-                        // Update error counter for meta-store update failure
-                        metrics::METRICS.increment_error_counter(
-                            OP_PUBLIC_DECRYPT_INNER,
-                            ERR_WITH_META_STORAGE,
-                        );
-                        // Log the error as well
-                        tracing::error!("Failed to update meta store on request ID {req_id} with decryption error: {e}")
-                    });
-                // exit mgmt task early in case of error
-                return;
             }
             // All the inner decrypts succeeded ok...
 
@@ -642,58 +634,25 @@ impl<
                 })
                 .await
             };
-            let external_sig = match external_sig {
-                Ok(Ok(sig)) => sig,
-                Err(e) | Ok(Err(e)) => {
-                    let msg = format!(
+            let pts_len = pts.len();
+            let res = match external_sig {
+                Ok(Ok(sig)) => Ok((req_id, pts, sig, extra_data)),
+                Err(e) | Ok(Err(e)) => Err(format!(
                     "Failed to compute external signature for decryption request {req_id}: {e:?}"
-                );
-                    // Update meta-store with the failure so clients are unblocked
-                    let mut guarded_meta_store = meta_store.write().await;
-                    MetricedError::error_handler(
-                        OP_PUBLIC_DECRYPT_INNER,
-                        Some(req_id),
-                        anyhow::anyhow!(msg.clone()),
-                    );
-                    // Error cannot be returned so we ignore it and just log it
-                    let _ = guarded_meta_store
-                    .update(&req_id, Err(msg.clone()))
-                    .inspect_err(|e| {
-                        // Update error counter for meta-store update failure
-                        metrics::METRICS.increment_error_counter(
-                            OP_PUBLIC_DECRYPT_INNER,
-                            ERR_WITH_META_STORAGE,
-                        );
-                        // Log the error as well
-                        tracing::error!("Failed to update meta store on request ID {req_id} with external signature with error: {e}")
-                    });
-                    MetricedError::error_handler(
-                        OP_PUBLIC_DECRYPT_INNER,
-                        Some(req_id),
-                        anyhow::anyhow!(msg.clone()),
-                    );
-                    return;
-                }
+                )),
             };
 
             // Single success update with minimal lock hold time
-            let pts_len = pts.len();
-            let success_result = Ok((req_id, pts, external_sig, extra_data));
-
             let (lock_acquired_time, total_lock_time) = {
                 let lock_start = std::time::Instant::now();
                 let mut guarded_meta_store = meta_store.write().await;
                 let lock_acquired_time = lock_start.elapsed();
-                let _ = guarded_meta_store
-                    .update(&req_id, success_result)
-                    .inspect_err(|e| {
-                         // Update error counter for meta-store update failure
-                            metrics::METRICS.increment_error_counter(
-                                OP_PUBLIC_DECRYPT_INNER,
-                                ERR_WITH_META_STORAGE,
-                            );
-                            tracing::error!("Failed to update meta store on request ID {req_id} with successfull result: {e}")
-                        });
+                update_req_in_meta_store(
+                    &mut guarded_meta_store,
+                    &req_id,
+                    res,
+                    OP_PUBLIC_DECRYPT_INNER,
+                );
                 let total_lock_time = lock_start.elapsed();
                 (lock_acquired_time, total_lock_time)
             };

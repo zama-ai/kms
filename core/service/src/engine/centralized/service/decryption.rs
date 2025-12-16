@@ -9,19 +9,20 @@ use crate::engine::validation::{
     proto_request_id, validate_public_decrypt_req, validate_user_decrypt_req, RequestIdParsingErr,
     DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
 };
-use crate::util::meta_store::{add_req_to_meta_store, handle_res_metric_mapping};
+use crate::util::meta_store::{
+    add_req_to_meta_store, handle_res_metric_mapping, update_err_req_in_meta_store,
+    update_req_in_meta_store,
+};
 use crate::vault::storage::Storage;
-use futures_util::TryFutureExt;
 use kms_grpc::kms::v1::{
     Empty, PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
     UserDecryptionRequest, UserDecryptionResponse,
 };
-use observability::metrics::{self, METRICS};
+use observability::metrics::METRICS;
 use observability::metrics_names::{
-    ERR_KEY_NOT_FOUND, ERR_PUBLIC_DECRYPTION_FAILED, ERR_USER_DECRYPTION_FAILED,
-    ERR_WITH_META_STORAGE, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
-    OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID,
-    TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
+    ERR_KEY_NOT_FOUND, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
+    OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST,
+    OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
 };
 use std::sync::Arc;
 use tonic::{Request, Response};
@@ -37,8 +38,21 @@ pub async fn user_decrypt_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<UserDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
-    let inner = request.into_inner();
+    let permit = service
+        .rate_limiter
+        .start_user_decrypt()
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                None,
+                e,
+                tonic::Code::ResourceExhausted,
+            )
+        })?;
+    let mut timer = METRICS.time_operation(OP_USER_DECRYPT_REQUEST).start();
 
+    let inner = request.into_inner();
     let (
         typed_ciphertexts,
         link,
@@ -58,17 +72,14 @@ pub async fn user_decrypt_impl<
         )
     })?;
 
+    // Use a constant party ID since this is the central KMS
     let metric_tags = vec![
         (TAG_PARTY_ID, "central".to_string()),
         (TAG_KEY_ID, key_id.to_string()),
         (TAG_CONTEXT_ID, context_id.to_string()),
         (TAG_EPOCH_ID, epoch_id.to_string()),
     ];
-    let timer = METRICS
-        .time_operation(OP_USER_DECRYPT_REQUEST)
-        // Use a constant party ID since this is the central KMS
-        .tags(metric_tags.clone())
-        .start();
+    timer.tags(metric_tags.clone());
 
     // check that the key exists and refresh the cache if needed
     // Refresh the cache to ensure the keys are loaded from private storage
@@ -87,55 +98,15 @@ pub async fn user_decrypt_impl<
             )
         })?;
 
-    // if the request already exists, then return the AlreadyExists error
-    // otherwise attempt to insert it to the meta store
-    let permit = {
-        // TODO shouldn't this be the first step
-        let permit = service
-            .rate_limiter
-            .start_user_decrypt()
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_USER_DECRYPT_REQUEST,
-                    Some(request_id),
-                    e,
-                    tonic::Code::ResourceExhausted,
-                )
-            })?;
-
-        let mut guarded_meta_store = service.user_dec_meta_store.write().await;
-        if guarded_meta_store.exists(&request_id) {
-            metrics::METRICS
-                .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_WITH_META_STORAGE);
-            return Err(MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                Some(request_id),
-                anyhow::anyhow!(
-                    "Public decryption request with ID {} already exists",
-                    request_id
-                ),
-                tonic::Code::AlreadyExists,
-            ));
-        }
-
-        // everything after this point should result in an abort error
-        guarded_meta_store.insert(&request_id).map_err(|e| {
-            metrics::METRICS
-                .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_WITH_META_STORAGE);
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                Some(request_id),
-                e,
-                tonic::Code::Aborted,
-            )
-        })?;
-
-        permit
-    };
     let meta_store = Arc::clone(&service.user_dec_meta_store);
     let crypto_storage = service.crypto_storage.clone();
     let mut rng = service.base_kms.new_rng().await;
+    add_req_to_meta_store(
+        &mut service.user_dec_meta_store.write().await,
+        &request_id,
+        OP_USER_DECRYPT_REQUEST,
+    )
+    .await?;
     let sig_key = service.base_kms.sig_key().map_err(|e| {
         MetricedError::new(
             OP_PUBLIC_DECRYPT_REQUEST,
@@ -166,22 +137,13 @@ pub async fn user_decrypt_impl<
             {
                 Ok(k) => k,
                 Err(e) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND); // TODO other places for key not found
-                    guarded_meta_store
-                        .update(
-                            &request_id,
-                            Err(format!("Failed to get key ID {key_id} with error {e:?}")),
-                        )
-                        .map_err(|e| {
-                            // Update error counter for meta-store update failure
-                            metrics::METRICS.increment_error_counter(
-                                OP_USER_DECRYPT_INNER, // TODO should we use OP_USER_DECRYPT_REQUEST here? Or do we want to trace depending on when in decryption the error happens?
-                                ERR_WITH_META_STORAGE,
-                            );
-                            format!("Failed to update meta with decryption error :{e}")
-                        })?;
-                    return Ok(());
+                    METRICS.increment_error_counter(OP_USER_DECRYPT_INNER, ERR_KEY_NOT_FOUND);
+                    return update_err_req_in_meta_store(
+                        &mut meta_store.write().await,
+                        &request_id,
+                        format!("Failed to get key ID {key_id} with error {e:?}"),
+                        OP_USER_DECRYPT_INNER,
+                    );
                 }
             };
 
@@ -192,7 +154,7 @@ pub async fn user_decrypt_impl<
             );
             // NOTE: extra_data is not used in the current implementation
             let extra_data = vec![];
-            match async_user_decrypt::<PubS, PrivS>(
+            let res = async_user_decrypt::<PubS, PrivS>(
                 &keys,
                 &sig_key,
                 &mut rng,
@@ -205,24 +167,14 @@ pub async fn user_decrypt_impl<
                 metric_tags,
                 extra_data.clone(),
             )
-            .await
-            {
-                Ok((payload, external_signature)) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store
-                        .update(&request_id, Ok((payload, external_signature, extra_data)));
-                }
-                Result::Err(e) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store
-                        .update(&request_id, Err(format!("Failed user decryption: {e}")));
-                    METRICS.increment_error_counter(
-                        OP_USER_DECRYPT_REQUEST,
-                        ERR_USER_DECRYPTION_FAILED,
-                    );
-                }
-            }
-            Ok(())
+            .await;
+            let res_with_extra_data = res.map(|(payload, sig)| (payload, sig, extra_data));
+            return update_req_in_meta_store(
+                &mut meta_store.write().await,
+                &request_id,
+                res_with_extra_data,
+                OP_USER_DECRYPT_INNER,
+            );
         }
         .instrument(tracing::Span::current()),
     );
@@ -379,114 +331,74 @@ pub async fn public_decrypt_impl<
 
     // we do not need to hold the handle,
     // the result of the computation is tracked by the pub_dec_meta_store
-    let _handle = tokio::spawn(
-        async move {
-            let _timer = timer;
-            let _permit = permit;
-            let keys = match crypto_storage
-                .read_cloned_centralized_fhe_keys_from_cache(&key_id.into())
-                .await
-            {
-                Ok(k) => k,
-                Err(e) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
-                    return guarded_meta_store.update(
-                        &request_id,
-                        Err(format!("Failed to get key ID {key_id} with error {e:?}")),
-                    );
-                }
-            };
-            tracing::info!(
-                "Starting decryption using key_id {} for request ID {}",
-                &key_id,
-                &request_id
-            );
+    let _handle = tokio::spawn(async move {
+        let _timer = timer;
+        let _permit = permit;
+        let keys = match crypto_storage
+            .read_cloned_centralized_fhe_keys_from_cache(&key_id.into())
+            .await
+        {
+            Ok(k) => k,
+            Err(e) => {
+                METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_INNER, ERR_KEY_NOT_FOUND);
+                return update_err_req_in_meta_store(
+                    &mut meta_store.write().await,
+                    &request_id,
+                    format!("Failed to get key ID {key_id} with error {e:?}"),
+                    OP_PUBLIC_DECRYPT_INNER,
+                );
+            }
+        };
+        tracing::info!(
+            "Starting decryption using key_id {} for request ID {}",
+            &key_id,
+            &request_id
+        );
 
-            let ext_handles_bytes = ciphertexts
-                .iter()
-                .map(|c| c.external_handle.to_owned())
-                .collect::<Vec<_>>();
+        let ext_handles_bytes = ciphertexts
+            .iter()
+            .map(|c| c.external_handle.to_owned())
+            .collect::<Vec<_>>();
 
-            // run the computation in a separate rayon thread to avoid blocking the tokio runtime
-            let (send, recv) = tokio::sync::oneshot::channel();
-            rayon::spawn_fifo(move || {
-                let decryptions =
-                    central_public_decrypt::<PubS, PrivS>(&keys, &ciphertexts, metric_tags);
-                let _ = send.send(decryptions);
-            });
-            let decryptions = recv.await;
+        // run the computation in a separate rayon thread to avoid blocking the tokio runtime
+        let (send, recv) = tokio::sync::oneshot::channel();
+        rayon::spawn_fifo(move || {
+            let decryptions =
+                central_public_decrypt::<PubS, PrivS>(&keys, &ciphertexts, metric_tags);
+            let _ = send.send(decryptions);
+        });
+        let decryptions = recv.await;
 
-            let extra_data = vec![]; // NOTE: extra_data is not used in the current implementation
-            match decryptions {
-                Ok(Ok(pts)) => {
-                    // sign the plaintexts and handles for external verification (in fhevm)
-                    let external_sig = match compute_external_pt_signature(
-                        &sig_key,
-                        ext_handles_bytes,
-                        &pts,
-                        extra_data.clone(),
-                        eip712_domain,
-                    ) {
-                        Ok(sig) => sig,
-                        Err(e) => {
-                            METRICS.increment_error_counter(
-                                OP_PUBLIC_DECRYPT_REQUEST,
-                                ERR_PUBLIC_DECRYPTION_FAILED,
-                            );
-                            let mut guarded_meta_store = meta_store.write().await;
-                            return guarded_meta_store.update(
-                                &request_id,
-                                Err(format!("Failed to compute external signature: {e:?}")),
-                            );
-                        }
-                    };
-
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let res = guarded_meta_store
-                        .update(&request_id, Ok((request_id, pts, external_sig, extra_data)));
-                    tracing::info!(
-                        "⏱️ Core Event Time for decryption computation: {:?}",
-                        start.elapsed()
-                    );
-                    res
-                }
-                Err(e) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    METRICS.increment_error_counter(
-                        OP_PUBLIC_DECRYPT_REQUEST,
-                        ERR_PUBLIC_DECRYPTION_FAILED,
-                    );
-                    guarded_meta_store.update(
-                        &request_id,
-                        Err(format!("Error collecting decrypt result: {e:?}")),
-                    )
-                }
-                Ok(Err(e)) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    METRICS.increment_error_counter(
-                        OP_PUBLIC_DECRYPT_REQUEST,
-                        ERR_PUBLIC_DECRYPTION_FAILED,
-                    );
-                    guarded_meta_store.update(
-                        &request_id,
-                        Err(format!("Error during decryption computation: {e}")),
-                    )
+        let extra_data = vec![]; // NOTE: extra_data is not used in the current implementation
+        let res = match decryptions {
+            Ok(Ok(pts)) => {
+                // sign the plaintexts and handles for external verification (in fhevm)
+                match compute_external_pt_signature(
+                    &sig_key,
+                    ext_handles_bytes,
+                    &pts,
+                    extra_data.clone(),
+                    eip712_domain,
+                ) {
+                    Ok(sig) => Ok((request_id, pts, sig, extra_data)),
+                    Err(e) => Err(format!("Failed to compute external signature: {e:?}")),
                 }
             }
-        }
-        .instrument(tracing::Span::current())
-        .inspect_err(move |e| {
-            // The `MetricedError` constructor ensures logging and metrics updates
-            // Note that we also process the error here to increment the error counter
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                Some(request_id),
-                anyhow::anyhow!("{}", e),
-                tonic::Code::Internal,
-            );
-        }),
-    );
+            Err(e) => Err(format!("Error collecting decrypt result: {e:?}")),
+            Ok(Err(e)) => Err(format!("Error during decryption computation: {e}")),
+        };
+        update_req_in_meta_store(
+            &mut meta_store.write().await,
+            &request_id,
+            res,
+            OP_PUBLIC_DECRYPT_INNER,
+        );
+        tracing::info!(
+            "⏱️ Core Event Time for decryption computation: {:?}",
+            start.elapsed()
+        );
+    })
+    .instrument(tracing::Span::current());
 
     Ok(Response::new(Empty {}))
 }

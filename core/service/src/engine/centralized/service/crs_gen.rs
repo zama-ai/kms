@@ -114,7 +114,6 @@ pub async fn crs_gen_impl<
                     req_id
                 );
             }
-            Ok(()) // todo
         }
         .instrument(tracing::Span::current()),
     );
