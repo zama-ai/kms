@@ -227,6 +227,7 @@ jobs:
           DEPLOYMENT_TYPE: ${{ inputs.deployment_type }}
           KMS_CORE_IMAGE_TAG: ${{ needs.core-service.outputs.image_tag }}
           KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.core-client.outputs.image_tag }}
+          BRANCH_NAME: ${{ github.ref }}
         run: |
           gh api \
             --method POST \
@@ -235,7 +236,7 @@ jobs:
             repos/zama-ai/kms-testing/dispatches \
             -f 'event_type=performance-testing' \
             -F "client_payload[tls]=true" \
-            -F "client_payload[kms_branch]=${{ github.ref }}" \
+            -F "client_payload[kms_branch]=${BRANCH_NAME}" \
             -F "client_payload[kms_chart_version]=repository" \
             -F "client_payload[deployment_type]=${DEPLOYMENT_TYPE}" \
             -F "client_payload[kms_core_image_tag]=${KMS_CORE_IMAGE_TAG}" \
