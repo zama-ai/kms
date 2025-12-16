@@ -3,14 +3,18 @@ use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
 use kms_grpc::kms::v1::CustodianRecoveryRequest;
 use kms_grpc::kms::v1::DestroyCustodianContextRequest;
 use kms_grpc::kms::v1::DestroyMpcContextRequest;
+use kms_grpc::kms::v1::DestroyMpcEpochRequest;
 use kms_grpc::kms::v1::Empty;
+use kms_grpc::kms::v1::EpochResultResponse;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::kms::v1::NewCustodianContextRequest;
 use kms_grpc::kms::v1::NewMpcContextRequest;
+use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms::v1::OperatorPublicKey;
 use kms_grpc::kms::v1::RecoveryRequest;
 use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::ContextId;
+use kms_grpc::RequestId;
 use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;
@@ -81,6 +85,24 @@ pub trait ContextManager {
     ) -> Result<Response<Empty>, Status>;
 
     async fn mpc_context_exists(&self, context_id: &ContextId) -> Result<bool, Status>;
+}
+
+#[tonic::async_trait]
+pub trait EpochManager {
+    async fn new_mpc_epoch(
+        &self,
+        request: Request<NewMpcEpochRequest>,
+    ) -> Result<Response<Empty>, Status>;
+
+    async fn destroy_mpc_epoch(
+        &self,
+        request: Request<DestroyMpcEpochRequest>,
+    ) -> Result<Response<Empty>, Status>;
+
+    async fn get_epoch_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<EpochResultResponse>, Status>;
 }
 
 #[tonic::async_trait]

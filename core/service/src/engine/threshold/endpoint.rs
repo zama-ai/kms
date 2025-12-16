@@ -7,11 +7,11 @@ use crate::engine::threshold::traits::{
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::traits::{BackupOperator, ContextManager};
 use kms_grpc::kms::v1::{
-    CrsGenRequest, CrsGenResult, DestroyMpcContextRequest, Empty, HealthStatus, InitRequest,
-    InitiateResharingRequest, InitiateResharingResponse, KeyGenPreprocRequest, KeyGenPreprocResult,
-    KeyGenRequest, KeyGenResult, KeyMaterialAvailabilityResponse, NewMpcContextRequest, NodeType,
-    PeersFromContext, PublicDecryptionRequest, PublicDecryptionResponse, RequestId,
-    ResharingResultResponse, UserDecryptionRequest, UserDecryptionResponse,
+    CrsGenRequest, CrsGenResult, DestroyMpcContextRequest, DestroyMpcEpochRequest, Empty,
+    EpochResultResponse, HealthStatus, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest,
+    KeyGenResult, KeyMaterialAvailabilityResponse, NewMpcContextRequest, NewMpcEpochRequest,
+    NodeType, PeersFromContext, PublicDecryptionRequest, PublicDecryptionResponse, RequestId,
+    UserDecryptionRequest, UserDecryptionResponse,
 };
 use kms_grpc::kms::v1::{HealthStatusResponse, PeerHealth};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
@@ -67,15 +67,15 @@ macro_rules! impl_endpoint {
 impl_endpoint! {
     // See the proto file for the documentation of each method.
     impl CoreServiceEndpoint {
-        async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
-            METRICS.increment_request_counter(OP_INIT);
-            self.initiator.init(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_INIT, tag);
-            })
+        //async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+        //    METRICS.increment_request_counter(OP_INIT);
+        //    self.initiator.init(request).await.inspect_err(|err| {
+        //        let tag = map_tonic_code_to_metric_tag(err.code());
+        //        let _ = METRICS
+        //            .increment_error_counter(OP_INIT, tag);
+        //    })
 
-        }
+        //}
 
         #[tracing::instrument(skip(self, request))]
         async fn key_gen_preproc(
@@ -315,13 +315,13 @@ impl_endpoint! {
         // Do we then also wnat a "destroy_mpc_epoch" endpoint, to let KMS core
         // know it's time to delete the shares of the sks?
         #[tracing::instrument(skip(self, request))]
-        async fn initiate_resharing(
+        async fn new_mpc_epoch(
             &self,
-            request: Request<InitiateResharingRequest>,
-        ) -> Result<Response<InitiateResharingResponse>, Status> {
-            METRICS.increment_request_counter(OP_INITIATE_RESHARING);
+            request: Request<NewMpcEpochRequest>,
+        ) -> Result<Response<Empty>, Status> {
             //TODO: First thing to do in resharing is to
             // do the PRSS init (which also means, we want to deprecatet the init endpoint)
+            METRICS.increment_request_counter(OP_INITIATE_RESHARING);
             self.resharer.initiate_resharing(request).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
                 let _ = METRICS
@@ -330,16 +330,24 @@ impl_endpoint! {
         }
 
         #[tracing::instrument(skip(self, request))]
-        async fn get_resharing_result(
+        async fn get_epoch_result(
             &self,
             request: Request<RequestId>,
-        ) -> Result<Response<ResharingResultResponse>, Status> {
+        ) -> Result<Response<EpochResultResponse>, Status> {
             METRICS.increment_request_counter(OP_GET_INITIATE_RESHARING_RESULT);
             self.resharer.get_resharing_result(request).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
                 let _ = METRICS
                     .increment_error_counter(OP_GET_INITIATE_RESHARING_RESULT, tag);
             })
+        }
+
+        async fn destroy_mpc_epoch(
+            &self,
+            _request: Request<DestroyMpcEpochRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            // Currently no-op
+            Ok(Response::new(Empty {}))
         }
 
         #[tracing::instrument(skip(self, request))]
