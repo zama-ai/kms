@@ -12,8 +12,9 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_CANCELLED, ERR_INVALID_REQUEST, ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN_REQUEST,
-        OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_CONTEXT_ID, TAG_PARTY_ID,
+        ERR_CANCELLED, ERR_CRS_EXISTS, ERR_INVALID_REQUEST, ERR_RATE_LIMIT_EXCEEDED,
+        OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_CONTEXT_ID,
+        TAG_PARTY_ID,
     },
 };
 use threshold_fhe::{
@@ -124,6 +125,7 @@ impl<
 
         // Validate the request ID before proceeding
         self.crypto_storage.crs_exists(&req_id).await.map_err(|e| {
+            metrics::METRICS.increment_error_counter(op_tag, ERR_CRS_EXISTS);
             MetricedError::new(
                 op_tag,
                 None,
@@ -241,8 +243,12 @@ impl<
             OP_CRS_GEN_RESULT
         };
         let request_id =
-            proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)
-                .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
+            proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse).map_err(
+                |e| {
+                    metrics::METRICS.increment_error_counter(op_tag, ERR_INVALID_REQUEST);
+                    MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument)
+                },
+            )?;
 
         let status = {
             let guarded_meta_store = self.crs_meta_store.read().await;

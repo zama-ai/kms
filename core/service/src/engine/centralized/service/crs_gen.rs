@@ -7,8 +7,8 @@ use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    ERR_CRS_GEN_FAILED, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST,
-     TAG_CONTEXT_ID, TAG_PARTY_ID,
+    ERR_INVALID_REQUEST, ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
+    OP_INSECURE_CRS_GEN_REQUEST, TAG_CONTEXT_ID, TAG_PARTY_ID,
 };
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::sync::{OwnedSemaphorePermit, RwLock};
@@ -21,7 +21,9 @@ use crate::engine::centralized::central_kms::{async_generate_crs, CentralizedKms
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{proto_request_id, validate_crs_gen_request, RequestIdParsingErr};
-use crate::util::meta_store::{add_req_to_meta_store, handle_res_metric_mapping, MetaStore};
+use crate::util::meta_store::{
+    add_req_to_meta_store, handle_res_metric_mapping, update_err_req_in_meta_store, MetaStore,
+};
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::Storage;
 
@@ -67,10 +69,10 @@ pub async fn crs_gen_impl<
     // all validation must be done before inserting the request ID
     add_req_to_meta_store(&mut service.crs_meta_map.write().await, &req_id, op_tag).await?;
 
-    let permit =
-        service.rate_limiter.start_crsgen().await.map_err(|e| {
-            MetricedError::new(op_tag, Some(req_id), e, tonic::Code::ResourceExhausted)
-        })?;
+    let permit = service.rate_limiter.start_crsgen().await.map_err(|e| {
+        METRICS.increment_error_counter(op_tag, ERR_RATE_LIMIT_EXCEEDED);
+        MetricedError::new(op_tag, Some(req_id), e, tonic::Code::ResourceExhausted)
+    })?;
 
     let meta_store = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();
@@ -91,7 +93,7 @@ pub async fn crs_gen_impl<
     let handle = service.tracker.spawn(
         async move {
             let _timer = timer;
-            if let Err(e) = crs_gen_background(
+            crs_gen_background(
                 &req_id,
                 rng,
                 meta_store,
@@ -103,16 +105,7 @@ pub async fn crs_gen_impl<
                 permit,
                 op_tag,
             )
-            .await
-            {
-                METRICS.increment_error_counter(op_tag, ERR_CRS_GEN_FAILED);
-                tracing::error!("CRS generation of request {} failed: {}", req_id, e);
-            } else {
-                tracing::info!(
-                    "CRS generation of request {} completed successfully.",
-                    req_id
-                );
-            }
+            .await;
         }
         .instrument(tracing::Span::current()),
     );
@@ -137,9 +130,11 @@ pub async fn get_crs_gen_result_impl<
     } else {
         OP_CRS_GEN_RESULT
     };
-    let request_id =
-        proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)
-            .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
+    let request_id = proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)
+        .map_err(|e| {
+        METRICS.increment_error_counter(op_tag, ERR_INVALID_REQUEST);
+        MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument)
+    })?;
     tracing::debug!("Received CRS gen result request with id {}", request_id);
 
     let status = {
@@ -207,7 +202,7 @@ pub(crate) async fn crs_gen_background<
     max_number_bits: Option<u32>,
     permit: OwnedSemaphorePermit,
     op_tag: &'static str,
-) -> Result<(), anyhow::Error> {
+) {
     let _permit = permit;
     let start = tokio::time::Instant::now();
 
@@ -215,15 +210,13 @@ pub(crate) async fn crs_gen_background<
         match async_generate_crs(&sk, params, max_number_bits, eip712_domain, req_id, rng).await {
             Ok((pp, crs_info)) => (pp, crs_info),
             Err(e) => {
-                tracing::error!("Error in inner CRS generation: {}", e);
-                let mut guarded_meta_store = meta_store.write().await;
-                let _ = guarded_meta_store.update(
+                let _ = update_err_req_in_meta_store(
+                    &mut meta_store.write().await,
                     req_id,
-                    Err(format!(
-                        "Failed CRS generation for CRS with ID {req_id}: {e}"
-                    )),
+                    e.to_string(),
+                    op_tag,
                 );
-                return Err(anyhow::anyhow!("Failed CRS generation: {}", e));
+                return;
             }
         };
 
@@ -232,7 +225,10 @@ pub(crate) async fn crs_gen_background<
         .await;
 
     tracing::info!("⏱️ Core Event Time for CRS-gen: {:?}", start.elapsed());
-    Ok(())
+    tracing::info!(
+        "CRS generation of request {} completed successfully.",
+        req_id
+    );
 }
 
 #[cfg(test)]

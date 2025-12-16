@@ -73,6 +73,10 @@ pub const ERR_RATE_LIMIT_EXCEEDED: &str = "rate_limit_exceeded";
 pub const ERR_KEY_EXISTS: &str = "key_already_exists";
 /// Incremented if any operation is attempted with key ID that does not exist (or has not been fully generated yet)
 pub const ERR_KEY_NOT_FOUND: &str = "key_not_found";
+/// Incremented if crs generation is attempted but the crs ID already exists
+pub const ERR_CRS_EXISTS: &str = "crs_already_exists";
+/// Incremented if any operation is attempted with crs ID that does not exist (or has not been fully generated yet)
+pub const ERR_CRS_NOT_FOUND: &str = "crs_not_found";
 /// Incremented if preprocessing data is not found for a given request ID
 pub const ERR_PREPROC_NOT_FOUND: &str = "preproc_not_found";
 /// Incremented if there is an issue with meta storage management. E.g. if a request ID already ecists

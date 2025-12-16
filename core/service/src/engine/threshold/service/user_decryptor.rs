@@ -68,7 +68,6 @@ use crate::{
             proto_request_id, validate_user_decrypt_req, RequestIdParsingErr, DSEP_USER_DECRYPTION,
         },
     },
-    ok_or_tonic_abort,
     util::{
         meta_store::{
             add_req_to_meta_store, handle_res_metric_mapping, update_req_in_meta_store, MetaStore,
@@ -225,12 +224,14 @@ impl<
 
             let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
-                    let session = ok_or_tonic_abort(
-                        session_maker
-                            .make_small_async_session_z128(session_id, context_id, epoch_id)
-                            .await,
-                        "Could not prepare ddec data for noiseflood decryption".to_string(),
-                    )?;
+                    let session = session_maker
+                        .make_small_async_session_z128(session_id, context_id, epoch_id)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!(
+                                "Could not prepare ddec data for noiseflood decryption: {e}",
+                            )
+                        })?;
                     let mut noiseflood_session = Dec::Prep::new(session);
 
                     let pdec = Dec::partial_decrypt(
@@ -269,12 +270,14 @@ impl<
                     Ok(res)
                 }
                 DecryptionMode::BitDecSmall => {
-                    let mut session = ok_or_tonic_abort(
-                        session_maker
-                            .make_small_async_session_z64(session_id, context_id, epoch_id)
-                            .await,
-                        "Could not prepare ddec data for bitdec decryption".to_string(),
-                    )?;
+                    let mut session = session_maker
+                        .make_small_async_session_z64(session_id, context_id, epoch_id)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!(
+                                "Could not prepare ddec data for bitdec decryption: {e}",
+                            )
+                        })?;
 
                     let pdec = secure_partial_decrypt_using_bitdec(
                         &mut session,
@@ -550,7 +553,7 @@ impl<
                 OP_USER_DECRYPT_REQUEST,
                 Some(req_id),
                 e,
-                tonic::Code::Internal,
+                tonic::Code::FailedPrecondition,
             )
         })?)
         .clone();
