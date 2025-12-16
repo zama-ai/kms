@@ -751,6 +751,7 @@ impl ImmutableSessionMaker {
             .await
     }
 
+    #[expect(unused)]
     pub(crate) async fn make_two_sets_session(
         &self,
         session_id: SessionId,
