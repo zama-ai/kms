@@ -512,6 +512,22 @@ impl<
         ];
         timer.tags(metric_tags.clone());
 
+        self.crypto_storage
+            .refresh_threshold_fhe_keys(&key_id.into())
+            .await
+            .map_err(|e| {
+                metrics::METRICS
+                    .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
+                MetricedError::new(
+                    OP_USER_DECRYPT_REQUEST,
+                    Some(req_id),
+                    anyhow::anyhow!(
+                    "Failed to refresh FHE keys for key_id {key_id} and request_id {req_id}: {e:?}"
+                ),
+                    tonic::Code::NotFound,
+                )
+            })?;
+
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let rng = self.base_kms.new_rng().await;

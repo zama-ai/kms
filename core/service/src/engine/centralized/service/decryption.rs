@@ -88,13 +88,14 @@ pub async fn user_decrypt_impl<
         .refresh_centralized_fhe_keys(&key_id.into())
         .await
         .map_err(|e| {
+            METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_REQUEST,
                 Some(request_id),
                 anyhow::anyhow!(
                 "Failed to refresh FHE keys for key_id {key_id} and request_id {request_id}: {e:?}"
             ),
-                tonic::Code::Aborted,
+                tonic::Code::NotFound,
             )
         })?;
 
@@ -299,13 +300,14 @@ pub async fn public_decrypt_impl<
         .refresh_centralized_fhe_keys(&key_id.into())
         .await
         .map_err(|e| {
+            METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_REQUEST,
                 Some(request_id),
                 anyhow::anyhow!(
                 "Failed to refresh FHE keys for key_id {key_id} and request_id {request_id}: {e:?}"
             ),
-                tonic::Code::Aborted,
+                tonic::Code::NotFound,
             )
         })?;
 
