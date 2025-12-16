@@ -221,6 +221,10 @@ use std::fs::create_dir_all;
 use std::process::{Command, Output};
 use tfhe::safe_serialization::safe_serialize;
 
+// Additional imports for reshare test
+use kms_lib::engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY};
+use kms_lib::util::key_setup::test_tools::{load_material_from_storage, load_pk_from_storage};
+
 // ============================================================================
 // CLI TEST SETUP FUNCTIONS
 // ============================================================================
@@ -495,6 +499,7 @@ port = {}
         }
 
         // Create minimal server config with mock enclave PCR values
+        // Include public_vault and aws sections for MPC context creation
         let server_config_content = format!(
             r#"
 mock_enclave = true
@@ -504,6 +509,16 @@ listen_address = "127.0.0.1"
 listen_port = {}
 timeout_secs = 30
 grpc_max_message_size = 104857600
+
+[public_vault.storage.s3]
+bucket = "kms-public"
+
+[private_vault.storage.file]
+path = "{}/PRIV-p{}"
+
+[aws]
+region = "us-east-1"
+s3_endpoint = "http://dev-s3-mock:9000"
 
 [threshold]
 my_id = {}
@@ -515,13 +530,15 @@ min_dec_cache = 10
 num_sessions_preproc = 2
 decryption_mode = "NoiseFloodSmall"
 
-[[threshold.tls.full_auto.trusted_releases]]
+[[threshold.tls.auto.trusted_releases]]
 pcr0 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
 pcr1 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
 pcr2 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
 {}
 "#,
             server.service_port,
+            material_dir.path().display(),
+            i,
             i,
             threshold_value,
             server.mpc_port.expect("MPC port should be set"),
@@ -947,6 +964,107 @@ async fn real_preproc_and_keygen_with_context_isolated(
     };
 
     Ok(key_id.to_string())
+}
+
+/// Helper to run preprocessing and keygen with context/epoch via CLI (isolated version)
+/// Returns both key_id and preproc_id for reshare operations
+#[cfg(feature = "k8s_tests")]
+async fn real_preproc_and_keygen_with_context_isolated_full(
+    config_path: &Path,
+    test_path: &Path,
+    context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
+) -> Result<(String, String)> {
+    // Step 1: Preprocessing
+    let preproc_config = CmdConfig {
+        file_conf: Some(config_path.to_str().unwrap().to_string()),
+        command: CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
+            context_id,
+            epoch_id,
+        }),
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    println!("Doing preprocessing with context");
+    let mut preproc_result = execute_cmd(&preproc_config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to do preprocessing: {}", e))?;
+    assert_eq!(preproc_result.len(), 1);
+    let (preproc_id_opt, _) = preproc_result.pop().unwrap();
+    let preproc_id = preproc_id_opt.unwrap();
+    println!("Preprocessing done with ID {preproc_id:?}");
+
+    // Step 2: Key generation using preprocessing result
+    let keygen_config = CmdConfig {
+        file_conf: Some(config_path.to_str().unwrap().to_string()),
+        command: CCCommand::KeyGen(KeyGenParameters {
+            preproc_id,
+            shared_args: SharedKeyGenParameters {
+                keyset_type: None,
+                context_id,
+                epoch_id,
+            },
+        }),
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    println!("Doing key-gen with context");
+    let key_gen_results = execute_cmd(&keygen_config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to do keygen: {}", e))?;
+    println!("Key-gen done");
+    assert_eq!(key_gen_results.len(), 1);
+
+    let key_id = match key_gen_results.first().unwrap() {
+        (Some(value), _) => value,
+        _ => panic!("Error doing keygen with context"),
+    };
+
+    Ok((key_id.to_string(), preproc_id.to_string()))
+}
+
+/// Helper to run reshare operation via CLI (isolated version)
+#[cfg(feature = "k8s_tests")]
+#[allow(clippy::too_many_arguments)]
+async fn reshare_isolated(
+    config_path: &Path,
+    test_path: &Path,
+    key_id: RequestId,
+    preproc_id: RequestId,
+    from_context_id: Option<ContextId>,
+    from_epoch_id: Option<EpochId>,
+    server_key_digest: String,
+    public_key_digest: String,
+) -> Result<Vec<(Option<RequestId>, String)>> {
+    let config = CmdConfig {
+        file_conf: Some(config_path.to_str().unwrap().to_string()),
+        command: CCCommand::Reshare(ReshareParameters {
+            key_id,
+            preproc_id,
+            from_context_id,
+            from_epoch_id,
+            server_key_digest,
+            public_key_digest,
+        }),
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    println!("Doing resharing");
+    let resharing_result = execute_cmd(&config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to do resharing: {}", e))?;
+    println!("Resharing done");
+
+    Ok(resharing_result)
 }
 
 // ============================================================================
@@ -1721,11 +1839,15 @@ listen_port = {}
 timeout_secs = 360
 grpc_max_message_size = 104857600
 
-[public_vault.storage.file]
-path = "{}/PUB-p{}"
+[public_vault.storage.s3]
+bucket = "kms-public"
 
 [private_vault.storage.file]
 path = "{}/PRIV-p{}"
+
+[aws]
+region = "us-east-1"
+s3_endpoint = "http://dev-s3-mock:9000"
 
 [threshold]
 listen_address = "127.0.0.1"
@@ -1737,7 +1859,7 @@ min_dec_cache = 6000
 num_sessions_preproc = 2
 decryption_mode = "NoiseFloodSmall"
 
-[[threshold.tls.full_auto.trusted_releases]]
+[[threshold.tls.auto.trusted_releases]]
 pcr0 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
 pcr1 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
 pcr2 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
@@ -1759,8 +1881,6 @@ max_waiting_time_for_message_queue = 60
 max_opened_inactive_sessions_per_party = 100
 "#,
             server.service_port,
-            material_dir.path().display(),
-            server_id,
             material_dir.path().display(),
             server_id,
             server.mpc_port.expect("MPC port should be set"),
@@ -1916,5 +2036,105 @@ config_path = "{}"
     }
 
     println!("✅ 6-party MPC context switch with party resharing test completed successfully");
+    Ok(())
+}
+
+/// Test threshold reshare operation via CLI (isolated version)
+///
+/// This test validates the resharing workflow:
+/// 1. Create and initialize MPC context
+/// 2. Initialize PRSS for the context
+/// 3. Run preprocessing and keygen with the context
+/// 4. Download key materials (ServerKey, PublicKey)
+/// 5. Compute digests of the key materials
+/// 6. Execute resharing command
+#[cfg(feature = "k8s_tests")]
+#[tokio::test]
+#[serial] // PRSS requires sequential execution
+async fn test_threshold_reshare() -> Result<()> {
+    init_testing();
+
+    // Setup isolated threshold KMS servers (4 parties) WITHOUT PRSS initialization
+    // This simulates servers that need context and PRSS setup
+    let (material_dir, _servers, config_path) =
+        setup_isolated_threshold_cli_test("threshold_reshare", 4).await?;
+
+    let test_path = material_dir.path();
+    let context_path = material_dir.path().join("mpc_context.bin");
+
+    // Step 1: Create and store MPC context to file
+    let context_id =
+        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222225555")?;
+    store_mpc_context_in_file_isolated(&context_path, &config_path, context_id).await?;
+
+    // Step 2: Initialize the new MPC context in KMS servers
+    new_mpc_context_isolated(&config_path, &context_path, test_path).await?;
+
+    // Step 3: Initialize PRSS for this context
+    let epoch_id =
+        EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222226666")?;
+    new_prss_isolated(&config_path, context_id, epoch_id, test_path).await?;
+
+    // Step 4: Run preprocessing and keygen with the context (get both key_id and preproc_id)
+    let (key_id_str, preproc_id_str) = real_preproc_and_keygen_with_context_isolated_full(
+        &config_path,
+        test_path,
+        Some(context_id),
+        Some(epoch_id),
+    )
+    .await?;
+
+    // Step 5: Download the key materials
+    let cc_conf: CoreClientConfig = observability::conf::Settings::builder()
+        .path(config_path.to_str().unwrap())
+        .env_prefix("CORE_CLIENT")
+        .build()
+        .init_conf()?;
+
+    let ids = fetch_public_elements(
+        &key_id_str,
+        &[PubDataType::ServerKey, PubDataType::PublicKey],
+        &cc_conf,
+        test_path,
+        false,
+    )
+    .await?;
+
+    // Step 6: Read the key materials from file and compute digests
+    let key_id = RequestId::from_str(&key_id_str)?;
+    let public_key = load_pk_from_storage(Some(test_path), &key_id, ids[0]).await;
+    let server_key: tfhe::ServerKey =
+        load_material_from_storage(Some(test_path), &key_id, PubDataType::ServerKey, ids[0]).await;
+
+    let server_key_digest = hex::encode(safe_serialize_hash_element_versioned(
+        &DSEP_PUBDATA_KEY,
+        &server_key,
+    )?);
+    let public_key_digest = hex::encode(safe_serialize_hash_element_versioned(
+        &DSEP_PUBDATA_KEY,
+        &public_key,
+    )?);
+
+    // Step 7: Execute resharing
+    let preproc_id = RequestId::from_str(&preproc_id_str)?;
+    let resharing_result = reshare_isolated(
+        &config_path,
+        test_path,
+        key_id,
+        preproc_id,
+        Some(context_id),
+        Some(epoch_id),
+        server_key_digest,
+        public_key_digest,
+    )
+    .await?;
+
+    println!("Resharing result: {:?}", resharing_result);
+    assert_eq!(resharing_result.len(), 2);
+
+    // The second element should be the key id
+    assert_eq!(resharing_result[1].0.unwrap(), key_id);
+
+    println!("✅ Threshold reshare test completed successfully");
     Ok(())
 }
