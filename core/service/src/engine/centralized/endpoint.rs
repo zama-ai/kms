@@ -208,7 +208,9 @@ impl<
         request: Request<kms_grpc::kms::v1::CrsGenRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_CRS_GEN_REQUEST);
-        crs_gen_impl(self, request).await.map_err(|e| e.into())
+        crs_gen_impl(self, request, false)
+            .await
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -217,7 +219,7 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::CrsGenResult>, Status> {
         METRICS.increment_request_counter(OP_CRS_GEN_RESULT);
-        get_crs_gen_result_impl(self, request) //todo ADD OP since we also have insecure
+        get_crs_gen_result_impl(self, request, false)
             .await
             .map_err(|e| e.into())
     }
@@ -230,7 +232,9 @@ impl<
     ) -> Result<Response<Empty>, Status> {
         METRICS
             .increment_request_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_REQUEST);
-        self.crs_gen(request).await
+        crs_gen_impl(self, request, true)
+            .await
+            .map_err(|e| e.into())
     }
 
     #[cfg(feature = "insecure")]
@@ -240,7 +244,9 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::CrsGenResult>, Status> {
         METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_RESULT);
-        self.get_crs_gen_result(request).await
+        get_crs_gen_result_impl(self, request, true)
+            .await
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]

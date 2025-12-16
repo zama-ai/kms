@@ -641,7 +641,7 @@ impl<
                 OP_USER_DECRYPT_RESULT,
                 Some(request_id),
                 anyhow!("Could not convert payload to bytes {payload:?}: {e:?}"),
-                tonic::Code::Aborted,
+                tonic::Code::Internal,
             )
         })?;
 
@@ -653,7 +653,7 @@ impl<
                     OP_USER_DECRYPT_RESULT,
                     Some(request_id),
                     anyhow!("Could not sign payload {payload:?}: {e:?}"),
-                    tonic::Code::Aborted,
+                    tonic::Code::Internal,
                 )
             })?;
         Ok(Response::new(UserDecryptionResponse {

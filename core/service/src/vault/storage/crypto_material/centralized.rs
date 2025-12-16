@@ -67,9 +67,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+        op_metric_tag: &'static str,
     ) {
         self.inner
-            .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)
+            .write_crs_with_meta_store(req_id, pp, crs_info, meta_store, op_metric_tag)
             .await
     }
 

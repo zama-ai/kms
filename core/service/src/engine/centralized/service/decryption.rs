@@ -139,12 +139,13 @@ pub async fn user_decrypt_impl<
                 Ok(k) => k,
                 Err(e) => {
                     METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
-                    return update_err_req_in_meta_store(
+                    let _ = update_err_req_in_meta_store(
                         &mut meta_store.write().await,
                         &request_id,
                         format!("Failed to get key ID {key_id} with error {e:?}"),
                         OP_USER_DECRYPT_REQUEST,
                     );
+                    return;
                 }
             };
 
@@ -170,7 +171,7 @@ pub async fn user_decrypt_impl<
             )
             .await;
             let res_with_extra_data = res.map(|(payload, sig)| (payload, sig, extra_data));
-            return update_req_in_meta_store(
+            let _ = update_req_in_meta_store(
                 &mut meta_store.write().await,
                 &request_id,
                 res_with_extra_data,
@@ -343,12 +344,13 @@ pub async fn public_decrypt_impl<
             Ok(k) => k,
             Err(e) => {
                 METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
-                return update_err_req_in_meta_store(
+                let _ = update_err_req_in_meta_store(
                     &mut meta_store.write().await,
                     &request_id,
                     format!("Failed to get key ID {key_id} with error {e:?}"),
                     OP_PUBLIC_DECRYPT_REQUEST,
                 );
+                return;
             }
         };
         tracing::info!(

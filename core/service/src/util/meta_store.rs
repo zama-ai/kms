@@ -310,15 +310,13 @@ pub(crate) fn update_req_in_meta_store<
     req_id: &RequestId,
     result: Result<T, E>,
     request_metric: &'static str,
-) {
+) -> bool {
     match result {
-        Ok(res) => {
-            update_ok_req_in_meta_store(meta_store, req_id, res, request_metric);
-        }
+        Ok(res) => update_ok_req_in_meta_store(meta_store, req_id, res, request_metric),
         Result::Err(e) => {
-            update_err_req_in_meta_store(meta_store, req_id, format!("{e:?}"), request_metric);
+            update_err_req_in_meta_store(meta_store, req_id, format!("{e:?}"), request_metric)
         }
-    };
+    }
 }
 
 #[cfg(feature = "non-wasm")]
@@ -327,37 +325,47 @@ pub(crate) fn update_ok_req_in_meta_store<T: Clone>(
     req_id: &RequestId,
     result: T,
     request_metric: &'static str,
-) {
-    let _ = meta_store.update(req_id, Ok(result)).inspect_err(|e| {
-        // Update error counter for meta-store update failure
-        metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
-        // Log the error as well
-        tracing::error!(
-            "Failed to update meta store on request ID {req_id} with OK response due to error: {e}"
-        )
-    });
-    // Error cannot be returned so we ignore since we have already proceessed it
+) -> bool {
+    match meta_store.update(req_id, Ok(result)) {
+        Ok(()) => true,
+        Err(e) => {
+            // Update error counter for meta-store update failure
+            metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
+            // Log the error as well
+            tracing::error!(
+                "Failed to update meta store on request ID {req_id} with OK response due to error: {e}"
+            );
+            false
+        }
+    }
 }
 
+/// Helper method for updating the meta store with an error result
+/// The method gracefully handles potential update failures by logging and updating metrics
+/// [req_id] is the request ID to update
+/// [error] is the error message to store
+/// [request_metric] is a free-form string used only for error logging the origin of the failure
+/// Returns true if the update was successful, false otherwise
 #[cfg(feature = "non-wasm")]
 pub(crate) fn update_err_req_in_meta_store<T: Clone>(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
     req_id: &RequestId,
     error: String,
     request_metric: &'static str,
-) {
+) -> bool {
     // Log and increment relevant metrics according to error
     MetricedError::error_handler(request_metric, Some(*req_id), error.clone());
 
-    let _ = meta_store
-        .update(req_id, Err(error.clone()))
-        .inspect_err(|e| {
+    match meta_store.update(req_id, Err(error.clone())) {
+        Ok(()) => true,
+        Err(e) => {
             // Update error counter for meta-store update failure
             metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
             // Log the error as well
-            tracing::error!("Failed to update meta store on request ID {req_id} with error message \"{error}\" due to update error: {e}")
-        });
-    // Error cannot be returned so we ignore since we have already proceessed it
+            tracing::error!("Failed to update meta store on request ID {req_id} with error message \"{error}\" due to update error: {e}");
+            false
+        }
+    }
 }
 
 /// Helper method for retrieving the result of a request from an appropriate meta store
@@ -369,14 +377,13 @@ pub(crate) async fn handle_res_metric_mapping<T: Clone>(
     metric_scope: &'static str,
     req_id: &RequestId,
 ) -> Result<T, MetricedError> {
+    // TODO should be integrated with meta stored fetching
     match handle {
         None => {
-            use crate::engine::utils::MetricedError;
-
             let msg = format!(
                 "Could not retrieve the result in scope {metric_scope} with request ID {req_id}. It does not exist"
             );
-            tracing::warn!(msg);
+
             Err(MetricedError::new(
                 metric_scope,
                 Some(*req_id),
@@ -395,10 +402,8 @@ pub(crate) async fn handle_res_metric_mapping<T: Clone>(
                 match result {
                     Ok(result) => Ok(result),
                     Err(e) => {
-                        use crate::engine::utils::MetricedError;
-
                         let msg = format!(
-                                "Could not retrievethe result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
+                                "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
                             );
                         tracing::warn!(msg);
                         Err(MetricedError::new(
@@ -410,8 +415,6 @@ pub(crate) async fn handle_res_metric_mapping<T: Clone>(
                     }
                 }
             } else {
-                use crate::engine::utils::MetricedError;
-
                 let msg = format!(
                     "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
                 );

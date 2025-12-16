@@ -23,6 +23,7 @@ use kms_grpc::{
 use kms_grpc::{KeyId, RequestId};
 use std::collections::{HashMap, HashSet};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_fhe::execution::zk::ceremony::compute_witness_dim;
 use threshold_fhe::hashing::DomainSep;
 
 pub(crate) const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
@@ -553,17 +554,23 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
 
 pub(crate) fn validate_crs_gen_request(
     req: CrsGenRequest,
-) -> anyhow::Result<(RequestId, ContextId, DKGParams, Eip712Domain)> {
+) -> anyhow::Result<(RequestId, ContextId, usize, DKGParams, Eip712Domain)> {
     let req_id =
         parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
-    let params = retrieve_parameters(Some(req.params))?;
 
-    // This verification is more strict than the checks in [compute_witness_dim]
+    // This verification is more strict than the checks in [compute_witness_dim] below
     // because it only allows powers of 2. But there are no strong reasons
     // to use max_num_bits that are not powers of 2 so we enforce it here.
     if let Some(max_num_bits) = req.max_num_bits {
         verify_max_num_bits(max_num_bits as usize)?;
     }
+
+    let params = retrieve_parameters(Some(req.params))?;
+    let crs_params = params
+        .get_params_basics_handle()
+        .get_compact_pk_enc_params();
+
+    let witness_dim = compute_witness_dim(&crs_params, req.max_num_bits.map(|x| x as usize))?;
 
     // context_id is not used at the moment, but we validate it if present
     let context_id = match &req.context_id {
@@ -573,7 +580,7 @@ pub(crate) fn validate_crs_gen_request(
 
     let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
-    Ok((req_id, context_id, params, eip712_domain))
+    Ok((req_id, context_id, witness_dim, params, eip712_domain))
 }
 
 /// The max_num_bits should be a power of 2 between 1 and 2048 (inclusive)

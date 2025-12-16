@@ -618,12 +618,13 @@ impl<
                         format!("Failed join inner decryption threads on {req_id} with JoinError: {e:?}")
                     }
                 };
-                return update_err_req_in_meta_store(
+                let _ = update_err_req_in_meta_store(
                     &mut meta_store.write().await,
                     &req_id,
                     err_msg,
                     OP_PUBLIC_DECRYPT_INNER,
                 );
+                return;
             }
             // All the inner decrypts succeeded ok...
 
@@ -742,7 +743,7 @@ impl<
                 OP_PUBLIC_DECRYPT_RESULT,
                 Some(request_id),
                 anyhow!("Could not convert payload to bytes {sig_payload:?}: {e:?}"),
-                tonic::Code::Aborted,
+                tonic::Code::Internal,
             )
         })?;
 
@@ -754,7 +755,7 @@ impl<
                     OP_PUBLIC_DECRYPT_RESULT,
                     Some(request_id),
                     anyhow!("Could not sign payload {sig_payload:?}: {e:?}"),
-                    tonic::Code::Aborted,
+                    tonic::Code::Internal,
                 )
             })?;
 

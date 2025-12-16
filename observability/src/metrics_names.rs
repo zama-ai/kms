@@ -1,6 +1,6 @@
-/// Constants for metric operation names to ensure consistency and prevent typos
-/// These match the gRPC method names for better correlation.
-/// Counters are incremented for each operation, and also used for error tracking.
+// Constants for metric operation names to ensure consistency and prevent typos
+// These match the gRPC method names for better correlation.
+// Counters are incremented for each operation, and also used for error tracking.
 
 // Preprocessing and generation related operations
 pub const OP_KEYGEN_REQUEST: &str = "keygen_request";
@@ -67,13 +67,19 @@ pub const TAG_USER_DECRYPTION_KIND: &str = "user_decryption_mode";
 
 // Common error values
 // NOTE: make sure to update docs/operations/advanced/metrics.md when changing
+/// Incremented when an operation is rejected due to the rate limiter
 pub const ERR_RATE_LIMIT_EXCEEDED: &str = "rate_limit_exceeded";
+/// Incremented if key generation is attempted but the key ID already exists
 pub const ERR_KEY_EXISTS: &str = "key_already_exists";
+/// Incremented if any operation is attempted with key ID that does not exist (or has not been fully generated yet)
 pub const ERR_KEY_NOT_FOUND: &str = "key_not_found";
+/// Incremented if preprocessing data is not found for a given request ID
 pub const ERR_PREPROC_NOT_FOUND: &str = "preproc_not_found";
-pub const ERR_VERIFICATION_FAILED: &str = "verification_failed";
+/// Incremented if there is an issue with meta storage management. E.g. if a request ID already ecists
 pub const ERR_WITH_META_STORAGE: &str = "meta_storage_error";
+/// If the grpc request data is invalid
 pub const ERR_INVALID_REQUEST: &str = "invalid_request";
+
 // Specific operation errors
 pub const ERR_PUBLIC_DECRYPTION_FAILED: &str = "public_decryption_failed";
 pub const ERR_PUBLIC_DECRYPTION_INNER_FAILED: &str = "public_decryption_inner_failed";
