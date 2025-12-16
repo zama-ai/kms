@@ -4194,6 +4194,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "async_cell",
+ "attestation-doc-validation",
  "aws-config",
  "aws-nitro-enclaves-nsm-api",
  "aws-sdk-kms",

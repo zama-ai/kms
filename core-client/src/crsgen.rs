@@ -1,4 +1,4 @@
-use crate::s3_operations::fetch_elements;
+use crate::s3_operations::fetch_public_elements;
 use crate::{dummy_domain, CmdConfig, CoreClientConfig, SLEEP_TIME_BETWEEN_REQUESTS_MS};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
@@ -119,7 +119,7 @@ pub(crate) async fn fetch_and_check_crsgen(
     );
 
     // Download the generated CRS.
-    let party_ids = fetch_elements(
+    let party_ids = fetch_public_elements(
         &request_id.to_string(),
         &[PubDataType::CRS],
         cc_conf,

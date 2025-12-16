@@ -21,7 +21,7 @@ use crate::CoreClientConfig;
 /// destination_prefix: the local folder to store the fetched elements
 /// download_all: whether to download from all cores or just the first one
 /// returns: the party IDs of the cores that were successfully contacted, unsorted
-pub(crate) async fn fetch_elements(
+pub async fn fetch_public_elements(
     element_id: &str,
     element_types: &[PubDataType],
     sim_conf: &CoreClientConfig,
@@ -84,7 +84,7 @@ pub(crate) async fn fetch_kms_verification_keys(
     let mut keys_map = HashMap::with_capacity(sim_conf.cores.len());
 
     for cur_core in &sim_conf.cores {
-        let content = fetch_element(
+        let content = generic_fetch_element(
             &cur_core.s3_endpoint.clone(),
             &format!(
                 "{}/{}",
@@ -117,7 +117,7 @@ pub(crate) async fn fetch_kms_signing_keys(
     for cur_core in &sim_conf.cores {
         use kms_grpc::rpc_types::PrivDataType;
 
-        let content = fetch_element(
+        let content = generic_fetch_element(
             &cur_core.s3_endpoint.clone(),
             &format!(
                 "{}/{}",
@@ -156,7 +156,7 @@ async fn fetch_global_pub_element_and_write_to_file(
 ) -> anyhow::Result<()> {
     // Fetch pub-key from storage and dump it for later use
     let folder = destination_prefix.join(element_folder).join(element_name);
-    let content = fetch_element(
+    let content = generic_fetch_element(
         s3_endpoint,
         &format!("{element_folder}/{element_name}"),
         element_id,
@@ -176,7 +176,7 @@ fn join_vars(args: &[&str]) -> String {
 
 // TODO: handle auth
 // TODO: add option to either use local key or remote key
-pub async fn fetch_element(
+async fn generic_fetch_element(
     endpoint: &str,
     folder: &str,
     element_id: &str,

@@ -11,6 +11,10 @@ use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::consts::ID_LENGTH;
 use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
 use kms_lib::consts::SIGNING_KEY_ID;
+use kms_lib::engine::base::safe_serialize_hash_element_versioned;
+use kms_lib::engine::base::DSEP_PUBDATA_KEY;
+use kms_lib::util::key_setup::test_tools::load_material_from_storage;
+use kms_lib::util::key_setup::test_tools::load_pk_from_storage;
 use serial_test::serial;
 use std::fs::create_dir_all;
 use std::io::Write;
@@ -297,7 +301,7 @@ async fn real_preproc_and_keygen(
     test_path: &Path,
     context_id: Option<ContextId>,
     epoch_id: Option<EpochId>,
-) -> String {
+) -> (String, String) {
     let config = CmdConfig {
         file_conf: Some(config_path.to_string()),
         command: CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
@@ -340,7 +344,7 @@ async fn real_preproc_and_keygen(
         _ => panic!("Error doing keygen"),
     };
 
-    key_id.to_string()
+    (key_id.to_string(), preproc_id.unwrap().to_string())
 }
 
 async fn restore_from_backup<T: DockerComposeManager>(ctx: &T, test_path: &Path) -> String {
@@ -1412,6 +1416,97 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
         )
         .await;
     }
+}
+
+#[test_context(DockerComposeThresholdTestNoInit)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInit) {
+    init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = temp_dir.path();
+    let context_path = temp_dir.path().join("mpc_context.bin");
+    let config_path = ctx.root_path().join(ctx.config_path());
+
+    // create and store mpc context
+    let context_id =
+        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222225555")
+            .unwrap();
+    store_mpc_context_in_file(&context_path, &config_path, context_id).await;
+
+    // create the new context
+    new_mpc_context(&context_path, &config_path, test_path).await;
+
+    // create PRSS
+    let epoch_id =
+        EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222226666")
+            .unwrap();
+    new_prss(context_id, epoch_id, &config_path, test_path).await;
+
+    // do preproc and keygen (which should use the prss)
+    let (key_id, preproc_id) = real_preproc_and_keygen(
+        config_path.to_str().unwrap(),
+        test_path,
+        Some(context_id),
+        Some(epoch_id),
+    )
+    .await;
+
+    // download the key materials
+    let cc_conf: CoreClientConfig = observability::conf::Settings::builder()
+        .path(config_path.to_str().unwrap())
+        .env_prefix("CORE_CLIENT")
+        .build()
+        .init_conf()
+        .unwrap();
+
+    let ids = fetch_public_elements(
+        &key_id,
+        &[PubDataType::ServerKey, PubDataType::PublicKey],
+        &cc_conf,
+        test_path,
+        false,
+    )
+    .await
+    .unwrap();
+
+    // read the key materials from file
+    let key_id = RequestId::from_str(&key_id).unwrap();
+    let public_key = load_pk_from_storage(Some(test_path), &key_id, ids[0]).await;
+    let server_key: tfhe::ServerKey =
+        load_material_from_storage(Some(test_path), &key_id, PubDataType::ServerKey, ids[0]).await;
+
+    // compute the digests
+    let server_key_digest =
+        hex::encode(safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap());
+    let public_key_digest =
+        hex::encode(safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap());
+
+    // create the resharing requeset
+    let config = CmdConfig {
+        file_conf: Some(String::from(config_path.to_str().unwrap())),
+        command: CCCommand::Reshare(ReshareParameters {
+            key_id,
+            preproc_id: RequestId::from_str(&preproc_id).unwrap(),
+            from_context_id: Some(context_id),
+            from_epoch_id: Some(epoch_id),
+            server_key_digest,
+            public_key_digest,
+        }),
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    println!("Doing resharing");
+    let resharing_result = execute_cmd(&config, test_path).await.unwrap();
+
+    println!("Resharing result: {:?}", resharing_result);
+    assert_eq!(resharing_result.len(), 2);
+
+    // the second element should be the key id
+    assert_eq!(resharing_result[1].0.unwrap(), key_id);
 }
 
 ///////// FULL GEN TESTS//////////

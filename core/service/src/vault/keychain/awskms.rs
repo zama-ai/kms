@@ -61,14 +61,14 @@ const AWS_KMS_ENVELOPED_DATA_RECIPIENT_VERSION: isize = 2;
 pub trait RootKey {
     fn enc_algo_spec(&self) -> EncryptionAlgorithmSpec;
 
-    fn measurements(&self) -> &RootKeyMeasurements;
+    fn measurements(&self) -> Arc<RootKeyMeasurements>;
 }
 
 #[derive(Debug)]
 pub struct Symm {
     pub key_id: String,
     pub enc_algo_spec: EncryptionAlgorithmSpec,
-    pub key_measurements: RootKeyMeasurements,
+    pub key_measurements: Arc<RootKeyMeasurements>,
 }
 
 impl Symm {
@@ -79,10 +79,10 @@ impl Symm {
         Ok(Self {
             key_id,
             enc_algo_spec: EncryptionAlgorithmSpec::SymmetricDefault,
-            key_measurements: RootKeyMeasurements::AwsKms {
+            key_measurements: Arc::new(RootKeyMeasurements::AwsKms {
                 key_origin: key_origin.to_string(),
                 key_policy,
-            },
+            }),
         })
     }
 }
@@ -92,8 +92,8 @@ impl RootKey for Symm {
         self.enc_algo_spec.clone()
     }
 
-    fn measurements(&self) -> &RootKeyMeasurements {
-        &self.key_measurements
+    fn measurements(&self) -> Arc<RootKeyMeasurements> {
+        self.key_measurements.clone()
     }
 }
 
@@ -102,7 +102,7 @@ pub struct Asymm {
     pub key_id: String,
     pub enc_algo_spec: EncryptionAlgorithmSpec,
     pub pk: RsaPublicKey,
-    pub key_measurements: RootKeyMeasurements,
+    pub key_measurements: Arc<RootKeyMeasurements>,
 }
 
 impl Asymm {
@@ -151,10 +151,10 @@ impl Asymm {
             key_id,
             enc_algo_spec: EncryptionAlgorithmSpec::RsaesOaepSha256,
             pk,
-            key_measurements: RootKeyMeasurements::AwsKms {
+            key_measurements: Arc::new(RootKeyMeasurements::AwsKms {
                 key_origin: key_origin.to_string(),
                 key_policy,
-            },
+            }),
         })
     }
 }
@@ -164,8 +164,8 @@ impl RootKey for Asymm {
         self.enc_algo_spec.clone()
     }
 
-    fn measurements(&self) -> &RootKeyMeasurements {
-        &self.key_measurements
+    fn measurements(&self) -> Arc<RootKeyMeasurements> {
+        self.key_measurements.clone()
     }
 }
 
@@ -267,7 +267,7 @@ impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> 
         })
     }
 
-    fn root_key_measurements(&self) -> &RootKeyMeasurements {
+    fn root_key_measurements(&self) -> Arc<RootKeyMeasurements> {
         self.root_key.measurements()
     }
 }
@@ -357,7 +357,7 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
         .await
     }
 
-    fn root_key_measurements(&self) -> &RootKeyMeasurements {
+    fn root_key_measurements(&self) -> Arc<RootKeyMeasurements> {
         AWSKMSKeychain::<S, Symm, R>::root_key_measurements(self)
     }
 }
@@ -403,7 +403,7 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
         .await
     }
 
-    fn root_key_measurements(&self) -> &RootKeyMeasurements {
+    fn root_key_measurements(&self) -> Arc<RootKeyMeasurements> {
         AWSKMSKeychain::<S, Asymm, R>::root_key_measurements(self)
     }
 }

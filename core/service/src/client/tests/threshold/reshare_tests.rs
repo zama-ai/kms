@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
 use kms_grpc::{
+    identifiers::EpochId,
     kms::v1::{FheParameter, KeyGenResult, ResharingResultResponse},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
-    RequestId,
+    rpc_types::PubDataType,
+    ContextId, RequestId,
 };
 use serial_test::serial;
 use threshold_fhe::execution::{
@@ -29,7 +31,10 @@ use crate::{
     },
     cryptography::internal_crypto_types::WrappedDKGParams,
     dummy_domain,
-    engine::{base::derive_request_id, threshold::service::ThresholdFheKeys},
+    engine::{
+        base::{derive_request_id, safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY},
+        threshold::service::ThresholdFheKeys,
+    },
     util::{
         key_setup::test_tools::{purge, EncryptionConfig, TestingPlaintext},
         rate_limiter::RateLimiterConfig,
@@ -111,16 +116,27 @@ pub(crate) async fn reshare(
 
     let (client_key, public_key, server_key) = keyset.get_standard();
 
-    // Run the reshare
+    // compute the key digests
+    let server_key_digest =
+        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap();
+    let public_key_digest =
+        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap();
 
+    // Run the reshare
     let (reshared_keyset, reshared_all_private_keys) = run_reshare(
         amount_parties,
         parameters,
         &kms_clients,
         &internal_client,
+        None,
+        None,
         &derive_request_id(&format!("reshare_{amount_parties}_{parameters:?}")).unwrap(),
         &req_preproc,
         &req_key,
+        &HashMap::from([
+            (PubDataType::ServerKey, server_key_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]),
     )
     .await;
 
@@ -225,14 +241,18 @@ pub(crate) async fn reshare(
     .await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_reshare(
     amount_parties: usize,
     parameters: FheParameter,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &Client,
+    context_id: Option<&ContextId>,
+    epoch_id: Option<&EpochId>,
     reshare_request_id: &RequestId,
     preproc_req_id: &RequestId,
     keygen_req_id: &RequestId,
+    key_digests: &HashMap<PubDataType, Vec<u8>>,
 ) -> (TestKeyGenResult, HashMap<Role, ThresholdFheKeys>) {
     let domain = dummy_domain();
 
@@ -241,9 +261,11 @@ async fn run_reshare(
             reshare_request_id,
             keygen_req_id,
             preproc_req_id,
+            context_id,
+            epoch_id,
             Some(parameters),
             &domain,
-            &HashMap::new(),
+            key_digests,
         )
         .unwrap();
 
