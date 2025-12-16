@@ -238,6 +238,12 @@ pub(crate) fn compute_info_standard_keygen(
     let public_key_digest =
         safe_serialize_hash_element_versioned(domain_separator, &keyset.public_key)?;
 
+    tracing::info!(
+        "Computed server key digest: {} and public key digest: {}",
+        hex::encode(&server_key_digest),
+        hex::encode(&public_key_digest)
+    );
+
     let sol_type = KeygenVerification::new(
         prep_id,
         key_id,

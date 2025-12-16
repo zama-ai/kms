@@ -1,4 +1,4 @@
-use crate::s3_operations::fetch_elements;
+use crate::s3_operations::fetch_public_elements;
 use crate::{
     dummy_domain, CmdConfig, CoreClientConfig, PartialKeyGenPreprocParameters,
     SharedKeyGenParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
@@ -147,7 +147,7 @@ pub(crate) async fn fetch_and_check_keygen(
         PubDataType::ServerKey,
     ];
 
-    let party_ids = fetch_elements(
+    let party_ids = fetch_public_elements(
         &request_id.to_string(),
         &key_types,
         cc_conf,

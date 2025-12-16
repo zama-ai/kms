@@ -238,7 +238,11 @@ impl<
                 .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS>>>()
                 .await;
         }
-        tracing::info!("PRSS completed successfully for identity {}.", own_identity);
+        tracing::info!(
+            "PRSS on epoch ID {} completed successfully for identity {}.",
+            epoch_id,
+            own_identity
+        );
         Ok(())
     }
 }

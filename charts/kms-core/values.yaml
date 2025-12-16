@@ -87,7 +87,7 @@ kmsCore:
           pcr1: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
           pcr2: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
       # Allows to ignore the results of AWS CA chain check (use with caution!)
-      ignoreAwsCaChain: true
+      ignoreAwsCaChain: false
       # Enables mutual attestation of private vault root key policies
       attestPrivateVaultRootKey: false
     # This value appears in the config file as `threshold`.
@@ -113,6 +113,11 @@ kmsCore:
   # Nitro enclave needs specific instance types
   nitroEnclave:
     enabled: false
+    # Socat proxy configuration
+    socat:
+      # Inactivity timeout in seconds for socat proxies
+      # This prevents child processes from hanging indefinitely
+      timeout: 60
     signed: false
     # Enclave CPU count, must be a multiple of 2 since whole cores (not hyperthreads) are sliced off and dedicated to the enclave
     cpuCount: 48
@@ -296,8 +301,8 @@ podSecurityContext:
   #  runAsGroup: 1000
   #  fsGroup: 1000
   #  runAsNonRoot: true
+containerSecurityContext:
   allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: true
   capabilities:
     drop:
       - ALL
