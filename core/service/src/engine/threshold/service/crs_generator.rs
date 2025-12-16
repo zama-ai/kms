@@ -44,7 +44,7 @@ use crate::{
         validation::{proto_request_id, validate_crs_gen_request, RequestIdParsingErr},
     },
     util::{
-        meta_store::{add_req_to_meta_store, handle_res_metric_mapping, MetaStore},
+        meta_store::{add_req_to_meta_store, retrieve_from_meta_store, MetaStore},
         rate_limiter::RateLimiter,
     },
     vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
@@ -250,11 +250,9 @@ impl<
                 },
             )?;
 
-        let status = {
-            let guarded_meta_store = self.crs_meta_store.read().await;
-            guarded_meta_store.retrieve(&request_id)
-        };
-        let crs_data = handle_res_metric_mapping(status, op_tag, &request_id).await?;
+        let crs_data =
+            retrieve_from_meta_store(&self.crs_meta_store.read().await, &request_id, op_tag)
+                .await?;
 
         match crs_data {
             CrsGenMetadata::Current(crs_data) => {
@@ -346,7 +344,7 @@ impl<
                 if my_role.one_based() == input_party_id {
                     let crs_res =
                         async_generate_crs(&sk, params, max_num_bits, domain, req_id, rng).await;
-                    let crs: tfhe::zk::CompactPkeCrs = match crs_res {
+                    let crs = match crs_res {
                         Ok((crs, _)) => crs,
                         Err(e) => {
                             let _ = update_err_req_in_meta_store(

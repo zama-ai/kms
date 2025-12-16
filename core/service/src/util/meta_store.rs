@@ -5,6 +5,8 @@ use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
 };
+#[cfg(feature = "non-wasm")]
+use tokio::sync::RwLockReadGuard;
 use tracing;
 
 cfg_if::cfg_if! {
@@ -372,12 +374,12 @@ pub(crate) fn update_err_req_in_meta_store<T: Clone>(
 /// [req_id] is the request ID to retrieve
 /// [request_type] is a free-form string used only for error logging the origin of the failure
 #[cfg(feature = "non-wasm")]
-pub(crate) async fn handle_res_metric_mapping<T: Clone>(
-    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
-    metric_scope: &'static str,
+pub(crate) async fn retrieve_from_meta_store<T: Clone>(
+    meta_store: &RwLockReadGuard<'_, MetaStore<T>>,
     req_id: &RequestId,
+    metric_scope: &'static str,
 ) -> Result<T, MetricedError> {
-    // TODO should be integrated with meta stored fetching
+    let handle = meta_store.retrieve(req_id);
     match handle {
         None => {
             let msg = format!(

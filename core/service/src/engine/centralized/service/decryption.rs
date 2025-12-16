@@ -10,7 +10,7 @@ use crate::engine::validation::{
     DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
 };
 use crate::util::meta_store::{
-    add_req_to_meta_store, handle_res_metric_mapping, update_err_req_in_meta_store,
+    add_req_to_meta_store, retrieve_from_meta_store, update_err_req_in_meta_store,
     update_req_in_meta_store,
 };
 use crate::vault::storage::Storage;
@@ -50,7 +50,10 @@ pub async fn user_decrypt_impl<
                 tonic::Code::ResourceExhausted,
             )
         })?;
-    let mut timer = METRICS.time_operation(OP_USER_DECRYPT_REQUEST).start();
+    let mut timer = METRICS
+        .time_operation(OP_USER_DECRYPT_REQUEST)
+        .tag(TAG_PARTY_ID, "central".to_string())
+        .start();
 
     let inner = request.into_inner();
     let (
@@ -74,7 +77,6 @@ pub async fn user_decrypt_impl<
 
     // Use a constant party ID since this is the central KMS
     let metric_tags = vec![
-        (TAG_PARTY_ID, "central".to_string()),
         (TAG_KEY_ID, key_id.to_string()),
         (TAG_CONTEXT_ID, context_id.to_string()),
         (TAG_EPOCH_ID, epoch_id.to_string()),
@@ -88,9 +90,9 @@ pub async fn user_decrypt_impl<
         .refresh_centralized_fhe_keys(&key_id.into())
         .await
         .map_err(|e| {
-            METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
+            METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
             MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
+                OP_USER_DECRYPT_REQUEST,
                 Some(request_id),
                 anyhow::anyhow!(
                 "Failed to refresh FHE keys for key_id {key_id} and request_id {request_id}: {e:?}"
@@ -110,7 +112,7 @@ pub async fn user_decrypt_impl<
     .await?;
     let sig_key = service.base_kms.sig_key().map_err(|e| {
         MetricedError::new(
-            OP_PUBLIC_DECRYPT_REQUEST,
+            OP_USER_DECRYPT_REQUEST,
             Some(request_id),
             anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
             tonic::Code::FailedPrecondition,
@@ -119,12 +121,12 @@ pub async fn user_decrypt_impl<
 
     let mut handles = service.thread_handles.write().await;
 
-    let server_verf_key = service.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
+    let server_verf_key = sig_key.verf_key().to_legacy_bytes().map_err(|e| {
         MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
             Some(request_id),
             anyhow::anyhow!("Failed to serialize server verification key: {e:?}"),
-            tonic::Code::FailedPrecondition,
+            tonic::Code::Internal,
         )
     })?;
 
@@ -205,13 +207,12 @@ pub async fn get_user_decryption_result_impl<
         )
     })?;
 
-    let status = {
-        let guarded_meta_store = service.user_dec_meta_store.read().await;
-        guarded_meta_store.retrieve(&request_id)
-    };
-
-    let (payload, external_signature, extra_data) =
-        handle_res_metric_mapping(status, OP_USER_DECRYPT_RESULT, &request_id).await?;
+    let (payload, external_signature, extra_data) = retrieve_from_meta_store(
+        &service.user_dec_meta_store.read().await,
+        &request_id,
+        OP_USER_DECRYPT_RESULT,
+    )
+    .await?;
 
     // sign the response
     let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
@@ -219,7 +220,7 @@ pub async fn get_user_decryption_result_impl<
             OP_USER_DECRYPT_RESULT,
             Some(request_id),
             anyhow::anyhow!("Could not serialize user decryption payload: {e}"),
-            tonic::Code::Aborted,
+            tonic::Code::Internal,
         )
     })?;
 
@@ -252,6 +253,23 @@ pub async fn public_decrypt_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<PublicDecryptionRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
+    let permit = service
+        .rate_limiter
+        .start_pub_decrypt()
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                None,
+                e,
+                tonic::Code::ResourceExhausted,
+            )
+        })?;
+    let mut timer = METRICS
+        .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
+        // Use a constant party ID since this is the central KMS
+        .tag(TAG_PARTY_ID, "central".to_string())
+        .start();
     let inner = request.into_inner();
     let (ciphertexts, request_id, key_id, context_id, epoch_id, eip712_domain) =
         validate_public_decrypt_req(&inner).map_err(|e| {
@@ -262,30 +280,13 @@ pub async fn public_decrypt_impl<
                 tonic::Code::InvalidArgument,
             )
         })?;
-    let permit = service
-        .rate_limiter
-        .start_pub_decrypt()
-        .await
-        .map_err(|e| {
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                Some(request_id),
-                e,
-                tonic::Code::ResourceExhausted,
-            )
-        })?;
+
     let metric_tags = vec![
-        (TAG_PARTY_ID, "central".to_string()),
         (TAG_KEY_ID, key_id.to_string()),
         (TAG_CONTEXT_ID, context_id.to_string()),
         (TAG_EPOCH_ID, epoch_id.to_string()),
     ];
-    let timer = METRICS
-        .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
-        // Use a constant party ID since this is the central KMS
-        .tags(metric_tags.clone())
-        .start();
-
+    timer.tags(metric_tags.clone());
     let start = tokio::time::Instant::now();
 
     tracing::info!(
@@ -431,12 +432,12 @@ pub async fn get_public_decryption_result_impl<
     })?;
     tracing::debug!("Received get key gen result request with id {}", request_id);
 
-    let status = {
-        let guarded_meta_store = service.pub_dec_meta_store.read().await;
-        guarded_meta_store.retrieve(&request_id)
-    };
-    let (retrieved_req_id, plaintexts, external_signature, extra_data) =
-        handle_res_metric_mapping(status, OP_PUBLIC_DECRYPT_RESULT, &request_id).await?;
+    let (retrieved_req_id, plaintexts, external_signature, extra_data) = retrieve_from_meta_store(
+        &service.pub_dec_meta_store.read().await,
+        &request_id,
+        OP_PUBLIC_DECRYPT_RESULT,
+    )
+    .await?;
 
     if retrieved_req_id != request_id {
         return Err(MetricedError::new(
@@ -475,7 +476,7 @@ pub async fn get_public_decryption_result_impl<
             OP_PUBLIC_DECRYPT_RESULT,
             Some(request_id),
             anyhow::anyhow!("Could not convert payload to bytes {kms_sig_payload:?}: {e:?}"),
-            tonic::Code::Aborted,
+            tonic::Code::Internal,
         )
     })?;
 

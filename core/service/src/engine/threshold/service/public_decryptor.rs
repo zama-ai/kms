@@ -63,7 +63,7 @@ use crate::{
     },
     util::{
         meta_store::{
-            add_req_to_meta_store, handle_res_metric_mapping, update_err_req_in_meta_store,
+            add_req_to_meta_store, retrieve_from_meta_store, update_err_req_in_meta_store,
             update_req_in_meta_store, MetaStore,
         },
         rate_limiter::RateLimiter,
@@ -382,7 +382,7 @@ impl<
             (lock_acquired_time, total_lock_time)
         };
 
-        // TODO do we still want to log these log times?
+        // TODO do we still want to log these lock times?
         // Log after lock is released
         tracing::debug!(
             "MetaStore INITIAL insert - req_id={}, key_id={}, context_id={}, epoch_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
@@ -578,7 +578,6 @@ impl<
                         .await
                         .map(|x| TypedPlaintext::new(x as u128, fhe_type))
                     }
-                    // TODO handle error here
                     unsupported_fhe_type => Err(anyhow::anyhow!(
                         "Unsupported fhe type {:?}",
                         unsupported_fhe_type
@@ -709,12 +708,13 @@ impl<
             )
         })?;
 
-        let status = {
-            let guarded_meta_store = self.pub_dec_meta_store.read().await;
-            guarded_meta_store.retrieve(&request_id)
-        };
         let (retrieved_req_id, plaintexts, external_signature, extra_data) =
-            handle_res_metric_mapping(status, OP_PUBLIC_DECRYPT_RESULT, &request_id).await?;
+            retrieve_from_meta_store(
+                &self.pub_dec_meta_store.read().await,
+                &request_id,
+                OP_PUBLIC_DECRYPT_RESULT,
+            )
+            .await?;
 
         if request_id != retrieved_req_id {
             return Err(MetricedError::new(

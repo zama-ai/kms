@@ -22,7 +22,7 @@ use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{proto_request_id, validate_crs_gen_request, RequestIdParsingErr};
 use crate::util::meta_store::{
-    add_req_to_meta_store, handle_res_metric_mapping, update_err_req_in_meta_store, MetaStore,
+    add_req_to_meta_store, retrieve_from_meta_store, update_err_req_in_meta_store, MetaStore,
 };
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::Storage;
@@ -46,33 +46,30 @@ pub async fn crs_gen_impl<
         OP_CRS_GEN_REQUEST
     };
 
+    let permit = service.rate_limiter.start_crsgen().await.map_err(|e| {
+        METRICS.increment_error_counter(op_tag, ERR_RATE_LIMIT_EXCEEDED);
+        MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted)
+    })?;
+    let mut timer = METRICS
+        .time_operation(op_tag)
+        .tag(TAG_PARTY_ID, "central".to_string())
+        .start();
     let inner = request.into_inner();
     let (req_id, context_id, _witness_dimension, params, eip712_domain) =
         validate_crs_gen_request(inner.clone()).map_err(|e| {
             MetricedError::new(
-                OP_CRS_GEN_REQUEST,
+                op_tag,
                 None,
                 e, // Validation error
                 tonic::Code::InvalidArgument,
             )
         })?;
-    let timer = METRICS
-        .time_operation(op_tag)
-        .tags(vec![
-            (TAG_PARTY_ID, "central".to_string()),
-            (TAG_CONTEXT_ID, context_id.to_string()),
-        ])
-        .start();
+    timer.tag(TAG_CONTEXT_ID, context_id.to_string());
 
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused
     // all validation must be done before inserting the request ID
     add_req_to_meta_store(&mut service.crs_meta_map.write().await, &req_id, op_tag).await?;
-
-    let permit = service.rate_limiter.start_crsgen().await.map_err(|e| {
-        METRICS.increment_error_counter(op_tag, ERR_RATE_LIMIT_EXCEEDED);
-        MetricedError::new(op_tag, Some(req_id), e, tonic::Code::ResourceExhausted)
-    })?;
 
     let meta_store = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();
@@ -137,11 +134,8 @@ pub async fn get_crs_gen_result_impl<
     })?;
     tracing::debug!("Received CRS gen result request with id {}", request_id);
 
-    let status = {
-        let guarded_meta_store = service.crs_meta_map.read().await;
-        guarded_meta_store.retrieve(&request_id)
-    };
-    let crs_info = handle_res_metric_mapping(status, op_tag, &request_id).await?;
+    let crs_info =
+        retrieve_from_meta_store(&service.crs_meta_map.read().await, &request_id, op_tag).await?;
 
     match crs_info {
         CrsGenMetadata::LegacyV0(_) => {

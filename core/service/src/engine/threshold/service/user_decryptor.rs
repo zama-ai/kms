@@ -70,7 +70,7 @@ use crate::{
     },
     util::{
         meta_store::{
-            add_req_to_meta_store, handle_res_metric_mapping, update_req_in_meta_store, MetaStore,
+            add_req_to_meta_store, retrieve_from_meta_store, update_req_in_meta_store, MetaStore,
         },
         rate_limiter::RateLimiter,
     },
@@ -632,12 +632,12 @@ impl<
             )?;
 
         // Retrieve the UserDecryptMetaStore object
-        let status = {
-            let guarded_meta_store = self.user_decrypt_meta_store.read().await;
-            guarded_meta_store.retrieve(&request_id)
-        };
-        let (payload, external_signature, extra_data) =
-            handle_res_metric_mapping(status, OP_USER_DECRYPT_RESULT, &request_id).await?;
+        let (payload, external_signature, extra_data) = retrieve_from_meta_store(
+            &self.user_decrypt_meta_store.read().await,
+            &request_id,
+            OP_USER_DECRYPT_RESULT,
+        )
+        .await?;
 
         let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
             MetricedError::new(
