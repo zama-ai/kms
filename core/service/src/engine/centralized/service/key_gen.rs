@@ -22,7 +22,7 @@ use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
 use kms_grpc::rpc_types::optional_protobuf_to_alloy_domain;
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
-use observability::metrics_names::{ERR_KEYGEN_FAILED, ERR_KEY_EXISTS, OP_KEYGEN};
+use observability::metrics_names::{ERR_KEYGEN_FAILED, ERR_KEY_EXISTS, OP_KEYGEN_REQUEST};
 use std::sync::Arc;
 use threshold_fhe::execution::keyset_config::KeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -41,7 +41,7 @@ pub async fn key_gen_impl<
     request: Request<KeyGenRequest>,
     #[cfg(feature = "insecure")] check_preproc_id: bool,
 ) -> Result<Response<Empty>, Status> {
-    let _timer = METRICS.time_operation(OP_KEYGEN).start();
+    let _timer = METRICS.time_operation(OP_KEYGEN_REQUEST).start();
 
     let inner = request.into_inner();
     tracing::info!(
@@ -69,7 +69,7 @@ pub async fn key_gen_impl<
 
     let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
         MetricedError::new(
-            OP_KEYGEN,
+            OP_KEYGEN_REQUEST,
             Some(req_id),
             anyhow::anyhow!("EIP712 domain validation for key generation: {e}"),
             tonic::Code::InvalidArgument,
@@ -160,7 +160,7 @@ pub async fn key_gen_impl<
             )
             .await
             {
-                METRICS.increment_error_counter(OP_KEYGEN, ERR_KEYGEN_FAILED);
+                METRICS.increment_error_counter(OP_KEYGEN_REQUEST, ERR_KEYGEN_FAILED);
                 tracing::error!("Key generation of request {} failed: {}", req_id, e);
             } else {
                 tracing::info!(
@@ -268,7 +268,7 @@ pub(crate) async fn key_gen_background<
             .is_ok()
         {
             let mut guarded_meta_store = meta_store.write().await;
-            METRICS.increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS);
+            METRICS.increment_error_counter(OP_KEYGEN_REQUEST, ERR_KEY_EXISTS);
             let _ = guarded_meta_store.update(
                 req_id,
                 Err(format!(

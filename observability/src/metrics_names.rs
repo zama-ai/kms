@@ -1,18 +1,19 @@
 /// Constants for metric operation names to ensure consistency and prevent typos
-/// These match the gRPC method names for better correlation
-//
-// Key Generation Operations
+/// These match the gRPC method names for better correlation.
+/// Counters are incremented for each operation, and also used for error tracking.
+
+// Preprocessing and generation related operations
 pub const OP_KEYGEN_REQUEST: &str = "keygen_request";
-pub const OP_KEYGEN_INNER: &str = "keygen_inner";
 pub const OP_KEYGEN_RESULT: &str = "keygen_result";
 pub const OP_INSECURE_KEYGEN_REQUEST: &str = "insecure_keygen_request";
 pub const OP_INSECURE_KEYGEN_RESULT: &str = "insecure_keygen_result";
-pub const OP_INSECURE_KEYGEN: &str = "insecure_keygen";
-pub const OP_INSECURE_DECOMPRESSION_KEYGEN: &str = "insecure_decompression_keygen";
-pub const OP_KEYGEN: &str = "keygen";
-pub const OP_DECOMPRESSION_KEYGEN: &str = "decompression_keygen";
 pub const OP_KEYGEN_PREPROC_REQUEST: &str = "keygen_preproc_request";
 pub const OP_KEYGEN_PREPROC_RESULT: &str = "keygen_preproc_result";
+// More specific metrics for key generation, only used with counters
+pub const OP_INSECURE_STANDARD_KEYGEN: &str = "insecure_standard_keygen";
+pub const OP_INSECURE_DECOMPRESSION_KEYGEN: &str = "insecure_decompression_keygen";
+pub const OP_STANDARD_KEYGEN: &str = "standard_keygen";
+pub const OP_DECOMPRESSION_KEYGEN: &str = "decompression_keygen";
 
 // Public/User decryption Operations
 // Corresponds to a request, a request may contain several ciphertexts
@@ -27,10 +28,8 @@ pub const OP_USER_DECRYPT_INNER: &str = "user_decrypt_inner";
 
 // CRS Operations
 pub const OP_CRS_GEN_REQUEST: &str = "crs_gen_request";
-pub const OP_CRS_GEN_INNER: &str = "crs_gen_inner";
 pub const OP_CRS_GEN_RESULT: &str = "crs_gen_result";
 pub const OP_INSECURE_CRS_GEN_REQUEST: &str = "insecure_crs_gen_request";
-pub const OP_INSECURE_CRS_GEN_INNER: &str = "insecure_crs_gen_inner";
 pub const OP_INSECURE_CRS_GEN_RESULT: &str = "insecure_crs_gen_result";
 
 // PRSS init
@@ -68,7 +67,6 @@ pub const TAG_USER_DECRYPTION_KIND: &str = "user_decryption_mode";
 
 // Common error values
 // NOTE: make sure to update docs/operations/advanced/metrics.md when changing
-// TODO should probably be an enum somewhere
 pub const ERR_RATE_LIMIT_EXCEEDED: &str = "rate_limit_exceeded";
 pub const ERR_KEY_EXISTS: &str = "key_already_exists";
 pub const ERR_KEY_NOT_FOUND: &str = "key_not_found";
@@ -86,15 +84,12 @@ pub const ERR_USER_DECRYPTION_RESULT_FAILED: &str = "user_decryption_result_fail
 pub const ERR_USER_PREPROC_FAILED: &str = "preproc_failed";
 pub const ERR_USER_PREPROC_RESULT_FAILED: &str = "preproc_result_failed";
 pub const ERR_KEYGEN_FAILED: &str = "keygen_failed";
-pub const ERR_KEYGEN_INNER_FAILED: &str = "keygen_inner_failed";
 pub const ERR_KEYGEN_RESULT_FAILED: &str = "keygen_result_failed";
 pub const ERR_INSECURE_KEYGEN_FAILED: &str = "insecure_keygen_failed";
 pub const ERR_INSECURE_KEYGEN_RESULT_FAILED: &str = "insecure_keygen_result_failed";
 pub const ERR_CRS_GEN_FAILED: &str = "crs_gen_failed";
-pub const ERR_CRS_GEN_INNER_FAILED: &str = "crs_gen_inner_failed";
 pub const ERR_CRS_GEN_RESULT_FAILED: &str = "crs_gen_result_failed";
 pub const ERR_INSECURE_CRS_GEN_FAILED: &str = "insecure_crs_gen_failed";
-pub const ERR_INSECURE_CRS_GEN_INNER_FAILED: &str = "insecure_crs_gen_inner_failed";
 pub const ERR_INSECURE_CRS_GEN_RESULT_FAILED: &str = "insecure_crs_gen_result_failed";
 
 // gRPC errors
@@ -139,15 +134,12 @@ pub fn map_scope_to_metric_err_tag(scope: &'static str) -> &'static str {
         OP_USER_DECRYPT_INNER => ERR_USER_DECRYPTION_INNER_FAILED,
         OP_USER_DECRYPT_RESULT => ERR_USER_DECRYPTION_RESULT_FAILED,
         OP_KEYGEN_REQUEST => ERR_KEYGEN_FAILED,
-        OP_KEYGEN_INNER => ERR_KEYGEN_INNER_FAILED,
         OP_KEYGEN_RESULT => ERR_KEYGEN_RESULT_FAILED,
         OP_INSECURE_KEYGEN_REQUEST => ERR_INSECURE_KEYGEN_FAILED,
         OP_INSECURE_KEYGEN_RESULT => ERR_INSECURE_KEYGEN_RESULT_FAILED,
         OP_CRS_GEN_REQUEST => ERR_CRS_GEN_FAILED,
-        OP_CRS_GEN_INNER => ERR_CRS_GEN_INNER_FAILED,
         OP_CRS_GEN_RESULT => ERR_CRS_GEN_RESULT_FAILED,
         OP_INSECURE_CRS_GEN_REQUEST => ERR_INSECURE_CRS_GEN_FAILED,
-        OP_INSECURE_CRS_GEN_INNER => ERR_INSECURE_CRS_GEN_INNER_FAILED,
         OP_INSECURE_CRS_GEN_RESULT => ERR_INSECURE_CRS_GEN_RESULT_FAILED,
         _ => ERR_OTHER,
     }

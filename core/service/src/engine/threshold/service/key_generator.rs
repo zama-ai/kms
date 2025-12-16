@@ -13,8 +13,8 @@ use observability::{
     metrics,
     metrics_names::{
         ERR_CANCELLED, ERR_KEYGEN_FAILED, OP_DECOMPRESSION_KEYGEN,
-        OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN, OP_KEYGEN, OP_KEYGEN_INNER,
-        TAG_PARTY_ID,
+        OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_STANDARD_KEYGEN, OP_KEYGEN_REQUEST,
+        OP_STANDARD_KEYGEN, TAG_PARTY_ID,
     },
 };
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -233,14 +233,14 @@ impl<
             internal_keyset_config.keyset_config(),
         ) {
             (PreprocHandleWithMode::Secure(_), ddec_keyset_config::KeySetConfig::Standard(_)) => {
-                OP_KEYGEN
+                OP_STANDARD_KEYGEN
             }
             (
                 PreprocHandleWithMode::Secure(_),
                 ddec_keyset_config::KeySetConfig::DecompressionOnly,
             ) => OP_DECOMPRESSION_KEYGEN,
             (PreprocHandleWithMode::Insecure, ddec_keyset_config::KeySetConfig::Standard(_)) => {
-                OP_INSECURE_KEYGEN
+                OP_INSECURE_STANDARD_KEYGEN
             }
             (
                 PreprocHandleWithMode::Insecure,
@@ -396,7 +396,7 @@ impl<
         let eip712_domain =
             optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
                 MetricedError::new(
-                    OP_KEYGEN_INNER,
+                    OP_KEYGEN_REQUEST,
                     Some(request_id),
                     anyhow::anyhow!("EIP712 domain validation for inner key generation: {e}"),
                     tonic::Code::InvalidArgument,

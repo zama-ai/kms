@@ -19,9 +19,9 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_KEY_NOT_FOUND, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
-        TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID, TAG_TFHE_TYPE,
-        TAG_USER_DECRYPTION_KIND,
+        ERR_KEY_NOT_FOUND, ERR_RATE_LIMIT_EXCEEDED, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST,
+        OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
+        TAG_TFHE_TYPE, TAG_USER_DECRYPTION_KIND,
     },
 };
 use rand::{CryptoRng, RngCore};
@@ -447,6 +447,8 @@ impl<
         // because resource exhaustion can be recovered by sending the exact same request
         // but the errors above cannot be tried again.
         let permit = self.rate_limiter.start_user_decrypt().await.map_err(|e| {
+            metrics::METRICS
+                .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED);
             MetricedError::new(
                 OP_USER_DECRYPT_REQUEST,
                 None,

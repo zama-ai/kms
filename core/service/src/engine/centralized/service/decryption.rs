@@ -20,9 +20,9 @@ use kms_grpc::kms::v1::{
 };
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    ERR_KEY_NOT_FOUND, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
-    OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST,
-    OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
+    ERR_KEY_NOT_FOUND, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
+    OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID,
+    TAG_PARTY_ID,
 };
 use std::sync::Arc;
 use tonic::{Request, Response};
@@ -138,12 +138,12 @@ pub async fn user_decrypt_impl<
             {
                 Ok(k) => k,
                 Err(e) => {
-                    METRICS.increment_error_counter(OP_USER_DECRYPT_INNER, ERR_KEY_NOT_FOUND);
+                    METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
                     return update_err_req_in_meta_store(
                         &mut meta_store.write().await,
                         &request_id,
                         format!("Failed to get key ID {key_id} with error {e:?}"),
-                        OP_USER_DECRYPT_INNER,
+                        OP_USER_DECRYPT_REQUEST,
                     );
                 }
             };
@@ -174,7 +174,7 @@ pub async fn user_decrypt_impl<
                 &mut meta_store.write().await,
                 &request_id,
                 res_with_extra_data,
-                OP_USER_DECRYPT_INNER,
+                OP_USER_DECRYPT_REQUEST,
             );
         }
         .instrument(tracing::Span::current()),
@@ -342,12 +342,12 @@ pub async fn public_decrypt_impl<
         {
             Ok(k) => k,
             Err(e) => {
-                METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_INNER, ERR_KEY_NOT_FOUND);
+                METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
                 return update_err_req_in_meta_store(
                     &mut meta_store.write().await,
                     &request_id,
                     format!("Failed to get key ID {key_id} with error {e:?}"),
-                    OP_PUBLIC_DECRYPT_INNER,
+                    OP_PUBLIC_DECRYPT_REQUEST,
                 );
             }
         };
@@ -393,7 +393,7 @@ pub async fn public_decrypt_impl<
             &mut meta_store.write().await,
             &request_id,
             res,
-            OP_PUBLIC_DECRYPT_INNER,
+            OP_PUBLIC_DECRYPT_REQUEST,
         );
         tracing::info!(
             "⏱️ Core Event Time for decryption computation: {:?}",

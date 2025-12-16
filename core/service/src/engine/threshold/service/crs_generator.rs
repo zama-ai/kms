@@ -12,8 +12,8 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_CANCELLED, OP_CRS_GEN_INNER, OP_CRS_GEN_REQUEST, OP_INSECURE_CRS_GEN_REQUEST,
-        TAG_CONTEXT_ID, TAG_PARTY_ID,
+        ERR_CANCELLED, ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
+        OP_INSECURE_CRS_GEN_REQUEST, TAG_CONTEXT_ID, TAG_PARTY_ID,
     },
 };
 use threshold_fhe::{
@@ -91,11 +91,18 @@ impl<
         request: Request<CrsGenRequest>,
         insecure: bool,
     ) -> Result<Response<Empty>, MetricedError> {
+        // Retrieve the correct tag
+        let op_tag = if insecure {
+            OP_INSECURE_CRS_GEN_REQUEST
+        } else {
+            OP_CRS_GEN_REQUEST
+        };
         // Check for resource exhaustion once all the other checks are ok
         // because resource exhaustion can be recovered by sending the exact same request
         // but the errors above cannot be tried again.
         let permit = self.rate_limiter.start_crsgen().await.map_err(|e| {
-            MetricedError::new(OP_CRS_GEN_REQUEST, None, e, tonic::Code::ResourceExhausted)
+            metrics::METRICS.increment_error_counter(OP_CRS_GEN_REQUEST, ERR_RATE_LIMIT_EXCEEDED);
+            MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted)
         })?;
 
         let inner = request.into_inner();
@@ -106,7 +113,7 @@ impl<
         let (req_id, context_id, dkg_params, eip712_domain) =
             validate_crs_gen_request(inner.clone()).map_err(|e| {
                 MetricedError::new(
-                    OP_CRS_GEN_REQUEST,
+                    op_tag,
                     None,
                     e, // Validation error
                     tonic::Code::InvalidArgument,
@@ -120,7 +127,7 @@ impl<
         let witness_dim = compute_witness_dim(&crs_params, inner.max_num_bits.map(|x| x as usize))
             .map_err(|e| {
                 MetricedError::new(
-                    OP_CRS_GEN_REQUEST,
+                    op_tag,
                     None,
                     format!("witness dimension computation failed: {e}"),
                     tonic::Code::InvalidArgument,
@@ -130,19 +137,14 @@ impl<
         // Validate the request ID before proceeding
         self.crypto_storage.crs_exists(&req_id).await.map_err(|e| {
             MetricedError::new(
-                OP_CRS_GEN_REQUEST,
+                op_tag,
                 None,
                 format!("Could not check crs existance in storage: {e}"),
                 tonic::Code::AlreadyExists,
             )
         })?;
 
-        add_req_to_meta_store(
-            &mut self.crs_meta_store.write().await,
-            &req_id,
-            OP_CRS_GEN_REQUEST,
-        )
-        .await?;
+        add_req_to_meta_store(&mut self.crs_meta_store.write().await, &req_id, op_tag).await?;
 
         // NOTE: everything inside this function will cause an Aborted error code
         // so before calling it we should do as much validation as possible without modifying state
@@ -157,9 +159,7 @@ impl<
             insecure,
         )
         .await
-        .map_err(|e| {
-            MetricedError::new(OP_CRS_GEN_REQUEST, Some(req_id), e, tonic::Code::Aborted)
-        })?; // TODO no clear distinction between internal and abroted
+        .map_err(|e| MetricedError::new(op_tag, Some(req_id), e, tonic::Code::Aborted))?; // TODO no clear distinction between internal and abroted
         Ok(Response::new(Empty {}))
     }
 
@@ -226,7 +226,7 @@ impl<
                    res  = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, permit, insecure) => {
                         // Increment the error counter if ever the task fails
                         // Ignore the result as logs and restult storage is handled inside crs_gen_background
-                        let _ = res.map_err(|e| { MetricedError::error_handler(OP_CRS_GEN_INNER, Some(req_id), e); });
+                        let _ = res.map_err(|e| { MetricedError::error_handler(OP_CRS_GEN_REQUEST, Some(req_id), e); });
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&req_id);
                         tracing::info!("CRS generation of request {} exiting normally.", req_id);
@@ -247,23 +247,29 @@ impl<
     async fn inner_get_result(
         &self,
         request: Request<v1::RequestId>,
+        insecure: bool,
     ) -> Result<Response<CrsGenResult>, MetricedError> {
+        // Retrieve the correct tag
+        let op_tag = if insecure {
+            OP_INSECURE_CRS_GEN_REQUEST
+        } else {
+            OP_CRS_GEN_RESULT
+        };
         let request_id =
-            proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse).map_err(
-                |e| MetricedError::new(OP_CRS_GEN_REQUEST, None, e, tonic::Code::InvalidArgument),
-            )?;
+            proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)
+                .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
 
         let status = {
             let guarded_meta_store = self.crs_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
         };
-        let crs_data = handle_res_metric_mapping(status, OP_CRS_GEN_REQUEST, &request_id).await?;
+        let crs_data = handle_res_metric_mapping(status, op_tag, &request_id).await?;
 
         match crs_data {
             CrsGenMetadata::Current(crs_data) => {
                 if crs_data.crs_id != request_id {
                     return Err(MetricedError::new(
-                        OP_CRS_GEN_REQUEST,
+                        op_tag,
                         Some(request_id),
                         anyhow!(
                             "CRS Request ID mismatch: expected {}, got {}",
@@ -414,7 +420,7 @@ impl<
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, MetricedError> {
-        self.inner_get_result(request).await
+        self.inner_get_result(request, false).await
     }
 }
 
@@ -472,7 +478,9 @@ impl<
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, MetricedError> {
-        self.real_crs_generator.inner_get_result(request).await
+        self.real_crs_generator
+            .inner_get_result(request, true)
+            .await
     }
 }
 

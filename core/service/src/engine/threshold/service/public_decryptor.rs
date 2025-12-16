@@ -15,9 +15,9 @@ use kms_grpc::{
 use observability::{
     metrics::{self},
     metrics_names::{
-        ERR_KEY_NOT_FOUND, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
-        OP_PUBLIC_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
-        TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+        ERR_KEY_NOT_FOUND, ERR_RATE_LIMIT_EXCEEDED, OP_PUBLIC_DECRYPT_INNER,
+        OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID,
+        TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
     },
 };
 use tfhe::FheTypes;
@@ -281,6 +281,8 @@ impl<
         // because resource exhaustion can be recovered by sending the exact same request
         // but the errors above cannot be tried again.
         let permit = self.rate_limiter.start_pub_decrypt().await.map_err(|e| {
+            metrics::METRICS
+                .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED);
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_REQUEST,
                 None,
@@ -667,7 +669,7 @@ impl<
                     &mut guarded_meta_store,
                     &req_id,
                     res,
-                    OP_PUBLIC_DECRYPT_INNER,
+                    OP_PUBLIC_DECRYPT_REQUEST,
                 );
                 let total_lock_time = lock_start.elapsed();
                 (lock_acquired_time, total_lock_time)
