@@ -380,7 +380,7 @@ pub(crate) async fn retrieve_from_meta_store<T: Clone>(
     metric_scope: &'static str,
 ) -> Result<T, MetricedError> {
     let handle = meta_store.retrieve(req_id);
-    drop(meta_store); // Release the read lock early
+    drop(meta_store); // Release the read lock early as we otherwise risk holding it for up to DURATION_WAITING_ON_RESULT_SECONDS!
     match handle {
         None => {
             let msg = format!(
