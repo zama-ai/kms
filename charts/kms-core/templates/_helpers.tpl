@@ -157,18 +157,29 @@ export KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="${KMS_CORE__BAC
 {{- end }}
 {{- end }}
 {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
+# Fetch CA certificates for all peers (needed for peer verification)
+# S3 endpoint format: http://localstack:4566 - need to add bucket name to path
+S3_PUBLIC_BUCKET="{{ .Values.kmsCore.publicVault.s3.bucket }}"
 for i in $(seq 1 {{ len .Values.kmsCore.thresholdMode.peersList }}); do
-# Fetch CA certificate
-BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/?list-type=2&prefix=PUB-p${i}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
-curl -s -o ./ca_pem "${CORE_CLIENT__S3_ENDPOINT}/${BUCKET_PATH}"
-export KMS_CA_PEM_${i}="\"\"\"$(cat ./ca_pem)\"\"\""
-# Fetch private key if available
-KEY_BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/?list-type=2&prefix=PUB-p${i}/PrivateKey/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//" || true)
-if [ -n "${KEY_BUCKET_PATH}" ]; then
-  curl -s -o ./key_pem "${CORE_CLIENT__S3_ENDPOINT}/${KEY_BUCKET_PATH}"
-  export KMS_KEY_PEM_${i}="\"\"\"$(cat ./key_pem)\"\"\""
+BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/${S3_PUBLIC_BUCKET}?list-type=2&prefix=PUB-p${i}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
+if [ -n "${BUCKET_PATH}" ]; then
+  curl -s -o ./ca_pem "${CORE_CLIENT__S3_ENDPOINT}/${S3_PUBLIC_BUCKET}/${BUCKET_PATH}"
+  export KMS_CA_PEM_${i}="\"\"\"$(cat ./ca_pem)\"\"\""
+  echo "Fetched CA cert for party ${i}"
+else
+  echo "WARNING: No CA cert found for party ${i}"
 fi
 done
+# Fetch private key only for this party (party {{ .Values.kmsPeers.id }})
+MY_ID={{ .Values.kmsPeers.id }}
+KEY_BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/${S3_PUBLIC_BUCKET}?list-type=2&prefix=PUB-p${MY_ID}/PrivateKey/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//" || true)
+if [ -n "${KEY_BUCKET_PATH}" ]; then
+  curl -s -o ./key_pem "${CORE_CLIENT__S3_ENDPOINT}/${S3_PUBLIC_BUCKET}/${KEY_BUCKET_PATH}"
+  export KMS_KEY_PEM_${MY_ID}="\"\"\"$(cat ./key_pem)\"\"\""
+  echo "Fetched private key for party ${MY_ID}"
+else
+  echo "WARNING: No private key found for party ${MY_ID}"
+fi
 echo "### BEGIN - env ###"
 env
 echo "### END - env ###"
