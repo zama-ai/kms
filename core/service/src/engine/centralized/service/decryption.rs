@@ -83,6 +83,15 @@ pub async fn user_decrypt_impl<
     ];
     timer.tags(metric_tags.clone());
 
+    if !service.key_meta_map.read().await.exists(&key_id.into()) {
+        return Err(MetricedError::new(
+            OP_USER_DECRYPT_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("Key ID {} not found", key_id),
+            tonic::Code::NotFound,
+        ));
+    }
+
     let meta_store = Arc::clone(&service.user_dec_meta_store);
     let crypto_storage = service.crypto_storage.clone();
     let mut rng = service.base_kms.new_rng().await;
@@ -269,6 +278,15 @@ pub async fn public_decrypt_impl<
         (TAG_EPOCH_ID, epoch_id.to_string()),
     ];
     timer.tags(metric_tags.clone());
+
+    if !service.key_meta_map.read().await.exists(&key_id.into()) {
+        return Err(MetricedError::new(
+            OP_USER_DECRYPT_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("Key ID {} not found", key_id),
+            tonic::Code::NotFound,
+        ));
+    }
     let start = tokio::time::Instant::now();
 
     tracing::info!(

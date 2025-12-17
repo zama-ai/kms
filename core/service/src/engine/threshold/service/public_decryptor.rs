@@ -50,7 +50,7 @@ use crate::{
     cryptography::internal_crypto_types::LegacySerialization,
     engine::{
         base::{
-            compute_external_pt_signature, deserialize_to_low_level, BaseKmsStruct,
+            compute_external_pt_signature, deserialize_to_low_level, BaseKmsStruct, KeyGenMetadata,
             PubDecCallValues,
         },
         threshold::{service::session::ImmutableSessionMaker, traits::PublicDecryptor},
@@ -135,6 +135,7 @@ pub struct RealPublicDecryptor<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
+    pub key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
@@ -330,6 +331,7 @@ impl<
                 tonic::Code::InvalidArgument,
             )
         })?;
+
         let dec_mode = self.decryption_mode;
         let metric_tags = vec![
             (TAG_PARTY_ID, my_role.to_string()),
@@ -342,6 +344,15 @@ impl<
             ),
         ];
         timer.tags(metric_tags.clone());
+
+        if !self.key_meta_store.read().await.exists(&key_id.into()) {
+            return Err(MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                Some(req_id),
+                anyhow::anyhow!("Key ID {} not found", key_id),
+                tonic::Code::NotFound,
+            ));
+        }
 
         tracing::debug!(
             request_id = ?req_id,
@@ -850,6 +861,7 @@ mod tests {
                 base_kms,
                 crypto_storage,
                 pub_dec_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+                key_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
                 session_maker,
                 tracker,
                 rate_limiter,

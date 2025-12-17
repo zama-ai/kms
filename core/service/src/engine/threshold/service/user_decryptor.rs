@@ -60,7 +60,7 @@ use crate::{
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
     },
     engine::{
-        base::{deserialize_to_low_level, BaseKmsStruct, UserDecryptCallValues},
+        base::{deserialize_to_low_level, BaseKmsStruct, KeyGenMetadata, UserDecryptCallValues},
         threshold::{service::session::ImmutableSessionMaker, traits::UserDecryptor},
         traits::BaseKms,
         utils::MetricedError,
@@ -145,6 +145,7 @@ pub struct RealUserDecryptor<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub user_decrypt_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
+    pub key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
@@ -412,6 +413,7 @@ impl<
             base_kms,
             crypto_storage,
             user_decrypt_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+            key_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
             session_maker,
             tracker,
             rate_limiter,
@@ -517,6 +519,14 @@ impl<
         ];
         timer.tags(metric_tags.clone());
 
+        if !self.key_meta_store.read().await.exists(&key_id.into()) {
+            return Err(MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                Some(req_id),
+                anyhow::anyhow!("Key ID {} not found", key_id),
+                tonic::Code::NotFound,
+            ));
+        }
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let rng = self.base_kms.new_rng().await;
