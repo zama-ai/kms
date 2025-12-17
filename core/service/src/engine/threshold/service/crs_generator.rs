@@ -251,7 +251,7 @@ impl<
             )?;
 
         let crs_data =
-            retrieve_from_meta_store(&self.crs_meta_store.read().await, &request_id, op_tag)
+            retrieve_from_meta_store(self.crs_meta_store.read().await, &request_id, op_tag)
                 .await?;
 
         match crs_data {

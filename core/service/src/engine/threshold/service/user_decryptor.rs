@@ -617,7 +617,7 @@ impl<
 
         // Retrieve the UserDecryptMetaStore object
         let (payload, external_signature, extra_data) = retrieve_from_meta_store(
-            &self.user_decrypt_meta_store.read().await,
+            self.user_decrypt_meta_store.read().await,
             &request_id,
             OP_USER_DECRYPT_RESULT,
         )

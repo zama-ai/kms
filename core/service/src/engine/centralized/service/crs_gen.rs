@@ -135,7 +135,7 @@ pub async fn get_crs_gen_result_impl<
     tracing::debug!("Received CRS gen result request with id {}", request_id);
 
     let crs_info =
-        retrieve_from_meta_store(&service.crs_meta_map.read().await, &request_id, op_tag).await?;
+        retrieve_from_meta_store(service.crs_meta_map.read().await, &request_id, op_tag).await?;
 
     match crs_info {
         CrsGenMetadata::LegacyV0(_) => {

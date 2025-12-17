@@ -375,11 +375,12 @@ pub(crate) fn update_err_req_in_meta_store<T: Clone>(
 /// [request_type] is a free-form string used only for error logging the origin of the failure
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn retrieve_from_meta_store<T: Clone>(
-    meta_store: &RwLockReadGuard<'_, MetaStore<T>>,
+    meta_store: RwLockReadGuard<'_, MetaStore<T>>,
     req_id: &RequestId,
     metric_scope: &'static str,
 ) -> Result<T, MetricedError> {
     let handle = meta_store.retrieve(req_id);
+    drop(meta_store); // Release the read lock early
     match handle {
         None => {
             let msg = format!(

@@ -694,7 +694,7 @@ impl<
 
         let (retrieved_req_id, plaintexts, external_signature, extra_data) =
             retrieve_from_meta_store(
-                &self.pub_dec_meta_store.read().await,
+                self.pub_dec_meta_store.read().await,
                 &request_id,
                 OP_PUBLIC_DECRYPT_RESULT,
             )
