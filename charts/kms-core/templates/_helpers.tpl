@@ -158,9 +158,16 @@ export KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="${KMS_CORE__BAC
 {{- end }}
 {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
 for i in $(seq 1 {{ len .Values.kmsCore.thresholdMode.peersList }}); do
+# Fetch CA certificate
 BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/?list-type=2&prefix=PUB-p${i}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
 curl -s -o ./ca_pem "${CORE_CLIENT__S3_ENDPOINT}/${BUCKET_PATH}"
 export KMS_CA_PEM_${i}="\"\"\"$(cat ./ca_pem)\"\"\""
+# Fetch private key if available
+KEY_BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/?list-type=2&prefix=PUB-p${i}/PrivateKey/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//" || true)
+if [ -n "${KEY_BUCKET_PATH}" ]; then
+  curl -s -o ./key_pem "${CORE_CLIENT__S3_ENDPOINT}/${KEY_BUCKET_PATH}"
+  export KMS_KEY_PEM_${i}="\"\"\"$(cat ./key_pem)\"\"\""
+fi
 done
 echo "### BEGIN - env ###"
 env

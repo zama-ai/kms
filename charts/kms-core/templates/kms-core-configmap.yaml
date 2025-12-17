@@ -155,7 +155,7 @@ data:
           {{- if .Values.kmsCore.thresholdMode.tls.privateKey.path }}
     key.path = {{ .Values.kmsCore.thresholdMode.tls.privateKey.path | quote }}
           {{- else }}
-    key.pem = {{ .Values.kmsCore.thresholdMode.tls.privateKey.path | toToml }}
+    key.pem = ${KMS_KEY_PEM_{{ .id }}}
           {{- end }}
         {{- end }}
       {{- end }}

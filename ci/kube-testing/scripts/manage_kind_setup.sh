@@ -25,13 +25,20 @@ KUBE_CONFIG="${HOME}/.kube/kind_config_${DEPLOYMENT_TYPE}"
 start_setup() {
     echo "Starting KMS setup in background..."
 
+    # Build TLS flag if enabled
+    local TLS_FLAG=""
+    if [[ "${ENABLE_TLS:-false}" == "true" ]]; then
+        TLS_FLAG="--enable-tls"
+    fi
+
     # Run setup script in background and capture its PID
     ./ci/kube-testing/scripts/setup_kms_in_kind.sh \
         --namespace "${NAMESPACE}" \
         --kms-core-tag "${KMS_CORE_IMAGE_TAG}" \
         --kms-core-client-tag "${KMS_CORE_CLIENT_IMAGE_TAG}" \
         --deployment-type "${DEPLOYMENT_TYPE}" \
-        --num-parties "${NUM_PARTIES}" > "${SETUP_LOG}" 2>&1 &
+        --num-parties "${NUM_PARTIES}" \
+        ${TLS_FLAG} > "${SETUP_LOG}" 2>&1 &
     SETUP_PID=$!
 
     # Tail the log file in background for real-time output
