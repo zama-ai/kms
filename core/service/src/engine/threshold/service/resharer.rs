@@ -167,7 +167,7 @@ async fn fetch_public_materials_from_peers<
             s3_client,
             bucket,
             StorageType::PUB,
-            // TODO: this is a workaround to get storage working when context does not have the prefix
+            // TODO(zama-ai/kms-internal#2850): this is a workaround to get storage working when context does not have the prefix
             Some(format!("PUB-p{}", node.party_id).as_str()),
             None,
         )?;
