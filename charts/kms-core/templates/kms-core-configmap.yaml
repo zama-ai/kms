@@ -147,12 +147,12 @@ data:
            {{- end }}
         {{- else }}
     [threshold.tls.manual]
-          {{- if .Values.kmsCore.thresholdMode.tls.certificate.path }}
-    cert.path = {{ .Values.kmsCore.thresholdMode.tls.certificate.path | quote }}
+          {{- if and .Values.kmsCore.thresholdMode.tls.ca_certificate .Values.kmsCore.thresholdMode.tls.ca_certificate.path }}
+    cert.path = {{ .Values.kmsCore.thresholdMode.tls.ca_certificate.path | quote }}
           {{- else }}
     cert.pem = ${KMS_CA_PEM_{{ .Values.kmsPeers.id }}}
           {{- end }}
-          {{- if .Values.kmsCore.thresholdMode.tls.privateKey.path }}
+          {{- if and .Values.kmsCore.thresholdMode.tls.privateKey .Values.kmsCore.thresholdMode.tls.privateKey.path }}
     key.path = {{ .Values.kmsCore.thresholdMode.tls.privateKey.path | quote }}
           {{- else }}
     key.pem = ${KMS_KEY_PEM_{{ .Values.kmsPeers.id }}}
