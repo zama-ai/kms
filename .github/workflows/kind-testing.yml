@@ -301,10 +301,11 @@ jobs:
           KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
           NAMESPACE: kms-test-${{ matrix.deployment-type }}
           NUM_PARTIES: ${{ matrix.num-parties }} # Number of parties
+          ENABLE_TLS: ${{ matrix.enable-tls || 'false' }} # Enable TLS for threshold mode
         run: |
           # Start KMS setup and wait for completion
           # Uses environment variables: NAMESPACE, KMS_CORE_IMAGE_TAG, KMS_CORE_CLIENT_IMAGE_TAG,
-          # DEPLOYMENT_TYPE, NUM_PARTIES
+          # DEPLOYMENT_TYPE, NUM_PARTIES, ENABLE_TLS
           ./ci/kube-testing/scripts/manage_kind_setup.sh start
 
       - name: Run Kubernetes Tests

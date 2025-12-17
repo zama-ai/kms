@@ -21,6 +21,7 @@
 #   --build                     Build and load Docker images locally
 #   --local                     Run in local mode (full cleanup on exit)
 #   --gen-keys                  Generate keys using gen-keys job (only with --local and threshold)
+#   --enable-tls                Enable TLS for threshold mode peer communication
 #   --collect-logs              Collect logs from pods and exit (for CI use)
 #   --help                      Show this help message
 #
@@ -45,6 +46,7 @@ CLEANUP=false
 BUILD=false
 LOCAL=false
 GEN_KEYS=false
+ENABLE_TLS=false
 COLLECT_LOGS_ONLY=false
 
 #=============================================================================
@@ -148,6 +150,10 @@ parse_args() {
                 ;;
             --gen-keys)
                 GEN_KEYS=true
+                shift
+                ;;
+            --enable-tls)
+                ENABLE_TLS=true
                 shift
                 ;;
             --collect-logs)
@@ -742,6 +748,92 @@ deploy_localstack() {
 }
 
 #=============================================================================
+# TLS Certificate Generation
+#=============================================================================
+
+# Generate TLS certificates for threshold mode and upload to S3
+generate_and_upload_tls_certs() {
+    log_info "Generating TLS certificates for ${NUM_PARTIES} parties..."
+
+    local CERTS_DIR="${REPO_ROOT}/ci/kube-testing/certs"
+    mkdir -p "${CERTS_DIR}"
+
+    # Generate CA names for each party (e.g., party1, party2, ...)
+    local CA_NAMES=""
+    for i in $(seq 1 "${NUM_PARTIES}"); do
+        if [[ -n "${CA_NAMES}" ]]; then
+            CA_NAMES="${CA_NAMES} "
+        fi
+        CA_NAMES="${CA_NAMES}kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
+    done
+
+    log_info "Generating certificates for: ${CA_NAMES}"
+
+    # Build and run the certificate generator
+    # The kms-gen-tls-certs binary generates self-signed CA certificates
+    cargo run --release --bin kms-gen-tls-certs -- \
+        --ca-names ${CA_NAMES} \
+        --output-dir "${CERTS_DIR}" \
+        --wildcard
+
+    # Wait for localstack to be ready
+    log_info "Waiting for localstack to be ready..."
+    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=localstack \
+        -n "${NAMESPACE}" --timeout=5m --kubeconfig "${KUBE_CONFIG}"
+
+    # Port forward localstack for S3 access
+    log_info "Setting up port forward to localstack..."
+    kubectl port-forward -n "${NAMESPACE}" svc/localstack 4566:4566 \
+        --kubeconfig "${KUBE_CONFIG}" > /dev/null 2>&1 &
+    local PF_PID=$!
+    sleep 5
+
+    # Upload certificates and private keys to S3 for each party
+    log_info "Uploading certificates and keys to S3..."
+    for i in $(seq 1 "${NUM_PARTIES}"); do
+        local PARTY_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
+        local CERT_FILE="${CERTS_DIR}/cert_${PARTY_NAME}.pem"
+        local KEY_FILE="${CERTS_DIR}/key_${PARTY_NAME}.pem"
+
+        if [[ -f "${CERT_FILE}" ]]; then
+            # Upload certificate to public bucket under PUB-p{i}/CACert/
+            aws --endpoint-url=http://localhost:4566 s3 cp \
+                "${CERT_FILE}" \
+                "s3://kms-public/PUB-p${i}/CACert/cert.pem" \
+                --no-sign-request 2>/dev/null || true
+            log_info "Uploaded certificate for party ${i}"
+        else
+            log_warn "Certificate file not found: ${CERT_FILE}"
+        fi
+
+        if [[ -f "${KEY_FILE}" ]]; then
+            # Upload private key to public bucket under PUB-p{i}/PrivateKey/
+            aws --endpoint-url=http://localhost:4566 s3 cp \
+                "${KEY_FILE}" \
+                "s3://kms-public/PUB-p${i}/PrivateKey/key.pem" \
+                --no-sign-request 2>/dev/null || true
+            log_info "Uploaded private key for party ${i}"
+        else
+            log_warn "Private key file not found: ${KEY_FILE}"
+        fi
+    done
+
+    # Also upload the combined certificate
+    if [[ -f "${CERTS_DIR}/cert_combined.pem" ]]; then
+        aws --endpoint-url=http://localhost:4566 s3 cp \
+            "${CERTS_DIR}/cert_combined.pem" \
+            "s3://kms-public/certs/cert_combined.pem" \
+            --no-sign-request 2>/dev/null || true
+        log_info "Uploaded combined certificate"
+    fi
+
+    # Stop port forward
+    kill ${PF_PID} 2>/dev/null || true
+
+    log_info "TLS certificates generated and uploaded successfully"
+}
+
+#=============================================================================
 # KMS Core Deployment
 #=============================================================================
 
@@ -785,6 +877,11 @@ deploy_threshold_mode() {
     # Replace namespace placeholder with actual namespace
     replace_namespace_in_files "${KMS_CORE_VALUES}" "${KMS_CORE_CLIENT_INIT_VALUES}" "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
 
+    # Generate and upload TLS certificates if TLS is enabled
+    if [[ "${ENABLE_TLS}" == "true" ]]; then
+        generate_and_upload_tls_certs
+    fi
+
     # Generate peersList dynamically based on NUM_PARTIES
     # Each peer entry needs: id, host, port
     # Host format: kms-service-threshold-{id}-{namespace}-core-{id}
@@ -798,9 +895,25 @@ deploy_threshold_mode() {
     PEERS_JSON+="]"
     log_info "Generated peersList: ${PEERS_JSON}"
 
+    # Build TLS Helm flags if TLS is enabled
+    # The Helm chart template requires tls.certificate and tls.privateKey objects to exist
+    # even if we're using environment variables for the actual cert/key content.
+    # Use an array to properly handle the arguments with special characters.
+    local TLS_FLAGS=()
+    if [[ "${ENABLE_TLS}" == "true" ]]; then
+        TLS_FLAGS=(
+            --set kmsCore.thresholdMode.tls.enabled=true
+            --set "kmsCore.thresholdMode.tls.certificate.path="
+            --set "kmsCore.thresholdMode.tls.privateKey.path="
+            --set "kmsCore.thresholdMode.tls.ca_certificate.path="
+        )
+        log_info "TLS enabled for threshold mode"
+    fi
+
     # Deploy all parties in parallel WITHOUT --wait flag
     # In threshold mode, pods need to connect to each other for health checks,
     # so we must deploy all releases first, then wait for pods to become ready together
+    local HELM_PIDS=()
     for i in $(seq 1 "${NUM_PARTIES}"); do
         log_info "Deploying KMS Core party ${i}/${NUM_PARTIES}..."
         helm upgrade --install "kms-service-threshold-${i}-${NAMESPACE}" \
@@ -812,14 +925,84 @@ deploy_threshold_mode() {
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --set kmsPeers.id="${i}" \
             --set-json "kmsCore.thresholdMode.peersList=${PEERS_JSON}" \
+            "${TLS_FLAGS[@]}" \
             --timeout 10m &
+        HELM_PIDS+=($!)
     done
-    wait
-    log_info "All Helm releases deployed, waiting for pods to become ready..."
+    
+    # Wait for all Helm deployments and check for failures
+    local HELM_FAILED=false
+    for pid in "${HELM_PIDS[@]}"; do
+        if ! wait "$pid"; then
+            HELM_FAILED=true
+            log_error "Helm deployment failed (PID: $pid)"
+        fi
+    done
+    
+    if [[ "${HELM_FAILED}" == "true" ]]; then
+        log_error "One or more Helm deployments failed. Check the errors above."
+        exit 1
+    fi
+    
+    log_info "All Helm releases deployed successfully, waiting for pods to become ready..."
+
+    # Show pod status for debugging
+    log_info "Current pod status:"
+    kubectl get pods -l app=kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -o wide
 
     # Wait for all pods to become ready together (they need each other for health checks)
-    kubectl wait --for=condition=ready pod -l app=kms-core \
-        -n "${NAMESPACE}" --timeout=15m --kubeconfig "${KUBE_CONFIG}"
+    # Use a loop with status checks for better debugging
+    local MAX_WAIT=900  # 15 minutes
+    local WAIT_INTERVAL=30
+    local ELAPSED=0
+    
+    while [ $ELAPSED -lt $MAX_WAIT ]; do
+        # Get ready count - trim whitespace to avoid integer comparison issues
+        local READY_COUNT
+        READY_COUNT=$(kubectl get pods -l app=kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+            -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' 2>/dev/null | grep -c "True" || echo "0")
+        READY_COUNT=$(echo "${READY_COUNT}" | tr -d '[:space:]')
+        
+        local TOTAL_COUNT
+        TOTAL_COUNT=$(kubectl get pods -l app=kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+            -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | wc -w | tr -d '[:space:]')
+        
+        # Default to 0 if empty
+        READY_COUNT=${READY_COUNT:-0}
+        TOTAL_COUNT=${TOTAL_COUNT:-0}
+        
+        log_info "Pod readiness: ${READY_COUNT}/${TOTAL_COUNT} ready (elapsed: ${ELAPSED}s)"
+        
+        if [ "$READY_COUNT" -eq "$TOTAL_COUNT" ] && [ "$TOTAL_COUNT" -gt 0 ]; then
+            log_info "All ${TOTAL_COUNT} pods are ready!"
+            break
+        fi
+        
+        # Show detailed status every 60 seconds
+        if [ $((ELAPSED % 60)) -eq 0 ]; then
+            log_info "Detailed pod status:"
+            kubectl get pods -l app=kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
+            log_info "Pod events:"
+            kubectl get events -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" --sort-by='.lastTimestamp' | tail -20
+        fi
+        
+        sleep $WAIT_INTERVAL
+        ELAPSED=$((ELAPSED + WAIT_INTERVAL))
+    done
+    
+    if [ $ELAPSED -ge $MAX_WAIT ]; then
+        log_error "Timeout waiting for pods to become ready"
+        log_info "Final pod status:"
+        kubectl get pods -l app=kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -o wide
+        log_info "Pod descriptions:"
+        kubectl describe pods -l app=kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
+        log_info "Pod logs:"
+        for i in $(seq 1 "${NUM_PARTIES}"); do
+            log_info "=== Logs for party ${i} ==="
+            kubectl logs "kms-service-threshold-${i}-${NAMESPACE}-core-${i}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" --all-containers=true || true
+        done
+        exit 1
+    fi
 
     log_info "All KMS Core pods are ready, collecting logs..."
     for i in $(seq 1 "${NUM_PARTIES}"); do
@@ -1079,6 +1262,7 @@ main() {
     log_info "  Build Locally:            ${BUILD}"
     log_info "  Local Mode:               ${LOCAL}"
     log_info "  Generate Keys:            ${GEN_KEYS}"
+    log_info "  Enable TLS:               ${ENABLE_TLS}"
     log_info "========================================="
 
     # Execute setup steps
