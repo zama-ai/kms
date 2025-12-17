@@ -356,7 +356,7 @@ pub(crate) fn update_err_req_in_meta_store<T: Clone>(
     request_metric: &'static str,
 ) -> bool {
     // Log and increment relevant metrics according to error
-    MetricedError::error_handler(request_metric, Some(*req_id), error.clone());
+    MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), error.clone());
 
     match meta_store.update(req_id, Err(error.clone())) {
         Ok(()) => true,

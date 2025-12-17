@@ -42,12 +42,6 @@ pub enum IdentifierError {
     MissingIdentifier,
 }
 
-/// Trait marking KMS identifier types
-/// That is everything based on a `RequestId`
-pub trait KmsId {
-    fn as_slice(&self) -> &[u8; ID_LENGTH];
-}
-
 /// KeyId represents a unique identifier for a key in the system
 ///
 /// This type provides a strongly-typed wrapper around a fixed-size byte array
