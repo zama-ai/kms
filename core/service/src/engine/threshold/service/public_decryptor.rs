@@ -327,7 +327,7 @@ impl<
                 OP_PUBLIC_DECRYPT_REQUEST,
                 Some(req_id),
                 e,
-                tonic::Code::Internal,
+                tonic::Code::InvalidArgument,
             )
         })?;
         let dec_mode = self.decryption_mode;
