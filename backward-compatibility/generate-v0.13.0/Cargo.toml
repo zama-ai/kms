@@ -42,6 +42,8 @@ itertools = "=0.14.0"
 # Both serde versions coexist in the same binary - this is intentional and correct!
 serde = { version = "=1.0.226", features = ["derive"] }
 # bincode needed for generate.rs utility functions, must match bc2wrap version (2.0.1 from v0.12.2)
+# WARNING: Bincode beyond 2.0.1 may never be used! Due to actions by the project we consider newer versions compromised
+# See https://www.reddit.com/r/rust/comments/1pnz1iz/bincode_development_has_ceased_permanently/
 bincode = { version = "=2.0.1", features = ["serde"] }
 aes-prng = "=0.2.1"
 rand = "=0.8.5"
