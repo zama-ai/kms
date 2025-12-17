@@ -612,7 +612,7 @@ impl<
 
         let private_compression_share = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&from_key_id)
+                .read_guarded_threshold_fhe_keys(&from_key_id)
                 .await?;
             let compression_sk_share = threshold_keys
                 .private_keys
@@ -628,7 +628,7 @@ impl<
         };
         let private_glwe_compute_share = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&to_key_id)
+                .read_guarded_threshold_fhe_keys(&to_key_id)
                 .await?;
             match threshold_keys.private_keys.glwe_secret_key_share.clone() {
                 GlweSecretKeyShareEnum::Z64(_share) => {
@@ -677,7 +677,7 @@ impl<
             .await?;
         let glwe_shares = {
             let guard = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&glwe_req_id)
+                .read_guarded_threshold_fhe_keys(&glwe_req_id)
                 .await?;
             match &guard.private_keys.glwe_secret_key_share {
                 GlweSecretKeyShareEnum::Z64(_) => anyhow::bail!("expected glwe shares to be z128"),
@@ -690,7 +690,7 @@ impl<
             .await?;
         let compression_shares = {
             let guard = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&compression_req_id)
+                .read_guarded_threshold_fhe_keys(&compression_req_id)
                 .await?;
             match &guard.private_keys.glwe_secret_key_share_compression {
                 Some(compression_enum) => match compression_enum {
@@ -942,7 +942,7 @@ impl<
     {
         let existing_compression_sk = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&compression_key_id)
+                .read_guarded_threshold_fhe_keys(&compression_key_id)
                 .await?;
             let compression_sk_share = threshold_keys
                 .private_keys

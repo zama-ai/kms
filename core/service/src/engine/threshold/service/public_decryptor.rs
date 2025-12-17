@@ -350,22 +350,6 @@ impl<
             "Starting decryption process"
         );
 
-        self.crypto_storage
-            .refresh_threshold_fhe_keys(&key_id.into())
-            .await
-            .map_err(|e| {
-                metrics::METRICS
-                    .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
-                MetricedError::new(
-                    OP_PUBLIC_DECRYPT_REQUEST,
-                    Some(req_id),
-                    anyhow::anyhow!(
-                    "Failed to refresh FHE keys for key_id {key_id} and request_id {req_id}: {e:?}"
-                ),
-                    tonic::Code::NotFound,
-                )
-            })?;
-
         // Below we write to the meta-store.
         // After writing, the the meta-store on this [req_id] will be in the "Started" state
         // So we need to update it everytime something bad happens,
@@ -969,7 +953,7 @@ mod tests {
             // check existance
             let _guard = public_decryptor
                 .crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&key_id)
+                .read_guarded_threshold_fhe_keys(&key_id)
                 .await
                 .unwrap();
         }

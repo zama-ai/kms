@@ -117,7 +117,7 @@ impl MetricedError {
     /// * `metric_scope` - The operation metric name associated with the error
     /// * `request_id` - Optional RequestId associated with the error
     /// * `internal_error` - The internal error being handled
-    /// Returns:
+    ///   Returns:
     /// * Box<dyn std::error::Error + Send + Sync> - The boxed internal error after logging and metric incrementing
     pub fn handle_unreturnable_error<E: Into<Box<dyn std::error::Error + Send + Sync>>>(
         metric_scope: &'static str,

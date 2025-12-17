@@ -263,7 +263,7 @@ pub(crate) async fn key_gen_background<
     {
         // Check if the key already exists
         if crypto_storage
-            .read_cloned_centralized_fhe_keys_from_cache(req_id)
+            .read_centralized_fhe_keys(req_id)
             .await
             .is_ok()
         {

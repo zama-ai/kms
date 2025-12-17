@@ -83,24 +83,6 @@ pub async fn user_decrypt_impl<
     ];
     timer.tags(metric_tags.clone());
 
-    // check that the key exists and refresh the cache if needed
-    // Refresh the cache to ensure the keys are loaded from private storage
-    service
-        .crypto_storage
-        .refresh_centralized_fhe_keys(&key_id.into())
-        .await
-        .map_err(|e| {
-            METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
-            MetricedError::new(
-                OP_USER_DECRYPT_REQUEST,
-                Some(request_id),
-                anyhow::anyhow!(
-                "Failed to refresh FHE keys for key_id {key_id} and request_id {request_id}: {e:?}"
-            ),
-                tonic::Code::NotFound,
-            )
-        })?;
-
     let meta_store = Arc::clone(&service.user_dec_meta_store);
     let crypto_storage = service.crypto_storage.clone();
     let mut rng = service.base_kms.new_rng().await;
@@ -135,7 +117,7 @@ pub async fn user_decrypt_impl<
             let _timer = timer;
             let _permit = permit;
             let keys = match crypto_storage
-                .read_cloned_centralized_fhe_keys_from_cache(&key_id.into())
+                .read_centralized_fhe_keys(&key_id.into())
                 .await
             {
                 Ok(k) => k,
@@ -296,23 +278,6 @@ pub async fn public_decrypt_impl<
         request_id.as_str()
     );
 
-    // check that the key exists
-    service
-        .crypto_storage
-        .refresh_centralized_fhe_keys(&key_id.into())
-        .await
-        .map_err(|e| {
-            METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
-            MetricedError::new(
-                OP_PUBLIC_DECRYPT_REQUEST,
-                Some(request_id),
-                anyhow::anyhow!(
-                "Failed to refresh FHE keys for key_id {key_id} and request_id {request_id}: {e:?}"
-            ),
-                tonic::Code::NotFound,
-            )
-        })?;
-
     // if the request already exists, then return the AlreadyExists error
     // otherwise attempt to insert it to the meta store
     add_req_to_meta_store(
@@ -339,7 +304,7 @@ pub async fn public_decrypt_impl<
         let _timer = timer;
         let _permit = permit;
         let keys = match crypto_storage
-            .read_cloned_centralized_fhe_keys_from_cache(&key_id.into())
+            .read_centralized_fhe_keys(&key_id.into())
             .await
         {
             Ok(k) => k,

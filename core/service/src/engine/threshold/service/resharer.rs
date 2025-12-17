@@ -501,7 +501,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // Read the old keys if they exists, otherwise we enter resharing with no keys
             let mut mutable_keys = {
                 let old_fhe_keys_rlock = crypto_storage
-                    .read_guarded_threshold_fhe_keys_from_cache(&key_id_to_reshare)
+                    .read_guarded_threshold_fhe_keys(&key_id_to_reshare)
                     .await
                     .ok();
                 // Note: the function is supposed to zeroize the keys (hence requires mut access),
