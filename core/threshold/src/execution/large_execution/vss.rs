@@ -149,7 +149,7 @@ pub struct DummyVss {}
 
 impl ProtocolDescription for DummyVss {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-DummyVss")
     }
 }
@@ -216,7 +216,7 @@ pub struct RealVss<BCast: Broadcast> {
 
 impl<BCast: Broadcast> ProtocolDescription for RealVss<BCast> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{}-RealVss:\n{}", indent, BCast::protocol_desc(depth + 1))
     }
 }
@@ -1126,13 +1126,10 @@ fn round_4_fix_conflicts<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
 
             // Output the polyomials sent by the VSS sender
             // or zero and add the VSS sender to malicious if nothing or garbage was sent
-            let sender_poly = maybe_poly.map_or_else(
-                || {
-                    malicious_bcast.insert(dealer_role);
-                    &default_maybe_poly
-                },
-                |p| p,
-            );
+            let sender_poly = maybe_poly.unwrap_or_else(|| {
+                malicious_bcast.insert(dealer_role);
+                &default_maybe_poly
+            });
             for (role_pj, value_pj) in non_dealer_happy_values {
                 let point_pj = Z::embed_role_to_exceptional_sequence(&role_pj)?;
                 let all_equals = sender_poly

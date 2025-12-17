@@ -57,7 +57,7 @@ pub struct PassiveSecureAgreeRandom {}
 
 impl ProtocolDescription for PassiveSecureAgreeRandom {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-PassiveSecureAgreeRandom")
     }
 }
@@ -68,7 +68,7 @@ pub struct AbortSecureAgreeRandom {}
 
 impl ProtocolDescription for AbortSecureAgreeRandom {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-AbortSecureAgreeRandom")
     }
 }
@@ -82,7 +82,7 @@ pub struct RobustRealAgreeRandom<RO: RobustOpen> {
 
 impl<RO: RobustOpen> ProtocolDescription for RobustRealAgreeRandom<RO> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-RobustRealAgreeRandom:\n{}",
             indent,
@@ -115,7 +115,7 @@ pub struct DummyAgreeRandom {}
 
 impl ProtocolDescription for DummyAgreeRandom {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-DummyAgreeRandom")
     }
 }
@@ -126,7 +126,7 @@ pub struct DummyAgreeRandomFromShare {}
 
 impl ProtocolDescription for DummyAgreeRandomFromShare {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-DummyAgreeRandomFromShare")
     }
 }

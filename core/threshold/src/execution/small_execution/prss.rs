@@ -136,7 +136,7 @@ impl<A: AgreeRandom> AbortRealPrssInit<A> {
 
 impl<A: AgreeRandom> ProtocolDescription for AbortRealPrssInit<A> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-AbortRealPrssInit:\n{}\n{} ",
             indent,
@@ -170,7 +170,7 @@ pub struct RobustRealPrssInit<A: AgreeRandomFromShare, V: Vss> {
 
 impl<A: AgreeRandomFromShare, V: Vss> ProtocolDescription for RobustRealPrssInit<A, V> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-RobustRealPrssInit:\n{}\n{}\n{} ",
             indent,
@@ -442,7 +442,7 @@ pub struct PRSSSetup<Z: Default + Clone + Serialize> {
 
 impl<Z: Default + Clone + Serialize> ProtocolDescription for PRSSSetup<Z> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         //Using a fat arrow here to indicate that this is a byproduct of Init and
         // not really a subprotocol
         format!(
@@ -489,7 +489,7 @@ pub struct PRSSState<Z: Default + Clone + Serialize, B: Broadcast> {
 
 impl<Z: Default + Clone + Serialize, B: Broadcast> ProtocolDescription for PRSSState<Z, B> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         // Using a fat arrow here to indicate that this is a byproduct of Setup
         format!("{}=>PRSSState:\n{}", indent, B::protocol_desc(depth + 1))
     }

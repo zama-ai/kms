@@ -27,7 +27,7 @@ pub struct DroppingVssFromStart {}
 
 impl ProtocolDescription for DroppingVssFromStart {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-DroppingVssFromStart")
     }
 }
@@ -58,7 +58,7 @@ pub struct DroppingVssAfterR1 {}
 
 impl ProtocolDescription for DroppingVssAfterR1 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-DroppingVssAfterR1")
     }
 }
@@ -94,7 +94,7 @@ pub struct DroppingVssAfterR2<BCast: Broadcast> {
 
 impl<BCast: Broadcast> ProtocolDescription for DroppingVssAfterR2<BCast> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-DroppingVssAfterR2:\n{}",
             indent,
@@ -147,7 +147,7 @@ pub struct MaliciousVssR1<BCast: Broadcast> {
 
 impl<BCast: Broadcast> ProtocolDescription for MaliciousVssR1<BCast> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-MaliciousVssR1:\n{}",
             indent,
@@ -248,7 +248,7 @@ pub struct WrongSecretLenVss<BCast: Broadcast> {
 
 impl<BCast: Broadcast> ProtocolDescription for WrongSecretLenVss<BCast> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-WrongSecretLenVss:\n{}",
             indent,
@@ -308,7 +308,7 @@ impl<BCast: Broadcast> WrongDegreeSharingVss<BCast> {
 
 impl<BCast: Broadcast> ProtocolDescription for WrongDegreeSharingVss<BCast> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-WrongDegreeSharingVss:\n{}",
             indent,

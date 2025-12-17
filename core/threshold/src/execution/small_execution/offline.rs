@@ -45,7 +45,7 @@ pub struct RealSmallPreprocessing<BCast: Broadcast> {
 
 impl<BCast: Broadcast> ProtocolDescription for RealSmallPreprocessing<BCast> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-RealSmallPreprocessing:\n{}",
             indent,

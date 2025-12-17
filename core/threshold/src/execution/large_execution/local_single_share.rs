@@ -72,7 +72,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
     for RealLocalSingleShare<C, S, BCast>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-RealLocalSingleShare:\n{}\n{}\n{}",
             indent,

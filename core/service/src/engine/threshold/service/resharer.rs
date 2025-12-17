@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use itertools::Itertools;
 use kms_grpc::{
@@ -6,9 +6,10 @@ use kms_grpc::{
     kms::v1::{
         InitiateResharingRequest, InitiateResharingResponse, KeyDigest, ResharingResultResponse,
     },
-    rpc_types::{optional_protobuf_to_alloy_domain, WrappedPublicKeyOwned},
-    IdentifierError,
+    rpc_types::{optional_protobuf_to_alloy_domain, PubDataType, WrappedPublicKeyOwned},
+    IdentifierError, RequestId,
 };
+use tfhe::ServerKey;
 use threshold_fhe::{
     execution::{
         endpoints::reshare_sk::{
@@ -24,12 +25,37 @@ use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response, Status};
 
+const ERR_SERVER_KEY_DIGEST_MISMATCH: &str = "Server key digest mismatch";
+const ERR_PUBLIC_KEY_DIGEST_MISMATCH: &str = "Public key digest mismatch";
+const ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS: &str = "Failed to fetch public materials";
+
+fn verify_key_digest(
+    server_key: &ServerKey,
+    public_key: &tfhe::CompactPublicKey,
+    expected_server_key_digest: &[u8],
+    expected_public_key_digest: &[u8],
+) -> anyhow::Result<()> {
+    let actual_server_key_digest =
+        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
+    let actual_public_key_digest =
+        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
+
+    if actual_server_key_digest != expected_server_key_digest {
+        anyhow::bail!(ERR_SERVER_KEY_DIGEST_MISMATCH);
+    }
+    if actual_public_key_digest != expected_public_key_digest {
+        anyhow::bail!(ERR_PUBLIC_KEY_DIGEST_MISMATCH);
+    }
+
+    Ok(())
+}
+
 use crate::{
     consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
     engine::{
         base::{
-            compute_info_standard_keygen, retrieve_parameters, BaseKmsStruct, KeyGenMetadata,
-            DSEP_PUBDATA_KEY,
+            compute_info_standard_keygen, retrieve_parameters,
+            safe_serialize_hash_element_versioned, BaseKmsStruct, KeyGenMetadata, DSEP_PUBDATA_KEY,
         },
         threshold::{
             service::{session::ImmutableSessionMaker, ThresholdFheKeys},
@@ -43,8 +69,271 @@ use crate::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
     },
-    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
+    vault::storage::{
+        crypto_material::ThresholdCryptoMaterialStorage,
+        read_context_at_id, read_pk_at_request_id, read_versioned_at_request_id,
+        s3::{
+            build_anonymous_s3_client, ReadOnlyS3Storage, ReadOnlyS3StorageGetter,
+            RealReadOnlyS3StorageGetter,
+        },
+        Storage, StorageReader, StorageType,
+    },
 };
+
+fn bucket_from_domain(url: &url::Url) -> anyhow::Result<String> {
+    let Some(domain) = url.domain() else {
+        anyhow::bail!("Cannot deduce the bucket name from url {:?}", url);
+    };
+    let domain_parts = domain.split('.').collect::<Vec<&str>>();
+    if domain_parts.len() < 2 {
+        anyhow::bail!("Cannot deduce the bucket name from url {:?}", url);
+    }
+    Ok(domain_parts[0].to_owned())
+}
+
+/// Split an S3 URL into its base URL and bucket name.
+/// For example:
+/// The URL https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/ will be split into
+/// https://s3.eu-west-1.amazonaws.com and zama-zws-dev-tkms-b6q87
+/// where the first part is the URL and the second part is the bucket name.
+///
+/// Code is adapted from
+/// https://github.com/zama-ai/fhevm/blob/dac153662361758c9a563e766473692f8acf1074/coprocessor/fhevm-engine/gw-listener/src/aws_s3.rs#L140C1-L174C1
+fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String)> {
+    // e.g BBBBBB.s3.bla.bli.amazonaws.blu, the bucket is part of the domain
+    let parsed_url_and_bucket = url::Url::parse(s3_bucket_url.as_str())?;
+    let mut bucket = parsed_url_and_bucket
+        .path()
+        .trim_start_matches('/')
+        .to_owned();
+    if bucket.is_empty() {
+        // e.g BBBBBB.s3.eu-west-1.amazonaws.com, the bucket is part of the domain
+        bucket = bucket_from_domain(&parsed_url_and_bucket)?;
+        let url = s3_bucket_url
+            .replace(&(bucket.clone() + "."), "")
+            .trim_end_matches('/')
+            .to_owned();
+        tracing::info!(s3_bucket_url, url, bucket, "Bucket from domain");
+        Ok((url, bucket))
+    } else {
+        let url = s3_bucket_url
+            .replace(&bucket, "")
+            .trim_end_matches('/')
+            .to_owned();
+        tracing::info!(s3_bucket_url, url, bucket, "Parsed S3 url");
+        Ok((url, bucket))
+    }
+}
+
+async fn fetch_public_materials_from_peers<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+    G: ReadOnlyS3StorageGetter<R>,
+    R: StorageReader,
+>(
+    crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    key_id: RequestId,
+    context_id: &ContextId,
+    key_digests: &HashMap<PubDataType, Vec<u8>>,
+    ro_storage_getter: &G,
+) -> anyhow::Result<FhePubKeySet> {
+    // obtain the digests
+    let expected_public_key_digest = key_digests
+        .get(&PubDataType::PublicKey)
+        .ok_or(anyhow::anyhow!("missing digest for public key"))?;
+
+    let expected_server_key_digest = key_digests
+        .get(&PubDataType::ServerKey)
+        .ok_or(anyhow::anyhow!("missing digest for server key"))?;
+
+    // fetch the context info
+    let context = {
+        let priv_storage = crypto_storage.get_private_storage();
+        let guard_storage = priv_storage.lock().await;
+        read_context_at_id(&(*guard_storage), context_id).await?
+    };
+
+    let mut errors = Vec::new();
+    for node in context.mpc_nodes {
+        // so simplify logic, it's ok to iterate over myself too
+        //
+        // the public storage URL consists of the bucket name and the URL
+        // we need to parse this information accordingly
+        let (url, bucket) = split_url(&node.public_storage_url)?;
+
+        // this is not an operation that is frequently used, so we can create a new s3 client each time
+        let s3_client = build_anonymous_s3_client(Some(url::Url::parse(&url)?)).await?;
+        let pub_storage = ro_storage_getter.get_storage(
+            s3_client,
+            bucket,
+            StorageType::PUB,
+            // TODO: this is a workaround to get storage working when context does not have the prefix
+            Some(format!("PUB-p{}", node.party_id).as_str()),
+            None,
+        )?;
+
+        // attempt to fetch the public materials from this node
+        let public_key = read_pk_at_request_id(&pub_storage, &key_id)
+            .await
+            .map(|pk| match pk {
+                WrappedPublicKeyOwned::Compact(compact_pk) => compact_pk,
+            });
+
+        let server_key = read_versioned_at_request_id::<_, ServerKey>(
+            &pub_storage,
+            &key_id,
+            &PubDataType::ServerKey.to_string(),
+        )
+        .await;
+
+        match (public_key, server_key) {
+            (Ok(public_key), Ok(server_key)) => {
+                match verify_key_digest(
+                    &server_key,
+                    &public_key,
+                    expected_server_key_digest,
+                    expected_public_key_digest,
+                ) {
+                    Ok(()) => {
+                        return Ok(FhePubKeySet {
+                            public_key,
+                            server_key,
+                        });
+                    }
+                    Err(e) => {
+                        let msg = format!("Verification failed from peer {}: {}", node.party_id, e);
+                        tracing::warn!(msg);
+                        errors.push(msg);
+                        continue;
+                    }
+                }
+            }
+            (Err(e), _) => {
+                let msg = format!(
+                    "{} from peer {}: {e:?}",
+                    ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS, node.party_id
+                );
+                tracing::warn!(msg);
+                errors.push(msg);
+            }
+            (_, Err(e)) => {
+                let msg = format!(
+                    "{} from peer {}: {e:?}",
+                    ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS, node.party_id
+                );
+                tracing::warn!(msg);
+                errors.push(msg);
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "Failed to fetch valid public materials from any peer, error count: {}, first error: {:?}, last error: {:?}",
+        errors.len(),
+        errors[0],
+        errors[errors.len() - 1],
+    );
+}
+
+/// Attempt to get and verify the public materials needed for resharing.
+async fn get_verified_public_materials<
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+    G: ReadOnlyS3StorageGetter<R>,
+    R: StorageReader,
+>(
+    crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    key_id: RequestId,
+    context_id: &ContextId,
+    key_digests: &HashMap<PubDataType, Vec<u8>>,
+    ro_storage_getter: &G,
+) -> Result<FhePubKeySet, tonic::Status> {
+    // Refresh keys but ignore any error as we might not have them yet
+    // (e.g. resharing due to a failed DKG)
+    let _ = crypto_storage
+        .refresh_threshold_fhe_keys(&key_id)
+        .await
+        .inspect_err(|e|tracing::warn!("During reshare, failed to refresh keys with id {}: {}. Will try to do the reshare anyway.", key_id, e));
+
+    // We assume the operators have manually copied the public keys to the public storage
+    let public_key_res = crypto_storage
+        .read_cloned_pk(&key_id)
+        .await
+        .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                format!("Failed to fetch public key from public storage: {}", e),
+            )
+        })
+        .map(|pk| match pk {
+            WrappedPublicKeyOwned::Compact(compact_public_key) => compact_public_key,
+        });
+
+    let server_key_res = crypto_storage
+        .read_cloned_server_key(&key_id)
+        .await
+        .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                format!("Failed to fetch server key from public storage: {}", e),
+            )
+        });
+
+    let verify_keys_from_own_pub_storage = |public_key,
+                                            server_key,
+                                            key_digests: &HashMap<PubDataType, Vec<u8>>|
+     -> anyhow::Result<()> {
+        // obtain the digests
+        let expected_public_key_digest = key_digests
+            .get(&PubDataType::PublicKey)
+            .ok_or(anyhow::anyhow!("missing digest for public key"))?;
+
+        let expected_server_key_digest = key_digests
+            .get(&PubDataType::ServerKey)
+            .ok_or(anyhow::anyhow!("missing digest for server key"))?;
+
+        verify_key_digest(
+            server_key,
+            public_key,
+            expected_server_key_digest,
+            expected_public_key_digest,
+        )
+    };
+
+    match (public_key_res, server_key_res) {
+        (Ok(public_key), Ok(server_key)) => {
+            verify_keys_from_own_pub_storage(&public_key, &server_key, key_digests).map_err(
+                |e| {
+                    tonic::Status::new(
+                        tonic::Code::Internal,
+                        format!("Key digest verification failed: {}", e),
+                    )
+                },
+            )?;
+            Ok(FhePubKeySet {
+                public_key,
+                server_key,
+            })
+        }
+        _ => {
+            // if local retrieval fails, attempt to fetch from s3 of another party
+            fetch_public_materials_from_peers::<_, _, G, R>(
+                crypto_storage,
+                key_id,
+                context_id,
+                key_digests,
+                ro_storage_getter,
+            )
+            .await
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!("Failed to fetch public materials from peers: {}", e),
+                )
+            })
+        }
+    }
+}
 
 pub struct RealResharer<
     PubS: Storage + Send + Sync + 'static,
@@ -112,47 +401,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         // but the errors above cannot be tried again.
         let permit = self.rate_limiter.start_reshare().await?;
 
-        // Refresh keys but ignore any error as we might not have them yet
-        // (e.g. resharing due to a failed DKG)
-        let _ = self
-            .crypto_storage
-            .refresh_threshold_fhe_keys(&key_id_to_reshare)
-            .await
-            .inspect_err(|e|tracing::warn!("During reshare, failed to refresh keys with id {}: {}. Will try to do the reshare anyway.", key_id_to_reshare, e));
-
-        // We assume the operators have manually copied the public keys to the public storage
-        let public_key = self
-            .crypto_storage
-            .read_cloned_pk(&key_id_to_reshare)
-            .await
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Internal,
-                    format!("Failed to fetch public key from public storage: {}", e),
-                )
-            })?;
-
-        let WrappedPublicKeyOwned::Compact(public_key) = public_key;
-
-        let server_key = self
-            .crypto_storage
-            .read_cloned_server_key(&key_id_to_reshare)
-            .await
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Internal,
-                    format!("Failed to fetch server key from public storage: {}", e),
-                )
-            })?;
-
-        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
-            server_key.clone().into_raw_parts();
-
-        let fhe_pubkeys = FhePubKeySet {
-            public_key,
-            server_key,
-        };
-
         let crypto_storage = self.crypto_storage.clone();
 
         // Do the resharing
@@ -163,6 +411,24 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             )
         })?;
         let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
+
+        // collect key digests
+        let key_digests: HashMap<PubDataType, Vec<u8>> = inner
+            .key_digests
+            .into_iter()
+            .map(|kd| {
+                let key_type = kd
+                    .key_type
+                    .parse::<PubDataType>() // we do not use safe serialize because these are not known by the gateway
+                    .map_err(|e| {
+                        tonic::Status::invalid_argument(format!(
+                            "Invalid PubDataType in key digests: {}",
+                            e
+                        ))
+                    })?;
+                Ok((key_type, kd.digest))
+            })
+            .collect::<Result<HashMap<PubDataType, Vec<u8>>, Status>>()?;
 
         // Update status
         {
@@ -245,7 +511,19 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             )
             .await?;
 
-            //Compute all the info required for storing
+            // use the real instantiation here for ReadOnlyS3StorageGetter
+            let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
+                &crypto_storage,
+                key_id_to_reshare,
+                &old_context, // it should be the old context ID as that's where the public materials are
+                &key_digests,
+                &RealReadOnlyS3StorageGetter {},
+            )
+            .await?;
+            let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
+                fhe_pubkeys.server_key.clone().into_raw_parts();
+
+            // Compute all the info required for storing
             // using the same IDs and domain as we should've had the
             // DKG went through successfully
             let info = match compute_info_standard_keygen(
@@ -367,6 +645,374 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     "Resharing returned legacy metadata, which should not happen",
                 ))
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    use crate::engine::base::safe_serialize_hash_element_versioned;
+    use crate::engine::context::ContextInfo;
+    use crate::engine::context::NodeInfo;
+    use crate::engine::context::SoftwareVersion;
+    use crate::engine::threshold::service::resharer::fetch_public_materials_from_peers;
+    use crate::engine::threshold::service::resharer::get_verified_public_materials;
+    use crate::engine::threshold::service::resharer::ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS;
+    use crate::engine::threshold::service::resharer::ERR_SERVER_KEY_DIGEST_MISMATCH;
+    use crate::vault::storage::crypto_material::ThresholdCryptoMaterialStorage;
+    use crate::vault::storage::ram::RamStorage;
+    use crate::vault::storage::s3::DummyReadOnlyS3Storage;
+    use crate::vault::storage::s3::DummyReadOnlyS3StorageGetter;
+    use crate::vault::storage::store_pk_at_request_id;
+    use crate::vault::storage::store_versioned_at_request_id;
+    use aes_prng::AesRng;
+    use kms_grpc::rpc_types::PubDataType;
+    use kms_grpc::rpc_types::WrappedPublicKey;
+    use kms_grpc::ContextId;
+    use kms_grpc::RequestId;
+    use rand::SeedableRng;
+    use tfhe::shortint::ClassicPBSParameters;
+    use tfhe::CompactPublicKey;
+    use tfhe::ServerKey;
+
+    #[test]
+    fn test_split_devnet_url() {
+        let (url, bucket) = super::split_url(
+            &"https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
+        )
+        .unwrap();
+        assert_eq!(url.as_str(), "https://s3.eu-west-1.amazonaws.com");
+        assert_eq!(bucket.as_str(), "zama-zws-dev-tkms-b6q87");
+    }
+
+    async fn setup_public_materials_test(
+        key_id: RequestId,
+        context_id: ContextId,
+        two_nodes: bool,
+    ) -> (
+        ThresholdCryptoMaterialStorage<RamStorage, RamStorage>,
+        HashMap<PubDataType, Vec<u8>>,
+        DummyReadOnlyS3StorageGetter,
+        (ServerKey, CompactPublicKey),
+    ) {
+        // create memory storage that contains a public key and server key
+        let mut ram_storage = RamStorage::new();
+
+        // generate the keys
+        let params = crate::consts::TEST_PARAM;
+        let pbs_params: ClassicPBSParameters = params
+            .get_params_basics_handle()
+            .to_classic_pbs_parameters();
+        let config = tfhe::ConfigBuilder::with_custom_parameters(pbs_params);
+        let client_key = tfhe::ClientKey::generate(config);
+        let server_key = client_key.generate_server_key();
+        let public_key = CompactPublicKey::new(&client_key);
+
+        // generate digests
+        let server_key_digest = safe_serialize_hash_element_versioned(
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            &server_key,
+        )
+        .unwrap();
+        let public_key_digest = safe_serialize_hash_element_versioned(
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            &public_key,
+        )
+        .unwrap();
+        let key_digests: HashMap<PubDataType, Vec<u8>> = HashMap::from_iter([
+            (PubDataType::ServerKey, server_key_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]);
+
+        // store the keys in ram storage
+        store_pk_at_request_id(
+            &mut ram_storage,
+            &key_id,
+            WrappedPublicKey::Compact(&public_key),
+        )
+        .await
+        .unwrap();
+
+        store_versioned_at_request_id(
+            &mut ram_storage,
+            &key_id,
+            &server_key,
+            &PubDataType::ServerKey.to_string(),
+        )
+        .await
+        .unwrap();
+
+        // create dummy crypto storage
+        let crypto_storage = ThresholdCryptoMaterialStorage::new(
+            RamStorage::new(),
+            RamStorage::new(),
+            None,
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let context_info = ContextInfo {
+            mpc_nodes: [
+                vec![NodeInfo {
+                    mpc_identity: "Node1".to_string(),
+                    party_id: 1,
+                    verification_key: None,
+                    external_url: "http://localhost:12345".to_string(),
+                    ca_cert: None,
+                    // the storage url does not matter as we're using the mock
+                    public_storage_url:
+                        "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
+                    extra_verification_keys: vec![],
+                }],
+                if two_nodes {
+                    vec![NodeInfo {
+                        mpc_identity: "Node2".to_string(),
+                        party_id: 2,
+                        verification_key: None,
+                        external_url: "http://localhost:12345".to_string(),
+                        ca_cert: None,
+                        // the storage url does not matter as we're using the mock
+                        public_storage_url:
+                            "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/"
+                                .to_string(),
+                        extra_verification_keys: vec![],
+                    }]
+                } else {
+                    vec![]
+                },
+            ]
+            .concat(),
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values: vec![],
+        };
+
+        crypto_storage
+            .inner
+            .write_context_info(&context_id, &context_info)
+            .await
+            .unwrap();
+
+        let ro_storage_getter = DummyReadOnlyS3StorageGetter {
+            counter: RefCell::new(0),
+            ram_storages: vec![ram_storage],
+        };
+
+        (
+            crypto_storage,
+            key_digests,
+            ro_storage_getter,
+            (server_key, public_key),
+        )
+    }
+
+    #[tokio::test]
+    async fn empty_storage_fetch_public_materials_from_peers() {
+        let mut rng = AesRng::seed_from_u64(2332);
+        let key_id = RequestId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng);
+        let (crypto_storage, key_digests, _ro_storage_getter, _) =
+            setup_public_materials_test(key_id, context_id, false).await;
+        {
+            // negative test
+            // use empty storage to trigger error
+            let ro_storage_getter = DummyReadOnlyS3StorageGetter {
+                counter: RefCell::new(0),
+                ram_storages: vec![RamStorage::new()],
+            };
+            let err = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+                &crypto_storage,
+                key_id,
+                &context_id,
+                &key_digests,
+                &ro_storage_getter,
+            )
+            .await
+            .unwrap_err();
+            assert!(err
+                .to_string()
+                .contains(ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS));
+        }
+    }
+
+    #[tokio::test]
+    async fn wrong_digest_fetch_public_materials_from_peers() {
+        let mut rng = AesRng::seed_from_u64(2332);
+        let key_id = RequestId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng);
+        let (crypto_storage, _key_digests, ro_storage_getter, _) =
+            setup_public_materials_test(key_id, context_id, false).await;
+        {
+            // negative test
+            // use wrong digests to trigger error
+            let wrong_key_digests: HashMap<PubDataType, Vec<u8>> = HashMap::from_iter([
+                (PubDataType::ServerKey, vec![0, 1, 2, 4]),
+                (PubDataType::PublicKey, vec![3, 4, 5, 6]),
+            ]);
+            let err = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+                &crypto_storage,
+                key_id,
+                &context_id,
+                &wrong_key_digests,
+                &ro_storage_getter,
+            )
+            .await
+            .unwrap_err();
+            assert!(err.to_string().contains(ERR_SERVER_KEY_DIGEST_MISMATCH));
+        }
+    }
+
+    #[tokio::test]
+    async fn sunshine_fetch_public_materials_from_peers() {
+        let mut rng = AesRng::seed_from_u64(2332);
+        let key_id = RequestId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng);
+        let (crypto_storage, key_digests, ro_storage_getter, _) =
+            setup_public_materials_test(key_id, context_id, true).await;
+
+        {
+            // sunshine
+            // use the dummy s3 storage to fetch the keys from ram storage
+            let _keyset = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+                &crypto_storage,
+                key_id,
+                &context_id,
+                &key_digests,
+                &ro_storage_getter,
+            )
+            .await
+            .unwrap();
+
+            // we should've used the read-only storage, so counter should be 1
+            assert_eq!(*ro_storage_getter.counter.borrow(), 1);
+        }
+        {
+            // sunshine
+            // use two dummy s3 storage, where the first one is broken, so ro_storage_getter should be called twice
+            let two_ro_storage_getter = DummyReadOnlyS3StorageGetter {
+                counter: RefCell::new(0),
+                ram_storages: vec![RamStorage::new(), ro_storage_getter.ram_storages[0].clone()],
+            };
+
+            let _keyset = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
+                &crypto_storage,
+                key_id,
+                &context_id,
+                &key_digests,
+                &two_ro_storage_getter,
+            )
+            .await
+            .unwrap();
+
+            // the first storage should've failed, the second one should work, so counter should be 2
+            assert_eq!(*two_ro_storage_getter.counter.borrow(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn bad_digests_get_verified_public_materials() {
+        let mut rng = AesRng::seed_from_u64(2332);
+        let key_id = RequestId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng);
+        let (crypto_storage, _key_digests, ro_storage_getter, (server_key, public_key)) =
+            setup_public_materials_test(key_id, context_id, false).await;
+
+        {
+            // we make sure that keys are present in my own public storage
+            let public_storage = crypto_storage.inner.get_public_storage();
+            {
+                let mut guard_storage = public_storage.lock().await;
+                store_pk_at_request_id(
+                    &mut (*guard_storage),
+                    &key_id,
+                    WrappedPublicKey::Compact(&public_key),
+                )
+                .await
+                .unwrap();
+                store_versioned_at_request_id(
+                    &mut (*guard_storage),
+                    &key_id,
+                    &server_key,
+                    &PubDataType::ServerKey.to_string(),
+                )
+                .await
+                .unwrap();
+            }
+
+            let bad_key_digests: HashMap<PubDataType, Vec<u8>> = HashMap::from_iter([
+                (PubDataType::ServerKey, vec![9, 8, 7, 6]),
+                (PubDataType::PublicKey, vec![5, 4, 3, 2]),
+            ]);
+            let err = get_verified_public_materials(
+                &crypto_storage,
+                key_id,
+                &context_id,
+                &bad_key_digests,
+                &ro_storage_getter,
+            )
+            .await
+            .unwrap_err();
+
+            assert!(err.to_string().contains(ERR_SERVER_KEY_DIGEST_MISMATCH));
+
+            // we should've used the public storage directly, so the counter here should be 0
+            assert_eq!(*ro_storage_getter.counter.borrow(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn sunshine_get_verified_public_materials() {
+        let mut rng = AesRng::seed_from_u64(2332);
+        let key_id = RequestId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng);
+        let (crypto_storage, key_digests, ro_storage_getter, (server_key, public_key)) =
+            setup_public_materials_test(key_id, context_id, false).await;
+
+        {
+            // sunshine
+            // if key materials are present locally, we expect giving an empty RO storage getter
+            // and an empty key_digests to still work
+            let public_storage = crypto_storage.inner.get_public_storage();
+            {
+                let mut guard_storage = public_storage.lock().await;
+                store_pk_at_request_id(
+                    &mut (*guard_storage),
+                    &key_id,
+                    WrappedPublicKey::Compact(&public_key),
+                )
+                .await
+                .unwrap();
+                store_versioned_at_request_id(
+                    &mut (*guard_storage),
+                    &key_id,
+                    &server_key,
+                    &PubDataType::ServerKey.to_string(),
+                )
+                .await
+                .unwrap();
+            }
+
+            let _key = get_verified_public_materials(
+                &crypto_storage,
+                key_id,
+                &context_id,
+                &key_digests,
+                &ro_storage_getter,
+            )
+            .await
+            .unwrap();
+
+            // we should've used the public storage directly, so the counter here should be 0
+            assert_eq!(*ro_storage_getter.counter.borrow(), 0);
         }
     }
 }

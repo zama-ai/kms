@@ -83,22 +83,21 @@ pub enum TlsConf {
         key: TlsKey,
     },
     // The party will generate a keypair inside of the enclave on boot and issue
-    // an ephemeral self-signed TLS certificate for it that bundles the provided
-    // certificate and the attestation document. The enclave image must be
-    // signed with the provided certificate.
-    SemiAuto {
-        cert: TlsCert,
-        trusted_releases: Vec<ReleasePCRValues>,
-        ignore_aws_ca_chain: Option<bool>,
-    },
-    // The party will use its core signing key to sign an emphemeral TLS
-    // certificate on boot that that bundles the attestation document, acting as
+    // an ephemeral TLS certificate with a bundled attestation document. By
+    // default, the party will use its core signing key to sign it, acting as
     // its own CA. The CA certificate must be self-signed with the core signing
     // key and included in the peer list.
-    FullAuto {
+    Auto {
+        // If a certificate is provided, the enclave image must be signed with
+        // the matching private key. This certificate will be used to establish
+        // the party identity instead of the core signing key then, so it must
+        // be included in the peer list.
+        eif_signing_cert: Option<TlsCert>,
         trusted_releases: Vec<ReleasePCRValues>,
         ignore_aws_ca_chain: Option<bool>,
         attest_private_vault_root_key: Option<bool>,
+        renew_slack_after_expiration: Option<u64>,
+        renew_fail_retry_timeout: Option<u64>,
     },
 }
 
@@ -124,7 +123,7 @@ impl TlsCert {
         Ok(parse_x509_pem(cert_bytes.as_ref())?.1)
     }
 
-    pub fn into_pem2(&self, peer: &PeerConf) -> anyhow::Result<Pem> {
+    pub fn into_pem(&self, peer: &PeerConf) -> anyhow::Result<Pem> {
         let cert_pem = self.unchecked_pem()?;
         let x509_cert = cert_pem.parse_x509()?;
         let mpc_identity = peer
@@ -141,7 +140,11 @@ impl TlsCert {
         Ok(cert_pem)
     }
 
-    pub fn into_pem(&self, my_id: usize, peers: &[PeerConf]) -> anyhow::Result<Pem> {
+    pub fn into_pem_with_sanity_check(
+        &self,
+        my_id: usize,
+        peers: &[PeerConf],
+    ) -> anyhow::Result<Pem> {
         // sanity check: peerlist needs to have an entry for the
         // current party
         let peer = &peers
@@ -150,7 +153,7 @@ impl TlsCert {
             .ok_or_else(|| {
                 anyhow::anyhow!("Peer list {peers:?} does not have an entry for my id {my_id}")
             })?;
-        self.into_pem2(peer)
+        self.into_pem(peer)
     }
 }
 
@@ -233,5 +236,5 @@ MEUCIEfh23uIR76K+tv+s5pi0uksEeleDonWm+tqStxeRFR5AiEAs4mw/Yi6aoDg
     }];
 
     // `into_pem` will deserialize the string inside `tls_cert`
-    let _ = tls_cert.into_pem(1, &peers).unwrap();
+    let _ = tls_cert.into_pem_with_sanity_check(1, &peers).unwrap();
 }

@@ -84,6 +84,18 @@ impl SessionMaker {
         }
     }
 
+    /// Returns the number of active sessions.
+    pub async fn active_sessions(&self) -> u64 {
+        let reader_guard = self.networking_manager.read().await;
+        reader_guard.active_session_count().await
+    }
+
+    /// Returns the number of inactive sessions.
+    pub async fn inactive_sessions(&self) -> u64 {
+        let reader_guard = self.networking_manager.read().await;
+        reader_guard.inactive_session_count().await
+    }
+
     #[cfg(test)]
     pub(crate) async fn context_count(&self) -> usize {
         self.context_map.read().await.len()
@@ -324,7 +336,7 @@ impl SessionMaker {
         network_mode: NetworkMode,
     ) -> anyhow::Result<BaseSession> {
         tracing::info!(
-            "Making base session: session_id={}, context_id={:?}, network_mode={:?}",
+            "Making base session: session_id={}, context_id={}, network_mode={:?}",
             session_id,
             context_id,
             network_mode
@@ -588,7 +600,17 @@ impl ImmutableSessionMaker {
         self.inner.threshold(context_id).await
     }
 
-    // Returns the an health check session per context.
+    /// Returns the number of active sessions.
+    pub(crate) async fn active_sessions(&self) -> u64 {
+        self.inner.active_sessions().await
+    }
+
+    /// Returns the number of inactive sessions.
+    pub(crate) async fn inactive_sessions(&self) -> u64 {
+        self.inner.inactive_sessions().await
+    }
+
+    // Returns a health check session per context.
     pub(crate) async fn get_healthcheck_session_all_contexts(
         &self,
     ) -> anyhow::Result<HashMap<ContextId, HealthCheckSession<Role>>> {

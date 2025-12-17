@@ -27,3 +27,10 @@ target-analyzer/
 /core-client/artifacts
 
 docker-compose-*
+
+.github/
+charts/
+ci/
+.config/
+NIST_scripts/
+docs/

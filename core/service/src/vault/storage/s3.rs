@@ -1,6 +1,6 @@
 use super::{Storage, StorageCache, StorageForBytes, StorageReader, StorageType};
 use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
-use aws_config::SdkConfig;
+use aws_config::{self, SdkConfig};
 use aws_sdk_s3::{error::ProvideErrorMetadata, primitives::ByteStream, Client as S3Client};
 use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
 use aws_smithy_runtime_api::{
@@ -15,6 +15,8 @@ use http_legacy::{header::HOST, HeaderValue};
 use hyper_rustls::HttpsConnectorBuilder;
 use kms_grpc::RequestId;
 use serde::{de::DeserializeOwned, Serialize};
+#[cfg(test)]
+use std::cell::RefCell;
 use std::sync::Arc;
 use std::{collections::HashSet, str::FromStr};
 use tfhe::{
@@ -34,6 +36,47 @@ pub struct S3Storage {
     pub bucket: String,
     pub prefix: String,
     cache: Option<Arc<Mutex<StorageCache>>>,
+}
+
+/// Read-only S3 storage wrapper, should not implement Storage trait.
+pub struct ReadOnlyS3Storage {
+    inner: S3Storage,
+}
+
+impl ReadOnlyS3Storage {
+    pub fn new(
+        s3_client: S3Client,
+        bucket: String,
+        storage_type: StorageType,
+        storage_prefix: Option<&str>,
+        cache: Option<StorageCache>,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            inner: S3Storage::new(s3_client, bucket, storage_type, storage_prefix, cache)?,
+        })
+    }
+}
+
+impl StorageReader for ReadOnlyS3Storage {
+    async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
+        self.inner.data_exists(data_id, data_type).await
+    }
+
+    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<T> {
+        self.inner.read_data(data_id, data_type).await
+    }
+
+    async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
+        self.inner.all_data_ids(data_type).await
+    }
+
+    fn info(&self) -> String {
+        self.inner.info()
+    }
 }
 
 impl S3Storage {
@@ -343,6 +386,21 @@ impl Intercept for HostHeaderInterceptor {
     }
 }
 
+// This builds an anonymous S3 client, useful for accessing public S3 buckets.
+pub async fn build_anonymous_s3_client(aws_s3_endpoint: Option<Url>) -> anyhow::Result<S3Client> {
+    let sdk_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .no_credentials()
+        .load()
+        .await;
+
+    let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&sdk_config);
+    if let Some(p) = aws_s3_endpoint {
+        s3_config_builder = s3_config_builder.endpoint_url(p);
+    }
+    let s3_config = s3_config_builder.build();
+    Ok(S3Client::from_conf(s3_config))
+}
+
 /// Given the address of a vsock-to-TCP proxy, constructs an S3 client for use inside of a Nitro
 /// enclave.
 pub async fn build_s3_client(
@@ -553,4 +611,114 @@ mod tests {
             "already exists. Keeping the data without overwriting"
         ));
     }
+}
+
+/// This is a trait to abstract over getting different ReadOnlyS3Storage implementations,
+/// It is mostly needed for mocking the read only s3 storage in tests.
+///
+/// Calling [Self::get_storage] on the real implementation simply constructs a new ReadOnlyS3Storage,
+/// only one getter is needed to construct different ReadOnlyS3Storage objects.
+pub(crate) trait ReadOnlyS3StorageGetter<R> {
+    fn get_storage(
+        &self,
+        s3_client: S3Client,
+        bucket: String,
+        storage_type: StorageType,
+        storage_prefix: Option<&str>,
+        cache: Option<StorageCache>,
+    ) -> anyhow::Result<R>;
+}
+
+pub(crate) struct RealReadOnlyS3StorageGetter;
+
+impl ReadOnlyS3StorageGetter<ReadOnlyS3Storage> for RealReadOnlyS3StorageGetter {
+    fn get_storage(
+        &self,
+        s3_client: S3Client,
+        bucket: String,
+        storage_type: StorageType,
+        storage_prefix: Option<&str>,
+        cache: Option<StorageCache>,
+    ) -> anyhow::Result<ReadOnlyS3Storage> {
+        ReadOnlyS3Storage::new(s3_client, bucket, storage_type, storage_prefix, cache)
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct DummyReadOnlyS3StorageGetter {
+    // A counter that's incremented each time get_storage is called
+    // it also selects which ram storage to return, i.e., the nth call to get_storage
+    // returns the nth ram storage in the ram_storages vector
+    pub(crate) counter: RefCell<usize>,
+    pub(crate) ram_storages: Vec<crate::vault::storage::ram::RamStorage>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct DummyReadOnlyS3Storage {
+    pub(crate) ram_storage: crate::vault::storage::ram::RamStorage,
+}
+
+#[cfg(test)]
+impl ReadOnlyS3StorageGetter<DummyReadOnlyS3Storage> for DummyReadOnlyS3StorageGetter {
+    fn get_storage(
+        &self,
+        _s3_client: S3Client,
+        _bucket: String,
+        _storage_type: StorageType,
+        _prefix: Option<&str>,
+        _cache: Option<StorageCache>,
+    ) -> anyhow::Result<DummyReadOnlyS3Storage> {
+        let val = { *self.counter.borrow() };
+        let out = DummyReadOnlyS3Storage {
+            ram_storage: self.ram_storages[val].clone(),
+        };
+        self.counter.replace(val + 1);
+        Ok(out)
+    }
+}
+
+#[cfg(test)]
+impl StorageReader for DummyReadOnlyS3Storage {
+    async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
+        self.ram_storage.data_exists(data_id, data_type).await
+    }
+
+    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<T> {
+        self.ram_storage.read_data(data_id, data_type).await
+    }
+
+    async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
+        self.ram_storage.all_data_ids(data_type).await
+    }
+
+    fn info(&self) -> String {
+        self.ram_storage.info()
+    }
+}
+
+#[tokio::test]
+async fn test_s3_anon() {
+    let s3_client = build_anonymous_s3_client(Some(
+        Url::parse("https://s3.eu-west-1.amazonaws.com/").unwrap(),
+    ))
+    .await
+    .unwrap();
+    let pub_storage = ReadOnlyS3Storage::new(
+        s3_client,
+        "zama-zws-dev-kms-fhevm-dev-lh7tg".to_string(),
+        StorageType::PUB,
+        Some("PUB-p1"),
+        None,
+    )
+    .unwrap();
+
+    let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
+    // at least one public key should be present in the bucket
+    assert!(!public_key_ids.is_empty());
 }

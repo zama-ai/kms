@@ -1,5 +1,5 @@
 use crate::client::client_wasm::Client;
-use crate::conf::{Keychain, SecretSharingKeychain};
+use crate::conf::{init_conf, CoreConfig, Keychain, SecretSharingKeychain};
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
 use crate::engine::base::BaseKmsStruct;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
@@ -117,30 +117,34 @@ pub async fn setup_threshold_no_client<
             tokio::sync::oneshot::Receiver<()>,
         ) = tokio::sync::oneshot::channel();
         mpc_shutdown_txs.push(mpc_core_tx);
-        let rl_conf = rate_limiter_conf.clone();
+        // Make a configuration based on the default, but customized with the needed changes for the test setup
+        let mut core_config: CoreConfig = init_conf("config/default_1").expect("config must parse");
+        let threshold_party_config = ThresholdPartyConf {
+            listen_address: mpc_conf[i - 1].address.clone(),
+            listen_port: mpc_conf[i - 1].port,
+            threshold,
+            dec_capacity: DEC_CAPACITY,
+            min_dec_cache: MIN_DEC_CACHE,
+            my_id: Some(i),
+            preproc_redis: None,
+            // Add some parallelism so CI runs a bit faster
+            // since it uses large machines
+            num_sessions_preproc: Some(5),
+            tls: None,
+            peers: Some(mpc_conf),
+            core_to_core_net: None,
+            decryption_mode,
+        };
+        core_config.threshold = Some(threshold_party_config);
+        core_config.rate_limiter_conf = rate_limiter_conf.clone();
+
         handles.push(tokio::spawn(async move {
-            let threshold_party_config = ThresholdPartyConf {
-                listen_address: mpc_conf[i - 1].address.clone(),
-                listen_port: mpc_conf[i - 1].port,
-                threshold,
-                dec_capacity: DEC_CAPACITY,
-                min_dec_cache: MIN_DEC_CACHE,
-                my_id: Some(i),
-                preproc_redis: None,
-                // Add some parallelism so CI runs a bit faster
-                // since it uses large machines
-                num_sessions_preproc: Some(5),
-                tls: None,
-                peers: Some(mpc_conf),
-                core_to_core_net: None,
-                decryption_mode,
-            };
             let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
             let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
 
             // TODO pass in cert_paths for testing TLS
             let server = new_real_threshold_kms(
-                threshold_party_config,
+                core_config,
                 cur_pub_storage,
                 cur_priv_storage,
                 cur_vault,
@@ -150,7 +154,6 @@ pub async fn setup_threshold_no_client<
                 None,
                 false,
                 run_prss,
-                rl_conf,
                 mpc_core_rx.map(drop),
             )
             .await;

@@ -24,7 +24,7 @@ impl<V: Vss> DroppingCoinflipAfterVss<V> {
 
 impl<V: Vss> ProtocolDescription for DroppingCoinflipAfterVss<V> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-DroppingCoinflipAfterVss:\n{}",
             indent,
@@ -56,7 +56,7 @@ pub struct MaliciousCoinflipRecons<V: Vss, RO: RobustOpen> {
 
 impl<V: Vss, RO: RobustOpen> ProtocolDescription for MaliciousCoinflipRecons<V, RO> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-MaliciousCoinflipRecons:\n{}\n{}",
             indent,

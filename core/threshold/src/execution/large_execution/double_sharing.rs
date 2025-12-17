@@ -52,7 +52,7 @@ pub struct RealDoubleSharing<Z, S: LocalDoubleShare> {
 
 impl<Z, S: LocalDoubleShare> ProtocolDescription for RealDoubleSharing<Z, S> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-RealDoubleSharing:\n{}",
             indent,
