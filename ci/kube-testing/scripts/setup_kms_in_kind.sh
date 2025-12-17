@@ -871,6 +871,9 @@ deploy_centralized_mode() {
         --set kmsCore.thresholdMode.enabled=false \
         --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
         --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+        --set kmsCore.publicVault.s3.prefix=PUB \
+        --set kmsCore.privateVault.s3.prefix=PRIV \
+        --set kmsCore.backupVault.s3.prefix=BACKUP \
         --wait \
         --timeout 10m
 
