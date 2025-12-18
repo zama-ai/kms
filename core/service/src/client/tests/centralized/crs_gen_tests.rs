@@ -29,7 +29,7 @@ use tonic::transport::Channel;
 async fn test_crs_gen_manual() {
     let crs_req_id = derive_request_id("test_crs_gen_manual").unwrap();
     // Delete potentially old data
-    purge(None, None, &crs_req_id, 1).await;
+    purge(None, None, &crs_req_id, &[None], &[None]).await;
     // TEST_PARAM uses V1 CRS
     crs_gen_centralized_manual(&TEST_PARAM, &crs_req_id, Some(FheParameter::Test), None).await;
 }
@@ -39,7 +39,7 @@ async fn test_crs_gen_manual() {
 async fn test_crs_gen_centralized() {
     let crs_req_id = derive_request_id("test_crs_gen_centralized").unwrap();
     // Delete potentially old data
-    purge(None, None, &crs_req_id, 1).await;
+    purge(None, None, &crs_req_id, &[None], &[None]).await;
     // TEST_PARAM uses V1 CRS
     crs_gen_centralized(&crs_req_id, FheParameter::Test, false, None).await;
 }
@@ -50,7 +50,7 @@ async fn test_crs_gen_centralized() {
 async fn test_insecure_crs_gen_centralized() {
     let crs_req_id = derive_request_id("test_insecure_crs_gen_centralized").unwrap();
     // Delete potentially old data
-    purge(None, None, &crs_req_id, 1).await;
+    purge(None, None, &crs_req_id, &[None], &[None]).await;
     // TEST_PARAM uses V1 CRS
     crs_gen_centralized(&crs_req_id, FheParameter::Test, true, None).await;
 }

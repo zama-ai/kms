@@ -17,19 +17,23 @@ storage_cache_size = 1000
 
 [public_vault.storage.s3]
 bucket = "kms"
+prefix = "PUB-p5"
 
 [private_vault.storage.s3]
 bucket = "kms"
+prefix = "PRIV-p5"
 
 [backup_vault]
 [backup_vault.storage.file]
 path = "./backup_vault"
+prefix = "BACKUP-p5"
 
 [threshold]
 listen_address = "0.0.0.0"
 listen_port = 50005
 
-my_id = 5
+# No need to set my_id because this node is started without context
+# my_id = 1
 
 threshold = 1
 dec_capacity = 10000

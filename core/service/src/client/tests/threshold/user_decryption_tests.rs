@@ -8,10 +8,10 @@ use crate::client::user_decryption_wasm::TestingUserDecryptionTranscript;
 use crate::consts::DEFAULT_PARAM;
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
-use crate::consts::TEST_PARAM;
 #[cfg(feature = "slow_tests")]
 use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
-use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
+use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, TEST_PARAM};
+use crate::consts::{PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, TEST_THRESHOLD_KEY_ID_4P};
 use crate::cryptography::encryption::{PkeSchemeType, UnifiedPrivateEncKey, UnifiedPublicEncKey};
 use crate::cryptography::signatures::{internal_sign, PrivateSigKey};
 use crate::dummy_domain;
@@ -480,8 +480,14 @@ pub(crate) async fn user_decryption_threshold(
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (mut kms_servers, mut kms_clients, mut internal_client) =
         threshold_handles(dkg_params, amount_parties, true, None, decryption_mode).await;
-    let (ct, ct_format, fhe_type) =
-        compute_cipher_from_stored_key(None, msg, key_id, 1, enc_config).await;
+    let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
+        None,
+        msg,
+        key_id,
+        PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
+        enc_config,
+    )
+    .await;
 
     // make requests
     let reqs: Vec<_> = (0..parallelism)
@@ -784,17 +790,17 @@ async fn process_batch_threshold_user_decryption(
 }
 
 async fn get_server_private_keys(amount_parties: usize) -> HashMap<u32, PrivateSigKey> {
+    let storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let mut server_private_keys = HashMap::new();
-    for i in 1..=amount_parties {
-        let priv_storage =
-            FileStorage::new(None, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap();
+    for (i, prefix) in storage_prefixes.iter().enumerate() {
+        let priv_storage = FileStorage::new(None, StorageType::PRIV, prefix.as_deref()).unwrap();
         let sk = get_core_signing_key(&priv_storage)
             .await
             .inspect_err(|e| {
                 tracing::error!("signing key hashmap is not exactly 1, {}", e);
             })
             .unwrap();
-        server_private_keys.insert(i as u32, sk);
+        server_private_keys.insert(i as u32 + 1, sk);
     }
     server_private_keys
 }

@@ -15,7 +15,7 @@ use threshold_fhe::{
         endpoints::reshare_sk::{
             ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
         },
-        runtime::{party::Role, sessions::session_parameters::GenericParameterHandles},
+        runtime::sessions::session_parameters::GenericParameterHandles,
         small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
         tfhe_internals::public_keysets::FhePubKeySet,
     },
@@ -167,9 +167,9 @@ async fn fetch_public_materials_from_peers<
         let pub_storage = ro_storage_getter.get_storage(
             s3_client,
             bucket,
-            None,
             StorageType::PUB,
-            Some(Role::indexed_from_one(node.party_id as usize)),
+            // TODO(zama-ai/kms-internal#2850): this is a workaround to get storage working when context does not have the prefix
+            Some(format!("PUB-p{}", node.party_id).as_str()),
             None,
         )?;
 

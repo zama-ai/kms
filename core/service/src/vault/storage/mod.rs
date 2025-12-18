@@ -20,7 +20,6 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{self};
 use strum::{EnumIter, IntoEnumIterator};
 use tfhe::{named::Named, Unversionize, Versionize};
-use threshold_fhe::execution::runtime::party::Role;
 use tracing;
 
 pub mod crypto_material;
@@ -392,34 +391,32 @@ pub enum StorageProxy {
     S3(s3::S3Storage),
 }
 
+// If storage_conf is None, then we default to file storage at the default path and prefix.
 pub fn make_storage(
     storage_conf: Option<StorageConf>,
     storage_type: StorageType,
-    party_role: Option<Role>,
     storage_cache: Option<StorageCache>,
     s3_client: Option<S3Client>,
 ) -> anyhow::Result<StorageProxy> {
-    let storage =
-        match storage_conf {
-            Some(storage_conf) => match storage_conf {
-                StorageConf::S3(S3Storage { bucket, prefix }) => {
-                    let s3_client = s3_client.expect("AWS S3 client must be configured");
-                    StorageProxy::from(s3::S3Storage::new(
-                        s3_client,
-                        bucket,
-                        prefix,
-                        storage_type,
-                        party_role,
-                        storage_cache,
-                    )?)
-                }
-                StorageConf::File(FileStorage { path }) => StorageProxy::from(
-                    file::FileStorage::new(Some(&path), storage_type, party_role)?,
-                ),
-                StorageConf::Ram(RamStorage {}) => StorageProxy::from(ram::RamStorage::new()),
-            },
-            None => StorageProxy::from(file::FileStorage::new(None, storage_type, party_role)?),
-        };
+    let storage = match storage_conf {
+        Some(storage_conf) => match storage_conf {
+            StorageConf::S3(S3Storage { bucket, prefix }) => {
+                let s3_client = s3_client.expect("AWS S3 client must be configured");
+                StorageProxy::from(s3::S3Storage::new(
+                    s3_client,
+                    bucket,
+                    storage_type,
+                    prefix.as_deref(),
+                    storage_cache,
+                )?)
+            }
+            StorageConf::File(FileStorage { path, prefix }) => StorageProxy::from(
+                file::FileStorage::new(Some(&path), storage_type, prefix.as_deref())?,
+            ),
+            StorageConf::Ram(RamStorage {}) => StorageProxy::from(ram::RamStorage::new()),
+        },
+        None => StorageProxy::from(file::FileStorage::new(None, storage_type, None)?),
+    };
     Ok(storage)
 }
 

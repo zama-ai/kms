@@ -13,8 +13,8 @@ use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
 use kms_lib::consts::SIGNING_KEY_ID;
 use kms_lib::engine::base::safe_serialize_hash_element_versioned;
 use kms_lib::engine::base::DSEP_PUBDATA_KEY;
-use kms_lib::util::key_setup::test_tools::load_material_from_storage;
-use kms_lib::util::key_setup::test_tools::load_pk_from_storage;
+use kms_lib::util::key_setup::test_tools::load_material_from_pub_storage;
+use kms_lib::util::key_setup::test_tools::load_pk_from_pub_storage;
 use serial_test::serial;
 use std::fs::create_dir_all;
 use std::io::Write;
@@ -1472,9 +1472,15 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInit) {
 
     // read the key materials from file
     let key_id = RequestId::from_str(&key_id).unwrap();
-    let public_key = load_pk_from_storage(Some(test_path), &key_id, ids[0]).await;
-    let server_key: tfhe::ServerKey =
-        load_material_from_storage(Some(test_path), &key_id, PubDataType::ServerKey, ids[0]).await;
+    let object_folder = &cc_conf.cores[ids[0] - 1].object_folder;
+    let public_key = load_pk_from_pub_storage(Some(test_path), &key_id, Some(object_folder)).await;
+    let server_key: tfhe::ServerKey = load_material_from_pub_storage(
+        Some(test_path),
+        &key_id,
+        PubDataType::ServerKey,
+        Some(object_folder),
+    )
+    .await;
 
     // compute the digests
     let server_key_digest =

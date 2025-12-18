@@ -70,6 +70,11 @@ impl Client {
         }
 
         let res_len = res_storage.len();
+        tracing::info!(
+            "Processing {} CRS generation results for request id {}",
+            res_len,
+            request_id
+        );
         for (result, storage) in res_storage {
             let pp: CompactPkeCrs = storage
                 .read_data(request_id, &PubDataType::CRS.to_string())
@@ -89,7 +94,11 @@ impl Client {
             // check the digest
             let actual_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &pp)?;
             if result.crs_digest != actual_digest {
-                tracing::warn!("crs_handle does not match the computed digest; discarding the CRS");
+                tracing::warn!(
+                    "crs_handle {} does not match the computed digest {}; discarding the CRS",
+                    hex::encode(&result.crs_digest),
+                    hex::encode(&actual_digest),
+                );
                 continue;
             }
 

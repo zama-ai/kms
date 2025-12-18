@@ -34,7 +34,6 @@ use kms_lib::{
 };
 use std::{env, net::ToSocketAddrs, sync::Arc, thread};
 use threshold_fhe::{
-    execution::runtime::party::Role,
     networking::tls::{build_ca_certs_map, AttestedVerifier},
     thread_handles::init_rayon_thread_pool,
 };
@@ -106,10 +105,10 @@ async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener
         .await
         .unwrap_or_else(|e| panic!("Could not bind to {mpc_socket_addr} \n {e:?}"));
     tracing::info!(
-                "Starting threshold KMS server v{} for party {}, listening for MPC communication on {:?}...",
-                env!("CARGO_PKG_VERSION"),
-                threshold_config.my_id,
-                mpc_socket_addr
+        "Starting threshold KMS server v{}, with id {:?}, listening for MPC communication on {:?}...",
+        env!("CARGO_PKG_VERSION"),
+        threshold_config.my_id,
+        mpc_socket_addr
     );
     if let Some(peers) = &threshold_config.peers {
         tracing::info!(
@@ -130,7 +129,6 @@ async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener
 /// documents and that can receive new trust roots on the context change.
 #[allow(clippy::too_many_arguments)]
 async fn build_tls_config(
-    my_id: usize,
     peers: &Option<Vec<PeerConf>>,
     tls_config: &TlsConf,
     security_module: Option<Arc<SecurityModuleProxy>>,
@@ -139,6 +137,7 @@ async fn build_tls_config(
     sk: Arc<PrivateSigKey>,
     #[cfg(feature = "insecure")] mock_enclave: bool,
 ) -> anyhow::Result<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)> {
+    let verf_key = sk.verf_key();
     let context_id = *DEFAULT_MPC_CONTEXT;
     aws_lc_rs_default_provider()
         .install_default()
@@ -150,19 +149,26 @@ async fn build_tls_config(
     // Communication between MPC parties can be optionally protected
     // with mTLS which requires a TLS certificate valid both for server
     // and client authentication.
-    let ca_certs_list = match peers {
-        Some(peers) => peers
-            .iter()
-            .map(|peer| {
-                peer.tls_cert
-                    .as_ref()
-                    .map(|cert| cert.into_pem(peer.party_id, peers))
-                    .unwrap_or_else(|| {
-                        panic!("No CA certificate present for peer {}", peer.party_id)
-                    })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?,
-        None => vec![],
+    let (ca_certs_list, my_peer) = match peers {
+        Some(peers) => {
+            let cert_list = peers
+                .iter()
+                .map(|peer| {
+                    peer.tls_cert
+                        .as_ref()
+                        .map(|cert| cert.into_pem_with_sanity_check(peer.party_id, peers))
+                        .unwrap_or_else(|| {
+                            panic!("No CA certificate present for peer {}", peer.party_id)
+                        })
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+
+            let myself = peers
+                .iter()
+                .find(|p| p.verification_address == Some(verf_key.address()));
+            (cert_list, myself)
+        }
+        None => (vec![], None),
     };
 
     // NOTE: ca_certs can be empty if peerlist is not set
@@ -177,11 +183,11 @@ async fn build_tls_config(
     ) = match tls_config {
         TlsConf::Manual { ref cert, ref key } => {
             tracing::info!("Using third-party TLS certificate without Nitro remote attestation");
-            let cert = match peers {
-                Some(ref peers) => cert.into_pem(my_id, peers)?,
+            let cert = match my_peer {
+                Some(peer) => cert.into_pem(peer)?,
                 None => {
                     tracing::info!(
-                        "No peerlist present, skipping TLS certificate validation against peerlist"
+                        "Cannot find a peer that corresponds to myself, skipping TLS certificate validation against peerlist"
                     );
                     cert.unchecked_pem()?
                 }
@@ -198,6 +204,7 @@ async fn build_tls_config(
             )));
             (cert_resolver, None, false, false, false)
         }
+
         // When remote attestation is used, the enclave generates a
         // self-signed TLS certificate for a private key that never
         // leaves its memory. This certificate includes the AWS
@@ -221,12 +228,12 @@ async fn build_tls_config(
                     tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
                     (
                         None,
-                        match peers {
-                            Some(ref peers) => eif_signing_cert.into_pem(my_id, peers)?,
+                        match my_peer {
+                            Some(peer) => eif_signing_cert.into_pem(peer)?,
                             None => {
                                 tracing::info!(
-                        "No peerlist present, skipping TLS certificate validation against peerlist"
-                    );
+                                    "No peerlist present, skipping TLS certificate validation against peerlist"
+                                );
                                 eif_signing_cert.unchecked_pem()?
                             }
                         },
@@ -371,11 +378,6 @@ async fn main_exec() -> anyhow::Result<()> {
         thread::available_parallelism()?.get(),
     );
 
-    let party_role = core_config
-        .threshold
-        .as_ref()
-        .map(|t| Role::indexed_from_one(t.my_id));
-
     // common AWS configuration
     let aws_sdk_config = match core_config.aws {
         Some(ref aws_config) => Some(
@@ -484,7 +486,6 @@ async fn main_exec() -> anyhow::Result<()> {
     let public_storage = make_storage(
         core_config.public_vault.as_ref().map(|v| v.storage.clone()),
         StorageType::PUB,
-        party_role,
         public_storage_cache,
         s3_client.clone(),
     )
@@ -501,7 +502,6 @@ async fn main_exec() -> anyhow::Result<()> {
             .as_ref()
             .map(|v| v.storage.clone()),
         StorageType::PRIV,
-        party_role,
         private_storage_cache,
         s3_client.clone(),
     )
@@ -540,7 +540,6 @@ async fn main_exec() -> anyhow::Result<()> {
             make_storage(
                 Some(v.storage.clone()),
                 StorageType::BACKUP,
-                party_role,
                 None,
                 s3_client,
             )
@@ -570,7 +569,6 @@ async fn main_exec() -> anyhow::Result<()> {
     });
 
     // initialize KMS core
-
     let service_socket_addr_str = format!(
         "{}:{}",
         core_config.service.listen_address, core_config.service.listen_port
@@ -633,7 +631,6 @@ async fn main_exec() -> anyhow::Result<()> {
             let tls_identity = match &threshold_config.tls {
                 Some(tls_config) => Some({
                     build_tls_config(
-                        threshold_config.my_id,
                         &threshold_config.peers,
                         tls_config,
                         security_module.clone(),

@@ -389,7 +389,11 @@ impl<
             }
         };
 
-        tracing::info!("CRS generation completed for req_id={req_id}, storing the CRS.");
+        tracing::info!(
+            "CRS generation completed for req_id={req_id} with digest={}, storing the CRS.",
+            hex::encode(crs_info.digest())
+        );
+
         //Note: We can't easily check here whether we succeeded writing to the meta store
         //thus we can't increment the error counter if it fails
         crypto_storage

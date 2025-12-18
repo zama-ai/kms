@@ -58,7 +58,6 @@ use std::str::FromStr;
 use std::sync::{Arc, Once};
 use strum_macros::{Display, EnumString};
 use tfhe::FheTypes as TfheFheType;
-use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::RwLock;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
@@ -109,9 +108,11 @@ pub struct CoreConf {
     /// The ID of the given KMS server (monotonically increasing positive integer starting at 1)
     #[validate(range(min = 1))]
     pub party_id: usize,
+
     /// The address of the given KMS server, including the port
     #[validate(length(min = 1))]
     pub address: String,
+
     /// The S3 endpoint where the public material of the given server can be reached
     #[validate(length(min = 1))]
     pub s3_endpoint: String,
@@ -834,7 +835,7 @@ pub async fn fetch_ctxt_from_file(
 /// - `party_id`: the 1-indexed ID of the KMS core whose public keys we will use (should not matter as long as the server is online)
 pub async fn encrypt(
     keys_folder: &Path,
-    party_id: usize,
+    stored_key_storage_prefix: Option<&str>,
     cipher_params: CipherParameters,
 ) -> Result<EncryptionResult, Box<dyn std::error::Error + 'static>> {
     let to_encrypt = parse_hex(cipher_params.to_encrypt.as_str())?;
@@ -864,7 +865,7 @@ pub async fn encrypt(
         Some(keys_folder),
         typed_to_encrypt,
         &cipher_params.key_id.into(),
-        party_id,
+        stored_key_storage_prefix,
         EncryptionConfig {
             compression: !cipher_params.no_compression,
             precompute_sns: !cipher_params.no_precompute_sns,
@@ -923,42 +924,14 @@ async fn read_kms_addresses_local(
     let mut addr_strings = Vec::with_capacity(sim_conf.cores.len());
 
     for cur_core in &sim_conf.cores {
-        // NOTE: [cur_core.party_id] might not match the storage path, as a workaround,
-        // if the kms config exists, then use the my_id field from there.
-        let storage_role = {
-            #[cfg(feature = "testing")]
-            match cur_core.config_path {
-                Some(ref p) => {
-                    let core_config: conf::CoreConfig =
-                        conf::init_conf(p.to_str().expect("expect core config path")).unwrap();
-                    Role::indexed_from_one(
-                        core_config
-                            .threshold
-                            .expect("expect threshold config")
-                            .my_id,
-                    )
-                }
-                None => Role::indexed_from_one(cur_core.party_id),
-            }
-            #[cfg(not(feature = "testing"))]
-            Role::indexed_from_one(cur_core.party_id)
-        };
+        let storage_prefix = Some(cur_core.object_folder.clone());
 
         let vault = {
             let store_path = Some(conf::Storage::File(conf::FileStorage {
                 path: path.to_path_buf(),
+                prefix: storage_prefix,
             }));
-            let optional_storage_role = match sim_conf.kms_type {
-                KmsType::Centralized => None, // in centralized mode, there is only one party, so no need to specify role to access the right storage
-                KmsType::Threshold => Some(storage_role),
-            };
-            let storage = make_storage(
-                store_path,
-                StorageType::PUB,
-                optional_storage_role,
-                None,
-                None,
-            )?;
+            let storage = make_storage(store_path, StorageType::PUB, None, None)?;
             Vault {
                 storage,
                 keychain: None,
@@ -1135,33 +1108,12 @@ pub async fn execute_cmd(
                     )?;
                     core_endpoints_resp.insert(cur_core.party_id as u32, core_endpoint_resp);
 
-                    // NOTE: [cur_core.party_id] might not match the storage path, as a workaround,
-                    // if the kms config exists, then use the my_id field from there.
-                    let storage_role = {
-                        #[cfg(feature = "testing")]
-                        match cur_core.config_path {
-                            Some(ref p) => {
-                                let core_config: conf::CoreConfig =
-                                    conf::init_conf(p.to_str().expect("expect core config path"))
-                                        .unwrap();
-                                Role::indexed_from_one(
-                                    core_config
-                                        .threshold
-                                        .expect("expect threshold config")
-                                        .my_id,
-                                )
-                            }
-                            None => Role::indexed_from_one(cur_core.party_id),
-                        }
-                        #[cfg(not(feature = "testing"))]
-                        Role::indexed_from_one(cur_core.party_id)
-                    };
                     pub_storage.insert(
                         cur_core.party_id as u32,
                         FileStorage::new(
                             Some(destination_prefix),
                             StorageType::PUB,
-                            Some(storage_role),
+                            Some(cur_core.object_folder.as_str()),
                         )
                         .unwrap(),
                     );
@@ -1225,9 +1177,18 @@ pub async fn execute_cmd(
                         false,
                     )
                     .await?;
+                    let storage_prefix = Some(
+                        cc_conf
+                            .cores
+                            .iter()
+                            .find(|c| c.party_id == party_ids[0])
+                            .expect("party ID not found in config")
+                            .object_folder
+                            .as_str(),
+                    );
                     encrypt(
                         destination_prefix,
-                        *party_ids.first().expect("no party IDs found"),
+                        storage_prefix,
                         cipher_parameters.clone(),
                     )
                     .await?
@@ -1292,9 +1253,19 @@ pub async fn execute_cmd(
                         false,
                     )
                     .await?;
+                    let storage_prefix = Some(
+                        cc_conf
+                            .cores
+                            .iter()
+                            .find(|c| c.party_id == party_ids[0])
+                            .expect("party ID not found in config")
+                            .object_folder
+                            .as_str(),
+                    );
+
                     encrypt(
                         destination_prefix,
-                        *party_ids.first().expect("no party IDs found"),
+                        storage_prefix,
                         cipher_parameters.clone(),
                     )
                     .await?
@@ -1486,9 +1457,18 @@ pub async fn execute_cmd(
                 false,
             )
             .await?;
+            let storage_prefix = Some(
+                cc_conf
+                    .cores
+                    .iter()
+                    .find(|c| c.party_id == party_ids[0])
+                    .expect("party ID not found in config")
+                    .object_folder
+                    .as_str(),
+            );
             encrypt(
                 destination_prefix,
-                *party_ids.first().expect("no party IDs found"),
+                storage_prefix,
                 cipher_parameters.clone(),
             )
             .await?;
