@@ -538,7 +538,7 @@ where
     }
     if let Err(e) = initiator.init_all_prss_from_storage().await {
         tracing::warn!(
-            "Could not read all PRSS Setup from storage from private storage {:?}: {}. You may need to call the init end-point later before you can use the KMS server",
+            "Could not read all PRSS Setups from storage from private storage {:?}: {}. You may need to call the init end-point later before you can use the KMS server",
             private_storage_info,
             e
         );
@@ -548,7 +548,7 @@ where
         let epoch_id_prss: EpochId = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?.into(); // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
         let default_context_id = *DEFAULT_MPC_CONTEXT;
         tracing::info!(
-            "Initializing threshold KMS server and generating a new PRSS Setup for private storage prefix {:?}",
+            "Initializing threshold KMS server and generating a new PRSS Setup for private storage {:?}",
             private_storage_info,
         );
         initiator

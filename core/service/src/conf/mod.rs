@@ -354,6 +354,12 @@ mod tests {
             .expect("baseline config must validate");
 
         let mut cc = core_config.clone();
+        cc.threshold.as_mut().unwrap().my_id = Some(0);
+        let s = cc.validate().unwrap_err().to_string();
+        // the actual values are not ordered deterministically, so we just check for the generic error message
+        assert!(s.contains("Validation error:"));
+
+        let mut cc = core_config.clone();
         cc.threshold.as_mut().unwrap().listen_port = 0;
         let s = cc.validate().unwrap_err().to_string();
         assert!(s.contains("Validation error:"));

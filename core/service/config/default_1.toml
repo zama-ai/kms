@@ -79,7 +79,7 @@ prefix = "PRIV-p1"
 
 # We support storage.file, storage.s3 and storage.ram.
 # When file storage is used, a path must be given with an optional prefix,
-# if the prefix is not given, then "BACKKUP" is used as the prefix.
+# if the prefix is not given, then "BACKUP" is used as the prefix.
 # When s3 storage is used, a bucket name must be given with an optional prefix,
 # if the prefix is not given, then "BACKUP" is used as the prefix as well.
 # When ram is used, there are no additional parameters.
@@ -97,7 +97,7 @@ listen_address = "0.0.0.0"
 listen_port = 50001
 
 # This is an optional parameter tha specifies the initial party ID
-# of the MPC core that's given in the peerlist.
+# of the MPC core that's given in the peerlist, specified under `[[threshold.peers]]`.
 #
 # It is needed when the KMS starts with a peerlist, otherwise it can be omitted.
 my_id = 1

@@ -28,7 +28,7 @@ pub struct ThresholdPartyConf {
     pub tls: Option<TlsConf>,
 
     #[validate(range(min = 1))]
-    // TODO: remove this
+    // TODO(zama-ai/kms-internal/issues/2853): remove this or make it optional
     pub threshold: u8,
 
     #[validate(range(min = 1))]
@@ -53,7 +53,16 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
         if 3 * conf.threshold as usize + 1 != num_parties {
             return Err(ValidationError::new("Incorrect threshold").with_message(format!("3*t+1 must be equal to number of parties. Got t={} but expected t={} for n={} parties", conf.threshold,                     (num_parties - 1) / 3,
                     num_parties
-        ).into() ));
+            ).into() ));
+        }
+        if let Some(my_id) = conf.my_id {
+            if my_id > num_parties {
+                tracing::warn!(
+                    "my_id {} is greater than number of parties {}, in some situations this may be a misconfiguration",
+                    my_id,
+                    num_parties
+                );
+            }
         }
         for peer in peers {
             if peer.party_id > num_parties {

@@ -105,8 +105,9 @@ async fn make_mpc_listener(threshold_config: &ThresholdPartyConf) -> TcpListener
         .await
         .unwrap_or_else(|e| panic!("Could not bind to {mpc_socket_addr} \n {e:?}"));
     tracing::info!(
-        "Starting threshold KMS server v{}, listening for MPC communication on {:?}...",
+        "Starting threshold KMS server v{}, with id {:?}, listening for MPC communication on {:?}...",
         env!("CARGO_PKG_VERSION"),
+        threshold_config.my_id,
         mpc_socket_addr
     );
     if let Some(peers) = &threshold_config.peers {
