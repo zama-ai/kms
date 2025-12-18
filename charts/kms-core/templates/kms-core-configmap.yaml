@@ -150,12 +150,12 @@ data:
           {{- if and .Values.kmsCore.thresholdMode.tls.ca_certificate .Values.kmsCore.thresholdMode.tls.ca_certificate.path }}
     cert.path = {{ .Values.kmsCore.thresholdMode.tls.ca_certificate.path | quote }}
           {{- else }}
-    cert.pem = ${KMS_CA_PEM_{{ .Values.kmsPeers.id }}}
+    cert.pem = """${KMS_CA_PEM_{{ .Values.kmsPeers.id }}}"""
           {{- end }}
           {{- if and .Values.kmsCore.thresholdMode.tls.privateKey .Values.kmsCore.thresholdMode.tls.privateKey.path }}
     key.path = {{ .Values.kmsCore.thresholdMode.tls.privateKey.path | quote }}
           {{- else }}
-    key.pem = ${KMS_KEY_PEM_{{ .Values.kmsPeers.id }}}
+    key.pem = """${KMS_KEY_PEM_{{ .Values.kmsPeers.id }}}"""
           {{- end }}
         {{- end }}
       {{- end }}
@@ -175,7 +175,7 @@ data:
             {{- if and $.Values.kmsCore.thresholdMode.tls.ca_certificate $.Values.kmsCore.thresholdMode.tls.ca_certificate.path }}
     tls_cert.path = {{ $.Values.kmsCore.thresholdMode.tls.ca_certificate.path | quote }}
             {{- else }}
-    tls_cert.pem = ${KMS_CA_PEM_{{ .id }}}
+    tls_cert.pem = """${KMS_CA_PEM_{{ .id }}}"""
             {{- end }}
           {{- end }}
         {{- end }}
