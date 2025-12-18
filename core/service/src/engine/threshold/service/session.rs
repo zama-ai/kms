@@ -40,7 +40,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::engine::context::ContextInfo;
 
 struct Context {
-    // I may not belong to all the context I am aware of
+    // I may not belong to all the contexts I am aware of
     // especially in the case of resharing where I only belong
     // in one of the two contexts at play.
     my_role: Option<Role>,
@@ -639,28 +639,25 @@ impl SessionMaker {
         Ok((session_parameters, role_assignment_both_sets))
     }
 
-    // If I don't belong to the context, this returns an error.
-    // Qu to reviewer: do we want this ? Or return Option<Identity> ?
-    pub(crate) async fn my_identity(&self, context_id: &ContextId) -> anyhow::Result<Identity> {
+    // If the context does not exist, this returns an error.
+    // If I don't belong to the context, this returns None.
+    pub(crate) async fn my_identity(
+        &self,
+        context_id: &ContextId,
+    ) -> anyhow::Result<Option<Identity>> {
         let context_map_guard = self.context_map.read().await;
         let context_info = context_map_guard
             .get(context_id)
             .ok_or_else(|| anyhow::anyhow!("Context {} not found in context map", context_id))?;
 
-        let id = context_info
+        Ok(context_info
             .my_role
             .and_then(|my_role| context_info.role_assignment.get(&my_role))
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Could not find my own identity in role assignments in context {}",
-                    context_id
-                )
-            })?;
-        Ok(id.to_owned())
+            .cloned())
     }
 
+    // If the context does not exist, this returns an error.
     // If I don't belong to the context, this returns None.
-    // Qu to reviewer: do we want this ? Or return an error instead ? (once we decide, probably unify behavior with my_identity)
     pub(crate) async fn my_role(&self, context_id: &ContextId) -> anyhow::Result<Option<Role>> {
         let context_map_guard = self.context_map.read().await;
         let context_info = context_map_guard
@@ -764,11 +761,16 @@ impl ImmutableSessionMaker {
             .await
     }
 
+    /// If the context doesn't exist or I don't belong to the context,
+    /// return an error .
     pub(crate) async fn my_identity(&self, context_id: &ContextId) -> anyhow::Result<Identity> {
-        self.inner.my_identity(context_id).await
+        self.inner.my_identity(context_id).await?.ok_or_else(|| {
+            anyhow::anyhow!("My identitify is not defined for context {}", context_id)
+        })
     }
 
-    /// Note at here we consider that if the role is None, this is an error.
+    /// If the context doesn't exist or I don't belong to the context,
+    /// return an error .
     pub(crate) async fn my_role(&self, context_id: &ContextId) -> anyhow::Result<Role> {
         self.inner
             .my_role(context_id)
