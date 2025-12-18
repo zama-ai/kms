@@ -300,29 +300,16 @@ impl<
         tracing::info!("{}", format_public_request(&inner));
 
         // Check and extract the parameters from the request in a separate thread
-        let (ciphertexts, req_id, key_id, context_id, epoch_id, eip712_domain) = {
-            let inner_compute = Arc::clone(&inner);
-            // TODO does it make sense to spawn this as a thread? It is just parsing the parameters
-            spawn_compute_bound(move || {
-                validate_public_decrypt_req(&inner_compute).map_err(|e| {
-                    MetricedError::new(
-                        OP_PUBLIC_DECRYPT_REQUEST,
-                        None,
-                        e,
-                        tonic::Code::InvalidArgument,
-                    )
-                })
-            })
-            .await
-            .map_err(|e| {
+        let (ciphertexts, req_id, key_id, context_id, epoch_id, eip712_domain) =
+            validate_public_decrypt_req(&inner).map_err(|e| {
                 MetricedError::new(
                     OP_PUBLIC_DECRYPT_REQUEST,
                     None,
-                    e, // Thread execution error
-                    tonic::Code::Internal,
+                    e,
+                    tonic::Code::InvalidArgument,
                 )
-            })?
-        }?;
+            })?;
+
         let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_REQUEST,

@@ -480,28 +480,15 @@ impl<
             context_id,
             epoch_id,
             domain,
-        ) = {
-            let inner_compute = Arc::clone(&inner);
-            spawn_compute_bound(move || {
-                validate_user_decrypt_req(inner_compute.as_ref()).map_err(|e| {
-                    MetricedError::new(
-                        OP_USER_DECRYPT_REQUEST,
-                        None,
-                        e, // Validation error
-                        tonic::Code::InvalidArgument,
-                    )
-                })
-            })
-            .await
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_USER_DECRYPT_REQUEST,
-                    None,
-                    e, // Thread execution error
-                    tonic::Code::Internal,
-                )
-            })?
-        }?;
+        ) = validate_user_decrypt_req(inner.as_ref()).map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                None,
+                e, // Validation error
+                tonic::Code::InvalidArgument,
+            )
+        })?;
+
         let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
             MetricedError::new(
                 OP_USER_DECRYPT_REQUEST,
