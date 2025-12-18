@@ -131,6 +131,10 @@ required-features = ["experimental", "choreographer", "testing"]
 name = "threshold-gen-tls-certs"
 path = "src/bin/threshold-gen-tls-certs.rs"
 
+[[bin]]
+name = "non-threshold-kat"
+path = "src/bin/non-threshold/kat.rs"
+
 [[bench]]
 name = "ddec"
 harness = false
