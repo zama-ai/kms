@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use clap::Parser;
 use tfhe::core_crypto::fft_impl::fft64::math::fft::{setup_custom_fft_plan, FftAlgo, Method, Plan};
 use tfhe::{
@@ -9,6 +11,14 @@ use tfhe::{
 };
 use tfhe_csprng::generators::SoftwareRandomGenerator;
 use threshold_fhe::execution::tfhe_internals::parameters::{DKGParams, NIST_PARAMS_P32_SNS_FGLWE};
+
+const CLIENT_KEY_PATH: &str = "client_key.bin";
+const SERVER_KEY_PATH: &str = "server_key.bin";
+
+const CIPHERTEXT43_PATH: &str = "ciphertext_43.bin";
+const CIPHERTEXT4445_PATH: &str = "ciphertext_4445.bin";
+const CIPHERTEXT_ADD_PATH: &str = "ciphertext_add.bin";
+const CIPHERTEXT_MULT_PATH: &str = "ciphertext_mult.bin";
 
 #[derive(Parser, Debug)]
 #[clap(name = "tfhe-kat")]
@@ -35,10 +45,13 @@ fn generate_and_save_keys(
 
     if save {
         // Save keys to files
-        let path_to_client_key = format!("{}/client_key.bin", storage_path);
-        let path_to_server_key = format!("{}/server_key.bin", storage_path);
+
+        let storage = Path::new(storage_path);
+        let path_to_client_key = storage.join(CLIENT_KEY_PATH);
+        let path_to_server_key = storage.join(SERVER_KEY_PATH);
 
         let serialized_ck = bc2wrap::serialize(&(params, &client_key)).unwrap();
+
         let serialized_sk = bc2wrap::serialize(&(params, &compressed_server_key)).unwrap();
 
         std::fs::write(path_to_client_key, serialized_ck).unwrap();
@@ -56,8 +69,9 @@ fn generate_and_save_keys(
 fn read_keys(expected_params: DKGParams, storage_path: &str) -> (ClientKey, CompressedServerKey) {
     println!("Reading KAT files of the keys from {}", storage_path);
 
-    let path_to_client_key = format!("{}/client_key.bin", storage_path);
-    let path_to_server_key = format!("{}/server_key.bin", storage_path);
+    let storage = Path::new(storage_path);
+    let path_to_client_key = storage.join(CLIENT_KEY_PATH);
+    let path_to_server_key = storage.join(SERVER_KEY_PATH);
 
     let (params, client_key): (DKGParams, ClientKey) =
         bc2wrap::deserialize_unsafe(&std::fs::read(path_to_client_key).unwrap()).unwrap();
@@ -88,10 +102,11 @@ fn generate_and_save_ciphertexts(
     let ciphertext_mult = &ciphertext_43 * &ciphertext_4445;
 
     if save {
-        let path_to_ciphertext_43 = format!("{}/ciphertext_43.bin", storage_path);
-        let path_to_ciphertext_4445 = format!("{}/ciphertext_4445.bin", storage_path);
-        let path_to_ciphertext_add = format!("{}/ciphertext_add.bin", storage_path);
-        let path_to_ciphertext_mult = format!("{}/ciphertext_mult.bin", storage_path);
+        let storage = Path::new(storage_path);
+        let path_to_ciphertext_43 = storage.join(CIPHERTEXT43_PATH);
+        let path_to_ciphertext_4445 = storage.join(CIPHERTEXT4445_PATH);
+        let path_to_ciphertext_add = storage.join(CIPHERTEXT_ADD_PATH);
+        let path_to_ciphertext_mult = storage.join(CIPHERTEXT_MULT_PATH);
 
         let serialized_ct_43 = bc2wrap::serialize(&ciphertext_43).unwrap();
         let serialized_ct_4445 = bc2wrap::serialize(&ciphertext_4445).unwrap();
@@ -120,10 +135,11 @@ fn generate_and_save_ciphertexts(
 fn read_ciphertexts(storage_path: &str) -> (FheUint64, FheUint64, FheUint64, FheUint64) {
     println!("Reading KAT files of the ciphertexts from {}", storage_path);
 
-    let path_to_ciphertext_43 = format!("{}/ciphertext_43.bin", storage_path);
-    let path_to_ciphertext_4445 = format!("{}/ciphertext_4445.bin", storage_path);
-    let path_to_ciphertext_add = format!("{}/ciphertext_add.bin", storage_path);
-    let path_to_ciphertext_mult = format!("{}/ciphertext_mult.bin", storage_path);
+    let storage = Path::new(storage_path);
+    let path_to_ciphertext_43 = storage.join(CIPHERTEXT43_PATH);
+    let path_to_ciphertext_4445 = storage.join(CIPHERTEXT4445_PATH);
+    let path_to_ciphertext_add = storage.join(CIPHERTEXT_ADD_PATH);
+    let path_to_ciphertext_mult = storage.join(CIPHERTEXT_MULT_PATH);
 
     let ciphertext_43: FheUint64 =
         bc2wrap::deserialize_unsafe(&std::fs::read(path_to_ciphertext_43).unwrap()).unwrap();
@@ -160,6 +176,17 @@ pub fn set_plan() {
 
 fn main() {
     let args = KatCli::parse();
+
+    println!(" STARTING TFHE KAT WITH {:?}", args);
+    let storage = Path::new(&args.path_to_kat_folder);
+    if args.generate_kat {
+        std::fs::create_dir_all(storage).unwrap();
+    } else if !storage.exists() {
+        panic!(
+            "KAT folder {} does not exist. Cannot verify KAT files.",
+            args.path_to_kat_folder
+        );
+    }
 
     set_plan();
 
