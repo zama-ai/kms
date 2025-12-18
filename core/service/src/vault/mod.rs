@@ -244,6 +244,45 @@ impl StorageForBytes for Vault {
     }
 }
 
+pub(crate) fn storage_prefix_safety(
+    storage_type: storage::StorageType,
+    prefix: &str,
+) -> anyhow::Result<()> {
+    let pub_str = storage::StorageType::PUB.to_string();
+    let priv_str = storage::StorageType::PRIV.to_string();
+    let backup_str = storage::StorageType::BACKUP.to_string();
+    let client_str = storage::StorageType::CLIENT.to_string();
+
+    let print_warning = match storage_type {
+        storage::StorageType::PUB => {
+            prefix.starts_with(&priv_str)
+                || prefix.starts_with(&client_str)
+                || prefix.starts_with(&backup_str)
+        }
+        storage::StorageType::PRIV => {
+            prefix.starts_with(&pub_str)
+                || prefix.starts_with(&client_str)
+                || prefix.starts_with(&backup_str)
+        }
+        storage::StorageType::CLIENT => {
+            prefix.starts_with(&pub_str)
+                || prefix.starts_with(&priv_str)
+                || prefix.starts_with(&backup_str)
+        }
+        storage::StorageType::BACKUP => {
+            prefix.starts_with(&pub_str)
+                || prefix.starts_with(&priv_str)
+                || prefix.starts_with(&client_str)
+        }
+    };
+    if print_warning {
+        let msg = format!("The storage prefix {} starts with a different storage type {}. This may lead to confusion.", prefix, storage_type);
+        tracing::warn!(msg);
+        anyhow::bail!(msg);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::VaultDataType;

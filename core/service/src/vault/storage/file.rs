@@ -3,6 +3,7 @@ use crate::consts::KEY_PATH_PREFIX;
 use crate::util::file_handling::{
     safe_read_element_versioned, safe_write_element_versioned, write_bytes,
 };
+use crate::vault::storage_prefix_safety;
 use crate::{anyhow_error_and_log, some_or_err};
 use anyhow::anyhow;
 use kms_grpc::RequestId;
@@ -14,7 +15,6 @@ use std::{
     str::FromStr,
 };
 use tfhe::{named::Named, Unversionize, Versionize};
-use threshold_fhe::execution::runtime::party::Role;
 
 #[derive(Default, Clone, Debug)]
 pub struct FileStorage {
@@ -32,17 +32,20 @@ impl FileStorage {
     /// If [path] is None, set the storage directory to be
     /// {current_dir}/keys/{extra_prefix}
     /// Otherwise, set the storage directory to be
-    /// {path}/{extra_pefix}
-    /// {extra_prefix} is {storage_type} if [party_id] is None,
-    /// otherwise it is set to {storage_type}-p{party_id}
+    /// {path}/{extra_prefix}
+    /// {extra_prefix} is {storage_prefix} if it is Some,
+    /// otherwise it is set to {storage_type}.
     /// All missing paths are created during this process.
     pub fn new(
         path: Option<&Path>,
         storage_type: StorageType,
-        party_role: Option<Role>,
+        storage_prefix: Option<&str>,
     ) -> anyhow::Result<Self> {
-        let extra_prefix = match party_role {
-            Some(party_role) => format!("{storage_type}-p{party_role}"),
+        let extra_prefix = match storage_prefix {
+            Some(prefix) => {
+                storage_prefix_safety(storage_type, prefix)?;
+                prefix.to_string()
+            }
             None => storage_type.to_string(),
         };
         let path = match path {
@@ -53,18 +56,6 @@ impl FileStorage {
         Ok(Self {
             path: path.canonicalize()?,
         })
-    }
-
-    /// Return the default path for the storage type.
-    pub fn default_path(
-        storage_type: StorageType,
-        party_role: Option<Role>,
-    ) -> anyhow::Result<PathBuf> {
-        let extra_prefix = match party_role {
-            Some(party_role) => format!("{storage_type}-p{party_role}"),
-            None => storage_type.to_string(),
-        };
-        Ok(env::current_dir()?.join(KEY_PATH_PREFIX).join(extra_prefix))
     }
 
     // Check if a path already exists and create it if not.
@@ -235,10 +226,13 @@ impl Storage for FileStorage {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::{engine::base::derive_request_id, vault::storage::tests::*};
+    use crate::{
+        consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, engine::base::derive_request_id,
+        vault::storage::tests::*,
+    };
     use kms_grpc::rpc_types::PubDataType;
     use strum::IntoEnumIterator;
-    use threshold_fhe::execution::runtime::party::Role;
+
     #[ignore]
     #[tokio::test]
     async fn threshold_dev_storage() {
@@ -302,7 +296,7 @@ pub mod tests {
             FileStorage::new(
                 Some(path),
                 StorageType::PUB,
-                Some(Role::indexed_from_one(1)),
+                PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
             )
             .unwrap()
         } else {
@@ -342,7 +336,7 @@ pub mod tests {
             FileStorage::new(
                 Some(path),
                 StorageType::PUB,
-                Some(Role::indexed_from_one(1)),
+                PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
             )
             .unwrap()
         } else {
@@ -352,7 +346,7 @@ pub mod tests {
             FileStorage::new(
                 Some(path),
                 StorageType::PRIV,
-                Some(Role::indexed_from_one(1)),
+                crate::consts::PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
             )
             .unwrap()
         } else {

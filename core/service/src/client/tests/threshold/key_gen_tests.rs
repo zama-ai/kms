@@ -33,6 +33,7 @@ cfg_if::cfg_if! {
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 #[cfg(feature = "insecure")]
 use crate::consts::TEST_PARAM;
+use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
 #[cfg(feature = "slow_tests")]
 use crate::util::rate_limiter::RateLimiterConfig;
 use alloy_dyn_abi::Eip712Domain;
@@ -78,11 +79,20 @@ impl TestKeyGenResult {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_insecure_dkg(#[case] amount_parties: usize) {
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let key_id: RequestId = derive_request_id(&format!(
         "test_insecure_dkg_key_{amount_parties}_{TEST_PARAM:?}"
     ))
     .unwrap();
-    purge(None, None, &key_id, amount_parties).await;
+    purge(
+        None,
+        None,
+        &key_id,
+        pub_storage_prefixes,
+        priv_storage_prefixes,
+    )
+    .await;
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
     let keys = run_threshold_keygen(
@@ -116,12 +126,21 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
 
     let param = FheParameter::Default;
     let dkg_param: WrappedDKGParams = param.into();
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
 
     let key_id: RequestId = derive_request_id(&format!(
         "default_insecure_dkg_key_{amount_parties}_{param:?}",
     ))
     .unwrap();
-    purge(None, None, &key_id, amount_parties).await;
+    purge(
+        None,
+        None,
+        &key_id,
+        pub_storage_prefixes,
+        priv_storage_prefixes,
+    )
+    .await;
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
     let keys = run_threshold_keygen(
@@ -365,8 +384,11 @@ async fn wait_for_keygen_result(
         let mut serialized_ref_decompression_key = Vec::new();
         for (idx, kg_res) in finished.into_iter() {
             let role = Role::indexed_from_one(idx as usize);
+            let storage_prefix = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[idx as usize - 1];
             let kg_res = kg_res.unwrap().into_inner();
-            let storage = FileStorage::new(data_root_path, StorageType::PUB, Some(role)).unwrap();
+            let storage =
+                FileStorage::new(data_root_path, StorageType::PUB, storage_prefix.as_deref())
+                    .unwrap();
             let decompression_key: Option<DecompressionKey> = internal_client
                 .retrieve_key_no_verification(&kg_res, PubDataType::DecompressionKey, &storage)
                 .await
@@ -437,6 +459,8 @@ pub(crate) async fn run_threshold_decompression_keygen(
     parameter: FheParameter,
     insecure: bool,
 ) {
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let preproc_id_1 = if insecure {
         *INSECURE_PREPROCESSING_ID
     } else {
@@ -447,7 +471,14 @@ pub(crate) async fn run_threshold_decompression_keygen(
     };
     let key_id_1: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_1")).unwrap();
-    purge(None, None, &key_id_1, amount_parties).await;
+    purge(
+        None,
+        None,
+        &key_id_1,
+        pub_storage_prefixes,
+        priv_storage_prefixes,
+    )
+    .await;
 
     let preproc_id_2 = if insecure {
         *INSECURE_PREPROCESSING_ID
@@ -459,7 +490,14 @@ pub(crate) async fn run_threshold_decompression_keygen(
     };
     let key_id_2: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_2")).unwrap();
-    purge(None, None, &key_id_2, amount_parties).await;
+    purge(
+        None,
+        None,
+        &key_id_2,
+        pub_storage_prefixes,
+        priv_storage_prefixes,
+    )
+    .await;
 
     let preproc_id_3 = derive_request_id(&format!(
         "decom_dkg_preproc_{amount_parties}_{parameter:?}_3"
@@ -467,7 +505,14 @@ pub(crate) async fn run_threshold_decompression_keygen(
     .unwrap();
     let key_id_3: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_3")).unwrap();
-    purge(None, None, &key_id_3, amount_parties).await;
+    purge(
+        None,
+        None,
+        &key_id_3,
+        pub_storage_prefixes,
+        priv_storage_prefixes,
+    )
+    .await;
 
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let dkg_param: WrappedDKGParams = parameter.into();
@@ -586,15 +631,31 @@ pub(crate) async fn preproc_and_keygen(
     party_ids_to_crash_keygen: Option<Vec<usize>>,
     partial_preproc: Option<kms_grpc::kms::v1::PartialKeyGenPreprocParams>,
 ) {
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     for i in 0..iterations {
         let req_preproc: RequestId = derive_request_id(&format!(
             "full_dkg_preproc_{amount_parties}_{parameter:?}_{i}"
         ))
         .unwrap();
-        purge(None, None, &req_preproc, amount_parties).await;
+        purge(
+            None,
+            None,
+            &req_preproc,
+            pub_storage_prefixes,
+            priv_storage_prefixes,
+        )
+        .await;
         let req_key: RequestId =
             derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameter:?}_{i}")).unwrap();
-        purge(None, None, &req_key, amount_parties).await;
+        purge(
+            None,
+            None,
+            &req_key,
+            pub_storage_prefixes,
+            priv_storage_prefixes,
+        )
+        .await;
     }
 
     let dkg_param: WrappedDKGParams = parameter.into();
@@ -1100,9 +1161,12 @@ pub(crate) async fn verify_keygen_responses(
     let mut final_server_key = None;
 
     for (idx, kg_res) in finished.into_iter().sorted_by_key(|(idx, _)| *idx) {
+        let pub_prefix = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[idx as usize - 1];
+        let priv_prefix = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[idx as usize - 1];
         let role = Role::indexed_from_one(idx as usize);
         let kg_res = kg_res.unwrap().into_inner();
-        let storage = FileStorage::new(data_root_path, StorageType::PUB, Some(role)).unwrap();
+        let storage =
+            FileStorage::new(data_root_path, StorageType::PUB, pub_prefix.as_deref()).unwrap();
 
         let (server_key, public_key) = internal_client
             .retrieve_server_key_and_public_key(
@@ -1132,7 +1196,8 @@ pub(crate) async fn verify_keygen_responses(
         }
 
         let key_id = RequestId::from_str(kg_res.request_id.unwrap().request_id.as_str()).unwrap();
-        let priv_storage = FileStorage::new(data_root_path, StorageType::PRIV, Some(role)).unwrap();
+        let priv_storage =
+            FileStorage::new(data_root_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
         let mut threshold_fhe_keys: ThresholdFheKeys = priv_storage
             .read_data(&key_id, &PrivDataType::FheKeyInfo.to_string())
             .await

@@ -892,6 +892,13 @@ impl CrsGenMetadata {
         })
     }
 
+    pub fn digest(&self) -> &[u8] {
+        match self {
+            CrsGenMetadata::Current(inner) => &inner.crs_digest,
+            CrsGenMetadata::LegacyV0(_inner) => &[],
+        }
+    }
+
     #[cfg(test)]
     pub fn external_signature(&self) -> &[u8] {
         match self {

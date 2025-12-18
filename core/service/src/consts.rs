@@ -85,6 +85,15 @@ cfg_if::cfg_if! {
             pub static ref DEFAULT_DEC_ID: RequestId = derive_request_id("DEFAULT_DEC_ID").unwrap();
             pub static ref OTHER_CENTRAL_DEFAULT_ID: RequestId =
                 derive_request_id("OTHER_DEFAULT_ID").unwrap();
+            pub static ref PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL: Vec<Option<String>> = (1..=13).map(|i|
+                Some(format!("PUB-p{}", i))
+            ).collect::<Vec<Option<String>>>();
+            pub static ref PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL: Vec<Option<String>> = (1..=13).map(|i|
+                Some(format!("PRIV-p{}", i))
+            ).collect::<Vec<Option<String>>>();
+            pub static ref BACKUP_STORAGE_PREFIX_THRESHOLD_ALL: Vec<Option<String>> = (1..=13).map(|i|
+                Some(format!("BACKUP-p{}", i))
+            ).collect::<Vec<Option<String>>>();
         }
     }
 }

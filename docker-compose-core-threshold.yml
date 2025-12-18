@@ -28,9 +28,9 @@ services:
         echo 'Starting signing key and CA certificates generation for all cores' &&
         for i in 1 2 3 4; do \
           kms-gen-keys --mock-enclave --aws-region us-east-1 \
-            --public-storage s3 --public-s3-bucket kms \
+            --public-storage s3 --public-s3-bucket kms --public-s3-prefix PUB-p$$i \
             --aws-s3-endpoint http://dev-s3-mock:9000 \
-            --private-storage s3 --private-s3-bucket kms \
+            --private-storage s3 --private-s3-bucket kms --private-s3-prefix PRIV-p$$i \
             --cmd signing-keys \
             threshold \
             --signing-key-party-id $$i --tls-subject dev-kms-core-$$i.com \
