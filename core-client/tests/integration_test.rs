@@ -1472,7 +1472,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInit) {
 
     // read the key materials from file
     let key_id = RequestId::from_str(&key_id).unwrap();
-    let object_folder = &cc_conf.cores[ids[0]].object_folder;
+    let object_folder = &cc_conf.cores[ids[0] - 1].object_folder;
     let public_key = load_pk_from_pub_storage(Some(test_path), &key_id, Some(object_folder)).await;
     let server_key: tfhe::ServerKey = load_material_from_pub_storage(
         Some(test_path),
