@@ -68,8 +68,6 @@ on:
         required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
-      NPM_TOKEN:
-        required: false
       AWS_ACCESS_KEY_S3_USER:
         required: true
       AWS_SECRET_KEY_S3_USER:
@@ -123,7 +121,6 @@ jobs:
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
