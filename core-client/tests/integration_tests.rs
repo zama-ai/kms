@@ -613,6 +613,241 @@ async fn setup_isolated_threshold_cli_test_impl(
 }
 
 // ============================================================================
+// PARTY RESHARING SETUP
+// ============================================================================
+
+/// Setup 6 servers with per-server peer configuration for party resharing tests.
+///
+/// This creates:
+/// - Servers 1-4 with peers [1,2,3,4] (for context 1)
+/// - Servers 5-6 with peers [5,6,3,4] where 5→party1, 6→party2 (for context 2)
+///
+/// Returns:
+/// - TempDir with test material
+/// - HashMap of server handles
+/// - Config path for context 1 (servers 1,2,3,4)
+/// - Config path for context 2 (servers 5,6,3,4)
+async fn setup_party_resharing_servers(
+    test_name: &str,
+) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf, PathBuf)> {
+    use kms_lib::conf::threshold::PeerConf;
+    use kms_lib::testing::helpers::create_test_material_manager;
+    use kms_lib::testing::material::TestMaterialSpec;
+    use kms_lib::vault::storage::file::FileStorage;
+    use kms_lib::vault::storage::StorageType;
+
+    let manager = create_test_material_manager();
+
+    // Setup material for 6 servers
+    let spec = TestMaterialSpec::threshold_basic(6);
+    let material_dir = manager.setup_test_material(&spec, test_name).await?;
+
+    // Create storage for each of the 6 servers
+    let pub_prefixes = [
+        Some("PUB-p1".to_string()),
+        Some("PUB-p2".to_string()),
+        Some("PUB-p3".to_string()),
+        Some("PUB-p4".to_string()),
+        Some("PUB-p5".to_string()),
+        Some("PUB-p6".to_string()),
+    ];
+    let priv_prefixes = [
+        Some("PRIV-p1".to_string()),
+        Some("PRIV-p2".to_string()),
+        Some("PRIV-p3".to_string()),
+        Some("PRIV-p4".to_string()),
+        Some("PRIV-p5".to_string()),
+        Some("PRIV-p6".to_string()),
+    ];
+
+    let mut pub_storages = Vec::new();
+    let mut priv_storages = Vec::new();
+    for (pub_prefix, priv_prefix) in pub_prefixes.iter().zip(&priv_prefixes) {
+        pub_storages.push(FileStorage::new(
+            Some(material_dir.path()),
+            StorageType::PUB,
+            pub_prefix.as_deref(),
+        )?);
+        priv_storages.push(FileStorage::new(
+            Some(material_dir.path()),
+            StorageType::PRIV,
+            priv_prefix.as_deref(),
+        )?);
+    }
+
+    // Create peer configurations for party resharing:
+    // - Servers 1-4: peers [1,2,3,4] (standard 4-party setup)
+    // - Servers 5-6: peers [5,6,3,4] where server 5 acts as party 1, server 6 as party 2
+    //   (This allows servers 5,6 to replace servers 1,2 in context 2)
+
+    // Peers for servers 1-4 (context 1)
+    let peers_1234: Vec<PeerConf> = (1..=4)
+        .map(|i| PeerConf {
+            party_id: i,
+            address: "127.0.0.1".to_string(),
+            mpc_identity: Some(format!("kms-core-{}.local", i)),
+            port: 0, // Will be updated by setup_threshold_with_custom_peers
+            tls_cert: None,
+            verification_address: None,
+        })
+        .collect();
+
+    // Peers for context 2: servers [5,6,3,4] acting as MPC parties [1,2,3,4]
+    // - Server 5 (index 4) acts as MPC party 1 (replacing server 1)
+    // - Server 6 (index 5) acts as MPC party 2 (replacing server 2)
+    // - Server 3 (index 2) remains as MPC party 3
+    // - Server 4 (index 3) remains as MPC party 4
+    let peers_ctx2: Vec<PeerConf> = vec![
+        PeerConf {
+            party_id: 1, // MPC party 1
+            address: "127.0.0.1".to_string(),
+            mpc_identity: Some("kms-core-5.local".to_string()),
+            port: 0,
+            tls_cert: None,
+            verification_address: None,
+        },
+        PeerConf {
+            party_id: 2, // MPC party 2
+            address: "127.0.0.1".to_string(),
+            mpc_identity: Some("kms-core-6.local".to_string()),
+            port: 0,
+            tls_cert: None,
+            verification_address: None,
+        },
+        PeerConf {
+            party_id: 3, // MPC party 3
+            address: "127.0.0.1".to_string(),
+            mpc_identity: Some("kms-core-3.local".to_string()),
+            port: 0,
+            tls_cert: None,
+            verification_address: None,
+        },
+        PeerConf {
+            party_id: 4, // MPC party 4
+            address: "127.0.0.1".to_string(),
+            mpc_identity: Some("kms-core-4.local".to_string()),
+            port: 0,
+            tls_cert: None,
+            verification_address: None,
+        },
+    ];
+
+    // Server configs: (my_id, threshold, peers, peer_server_indices)
+    // - my_id: The MPC party ID this server will act as
+    // - peer_server_indices: Maps each peer (by index in peers vec) to physical server index (0-based)
+    //
+    // Context 1 servers (indices 0-3): peers map to servers 0,1,2,3
+    // Context 2 servers (indices 4-5): peers map to servers 4,5,2,3 (party 1→server5, party 2→server6)
+    let peer_indices_ctx1 = vec![0, 1, 2, 3]; // Peers 1,2,3,4 → servers 0,1,2,3
+    let peer_indices_ctx2 = vec![4, 5, 2, 3]; // Peers 1,2,3,4 → servers 4,5,2,3
+
+    let server_configs: Vec<(usize, u8, Vec<PeerConf>, Vec<usize>)> = vec![
+        (1, 1, peers_1234.clone(), peer_indices_ctx1.clone()), // Server 1 (idx 0): party 1
+        (2, 1, peers_1234.clone(), peer_indices_ctx1.clone()), // Server 2 (idx 1): party 2
+        (3, 1, peers_1234.clone(), peer_indices_ctx1.clone()), // Server 3 (idx 2): party 3
+        (4, 1, peers_1234.clone(), peer_indices_ctx1.clone()), // Server 4 (idx 3): party 4
+        (1, 1, peers_ctx2.clone(), peer_indices_ctx2.clone()), // Server 5 (idx 4): party 1 in ctx2
+        (2, 1, peers_ctx2.clone(), peer_indices_ctx2.clone()), // Server 6 (idx 5): party 2 in ctx2
+    ];
+
+    let vaults: Vec<Option<kms_lib::vault::Vault>> = (0..6).map(|_| None).collect();
+
+    // Start servers with custom peer configurations
+    let servers = kms_lib::client::test_tools::setup_threshold_with_custom_peers(
+        server_configs,
+        pub_storages,
+        priv_storages,
+        vaults,
+        false, // run_prss - we'll do this per-context
+        None,  // rate_limiter_conf
+        None,  // decryption_mode
+    )
+    .await;
+
+    // Generate CLI config for context 1 (servers 1,2,3,4)
+    let config_path_1234 = material_dir.path().join("client_config_1234.toml");
+    let mut config_content_1234 = format!(
+        r#"
+kms_type = "threshold"
+num_majority = 2
+num_reconstruct = 3
+fhe_params = "Test"
+decryption_mode = "NoiseFloodSmall"
+
+[storage]
+pub_storage_type = "file"
+priv_storage_type = "file"
+client_storage_type = "file"
+file_storage_path = "{}"
+"#,
+        material_dir.path().display()
+    );
+
+    for i in 1..=4 {
+        let server = servers.get(&(i as u32)).unwrap();
+        config_content_1234.push_str(&format!(
+            r#"
+[[cores]]
+party_id = {}
+address = "localhost:{}"
+s3_endpoint = "file://{}"
+object_folder = "PUB-p{}"
+private_object_folder = "PRIV-p{}"
+"#,
+            i,
+            server.service_port,
+            material_dir.path().display(),
+            i,
+            i
+        ));
+    }
+    std::fs::write(&config_path_1234, config_content_1234)?;
+
+    // Generate CLI config for context 2 (servers 5,6,3,4 as parties 1,2,3,4)
+    let config_path_5634 = material_dir.path().join("client_config_5634.toml");
+    let mut config_content_5634 = format!(
+        r#"
+kms_type = "threshold"
+num_majority = 2
+num_reconstruct = 3
+fhe_params = "Test"
+decryption_mode = "NoiseFloodSmall"
+
+[storage]
+pub_storage_type = "file"
+priv_storage_type = "file"
+client_storage_type = "file"
+file_storage_path = "{}"
+"#,
+        material_dir.path().display()
+    );
+
+    // Map: MPC party_id -> physical server_id
+    // Party 1 -> Server 5, Party 2 -> Server 6, Party 3 -> Server 3, Party 4 -> Server 4
+    for (party_id, server_id) in [(1, 5), (2, 6), (3, 3), (4, 4)] {
+        let server = servers.get(&(server_id as u32)).unwrap();
+        config_content_5634.push_str(&format!(
+            r#"
+[[cores]]
+party_id = {}
+address = "localhost:{}"
+s3_endpoint = "file://{}"
+object_folder = "PUB-p{}"
+private_object_folder = "PRIV-p{}"
+"#,
+            party_id, // MPC party ID (1-4)
+            server.service_port,
+            material_dir.path().display(),
+            server_id, // Physical server ID for storage
+            server_id
+        ));
+    }
+    std::fs::write(&config_path_5634, config_content_5634)?;
+
+    Ok((material_dir, servers, config_path_1234, config_path_5634))
+}
+
+// ============================================================================
 // TEST UTILITIES
 // ============================================================================
 
@@ -1773,10 +2008,10 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
     Ok(())
 }
 
-/// Test 6-party MPC context switch with party resharing (ISOLATED, NO TLS)
+/// Test 6-party MPC context switching with party resharing (ISOLATED, NO TLS)
 ///
 /// **NOTE:** This is the isolated test version WITHOUT TLS for fast execution.
-/// For TLS-enabled testing in K8s, see: `kubernetes_test_threshold_context::k8s_test_threshold_mpc_context_switch_6`
+/// For TLS-enabled testing in K8s, see: `kubernetes_test_threshold_context::k8s_test_threshold_context_switch_6_tls`
 ///
 /// This test validates party resharing/remapping across MPC contexts:
 /// - First context: Physical servers 1,2,3,4 act as MPC parties 1,2,3,4
@@ -1789,6 +2024,11 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 /// - Key rotation (changing physical server composition)
 /// - Dynamic party management in production
 ///
+/// **Architecture:**
+/// - 6 physical servers total, each MPC context uses 4 parties (threshold=1)
+/// - Servers 1-4 configured with peers [1,2,3,4]
+/// - Servers 5-6 configured with peers [5,6,3,4] where 5→party1, 6→party2
+///
 /// **TLS Status:** Disabled (isolated test, localhost only)
 /// **For TLS testing:** Use K8s version in `kubernetes_test_threshold_context.rs`
 #[tokio::test]
@@ -1797,247 +2037,106 @@ async fn test_threshold_mpc_context_init() -> Result<()> {
 async fn test_threshold_mpc_context_switch_6() -> Result<()> {
     init_testing();
 
-    // Setup isolated threshold KMS servers (6 parties total)
-    // All 6 servers run, but each context only uses 4 of them
-    let (material_dir, servers, _original_config) =
-        setup_isolated_threshold_cli_test("threshold_context_switch_6", 6).await?;
+    // Setup 6 servers with per-server peer configuration for party resharing
+    let (material_dir, servers, config_path_1234, config_path_5634) =
+        setup_party_resharing_servers("threshold_context_switch_6").await?;
 
-    // Create custom server configs for servers 5 and 6
-    // These servers will think they're parties 1 and 2 in the MPC protocol
-    // This enables party resharing: servers 5,6 replace servers 1,2
-    for (server_id, _party_id_in_mpc) in [(5, 1), (6, 2)] {
-        let server = servers.get(&(server_id as u32)).unwrap();
-        let server_config_path = material_dir
-            .path()
-            .join(format!("compose_{}.toml", server_id));
+    let test_path = material_dir.path();
 
-        // Build peer list where this server thinks it's party_id_in_mpc
-        // Peers: party 1=server5, party 2=server6, party 3=server3, party 4=server4
-        let peer_mapping = [(1, 5), (2, 6), (3, 3), (4, 4)];
-        let mut peers_config = String::new();
-        for (party_id, physical_server_id) in peer_mapping {
-            let peer_server = servers.get(&(physical_server_id as u32)).unwrap();
-            let mpc_port = peer_server.mpc_port.expect("MPC port should be set");
-            peers_config.push_str(&format!(
-                r#"
-[[threshold.peers]]
-party_id = {}
-address = "127.0.0.1"
-mpc_identity = "kms-core-{}.local"
-port = {}
-"#,
-                party_id, physical_server_id, mpc_port
-            ));
-        }
+    // === CONTEXT 1: Servers 1,2,3,4 as parties 1,2,3,4 ===
+    println!("\n========== CONTEXT 1 ==========");
+    println!("Creating first context with servers [1, 2, 3, 4] as parties [1, 2, 3, 4]");
 
-        let threshold_value = 1; // threshold for 4 parties
-        let server_config_content = format!(
-            r#"
-mock_enclave = true
+    let context_1_id =
+        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222223333")?;
+    let epoch_1_id =
+        EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222224444")?;
+    let context_1_path = material_dir.path().join("mpc_context_1.bin");
 
-[service]
-listen_address = "127.0.0.1"
-listen_port = {}
-timeout_secs = 360
-grpc_max_message_size = 104857600
+    store_mpc_context_in_file_isolated(&context_1_path, &config_path_1234, context_1_id).await?;
+    new_mpc_context_isolated(&config_path_1234, &context_1_path, test_path).await?;
+    new_prss_isolated(&config_path_1234, context_1_id, epoch_1_id, test_path).await?;
 
-[public_vault.storage.s3]
-bucket = "kms-public"
-
-[private_vault.storage.file]
-path = "{}/PRIV-p{}"
-
-[aws]
-region = "us-east-1"
-s3_endpoint = "http://dev-s3-mock:9000"
-
-[threshold]
-listen_address = "127.0.0.1"
-listen_port = {}
-my_id = {}
-threshold = {}
-dec_capacity = 10000
-min_dec_cache = 6000
-num_sessions_preproc = 2
-decryption_mode = "NoiseFloodSmall"
-
-[[threshold.tls.auto.trusted_releases]]
-pcr0 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
-pcr1 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
-pcr2 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
-{}
-[threshold.core_to_core_net]
-message_limit = 70
-multiplier = 2.0
-max_interval = 60
-initial_interval_ms = 100
-max_elapsed_time = 300
-network_timeout = 20
-network_timeout_bk = 300
-network_timeout_bk_sns = 1200
-max_en_decode_message_size = 2147483648
-session_update_interval_secs = 60
-session_cleanup_interval_secs = 3600
-discard_inactive_sessions_interval = 900
-max_waiting_time_for_message_queue = 60
-max_opened_inactive_sessions_per_party = 100
-"#,
-            server.service_port,
-            material_dir.path().display(),
-            server_id,
-            server.mpc_port.expect("MPC port should be set"),
-            server_id, // my_id is the physical server ID
-            threshold_value,
-            peers_config
-        );
-
-        std::fs::write(&server_config_path, server_config_content)?;
-    }
-
-    // Create first client config pointing to servers 1, 2, 3, 4
-    let config_path_1234 = material_dir.path().join("client_config_1234.toml");
-    let mut config_content_1234 = format!(
-        r#"
-kms_type = "threshold"
-num_majority = 2
-num_reconstruct = 3
-fhe_params = "Test"
-decryption_mode = "NoiseFloodSmall"
-
-[storage]
-pub_storage_type = "file"
-priv_storage_type = "file"
-client_storage_type = "file"
-file_storage_path = "{}"
-"#,
-        material_dir.path().display()
+    // Generate key in context 1
+    let key_1_id = real_preproc_and_keygen_with_context_isolated(
+        &config_path_1234,
+        test_path,
+        Some(context_1_id),
+        Some(epoch_1_id),
+    )
+    .await?;
+    println!(
+        "✅ Context 1 (servers 1,2,3,4): Key generated: {}",
+        key_1_id
     );
 
-    for i in 1..=4 {
-        let server = servers.get(&(i as u32)).unwrap();
-        let server_config_path = material_dir.path().join(format!("compose_{}.toml", i));
-        config_content_1234.push_str(&format!(
-            r#"
-[[cores]]
-party_id = {}
-address = "localhost:{}"
-s3_endpoint = "file://{}"
-object_folder = "PUB-p{}"
-private_object_folder = "PRIV-p{}"
-config_path = "{}"
-"#,
-            i,
-            server.service_port,
-            material_dir.path().display(),
-            i,
-            i,
-            server_config_path.display()
-        ));
-    }
-    std::fs::write(&config_path_1234, config_content_1234)?;
+    // === CONTEXT 2: Servers 5,6,3,4 as parties 1,2,3,4 (party resharing) ===
+    println!("\n========== CONTEXT 2 (PARTY RESHARING) ==========");
+    println!("Creating second context with servers [5, 6, 3, 4] as parties [1, 2, 3, 4]");
+    println!("Note: Servers 5,6 REPLACE servers 1,2 in this context");
 
-    // Create second client config pointing to servers 5, 6, 3, 4
-    // But in MPC protocol, these are parties 1, 2, 3, 4 (servers 5,6 act as parties 1,2)
-    let config_path_5634 = material_dir.path().join("client_config_5634.toml");
-    let mut config_content_5634 = format!(
-        r#"
-kms_type = "threshold"
-num_majority = 2
-num_reconstruct = 3
-fhe_params = "Test"
-decryption_mode = "NoiseFloodSmall"
+    let context_2_id =
+        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222225555")?;
+    let epoch_2_id =
+        EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222226666")?;
+    let context_2_path = material_dir.path().join("mpc_context_2.bin");
 
-[storage]
-pub_storage_type = "file"
-priv_storage_type = "file"
-client_storage_type = "file"
-file_storage_path = "{}"
-"#,
-        material_dir.path().display()
+    store_mpc_context_in_file_isolated(&context_2_path, &config_path_5634, context_2_id).await?;
+    new_mpc_context_isolated(&config_path_5634, &context_2_path, test_path).await?;
+    new_prss_isolated(&config_path_5634, context_2_id, epoch_2_id, test_path).await?;
+
+    // Generate key in context 2 (with reshared parties)
+    let key_2_id = real_preproc_and_keygen_with_context_isolated(
+        &config_path_5634,
+        test_path,
+        Some(context_2_id),
+        Some(epoch_2_id),
+    )
+    .await?;
+    println!(
+        "✅ Context 2 (servers 5,6,3,4): Key generated: {}",
+        key_2_id
     );
 
-    // Map: party_id -> physical_server_id
-    for (party_id, server_id) in [(1, 5), (2, 6), (3, 3), (4, 4)] {
-        let server = servers.get(&(server_id as u32)).unwrap();
-        let server_config_path = material_dir
-            .path()
-            .join(format!("compose_{}.toml", server_id));
-        config_content_5634.push_str(&format!(
-            r#"
-[[cores]]
-party_id = {}
-address = "localhost:{}"
-s3_endpoint = "file://{}"
-object_folder = "PUB-p{}"
-private_object_folder = "PRIV-p{}"
-config_path = "{}"
-"#,
-            party_id, // MPC party ID (1-4)
-            server.service_port,
-            material_dir.path().display(),
-            server_id, // Physical server ID for storage
-            server_id,
-            server_config_path.display()
-        ));
-    }
-    std::fs::write(&config_path_5634, config_content_5634)?;
+    // === SWITCH BACK TO CONTEXT 1 ===
+    println!("\n========== SWITCH BACK TO CONTEXT 1 ==========");
+    println!("Switching back to context 1 (servers 1,2,3,4)");
 
-    // First MPC context with physical servers 1, 2, 3, 4 (acting as MPC parties 1, 2, 3, 4)
-    {
-        let test_path = material_dir.path();
-        let context_path = material_dir.path().join("mpc_context_1.bin");
+    let key_1b_id = real_preproc_and_keygen_with_context_isolated(
+        &config_path_1234,
+        test_path,
+        Some(context_1_id),
+        Some(epoch_1_id),
+    )
+    .await?;
+    println!("✅ Context 1 (switched back): Key generated: {}", key_1b_id);
 
-        // Create and store first MPC context
-        let context_id = ContextId::from_str(
-            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222223333",
-        )?;
-        store_mpc_context_in_file_isolated(&context_path, &config_path_1234, context_id).await?;
+    // === VALIDATION ===
+    println!("\n========== VALIDATION ==========");
+    assert_ne!(context_1_id, context_2_id, "Context IDs must be different");
+    assert_ne!(
+        key_1_id, key_2_id,
+        "Keys from different contexts must be different"
+    );
+    assert_ne!(
+        key_1_id, key_1b_id,
+        "Different keys in same context must be different"
+    );
+    assert_ne!(
+        key_2_id, key_1b_id,
+        "Keys from different contexts must be different"
+    );
 
-        // Initialize the first context (servers 1,2,3,4 as parties 1,2,3,4)
-        new_mpc_context_isolated(&config_path_1234, &context_path, test_path).await?;
-
-        // Create PRSS for first context
-        let epoch_id =
-            EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222224444")?;
-        new_prss_isolated(&config_path_1234, context_id, epoch_id, test_path).await?;
-
-        println!("✅ First MPC context (servers 1,2,3,4) initialized successfully");
-    }
-
-    // Second MPC context with physical servers 5, 6, 3, 4 (acting as MPC parties 1, 2, 3, 4)
-    // This demonstrates party resharing: servers 5,6 REPLACE servers 1,2
-    {
-        let test_path = material_dir.path();
-        let context_path = material_dir.path().join("mpc_context_2.bin");
-
-        // Create and store second MPC context (different context ID)
-        let context_id = ContextId::from_str(
-            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222225555",
-        )?;
-        store_mpc_context_in_file_isolated(&context_path, &config_path_5634, context_id).await?;
-
-        // Initialize the second context (servers 5,6,3,4 as parties 1,2,3,4)
-        new_mpc_context_isolated(&config_path_5634, &context_path, test_path).await?;
-
-        // Create PRSS for second context
-        let epoch_id =
-            EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222226666")?;
-        new_prss_isolated(&config_path_5634, context_id, epoch_id, test_path).await?;
-
-        // Run preprocessing and keygen with the second context
-        let _key_id = real_preproc_and_keygen_with_context_isolated(
-            &config_path_5634,
-            test_path,
-            Some(context_id),
-            Some(epoch_id),
-        )
-        .await?;
-
-        println!("✅ Second MPC context (servers 5,6,3,4) initialized and used successfully");
-        println!("✅ Party resharing validated: servers 5,6 successfully replaced servers 1,2");
-    }
-
+    println!("✅ Party resharing validated:");
+    println!("   - Context 1: servers 1,2,3,4 as parties 1,2,3,4");
+    println!("   - Context 2: servers 5,6,3,4 as parties 1,2,3,4 (5,6 replaced 1,2)");
+    println!("   - Servers 3,4 participated in BOTH contexts");
+    println!("   - All 3 keys are unique and isolated");
     println!("✅ 6-party MPC context switch with party resharing test completed successfully");
+
+    // Cleanup: drop servers explicitly
+    drop(servers);
+
     Ok(())
 }
 
