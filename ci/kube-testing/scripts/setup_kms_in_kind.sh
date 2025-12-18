@@ -1236,6 +1236,26 @@ cleanup() {
         # Lightweight cleanup for CI
         # The CI workflow will handle full cluster cleanup
         log_info "Running lightweight cleanup (CI mode)..."
+        
+        # Collect pod logs before CI destroys the cluster
+        log_info "Collecting pod logs for debugging..."
+        for i in $(seq 1 "${NUM_PARTIES:-6}"); do
+            local POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
+            local LOG_FILE="/tmp/kms-core-party-${i}.log"
+            {
+                echo "=== Init container logs (kms-core-init-load-env) ==="
+                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core-init-load-env --previous 2>&1 || \
+                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core-init-load-env 2>&1 || \
+                echo "No init container logs available"
+                echo ""
+                echo "=== Main container logs (kms-core) ==="
+                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core --previous 2>&1 || \
+                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core 2>&1 || \
+                echo "No main container logs available"
+            } > "${LOG_FILE}" 2>&1 || true
+            log_info "Saved logs to ${LOG_FILE}"
+        done
+        
         log_info "Logs collected and port-forwards stopped. CI will handle cluster cleanup."
     fi
 

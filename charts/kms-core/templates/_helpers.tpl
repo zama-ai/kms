@@ -158,15 +158,20 @@ export KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="${KMS_CORE__BAC
 {{- end }}
 {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
 # Fetch CA certificates for all peers (needed for peer verification)
-# S3 endpoint format: http://localstack:4566 - need to add bucket name to path
-S3_PUBLIC_BUCKET="{{ .Values.kmsCore.publicVault.s3.bucket }}"
-echo "Fetching TLS certificates from S3 endpoint: ${CORE_CLIENT__S3_ENDPOINT}"
+# In minio/localstack context: CORE_CLIENT__S3_ENDPOINT is just the endpoint, need to add bucket
+# In AWS context: CORE_CLIENT__S3_ENDPOINT already contains the bucket path
+{{- if $.Values.minio.enabled }}
+S3_BASE_URL="${CORE_CLIENT__S3_ENDPOINT}/{{ .Values.kmsCore.publicVault.s3.bucket }}"
+{{- else }}
+S3_BASE_URL="${CORE_CLIENT__S3_ENDPOINT}"
+{{- end }}
+echo "Fetching TLS certificates from S3 base URL: ${S3_BASE_URL}"
 {{- range .Values.kmsCore.thresholdMode.peersList }}
-echo "Looking for CA cert for party {{ .id }} at: ${CORE_CLIENT__S3_ENDPOINT}/${S3_PUBLIC_BUCKET}?list-type=2&prefix=PUB-p{{ .id }}/CACert/"
-BUCKET_PATH_{{ .id }}=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/${S3_PUBLIC_BUCKET}?list-type=2&prefix=PUB-p{{ .id }}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
+echo "Looking for CA cert for party {{ .id }} at: ${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .id }}/CACert/"
+BUCKET_PATH_{{ .id }}=$(curl -s "${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .id }}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
 echo "Found bucket path: ${BUCKET_PATH_{{ .id }}}"
 if [ -n "${BUCKET_PATH_{{ .id }}}" ]; then
-  curl -s -o ./ca_pem_{{ .id }} "${CORE_CLIENT__S3_ENDPOINT}/${S3_PUBLIC_BUCKET}/${BUCKET_PATH_{{ .id }}}"
+  curl -s -o ./ca_pem_{{ .id }} "${S3_BASE_URL}/${BUCKET_PATH_{{ .id }}}"
   export KMS_CA_PEM_{{ .id }}="\"\"\"$(cat ./ca_pem_{{ .id }})\"\"\""
   echo "Fetched CA cert for party {{ .id }}"
 else
@@ -174,11 +179,11 @@ else
 fi
 {{- end }}
 # Fetch private key only for this party (party {{ .Values.kmsPeers.id }})
-echo "Looking for private key at: ${CORE_CLIENT__S3_ENDPOINT}/${S3_PUBLIC_BUCKET}?list-type=2&prefix=PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/"
-KEY_BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/${S3_PUBLIC_BUCKET}?list-type=2&prefix=PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//" || true)
+echo "Looking for private key at: ${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/"
+KEY_BUCKET_PATH=$(curl -s "${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//" || true)
 echo "Found key bucket path: ${KEY_BUCKET_PATH}"
 if [ -n "${KEY_BUCKET_PATH}" ]; then
-  curl -s -o ./key_pem "${CORE_CLIENT__S3_ENDPOINT}/${S3_PUBLIC_BUCKET}/${KEY_BUCKET_PATH}"
+  curl -s -o ./key_pem "${S3_BASE_URL}/${KEY_BUCKET_PATH}"
   export KMS_KEY_PEM_{{ .Values.kmsPeers.id }}="\"\"\"$(cat ./key_pem)\"\"\""
   echo "Fetched private key for party {{ .Values.kmsPeers.id }}"
 else
