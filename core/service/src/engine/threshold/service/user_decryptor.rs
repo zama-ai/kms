@@ -397,6 +397,7 @@ impl<
         pub_storage: PubS,
         priv_storage: PrivS,
         session_maker: ImmutableSessionMaker,
+        key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) -> Self {
         let crypto_storage = ThresholdCryptoMaterialStorage::new(
             pub_storage,
@@ -413,7 +414,7 @@ impl<
             base_kms,
             crypto_storage,
             user_decrypt_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-            key_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+            key_meta_store,
             session_maker,
             tracker,
             rate_limiter,
@@ -736,10 +737,18 @@ mod tests {
         pub async fn init_test_dummy_decryptor(
             base_kms: BaseKmsStruct,
             session_maker: ImmutableSessionMaker,
+            key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(base_kms, pub_storage, priv_storage, session_maker).await
+            Self::init_test(
+                base_kms,
+                pub_storage,
+                priv_storage,
+                session_maker,
+                key_meta_store,
+            )
+            .await
         }
     }
 
@@ -772,11 +781,18 @@ mod tests {
             prss_setup_z64,
             base_kms.new_rng().await,
         );
-        let user_decryptor =
-            RealUserDecryptor::init_test_dummy_decryptor(base_kms, session_maker.make_immutable())
-                .await;
 
         let key_id = RequestId::new_random(rng);
+        let mut key_store = MetaStore::new_unlimited();
+        key_store.insert(&key_id).unwrap();
+        let key_meta_store = Arc::new(RwLock::new(key_store));
+
+        let user_decryptor = RealUserDecryptor::init_test_dummy_decryptor(
+            base_kms,
+            session_maker.make_immutable(),
+            Arc::clone(&key_meta_store),
+        )
+        .await;
 
         // make a dummy private keyset
         let (threshold_fhe_keys, fhe_key_set) =
@@ -804,13 +820,6 @@ mod tests {
         )
         .unwrap();
 
-        let dummy_meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-        {
-            // initialize the dummy meta store
-            let meta_store = dummy_meta_store.clone();
-            let mut guard = meta_store.write().await;
-            guard.insert(&key_id).unwrap();
-        }
         user_decryptor
             .crypto_storage
             .write_threshold_keys_with_dkg_meta_store(
@@ -818,7 +827,7 @@ mod tests {
                 threshold_fhe_keys,
                 fhe_key_set,
                 info,
-                dummy_meta_store,
+                Arc::clone(&key_meta_store),
             )
             .await;
 
