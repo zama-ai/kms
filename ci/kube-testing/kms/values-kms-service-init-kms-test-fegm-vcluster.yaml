@@ -13,11 +13,11 @@ minio:
   password: kms-secret-access-key
 
 kmsCoreClient:
-  enabled: true
+  enabled: false
   nameOverride: kms-core-client
   image:
     name: hub.zama.org/dev-kms/core-client
-    tag:
+    tag: latest
   num_majority: 2 # 2 when 4 parties and 5 when 13 parties
   num_reconstruct: 3 # 3 when 4 parties and 9 when 13 parties
   decryption_mode: NoiseFloodSmall
@@ -42,28 +42,31 @@ kmsCoreClient:
 
 kubeUtils:
   image:
-    name: ghcr.io/zama-ai/security-hub/infra/kube-utils
+    name: hub.zama.org/ghcr/zama-ai/security-hub/infra/kube-utils
     tag: v0.4.3
     pullPolicy: Always
 
 kmsCore:
   enabled: false
+  image:
+    name: hub.zama.org/dev-kms/core-service
+    tag: latest
   thresholdMode:
     enabled: true
     initializationScript:
       enabled: true
     peersList:
       - id: 1
-        host: kms-service-threshold-1-kms-test-core-1
+        host: kms-service-threshold-1-kms-test-fegm-core-1
         port: 50001
       - id: 2
-        host: kms-service-threshold-2-kms-test-core-2
+        host: kms-service-threshold-2-kms-test-fegm-core-2
         port: 50001
       - id: 3
-        host: kms-service-threshold-3-kms-test-core-3
+        host: kms-service-threshold-3-kms-test-fegm-core-3
         port: 50001
       - id: 4
-        host: kms-service-threshold-4-kms-test-core-4
+        host: kms-service-threshold-4-kms-test-fegm-core-4
         port: 50001
   tolerations:
     - key: karpenter.sh/nodepool
