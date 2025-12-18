@@ -998,8 +998,15 @@ deploy_threshold_mode() {
         kubectl describe pods -l app=kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
         log_info "Pod logs:"
         for i in $(seq 1 "${NUM_PARTIES}"); do
-            log_info "=== Logs for party ${i} ==="
-            kubectl logs "kms-service-threshold-${i}-${NAMESPACE}-core-${i}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" --all-containers=true || true
+            local POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
+            log_info "=== Init container logs for party ${i} ==="
+            kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core-init-load-env --previous 2>/dev/null || \
+            kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core-init-load-env 2>/dev/null || \
+            echo "No init container logs available"
+            log_info "=== Main container logs for party ${i} ==="
+            kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core --previous 2>/dev/null || \
+            kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core 2>/dev/null || \
+            echo "No main container logs available"
         done
         exit 1
     fi
