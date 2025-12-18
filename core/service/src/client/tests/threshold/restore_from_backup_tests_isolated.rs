@@ -17,6 +17,7 @@
 
 #[cfg(feature = "insecure")]
 use crate::client::tests::threshold::common::threshold_key_gen_isolated;
+use crate::consts::{BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::testing::helpers::domain_to_msg;
@@ -63,11 +64,12 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
     threshold_key_gen_isolated(&clients, &key_id_2, FheParameter::Test).await?;
 
     // Delete private storage for both keys on all parties
-    for i in 1..=4 {
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
+    for prefix in priv_storage_prefixes {
         let mut priv_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::PRIV,
-            Some(Role::indexed_from_one(i)),
+            prefix.as_deref(),
         )?;
         let _ = delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
         let _ = delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
@@ -77,7 +79,7 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
     let priv_storage = FileStorage::new(
         Some(material_dir.path()),
         StorageType::PRIV,
-        Some(Role::indexed_from_one(1)),
+        priv_storage_prefixes[0].as_deref(),
     )?;
     assert!(
         !priv_storage
@@ -102,11 +104,11 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
     }
 
     // Verify restoration (threshold uses FheKeyInfo, not FhePrivateKey)
-    for i in 1..=4 {
+    for prefix in priv_storage_prefixes {
         let priv_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::PRIV,
-            Some(Role::indexed_from_one(i)),
+            prefix.as_deref(),
         )?;
         assert!(
             priv_storage
@@ -164,11 +166,12 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion_isolated() ->
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Verify backup was auto-created on shutdown (threshold uses FheKeyInfo)
-    for i in 1..=4 {
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
+    for prefix in backup_storage_prefixes {
         let backup_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::BACKUP,
-            Some(Role::indexed_from_one(i)),
+            prefix.as_deref(),
         )?;
         assert!(
             backup_storage
@@ -248,11 +251,12 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
     }
 
     // Delete CRS from private storage on all parties
-    for i in 1..=4 {
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
+    for prefix in priv_storage_prefixes {
         let mut priv_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::PRIV,
-            Some(Role::indexed_from_one(i)),
+            prefix.as_deref(),
         )?;
         let _ = delete_all_at_request_id(&mut priv_storage, &req_id).await;
 
@@ -280,11 +284,12 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
     }
 
     // Verify backup still exists and CRS was restored
-    for i in 1..=4 {
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
+    for (backup_prefix, priv_prefix) in backup_storage_prefixes.iter().zip(priv_storage_prefixes) {
         let backup_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::BACKUP,
-            Some(Role::indexed_from_one(i)),
+            backup_prefix.as_deref(),
         )?;
         assert!(
             backup_storage
@@ -295,7 +300,7 @@ async fn test_insecure_threshold_crs_backup_isolated() -> Result<()> {
         let priv_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::PRIV,
-            Some(Role::indexed_from_one(i)),
+            priv_prefix.as_deref(),
         )?;
         assert!(
             priv_storage

@@ -5,10 +5,10 @@ use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
     PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
 };
-use crate::util::key_setup::test_tools::file_backup_vault;
 #[cfg(feature = "slow_tests")]
 use crate::testing::utils::setup::ensure_default_material_exists;
 use crate::testing::utils::setup::{ensure_dir_exist, ensure_testing_material_exists};
+use crate::util::key_setup::test_tools::file_backup_vault;
 use crate::util::key_setup::{
     ensure_client_keys_exist, ensure_threshold_server_signing_keys_exist, max_threshold,
     ThresholdSigningKeyConfig,

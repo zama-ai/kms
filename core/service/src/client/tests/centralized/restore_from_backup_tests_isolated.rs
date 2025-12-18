@@ -110,7 +110,7 @@ async fn decrypt_and_verify_isolated(
         Some(material_dir),
         msg,
         key_id,
-        1,
+        None, // storage_prefix - use default
         EncryptionConfig {
             compression: false,
             precompute_sns: true,

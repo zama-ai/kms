@@ -3,6 +3,10 @@
 //! This module provides a builder pattern for setting up isolated threshold KMS
 //! test environments with automatic cleanup.
 
+use crate::consts::{
+    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
+};
 use crate::testing::helpers::create_test_material_manager;
 use crate::testing::material::{TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
@@ -12,7 +16,6 @@ use anyhow::Result;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use std::collections::HashMap;
 use tempfile::TempDir;
-use threshold_fhe::execution::runtime::party::Role;
 use tonic::transport::Channel;
 
 /// Threshold KMS test environment
@@ -220,17 +223,18 @@ impl ThresholdTestEnvBuilder {
         // Create storage for each party
         let mut pub_storages = Vec::new();
         let mut priv_storages = Vec::new();
-        for i in 1..=self.party_count {
-            let role = Role::indexed_from_one(i);
+        let pub_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..self.party_count];
+        let priv_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..self.party_count];
+        for (pub_prefix, priv_prefix) in pub_prefixes.iter().zip(priv_prefixes) {
             pub_storages.push(FileStorage::new(
                 Some(material_dir.path()),
                 StorageType::PUB,
-                Some(role),
+                pub_prefix.as_deref(),
             )?);
             priv_storages.push(FileStorage::new(
                 Some(material_dir.path()),
                 StorageType::PRIV,
-                Some(role),
+                priv_prefix.as_deref(),
             )?);
         }
 
@@ -242,24 +246,23 @@ impl ThresholdTestEnvBuilder {
             use std::fs;
 
             let mut vaults = Vec::new();
-            for i in 1..=self.party_count {
-                let role = Role::indexed_from_one(i);
-
+            let backup_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..self.party_count];
+            for (backup_prefix, pub_prefix) in backup_prefixes.iter().zip(pub_prefixes) {
                 // Create BACKUP directory for this party
-                let backup_dir = material_dir.path().join(format!("BACKUP-p{}", i));
+                let backup_dir = material_dir.path().join(backup_prefix.as_deref().unwrap());
                 fs::create_dir_all(&backup_dir)?;
 
                 let backup_proxy = crate::vault::storage::StorageProxy::from(FileStorage::new(
                     Some(material_dir.path()),
                     StorageType::BACKUP,
-                    Some(role),
+                    backup_prefix.as_deref(),
                 )?);
 
                 let keychain = if self.with_custodian_keychain {
                     let pub_proxy = crate::vault::storage::StorageProxy::from(FileStorage::new(
                         Some(material_dir.path()),
                         StorageType::PUB,
-                        Some(role),
+                        pub_prefix.as_deref(),
                     )?);
                     Some(
                         make_keychain_proxy(
