@@ -882,6 +882,16 @@ deploy_threshold_mode() {
         generate_and_upload_tls_certs
     fi
 
+    # Calculate threshold value based on number of parties
+    # Formula: n = 3t + 1, so t = (n - 1) / 3
+    # Valid party counts: 4 (t=1), 7 (t=2), 10 (t=3), 13 (t=4)
+    local THRESHOLD_VALUE=$(( (NUM_PARTIES - 1) / 3 ))
+    if [[ $(( 3 * THRESHOLD_VALUE + 1 )) -ne ${NUM_PARTIES} ]]; then
+        log_error "Invalid number of parties: ${NUM_PARTIES}. Must satisfy n = 3t + 1 (valid: 4, 7, 10, 13, ...)"
+        exit 1
+    fi
+    log_info "Calculated threshold value: ${THRESHOLD_VALUE} for ${NUM_PARTIES} parties"
+
     # Generate peersList dynamically based on NUM_PARTIES
     # Each peer entry needs: id, host, port
     # Host format: kms-service-threshold-{id}-{namespace}-core-{id}
@@ -924,6 +934,7 @@ deploy_threshold_mode() {
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --set kmsPeers.id="${i}" \
+            --set kmsCore.thresholdMode.thresholdValue="${THRESHOLD_VALUE}" \
             --set-json "kmsCore.thresholdMode.peersList=${PEERS_JSON}" \
             "${TLS_FLAGS[@]}" \
             --timeout 10m &

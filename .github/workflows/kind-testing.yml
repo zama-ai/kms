@@ -117,7 +117,7 @@ jobs:
           - name: threshold-context
             deployment-type: threshold
             test-name: threshold_context
-            num-parties: 6
+            num-parties: 4
             enable-tls: true
             runner-label: ${{ needs.start-runner-threshold.outputs.label }}
           - name: centralized
