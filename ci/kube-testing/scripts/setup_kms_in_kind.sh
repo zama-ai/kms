@@ -1168,16 +1168,23 @@ collect_logs() {
             log_info "Collecting logs from ${NUM_PARTIES} KMS Core pods..."
             for i in $(seq 1 "${NUM_PARTIES}"); do
                 POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
+                LOG_FILE="/tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log"
                 log_info "  Checking pod: ${POD_NAME}"
 
                 if kubectl get pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &>/dev/null; then
                     log_info "  Pod ${POD_NAME} exists, collecting logs..."
-                    if kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
-                        > "/tmp/kms-service-threshold-${i}-${NAMESPACE}-core-${i}.log" 2>&1; then
-                        log_info "  ✓ Collected logs from ${POD_NAME}"
-                    else
-                        log_error "  ✗ Failed to collect logs from ${POD_NAME}"
-                    fi
+                    {
+                        echo "=== Init container logs (kms-core-init-load-env) ==="
+                        kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core-init-load-env --previous 2>&1 || \
+                        kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core-init-load-env 2>&1 || \
+                        echo "No init container logs available"
+                        echo ""
+                        echo "=== Main container logs (kms-core) ==="
+                        kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core --previous 2>&1 || \
+                        kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core 2>&1 || \
+                        echo "No main container logs available"
+                    } > "${LOG_FILE}" 2>&1
+                    log_info "  ✓ Collected logs to ${LOG_FILE}"
                 else
                     log_error "  ✗ Pod ${POD_NAME} not found"
                 fi
@@ -1238,23 +1245,7 @@ cleanup() {
         log_info "Running lightweight cleanup (CI mode)..."
         
         # Collect pod logs before CI destroys the cluster
-        log_info "Collecting pod logs for debugging..."
-        for i in $(seq 1 "${NUM_PARTIES:-6}"); do
-            local POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
-            local LOG_FILE="/tmp/kms-core-party-${i}.log"
-            {
-                echo "=== Init container logs (kms-core-init-load-env) ==="
-                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core-init-load-env --previous 2>&1 || \
-                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core-init-load-env 2>&1 || \
-                echo "No init container logs available"
-                echo ""
-                echo "=== Main container logs (kms-core) ==="
-                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core --previous 2>&1 || \
-                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core 2>&1 || \
-                echo "No main container logs available"
-            } > "${LOG_FILE}" 2>&1 || true
-            log_info "Saved logs to ${LOG_FILE}"
-        done
+        collect_logs || log_error "Failed to collect logs"
         
         log_info "Logs collected and port-forwards stopped. CI will handle cluster cleanup."
     fi
