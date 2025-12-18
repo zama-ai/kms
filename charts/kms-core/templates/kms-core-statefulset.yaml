@@ -500,6 +500,8 @@ spec:
           imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
           {{- if .Values.kmsCore.nitroEnclave.enabled }}
           name: kms-core-enclave
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           command:
             - /bin/sh
           args:

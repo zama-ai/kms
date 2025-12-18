@@ -37,7 +37,7 @@ KMS_CORE_IMAGE_TAG="${KMS_CORE_IMAGE_TAG:-latest-dev}"
 KMS_CORE_CLIENT_IMAGE_TAG="${KMS_CORE_CLIENT_IMAGE_TAG:-latest-dev}"
 DEPLOYMENT_TYPE="${DEPLOYMENT_TYPE:-threshold}"
 NUM_PARTIES="${NUM_PARTIES:-$([ "${DEPLOYMENT_TYPE}" = "centralized" ] && echo "1" || echo "4")}"
-KUBE_CONFIG="${HOME}/.kube/kind_config_${DEPLOYMENT_TYPE}"
+KUBE_CONFIG="${HOME}/.kube/config"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 RUST_IMAGE_VERSION="$(cat ${REPO_ROOT}/toolchain.txt)"
@@ -222,16 +222,16 @@ get_values_file_paths() {
     local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
 
     if [[ "${use_local}" == "true" ]]; then
-        echo "${base_dir}/local-values-kms-test.yaml"
-        echo "${base_dir}/local-values-kms-service-init-kms-test.yaml"
+        echo "${base_dir}/local-values-kms-test-vcluster.yaml"
+        echo "${base_dir}/local-values-kms-service-init-kms-test-vcluster.yaml"
         if [[ "${GEN_KEYS}" == "true" ]]; then
-            echo "${base_dir}/local-values-kms-service-gen-keys-kms-test.yaml"
+            echo "${base_dir}/local-values-kms-service-gen-keys-kms-test-vcluster.yaml"
         fi
     else
-        echo "${base_dir}/values-kms-test.yaml"
-        echo "${base_dir}/values-kms-service-init-kms-test.yaml"
+        echo "${base_dir}/values-kms-test-vcluster.yaml"
+        echo "${base_dir}/values-kms-service-init-kms-test-vcluster.yaml"
         if [[ "${GEN_KEYS}" == "true" ]]; then
-            echo "${base_dir}/values-kms-service-gen-keys-kms-test.yaml"
+            echo "${base_dir}/values-kms-service-gen-keys-kms-test-vcluster.yaml"
         fi
     fi
 }
@@ -257,12 +257,12 @@ check_values_files_exist() {
 remove_local_values_files() {
     local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
     local files_to_remove=(
-        "${base_dir}/local-values-kms-test.yaml"
-        "${base_dir}/local-values-kms-service-init-kms-test.yaml"
+        "${base_dir}/local-values-kms-test-vcluster.yaml"
+        "${base_dir}/local-values-kms-service-init-kms-test-vcluster.yaml"
     )
 
     if [[ "${GEN_KEYS}" == "true" ]]; then
-        files_to_remove+=("${base_dir}/local-values-kms-service-gen-keys-kms-test.yaml")
+        files_to_remove+=("${base_dir}/local-values-kms-service-gen-keys-kms-test-vcluster.yaml")
     fi
 
     local any_exist=false
@@ -290,11 +290,11 @@ copy_to_local_values_files() {
     local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
 
     log_info "Creating local values files..."
-    cp "${core_base}" "${base_dir}/local-values-kms-test.yaml"
-    cp "${client_init_base}" "${base_dir}/local-values-kms-service-init-kms-test.yaml"
+    cp "${core_base}" "${base_dir}/local-values-kms-test-vcluster.yaml"
+    cp "${client_init_base}" "${base_dir}/local-values-kms-service-init-kms-test-vcluster.yaml"
 
     if [[ -n "${client_gen_keys_base}" ]]; then
-        cp "${client_gen_keys_base}" "${base_dir}/local-values-kms-service-gen-keys-kms-test.yaml"
+        cp "${client_gen_keys_base}" "${base_dir}/local-values-kms-service-gen-keys-kms-test-vcluster.yaml"
     fi
 }
 
@@ -334,11 +334,11 @@ check_local_resources() {
     local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
 
     # Try local files first, fallback to base files
-    local KMS_CORE_VALUES="${base_dir}/local-values-kms-test.yaml"
-    local KMS_CORE_CLIENT_INIT_VALUES="${base_dir}/local-values-kms-service-init-kms-test.yaml"
+    local KMS_CORE_VALUES="${base_dir}/local-values-kms-test-vcluster.yaml"
+    local KMS_CORE_CLIENT_INIT_VALUES="${base_dir}/local-values-kms-service-init-kms-test-vcluster.yaml"
     local KMS_CORE_CLIENT_GEN_KEYS_VALUES=""
     if [[ "${GEN_KEYS}" == "true" ]]; then
-        KMS_CORE_CLIENT_GEN_KEYS_VALUES="${base_dir}/local-values-kms-service-gen-keys-kms-test.yaml"
+        KMS_CORE_CLIENT_GEN_KEYS_VALUES="${base_dir}/local-values-kms-service-gen-keys-kms-test-vcluster.yaml"
     fi
 
     # Check if files exist
@@ -352,11 +352,13 @@ check_local_resources() {
             log_error "KMS Core Client gen keys values: ${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
         fi
         # Fallback to base files
-        KMS_CORE_VALUES="${base_dir}/values-kms-test.yaml"
-        KMS_CORE_CLIENT_INIT_VALUES="${base_dir}/values-kms-service-init-kms-test.yaml"
+        log_info "Copying base files to local values files..."
+        cp "${base_dir}/values-kms-test-vcluster.yaml" "${KMS_CORE_VALUES}"
+        cp "${base_dir}/values-kms-service-init-kms-test-vcluster.yaml" "${KMS_CORE_CLIENT_INIT_VALUES}"
         if [[ "${GEN_KEYS}" == "true" ]]; then
-            KMS_CORE_CLIENT_GEN_KEYS_VALUES="${base_dir}/values-kms-service-gen-keys-kms-test.yaml"
+            cp "${base_dir}/values-kms-service-gen-keys-kms-test-vcluster.yaml" "${KMS_CORE_CLIENT_GEN_KEYS_VALUES}"
         fi
+
     else
         log_info "Values files found:"
         log_info "KMS Core values: ${KMS_CORE_VALUES}"
@@ -441,11 +443,11 @@ check_local_resources() {
                 echo ""
                 # Get base file paths for copying
                 local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
-                local BASE_CORE_VALUES="${base_dir}/values-kms-test.yaml"
-                local BASE_CLIENT_INIT_VALUES="${base_dir}/values-kms-service-init-kms-test.yaml"
+                local BASE_CORE_VALUES="${base_dir}/values-kms-test-vcluster.yaml"
+                local BASE_CLIENT_INIT_VALUES="${base_dir}/values-kms-service-init-kms-test-vcluster.yaml"
                 local BASE_CLIENT_GEN_KEYS_VALUES=""
                 if [[ "${GEN_KEYS}" == "true" ]]; then
-                    BASE_CLIENT_GEN_KEYS_VALUES="${base_dir}/values-kms-service-gen-keys-kms-test.yaml"
+                    BASE_CLIENT_GEN_KEYS_VALUES="${base_dir}/values-kms-service-gen-keys-kms-test-vcluster.yaml"
                 fi
 
                 # Remove existing local values files if they exist
@@ -455,10 +457,10 @@ check_local_resources() {
                 copy_to_local_values_files "${BASE_CORE_VALUES}" "${BASE_CLIENT_INIT_VALUES}" "${BASE_CLIENT_GEN_KEYS_VALUES}"
 
                 # Update variables to point to local files
-                KMS_CORE_VALUES="${base_dir}/local-values-kms-test.yaml"
-                KMS_CORE_CLIENT_INIT_VALUES="${base_dir}/local-values-kms-service-init-kms-test.yaml"
+                KMS_CORE_VALUES="${base_dir}/local-values-kms-test-vcluster.yaml"
+                KMS_CORE_CLIENT_INIT_VALUES="${base_dir}/local-values-kms-service-init-kms-test-vcluster.yaml"
                 if [[ "${GEN_KEYS}" == "true" ]]; then
-                    KMS_CORE_CLIENT_GEN_KEYS_VALUES="${base_dir}/local-values-kms-service-gen-keys-kms-test.yaml"
+                    KMS_CORE_CLIENT_GEN_KEYS_VALUES="${base_dir}/local-values-kms-service-gen-keys-kms-test-vcluster.yaml"
                 fi
 
                 # Replace namespace placeholder in the newly created local files
@@ -502,10 +504,10 @@ check_local_resources() {
                 fi
 
                 log_info "New local values files created successfully:"
-                log_info "- ${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
-                log_info "- ${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
+                log_info "- ${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test-vcluster.yaml"
+                log_info "- ${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test-vcluster.yaml"
                 if [[ "${GEN_KEYS}" == "true" ]]; then
-                    log_info "- ${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
+                    log_info "- ${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test-vcluster.yaml"
                 fi
 
                 # Calculate new totals (using bc for floating-point arithmetic)
@@ -601,10 +603,10 @@ setup_kube_context() {
     kubectl config get-contexts --kubeconfig "${KUBE_CONFIG}"
 
     log_info "Using kind-"${NAMESPACE}" context..."
-    kubectl config use-context kind-"${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
-
+    # kubectl config use-context kind-"${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
+    kubectl config use-context vcluster_kms-for-developers_vcluster-kms-for-developers_tailscale-operator-zws-dev.diplodocus-boa.ts.net --kubeconfig "${KUBE_CONFIG}"
     log_info "Checking cluster nodes..."
-    kubectl get nodes --kubeconfig "${KUBE_CONFIG}"
+    # kubectl get nodes --kubeconfig "${KUBE_CONFIG}"
 
     log_info "Kubernetes context configured"
 }
@@ -645,29 +647,30 @@ setup_registry_credentials() {
         return 0
     fi
 
-    # Create dockerconfigjson for ghcr.io authentication
-    local DOCKER_CONFIG_JSON
-    DOCKER_CONFIG_JSON=$(cat <<JSON | ${BASE64_CMD}
-{
-  "auths": {
-    "ghcr.io": {
-      "auth": "$(echo -n "zws-bot:${GITHUB_TOKEN}" | ${BASE64_CMD})"
-    }
-  }
-}
-JSON
-)
 
-    # Apply the secret to Kubernetes
-    cat <<EOF | kubectl apply -f - --namespace "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
-apiVersion: v1
-data:
-  .dockerconfigjson: ${DOCKER_CONFIG_JSON}
-kind: Secret
-metadata:
-  name: registry-credentials
-type: kubernetes.io/dockerconfigjson
-EOF
+#     # Create dockerconfigjson for ghcr.io authentication
+#     local DOCKER_CONFIG_JSON
+#     DOCKER_CONFIG_JSON=$(cat <<JSON | ${BASE64_CMD}
+# {
+#   "auths": {
+#     "ghcr.io": {
+#       "auth": "$(echo -n "zws-bot:${GITHUB_TOKEN}" | ${BASE64_CMD})"
+#     }
+#   }
+# }
+# JSON
+# )
+
+#     # Apply the secret to Kubernetes
+#     cat <<EOF | kubectl apply -f - --namespace "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
+# apiVersion: v1
+# data:
+#   .dockerconfigjson: ${DOCKER_CONFIG_JSON}
+# kind: Secret
+# metadata:
+#   name: registry-credentials
+# type: kubernetes.io/dockerconfigjson
+# EOF
 
     # Verify secret exists without printing its contents
     if kubectl get secret registry-credentials -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" &> /dev/null; then
@@ -696,31 +699,22 @@ setup_helm_repos() {
 # Container Build and Load
 #=============================================================================
 
-# Build and load Docker images into Kind cluster
+# Build and load Docker images into vcluster
 build_container() {
-  log_info "Building container for core-service ..."
-  docker buildx build -t "ghcr.io/zama-ai/kms/core-service:latest-dev" \
+  log_info "Building and pushing container for core-service in hub.zama.org/dev-kms/core-service:latest-${TAG_NAME}..."
+  docker buildx build -t hub.zama.org/dev-kms/core-service:latest-"${TAG_NAME}" \
     -f "${REPO_ROOT}/docker/core/service/Dockerfile" \
     --build-arg RUST_IMAGE_VERSION=${RUST_IMAGE_VERSION} \
     "${REPO_ROOT}/" \
-    --load
+    --push
 
-  log_info "Loading container for core-service in kind ..."
-  kind load docker-image "ghcr.io/zama-ai/kms/core-service:latest-dev" \
-    -n "${NAMESPACE}" \
-    --nodes "${NAMESPACE}"-worker
 
-  log_info "Building container for core-client ..."
-  docker buildx build -t "ghcr.io/zama-ai/kms/core-client:latest-dev" \
+  log_info "Building and pushing container for core-client in hub.zama.org/dev-kms/core-client:latest-${TAG_NAME}..."
+  docker buildx build -t hub.zama.org/dev-kms/core-client:latest-"${TAG_NAME}" \
     -f "${REPO_ROOT}/docker/core-client/Dockerfile" \
     --build-arg RUST_IMAGE_VERSION=${RUST_IMAGE_VERSION} \
     "${REPO_ROOT}/" \
-    --load
-
-  log_info "Loading container for core-client in kind ..."
-  kind load docker-image "ghcr.io/zama-ai/kms/core-client:latest-dev" \
-    -n "${NAMESPACE}" \
-    --nodes "${NAMESPACE}"-worker
+    --push
 }
 
 #=============================================================================
@@ -735,7 +729,8 @@ deploy_localstack() {
         --namespace "${NAMESPACE}" \
         --kubeconfig "${KUBE_CONFIG}" \
         --create-namespace \
-        -f "${REPO_ROOT}/ci/kube-testing/infra/localstack-s3-values.yaml"
+        -f "${REPO_ROOT}/ci/kube-testing/infra/localstack-s3-vcluster-values.yaml" \
+        --wait
 
     sleep 30
     log_info "Localstack deployed successfully"
@@ -769,16 +764,16 @@ deploy_threshold_mode() {
 
     local KMS_CORE_CLIENT_GEN_KEYS_VALUES=""
     if [[ "${LOCAL}" == "true" ]]; then
-        local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
-        local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
+        local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test-vcluster.yaml"
+        local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test-vcluster.yaml"
         if [[ "${GEN_KEYS}" == "true" ]]; then
-            KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test.yaml"
+            KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-gen-keys-kms-test-vcluster.yaml"
         fi
     else
-        local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
-        local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
+        local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test-vcluster.yaml"
+        local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test-vcluster.yaml"
         if [[ "${GEN_KEYS}" == "true" ]]; then
-            KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test.yaml"
+            KMS_CORE_CLIENT_GEN_KEYS_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-gen-keys-kms-test-vcluster.yaml"
         fi
     fi
 
@@ -850,11 +845,11 @@ deploy_centralized_mode() {
     log_info "Deploying KMS Core in centralized mode..."
 
     if [[ "${LOCAL}" == "true" ]]; then
-      local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test.yaml"
-      local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test.yaml"
+      local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-test-vcluster.yaml"
+      local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/local-values-kms-service-init-kms-test-vcluster.yaml"
     else
-      local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
-      local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
+      local KMS_CORE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test-vcluster.yaml"
+      local KMS_CORE_CLIENT_INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test-vcluster.yaml"
     fi
 
     # Replace namespace placeholder with actual namespace
@@ -1023,10 +1018,6 @@ cleanup() {
 
         # Collect logs before destroying cluster
         collect_logs || log_error "Failed to collect logs"
-
-        # Delete cluster and kubeconfig
-        kind delete cluster --name ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
-        rm -f "${KUBE_CONFIG}"
     else
         # Lightweight cleanup for CI
         # The CI workflow will handle full cluster cleanup
@@ -1078,18 +1069,15 @@ main() {
 
     # Execute setup steps
     check_prerequisites
-    setup_kind_cluster
     setup_kube_context
     setup_namespace
     setup_registry_credentials
     setup_helm_repos
-    deploy_localstack
-
     # Optionally build and load images
     if [[ "$BUILD" == "true" ]]; then
         build_container
     fi
-
+    deploy_localstack
     deploy_kms_core
     setup_port_forwarding
 
