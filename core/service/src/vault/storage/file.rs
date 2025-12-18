@@ -536,7 +536,10 @@ pub mod tests {
             .root_dir()
             .join(&data_type)
             .join(epoch_id.to_string());
-        assert!(epoch_dir.exists(), "Epoch directory should exist after storing data");
+        assert!(
+            epoch_dir.exists(),
+            "Epoch directory should exist after storing data"
+        );
 
         // Delete the data
         storage

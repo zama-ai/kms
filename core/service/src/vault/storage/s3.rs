@@ -707,7 +707,7 @@ mod tests {
             s3_client,
             BUCKET_NAME.to_string(),
             StorageType::PUB,
-            Some(prefix),
+            Some(&prefix),
             None,
         )
         .unwrap();
@@ -728,7 +728,7 @@ mod tests {
             s3_client,
             BUCKET_NAME.to_string(),
             StorageType::PRIV,
-            Some(prefix),
+            Some(&prefix),
             None,
         )
         .unwrap();
@@ -749,7 +749,7 @@ mod tests {
             s3_client,
             BUCKET_NAME.to_string(),
             StorageType::PUB,
-            Some(prefix),
+            Some(&prefix),
             None,
         )
         .unwrap();
