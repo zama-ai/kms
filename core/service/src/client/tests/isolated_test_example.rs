@@ -50,7 +50,7 @@ async fn test_threshold_isolated_example() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("threshold_example")
         .with_party_count(4)
-        .with_threshold(2)
+        .with_threshold(1) // For 4 parties: nodes = 3*threshold + 1, so threshold = 1
         .build()
         .await?;
 

@@ -223,7 +223,9 @@ use tfhe::safe_serialization::safe_serialize;
 
 // Additional imports for reshare test
 use kms_lib::engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY};
-use kms_lib::util::key_setup::test_tools::{load_material_from_storage, load_pk_from_storage};
+use kms_lib::util::key_setup::test_tools::{
+    load_material_from_pub_storage, load_pk_from_pub_storage,
+};
 
 // ============================================================================
 // CLI TEST SETUP FUNCTIONS
@@ -2102,9 +2104,17 @@ async fn test_threshold_reshare() -> Result<()> {
 
     // Step 6: Read the key materials from file and compute digests
     let key_id = RequestId::from_str(&key_id_str)?;
-    let public_key = load_pk_from_storage(Some(test_path), &key_id, ids[0]).await;
-    let server_key: tfhe::ServerKey =
-        load_material_from_storage(Some(test_path), &key_id, PubDataType::ServerKey, ids[0]).await;
+    // Use first party's storage prefix for reading materials
+    let storage_prefix = format!("PUB-p{}", ids[0]);
+    let public_key =
+        load_pk_from_pub_storage(Some(test_path), &key_id, Some(&storage_prefix)).await;
+    let server_key: tfhe::ServerKey = load_material_from_pub_storage(
+        Some(test_path),
+        &key_id,
+        PubDataType::ServerKey,
+        Some(&storage_prefix),
+    )
+    .await;
 
     let server_key_digest = hex::encode(safe_serialize_hash_element_versioned(
         &DSEP_PUBDATA_KEY,

@@ -527,7 +527,7 @@ pub async fn purge_recovery_material(path: Option<&Path>, storage_prefixes: &[Op
 }
 
 #[cfg(any(test, feature = "testing"))]
-pub(crate) mod setup {
+pub mod setup {
     use crate::consts::{
         PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
     };

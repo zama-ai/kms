@@ -124,6 +124,7 @@ async fn test_central_close_after_drop_isolated() -> Result<()> {
         None,
         &client_map,
         &mut internal_client,
+        &[None], // storage_prefixes - use default
     )
     .await;
     // Drop server

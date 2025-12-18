@@ -18,7 +18,7 @@ async fn test_threshold_health_endpoint_availability_isolated() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("health_endpoint")
         .with_party_count(4)
-        .with_threshold(2)
+        .with_threshold(1) // For 4 parties: nodes = 3*threshold + 1, so threshold = 1
         .build()
         .await?;
 
@@ -61,7 +61,7 @@ async fn test_threshold_close_after_drop_isolated() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("close_after_drop")
         .with_party_count(4)
-        .with_threshold(2)
+        .with_threshold(1) // For 4 parties: nodes = 3*threshold + 1, so threshold = 1
         .build()
         .await?;
 
@@ -112,7 +112,7 @@ async fn test_threshold_shutdown_isolated() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("shutdown")
         .with_party_count(4)
-        .with_threshold(2)
+        .with_threshold(1) // For 4 parties: nodes = 3*threshold + 1, so threshold = 1
         .build()
         .await?;
 
