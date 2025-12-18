@@ -210,7 +210,7 @@ impl<
             let decimal_req_id = U256::try_from_be_slice(req_id.as_bytes())
                 .unwrap_or(U256::ZERO)
                 .to_string();
-            tracing::info!(
+            tracing::debug!(
                 request_id = hex_req_id,
                 request_id_decimal = decimal_req_id,
                 "User Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {session_id} and context ID: {context_id}. Handle: {}",
@@ -339,7 +339,7 @@ impl<
                     })
                     .await??;
 
-                    tracing::info!(
+                    tracing::debug!(
                         "User decryption {req_id} in session {session_id} ccompleted for type {:?}. Inner thread took {:?} ms",
                         fhe_type,
                         time.as_millis()

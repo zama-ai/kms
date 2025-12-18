@@ -353,23 +353,12 @@ impl<
         // So we need to update it everytime something bad happens,
         // or put all the code that may error before the first write to the meta-store,
         // otherwise it'll be in the "Started" state forever.
-        // Optimize lock hold time by minimizing operations under lock
-        let (lock_acquired_time, total_lock_time) = {
-            let lock_start = std::time::Instant::now();
-            let mut guarded_meta_store = self.pub_dec_meta_store.write().await;
-            let lock_acquired_time = lock_start.elapsed();
-            add_req_to_meta_store(&mut guarded_meta_store, &req_id, OP_PUBLIC_DECRYPT_REQUEST)
-                .await?;
-            let total_lock_time = lock_start.elapsed();
-            (lock_acquired_time, total_lock_time)
-        };
-
-        // TODO do we still want to log these lock times?
-        // Log after lock is released
-        tracing::debug!(
-            "MetaStore INITIAL insert - req_id={}, key_id={}, context_id={}, epoch_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
-            req_id, key_id, context_id, epoch_id, my_role, ciphertexts.len(), lock_acquired_time, total_lock_time
-        );
+        add_req_to_meta_store(
+            &mut self.pub_dec_meta_store.write().await,
+            &req_id,
+            OP_PUBLIC_DECRYPT_REQUEST,
+        )
+        .await?;
 
         let ext_handles_bytes = ciphertexts
             .iter()
@@ -577,7 +566,6 @@ impl<
                     .spawn(decrypt_future().instrument(tracing::Span::current())),
             );
         }
-        // TODO the code below could be simplified a lot of we don't want to log individual lock time and do so many tiny threads
         let dec_sig_future = move |_permit| async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
@@ -635,7 +623,6 @@ impl<
                 })
                 .await
             };
-            let pts_len = pts.len();
             let res = match external_sig {
                 Ok(Ok(sig)) => Ok((req_id, pts, sig, extra_data)),
                 Err(e) | Ok(Err(e)) => Err(format!(
@@ -643,24 +630,11 @@ impl<
                 )),
             };
 
-            // Single success update with minimal lock hold time
-            let (lock_acquired_time, total_lock_time) = {
-                let lock_start = std::time::Instant::now();
-                let mut guarded_meta_store = meta_store.write().await;
-                let lock_acquired_time = lock_start.elapsed();
-                update_req_in_meta_store(
-                    &mut guarded_meta_store,
-                    &req_id,
-                    res,
-                    OP_PUBLIC_DECRYPT_REQUEST,
-                );
-                let total_lock_time = lock_start.elapsed();
-                (lock_acquired_time, total_lock_time)
-            };
-            // Log after lock is released
-            tracing::info!(
-                "MetaStore SUCCESS update - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
-                req_id, key_id, my_role, pts_len, lock_acquired_time, total_lock_time
+            update_req_in_meta_store(
+                &mut meta_store.write().await,
+                &req_id,
+                res,
+                OP_PUBLIC_DECRYPT_REQUEST,
             );
         };
         // Increment the error counter if ever the task fails
