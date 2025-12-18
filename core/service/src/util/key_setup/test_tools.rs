@@ -5,12 +5,13 @@ use crate::util::key_setup::FhePublicKey;
 use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
-    delete_all_at_request_id, make_storage, read_versioned_at_request_id, StorageReader,
+    delete_all_at_request_id, delete_at_request_and_epoch_id, make_storage,
+    read_versioned_at_request_id, StorageReader, StorageReaderExt,
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
 use crate::vault::{Vault, VaultDataType};
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
-use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
+use kms_grpc::rpc_types::{PrivDataType, PubDataType, WrappedPublicKeyOwned};
 use kms_grpc::RequestId;
 use serde::de::DeserializeOwned;
 use std::path::Path;
@@ -375,6 +376,22 @@ pub async fn purge(
         delete_all_at_request_id(&mut threshold_priv, id)
             .await
             .unwrap();
+
+        // Also delete epoch-specific data types that delete_all_at_request_id skips
+        for data_type in [PrivDataType::FhePrivateKey, PrivDataType::FheKeyInfo] {
+            let data_type_str = data_type.to_string();
+            if let Ok(epoch_ids) = threshold_priv.all_epoch_ids_for_data(&data_type_str).await {
+                for epoch_id in epoch_ids {
+                    let _ = delete_at_request_and_epoch_id(
+                        &mut threshold_priv,
+                        id,
+                        &epoch_id,
+                        &data_type_str,
+                    )
+                    .await;
+                }
+            }
+        }
     }
 }
 

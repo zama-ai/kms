@@ -336,7 +336,17 @@ impl StorageExt for FileStorage {
         data_type: &str,
     ) -> anyhow::Result<()> {
         let path = self.item_path_at_epoch(data_id, epoch_id, data_type);
-        Ok(tokio::fs::remove_file(&path).await?)
+        tokio::fs::remove_file(&path).await?;
+
+        // Remove the epoch directory if it's now empty
+        if let Some(epoch_dir) = path.parent() {
+            if let Ok(mut entries) = tokio::fs::read_dir(epoch_dir).await {
+                if entries.next_entry().await?.is_none() {
+                    let _ = tokio::fs::remove_dir(epoch_dir).await;
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -496,5 +506,115 @@ pub mod tests {
         let path = temp_dir.path();
         let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
         test_epoch_methods(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_at_epoch_removes_empty_epoch_dir() {
+        use aes_prng::AesRng;
+        use kms_grpc::rpc_types::PrivDataType;
+        use rand::SeedableRng;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path();
+        let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
+
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_id = kms_grpc::identifiers::EpochId::new_random(&mut rng);
+        let data_id = derive_request_id("TEST_DATA").unwrap();
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+
+        let data = TestType { i: 99 };
+
+        // Store data at epoch
+        storage
+            .store_data_at_epoch(&data, &data_id, &epoch_id, &data_type)
+            .await
+            .unwrap();
+
+        // Verify the epoch directory exists
+        let epoch_dir = storage
+            .root_dir()
+            .join(&data_type)
+            .join(epoch_id.to_string());
+        assert!(epoch_dir.exists(), "Epoch directory should exist after storing data");
+
+        // Delete the data
+        storage
+            .delete_data_at_epoch(&data_id, &epoch_id, &data_type)
+            .await
+            .unwrap();
+
+        // Verify the epoch directory is removed since it's now empty
+        assert!(
+            !epoch_dir.exists(),
+            "Epoch directory should be removed after deleting the last file"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_at_epoch_keeps_dir_when_not_empty() {
+        use aes_prng::AesRng;
+        use kms_grpc::rpc_types::PrivDataType;
+        use rand::SeedableRng;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path();
+        let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
+
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_id = kms_grpc::identifiers::EpochId::new_random(&mut rng);
+        let data_id_1 = derive_request_id("TEST_DATA_1").unwrap();
+        let data_id_2 = derive_request_id("TEST_DATA_2").unwrap();
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+
+        let data1 = TestType { i: 1 };
+        let data2 = TestType { i: 2 };
+
+        // Store two items at the same epoch
+        storage
+            .store_data_at_epoch(&data1, &data_id_1, &epoch_id, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_data_at_epoch(&data2, &data_id_2, &epoch_id, &data_type)
+            .await
+            .unwrap();
+
+        let epoch_dir = storage
+            .root_dir()
+            .join(&data_type)
+            .join(epoch_id.to_string());
+        assert!(epoch_dir.exists(), "Epoch directory should exist");
+
+        // Delete only the first item
+        storage
+            .delete_data_at_epoch(&data_id_1, &epoch_id, &data_type)
+            .await
+            .unwrap();
+
+        // Epoch directory should still exist because data_id_2 is still there
+        assert!(
+            epoch_dir.exists(),
+            "Epoch directory should still exist when other files remain"
+        );
+
+        // Verify data_id_2 still exists and is readable
+        let retrieved: TestType = storage
+            .read_data_at_epoch(&data_id_2, &epoch_id, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(retrieved.i, 2);
+
+        // Now delete the second item
+        storage
+            .delete_data_at_epoch(&data_id_2, &epoch_id, &data_type)
+            .await
+            .unwrap();
+
+        // Now the epoch directory should be removed
+        assert!(
+            !epoch_dir.exists(),
+            "Epoch directory should be removed after deleting the last file"
+        );
     }
 }
