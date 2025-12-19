@@ -20,6 +20,40 @@ SETUP_LOG="setup_kms.log"
 KUBE_CONFIG="${HOME}/.kube/kind_config_${DEPLOYMENT_TYPE}"
 
 #=============================================================================
+# Log Collection Function
+#=============================================================================
+# Collects logs from all KMS pods and saves them to /tmp for artifact upload
+collect_pod_logs() {
+    echo "Collecting pod logs to /tmp for artifact upload..."
+    local num_parties="${NUM_PARTIES:-4}"
+    local namespace="${NAMESPACE:-kms-test}"
+    
+    for i in $(seq 1 "${num_parties}"); do
+        local POD_NAME="kms-service-threshold-${i}-${namespace}-core-${i}"
+        local LOG_FILE="/tmp/kms-core-party-${i}.log"
+        echo "=== Collecting logs for party ${i} (${POD_NAME}) ==="
+        {
+            echo "=== Init container logs (kms-core-init-load-env) ==="
+            kubectl logs "${POD_NAME}" -n "${namespace}" --kubeconfig "${KUBE_CONFIG}" -c kms-core-init-load-env 2>&1 || \
+            echo "No init container logs available"
+            echo ""
+            echo "=== Main container logs (kms-core) - previous ==="
+            kubectl logs "${POD_NAME}" -n "${namespace}" --kubeconfig "${KUBE_CONFIG}" -c kms-core --previous 2>&1 || \
+            echo "No previous main container logs available"
+            echo ""
+            echo "=== Main container logs (kms-core) - current ==="
+            kubectl logs "${POD_NAME}" -n "${namespace}" --kubeconfig "${KUBE_CONFIG}" -c kms-core 2>&1 || \
+            echo "No current main container logs available"
+            echo ""
+            echo "=== Pod describe ==="
+            kubectl describe pod "${POD_NAME}" -n "${namespace}" --kubeconfig "${KUBE_CONFIG}" 2>&1 || true
+        } > "${LOG_FILE}" 2>&1 || true
+        echo "Saved logs to ${LOG_FILE}"
+    done
+    echo "Log files saved to /tmp/kms-core-party-*.log"
+}
+
+#=============================================================================
 # Start Setup
 #=============================================================================
 start_setup() {
@@ -114,6 +148,13 @@ stop_setup() {
     echo "Terminating any remaining port-forward processes..."
     pkill -9 -f "kubectl port-forward" || true
     sleep 2
+    
+    # Collect logs BEFORE deleting the cluster
+    if kind get clusters 2>/dev/null | grep -q "${NAMESPACE}"; then
+        echo "Collecting logs before cluster deletion..."
+        collect_pod_logs || true
+    fi
+    
     # Delete cluster and kubeconfig
     kind delete cluster --name ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
     rm -f "${KUBE_CONFIG}"

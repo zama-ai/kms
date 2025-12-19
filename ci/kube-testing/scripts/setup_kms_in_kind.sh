@@ -109,6 +109,37 @@ log_error() {
 }
 
 #=============================================================================
+# Log Collection Function
+#=============================================================================
+# Collects logs from all KMS pods and saves them to /tmp for artifact upload
+collect_pod_logs() {
+    log_info "Collecting pod logs to /tmp for artifact upload..."
+    for i in $(seq 1 "${NUM_PARTIES}"); do
+        local POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
+        local LOG_FILE="/tmp/kms-core-party-${i}.log"
+        log_info "=== Collecting logs for party ${i} (${POD_NAME}) ==="
+        {
+            echo "=== Init container logs (kms-core-init-load-env) ==="
+            kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core-init-load-env 2>&1 || \
+            echo "No init container logs available"
+            echo ""
+            echo "=== Main container logs (kms-core) - previous ==="
+            kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core --previous 2>&1 || \
+            echo "No previous main container logs available"
+            echo ""
+            echo "=== Main container logs (kms-core) - current ==="
+            kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core 2>&1 || \
+            echo "No current main container logs available"
+            echo ""
+            echo "=== Pod describe ==="
+            kubectl describe pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" 2>&1 || true
+        } | tee "${LOG_FILE}"
+        log_info "Saved logs to ${LOG_FILE}"
+    done
+    log_info "Log files saved to /tmp/kms-core-party-*.log"
+}
+
+#=============================================================================
 # Argument Parsing
 #=============================================================================
 
@@ -989,6 +1020,18 @@ deploy_threshold_mode() {
             break
         fi
         
+        # Check for CrashLoopBackOff - if all pods are crashing, collect logs early and fail fast
+        local CRASH_COUNT
+        CRASH_COUNT=$(kubectl get pods -l app=kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" \
+            -o jsonpath='{range .items[*]}{.status.containerStatuses[*].state.waiting.reason}{"\n"}{end}' 2>/dev/null | grep -c "CrashLoopBackOff" || echo "0")
+        CRASH_COUNT=$(echo "${CRASH_COUNT}" | tr -d '[:space:]')
+        
+        if [ "${CRASH_COUNT:-0}" -ge "${TOTAL_COUNT:-0}" ] && [ "${TOTAL_COUNT:-0}" -gt 0 ] && [ "${ELAPSED}" -ge 90 ]; then
+            log_error "All pods are in CrashLoopBackOff - collecting logs and failing early"
+            collect_pod_logs
+            exit 1
+        fi
+        
         # Show detailed status every 60 seconds
         if [ $((ELAPSED % 60)) -eq 0 ]; then
             log_info "Detailed pod status:"
@@ -1007,28 +1050,7 @@ deploy_threshold_mode() {
         kubectl get pods -l app=kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -o wide
         log_info "Pod descriptions:"
         kubectl describe pods -l app=kms-core -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}"
-        log_info "Collecting pod logs to /tmp for artifact upload..."
-        for i in $(seq 1 "${NUM_PARTIES}"); do
-            local POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
-            local LOG_FILE="/tmp/kms-core-party-${i}.log"
-            log_info "=== Collecting logs for party ${i} (${POD_NAME}) ==="
-            {
-                echo "=== Init container logs (kms-core-init-load-env) ==="
-                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core-init-load-env --previous 2>&1 || \
-                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core-init-load-env 2>&1 || \
-                echo "No init container logs available"
-                echo ""
-                echo "=== Main container logs (kms-core) ==="
-                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core --previous 2>&1 || \
-                kubectl logs "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" -c kms-core 2>&1 || \
-                echo "No main container logs available"
-                echo ""
-                echo "=== Pod describe ==="
-                kubectl describe pod "${POD_NAME}" -n "${NAMESPACE}" --kubeconfig "${KUBE_CONFIG}" 2>&1 || true
-            } | tee "${LOG_FILE}"
-            log_info "Saved logs to ${LOG_FILE}"
-        done
-        log_info "Log files saved to /tmp/kms-core-party-*.log"
+        collect_pod_logs
         exit 1
     fi
 
