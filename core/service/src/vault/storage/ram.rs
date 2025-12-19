@@ -1,4 +1,4 @@
-use super::{Storage, StorageForBytes, StorageReader};
+use super::{Storage, StorageReader};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::vault::storage::{all_data_ids_from_all_epochs_impl, StorageExt};
 use crate::{anyhow_error_and_log, vault::storage::StorageReaderExt};
@@ -55,6 +55,23 @@ impl StorageReader for RamStorage {
         };
         let mut buf = std::io::Cursor::new(raw_data);
         safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
+    }
+
+    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
+        let raw_data = match self
+            .internal_storage
+            .get(&((*data_id, None), data_type.to_string()))
+        {
+            Some(raw_data) => raw_data,
+            None => {
+                return Err(anyhow!(
+                    "Could not decode data at ({}, {})",
+                    data_id,
+                    data_type
+                ))
+            }
+        };
+        Ok(raw_data.clone())
     }
 
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
@@ -143,44 +160,6 @@ impl StorageReaderExt for RamStorage {
     }
 }
 
-impl StorageForBytes for RamStorage {
-    async fn store_bytes(
-        &mut self,
-        bytes: &[u8],
-        data_id: &RequestId,
-        data_type: &str,
-    ) -> anyhow::Result<()> {
-        if self.data_exists(data_id, data_type).await? {
-            tracing::warn!(
-                "The data {}-{} already exists. Keeping the data without overwriting",
-                data_id,
-                data_type
-            );
-            return Ok(());
-        }
-        self.internal_storage
-            .insert(((*data_id, None), data_type.to_string()), bytes.to_vec());
-        Ok(())
-    }
-
-    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
-        let raw_data = match self
-            .internal_storage
-            .get(&((*data_id, None), data_type.to_string()))
-        {
-            Some(raw_data) => raw_data,
-            None => {
-                return Err(anyhow!(
-                    "Could not decode data at ({}, {})",
-                    data_id,
-                    data_type
-                ))
-            }
-        };
-        Ok(raw_data.clone())
-    }
-}
-
 impl Storage for RamStorage {
     async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
@@ -200,6 +179,25 @@ impl Storage for RamStorage {
         safe_serialize(data, &mut serialized, SAFE_SER_SIZE_LIMIT)?;
         self.internal_storage
             .insert(((*data_id, None), data_type.to_string()), serialized);
+        Ok(())
+    }
+
+    async fn store_bytes(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        if self.data_exists(data_id, data_type).await? {
+            tracing::warn!(
+                "The data {}-{} already exists. Keeping the data without overwriting",
+                data_id,
+                data_type
+            );
+            return Ok(());
+        }
+        self.internal_storage
+            .insert(((*data_id, None), data_type.to_string()), bytes.to_vec());
         Ok(())
     }
 
@@ -300,28 +298,16 @@ impl StorageReader for FailingRamStorage {
         self.inner.read_data(data_id, data_type).await
     }
 
+    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
+        self.inner.load_bytes(data_id, data_type).await
+    }
+
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
         self.inner.all_data_ids(data_type).await
     }
 
     fn info(&self) -> String {
         "FailingRamStorage".to_string()
-    }
-}
-
-#[cfg(test)]
-impl StorageForBytes for FailingRamStorage {
-    async fn store_bytes(
-        &mut self,
-        bytes: &[u8],
-        data_id: &RequestId,
-        data_type: &str,
-    ) -> anyhow::Result<()> {
-        self.inner.store_bytes(bytes, data_id, data_type).await
-    }
-
-    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
-        self.inner.load_bytes(data_id, data_type).await
     }
 }
 
@@ -339,6 +325,15 @@ impl Storage for FailingRamStorage {
             self.available_writes -= 1;
             self.inner.store_data(data, data_id, data_type).await
         }
+    }
+
+    async fn store_bytes(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        self.inner.store_bytes(bytes, data_id, data_type).await
     }
 
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {

@@ -188,6 +188,10 @@ impl Client {
         {
             Ok(Some(server_key))
         } else {
+            tracing::warn!(
+                "Server key not found with request ID {:?}",
+                key_gen_result.request_id
+            );
             Ok(None)
         }
     }

@@ -12,7 +12,7 @@ cfg_if::cfg_if! {
             calculate_max_num_bits, check_data_exists, check_data_exists_at_epoch, get_core_signing_key,
         };
         use crate::vault::storage::{
-            store_pk_at_request_id, store_versioned_at_request_and_epoch_id, Storage, StorageExt,
+            store_pk_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt,
         };
         use futures_util::future;
         use kms_grpc::identifiers::EpochId;
@@ -35,7 +35,7 @@ use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{get_rng, log_data_exists, log_storage_success};
 use crate::vault::storage::{
     file::FileStorage, read_all_data_versioned, store_text_at_request_id,
-    store_versioned_at_request_id, StorageForBytes, StorageReader, StorageType,
+    store_versioned_at_request_id, Storage, StorageReader, StorageType,
 };
 use itertools::Itertools;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
@@ -165,8 +165,8 @@ pub async fn ensure_central_server_signing_keys_exist<PubS, PrivS>(
     deterministic: bool,
 ) -> bool
 where
-    PubS: StorageForBytes,
-    PrivS: StorageForBytes,
+    PubS: Storage,
+    PrivS: Storage,
 {
     // Check if keys already exist with error handling
     let temp: HashMap<RequestId, PrivateSigKey> =
@@ -600,8 +600,8 @@ pub async fn ensure_threshold_server_signing_keys_exist<PubS, PrivS>(
     tls_wildcard: bool,
 ) -> anyhow::Result<bool>
 where
-    PubS: StorageForBytes,
-    PrivS: StorageForBytes,
+    PubS: Storage,
+    PrivS: Storage,
 {
     // Validate input parameters
     if pub_storages.len() != priv_storages.len() {
@@ -776,7 +776,7 @@ where
 
 /// Generates stores CA certificates that are used to issue ephemeral mTLS
 /// certificates in the enclave.
-async fn ensure_ca_cert_exists<PubS: StorageForBytes>(
+async fn ensure_ca_cert_exists<PubS: Storage>(
     pub_storage: &mut PubS,
     sk: &PrivateSigKey,
     req_id: &RequestId,

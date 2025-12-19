@@ -1,11 +1,10 @@
 use itertools::Itertools;
 use kms_grpc::{
-    identifiers::{ContextId, EpochId, RequestId},
     kms::v1::{
         InitiateResharingRequest, InitiateResharingResponse, KeyDigest, ResharingResultResponse,
     },
-    rpc_types::{optional_protobuf_to_alloy_domain, PubDataType, WrappedPublicKeyOwned},
-    IdentifierError,
+    rpc_types::{optional_protobuf_to_alloy_domain, PubDataType},
+    ContextId, EpochId, IdentifierError, RequestId,
 };
 use observability::metrics_names::OP_INITIATE_RESHARING;
 use std::{collections::HashMap, sync::Arc};
@@ -19,6 +18,7 @@ use threshold_fhe::{
         small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
         tfhe_internals::public_keysets::FhePubKeySet,
     },
+    hashing::hash_element,
     networking::NetworkMode,
 };
 use tokio::sync::RwLock;
@@ -29,16 +29,17 @@ const ERR_SERVER_KEY_DIGEST_MISMATCH: &str = "Server key digest mismatch";
 const ERR_PUBLIC_KEY_DIGEST_MISMATCH: &str = "Public key digest mismatch";
 const ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS: &str = "Failed to fetch public materials";
 
-fn verify_key_digest(
-    server_key: &ServerKey,
-    public_key: &tfhe::CompactPublicKey,
+/// Verify key digests using raw bytes from storage.
+/// This avoids re-serializing the keys, which would produce different bytes
+/// if there was a version upgrade since the original digest was computed.
+fn verify_key_digest_from_bytes(
+    server_key_bytes: &[u8],
+    public_key_bytes: &[u8],
     expected_server_key_digest: &[u8],
     expected_public_key_digest: &[u8],
 ) -> anyhow::Result<()> {
-    let actual_server_key_digest =
-        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
-    let actual_public_key_digest =
-        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
+    let actual_server_key_digest = hash_element(&DSEP_PUBDATA_KEY, server_key_bytes);
+    let actual_public_key_digest = hash_element(&DSEP_PUBDATA_KEY, public_key_bytes);
 
     if actual_server_key_digest != expected_server_key_digest {
         anyhow::bail!(ERR_SERVER_KEY_DIGEST_MISMATCH);
@@ -54,8 +55,8 @@ use crate::{
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
     engine::{
         base::{
-            compute_info_standard_keygen, retrieve_parameters,
-            safe_serialize_hash_element_versioned, BaseKmsStruct, KeyGenMetadata, DSEP_PUBDATA_KEY,
+            compute_info_standard_keygen, retrieve_parameters, BaseKmsStruct, KeyGenMetadata,
+            DSEP_PUBDATA_KEY,
         },
         threshold::{
             service::{session::ImmutableSessionMaker, ThresholdFheKeys},
@@ -72,7 +73,7 @@ use crate::{
     },
     vault::storage::{
         crypto_material::ThresholdCryptoMaterialStorage,
-        read_context_at_id, read_pk_at_request_id, read_versioned_at_request_id,
+        read_context_at_id,
         s3::{
             build_anonymous_s3_client, ReadOnlyS3Storage, ReadOnlyS3StorageGetter,
             RealReadOnlyS3StorageGetter,
@@ -172,29 +173,42 @@ async fn fetch_public_materials_from_peers<
             None,
         )?;
 
-        // attempt to fetch the public materials from this node
-        let public_key = read_pk_at_request_id(&pub_storage, key_id)
-            .await
-            .map(|pk| match pk {
-                WrappedPublicKeyOwned::Compact(compact_pk) => compact_pk,
-            });
+        // Load raw bytes from storage to verify digests before deserializing.
+        // This avoids issues with version upgrades where re-serialization produces different bytes.
+        let public_key_bytes = pub_storage
+            .load_bytes(key_id, &PubDataType::PublicKey.to_string())
+            .await;
 
-        let server_key = read_versioned_at_request_id::<_, ServerKey>(
-            &pub_storage,
-            key_id,
-            &PubDataType::ServerKey.to_string(),
-        )
-        .await;
+        let server_key_bytes = pub_storage
+            .load_bytes(key_id, &PubDataType::ServerKey.to_string())
+            .await;
 
-        match (public_key, server_key) {
-            (Ok(public_key), Ok(server_key)) => {
-                match verify_key_digest(
-                    &server_key,
-                    &public_key,
+        match (public_key_bytes, server_key_bytes) {
+            (Ok(public_key_bytes), Ok(server_key_bytes)) => {
+                // Verify digests using raw bytes
+                match verify_key_digest_from_bytes(
+                    &server_key_bytes,
+                    &public_key_bytes,
                     expected_server_key_digest,
                     expected_public_key_digest,
                 ) {
                     Ok(()) => {
+                        // Only deserialize after digest verification passes
+                        let public_key: tfhe::CompactPublicKey =
+                            tfhe::safe_serialization::safe_deserialize(
+                                std::io::Cursor::new(&public_key_bytes),
+                                crate::consts::SAFE_SER_SIZE_LIMIT,
+                            )
+                            .map_err(|e| {
+                                anyhow::anyhow!("Failed to deserialize public key: {}", e)
+                            })?;
+
+                        let server_key: ServerKey = tfhe::safe_serialization::safe_deserialize(
+                            std::io::Cursor::new(&server_key_bytes),
+                            crate::consts::SAFE_SER_SIZE_LIMIT,
+                        )
+                        .map_err(|e| anyhow::anyhow!("Failed to deserialize server key: {}", e))?;
+
                         return Ok(FhePubKeySet {
                             public_key,
                             server_key,
@@ -248,61 +262,74 @@ async fn get_verified_public_materials<
     key_digests: &HashMap<PubDataType, Vec<u8>>,
     ro_storage_getter: &G,
 ) -> Result<FhePubKeySet, tonic::Status> {
-    // We assume the operators have manually copied the public keys to the public storage
-    let public_key_res = crypto_storage
-        .read_cloned_pk(key_id)
-        .await
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                format!("Failed to fetch public key from public storage: {}", e),
-            )
-        })
-        .map(|pk| match pk {
-            WrappedPublicKeyOwned::Compact(compact_public_key) => compact_public_key,
-        });
+    // obtain the digests
+    let expected_public_key_digest = key_digests.get(&PubDataType::PublicKey).ok_or_else(|| {
+        tonic::Status::new(tonic::Code::Internal, "missing digest for public key")
+    })?;
 
-    let server_key_res = crypto_storage
-        .read_cloned_server_key(key_id)
-        .await
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                format!("Failed to fetch server key from public storage: {}", e),
-            )
-        });
+    let expected_server_key_digest = key_digests.get(&PubDataType::ServerKey).ok_or_else(|| {
+        tonic::Status::new(tonic::Code::Internal, "missing digest for server key")
+    })?;
 
-    let verify_keys_from_own_pub_storage = |public_key,
-                                            server_key,
-                                            key_digests: &HashMap<PubDataType, Vec<u8>>|
-     -> anyhow::Result<()> {
-        // obtain the digests
-        let expected_public_key_digest = key_digests
-            .get(&PubDataType::PublicKey)
-            .ok_or(anyhow::anyhow!("missing digest for public key"))?;
+    // Load raw bytes from own public storage to verify digests before deserializing.
+    // This avoids issues with version upgrades where re-serialization produces different bytes.
+    let (public_key_bytes_res, server_key_bytes_res): (
+        anyhow::Result<Vec<u8>>,
+        anyhow::Result<Vec<u8>>,
+    ) = {
+        let pub_storage = crypto_storage.inner.get_public_storage();
+        let guard_storage = pub_storage.lock().await;
 
-        let expected_server_key_digest = key_digests
-            .get(&PubDataType::ServerKey)
-            .ok_or(anyhow::anyhow!("missing digest for server key"))?;
+        let public_key_bytes = guard_storage
+            .load_bytes(key_id, &PubDataType::PublicKey.to_string())
+            .await;
 
-        verify_key_digest(
-            server_key,
-            public_key,
-            expected_server_key_digest,
-            expected_public_key_digest,
-        )
+        let server_key_bytes = guard_storage
+            .load_bytes(key_id, &PubDataType::ServerKey.to_string())
+            .await;
+
+        (public_key_bytes, server_key_bytes)
     };
 
-    match (public_key_res, server_key_res) {
-        (Ok(public_key), Ok(server_key)) => {
-            verify_keys_from_own_pub_storage(&public_key, &server_key, key_digests).map_err(
-                |e| {
-                    tonic::Status::new(
-                        tonic::Code::Internal,
-                        format!("Key digest verification failed: {}", e),
-                    )
-                },
-            )?;
+    match (public_key_bytes_res, server_key_bytes_res) {
+        (Ok(public_key_bytes), Ok(server_key_bytes)) => {
+            // Verify digests using raw bytes
+            verify_key_digest_from_bytes(
+                &server_key_bytes,
+                &public_key_bytes,
+                expected_server_key_digest,
+                expected_public_key_digest,
+            )
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!("Key digest verification failed: {}", e),
+                )
+            })?;
+
+            // Only deserialize after digest verification passes
+            let public_key: tfhe::CompactPublicKey = tfhe::safe_serialization::safe_deserialize(
+                std::io::Cursor::new(&public_key_bytes),
+                crate::consts::SAFE_SER_SIZE_LIMIT,
+            )
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!("Failed to deserialize public key: {}", e),
+                )
+            })?;
+
+            let server_key: ServerKey = tfhe::safe_serialization::safe_deserialize(
+                std::io::Cursor::new(&server_key_bytes),
+                crate::consts::SAFE_SER_SIZE_LIMIT,
+            )
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!("Failed to deserialize server key: {}", e),
+                )
+            })?;
+
             Ok(FhePubKeySet {
                 public_key,
                 server_key,
