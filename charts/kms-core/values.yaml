@@ -187,6 +187,18 @@ kmsCore:
     client: 50100
     peer: 50001
     metrics: 9646
+  readinessProbe:
+    failureThreshold: 30
+    initialDelaySeconds: 10
+    periodSeconds: 5
+  startupProbe:
+    failureThreshold: 10
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  livenessProbe:
+    failureThreshold: 10
+    initialDelaySeconds: 10
+    timeoutSeconds: 5
   workdir: /root
   serviceMonitor:
     enabled: false
