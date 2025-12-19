@@ -797,6 +797,105 @@ async fn setup_party_resharing_servers(
     )
     .await;
 
+    // Generate server config files for MPC context creation (needed for PCR values)
+    // These are minimal configs with mock_enclave = true and TLS auto mode
+    let threshold_value = 1; // For 4 parties: threshold = 1
+
+    // Create server configs for all 6 servers
+    for server_id in 1..=6 {
+        let server = servers.get(&(server_id as u32)).unwrap();
+        let server_config_path = material_dir
+            .path()
+            .join(format!("compose_{}.toml", server_id));
+
+        // Determine which peer list this server uses
+        let (my_party_id, peers_for_config) = if server_id <= 4 {
+            // Servers 1-4 use peers_1234, party_id = server_id
+            (server_id, &peers_1234)
+        } else {
+            // Servers 5-6 use peers_ctx2, party_id = server_id - 4 (5→1, 6→2)
+            (server_id - 4, &peers_ctx2)
+        };
+
+        // Build peer list for this server's config
+        let mut peers_config = String::new();
+        for peer in peers_for_config.iter() {
+            // Find the physical server for this peer
+            let peer_server_id = if server_id <= 4 {
+                // Context 1: peer party_id maps directly to server_id
+                peer.party_id as u32
+            } else {
+                // Context 2: party 1→server5, party 2→server6, party 3→server3, party 4→server4
+                match peer.party_id {
+                    1 => 5,
+                    2 => 6,
+                    3 => 3,
+                    4 => 4,
+                    _ => peer.party_id as u32,
+                }
+            };
+            let peer_server = servers.get(&peer_server_id).unwrap();
+            let mpc_port = peer_server.mpc_port.expect("MPC port should be set");
+            peers_config.push_str(&format!(
+                r#"
+[[threshold.peers]]
+party_id = {}
+address = "127.0.0.1"
+mpc_identity = "kms-core-{}.local"
+port = {}
+"#,
+                peer.party_id, peer_server_id, mpc_port
+            ));
+        }
+
+        let server_config_content = format!(
+            r#"
+mock_enclave = true
+
+[service]
+listen_address = "127.0.0.1"
+listen_port = {}
+timeout_secs = 30
+grpc_max_message_size = 104857600
+
+[public_vault.storage.s3]
+bucket = "kms-public"
+
+[private_vault.storage.file]
+path = "{}/PRIV-p{}"
+
+[aws]
+region = "us-east-1"
+s3_endpoint = "http://dev-s3-mock:9000"
+
+[threshold]
+my_id = {}
+threshold = {}
+listen_address = "127.0.0.1"
+listen_port = {}
+dec_capacity = 100
+min_dec_cache = 10
+num_sessions_preproc = 2
+decryption_mode = "NoiseFloodSmall"
+
+[[threshold.tls.auto.trusted_releases]]
+pcr0 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
+pcr1 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
+pcr2 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
+{}
+"#,
+            server.service_port,
+            material_dir.path().display(),
+            server_id,
+            my_party_id,
+            threshold_value,
+            server.mpc_port.expect("MPC port should be set"),
+            peers_config
+        );
+
+        std::fs::write(&server_config_path, server_config_content)?;
+    }
+
     // Generate CLI config for context 1 (servers 1,2,3,4)
     let config_path_1234 = material_dir.path().join("client_config_1234.toml");
     let mut config_content_1234 = format!(
@@ -818,6 +917,7 @@ file_storage_path = "{}"
 
     for i in 1..=4 {
         let server = servers.get(&(i as u32)).unwrap();
+        let server_config_path = material_dir.path().join(format!("compose_{}.toml", i));
         config_content_1234.push_str(&format!(
             r#"
 [[cores]]
@@ -826,12 +926,14 @@ address = "localhost:{}"
 s3_endpoint = "file://{}"
 object_folder = "PUB-p{}"
 private_object_folder = "PRIV-p{}"
+config_path = "{}"
 "#,
             i,
             server.service_port,
             material_dir.path().display(),
             i,
-            i
+            i,
+            server_config_path.display()
         ));
     }
     std::fs::write(&config_path_1234, config_content_1234)?;
@@ -859,6 +961,9 @@ file_storage_path = "{}"
     // Party 1 -> Server 5, Party 2 -> Server 6, Party 3 -> Server 3, Party 4 -> Server 4
     for (party_id, server_id) in [(1, 5), (2, 6), (3, 3), (4, 4)] {
         let server = servers.get(&(server_id as u32)).unwrap();
+        let server_config_path = material_dir
+            .path()
+            .join(format!("compose_{}.toml", server_id));
         config_content_5634.push_str(&format!(
             r#"
 [[cores]]
@@ -867,12 +972,14 @@ address = "localhost:{}"
 s3_endpoint = "file://{}"
 object_folder = "PUB-p{}"
 private_object_folder = "PRIV-p{}"
+config_path = "{}"
 "#,
             party_id, // MPC party ID (1-4)
             server.service_port,
             material_dir.path().display(),
             server_id, // Physical server ID for storage
-            server_id
+            server_id,
+            server_config_path.display()
         ));
     }
     std::fs::write(&config_path_5634, config_content_5634)?;
