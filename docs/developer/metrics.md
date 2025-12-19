@@ -144,14 +144,11 @@ Track instantaneous values that can increase or decrease:
 ### Basic Usage
 
 ```rust
-use observability::metrics::METRICS;
-use observability::metrics_names::{OP_KEYGEN, TAG_OPERATION_TYPE, OP_TYPE_TOTAL};
-
 // Record operation counter
 METRICS.increment_request_counter(OP_KEYGEN_REQUEST)?;  // kms_operations_total{operation="keygen_request"}
 
 // Record error with context
-METRICS.increment_error_counter(OP_DECRYPT, ERR_NOT_FOUND)?;  // kms_operation_errors_total{operation="decrypt",error="key_not_found"}
+METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_NOT_FOUND)?;  // kms_operation_errors_total{operation="public_decrypt_request",error="not_found"}
 
 // Record duration with tags
 let _timer = METRICS.time_operation(OP_KEYGEN)?
@@ -178,7 +175,7 @@ let config = MetricsConfig {
 let metrics = CoreMetrics::with_config(config)?;
 
 // Now metrics will use "app" prefix
-metrics.increment_request_counter(OP_KEYGEN)?;  // app_operations_total{operation="keygen"}
+metrics.increment_request_counter(OP_KEYGEN_REQUEST)?;  // app_operations_total{operation="keygen_request"}
 ```
 
 ### Duration Measurement with Tags
@@ -188,10 +185,10 @@ The preferred way to measure operation duration is using RAII guards with option
 ```rust
 fn process_key(key_id: &str, algorithm: &str) -> Result<(), Error> {
     // Basic timing with multiple tags
-    let _timer = METRICS.time_operation(OP_KEYGEN)?
+    let _timer = METRICS.time_operation(OP_KEYGEN_REQUEST)?
         .tag("key_id", key_id)?
         .tag("algorithm", algorithm)?
-        .start();  // kms_operation_duration_ms{operation="keygen",key_id="...",algorithm="..."}
+        .start();  // kms_operation_duration_ms{operation="keygen_requets",key_id="...",algorithm="..."}
 
     // Timer automatically records duration when dropped
     process_data()?;
@@ -234,24 +231,19 @@ fn explicit_timing() -> Result<(), Error> {
 ```rust
 use observability::metrics::CoreMetrics; // or ::METRICS;
 
-fn handle_request(data: &[u8]) -> Result<(), Error> {
+fn handle_request(request: Request) -> Result<(), Error> {
     let metrics = CoreMetrics::new()?;
-    let _timer = metrics.time_operation(OP_KEYGEN)?
+    let _timer = metrics.time_operation(OP_KEYGEN_REQUEST)?
         .tag("size", data.len().to_string())?
-        .start();  // kms_operation_duration_ms{operation="keygen",size="..."}
+        .start();  // kms_operation_duration_ms{operation="keygen_request",size="..."}
 
-    match validate_data(data) {
-        Ok(()) => {
-            metrics.increment_request_counter(OP_KEYGEN)?;
+    metrics.increment_request_counter(OP_KEYGEN_REQUEST)?;
+    match validate_data(request) {
+        Ok(()) => {        
             process_valid_data(data)
         }
         Err(e) => {
-            let error_type = match e {
-                ValidationError::InvalidFormat => ERR_KEY_NOT_FOUND,
-                ValidationError::TooLarge => ERR_RATE_LIMIT_EXCEEDED,
-                _ => ERR_USER_DECRYPTION_FAILED,
-            };
-            metrics.increment_error_counter(OP_KEYGEN, error_type)?;  // kms_operation_errors_total{operation="keygen",error="..."}
+            metrics.increment_error_counter(OP_KEYGEN_REQUEST, ERR_INVALID_ARGUMENT)?;  // kms_operation_errors_total{operation="keygen_request",error="invalid_argument"}
             Err(e.into())
         }
     }
@@ -268,8 +260,7 @@ fn handle_request(data: &[u8]) -> Result<(), Error> {
 
 ### 2. Error Recording
 - Use predefined error type constants from `metrics_names` module
-- Keep error types consistent across similar operations
-- If a new error type is needed, add it to the `metrics_names` module
+- These should match gRPC errors along with any special cases indicating other ways a request could fail than at the grpc level. For now this only means the `ERR_ASYNC` which is used in case of an error occuring in the async worker thread for a gRPC request. 
 
 ### 3. Tag Usage
 - Use tag keys that match parameter names when possible
@@ -279,7 +270,8 @@ fn handle_request(data: &[u8]) -> Result<(), Error> {
   - `error`: standardized error type
   - `key_id`: matches the key identifier parameter
   - `operation_type`: type of the operation (e.g., "total")
-- Avoid introducing new tag keys without adding them to `metrics_names`
+- Avoid introducing new tag keys without adding them to `metrics_names`.
+- Also to _not_ use tags that will have high cardinality. E.g. using `RequestId` as tag would not be acceptable.
 
 ### 4. Duration Measurement
 - Use the `observe_duration_with_tags` method with proper operation name constants
