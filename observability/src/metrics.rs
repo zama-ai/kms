@@ -60,8 +60,8 @@ pub struct CoreMetrics {
     network_tx_counter: TaggedMetric<Counter<u64>>, //Note: Because we use counter we need to increment from last seen value.
 
     // Histograms
-    duration_histogram: TaggedMetric<Histogram<f64>>,  // TODO currently not used
-    size_histogram: TaggedMetric<Histogram<f64>>,    // TODO currently not used
+    duration_histogram: TaggedMetric<Histogram<f64>>, // TODO currently not used
+    size_histogram: TaggedMetric<Histogram<f64>>,     // TODO currently not used
     // Gauges
     gauge: TaggedMetric<Gauge<i64>>,
     cpu_load_gauge: TaggedMetric<Gauge<f64>>,
