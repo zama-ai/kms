@@ -21,10 +21,10 @@ use crate::{
                 check_data_exists, log_storage_success_optional_variant,
                 traits::PrivateCryptoMaterialReader,
             },
-            delete_all_at_request_id, delete_at_request_id, delete_pk_at_request_id,
-            read_all_data_versioned, read_context_at_id, store_context_at_id,
-            store_pk_at_request_id, store_versioned_at_request_id, Storage, StorageExt,
-            StorageReaderExt,
+            delete_all_at_request_id, delete_at_request_and_epoch_id, delete_at_request_id,
+            delete_pk_at_request_id, read_all_data_versioned, read_context_at_id,
+            store_context_at_id, store_pk_at_request_id, store_versioned_at_request_id, Storage,
+            StorageExt, StorageReaderExt,
         },
         Vault,
     },
@@ -297,6 +297,7 @@ where
     pub async fn purge_key_material(
         &self,
         req_id: &RequestId,
+        epoch_id: &EpochId,
         kms_type: KMSType,
         mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
     ) {
@@ -328,18 +329,20 @@ where
             let result = match kms_type {
                 KMSType::Centralized => {
                     // In centralized KMS there is no FHE key info to delete, instead delete the FhePrivateKey
-                    delete_at_request_id(
+                    delete_at_request_and_epoch_id(
                         &mut (*priv_storage),
                         req_id,
+                        epoch_id,
                         &PrivDataType::FhePrivateKey.to_string(),
                     )
                     .await
                 }
                 KMSType::Threshold => {
                     // In threshold KMS we need to delete the FHE key info
-                    delete_at_request_id(
+                    delete_at_request_and_epoch_id(
                         &mut (*priv_storage),
                         req_id,
+                        epoch_id,
                         &PrivDataType::FheKeyInfo.to_string(),
                     )
                     .await
@@ -357,12 +360,26 @@ where
         let f3 = async {
             match back_vault {
                 Some(mut guarded_backup_vault) => {
-                    let result = delete_at_request_id(
-                        &mut (*guarded_backup_vault),
-                        req_id,
-                        &PrivDataType::FheKeyInfo.to_string(),
-                    )
-                    .await;
+                    let result = match kms_type {
+                        KMSType::Centralized => {
+                            delete_at_request_and_epoch_id(
+                                &mut (*guarded_backup_vault),
+                                req_id,
+                                epoch_id,
+                                &PrivDataType::FhePrivateKey.to_string(),
+                            )
+                            .await
+                        }
+                        KMSType::Threshold => {
+                            delete_at_request_and_epoch_id(
+                                &mut (*guarded_backup_vault),
+                                req_id,
+                                epoch_id,
+                                &PrivDataType::FheKeyInfo.to_string(),
+                            )
+                            .await
+                        }
+                    };
                     if let Err(e) = &result {
                         tracing::warn!(
                             "Failed to delete FHE key info from backup storage for request {}: {}",

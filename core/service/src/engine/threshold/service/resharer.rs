@@ -552,7 +552,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             // Dummy insert to avoid error logs during purge
             dummy_meta_store.write().await.insert(&key_id_to_reshare)?;
             crypto_storage
-                .purge_key_material(&key_id_to_reshare, dummy_meta_store.write().await)
+                .purge_key_material(
+                    &key_id_to_reshare,
+                    &old_epoch_id,
+                    dummy_meta_store.write().await,
+                )
                 .await;
 
             // HOTFIX(keygen-recovery): Note that this overwrites the private storage

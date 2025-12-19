@@ -261,7 +261,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 "Failed to ensure existence of threshold key material for Key with ID: {}",
                 key_id
             );
-            self.purge_key_material(key_id, guarded_meta_storage).await;
+            self.purge_key_material(key_id, epoch_id, guarded_meta_storage)
+                .await;
         }
     }
 
@@ -377,15 +378,16 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         .await
     }
 
-    /// Tries to delete all the types of key material related to a specific [RequestId].
+    /// Tries to delete all the types of key material related to a specific [RequestId] and [EpochId].
     /// WARNING: This also deletes the BACKUP of the keys. Hence the method should should only be used as cleanup after a failed DKG.
     pub async fn purge_key_material(
         &self,
         req_id: &RequestId,
+        epoch_id: &EpochId,
         guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
     ) {
         self.inner
-            .purge_key_material(req_id, KMSType::Threshold, guarded_meta_store)
+            .purge_key_material(req_id, epoch_id, KMSType::Threshold, guarded_meta_store)
             .await
     }
 

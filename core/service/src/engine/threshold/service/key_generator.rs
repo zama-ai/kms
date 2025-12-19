@@ -363,7 +363,7 @@ impl<
                         tracing::error!("Key generation of request {} exiting before completion because of a cancellation event.", req_id);
                         // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let guarded_meta_store = meta_store_cancelled.write().await;
-                        crypto_storage_cancelled.purge_key_material(&req_id, guarded_meta_store).await;
+                        crypto_storage_cancelled.purge_key_material(&req_id, &epoch_id, guarded_meta_store).await;
                         // We use the more specific tag to increment the error counter
                         metrics::METRICS.increment_error_counter(op_tag, ERR_CANCELLED);
                         tracing::info!("Trying to clean up any already written material.")

@@ -236,7 +236,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             // it might be because the data did not get created
             // In any case, we can't do much.
             self.inner
-                .purge_key_material(key_id, KMSType::Centralized, guarded_meta_store)
+                .purge_key_material(key_id, epoch_id, KMSType::Centralized, guarded_meta_store)
                 .await;
         }
     }
