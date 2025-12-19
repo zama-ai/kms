@@ -4,7 +4,7 @@ use kms_grpc::rpc_types::{KMSType, PrivDataType};
 use kms_grpc::utils::tonic_result::top_1k_chars;
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
-use observability::metrics_names::ERR_ASYNC;
+use observability::metrics_names::{map_tonic_code_to_metric_err_tag, ERR_ASYNC};
 use tonic::Status;
 
 /// Query key material availability from private storage
@@ -81,7 +81,7 @@ pub struct MetricedError {
 }
 
 impl MetricedError {
-    /// Create a new MetricedError, logging the error and incrementing metrics as needed.
+    /// Create a new MetricedError, logging the error and incrementing metrics if it gets converted into a tonic error using the `From` trait.
     /// # Arguments
     /// * `op_metric` - The operation metric name associated with the error
     /// * `request_id` - Optional RequestId associated with the error
@@ -93,7 +93,20 @@ impl MetricedError {
         internal_error: E,
         error_code: tonic::Code,
     ) -> Self {
-        let error = Self::handle_unreturnable_error(op_metric, request_id, internal_error);
+        let error = internal_error.into(); // converts anyhow::Error or any other error
+        let error_string = format!(
+            "Grpc failure on requestID {} with metric {}. Error: {}",
+            request_id.unwrap_or_default(),
+            op_metric,
+            error
+        );
+
+        tracing::error!(
+            error = ?error,
+            request_id = ?request_id,
+            "Grpc error {error_string}",
+        );
+
         Self {
             op_metric,
             request_id,
@@ -102,7 +115,8 @@ impl MetricedError {
         }
     }
 
-    /// Return the gRPC error code associated with this MetricedError
+    /// Return the gRPC error code associated with this MetricedError without incrementing the metrics.
+    #[cfg(feature = "testing")]
     pub fn code(&self) -> tonic::Code {
         self.error_code
     }
@@ -123,7 +137,7 @@ impl MetricedError {
     ) -> Box<dyn std::error::Error + Send + Sync> {
         let error = internal_error.into(); // converts anyhow::Error or any other error
         let error_string = format!(
-            "Failure on requestID {} with metric {}. Error: {}",
+            "Async failure on requestID {} with metric {}. Error: {}",
             request_id.unwrap_or_default(),
             op_metric,
             error
@@ -132,7 +146,7 @@ impl MetricedError {
         tracing::error!(
             error = ?error,
             request_id = ?request_id,
-            error_string,
+            "Async error {error_string}",
         );
 
         // Increment the method specific metric
@@ -143,6 +157,12 @@ impl MetricedError {
 
 impl From<MetricedError> for Status {
     fn from(metriced_error: MetricedError) -> Self {
+        // Increment the method specific metric
+        METRICS.increment_error_counter(
+            metriced_error.op_metric,
+            map_tonic_code_to_metric_err_tag(metriced_error.error_code),
+        );
+
         let error_string = top_1k_chars(format!(
             "Failed on requestID {} with metric {}",
             metriced_error.request_id.unwrap_or_default(),
