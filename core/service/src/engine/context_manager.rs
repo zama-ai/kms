@@ -54,7 +54,7 @@ where
     async fn verify_and_extract_new_mpc_context(
         &self,
         request: tonic::Request<kms_grpc::kms::v1::NewMpcContextRequest>,
-    ) -> Result<(Role, ContextInfo), tonic::Status> {
+    ) -> Result<(Option<Role>, ContextInfo), tonic::Status> {
         // first verify that the context is valid
         let kms_grpc::kms::v1::NewMpcContextRequest { new_context } = request.into_inner();
 
@@ -71,7 +71,7 @@ where
     async fn extract_my_role_from_context(
         &self,
         context: &ContextInfo,
-    ) -> Result<Role, tonic::Status> {
+    ) -> Result<Option<Role>, tonic::Status> {
         let storage_ref = self.crypto_storage.private_storage.clone();
         let guarded_priv_storage = storage_ref.lock().await;
         context
@@ -493,7 +493,7 @@ async fn atomic_update_context<
 >(
     session_maker: &SessionMaker,
     crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
-    my_role: Role,
+    my_role: Option<Role>,
     new_context: &ContextInfo,
 ) -> anyhow::Result<()> {
     let context_id = new_context.context_id();

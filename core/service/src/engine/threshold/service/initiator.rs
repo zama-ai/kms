@@ -166,7 +166,12 @@ impl<
         // TODO(zama-ai/kms-internal/issues/2721),
         // we never try to store the PRSS in meta_store, so the ID is not guaranteed to be unique
 
-        let own_identity = self.session_maker.my_identity(context_id).await?;
+        let own_identity = self
+            .session_maker
+            .my_identity(context_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("own identity not found in context {}", context_id))?;
+
         let session_id = epoch_id.derive_session_id()?;
 
         // PRSS robust init requires broadcast, which is implemented with Sync network assumption
