@@ -2,13 +2,25 @@ version: v2beta1
 name: kmsgit
 
 vars:
+  NAMESPACE:
+    question: "Enter the namespace for the KMS deployment \n  Namespace must be a valid Kubernetes namespace like kms-test-<username> with \"-\" instead of \"_\"\n"
+  TKMS_INFRA_CHART_VERSION: 0.3.2
   TAG_NAME:
     question: "Enter the tag name for the KMS deployment (e.g. latest-fegm)"
     default: "latest-vcluster"
   RUST_IMAGE_VERSION: "$(cat toolchain.txt)"
-  NAMESPACE:
-    question: "Enter the namespace for the KMS deployment \n  Namespace must be a valid Kubernetes namespace like kms-test-<username> with \"-\" instead of \"_\"\n"
-
+  PCR0:
+    command: |-
+      docker pull --platform=linux/amd64 ghcr.io/zama-ai/kms/core-service-enclave:"${TAG_NAME}"
+      docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${TAG_NAME}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]'
+  PCR1:
+    command: |-
+      docker pull --platform=linux/amd64 ghcr.io/zama-ai/kms/core-service-enclave:"${TAG_NAME}"
+      docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${TAG_NAME}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]'
+  PCR2:
+    command: |-
+      docker pull --platform=linux/amd64 ghcr.io/zama-ai/kms/core-service-enclave:"${TAG_NAME}"
+      docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${TAG_NAME}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]'
 pullSecrets:
   cgr:
     registry: "cgr.dev"
@@ -36,16 +48,21 @@ pipelines:
   deploy: |-
       ensure_pull_secrets --all
       echo ${DEVSPACE_NAMESPACE}
-      run_pipelines deploy-infra deploy-kms deploy-kms-init
+      run_pipelines deploy-infra
+      # run_pipelines deploy-kms
+      # run_pipelines deploy-kms-init
   deploy-infra: |-
-      create_deployments localstack
+      echo "PCR0=${PCR0}"
+      echo "PCR1=${PCR1}"
+      echo "PCR2=${PCR2}"
+      create_deployments tkms-infra
   deploy-kms: |-
       ensure_pull_secrets --all
-      wait_pod --label-selector="app.kubernetes.io/name=localstack" --namespace "${NAMESPACE}"
+      wait_pod --label-selector="crossplane.io/claim-name=kms-party-${DEVSPACE_NAMESPACE}" --namespace "${NAMESPACE}"
       create_deployments kms-core-1 kms-core-2 kms-core-3 kms-core-4
   deploy-kms-init: |-
+      wait_pod --label-selector="crossplane.io/claim-name=kms-party-${DEVSPACE_NAMESPACE}" --namespace "${NAMESPACE}"
       ensure_pull_secrets --all
-      wait_pod --label-selector="app.kubernetes.io/name=localstack" --namespace "${NAMESPACE}"
       create_deployments kms-core-init
   dev: |-
     run_pipelines build
@@ -121,15 +138,45 @@ pipelines:
 
 # This is a list of `deployments` that DevSpace can create for this project
 deployments:
-  localstack:
+  tkms-infra:
     namespace: ${NAMESPACE}
     helm:
-      releaseName: localstack
+      releaseName: tkms-infra
       chart:
-        name: localstack
-        repo: https://localstack.github.io/helm-charts
+        name: oci://ghcr.io/zama-zws/crossplane/tkms-infra
+        version: "${TKMS_INFRA_CHART_VERSION}"
+      values:
+        fullnameOverride: "kms-party-${DEVSPACE_NAMESPACE}"
+        publicBucketVault:
+          irsa:
+            serviceAccountName: ${DEVSPACE_NAMESPACE}
+          labels:
+            environment: ${DEVSPACE_NAMESPACE}
+        kmsParties:
+          serviceAccountPrefixName: ${DEVSPACE_NAMESPACE}
+          publishConnectionDetailsTo:
+            prefixName: ${DEVSPACE_NAMESPACE}
+          publicBucketVaultRef:
+            matchLabels:
+              environment: ${DEVSPACE_NAMESPACE}
+          awsKms:
+            recipientAttestationImageSHA384: "${{ env.PCR0 }}"
+          enclaveNodeGroup:
+            taint:
+              - key: "app"
+                value: "${DEVSPACE_NAMESPACE}"
+                effect: NO_SCHEDULE
       valuesFiles:
-        - "./ci/kube-testing/infra/localstack-s3-vcluster-values.yaml"
+        - "./ci/kube-testing/thresholdWithEnclave/tkms-infra/values-kms-enclave-ci.yaml"
+  # localstack:
+  #   namespace: ${NAMESPACE}
+  #   helm:
+  #     releaseName: localstack
+  #     chart:
+  #       name: localstack
+  #       repo: https://localstack.github.io/helm-charts
+  #     valuesFiles:
+  #       - "./ci/kube-testing/infra/localstack-s3-vcluster-values.yaml"
   kms-core-1:
     namespace: "${NAMESPACE}"
     updateImageTags: false
