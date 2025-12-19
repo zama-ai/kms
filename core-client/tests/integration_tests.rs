@@ -350,7 +350,11 @@ async fn setup_isolated_centralized_cli_test_impl(
 async fn setup_isolated_threshold_cli_test(
     test_name: &str,
     party_count: usize,
-) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
+) -> Result<(
+    kms_lib::testing::material::TestMaterialHandle,
+    HashMap<u32, ServerHandle>,
+    PathBuf,
+)> {
     setup_isolated_threshold_cli_test_impl(test_name, party_count, false, false, false, "Test")
         .await
 }
@@ -387,7 +391,11 @@ async fn setup_isolated_threshold_cli_test(
 async fn setup_isolated_threshold_cli_test_with_prss(
     test_name: &str,
     party_count: usize,
-) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
+) -> Result<(
+    kms_lib::testing::material::TestMaterialHandle,
+    HashMap<u32, ServerHandle>,
+    PathBuf,
+)> {
     setup_isolated_threshold_cli_test_impl(test_name, party_count, true, false, false, "Test").await
 }
 
@@ -395,7 +403,11 @@ async fn setup_isolated_threshold_cli_test_with_prss(
 async fn setup_isolated_threshold_cli_test_with_backup(
     test_name: &str,
     party_count: usize,
-) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
+) -> Result<(
+    kms_lib::testing::material::TestMaterialHandle,
+    HashMap<u32, ServerHandle>,
+    PathBuf,
+)> {
     setup_isolated_threshold_cli_test_impl(test_name, party_count, false, true, false, "Test").await
 }
 
@@ -403,7 +415,11 @@ async fn setup_isolated_threshold_cli_test_with_backup(
 async fn setup_isolated_threshold_cli_test_with_custodian_backup(
     test_name: &str,
     party_count: usize,
-) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
+) -> Result<(
+    kms_lib::testing::material::TestMaterialHandle,
+    HashMap<u32, ServerHandle>,
+    PathBuf,
+)> {
     setup_isolated_threshold_cli_test_impl(test_name, party_count, false, true, true, "Test").await
 }
 
@@ -429,7 +445,11 @@ async fn setup_isolated_threshold_cli_test_with_custodian_backup(
 async fn setup_isolated_threshold_cli_test_default(
     test_name: &str,
     party_count: usize,
-) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
+) -> Result<(
+    kms_lib::testing::material::TestMaterialHandle,
+    HashMap<u32, ServerHandle>,
+    PathBuf,
+)> {
     setup_isolated_threshold_cli_test_impl(test_name, party_count, false, false, false, "Default")
         .await
 }
@@ -439,14 +459,18 @@ async fn setup_isolated_threshold_cli_test_default(
 async fn setup_isolated_threshold_cli_test_with_prss_default(
     test_name: &str,
     party_count: usize,
-) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
+) -> Result<(
+    kms_lib::testing::material::TestMaterialHandle,
+    HashMap<u32, ServerHandle>,
+    PathBuf,
+)> {
     setup_isolated_threshold_cli_test_impl(test_name, party_count, true, false, false, "Default")
         .await
 }
 
 /// Generate CLI config files for threshold KMS
 fn generate_threshold_cli_config(
-    material_dir: &TempDir,
+    material_dir: &kms_lib::testing::material::TestMaterialHandle,
     servers: &HashMap<u32, ServerHandle>,
     party_count: usize,
     fhe_params: &str,
@@ -581,7 +605,11 @@ async fn setup_isolated_threshold_cli_test_impl(
     with_backup_vault: bool,
     with_custodian_keychain: bool,
     fhe_params: &str,
-) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf)> {
+) -> Result<(
+    kms_lib::testing::material::TestMaterialHandle,
+    HashMap<u32, ServerHandle>,
+    PathBuf,
+)> {
     // Use builder pattern with full feature support
     let mut builder = ThresholdTestEnv::builder()
         .with_test_name(test_name)
@@ -623,13 +651,18 @@ async fn setup_isolated_threshold_cli_test_impl(
 /// - Servers 5-6 with peers [5,6,3,4] where 5→party1, 6→party2 (for context 2)
 ///
 /// Returns:
-/// - TempDir with test material
+/// - TestMaterialHandle with test material
 /// - HashMap of server handles
 /// - Config path for context 1 (servers 1,2,3,4)
 /// - Config path for context 2 (servers 5,6,3,4)
 async fn setup_party_resharing_servers(
     test_name: &str,
-) -> Result<(TempDir, HashMap<u32, ServerHandle>, PathBuf, PathBuf)> {
+) -> Result<(
+    kms_lib::testing::material::TestMaterialHandle,
+    HashMap<u32, ServerHandle>,
+    PathBuf,
+    PathBuf,
+)> {
     use kms_lib::conf::threshold::PeerConf;
     use kms_lib::testing::helpers::create_test_material_manager;
     use kms_lib::testing::material::TestMaterialSpec;
@@ -638,9 +671,9 @@ async fn setup_party_resharing_servers(
 
     let manager = create_test_material_manager();
 
-    // Setup material for 6 servers
+    // Setup material for 6 servers (isolated or shared based on KMS_TEST_SHARED_MATERIAL)
     let spec = TestMaterialSpec::threshold_basic(6);
-    let material_dir = manager.setup_test_material(&spec, test_name).await?;
+    let material_dir = manager.setup_test_material_auto(&spec, test_name).await?;
 
     // Create storage for each of the 6 servers
     let pub_prefixes = [

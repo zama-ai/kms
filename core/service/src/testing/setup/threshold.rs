@@ -8,23 +8,23 @@ use crate::consts::{
     PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
 };
 use crate::testing::helpers::create_test_material_manager;
-use crate::testing::material::{TestMaterialManager, TestMaterialSpec};
+use crate::testing::material::{TestMaterialHandle, TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
 pub use crate::testing::types::ThresholdTestConfig;
 use crate::vault::storage::{file::FileStorage, StorageType};
 use anyhow::Result;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use std::collections::HashMap;
-use tempfile::TempDir;
 use tonic::transport::Channel;
 
 /// Threshold KMS test environment
 ///
 /// Provides an isolated multi-party KMS setup with automatic cleanup.
-/// The environment is automatically cleaned up when dropped.
+/// The environment is automatically cleaned up when dropped (for isolated mode)
+/// or kept intact (for shared mode when KMS_TEST_SHARED_MATERIAL=1).
 pub struct ThresholdTestEnv {
-    /// Isolated test material directory (auto-deleted on drop)
-    pub material_dir: TempDir,
+    /// Test material directory handle (isolated or shared)
+    pub material_dir: TestMaterialHandle,
     /// Running KMS server handles (keyed by party ID)
     pub servers: HashMap<u32, ServerHandle>,
     /// gRPC clients for communicating with servers (keyed by party ID)
@@ -217,8 +217,8 @@ impl ThresholdTestEnvBuilder {
             .material_spec
             .unwrap_or_else(|| TestMaterialSpec::threshold_basic(self.party_count));
 
-        // Setup isolated material
-        let material_dir = manager.setup_test_material(&spec, &test_name).await?;
+        // Setup material (isolated or shared based on KMS_TEST_SHARED_MATERIAL env var)
+        let material_dir = manager.setup_test_material_auto(&spec, &test_name).await?;
 
         // Create storage for each party
         let mut pub_storages = Vec::new();
