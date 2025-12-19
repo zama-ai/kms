@@ -65,43 +65,6 @@ pub const TAG_TFHE_TYPE: &str = "tfhe_type";
 pub const TAG_PUBLIC_DECRYPTION_KIND: &str = "public_decryption_mode";
 pub const TAG_USER_DECRYPTION_KIND: &str = "user_decryption_mode";
 
-// Common error values
-// NOTE: make sure to update docs/operations/advanced/metrics.md when changing
-/// Incremented when an operation is rejected due to the rate limiter
-pub const ERR_RATE_LIMIT_EXCEEDED: &str = "rate_limit_exceeded";
-/// Incremented if key generation is attempted but the key ID already exists
-pub const ERR_KEY_EXISTS: &str = "key_already_exists";
-/// Incremented if any operation is attempted with key ID that does not exist (or has not been fully generated yet)
-pub const ERR_KEY_NOT_FOUND: &str = "key_not_found";
-/// Incremented if crs generation is attempted but the crs ID already exists
-pub const ERR_CRS_EXISTS: &str = "crs_already_exists";
-/// Incremented if any operation is attempted with crs ID that does not exist (or has not been fully generated yet)
-pub const ERR_CRS_NOT_FOUND: &str = "crs_not_found";
-/// Incremented if preprocessing data is not found for a given request ID
-pub const ERR_PREPROC_NOT_FOUND: &str = "preproc_not_found";
-/// Incremented if there is an issue with meta storage management. E.g. if a request ID already ecists
-pub const ERR_WITH_META_STORAGE: &str = "meta_storage_error";
-/// If the grpc request data is invalid
-pub const ERR_INVALID_REQUEST: &str = "invalid_request";
-
-// Specific operation errors
-pub const ERR_PUBLIC_DECRYPTION_FAILED: &str = "public_decryption_failed";
-pub const ERR_PUBLIC_DECRYPTION_INNER_FAILED: &str = "public_decryption_inner_failed";
-pub const ERR_PUBLIC_DECRYPTION_RESULT_FAILED: &str = "public_decryption_result_failed";
-pub const ERR_USER_DECRYPTION_FAILED: &str = "user_decryption_failed";
-pub const ERR_USER_DECRYPTION_INNER_FAILED: &str = "user_decryption_inner_failed";
-pub const ERR_USER_DECRYPTION_RESULT_FAILED: &str = "user_decryption_result_failed";
-pub const ERR_USER_PREPROC_FAILED: &str = "preproc_failed";
-pub const ERR_USER_PREPROC_RESULT_FAILED: &str = "preproc_result_failed";
-pub const ERR_KEYGEN_FAILED: &str = "keygen_failed";
-pub const ERR_KEYGEN_RESULT_FAILED: &str = "keygen_result_failed";
-pub const ERR_INSECURE_KEYGEN_FAILED: &str = "insecure_keygen_failed";
-pub const ERR_INSECURE_KEYGEN_RESULT_FAILED: &str = "insecure_keygen_result_failed";
-pub const ERR_CRS_GEN_FAILED: &str = "crs_gen_failed";
-pub const ERR_CRS_GEN_RESULT_FAILED: &str = "crs_gen_result_failed";
-pub const ERR_INSECURE_CRS_GEN_FAILED: &str = "insecure_crs_gen_failed";
-pub const ERR_INSECURE_CRS_GEN_RESULT_FAILED: &str = "insecure_crs_gen_result_failed";
-
 // gRPC errors
 pub const ERR_FAILED_PRECONDITION: &str = "failed_precondition";
 pub const ERR_RESOURCE_EXHAUSTED: &str = "resource_exhausted";
@@ -113,6 +76,8 @@ pub const ERR_NOT_FOUND: &str = "not_found";
 pub const ERR_INTERNAL: &str = "internal_error";
 pub const ERR_UNAVAILABLE: &str = "unavailable";
 pub const ERR_OTHER: &str = "other";
+// Specific non-grpc error used to indicate that failure happened in an async task, after a request has been returned
+pub const ERR_ASYNC: &str = "async_call_error";
 
 // Common operation type values
 pub const OP_TYPE_TOTAL: &str = "total";
@@ -131,26 +96,9 @@ pub fn map_tonic_code_to_metric_err_tag(code: tonic::Code) -> &'static str {
         tonic::Code::NotFound => ERR_NOT_FOUND,
         tonic::Code::Internal => ERR_INTERNAL,
         tonic::Code::Unavailable => ERR_UNAVAILABLE,
-        _ => ERR_OTHER,
-    }
-}
-
-pub fn map_scope_to_metric_err_tag(scope: &'static str) -> &'static str {
-    match scope {
-        OP_PUBLIC_DECRYPT_REQUEST => ERR_PUBLIC_DECRYPTION_FAILED,
-        OP_PUBLIC_DECRYPT_INNER => ERR_PUBLIC_DECRYPTION_INNER_FAILED,
-        OP_PUBLIC_DECRYPT_RESULT => ERR_PUBLIC_DECRYPTION_RESULT_FAILED,
-        OP_USER_DECRYPT_REQUEST => ERR_USER_DECRYPTION_FAILED,
-        OP_USER_DECRYPT_INNER => ERR_USER_DECRYPTION_INNER_FAILED,
-        OP_USER_DECRYPT_RESULT => ERR_USER_DECRYPTION_RESULT_FAILED,
-        OP_KEYGEN_REQUEST => ERR_KEYGEN_FAILED,
-        OP_KEYGEN_RESULT => ERR_KEYGEN_RESULT_FAILED,
-        OP_INSECURE_KEYGEN_REQUEST => ERR_INSECURE_KEYGEN_FAILED,
-        OP_INSECURE_KEYGEN_RESULT => ERR_INSECURE_KEYGEN_RESULT_FAILED,
-        OP_CRS_GEN_REQUEST => ERR_CRS_GEN_FAILED,
-        OP_CRS_GEN_RESULT => ERR_CRS_GEN_RESULT_FAILED,
-        OP_INSECURE_CRS_GEN_REQUEST => ERR_INSECURE_CRS_GEN_FAILED,
-        OP_INSECURE_CRS_GEN_RESULT => ERR_INSECURE_CRS_GEN_RESULT_FAILED,
-        _ => ERR_OTHER,
+        code => {
+            tracing::warn!("Unexcepted grpc error code: {code}. Counted as {ERR_OTHER}");
+            ERR_OTHER
+        }
     }
 }

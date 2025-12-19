@@ -10,9 +10,7 @@ use kms_grpc::{
 };
 use observability::{
     metrics,
-    metrics_names::{
-        ERR_CANCELLED, ERR_USER_PREPROC_FAILED, OP_KEYGEN_PREPROC_REQUEST, TAG_PARTY_ID,
-    },
+    metrics_names::{ERR_CANCELLED, OP_KEYGEN_PREPROC_REQUEST, TAG_PARTY_ID},
 };
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
@@ -150,12 +148,20 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                         permit,
                         #[cfg(feature = "insecure")] percentage_offline
                     ) => {
-                        if res.is_err() {
-                            metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, ERR_USER_PREPROC_FAILED);
+                        match res {
+                            Ok(()) => {
+                                tracing::info!("Preprocessing of request {} exiting normally.", &request_id);
+                            },
+                            Err(()) => {
+                                MetricedError::handle_unreturnable_error(
+                                    OP_KEYGEN_PREPROC_REQUEST,
+                                    Some(request_id),
+                                    format!("Preprocessing background task failed for request ID {}", &request_id),
+                                );
+                            }
                         }
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&request_id);
-                        tracing::info!("Preprocessing of request {} exiting normally.", &request_id);
                     },
                     () = token.cancelled() => {
                         // NOTE: Any correlated randomness that was already generated should be cleaned up from Redis on drop.

@@ -12,9 +12,8 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_CANCELLED, ERR_KEYGEN_FAILED, OP_DECOMPRESSION_KEYGEN,
-        OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_STANDARD_KEYGEN, OP_KEYGEN_REQUEST,
-        OP_STANDARD_KEYGEN, TAG_PARTY_ID,
+        ERR_CANCELLED, OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN,
+        OP_INSECURE_STANDARD_KEYGEN, OP_KEYGEN_REQUEST, OP_STANDARD_KEYGEN, TAG_PARTY_ID,
     },
 };
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -346,12 +345,17 @@ impl<
                 let _timer = timer.start();
                 tokio::select! {
                     res = keygen_background => {
-                        if res.is_err() {
-                            // We use the more specific tag to increment the error counter
-                            metrics::METRICS.increment_error_counter(op_tag, ERR_KEYGEN_FAILED);
-                            tracing::error!("Key generation of request {} failed.", req_id);
-                        } else {
-                            tracing::info!("Key generation of request {} exiting normally.", req_id);
+                                                match res {
+                            Ok(()) => {
+                                tracing::info!("Key generation of request {} exiting normally.", req_id);
+                            },
+                            Err(()) => {
+                                MetricedError::handle_unreturnable_error(
+                                    OP_KEYGEN_REQUEST,
+                                    Some(req_id),
+                                    format!("Key generation background task failed for request ID {}", &req_id),
+                                );
+                            }
                         }
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&req_id);

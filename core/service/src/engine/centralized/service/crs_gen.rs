@@ -7,8 +7,8 @@ use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    ERR_INVALID_REQUEST, ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
-    OP_INSECURE_CRS_GEN_REQUEST, TAG_CONTEXT_ID, TAG_PARTY_ID,
+    OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_CONTEXT_ID,
+    TAG_PARTY_ID,
 };
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::sync::{OwnedSemaphorePermit, RwLock};
@@ -46,10 +46,11 @@ pub async fn crs_gen_impl<
         OP_CRS_GEN_REQUEST
     };
 
-    let permit = service.rate_limiter.start_crsgen().await.map_err(|e| {
-        METRICS.increment_error_counter(op_tag, ERR_RATE_LIMIT_EXCEEDED);
-        MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted)
-    })?;
+    let permit = service
+        .rate_limiter
+        .start_crsgen()
+        .await
+        .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
     let mut timer = METRICS
         .time_operation(op_tag)
         .tag(TAG_PARTY_ID, "central".to_string())
@@ -127,11 +128,9 @@ pub async fn get_crs_gen_result_impl<
     } else {
         OP_CRS_GEN_RESULT
     };
-    let request_id = proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)
-        .map_err(|e| {
-        METRICS.increment_error_counter(op_tag, ERR_INVALID_REQUEST);
-        MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument)
-    })?;
+    let request_id =
+        proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)
+            .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
     tracing::debug!("Received CRS gen result request with id {}", request_id);
 
     let crs_info =

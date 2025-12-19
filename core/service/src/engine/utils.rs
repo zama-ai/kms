@@ -4,7 +4,7 @@ use kms_grpc::rpc_types::{KMSType, PrivDataType};
 use kms_grpc::utils::tonic_result::top_1k_chars;
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
-use observability::metrics_names::{map_scope_to_metric_err_tag, map_tonic_code_to_metric_err_tag};
+use observability::metrics_names::ERR_ASYNC;
 use tonic::Status;
 
 /// Query key material availability from private storage
@@ -94,9 +94,6 @@ impl MetricedError {
         error_code: tonic::Code,
     ) -> Self {
         let error = Self::handle_unreturnable_error(op_metric, request_id, internal_error);
-        // Increment the error code metric
-        METRICS.increment_error_counter(op_metric, map_tonic_code_to_metric_err_tag(error_code));
-
         Self {
             op_metric,
             request_id,
@@ -114,13 +111,13 @@ impl MetricedError {
     /// More specifically this is to be utilized in the async execution of KMS service commands where errors cannot be returned.
     ///
     /// Arguments:
-    /// * `metric_scope` - The operation metric name associated with the error
+    /// * `op_metric` - The operation metric name associated with the error
     /// * `request_id` - Optional RequestId associated with the error
     /// * `internal_error` - The internal error being handled
     ///   Returns:
     /// * Box<dyn std::error::Error + Send + Sync> - The boxed internal error after logging and metric incrementing
     pub fn handle_unreturnable_error<E: Into<Box<dyn std::error::Error + Send + Sync>>>(
-        metric_scope: &'static str,
+        op_metric: &'static str,
         request_id: Option<RequestId>,
         internal_error: E,
     ) -> Box<dyn std::error::Error + Send + Sync> {
@@ -128,7 +125,7 @@ impl MetricedError {
         let error_string = format!(
             "Failure on requestID {} with metric {}. Error: {}",
             request_id.unwrap_or_default(),
-            metric_scope,
+            op_metric,
             error
         );
 
@@ -139,7 +136,7 @@ impl MetricedError {
         );
 
         // Increment the method specific metric
-        METRICS.increment_error_counter(metric_scope, map_scope_to_metric_err_tag(metric_scope));
+        METRICS.increment_error_counter(op_metric, ERR_ASYNC);
         error
     }
 }

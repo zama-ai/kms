@@ -15,9 +15,9 @@ use kms_grpc::{
 use observability::{
     metrics::{self},
     metrics_names::{
-        ERR_KEY_NOT_FOUND, ERR_RATE_LIMIT_EXCEEDED, OP_PUBLIC_DECRYPT_INNER,
-        OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID,
-        TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+        OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
+        TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND,
+        TAG_TFHE_TYPE,
     },
 };
 use tfhe::FheTypes;
@@ -283,8 +283,6 @@ impl<
         // because resource exhaustion can be recovered by sending the exact same request
         // but the errors above cannot be tried again.
         let permit = self.rate_limiter.start_pub_decrypt().await.map_err(|e| {
-            metrics::METRICS
-                .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED);
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_REQUEST,
                 None,
@@ -417,11 +415,7 @@ impl<
                 let ciphertext = typed_ciphertext.ciphertext;
                 let fhe_keys_rlock = crypto_storage
                     .read_guarded_threshold_fhe_keys(&key_id.into())
-                    .await
-                    .inspect_err(|_e| {
-                        metrics::METRICS
-                            .increment_error_counter(OP_PUBLIC_DECRYPT_INNER, ERR_KEY_NOT_FOUND)
-                    })?;
+                    .await?;
 
                 let res_plaintext = match fhe_type {
                     FheTypes::Uint2048 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<

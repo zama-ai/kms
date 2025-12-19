@@ -12,9 +12,8 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_CANCELLED, ERR_CRS_EXISTS, ERR_INVALID_REQUEST, ERR_RATE_LIMIT_EXCEEDED,
-        OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_CONTEXT_ID,
-        TAG_PARTY_ID,
+        ERR_CANCELLED, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST,
+        TAG_CONTEXT_ID, TAG_PARTY_ID,
     },
 };
 use threshold_fhe::{
@@ -102,10 +101,11 @@ impl<
         // Check for resource exhaustion once all the other checks are ok
         // because resource exhaustion can be recovered by sending the exact same request
         // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_crsgen().await.map_err(|e| {
-            metrics::METRICS.increment_error_counter(op_tag, ERR_RATE_LIMIT_EXCEEDED);
-            MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted)
-        })?;
+        let permit = self
+            .rate_limiter
+            .start_crsgen()
+            .await
+            .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
 
         let inner = request.into_inner();
         tracing::info!(
@@ -114,7 +114,6 @@ impl<
         );
         let (req_id, context_id, witness_dim, dkg_params, eip712_domain) =
             validate_crs_gen_request(inner.clone()).map_err(|e| {
-                metrics::METRICS.increment_error_counter(op_tag, ERR_INVALID_REQUEST);
                 MetricedError::new(
                     op_tag,
                     None,
@@ -125,7 +124,6 @@ impl<
 
         // Validate the request ID before proceeding
         self.crypto_storage.crs_exists(&req_id).await.map_err(|e| {
-            metrics::METRICS.increment_error_counter(op_tag, ERR_CRS_EXISTS);
             MetricedError::new(
                 op_tag,
                 None,
@@ -243,12 +241,8 @@ impl<
             OP_CRS_GEN_RESULT
         };
         let request_id =
-            proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse).map_err(
-                |e| {
-                    metrics::METRICS.increment_error_counter(op_tag, ERR_INVALID_REQUEST);
-                    MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument)
-                },
-            )?;
+            proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)
+                .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
 
         let crs_data =
             retrieve_from_meta_store(self.crs_meta_store.read().await, &request_id, op_tag).await?;
@@ -256,7 +250,6 @@ impl<
         match crs_data {
             CrsGenMetadata::Current(crs_data) => {
                 if crs_data.crs_id != request_id {
-                    metrics::METRICS.increment_error_counter(op_tag, ERR_INVALID_REQUEST);
                     return Err(MetricedError::new(
                         op_tag,
                         Some(request_id),

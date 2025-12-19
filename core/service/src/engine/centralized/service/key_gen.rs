@@ -22,7 +22,7 @@ use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
 use kms_grpc::rpc_types::optional_protobuf_to_alloy_domain;
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
-use observability::metrics_names::{ERR_KEYGEN_FAILED, ERR_KEY_EXISTS, OP_KEYGEN_REQUEST};
+use observability::metrics_names::OP_KEYGEN_REQUEST;
 use std::sync::Arc;
 use threshold_fhe::execution::keyset_config::KeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -147,7 +147,7 @@ pub async fn key_gen_impl<
     let handle = service.tracker.spawn(
         async move {
             let _timer = _timer;
-            if let Err(e) = key_gen_background(
+            match key_gen_background(
                 &req_id,
                 &preproc_id,
                 meta_store,
@@ -160,13 +160,15 @@ pub async fn key_gen_impl<
             )
             .await
             {
-                METRICS.increment_error_counter(OP_KEYGEN_REQUEST, ERR_KEYGEN_FAILED);
-                tracing::error!("Key generation of request {} failed: {}", req_id, e);
-            } else {
-                tracing::info!(
-                    "Key generation of request {} completed successfully.",
-                    req_id
-                );
+                Ok(()) => {
+                    tracing::info!(
+                        "Key generation of request {} completed successfully.",
+                        req_id
+                    );
+                }
+                Err(e) => {
+                    MetricedError::handle_unreturnable_error(OP_KEYGEN_REQUEST, Some(req_id), e);
+                }
             }
         }
         .instrument(tracing::Span::current()),
@@ -268,7 +270,6 @@ pub(crate) async fn key_gen_background<
             .is_ok()
         {
             let mut guarded_meta_store = meta_store.write().await;
-            METRICS.increment_error_counter(OP_KEYGEN_REQUEST, ERR_KEY_EXISTS);
             let _ = guarded_meta_store.update(
                 req_id,
                 Err(format!(

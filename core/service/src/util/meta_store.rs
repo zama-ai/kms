@@ -14,7 +14,6 @@ cfg_if::cfg_if! {
         use crate::engine::utils::MetricedError;
         use anyhow::anyhow;
         use std::fmt::{self};
-        use observability::{metrics, metrics_names::ERR_WITH_META_STORAGE};
         use tokio::sync::RwLockWriteGuard;
         use tonic::Status;
     }
@@ -288,7 +287,6 @@ pub(crate) async fn add_req_to_meta_store<T: Clone>(
     request_metric: &'static str,
 ) -> Result<(), MetricedError> {
     if meta_store.exists(req_id) {
-        metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
         return Err(MetricedError::new(
             request_metric,
             Some(*req_id),
@@ -297,7 +295,7 @@ pub(crate) async fn add_req_to_meta_store<T: Clone>(
         ));
     }
     meta_store.insert(req_id).map_err(|e| {
-        metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
+        // We likely reached capacity here
         MetricedError::new(request_metric, Some(*req_id), e, tonic::Code::Aborted)
     })?;
     Ok(())
@@ -332,11 +330,8 @@ pub(crate) fn update_ok_req_in_meta_store<T: Clone>(
         Ok(()) => true,
         Err(e) => {
             // Update error counter for meta-store update failure
-            metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
-            // Log the error as well
-            tracing::error!(
-                "Failed to update meta store on request ID {req_id} with OK response due to error: {e}"
-            );
+            MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), e);
+
             false
         }
     }
@@ -361,9 +356,7 @@ pub(crate) fn update_err_req_in_meta_store<T: Clone>(
     match meta_store.update(req_id, Err(error.clone())) {
         Ok(()) => true,
         Err(e) => {
-            // Update error counter for meta-store update failure
-            metrics::METRICS.increment_error_counter(request_metric, ERR_WITH_META_STORAGE);
-            // Log the error as well
+            // We already logged the original error, so just log the update failure here as there is not much else we can do
             tracing::error!("Failed to update meta store on request ID {req_id} with error message \"{error}\" due to update error: {e}");
             false
         }
