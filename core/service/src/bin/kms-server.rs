@@ -272,12 +272,19 @@ async fn build_tls_config(
                 }
             };
 
+            let attest_private_vault_root_key_flag =
+                attest_private_vault_root_key.is_some_and(|m| m);
+
             let cert_resolver = Arc::new(CertResolver::AutoRefresh(
                 AutoRefreshCertResolver::new(
                     sk,
                     ca_cert,
                     security_module.clone(),
-                    private_vault_root_key_measurements,
+                    if attest_private_vault_root_key_flag {
+                        private_vault_root_key_measurements
+                    } else {
+                        None
+                    },
                     renew_slack_after_expiration.unwrap_or(5),
                     renew_fail_retry_timeout.unwrap_or(60),
                 )
@@ -289,7 +296,7 @@ async fn build_tls_config(
                 Some(trusted_releases.iter().cloned().collect()),
                 eif_signing_cert.is_some(),
                 ignore_aws_ca_chain.is_some_and(|m| m),
-                attest_private_vault_root_key.is_some_and(|m| m),
+                attest_private_vault_root_key_flag,
             )
         }
     };
