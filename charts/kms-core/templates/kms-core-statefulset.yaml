@@ -709,20 +709,21 @@ spec:
           readinessProbe:
             grpc:
               port: {{ .Values.kmsCore.ports.client }}
-            failureThreshold: 30
-            initialDelaySeconds: 10
-            periodSeconds: 5
+            failureThreshold: {{ .Values.kmsCore.readinessProbe.failureThreshold }}
+            initialDelaySeconds: {{ .Values.kmsCore.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.kmsCore.readinessProbe.periodSeconds }}
           startupProbe:
             grpc:
               port: {{ .Values.kmsCore.ports.client }}
-            failureThreshold: 10
-            initialDelaySeconds: 30
-            periodSeconds: 10
+            failureThreshold: {{ .Values.kmsCore.startupProbe.failureThreshold }}
+            initialDelaySeconds: {{ .Values.kmsCore.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.kmsCore.startupProbe.periodSeconds }}
           livenessProbe:
             grpc:
               port: {{ .Values.kmsCore.ports.client }}
-            initialDelaySeconds: 10
-            timeoutSeconds: 5
+            failureThreshold: {{ .Values.kmsCore.livenessProbe.failureThreshold }}
+            initialDelaySeconds: {{ .Values.kmsCore.livenessProbe.initialDelaySeconds }}
+            timeoutSeconds: {{ .Values.kmsCore.livenessProbe.timeoutSeconds }}
           {{- if .Values.kmsCore.nitroEnclave.enabled }}
           lifecycle:
             preStop:
