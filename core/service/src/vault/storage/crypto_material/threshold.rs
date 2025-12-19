@@ -314,13 +314,25 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         req_id: &RequestId, // TODO(#2849) change to keyid
     ) -> anyhow::Result<OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>>
     {
-        // First ensure the keys are in the cache
-        self.refresh_threshold_fhe_keys(req_id).await?;
-        CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
+        // First try to read from cache
+        match CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
             req_id,
             self.fhe_keys.clone(),
         )
         .await
+        {
+            Ok(guarded_keys) => Ok(guarded_keys),
+            Err(_) => {
+                // Refresh the cache if the first read was an error
+                self.refresh_threshold_fhe_keys(req_id).await?;
+                // Retry reading after the refresh
+                CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
+                    req_id,
+                    self.fhe_keys.clone(),
+                )
+                .await
+            }
+        }
     }
 
     /// Check if the threshold FHE keys exist in the storage.

@@ -243,12 +243,23 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         req_id: &RequestId,
     ) -> anyhow::Result<KmsFheKeyHandles> {
-        self.refresh_centralized_fhe_keys(req_id).await?;
-        CryptoMaterialStorage::<PubS, PrivS>::read_cloned_crypto_material_from_cache(
+        match CryptoMaterialStorage::<PubS, PrivS>::read_cloned_crypto_material_from_cache(
             self.fhe_keys.clone(),
             req_id,
         )
         .await
+        {
+            Ok(k) => Ok(k),
+            Err(_) => {
+                // No keys in cache -- try to refresh from storage
+                self.refresh_centralized_fhe_keys(req_id).await?;
+                CryptoMaterialStorage::<PubS, PrivS>::read_cloned_crypto_material_from_cache(
+                    self.fhe_keys.clone(),
+                    req_id,
+                )
+                .await
+            }
+        }
     }
 
     /// Refresh the key materials for decryption in the centralized case.
