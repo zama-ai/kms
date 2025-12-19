@@ -52,17 +52,25 @@ pub trait StorageReader {
     fn info(&self) -> String;
 }
 
+/// Extended storage reader trait for epoch-aware data access.
+///
+/// This trait extends [`StorageReader`] with methods that support reading data
+/// organized by epoch IDs. Epochs represent distinct time periods or versions
+/// of the private key material, which is created during resharing.
 #[enum_dispatch]
 #[trait_variant::make(Send)]
 pub trait StorageReaderExt: StorageReader {
+    /// Returns all data IDs stored under the given epoch and data type.
     async fn all_data_ids_at_epoch(
         &self,
         epoch_id: &EpochId,
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>>;
 
+    /// Returns all epoch IDs that contain data of the given type.
     async fn all_epoch_ids_for_data(&self, data_type: &str) -> anyhow::Result<HashSet<EpochId>>;
 
+    /// Checks whether data exists for the given data ID, epoch ID, and data type.
     async fn data_exists_at_epoch(
         &self,
         data_id: &RequestId,
@@ -70,6 +78,7 @@ pub trait StorageReaderExt: StorageReader {
         data_type: &str,
     ) -> anyhow::Result<bool>;
 
+    /// Reads and deserializes data stored at the given data ID, epoch ID, and data type.
     async fn read_data_at_epoch<T: DeserializeOwned + Unversionize + Named + Send>(
         &self,
         data_id: &RequestId,
@@ -98,9 +107,15 @@ pub trait Storage: StorageReader {
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()>;
 }
 
+/// Extended storage trait for epoch-aware data storage and deletion.
+///
+/// This trait combines [`StorageReaderExt`] and [`Storage`] with additional methods
+/// for storing and deleting data organized by epoch IDs. Use this trait when you need
+/// to manage private key material that may belong to a specific epoch.
 #[enum_dispatch]
 #[trait_variant::make(Send)]
 pub trait StorageExt: StorageReaderExt + Storage {
+    /// Stores the given data at the specified data ID, epoch ID, and data type.
     async fn store_data_at_epoch<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
@@ -109,6 +124,7 @@ pub trait StorageExt: StorageReaderExt + Storage {
         data_type: &str,
     ) -> anyhow::Result<()>;
 
+    /// Deletes data at the specified data ID, epoch ID, and data type.
     async fn delete_data_at_epoch(
         &mut self,
         data_id: &RequestId,

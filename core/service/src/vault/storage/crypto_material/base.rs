@@ -196,7 +196,9 @@ where
         Ok(!keys.is_empty())
     }
 
-    /// Check if FHE keys exist (for central server)
+    /// Check if FHE keys exist (for central server).
+    ///
+    /// The `epoch_id` identifies the epoch that the secret key belongs to.
     pub async fn fhe_keys_exist(
         &self,
         key_id: &RequestId,
@@ -211,7 +213,9 @@ where
         .await
     }
 
-    /// Check if threshold FHE keys exist
+    /// Check if threshold FHE keys exist.
+    ///
+    /// The `epoch_id` identifies the epoch that the secret key belongs to.
     pub async fn threshold_fhe_keys_exist(
         &self,
         key_id: &RequestId,

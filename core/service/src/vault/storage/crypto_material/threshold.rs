@@ -336,6 +336,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     }
 
     /// Check if the threshold FHE keys exist in the storage.
+    ///
+    /// The `epoch_id` identifies the epoch that the secret FHE key share belongs to.
     pub async fn threshold_fhe_keys_exists(
         &self,
         req_id: &RequestId,
@@ -354,6 +356,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     /// an attempt is made to read from the storage to update the cache.
     /// The object [ThresholdFheKeys] is big so
     /// we return a lock guard instead of the whole object.
+    ///
+    /// The `epoch_id` identifies the epoch that the secret FHE key share belongs to.
     ///
     /// Developers: try not to interleave calls to [refresh_threshold_fhe_keys]
     /// with calls to [read_threshold_fhe_keys] on the same tokio task

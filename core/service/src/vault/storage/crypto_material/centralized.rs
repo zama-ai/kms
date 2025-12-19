@@ -242,6 +242,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     }
 
     /// Read the key materials for decryption in the centralized case.
+    ///
+    /// Returns a clone of the cached FHE key handles for the given request ID and epoch ID.
+    /// The `epoch_id` identifies the epoch that the secret FHE key belongs to.
     pub async fn read_cloned_centralized_fhe_keys_from_cache(
         &self,
         req_id: &RequestId,
@@ -258,6 +261,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     /// Refresh the key materials for decryption in the centralized case.
     /// That is, if the key material is not in the cache,
     /// an attempt is made to read from the storage to update the cache.
+    ///
+    /// The `epoch_id` identifies the epoch that the secret FHE key belongs to.
     ///
     /// Developers: try not to interleave calls to [refresh_centralized_fhe_keys]
     /// with calls to [read_centralized_fhe_keys] on the same tokio task
