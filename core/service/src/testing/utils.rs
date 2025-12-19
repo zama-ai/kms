@@ -642,7 +642,7 @@ pub mod setup {
             &DEFAULT_THRESHOLD_CRS_ID_4P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
-            None,
+            path,
         )
         .await;
         threshold_material(
@@ -651,7 +651,7 @@ pub mod setup {
             &DEFAULT_THRESHOLD_CRS_ID_10P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
-            None,
+            path,
         )
         .await;
         threshold_material(
@@ -660,7 +660,7 @@ pub mod setup {
             &DEFAULT_THRESHOLD_CRS_ID_13P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
-            None,
+            path,
         )
         .await;
     }
