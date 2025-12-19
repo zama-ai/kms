@@ -118,8 +118,78 @@ async fn create_context_configs(test_path: &Path) -> anyhow::Result<(PathBuf, Pa
     let config_path_1234 = test_path.join("client_config_1234.toml");
     let config_path_5634 = test_path.join("client_config_5634.toml");
 
+    // Create server config files for MPC context creation (needed for PCR values)
+    // These are minimal configs with mock_enclave = true and TLS auto mode
+    for party_id in 1..=4 {
+        let server_config_path = test_path.join(format!("compose_{}.toml", party_id));
+        let port = 50000 + party_id * 100;
+        let mpc_port = port + 50;
+
+        // Build peer list
+        let mut peers_config = String::new();
+        for peer_id in 1..=4 {
+            let peer_port = 50000 + peer_id * 100 + 50;
+            peers_config.push_str(&format!(
+                r#"
+[[threshold.peers]]
+party_id = {}
+address = "127.0.0.1"
+mpc_identity = "kms-core-{}.local"
+port = {}
+"#,
+                peer_id, peer_id, peer_port
+            ));
+        }
+
+        let server_config_content = format!(
+            r#"
+mock_enclave = true
+
+[service]
+listen_address = "127.0.0.1"
+listen_port = {}
+timeout_secs = 30
+grpc_max_message_size = 104857600
+
+[public_vault.storage.s3]
+bucket = "kms-public"
+
+[private_vault.storage.file]
+path = "{}/PRIV-p{}"
+
+[aws]
+region = "us-east-1"
+s3_endpoint = "http://localhost:9000"
+
+[threshold]
+my_id = {}
+threshold = 1
+listen_address = "127.0.0.1"
+listen_port = {}
+dec_capacity = 100
+min_dec_cache = 10
+num_sessions_preproc = 2
+decryption_mode = "NoiseFloodSmall"
+
+[[threshold.tls.auto.trusted_releases]]
+pcr0 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
+pcr1 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
+pcr2 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f"
+{}
+"#,
+            port,
+            test_path.display(),
+            party_id,
+            party_id,
+            mpc_port,
+            peers_config
+        );
+
+        std::fs::write(&server_config_path, server_config_content)?;
+    }
+
     // Config for context 1: parties 1, 2, 3, 4
-    let config_content_1234 = format!(
+    let mut config_content_1234 = format!(
         r#"kms_type = "threshold"
 num_majority = 2
 num_reconstruct = 3
@@ -131,37 +201,30 @@ pub_storage_type = "file"
 priv_storage_type = "file"
 client_storage_type = "file"
 file_storage_path = "{}"
-
-[[cores]]
-party_id = 1
-address = "localhost:50100"
-s3_endpoint = "http://localhost:9000/kms-public"
-object_folder = "PUB-p1"
-private_object_folder = "PRIV-p1"
-
-[[cores]]
-party_id = 2
-address = "localhost:50200"
-s3_endpoint = "http://localhost:9000/kms-public"
-object_folder = "PUB-p2"
-private_object_folder = "PRIV-p2"
-
-[[cores]]
-party_id = 3
-address = "localhost:50300"
-s3_endpoint = "http://localhost:9000/kms-public"
-object_folder = "PUB-p3"
-private_object_folder = "PRIV-p3"
-
-[[cores]]
-party_id = 4
-address = "localhost:50400"
-s3_endpoint = "http://localhost:9000/kms-public"
-object_folder = "PUB-p4"
-private_object_folder = "PRIV-p4"
 "#,
         test_path.display()
     );
+
+    for party_id in 1..=4 {
+        let port = 50000 + party_id * 100;
+        let server_config_path = test_path.join(format!("compose_{}.toml", party_id));
+        config_content_1234.push_str(&format!(
+            r#"
+[[cores]]
+party_id = {}
+address = "localhost:{}"
+s3_endpoint = "http://localhost:9000/kms-public"
+object_folder = "PUB-p{}"
+private_object_folder = "PRIV-p{}"
+config_path = "{}"
+"#,
+            party_id,
+            port,
+            party_id,
+            party_id,
+            server_config_path.display()
+        ));
+    }
 
     // Config for context 2: same 4 parties, different context
     // This tests context isolation - same servers can operate in multiple independent contexts
