@@ -676,9 +676,6 @@ impl<
             )
         })?;
 
-        crypto_storage
-            .refresh_threshold_fhe_keys(&glwe_req_id)
-            .await?;
         let glwe_shares = {
             let guard = crypto_storage
                 .read_guarded_threshold_fhe_keys(&glwe_req_id)
@@ -689,9 +686,6 @@ impl<
             }
         };
 
-        crypto_storage
-            .refresh_threshold_fhe_keys(&compression_req_id)
-            .await?;
         let compression_shares = {
             let guard = crypto_storage
                 .read_guarded_threshold_fhe_keys(&compression_req_id)

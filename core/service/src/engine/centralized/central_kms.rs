@@ -114,9 +114,6 @@ where
 
     let existing_key_handle = match compression_key_id {
         Some(compression_key_id_inner) => {
-            storage
-                .refresh_centralized_fhe_keys(&compression_key_id_inner)
-                .await?;
             let existing_key_handle = storage
                 .read_centralized_fhe_keys(&compression_key_id_inner)
                 .await?;
