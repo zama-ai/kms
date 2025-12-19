@@ -70,6 +70,7 @@ where
 /// * `request_id` - Optional RequestId associated with the error
 /// * `internal_error` - The internal error being wrapped
 /// * `error_code` - The tonic::Code representing the gRPC error code
+/// * `counted` - A boolean flag indicating whether the error has already been counted in metrics
 #[derive(Debug)]
 pub struct MetricedError {
     op_metric: &'static str,
@@ -78,6 +79,7 @@ pub struct MetricedError {
     #[expect(unused)]
     internal_error: Box<dyn std::error::Error + Send + Sync>,
     error_code: tonic::Code,
+    counted: bool,
 }
 
 impl MetricedError {
@@ -112,6 +114,7 @@ impl MetricedError {
             request_id,
             internal_error: error,
             error_code,
+            counted: false,
         }
     }
 
@@ -155,13 +158,26 @@ impl MetricedError {
     }
 }
 
+impl Drop for MetricedError {
+    fn drop(&mut self) {
+        if !self.counted {
+            // Increment the method specific metric
+            METRICS.increment_error_counter(
+                self.op_metric,
+                map_tonic_code_to_metric_err_tag(self.error_code),
+            );
+        }
+    }
+}
+
 impl From<MetricedError> for Status {
-    fn from(metriced_error: MetricedError) -> Self {
+    fn from(mut metriced_error: MetricedError) -> Self {
         // Increment the method specific metric
         METRICS.increment_error_counter(
             metriced_error.op_metric,
             map_tonic_code_to_metric_err_tag(metriced_error.error_code),
         );
+        metriced_error.counted = true;
 
         let error_string = top_1k_chars(format!(
             "Failed on requestID {} with metric {}",
