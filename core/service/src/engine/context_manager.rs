@@ -71,7 +71,7 @@ where
     async fn extract_my_role_from_context(
         &self,
         context: &ContextInfo,
-    ) -> Result<Role, tonic::Status> {
+    ) -> Result<Option<Role>, tonic::Status> {
         let storage_ref = self.crypto_storage.private_storage.clone();
         let guarded_priv_storage = storage_ref.lock().await;
         context
@@ -469,7 +469,7 @@ where
         for context in contexts {
             let my_role = self.inner.extract_my_role_from_context(&context).await?;
             self.session_maker
-                .add_context_info(Some(my_role), &context)
+                .add_context_info(my_role, &context)
                 .await
                 .inspect_err(|e| {
                     tracing::error!(
