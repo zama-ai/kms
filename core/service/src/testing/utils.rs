@@ -669,7 +669,7 @@ pub mod setup {
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
             &epoch_id,
-            None,
+            path,
         )
         .await;
         threshold_material(
@@ -679,7 +679,7 @@ pub mod setup {
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
             &epoch_id,
-            None,
+            path,
         )
         .await;
         threshold_material(
@@ -689,7 +689,7 @@ pub mod setup {
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
             &epoch_id,
-            None,
+            path,
         )
         .await;
     }
