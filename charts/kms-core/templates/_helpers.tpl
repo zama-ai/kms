@@ -172,7 +172,7 @@ BUCKET_PATH_{{ .id }}=$(curl -s "${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .id }
 echo "Found bucket path: ${BUCKET_PATH_{{ .id }}}"
 if [ -n "${BUCKET_PATH_{{ .id }}}" ]; then
   curl -s -o ./ca_pem_{{ .id }} "${S3_BASE_URL}/${BUCKET_PATH_{{ .id }}}"
-  export KMS_CA_PEM_{{ .id }}="\"\"\"$(cat ./ca_pem_{{ .id }})\"\"\""
+  export KMS_CA_PEM_{{ .id }}="$(cat ./ca_pem_{{ .id }})"
   echo "Fetched CA cert for party {{ .id }}"
 else
   echo "WARNING: No CA cert found for party {{ .id }}"
@@ -184,7 +184,7 @@ KEY_BUCKET_PATH=$(curl -s "${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .Values.kms
 echo "Found key bucket path: ${KEY_BUCKET_PATH}"
 if [ -n "${KEY_BUCKET_PATH}" ]; then
   curl -s -o ./key_pem "${S3_BASE_URL}/${KEY_BUCKET_PATH}"
-  export KMS_KEY_PEM_{{ .Values.kmsPeers.id }}="\"\"\"$(cat ./key_pem)\"\"\""
+  export KMS_KEY_PEM_{{ .Values.kmsPeers.id }}="$(cat ./key_pem)"
   echo "Fetched private key for party {{ .Values.kmsPeers.id }}"
 else
   echo "WARNING: No private key found for party {{ .Values.kmsPeers.id }}"
