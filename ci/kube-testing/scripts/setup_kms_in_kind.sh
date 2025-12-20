@@ -819,6 +819,15 @@ generate_and_upload_tls_certs() {
     local PF_PID=$!
     sleep 5
 
+    # Ensure buckets exist (localstack startup script should create them, but verify)
+    log_info "Ensuring S3 buckets exist..."
+    aws --endpoint-url=http://localhost:4566 s3 mb s3://kms-public 2>/dev/null || true
+    aws --endpoint-url=http://localhost:4566 s3 mb s3://kms-private 2>/dev/null || true
+    
+    # List buckets to verify
+    log_info "Available S3 buckets:"
+    aws --endpoint-url=http://localhost:4566 s3 ls
+
     # Upload certificates and private keys to S3 for each party
     log_info "Uploading certificates and keys to S3..."
     for i in $(seq 1 "${NUM_PARTIES}"); do
@@ -828,35 +837,47 @@ generate_and_upload_tls_certs() {
 
         if [[ -f "${CERT_FILE}" ]]; then
             # Upload certificate to public bucket under PUB-p{i}/CACert/
-            aws --endpoint-url=http://localhost:4566 s3 cp \
+            log_info "Uploading certificate from ${CERT_FILE} to s3://kms-public/PUB-p${i}/CACert/cert.pem"
+            if aws --endpoint-url=http://localhost:4566 s3 cp \
                 "${CERT_FILE}" \
-                "s3://kms-public/PUB-p${i}/CACert/cert.pem" \
-                --no-sign-request 2>/dev/null || true
-            log_info "Uploaded certificate for party ${i}"
+                "s3://kms-public/PUB-p${i}/CACert/cert.pem"; then
+                log_info "Successfully uploaded certificate for party ${i}"
+            else
+                log_error "Failed to upload certificate for party ${i}"
+            fi
         else
-            log_warn "Certificate file not found: ${CERT_FILE}"
+            log_error "Certificate file not found: ${CERT_FILE}"
         fi
 
         if [[ -f "${KEY_FILE}" ]]; then
             # Upload private key to public bucket under PUB-p{i}/PrivateKey/
-            aws --endpoint-url=http://localhost:4566 s3 cp \
+            log_info "Uploading private key from ${KEY_FILE} to s3://kms-public/PUB-p${i}/PrivateKey/key.pem"
+            if aws --endpoint-url=http://localhost:4566 s3 cp \
                 "${KEY_FILE}" \
-                "s3://kms-public/PUB-p${i}/PrivateKey/key.pem" \
-                --no-sign-request 2>/dev/null || true
-            log_info "Uploaded private key for party ${i}"
+                "s3://kms-public/PUB-p${i}/PrivateKey/key.pem"; then
+                log_info "Successfully uploaded private key for party ${i}"
+            else
+                log_error "Failed to upload private key for party ${i}"
+            fi
         else
-            log_warn "Private key file not found: ${KEY_FILE}"
+            log_error "Private key file not found: ${KEY_FILE}"
         fi
     done
 
     # Also upload the combined certificate
     if [[ -f "${CERTS_DIR}/cert_combined.pem" ]]; then
-        aws --endpoint-url=http://localhost:4566 s3 cp \
+        if aws --endpoint-url=http://localhost:4566 s3 cp \
             "${CERTS_DIR}/cert_combined.pem" \
-            "s3://kms-public/certs/cert_combined.pem" \
-            --no-sign-request 2>/dev/null || true
-        log_info "Uploaded combined certificate"
+            "s3://kms-public/certs/cert_combined.pem"; then
+            log_info "Successfully uploaded combined certificate"
+        else
+            log_error "Failed to upload combined certificate"
+        fi
     fi
+
+    # Verify uploads by listing the bucket contents
+    log_info "Verifying uploaded certificates in S3:"
+    aws --endpoint-url=http://localhost:4566 s3 ls s3://kms-public/ --recursive
 
     # Stop port forward
     kill ${PF_PID} 2>/dev/null || true
