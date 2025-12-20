@@ -987,6 +987,8 @@ deploy_threshold_mode() {
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --set kmsPeers.id="${i}" \
             --set kmsCore.thresholdMode.thresholdValue="${THRESHOLD_VALUE}" \
+            --set kmsCore.publicVault.s3.prefix="PUB-p${i}" \
+            --set kmsCore.privateVault.s3.prefix="PRIV-p${i}" \
             --set-json "kmsCore.thresholdMode.peersList=${PEERS_JSON}" \
             "${TLS_FLAGS[@]}" \
             --timeout 10m &
