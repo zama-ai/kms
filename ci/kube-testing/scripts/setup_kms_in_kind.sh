@@ -812,21 +812,26 @@ generate_and_upload_tls_certs() {
     kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=localstack \
         -n "${NAMESPACE}" --timeout=5m --kubeconfig "${KUBE_CONFIG}"
 
-    # Port forward localstack for S3 access
-    log_info "Setting up port forward to localstack..."
-    kubectl port-forward -n "${NAMESPACE}" svc/localstack 4566:4566 \
-        --kubeconfig "${KUBE_CONFIG}" > /dev/null 2>&1 &
-    local PF_PID=$!
-    sleep 5
+    # Get localstack pod name for kubectl exec commands
+    local LOCALSTACK_POD
+    LOCALSTACK_POD=$(kubectl get pods -n "${NAMESPACE}" -l app.kubernetes.io/name=localstack \
+        -o jsonpath='{.items[0].metadata.name}' --kubeconfig "${KUBE_CONFIG}")
+    log_info "Using localstack pod: ${LOCALSTACK_POD}"
+
+    # Helper function to run awslocal commands in localstack pod
+    run_awslocal() {
+        kubectl exec -n "${NAMESPACE}" "${LOCALSTACK_POD}" --kubeconfig "${KUBE_CONFIG}" -- \
+            awslocal "$@"
+    }
 
     # Ensure buckets exist (localstack startup script should create them, but verify)
     log_info "Ensuring S3 buckets exist..."
-    aws --endpoint-url=http://localhost:4566 s3 mb s3://kms-public 2>/dev/null || true
-    aws --endpoint-url=http://localhost:4566 s3 mb s3://kms-private 2>/dev/null || true
+    run_awslocal s3 mb s3://kms-public 2>/dev/null || true
+    run_awslocal s3 mb s3://kms-private 2>/dev/null || true
     
     # List buckets to verify
     log_info "Available S3 buckets:"
-    aws --endpoint-url=http://localhost:4566 s3 ls
+    run_awslocal s3 ls
 
     # Upload certificates and private keys to S3 for each party
     log_info "Uploading certificates and keys to S3..."
@@ -836,11 +841,10 @@ generate_and_upload_tls_certs() {
         local KEY_FILE="${CERTS_DIR}/key_${PARTY_NAME}.pem"
 
         if [[ -f "${CERT_FILE}" ]]; then
-            # Upload certificate to public bucket under PUB-p{i}/CACert/
-            log_info "Uploading certificate from ${CERT_FILE} to s3://kms-public/PUB-p${i}/CACert/cert.pem"
-            if aws --endpoint-url=http://localhost:4566 s3 cp \
-                "${CERT_FILE}" \
-                "s3://kms-public/PUB-p${i}/CACert/cert.pem"; then
+            # Copy cert to localstack pod, then upload to S3
+            log_info "Uploading certificate for party ${i} to s3://kms-public/PUB-p${i}/CACert/cert.pem"
+            kubectl cp "${CERT_FILE}" "${NAMESPACE}/${LOCALSTACK_POD}:/tmp/cert_p${i}.pem" --kubeconfig "${KUBE_CONFIG}"
+            if run_awslocal s3 cp /tmp/cert_p${i}.pem "s3://kms-public/PUB-p${i}/CACert/cert.pem"; then
                 log_info "Successfully uploaded certificate for party ${i}"
             else
                 log_error "Failed to upload certificate for party ${i}"
@@ -850,11 +854,10 @@ generate_and_upload_tls_certs() {
         fi
 
         if [[ -f "${KEY_FILE}" ]]; then
-            # Upload private key to public bucket under PUB-p{i}/PrivateKey/
-            log_info "Uploading private key from ${KEY_FILE} to s3://kms-public/PUB-p${i}/PrivateKey/key.pem"
-            if aws --endpoint-url=http://localhost:4566 s3 cp \
-                "${KEY_FILE}" \
-                "s3://kms-public/PUB-p${i}/PrivateKey/key.pem"; then
+            # Copy key to localstack pod, then upload to S3
+            log_info "Uploading private key for party ${i} to s3://kms-public/PUB-p${i}/PrivateKey/key.pem"
+            kubectl cp "${KEY_FILE}" "${NAMESPACE}/${LOCALSTACK_POD}:/tmp/key_p${i}.pem" --kubeconfig "${KUBE_CONFIG}"
+            if run_awslocal s3 cp /tmp/key_p${i}.pem "s3://kms-public/PUB-p${i}/PrivateKey/key.pem"; then
                 log_info "Successfully uploaded private key for party ${i}"
             else
                 log_error "Failed to upload private key for party ${i}"
@@ -866,9 +869,8 @@ generate_and_upload_tls_certs() {
 
     # Also upload the combined certificate
     if [[ -f "${CERTS_DIR}/cert_combined.pem" ]]; then
-        if aws --endpoint-url=http://localhost:4566 s3 cp \
-            "${CERTS_DIR}/cert_combined.pem" \
-            "s3://kms-public/certs/cert_combined.pem"; then
+        kubectl cp "${CERTS_DIR}/cert_combined.pem" "${NAMESPACE}/${LOCALSTACK_POD}:/tmp/cert_combined.pem" --kubeconfig "${KUBE_CONFIG}"
+        if run_awslocal s3 cp /tmp/cert_combined.pem "s3://kms-public/certs/cert_combined.pem"; then
             log_info "Successfully uploaded combined certificate"
         else
             log_error "Failed to upload combined certificate"
@@ -877,10 +879,7 @@ generate_and_upload_tls_certs() {
 
     # Verify uploads by listing the bucket contents
     log_info "Verifying uploaded certificates in S3:"
-    aws --endpoint-url=http://localhost:4566 s3 ls s3://kms-public/ --recursive
-
-    # Stop port forward
-    kill ${PF_PID} 2>/dev/null || true
+    run_awslocal s3 ls s3://kms-public/ --recursive
 
     log_info "TLS certificates generated and uploaded successfully"
 }
