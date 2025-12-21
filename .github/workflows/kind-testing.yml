@@ -323,7 +323,7 @@ jobs:
           # Here we run the tests and capture exit code
           #============================================================
           #
-          cargo nextest run --test kubernetes_test_"${TEST_NAME}" --profile ci --no-fail-fast
+          cargo nextest run --test kubernetes_test_"${TEST_NAME}" --features k8s_tests,testing --profile ci --no-fail-fast
           echo "TEST_EXIT_CODE=$?" >> "${GITHUB_ENV}"
 
           # Collect logs after tests complete
