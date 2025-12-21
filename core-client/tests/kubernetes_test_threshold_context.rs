@@ -126,6 +126,7 @@ async fn create_context_configs(test_path: &Path) -> anyhow::Result<(PathBuf, Pa
         let mpc_port = port + 50;
 
         // Build peer list
+        // Use "localhost" instead of "127.0.0.1" because TLS requires DNS names, not IP addresses
         let mut peers_config = String::new();
         for peer_id in 1..=4 {
             let peer_port = 50000 + peer_id * 100 + 50;
@@ -133,7 +134,7 @@ async fn create_context_configs(test_path: &Path) -> anyhow::Result<(PathBuf, Pa
                 r#"
 [[threshold.peers]]
 party_id = {}
-address = "127.0.0.1"
+address = "localhost"
 mpc_identity = "kms-core-{}.local"
 port = {}
 "#,
@@ -214,6 +215,7 @@ file_storage_path = "{}"
 party_id = {}
 address = "localhost:{}"
 s3_endpoint = "http://localhost:9000/kms-public"
+private_s3_endpoint = "http://localhost:9000/kms-private"
 object_folder = "PUB-p{}"
 private_object_folder = "PRIV-p{}"
 config_path = "{}"
