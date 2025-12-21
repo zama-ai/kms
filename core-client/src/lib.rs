@@ -128,6 +128,12 @@ pub struct CoreConf {
     pub private_object_folder: Option<String>,
 
     #[cfg(feature = "testing")]
+    /// The S3 endpoint for private data (e.g., signing keys).
+    /// If not set, falls back to s3_endpoint.
+    /// This is needed when public and private data are in different buckets (e.g., K8s).
+    pub private_s3_endpoint: Option<String>,
+
+    #[cfg(feature = "testing")]
     /// The path for the KMS configuration file,
     /// this is only needed for testing context switching.
     pub config_path: Option<PathBuf>,

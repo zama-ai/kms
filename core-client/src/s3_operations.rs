@@ -117,8 +117,14 @@ pub(crate) async fn fetch_kms_signing_keys(
     for cur_core in &sim_conf.cores {
         use kms_grpc::rpc_types::PrivDataType;
 
+        // Use private_s3_endpoint if set, otherwise fall back to s3_endpoint
+        let endpoint = cur_core
+            .private_s3_endpoint
+            .as_ref()
+            .unwrap_or(&cur_core.s3_endpoint);
+
         let content = generic_fetch_element(
-            &cur_core.s3_endpoint.clone(),
+            endpoint,
             &format!(
                 "{}/{}",
                 cur_core
