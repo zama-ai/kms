@@ -610,6 +610,7 @@ fn test_context_info(
         external_url: "https://node42.example.com".to_string(),
         ca_cert: None,
         public_storage_url: "https://storage.example.com/node42".to_string(),
+        public_storage_prefix: None,
         extra_verification_keys: vec![],
     };
     let software_version = SoftwareVersion {
@@ -660,6 +661,7 @@ fn test_node_info(
         external_url: test.external_url.to_string(),
         ca_cert: test.ca_cert.clone(), // We currently don't have simple code for generating certificates
         public_storage_url: test.public_storage_url.to_string(),
+        public_storage_prefix: None,
         extra_verification_keys: vec![verf_key2],
     };
 

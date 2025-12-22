@@ -430,6 +430,7 @@ where
                                 ),
                                 ca_cert: pem_string.map(|cert_pem| cert_pem.into_bytes()),
                                 public_storage_url: "".to_string(),
+                                public_storage_prefix: None,
                                 extra_verification_keys: vec![],
                             })
                         }
