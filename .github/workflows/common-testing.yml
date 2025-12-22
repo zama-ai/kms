@@ -297,10 +297,8 @@ jobs:
           RUST_BACKTRACE=full cargo nextest \
             run \
             --debugger "rust-gdb --args" \
-            --test-threads=1 \
-            --profile ci \
-            --no-fail-fast \
             ${ARGS_TESTS:+$ARGS_TESTS} \
+            --profile ci \
             2>&1 | tee nextest-gdb-output.txt
 
       - name: Upload debugger output
