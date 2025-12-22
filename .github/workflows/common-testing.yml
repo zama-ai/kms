@@ -294,7 +294,7 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
-          RUST_BACKTRACE=full cargo nextest --status-level=all \
+          RUST_BACKTRACE=full cargo nextest \
             --debugger "rust-gdb --args" \
             --nocapture \
             --test-threads=1 \
