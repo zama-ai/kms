@@ -90,6 +90,14 @@ pub trait StorageReaderExt: StorageReader {
         epoch_id: &EpochId,
         data_type: &str,
     ) -> anyhow::Result<T>;
+
+    /// Load raw bytes from storage at the given epoch without deserializing.
+    async fn load_bytes_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<Vec<u8>>;
 }
 
 // Trait for KMS public storage reading and writing
@@ -136,6 +144,15 @@ pub trait StorageExt: StorageReaderExt + Storage {
     async fn store_data_at_epoch<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Store raw bytes at the specified epoch without versioning or serialization.
+    async fn store_bytes_at_epoch(
+        &mut self,
+        bytes: &[u8],
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,

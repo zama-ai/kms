@@ -150,6 +150,29 @@ impl StorageReaderExt for RamStorage {
         }
         Ok(res)
     }
+
+    async fn load_bytes_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        let raw_data = match self
+            .internal_storage
+            .get(&((*data_id, Some(*epoch_id)), data_type.to_string()))
+        {
+            Some(raw_data) => raw_data,
+            None => {
+                return Err(anyhow!(
+                    "Could not find data at ({}, {}, {})",
+                    data_id,
+                    epoch_id,
+                    data_type
+                ))
+            }
+        };
+        Ok(raw_data.clone())
+    }
 }
 
 impl Storage for RamStorage {
@@ -232,6 +255,32 @@ impl StorageExt for RamStorage {
         println!(
             "Stored data at epoch: ({}, {}, {})",
             data_id, epoch_id, data_type
+        );
+        Ok(())
+    }
+
+    async fn store_bytes_at_epoch(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        if self
+            .data_exists_at_epoch(data_id, epoch_id, data_type)
+            .await?
+        {
+            tracing::warn!(
+                "The data {}-{} at epoch {} already exists. Keeping the data without overwriting",
+                data_id,
+                data_type,
+                epoch_id
+            );
+            return Ok(());
+        }
+        self.internal_storage.insert(
+            ((*data_id, Some(*epoch_id)), data_type.to_string()),
+            bytes.to_vec(),
         );
         Ok(())
     }
