@@ -179,10 +179,12 @@ jobs:
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
 
-      - name: Install nextest and grcov
+      - name: Install nextest and grcov and gdb
         run: |
           cargo install cargo-nextest --locked
           cargo install grcov --locked
+          sudo apt-get update
+          sudo apt-get install -y gdb
 
       - name: Install Protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
@@ -292,7 +294,23 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
-          RUST_BACKTRACE=full cargo nextest --profile ci run --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+          RUST_BACKTRACE=full cargo nextest --status-level=all \
+            --debugger "rust-gdb --args" \
+            --nocapture \
+            --test-threads=1 \
+            --profile ci \
+            run \
+            --no-fail-fast \
+            ${ARGS_TESTS:+$ARGS_TESTS} \
+            2>&1 | tee nextest-gdb-output.txt
+
+      - name: Upload debugger output
+        if: ${{ steps.tests.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nextest-gdb-output
+          path: nextest-gdb-output.txt
+          if-no-files-found: warn
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
