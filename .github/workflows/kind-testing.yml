@@ -113,7 +113,7 @@ jobs:
           - name: threshold
             deployment-type: threshold
             num-parties: 4
-            enable-tls: true
+            enable-tls: true # This is important to test TLS in K8s deployment
             runner-label: ${{ needs.start-runner-threshold.outputs.label }}
           - name: centralized
             deployment-type: centralized
