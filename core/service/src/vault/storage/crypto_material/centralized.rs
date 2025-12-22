@@ -281,6 +281,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         )
         .await
     }
+
+    /// Invalidate the cache entry for a given request and epoch ID.
+    /// This is useful for testing scenarios where we want to force a re-read from storage.
+    #[cfg(test)]
+    pub async fn invalidate_fhe_keys_cache(&self, req_id: &RequestId, epoch_id: &EpochId) {
+        let mut guarded_fhe_keys = self.fhe_keys.write().await;
+        guarded_fhe_keys.remove(&(*req_id, *epoch_id));
+    }
 }
 
 // we need to manually implement clone, see  https://github.com/rust-lang/rust/issues/26925

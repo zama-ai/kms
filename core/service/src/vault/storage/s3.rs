@@ -353,7 +353,7 @@ impl StorageReaderExt for S3Storage {
             .list_objects_v2()
             .bucket(&self.bucket)
             .delimiter("/")
-            .prefix(format!("{}/{}/{}", &self.prefix, data_type, epoch_id))
+            .prefix(format!("{}/{}/{}/", &self.prefix, data_type, epoch_id))
             .send()
             .await?;
         for cur_res in result.contents() {
@@ -379,12 +379,13 @@ impl StorageReaderExt for S3Storage {
             .prefix(format!("{}/{}/", &self.prefix, data_type))
             .send()
             .await?;
-        for cur_res in result.contents() {
-            if let Some(key) = &cur_res.key {
-                let trimmed_key = key.trim();
-                // here we need to find the directory after data_type which is the epoch id
-                // so we split and take the second last element
-                if let Some(cur_id) = trimmed_key.split('/').nth_back(1) {
+        // With delimiter="/", epoch_ids appear as "directories" in common_prefixes,
+        // not as objects in contents()
+        for cur_res in result.common_prefixes() {
+            if let Some(prefix) = &cur_res.prefix {
+                let trimmed_prefix = prefix.trim().trim_end_matches('/');
+                // The epoch_id is the last segment of the prefix
+                if let Some(cur_id) = trimmed_prefix.split('/').next_back() {
                     ids.insert(EpochId::from_str(cur_id)?);
                 }
             }

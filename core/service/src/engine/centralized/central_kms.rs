@@ -1023,7 +1023,7 @@ pub(crate) mod tests {
         ephemeral_signcryption_key_generation, UnsigncryptFHEPlaintext,
     };
     use crate::dummy_domain;
-    use crate::engine::base::{compute_handle, derive_request_id};
+    use crate::engine::base::{compute_handle, derive_request_id, KmsFheKeyHandles};
     use crate::engine::centralized::central_kms::RealCentralizedKms;
     use crate::engine::traits::Kms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
@@ -1502,34 +1502,57 @@ pub(crate) mod tests {
         let config = ConfigBuilder::with_custom_parameters(pbs_params);
         let wrong_client_key = tfhe::ClientKey::generate(config);
 
-        // delete the existing key
-        let private_storage = inner.crypto_storage.inner.private_storage.clone();
-        let mut private_storage_guard = private_storage.lock().await;
-        delete_at_request_and_epoch_id(
-            &mut (*private_storage_guard),
-            key_id,
-            epoch_id,
-            &PrivDataType::FhePrivateKey.to_string(),
-        )
-        .await
-        .unwrap();
-
-        // write the wrong key
-        store_versioned_at_request_and_epoch_id(
-            &mut (*private_storage_guard),
-            key_id,
-            epoch_id,
-            &wrong_client_key,
-            &PrivDataType::FhePrivateKey.to_string(),
-        )
-        .await
-        .unwrap();
-
+        // First refresh the cache from storage (in case it's not populated yet)
         inner
             .crypto_storage
             .refresh_centralized_fhe_keys(key_id, epoch_id)
             .await
             .unwrap();
+
+        // Read existing key handles from cache to preserve other fields
+        let existing_handles = inner
+            .crypto_storage
+            .read_cloned_centralized_fhe_keys_from_cache(key_id, epoch_id)
+            .await
+            .unwrap();
+
+        // Create new handles with the wrong client key but same metadata
+        let wrong_handles = KmsFheKeyHandles {
+            client_key: wrong_client_key,
+            decompression_key: existing_handles.decompression_key,
+            public_key_info: existing_handles.public_key_info,
+        };
+
+        {
+            // delete the existing key and write wrong handles
+            let private_storage = inner.crypto_storage.inner.private_storage.clone();
+            let mut private_storage_guard = private_storage.lock().await;
+            delete_at_request_and_epoch_id(
+                &mut (*private_storage_guard),
+                key_id,
+                epoch_id,
+                &PrivDataType::FhePrivateKey.to_string(),
+            )
+            .await
+            .unwrap();
+
+            // write the wrong key handles
+            store_versioned_at_request_and_epoch_id(
+                &mut (*private_storage_guard),
+                key_id,
+                epoch_id,
+                &wrong_handles,
+                &PrivDataType::FhePrivateKey.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+
+        // Invalidate the cache so that the next refresh will re-read from storage
+        inner
+            .crypto_storage
+            .invalidate_fhe_keys_cache(key_id, epoch_id)
+            .await;
     }
 
     async fn simulate_user_decrypt(
@@ -1606,6 +1629,11 @@ pub(crate) mod tests {
             keys
         };
         let mut rng = kms.base_kms.new_rng().await;
+        kms.crypto_storage
+            .refresh_centralized_fhe_keys(key_id, epoch_id)
+            .await
+            .unwrap();
+
         let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage
                 .read_cloned_centralized_fhe_keys_from_cache(key_id, epoch_id)

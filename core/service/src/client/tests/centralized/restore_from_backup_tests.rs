@@ -10,7 +10,8 @@ use crate::{
         purge, purge_backup, purge_priv, purge_pub, EncryptionConfig, TestingPlaintext,
     },
     vault::storage::{
-        delete_all_at_request_id, file::FileStorage, make_storage, StorageReader, StorageType,
+        delete_all_at_request_id, file::FileStorage, make_storage, StorageReader, StorageReaderExt,
+        StorageType,
     },
 };
 use kms_grpc::{
@@ -100,7 +101,7 @@ async fn test_insecure_central_autobackup_after_deletion() {
     let backup_storage = make_storage(None, StorageType::BACKUP, None, None).unwrap();
     // Validate that the backup is constructed again
     assert!(backup_storage
-        .data_exists(&key_id, &PrivDataType::FhePrivateKey.to_string())
+        .data_exists_at_epoch(&key_id, &epoch_id, &PrivDataType::FhePrivateKey.to_string())
         .await
         .unwrap());
     purge_priv(None, &[None]).await;
