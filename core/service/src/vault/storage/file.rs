@@ -103,9 +103,15 @@ impl FileStorage {
     }
 
     async fn item_exists_at_path(&self, path: &Path) -> anyhow::Result<bool> {
-        tokio::fs::try_exists(path)
-            .await
-            .map_err(|_| anyhow_error_and_log(format!("Path {} does not exist", path.display())))
+        match tokio::fs::try_exists(path).await {
+            Ok(exists) => Ok(exists),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(anyhow_error_and_log(format!(
+                "Error checking path {}: {}",
+                path.display(),
+                e
+            ))),
+        }
     }
 
     /// Find all data under a given path.
@@ -247,6 +253,22 @@ impl StorageReaderExt for FileStorage {
     ) -> anyhow::Result<HashSet<RequestId>> {
         all_data_ids_from_all_epochs_impl(self, data_type).await
     }
+
+    async fn load_bytes_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        let path = self.item_path_at_epoch(data_id, epoch_id, data_type);
+        tokio::fs::read(&path).await.map_err(|e| {
+            anyhow_error_and_log(format!(
+                "Could not read from path {}: {}",
+                path.display(),
+                e
+            ))
+        })
+    }
 }
 
 impl Storage for FileStorage {
@@ -336,6 +358,32 @@ impl StorageExt for FileStorage {
                 tracing::warn!("Could not write to path {}: {}", path.display(), e);
                 e
             })?;
+        Ok(())
+    }
+
+    async fn store_bytes_at_epoch(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        let path = self.item_path_at_epoch(data_id, epoch_id, data_type);
+        self.setup_dirs(&path).await?;
+        if self
+            .data_exists_at_epoch(data_id, epoch_id, data_type)
+            .await?
+        {
+            tracing::warn!(
+                "The path {} already exists. Keeping the data without overwriting",
+                path.display()
+            );
+            return Ok(());
+        }
+        write_bytes(path.as_path(), bytes).await.map_err(|e| {
+            tracing::warn!("Could not write to path {}: {}", path.display(), e);
+            e
+        })?;
         Ok(())
     }
 
@@ -524,6 +572,26 @@ pub mod tests {
         let path = temp_dir.path();
         let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
         test_all_data_ids_from_all_epochs(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_store_load_bytes_at_epoch_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path();
+        let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
+        test_store_load_bytes_at_epoch(&mut storage).await;
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_store_bytes_at_epoch_does_not_overwrite_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path();
+        let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
+        test_store_bytes_at_epoch_does_not_overwrite(&mut storage).await;
+        assert!(logs_contain(
+            "already exists. Keeping the data without overwriting"
+        ));
     }
 
     #[tokio::test]

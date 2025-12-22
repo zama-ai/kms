@@ -158,6 +158,29 @@ impl StorageReaderExt for RamStorage {
     ) -> anyhow::Result<HashSet<RequestId>> {
         all_data_ids_from_all_epochs_impl(self, data_type).await
     }
+
+    async fn load_bytes_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        let raw_data = match self
+            .internal_storage
+            .get(&((*data_id, Some(*epoch_id)), data_type.to_string()))
+        {
+            Some(raw_data) => raw_data,
+            None => {
+                return Err(anyhow!(
+                    "Could not find data at ({}, {}, {})",
+                    data_id,
+                    epoch_id,
+                    data_type
+                ))
+            }
+        };
+        Ok(raw_data.clone())
+    }
 }
 
 impl Storage for RamStorage {
@@ -240,6 +263,32 @@ impl StorageExt for RamStorage {
         println!(
             "Stored data at epoch: ({}, {}, {})",
             data_id, epoch_id, data_type
+        );
+        Ok(())
+    }
+
+    async fn store_bytes_at_epoch(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        if self
+            .data_exists_at_epoch(data_id, epoch_id, data_type)
+            .await?
+        {
+            tracing::warn!(
+                "The data {}-{} at epoch {} already exists. Keeping the data without overwriting",
+                data_id,
+                data_type,
+                epoch_id
+            );
+            return Ok(());
+        }
+        self.internal_storage.insert(
+            ((*data_id, Some(*epoch_id)), data_type.to_string()),
+            bytes.to_vec(),
         );
         Ok(())
     }
@@ -359,6 +408,12 @@ pub mod tests {
         test_all_data_ids_from_all_epochs(&mut storage).await;
     }
 
+    #[tokio::test]
+    async fn test_store_load_bytes_at_epoch_ram() {
+        let mut storage = RamStorage::new();
+        test_store_load_bytes_at_epoch(&mut storage).await;
+    }
+
     /// Test that files don't get silently overwritten
     #[tracing_test::traced_test]
     #[tokio::test]
@@ -366,6 +421,16 @@ pub mod tests {
         let mut storage = RamStorage::new();
         test_store_bytes_does_not_overwrite_existing_bytes(&mut storage).await;
         test_store_data_does_not_overwrite_existing_data(&mut storage).await;
+        assert!(logs_contain(
+            "already exists. Keeping the data without overwriting"
+        ));
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_overwrite_logic_ram_on_epoch() {
+        let mut storage = RamStorage::new();
+        test_store_bytes_at_epoch_does_not_overwrite(&mut storage).await;
         assert!(logs_contain(
             "already exists. Keeping the data without overwriting"
         ));

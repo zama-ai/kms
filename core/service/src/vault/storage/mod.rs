@@ -138,6 +138,14 @@ pub trait StorageReaderExt: StorageReader {
         &self,
         data_type: &str,
     ) -> anyhow::Result<HashSet<RequestId>>;
+
+    /// Load raw bytes from storage at the given epoch without deserializing.
+    async fn load_bytes_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<Vec<u8>>;
 }
 
 /// Trait for KMS storage reading and writing.
@@ -186,6 +194,15 @@ pub trait StorageExt: StorageReaderExt + Storage {
     async fn store_data_at_epoch<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Store raw bytes at the specified epoch without versioning or serialization.
+    async fn store_bytes_at_epoch(
+        &mut self,
+        bytes: &[u8],
         data_id: &RequestId,
         epoch_id: &EpochId,
         data_type: &str,
@@ -1017,6 +1034,111 @@ pub mod tests {
             .unwrap();
         storage.delete_data(&id4, &data_type).await.unwrap();
         storage.delete_data(&id5, &data_type).await.unwrap();
+    }
+
+    pub async fn test_store_load_bytes_at_epoch<S: StorageExt>(storage: &mut S) {
+        let mut rng = AesRng::seed_from_u64(54321);
+        let epoch1 = EpochId::new_random(&mut rng);
+        let epoch2 = EpochId::new_random(&mut rng);
+
+        let bytes1 = vec![1, 2, 3, 4, 5];
+        let bytes2 = vec![10, 20, 30];
+        let bytes3 = vec![100, 200];
+
+        let id1 = derive_request_id("BYTES_EPOCH_1").unwrap();
+        let id2 = derive_request_id("BYTES_EPOCH_2").unwrap();
+
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+
+        // Store bytes at different epochs
+        storage
+            .store_bytes_at_epoch(&bytes1, &id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_bytes_at_epoch(&bytes2, &id1, &epoch2, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_bytes_at_epoch(&bytes3, &id2, &epoch1, &data_type)
+            .await
+            .unwrap();
+
+        // Load bytes and verify
+        let loaded1 = storage
+            .load_bytes_at_epoch(&id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(loaded1, bytes1);
+
+        let loaded2 = storage
+            .load_bytes_at_epoch(&id1, &epoch2, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(loaded2, bytes2);
+
+        let loaded3 = storage
+            .load_bytes_at_epoch(&id2, &epoch1, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(loaded3, bytes3);
+
+        // Verify loading non-existent data fails
+        let result = storage.load_bytes_at_epoch(&id2, &epoch2, &data_type).await;
+        assert!(result.is_err());
+
+        // Clean up
+        storage
+            .delete_data_at_epoch(&id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&id1, &epoch2, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&id2, &epoch1, &data_type)
+            .await
+            .unwrap();
+    }
+
+    pub async fn test_store_bytes_at_epoch_does_not_overwrite<S: StorageExt>(storage: &mut S) {
+        let mut rng = AesRng::seed_from_u64(11111);
+        let epoch = EpochId::new_random(&mut rng);
+
+        let original_bytes = vec![1, 2, 3, 4, 5];
+        let new_bytes = vec![9, 8, 7, 6, 5];
+
+        let data_id = derive_request_id("BYTES_EPOCH_OVERWRITE").unwrap();
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+
+        // Store original bytes
+        storage
+            .store_bytes_at_epoch(&original_bytes, &data_id, &epoch, &data_type)
+            .await
+            .unwrap();
+
+        // Attempt to overwrite with different bytes
+        storage
+            .store_bytes_at_epoch(&new_bytes, &data_id, &epoch, &data_type)
+            .await
+            .unwrap();
+
+        // Verify original bytes are preserved
+        let loaded = storage
+            .load_bytes_at_epoch(&data_id, &epoch, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(
+            loaded, original_bytes,
+            "Bytes at epoch should not be overwritten"
+        );
+
+        // Clean up
+        storage
+            .delete_data_at_epoch(&data_id, &epoch, &data_type)
+            .await
+            .unwrap();
     }
 
     #[test]

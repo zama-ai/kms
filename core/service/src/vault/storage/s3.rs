@@ -416,6 +416,23 @@ impl StorageReaderExt for S3Storage {
     ) -> anyhow::Result<HashSet<RequestId>> {
         all_data_ids_from_all_epochs_impl(self, data_type).await
     }
+
+    async fn load_bytes_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        let key = &self.item_key_at_epoch(data_id, epoch_id, data_type);
+
+        tracing::info!(
+            "Reading bytes from bucket {} under key {}",
+            &self.bucket,
+            key
+        );
+
+        self.get_with_cache(key).await
+    }
 }
 
 impl Storage for S3Storage {
@@ -495,6 +512,38 @@ impl StorageExt for S3Storage {
         }
         let key = &self.item_key_at_epoch(data_id, epoch_id, data_type);
         self.store_data_at_key(key, data).await
+    }
+
+    async fn store_bytes_at_epoch(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        if self
+            .data_exists_at_epoch(data_id, epoch_id, data_type)
+            .await?
+        {
+            tracing::warn!(
+                "The data {}-{} at epoch {} already exists. Keeping the data without overwriting",
+                data_id,
+                data_type,
+                epoch_id
+            );
+            return Ok(());
+        }
+        let key = &self.item_key_at_epoch(data_id, epoch_id, data_type);
+
+        tracing::info!("Storing bytes in bucket {} under key {}", &self.bucket, key);
+
+        // Store in S3 FIRST - only update cache if S3 operation succeeds
+        s3_put_blob(&self.s3_client, &self.bucket, key, bytes.to_vec()).await?;
+
+        // Update cache ONLY after successful S3 storage
+        self.update_cache(key, bytes).await;
+
+        Ok(())
     }
 
     async fn delete_data_at_epoch(
@@ -784,6 +833,51 @@ mod tests {
         .unwrap();
         test_store_bytes_does_not_overwrite_existing_bytes(&mut pub_storage).await;
         test_store_data_does_not_overwrite_existing_data(&mut pub_storage).await;
+        assert!(logs_contain(
+            "already exists. Keeping the data without overwriting"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_store_load_bytes_at_epoch_s3() {
+        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
+            .await
+            .unwrap();
+        let mut rng = AesRng::from_random_seed();
+        let prefix = Alphanumeric.sample_string(&mut rng, 10);
+        let mut priv_storage = S3Storage::new(
+            s3_client,
+            BUCKET_NAME.to_string(),
+            StorageType::PRIV,
+            Some(&prefix),
+            None,
+        )
+        .unwrap();
+        crate::vault::storage::tests::test_store_load_bytes_at_epoch(&mut priv_storage).await;
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_store_bytes_at_epoch_does_not_overwrite_s3() {
+        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
+            .await
+            .unwrap();
+        let mut rng = AesRng::from_random_seed();
+        let prefix = Alphanumeric.sample_string(&mut rng, 10);
+        let mut priv_storage = S3Storage::new(
+            s3_client,
+            BUCKET_NAME.to_string(),
+            StorageType::PRIV,
+            Some(&prefix),
+            None,
+        )
+        .unwrap();
+        crate::vault::storage::tests::test_store_bytes_at_epoch_does_not_overwrite(
+            &mut priv_storage,
+        )
+        .await;
         assert!(logs_contain(
             "already exists. Keeping the data without overwriting"
         ));
