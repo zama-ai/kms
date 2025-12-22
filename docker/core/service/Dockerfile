@@ -29,7 +29,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     ./core/service/bin
 
 
-ARG YQ_VERSION=v4.48.2
+ARG YQ_VERSION=v4.50.1
 # Overridable arg to allow building for different architectures
 ARG TARGETARCH=amd64
 RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH} && \
@@ -81,7 +81,7 @@ CMD ["/bin/bash", "/app/kms/core/service/bin/init_enclave.sh"]
 
 ################################################################
 # Build the grpc-health-probe binary for development
-FROM cgr.dev/zama.ai/golang:1.25.4 AS go-builder
+FROM cgr.dev/zama.ai/golang:1.25 AS go-builder
 
 ARG GRPC_HEALTH_PROBE_VERSION=v0.4.42
 
