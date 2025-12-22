@@ -458,7 +458,7 @@ jobs:
             MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly\"}"
           else
             # MATRIX="${MATRIX}{\"args-tests\":\"--release test_user_decryption_threshold_nightly\"},{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly\"}"
-            MATRIX="${MATRIX}{\"args-tests\":\"--release test_user_decryption_threshold_nightly\"}"
+            MATRIX="${MATRIX}{\"args-tests\":\"--release test_user_decryption_threshold_nightly::case_2\"}"
           fi
           MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
