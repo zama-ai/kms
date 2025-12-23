@@ -4,13 +4,13 @@
 name: pr-preview-deploy
 
 on:
-  pull_request:
-  # workflow_call:
-  #   inputs:
-  #     image_tag:
-  #       description: 'Image tag'
-  #       required: true
-  #       type: string
+  # pull_request:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: 'Image tag'
+        required: true
+        type: string
 
 permissions: {}
 
@@ -25,7 +25,7 @@ jobs:
 
     # Environment variables used throughout the job
     env:
-      NAMESPACE: 'kms-ci-${{ github.actor }}-${{ github.ref }}'
+      NAMESPACE: 'kms-ci-${{ github.actor }}-${{ github.event.pull_request.number }}'
       TKMS_INFRA_CHART_VERSION: '0.3.2'
       SYNC_SECRETS_CHART_VERSION: '0.2.1'
       KMS_CORE_IMAGE_TAG: 'v0.12.5'
@@ -104,12 +104,6 @@ jobs:
       - name: setup kubectl
         uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
 
-      - name: Setup Vcluster CLI
-        run: |
-          curl -L -o vcluster "https://github.com/loft-sh/vcluster/releases/latest/download/vcluster-linux-amd64" && \
-          sudo install -c -m 0755 vcluster /usr/local/bin && \
-          rm -f vcluster
-          vcluster version
 
       # ======================================================================
       # KUBERNETES & HELM SETUP
@@ -129,13 +123,9 @@ jobs:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
 
-      - name: Setup Vcluster
+      - name: Create namespace
         run: |
-          vcluster create "vcluster-${NAMESPACE}" \
-            --namespace "vcluster-${NAMESPACE}" \
-            --kubernetes-version "v1.31.0"
-          vcluster connect "vcluster-${NAMESPACE}" --namespace "vcluster-${NAMESPACE}"
-          kubectl get namespace
+          kubectl create namespace "${NAMESPACE}"
 
       # ======================================================================
       # REGISTRY & SECRETS CONFIGURATION
@@ -314,65 +304,3 @@ jobs:
             kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
               -n "${NAMESPACE}" --timeout=600s
           fi
-
-      # ======================================================================
-      # SAVE ARGO WORKFLOW LOGS
-      # ======================================================================
-      - name: Upload Argo workflow logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: argo-workflow-logs.txt
-          path: argo-workflow-logs.txt
-          retention-days: 30
-
-
-      # ======================================================================
-      # CLEANUP
-      # ======================================================================
-      - name: Cleanup
-        if: always()
-        run: |
-          ###################################################################
-          # Clean up all resources to avoid unnecessary costs
-          ###################################################################
-          echo "Starting cleanup of KMS resources..."
-
-          # Uninstall KMS Core instances
-          echo "Uninstalling KMS Core instances..."
-          if [[ ${DEPLOYMENT_TYPE} == "threshold" || ${DEPLOYMENT_TYPE} == "thresholdWithEnclave" ]]; then
-            for i in {1..13}; do
-              echo "Uninstalling KMS Core instance ${i}/13..."
-              helm uninstall "kms-service-threshold-${i}-${PATH_SUFFIX}" -n "${NAMESPACE}" || true
-            done
-          fi
-          if [[ ${DEPLOYMENT_TYPE} == "centralized" || ${DEPLOYMENT_TYPE} == "centralizedWithEnclave" ]]; then
-            echo "Uninstalling KMS Core instance..."
-            helm uninstall "kms-service-centralized-${PATH_SUFFIX}" -n "${NAMESPACE}" || true
-          fi
-
-          # Clean up ConfigMaps
-          echo "Cleaning up ConfigMaps..."
-          kubectl delete cm -l app=kms-core -n "${NAMESPACE}" || true
-          kubectl delete cm -l app=kms-core-client -n "${NAMESPACE}" || true
-
-          # Clean up StatefulSets
-          echo "Cleaning up StatefulSets..."
-          kubectl delete sts -l app=kms-core-client -n "${NAMESPACE}" || true
-
-          # Clean up Jobs
-          echo "Cleaning up Jobs..."
-          kubectl delete job -l app=kms-core -n "${NAMESPACE}" || true
-          kubectl delete job -l app=kms-threshold-init-job -n "${NAMESPACE}" || true
-
-          # Clean up workflow
-          echo "Cleaning up workflow..."
-          argo delete @latest -n kms-ci -n "${NAMESPACE}" || true
-
-          # Uninstall Helm releases
-          echo "Uninstalling Helm releases..."
-          helm uninstall kms-core-init -n "${NAMESPACE}" || true
-          helm uninstall tkms-infra -n "${NAMESPACE}" || true
-          helm uninstall sync-secrets -n "${NAMESPACE}" || true
-
-          echo "✅ Cleanup completed successfully"
