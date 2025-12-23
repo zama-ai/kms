@@ -29,6 +29,7 @@ use crate::{
             },
         },
     },
+    consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL},
     cryptography::internal_crypto_types::WrappedDKGParams,
     dummy_domain,
     engine::{
@@ -55,11 +56,27 @@ pub(crate) async fn reshare(
 ) {
     let req_preproc: RequestId =
         derive_request_id(&format!("full_dkg_preproc_{amount_parties}_{parameters:?}")).unwrap();
-    purge(None, None, &req_preproc, amount_parties).await;
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    purge(
+        None,
+        None,
+        &req_preproc,
+        pub_storage_prefixes,
+        priv_storage_prefixes,
+    )
+    .await;
 
     let req_key: RequestId =
         derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameters:?}")).unwrap();
-    purge(None, None, &req_key, amount_parties).await;
+    purge(
+        None,
+        None,
+        &req_key,
+        pub_storage_prefixes,
+        priv_storage_prefixes,
+    )
+    .await;
 
     let dkg_param: WrappedDKGParams = parameters.into();
     // Preproc should use all the tokens in the bucket,

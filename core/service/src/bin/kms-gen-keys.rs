@@ -34,7 +34,6 @@ use observability::telemetry::init_tracing;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use strum::EnumIs;
-use threshold_fhe::execution::runtime::party::Role;
 use url::Url;
 
 #[derive(Parser)]
@@ -86,13 +85,18 @@ struct Args {
     #[clap(long, default_value = None)]
     private_file_path: Option<PathBuf>,
     #[clap(long, default_value = None)]
+    private_file_prefix: Option<String>,
+    #[clap(long, default_value = None)]
     private_s3_bucket: Option<String>,
     #[clap(long, default_value = None)]
     private_s3_prefix: Option<String>,
+
     #[clap(long, default_value_t = StorageCommand::File, value_enum)]
     public_storage: StorageCommand,
     #[clap(long, default_value = None)]
     public_file_path: Option<PathBuf>,
+    #[clap(long, default_value = None)]
+    public_file_prefix: Option<String>,
     #[clap(long, default_value = None)]
     public_s3_bucket: Option<String>,
     #[clap(long, default_value = None)]
@@ -303,21 +307,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut pub_storages = Vec::with_capacity(amount_storages);
     let mut priv_vaults = Vec::with_capacity(amount_storages);
-    for i in 1..=amount_storages {
-        let party_role = match args.mode {
-            Mode::Centralized { write_privkey: _ } => None,
-            Mode::Threshold {
-                signing_key_party_id: _,
-                num_parties: _,
-                tls_subject: _,
-                tls_wildcard: _,
-            } => Some(Role::indexed_from_one(i)),
-        };
+    for _i in 1..=amount_storages {
         let pub_proxy_storage = make_storage(
             match args.public_storage {
                 StorageCommand::File => args.public_file_path.as_ref().map(|path| {
                     StorageConf::File(FileStorage {
                         path: path.to_path_buf(),
+                        prefix: args.public_file_prefix.clone(),
                     })
                 }),
                 StorageCommand::S3 => Some(StorageConf::S3(S3Storage {
@@ -330,7 +326,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })),
             },
             StorageType::PUB,
-            party_role,
             None,
             s3_client.clone(),
         )
@@ -364,6 +359,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     StorageCommand::File => args.private_file_path.as_ref().map(|path| {
                         StorageConf::File(FileStorage {
                             path: path.to_path_buf(),
+                            prefix: args.private_file_prefix.clone(),
                         })
                     }),
                     StorageCommand::S3 => Some(StorageConf::S3(S3Storage {
@@ -376,7 +372,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     })),
                 },
                 StorageType::PRIV,
-                party_role,
                 None,
                 s3_client.clone(),
             )

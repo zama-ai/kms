@@ -31,16 +31,16 @@ jobs:
           toolchain: stable
           cache: false
 
-      # to calculate hash use `curl -s https://api.github.com/repos/cargo-bins/cargo-binstall/git/refs/tags/v1.10.14 | jq -r .object.sha`
+      # to calculate hash use `curl -s https://api.github.com/repos/cargo-bins/cargo-binstall/git/refs/tags/v1.16.4 | jq -r .object.sha`
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@84ca29d5c1719e79e23b6af147555a8f4dac79d6 # v1.10.14
+        uses: cargo-bins/cargo-binstall@ea60fcf749c6a52a729e0eaabb5eb33391d44823 # v1.16.4
 
       # Use cargo-binstall to efficiently install required cargo tools with versiones specified
       - name: Install cargo tools
         run: |
           cargo binstall --no-confirm --force \
-            cargo-audit@0.21.0 \
-            cargo-deny@0.16.2
+            cargo-audit@0.22.0 \
+            cargo-deny@0.18.9
 
       - name: Check that Cargo.lock is the source of truth
         run: cargo update -w --locked

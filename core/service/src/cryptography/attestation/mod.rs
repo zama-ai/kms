@@ -292,7 +292,12 @@ impl AutoRefreshCertResolver {
             security_module.clone(),
             private_vault_root_key_measurements.clone(),
         )
-        .await?;
+        .await
+        .map_err(|e| anyhow::anyhow!("Could not issue initial TLS certificate: {e}"))?;
+        tracing::info!(
+            "Issued initial TLS certificate valid for {} s",
+            expiration.as_secs()
+        );
         let certified_key_with_expiration = Arc::new(RwLock::new((certified_key, expiration)));
         let resolver = Self {
             certified_key_with_expiration: certified_key_with_expiration.clone(),
@@ -336,7 +341,7 @@ impl AutoRefreshCertResolver {
                 {
                     Ok((certified_key, expiration)) => {
                         tracing::info!(
-                            "Issued new TLS certificate valid for {} s",
+                            "Issued renewed TLS certificate valid for {} s",
                             expiration.as_secs()
                         );
 

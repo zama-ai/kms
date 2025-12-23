@@ -328,21 +328,21 @@ spec:
               --aws-s3-endpoint {{ .Values.minio.endpoint }} \
             {{- end }}
               --aws-region {{ .Values.kmsCore.aws.region }} \
-            {{- if .Values.kmsCore.publicVault.s3.enabled -}}
+            {{- if .Values.kmsCore.publicVault.s3.enabled }}
               --public-storage s3 \
               --public-s3-bucket "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.publicVault.s3.bucket }}}" \
               {{- if .Values.kmsCore.publicVault.s3.prefix }}
-              --public-s3-prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.prefix }}}" \
+              --public-s3-prefix "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.prefix }}}" \
               {{- end }}
             {{- else }}
               --public-storage file \
               --public-file-path "/keys" \
             {{- end }}
-            {{- if .Values.kmsCore.privateVault.s3.enabled -}}
+            {{- if .Values.kmsCore.privateVault.s3.enabled }}
               --private-storage s3 \
               --private-s3-bucket "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.privateVault.s3.bucket }}}" \
               {{- if .Values.kmsCore.privateVault.s3.prefix }}
-              --private-s3-prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:=={{ .Values.kmsCore.privateVault.s3.prefix }}}" \
+              --private-s3-prefix "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.privateVault.s3.prefix }}}" \
               {{- end }}
             {{- else }}
               --private-storage file \
@@ -709,20 +709,21 @@ spec:
           readinessProbe:
             grpc:
               port: {{ .Values.kmsCore.ports.client }}
-            failureThreshold: 30
-            initialDelaySeconds: 10
-            periodSeconds: 5
+            failureThreshold: {{ .Values.kmsCore.readinessProbe.failureThreshold }}
+            initialDelaySeconds: {{ .Values.kmsCore.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.kmsCore.readinessProbe.periodSeconds }}
           startupProbe:
             grpc:
               port: {{ .Values.kmsCore.ports.client }}
-            failureThreshold: 10
-            initialDelaySeconds: 30
-            periodSeconds: 10
+            failureThreshold: {{ .Values.kmsCore.startupProbe.failureThreshold }}
+            initialDelaySeconds: {{ .Values.kmsCore.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.kmsCore.startupProbe.periodSeconds }}
           livenessProbe:
             grpc:
               port: {{ .Values.kmsCore.ports.client }}
-            initialDelaySeconds: 10
-            timeoutSeconds: 5
+            failureThreshold: {{ .Values.kmsCore.livenessProbe.failureThreshold }}
+            initialDelaySeconds: {{ .Values.kmsCore.livenessProbe.initialDelaySeconds }}
+            timeoutSeconds: {{ .Values.kmsCore.livenessProbe.timeoutSeconds }}
           {{- if .Values.kmsCore.nitroEnclave.enabled }}
           lifecycle:
             preStop:

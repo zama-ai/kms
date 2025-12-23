@@ -13,8 +13,6 @@ on:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
-      NPM_TOKEN:
-        required: false
 
 env:
   NPM_TAG: 'test'
@@ -109,9 +107,8 @@ jobs:
           echo "# node-tkms" > pkg/README.md
 
       - name: NPM publish Node package
-        uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
+        uses: JS-DevTools/npm-publish@7f8fe47b3bea1be0c3aec2b717c5ec1f3e03410b # v4.1.1
         with:
-          token: ${{ secrets.NPM_TOKEN }}
           package: ./core/service/pkg/package.json
           dry-run: true
           provenance: true
@@ -127,9 +124,8 @@ jobs:
           echo "# tkms" > pkg/README.md
 
       - name: NPM publish web package
-        uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
+        uses: JS-DevTools/npm-publish@7f8fe47b3bea1be0c3aec2b717c5ec1f3e03410b # v4.1.1
         with:
-          token: ${{ secrets.NPM_TOKEN }}
           package: ./core/service/pkg/package.json
           dry-run: true
           provenance: true

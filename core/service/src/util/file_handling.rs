@@ -41,7 +41,12 @@ pub async fn safe_read_element_versioned<
 >(
     file_path: P,
 ) -> anyhow::Result<T> {
-    let mut buf = std::io::Cursor::new(tokio::fs::read(file_path).await?);
+    let mut buf = std::io::Cursor::new(tokio::fs::read(file_path.as_ref()).await.map_err(|e| {
+        anyhow::anyhow!(
+            "failed to read file path at {} due to {e}",
+            file_path.as_ref().display()
+        )
+    })?);
     safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
 }
 

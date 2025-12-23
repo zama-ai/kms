@@ -24,7 +24,7 @@ use tfhe::{
     FheUint8, HlCompactable, HlCompressible, HlExpandable, HlSquashedNoiseCompressible, ServerKey,
     Unversionize, Versionize,
 };
-use threshold_fhe::execution::{runtime::party::Role, tfhe_internals::utils::expanded_encrypt};
+use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
 
 fn enc_and_serialize_ctxt<M, T>(
     msg: M,
@@ -274,65 +274,58 @@ impl From<tfhe::integer::bigint::U256> for TestingPlaintext {
     }
 }
 
-async fn get_storage(
+async fn get_pub_storage(
     pub_path: Option<&Path>,
     data_id: &RequestId,
     data_type: &str,
-    party_id: usize,
+    storage_prefix: Option<&str>,
 ) -> FileStorage {
     // Try first with centralized storage
-    let mut storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-    if storage.data_exists(data_id, data_type).await.unwrap() {
-        tracing::info!("Using centralized storage at {}/{}", data_id, data_type);
-    } else {
-        // Try with the threshold storage
-        storage = FileStorage::new(
-            pub_path,
-            StorageType::PUB,
-            Some(Role::indexed_from_one(party_id)),
-        )
-        .unwrap();
-        tracing::info!(
-            "Fallback to threshold file storage with path {:?}",
-            storage.root_dir()
+    let storage = FileStorage::new(pub_path, StorageType::PUB, storage_prefix).unwrap();
+    if !storage.data_exists(data_id, data_type).await.unwrap() {
+        tracing::error!(
+            "Data does not exist for id={}, type={}, prefix={:?}",
+            data_id,
+            data_type,
+            storage_prefix
         );
     }
     storage
 }
 
-pub async fn load_material_from_storage<T>(
+pub async fn load_material_from_pub_storage<T>(
     pub_path: Option<&Path>,
     key_id: &RequestId,
     data_type: PubDataType,
-    party_id: usize,
+    storage_prefix: Option<&str>,
 ) -> T
 where
     T: DeserializeOwned + Unversionize + Named + Send,
     <T as tfhe_versionable::VersionizeOwned>::VersionedOwned: Send,
 {
-    let storage = get_storage(pub_path, key_id, &data_type.to_string(), party_id).await;
+    let storage = get_pub_storage(pub_path, key_id, &data_type.to_string(), storage_prefix).await;
     let material: T = read_versioned_at_request_id(&storage, key_id, &data_type.to_string())
         .await
         .unwrap();
     material
 }
 
-pub async fn load_pk_from_storage(
+pub async fn load_pk_from_pub_storage(
     pub_path: Option<&Path>,
     key_id: &RequestId,
-    party_id: usize,
+    storage_prefix: Option<&str>,
 ) -> FhePublicKey {
-    let storage = get_storage(
+    let storage = get_pub_storage(
         pub_path,
         key_id,
         &PubDataType::PublicKey.to_string(),
-        party_id,
+        storage_prefix,
     )
     .await;
     tracing::info!("loading pk from storage root dir: {:?}", storage.root_dir());
     let wrapped_pk = read_pk_at_request_id(&storage, key_id)
         .await
-        .expect("load_pk_from_storage failed");
+        .expect("load_pk_from_pub_storage failed");
     let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
     pk
 }
@@ -342,13 +335,14 @@ pub async fn compute_cipher_from_stored_key(
     pub_path: Option<&Path>,
     msg: TestingPlaintext,
     key_id: &RequestId,
-    party_id: usize,
+    storage_prefix: Option<&str>,
     enc_config: EncryptionConfig,
 ) -> (Vec<u8>, CiphertextFormat, FheTypes) {
-    let pk = load_pk_from_storage(pub_path, key_id, party_id).await;
+    let pk = load_pk_from_pub_storage(pub_path, key_id, storage_prefix).await;
     //Setting the server key as we may need id to expand the ciphertext during compute_cipher
     let server_key: ServerKey =
-        load_material_from_storage(pub_path, key_id, PubDataType::ServerKey, party_id).await;
+        load_material_from_pub_storage(pub_path, key_id, PubDataType::ServerKey, storage_prefix)
+            .await;
 
     // compute_cipher can take a long time since it may do SnS
     let (send, recv) = tokio::sync::oneshot::channel();
@@ -365,52 +359,32 @@ pub async fn purge(
     pub_path: Option<&Path>,
     priv_path: Option<&Path>,
     id: &RequestId,
-    amount_parties: usize,
+    public_storage_prefixes: &[Option<String>],
+    priv_storage_prefixes: &[Option<String>],
 ) {
-    if amount_parties == 1 {
-        let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-        delete_all_at_request_id(&mut pub_storage, id)
+    for storage_prefix in public_storage_prefixes.iter() {
+        let mut threshold_pub =
+            FileStorage::new(pub_path, StorageType::PUB, storage_prefix.as_deref()).unwrap();
+        delete_all_at_request_id(&mut threshold_pub, id)
             .await
             .unwrap();
-        let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
-        delete_all_at_request_id(&mut priv_storage, id)
+    }
+    for storage_prefix in priv_storage_prefixes.iter() {
+        let mut threshold_priv =
+            FileStorage::new(priv_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
+        delete_all_at_request_id(&mut threshold_priv, id)
             .await
             .unwrap();
-    } else {
-        for i in 1..=amount_parties {
-            let mut threshold_pub =
-                FileStorage::new(pub_path, StorageType::PUB, Some(Role::indexed_from_one(i)))
-                    .unwrap();
-            let mut threshold_priv = FileStorage::new(
-                priv_path,
-                StorageType::PRIV,
-                Some(Role::indexed_from_one(i)),
-            )
-            .unwrap();
-            delete_all_at_request_id(&mut threshold_pub, id)
-                .await
-                .unwrap();
-            delete_all_at_request_id(&mut threshold_priv, id)
-                .await
-                .unwrap();
-        }
     }
 }
 
 /// Purge the entire content of the private storage.
 /// This is useful for testing backup
-pub async fn purge_priv(priv_path: Option<&Path>) {
-    let storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
-    // Ignore if the dir does not exist
-    let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
+pub async fn purge_priv(priv_path: Option<&Path>, storage_prefixes: &[Option<String>]) {
     // Purge for the max amount of parties we may have in tests
-    for cur_party in 1..=13 {
-        let storage = FileStorage::new(
-            priv_path,
-            StorageType::PRIV,
-            Some(Role::indexed_from_one(cur_party)),
-        )
-        .unwrap();
+    for storage_prefix in storage_prefixes.iter() {
+        let storage =
+            FileStorage::new(priv_path, StorageType::PRIV, storage_prefix.as_deref()).unwrap();
         // Ignore if the dir does not exist
         let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
     }
@@ -418,18 +392,11 @@ pub async fn purge_priv(priv_path: Option<&Path>) {
 
 /// Purge the entire content of the public storage.
 /// This is useful for testing backup
-pub async fn purge_pub(pub_path: Option<&Path>) {
-    let storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-    // Ignore if the dir does not exist
-    let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
+pub async fn purge_pub(pub_path: Option<&Path>, storage_prefixes: &[Option<String>]) {
     // Purge for the max amount of parties we may have in tests
-    for cur_party in 1..=13 {
-        let storage = FileStorage::new(
-            pub_path,
-            StorageType::PUB,
-            Some(Role::indexed_from_one(cur_party)),
-        )
-        .unwrap();
+    for storage_prefix in storage_prefixes.iter() {
+        let storage =
+            FileStorage::new(pub_path, StorageType::PUB, storage_prefix.as_deref()).unwrap();
         // Ignore if the dir does not exist
         let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
     }
@@ -439,48 +406,28 @@ pub async fn purge_pub(pub_path: Option<&Path>) {
 /// Note however that this method does _not_ purge anything in the private or public storage.
 /// Thus, if you want to avoid new custodian backups being constructed at boot ensure that `purge_recovery_material`
 /// is also called, as it deletes all the custodian recovery info.
-pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
-    if amount_parties == 1 {
-        let storage = FileStorage::new(backup_path, StorageType::BACKUP, None).unwrap();
+pub async fn purge_backup(backup_path: Option<&Path>, storage_prefixes: &[Option<String>]) {
+    for storage_prefix in storage_prefixes.iter() {
+        let storage =
+            FileStorage::new(backup_path, StorageType::BACKUP, storage_prefix.as_deref()).unwrap();
         // Ignore if the dir does not exist
         let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
-    } else {
-        for cur_party in 1..=amount_parties {
-            let storage = FileStorage::new(
-                backup_path,
-                StorageType::BACKUP,
-                Some(Role::indexed_from_one(cur_party)),
-            )
-            .unwrap();
-            // Ignore if the dir does not exist
-            let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
-        }
     }
 }
 
 /// Validate that a backup exists
-pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) -> bool {
+pub async fn backup_exists(
+    backup_path: Option<&Path>,
+    storage_prefixes: &[Option<String>],
+) -> bool {
     let mut backup_exists = true;
-    if amount_parties == 1 {
-        let storage = FileStorage::new(backup_path, StorageType::BACKUP, None).unwrap();
+    for storage_prefix in storage_prefixes.iter() {
+        let storage =
+            FileStorage::new(backup_path, StorageType::BACKUP, storage_prefix.as_deref()).unwrap();
         let base_path = storage.root_dir();
         let mut files = tokio::fs::read_dir(base_path).await.unwrap();
         if files.next_entry().await.unwrap().is_none() {
             backup_exists = false;
-        }
-    } else {
-        for cur_party in 1..=amount_parties {
-            let storage = FileStorage::new(
-                backup_path,
-                StorageType::BACKUP,
-                Some(Role::indexed_from_one(cur_party)),
-            )
-            .unwrap();
-            let base_path = storage.root_dir();
-            let mut files = tokio::fs::read_dir(base_path).await.unwrap();
-            if files.next_entry().await.unwrap().is_none() {
-                backup_exists = false;
-            }
         }
     }
     backup_exists
@@ -488,25 +435,36 @@ pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) ->
 
 /// Helper method to construct a backup vault for testing. That is either without encryption (no `Keychain`) or using custodians.
 pub async fn file_backup_vault(
-    role: Option<Role>,
     keychain_conf: Option<&Keychain>,
     pub_path: Option<&Path>,
     backup_path: Option<&Path>,
+    pub_storage_prefix: Option<&str>,
+    backup_storage_prefix: Option<&str>,
 ) -> Vault {
-    let backup_store_path = backup_path.map(|p| {
-        conf::Storage::File(conf::FileStorage {
-            path: p.to_path_buf(),
-        })
-    });
-    let pub_store_path = pub_path.map(|p| {
-        conf::Storage::File(conf::FileStorage {
-            path: p.to_path_buf(),
-        })
-    });
-    let pub_proxy_storage =
-        make_storage(pub_store_path.clone(), StorageType::PUB, role, None, None).unwrap();
+    let create_storage_conf =
+        |path: Option<&Path>, storage_prefix: Option<&str>| match (path, storage_prefix) {
+            (None, None) => None,
+            (None, Some(prefix)) => Some(conf::Storage::File(conf::FileStorage {
+                path: std::env::current_dir()
+                    .unwrap()
+                    .join(crate::consts::KEY_PATH_PREFIX),
+                prefix: Some(prefix.to_string()),
+            })),
+            (Some(path), None) => Some(conf::Storage::File(conf::FileStorage {
+                path: path.to_path_buf(),
+                prefix: None,
+            })),
+            (Some(path), Some(prefix)) => Some(conf::Storage::File(conf::FileStorage {
+                path: path.to_path_buf(),
+                prefix: Some(prefix.to_string()),
+            })),
+        };
+    let backup_storage_conf = create_storage_conf(backup_path, backup_storage_prefix);
+    let pub_storage_conf = create_storage_conf(pub_path, pub_storage_prefix);
+
+    let pub_proxy_storage = make_storage(pub_storage_conf, StorageType::PUB, None, None).unwrap();
     let backup_proxy_storage =
-        make_storage(backup_store_path, StorageType::BACKUP, role, None, None).unwrap();
+        make_storage(backup_storage_conf, StorageType::BACKUP, None, None).unwrap();
     let keychain = match keychain_conf {
         Some(conf) => Some(
             make_keychain_proxy(conf, None, None, Some(&pub_proxy_storage))
@@ -523,15 +481,16 @@ pub async fn file_backup_vault(
 
 /// Helper method for tests to read the plain custodian backup files without going through the Vault API, and hence decryption.
 pub async fn read_custodian_backup_files(
-    amount_parties: usize,
     test_path: Option<&Path>,
     backup_id: &RequestId,
     file_req: &RequestId,
     data_type: &str,
+    storage_prefixes: &[Option<String>],
 ) -> Vec<BackupCiphertext> {
     let mut files = Vec::new();
-    if amount_parties == 1 {
-        let storage = FileStorage::new(test_path, StorageType::BACKUP, None).unwrap();
+    for storage_prefix in storage_prefixes.iter() {
+        let storage =
+            FileStorage::new(test_path, StorageType::BACKUP, storage_prefix.as_deref()).unwrap();
         let coerced_path = storage
             .root_dir()
             .join(
@@ -543,26 +502,6 @@ pub async fn read_custodian_backup_files(
         if let Ok(file) = safe_read_element_versioned(coerced_path).await {
             files.push(file);
         }
-    } else {
-        for cur_role in 1..=amount_parties {
-            let storage = FileStorage::new(
-                test_path,
-                StorageType::BACKUP,
-                Some(Role::indexed_from_one(cur_role)),
-            )
-            .unwrap();
-            let coerced_path = storage
-                .root_dir()
-                .join(
-                    VaultDataType::CustodianBackupData(*backup_id, data_type.try_into().unwrap())
-                        .to_string(),
-                )
-                .join(file_req.to_string());
-            // Attempt to read the file
-            if let Ok(file) = safe_read_element_versioned(coerced_path).await {
-                files.push(file);
-            }
-        }
     }
     files
 }
@@ -571,36 +510,27 @@ pub async fn read_custodian_backup_files(
 /// This then allows your to prevent the automatic backup being done at boot
 /// when the system is configured with custodian backups.
 /// TODO currently not used anywhere
-pub async fn purge_recovery_material(path: Option<&Path>, amount_parties: usize) {
-    if amount_parties == 1 {
-        let storage = FileStorage::new(path, StorageType::PUB, None).unwrap();
+pub async fn purge_recovery_material(path: Option<&Path>, storage_prefixes: &[Option<String>]) {
+    for storage_prefix in storage_prefixes {
+        // Next purge recovery info
+        let storage = FileStorage::new(
+            path,
+            StorageType::PUB,
+            storage_prefix.as_ref().map(|x| x.as_str()),
+        )
+        .unwrap();
         let base_dir = storage.root_dir();
         let _ =
             tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryMaterial.to_string()))
                 .await;
-        let _ =
-            tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryMaterial.to_string()))
-                .await;
-    } else {
-        for cur_party in 1..=amount_parties {
-            // Next purge recovery info
-            let storage = FileStorage::new(
-                path,
-                StorageType::PUB,
-                Some(Role::indexed_from_one(cur_party)),
-            )
-            .unwrap();
-            let base_dir = storage.root_dir();
-            let _ = tokio::fs::remove_dir_all(
-                &base_dir.join(PubDataType::RecoveryMaterial.to_string()),
-            )
-            .await;
-        }
     }
 }
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod setup {
+    use crate::consts::{
+        PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
+    };
     #[cfg(feature = "slow_tests")]
     use crate::consts::{TEST_THRESHOLD_CRS_ID_13P, TEST_THRESHOLD_KEY_ID_13P};
     use crate::util::key_setup::{
@@ -624,7 +554,7 @@ pub(crate) mod setup {
     };
     use kms_grpc::RequestId;
     use std::path::Path;
-    use threshold_fhe::execution::{runtime::party::Role, tfhe_internals::parameters::DKGParams};
+    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 
     pub async fn ensure_dir_exist(path: Option<&Path>) {
         match path {
@@ -658,7 +588,8 @@ pub(crate) mod setup {
             &TEST_PARAM,
             &TEST_THRESHOLD_KEY_ID_4P,
             &TEST_THRESHOLD_CRS_ID_4P,
-            4,
+            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
+            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
             path,
         )
         .await;
@@ -666,7 +597,8 @@ pub(crate) mod setup {
             &TEST_PARAM,
             &TEST_THRESHOLD_KEY_ID_10P,
             &TEST_THRESHOLD_CRS_ID_10P,
-            10,
+            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
+            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
             path,
         )
         .await;
@@ -675,7 +607,8 @@ pub(crate) mod setup {
             &TEST_PARAM,
             &TEST_THRESHOLD_KEY_ID_13P,
             &TEST_THRESHOLD_CRS_ID_13P,
-            13,
+            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
+            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
             path,
         )
         .await;
@@ -707,7 +640,8 @@ pub(crate) mod setup {
             &DEFAULT_PARAM,
             &DEFAULT_THRESHOLD_KEY_ID_4P,
             &DEFAULT_THRESHOLD_CRS_ID_4P,
-            4,
+            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
+            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
             None,
         )
         .await;
@@ -715,7 +649,8 @@ pub(crate) mod setup {
             &DEFAULT_PARAM,
             &DEFAULT_THRESHOLD_KEY_ID_10P,
             &DEFAULT_THRESHOLD_CRS_ID_10P,
-            10,
+            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
+            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
             None,
         )
         .await;
@@ -723,7 +658,8 @@ pub(crate) mod setup {
             &DEFAULT_PARAM,
             &DEFAULT_THRESHOLD_KEY_ID_13P,
             &DEFAULT_THRESHOLD_CRS_ID_13P,
-            13,
+            &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
+            &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
             None,
         )
         .await;
@@ -770,19 +706,24 @@ pub(crate) mod setup {
         params: &DKGParams,
         fhe_key_id: &RequestId,
         crs_id: &RequestId,
-        amount_parties: usize,
+        public_storage_prefixes: &[Option<String>],
+        private_storage_prefixes: &[Option<String>],
         path: Option<&Path>,
     ) {
+        assert_eq!(
+            public_storage_prefixes.len(),
+            private_storage_prefixes.len()
+        );
+        let amount_parties = public_storage_prefixes.len();
         let mut threshold_pub_storages = Vec::with_capacity(amount_parties);
-        for i in 1..=amount_parties {
-            threshold_pub_storages.push(
-                FileStorage::new(path, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap(),
-            );
+        for storage_prefix in public_storage_prefixes.iter() {
+            threshold_pub_storages
+                .push(FileStorage::new(path, StorageType::PUB, storage_prefix.as_deref()).unwrap());
         }
         let mut threshold_priv_storages = Vec::with_capacity(amount_parties);
-        for i in 1..=amount_parties {
+        for storage_prefix in private_storage_prefixes.iter() {
             threshold_priv_storages.push(
-                FileStorage::new(path, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap(),
+                FileStorage::new(path, StorageType::PRIV, storage_prefix.as_deref()).unwrap(),
             );
         }
 
@@ -832,6 +773,7 @@ async fn test_purge() {
     let test_prefix = Some(temp_dir.path());
     let mut central_pub_storage = FileStorage::new(test_prefix, StorageType::PUB, None).unwrap();
     let mut central_priv_storage = FileStorage::new(test_prefix, StorageType::PRIV, None).unwrap();
+
     // Check no keys exist
     assert!(central_pub_storage
         .all_data_ids(&PubDataType::VerfKey.to_string())
@@ -868,7 +810,8 @@ async fn test_purge() {
         test_prefix,
         test_prefix,
         &pub_ids.into_iter().next().unwrap(),
-        1,
+        &[None],
+        &[None],
     )
     .await;
     // Check the keys were deleted

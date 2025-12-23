@@ -795,6 +795,9 @@ deploy_threshold_mode() {
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --set kmsPeers.id="${i}" \
+            --set kmsCore.publicVault.s3.prefix=PUB-p"${i}" \
+            --set kmsCore.privateVault.s3.prefix=PRIV-p"${i}" \
+            --set kmsCore.backupVault.s3.prefix=BACKUP-p"${i}" \
             --wait \
             --timeout 10m &
     done
@@ -868,30 +871,14 @@ deploy_centralized_mode() {
         --set kmsCore.thresholdMode.enabled=false \
         --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
         --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+        --set kmsCore.publicVault.s3.prefix=PUB \
+        --set kmsCore.privateVault.s3.prefix=PRIV \
+        --set kmsCore.backupVault.s3.prefix=BACKUP \
         --wait \
         --timeout 10m
 
     log_info "Waiting for KMS Core pod to be ready..."
     kubectl wait --for=condition=ready pod -l app=kms-core \
-        -n "${NAMESPACE}" --timeout=10m --kubeconfig "${KUBE_CONFIG}"
-
-    # Deploy initialization job
-    log_info "Deploying KMS Core initialization job..."
-    helm upgrade --install kms-core-init \
-        "${REPO_ROOT}/charts/kms-core" \
-        --namespace "${NAMESPACE}" \
-        --kubeconfig "${KUBE_CONFIG}" \
-        -f "${KMS_CORE_CLIENT_INIT_VALUES}" \
-        --set kmsCore.nameOverride="kms-core" \
-        --set kmsInit.enabled=false \
-        --set kmsCore.thresholdMode.enabled=false \
-        --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
-        --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-        --wait \
-        --timeout 20m
-
-    log_info "Waiting for kms-core-client..."
-    kubectl wait --for=condition=ready pod -l app=kms-core-client \
         -n "${NAMESPACE}" --timeout=10m --kubeconfig "${KUBE_CONFIG}"
 
     log_info "Centralized mode deployment completed"

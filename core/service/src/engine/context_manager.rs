@@ -44,9 +44,6 @@ struct SharedContextManager<
     base_kms: BaseKmsStruct,
     crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
-    // NOTE: this should be removed since a context manager should not have a role
-    // as it manages multiple context with different roles.
-    my_role: Role,
 }
 
 impl<PubS, PrivS> SharedContextManager<PubS, PrivS>
@@ -57,7 +54,7 @@ where
     async fn verify_and_extract_new_mpc_context(
         &self,
         request: tonic::Request<kms_grpc::kms::v1::NewMpcContextRequest>,
-    ) -> Result<(Role, ContextInfo), tonic::Status> {
+    ) -> Result<(Option<Role>, ContextInfo), tonic::Status> {
         // first verify that the context is valid
         let kms_grpc::kms::v1::NewMpcContextRequest { new_context } = request.into_inner();
 
@@ -66,18 +63,21 @@ where
         let new_context = ContextInfo::try_from(new_context)
             .map_err(|e| Status::invalid_argument(format!("Invalid context info: {e}")))?;
         // verify new context
-        let my_role = {
-            let storage_ref = self.crypto_storage.private_storage.clone();
-            let guarded_priv_storage = storage_ref.lock().await;
-            new_context
-                .verify(&(*guarded_priv_storage))
-                .await
-                .map_err(|e| {
-                    Status::invalid_argument(format!("Failed to verify new context: {e}"))
-                })?
-        };
+        let my_role = self.extract_my_role_from_context(&new_context).await?;
 
         Ok((my_role, new_context))
+    }
+
+    async fn extract_my_role_from_context(
+        &self,
+        context: &ContextInfo,
+    ) -> Result<Option<Role>, tonic::Status> {
+        let storage_ref = self.crypto_storage.private_storage.clone();
+        let guarded_priv_storage = storage_ref.lock().await;
+        context
+            .verify(&(*guarded_priv_storage))
+            .await
+            .map_err(|e| Status::invalid_argument(format!("Failed to verify new context: {e}")))
     }
 
     async fn mpc_context_exists(&self, context_id: &ContextId) -> anyhow::Result<bool> {
@@ -321,14 +321,12 @@ where
         base_kms: BaseKmsStruct,
         crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
-        my_role: Role,
     ) -> Self {
         Self {
             inner: SharedContextManager {
                 base_kms,
                 crypto_storage,
                 custodian_meta_store,
-                my_role,
             },
         }
     }
@@ -448,7 +446,6 @@ where
         base_kms: BaseKmsStruct,
         crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
         custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
-        my_role: Role,
         session_maker: SessionMaker,
     ) -> Self {
         Self {
@@ -456,7 +453,6 @@ where
                 base_kms,
                 crypto_storage,
                 custodian_meta_store,
-                my_role,
             },
             session_maker,
         }
@@ -469,8 +465,9 @@ where
             .read_all_context_info()
             .await
             .inspect_err(|e| tracing::error!("Failed to load all contexts from storage: {}", e))?;
-        let my_role = self.inner.my_role;
+
         for context in contexts {
+            let my_role = self.inner.extract_my_role_from_context(&context).await?;
             self.session_maker
                 .add_context_info(my_role, &context)
                 .await
@@ -496,7 +493,7 @@ async fn atomic_update_context<
 >(
     session_maker: &SessionMaker,
     crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
-    my_role: Role,
+    my_role: Option<Role>,
     new_context: &ContextInfo,
 ) -> anyhow::Result<()> {
     let context_id = new_context.context_id();
@@ -818,7 +815,6 @@ mod tests {
             base_kms,
             crypto_storage.clone(),
             Arc::new(RwLock::new(MetaStore::new(100, 10))),
-            Role::indexed_from_one(1),
             session_maker,
         );
 
@@ -906,7 +902,6 @@ mod tests {
                 base_kms,
                 crypto_storage.clone(),
                 Arc::new(RwLock::new(MetaStore::new(100, 10))),
-                Role::indexed_from_one(1),
                 session_maker,
             );
 
@@ -942,7 +937,6 @@ mod tests {
                 base_kms,
                 crypto_storage.clone(),
                 Arc::new(RwLock::new(MetaStore::new(100, 10))),
-                Role::indexed_from_one(1),
                 session_maker,
             );
 
@@ -1004,7 +998,6 @@ mod tests {
                 base_kms,
                 crypto_storage.clone(),
                 Arc::new(RwLock::new(MetaStore::new(100, 10))),
-                Role::indexed_from_one(1),
                 session_maker,
             );
 
