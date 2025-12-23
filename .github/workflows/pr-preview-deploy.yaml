@@ -4,7 +4,8 @@
 name: pr-preview-deploy
 
 on:
-  # pull_request:
+  pull_request:
+    types: [opened, synchronize]
   workflow_call:
     inputs:
       image_tag:
