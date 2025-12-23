@@ -95,7 +95,7 @@ jobs:
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:${NAMESPACE}
+          tags: tag:kms-ci
 
       - name: Setup helm
         run: |
