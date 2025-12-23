@@ -147,15 +147,15 @@ data:
            {{- end }}
         {{- else }}
     [threshold.tls.manual]
-          {{- if .Values.kmsCore.thresholdMode.tls.certificate.path }}
-    cert.path = {{ .Values.kmsCore.thresholdMode.tls.certificate.path | quote }}
+          {{- if and .Values.kmsCore.thresholdMode.tls.ca_certificate .Values.kmsCore.thresholdMode.tls.ca_certificate.path (ne .Values.kmsCore.thresholdMode.tls.ca_certificate.path "") }}
+    cert.path = {{ .Values.kmsCore.thresholdMode.tls.ca_certificate.path | quote }}
           {{- else }}
-    cert.pem = ${KMS_CA_PEM_{{ .id }}}
+    cert.pem = """${KMS_CA_PEM_{{ .Values.kmsPeers.id }}}"""
           {{- end }}
-          {{- if .Values.kmsCore.thresholdMode.tls.privateKey.path }}
+          {{- if and .Values.kmsCore.thresholdMode.tls.privateKey .Values.kmsCore.thresholdMode.tls.privateKey.path (ne .Values.kmsCore.thresholdMode.tls.privateKey.path "") }}
     key.path = {{ .Values.kmsCore.thresholdMode.tls.privateKey.path | quote }}
           {{- else }}
-    key.pem = {{ .Values.kmsCore.thresholdMode.tls.privateKey.path | toToml }}
+    key.pem = """${KMS_KEY_PEM_{{ .Values.kmsPeers.id }}}"""
           {{- end }}
         {{- end }}
       {{- end }}
@@ -172,10 +172,10 @@ data:
     port = {{ int .port }}
           {{- end }}
           {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
-            {{- if $.Values.kmsCore.thresholdMode.tls.ca_certificate.path }}
+            {{- if and $.Values.kmsCore.thresholdMode.tls.ca_certificate $.Values.kmsCore.thresholdMode.tls.ca_certificate.path (ne $.Values.kmsCore.thresholdMode.tls.ca_certificate.path "") }}
     tls_cert.path = {{ $.Values.kmsCore.thresholdMode.tls.ca_certificate.path | quote }}
             {{- else }}
-    tls_cert.pem = ${KMS_CA_PEM_{{ .id }}}
+    tls_cert.pem = """${KMS_CA_PEM_{{ .id }}}"""
             {{- end }}
           {{- end }}
         {{- end }}

@@ -3,7 +3,7 @@ cfg_if::cfg_if! {
         use crate::backup::custodian::Custodian;
         use crate::backup::seed_phrase::custodian_from_seed_phrase;
         use crate::client::tests::threshold::crs_gen_tests::run_crs;
-        use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
+        use crate::client::tests::threshold::key_gen_helpers::run_threshold_keygen;
         use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
         use crate::consts::SAFE_SER_SIZE_LIMIT;
         use crate::cryptography::signatures::PrivateSigKey;

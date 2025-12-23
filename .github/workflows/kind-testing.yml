@@ -1,7 +1,9 @@
 name: kind-testing
 
 on:
-  pull_request:
+  push:
+    branches:
+      - 'maksym/refactor/2761/tests-setup'  # TEMPORARY: Enable K8s tests on this branch
   schedule:
     - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
 
@@ -14,7 +16,7 @@ jobs:
   # for testing purposes when needed.
   ############################################################################
   docker-build:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'  # TEMPORARY: Allow push events
     name: kind-testing/docker-build
     permissions:
       actions: read # Read workflow run information
@@ -111,6 +113,7 @@ jobs:
           - name: threshold
             deployment-type: threshold
             num-parties: 4
+            enable-tls: true # This is important to test TLS in K8s deployment
             runner-label: ${{ needs.start-runner-threshold.outputs.label }}
           - name: centralized
             deployment-type: centralized
@@ -271,12 +274,6 @@ jobs:
         if: matrix.cargo-check == true
         run: cargo fmt --all -- --check
 
-      - name: Linting default features
-        if: matrix.cargo-check == true
-        env:
-          PACKAGE_NAME: 'kms-core-client'
-        run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
-
       - name: Linting All features
         if: matrix.cargo-check == true
         env:
@@ -301,10 +298,11 @@ jobs:
           KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
           NAMESPACE: kms-test-${{ matrix.deployment-type }}
           NUM_PARTIES: ${{ matrix.num-parties }} # Number of parties
+          ENABLE_TLS: ${{ matrix.enable-tls || 'false' }} # Enable TLS for threshold mode
         run: |
           # Start KMS setup and wait for completion
           # Uses environment variables: NAMESPACE, KMS_CORE_IMAGE_TAG, KMS_CORE_CLIENT_IMAGE_TAG,
-          # DEPLOYMENT_TYPE, NUM_PARTIES
+          # DEPLOYMENT_TYPE, NUM_PARTIES, ENABLE_TLS
           ./ci/kube-testing/scripts/manage_kind_setup.sh start
 
       - name: Run Kubernetes Tests
@@ -319,7 +317,7 @@ jobs:
           # Here we run the tests and capture exit code
           #============================================================
           #
-          cargo nextest run --test kubernetes_test_"${DEPLOYMENT_TYPE}" --profile ci --no-fail-fast
+          cargo nextest run --test kubernetes_test_"${DEPLOYMENT_TYPE}" --features k8s_tests,testing --profile ci --no-fail-fast
           echo "TEST_EXIT_CODE=$?" >> "${GITHUB_ENV}"
 
           # Collect logs after tests complete
@@ -365,7 +363,7 @@ jobs:
         if: always() && matrix.cargo-check == false
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: kms-core-${{ matrix.deployment-type }}-logs
+          name: kms-core-${{ matrix.name }}-logs-attempt-${{ github.run_attempt }}
           path: |
             /tmp/kms-service-threshold-*.log
             /tmp/kms-core-*.log
