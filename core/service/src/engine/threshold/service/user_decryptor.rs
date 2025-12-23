@@ -14,15 +14,13 @@ use kms_grpc::{
         self, Empty, TypedCiphertext, TypedSigncryptedCiphertext, UserDecryptionRequest,
         UserDecryptionResponse, UserDecryptionResponsePayload,
     },
-    utils::tonic_result::BoxedStatus,
-    IdentifierError, RequestId,
+    RequestId,
 };
 use observability::{
     metrics,
     metrics_names::{
-        ERR_USER_DECRYPTION_FAILED, ERR_WITH_META_STORAGE, OP_USER_DECRYPT_INNER,
-        OP_USER_DECRYPT_REQUEST, TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND,
-        TAG_TFHE_TYPE,
+        OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID,
+        TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID, TAG_TFHE_TYPE, TAG_USER_DECRYPTION_KIND,
     },
 };
 use rand::{CryptoRng, RngCore};
@@ -48,13 +46,12 @@ use threshold_fhe::{
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response};
 use tracing::Instrument;
 
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
     cryptography::{
         compute_external_user_decrypt_signature,
         error::CryptographyError,
@@ -62,17 +59,18 @@ use crate::{
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
     },
     engine::{
-        base::{deserialize_to_low_level, BaseKmsStruct, UserDecryptCallValues},
+        base::{deserialize_to_low_level, BaseKmsStruct, KeyGenMetadata, UserDecryptCallValues},
         threshold::{service::session::ImmutableSessionMaker, traits::UserDecryptor},
         traits::BaseKms,
+        utils::MetricedError,
         validation::{
-            parse_proto_request_id, validate_user_decrypt_req, RequestIdParsingErr,
-            DSEP_USER_DECRYPTION,
+            proto_request_id, validate_user_decrypt_req, RequestIdParsingErr, DSEP_USER_DECRYPTION,
         },
     },
-    ok_or_tonic_abort,
     util::{
-        meta_store::{handle_res_mapping, MetaStore},
+        meta_store::{
+            add_req_to_meta_store, retrieve_from_meta_store, update_req_in_meta_store, MetaStore,
+        },
         rate_limiter::RateLimiter,
     },
     vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
@@ -146,6 +144,7 @@ pub struct RealUserDecryptor<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub user_decrypt_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
+    pub key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
@@ -210,7 +209,7 @@ impl<
             let decimal_req_id = U256::try_from_be_slice(req_id.as_bytes())
                 .unwrap_or(U256::ZERO)
                 .to_string();
-            tracing::info!(
+            tracing::debug!(
                 request_id = hex_req_id,
                 request_id_decimal = decimal_req_id,
                 "User Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {session_id} and context ID: {context_id}. Handle: {}",
@@ -225,12 +224,14 @@ impl<
 
             let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
-                    let session = ok_or_tonic_abort(
-                        session_maker
-                            .make_small_async_session_z128(session_id, context_id, epoch_id)
-                            .await,
-                        "Could not prepare ddec data for noiseflood decryption".to_string(),
-                    )?;
+                    let session = session_maker
+                        .make_small_async_session_z128(session_id, context_id, epoch_id)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!(
+                                "Could not prepare ddec data for noiseflood decryption: {e}",
+                            )
+                        })?;
                     let mut noiseflood_session = Dec::Prep::new(session);
 
                     let pdec = Dec::partial_decrypt(
@@ -269,12 +270,14 @@ impl<
                     Ok(res)
                 }
                 DecryptionMode::BitDecSmall => {
-                    let mut session = ok_or_tonic_abort(
-                        session_maker
-                            .make_small_async_session_z64(session_id, context_id, epoch_id)
-                            .await,
-                        "Could not prepare ddec data for bitdec decryption".to_string(),
-                    )?;
+                    let mut session = session_maker
+                        .make_small_async_session_z64(session_id, context_id, epoch_id)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!(
+                                "Could not prepare ddec data for bitdec decryption: {e}",
+                            )
+                        })?;
 
                     let pdec = secure_partial_decrypt_using_bitdec(
                         &mut session,
@@ -335,7 +338,7 @@ impl<
                     })
                     .await??;
 
-                    tracing::info!(
+                    tracing::debug!(
                         "User decryption {req_id} in session {session_id} ccompleted for type {:?}. Inner thread took {:?} ms",
                         fhe_type,
                         time.as_millis()
@@ -393,6 +396,7 @@ impl<
         pub_storage: PubS,
         priv_storage: PrivS,
         session_maker: ImmutableSessionMaker,
+        key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) -> Self {
         let crypto_storage = ThresholdCryptoMaterialStorage::new(
             pub_storage,
@@ -409,6 +413,7 @@ impl<
             base_kms,
             crypto_storage,
             user_decrypt_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+            key_meta_store,
             session_maker,
             tracker,
             rate_limiter,
@@ -427,14 +432,6 @@ impl<
     }
 }
 
-// We want most of the metadata but not the actual ciphertexts
-fn format_user_request(request: &UserDecryptionRequest) -> String {
-    format!(
-        "UserDecryptionRequest {{ request_id: {:?}, key_id: {:?}, client_address: {:?}, enc_key: {:?}, domain: {:?}, typed_ciphertexts_count: {} }}",
-        request.request_id, request.key_id, request.client_address, hex::encode(&request.enc_key), request.domain, request.typed_ciphertexts.len(),
-    )
-}
-
 #[tonic::async_trait]
 impl<
         PubS: Storage + Send + Sync + 'static,
@@ -450,121 +447,95 @@ impl<
     async fn user_decrypt(
         &self,
         request: Request<UserDecryptionRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        let inner = Arc::new(request.into_inner());
-        tracing::info!(
-            request_id = ?inner.request_id,
-            "Received a new user decryption request",
-        );
-
-        // TODO(zama-ai/kms-internal/issues/2758)
-        // remove the default context when all of context is ready
-        let context_id: ContextId = match &inner.context_id {
-            Some(c) => c
-                .try_into()
-                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
-            None => *DEFAULT_MPC_CONTEXT,
-        };
-        let epoch_id: EpochId = match &inner.epoch_id {
-            Some(c) => c
-                .try_into()
-                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
-            None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap since `PRSS_INIT_REQ_ID` is valid
-        };
-        let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
-            tonic::Status::not_found(format!(
-                "Could not get my role for context {context_id}: {e}"
-            ))
-        })?;
-
-        // Start timing and counting before any operations
-        let mut timer = metrics::METRICS
-            .time_operation(OP_USER_DECRYPT_REQUEST)
-            .tag(TAG_PARTY_ID, my_role.to_string())
-            .start();
-
-        let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) = {
-            let inner = inner.clone();
-            spawn_compute_bound(move || validate_user_decrypt_req(inner.as_ref()))
-                .await
-                .map_err(|_| {
-                    BoxedStatus::from(tonic::Status::new(
-                        tonic::Code::Internal,
-                        "Error delegating validate_user_decrypt_req to rayon".to_string(),
-                    ))
-                })?
-        }
-        .inspect_err(|e| {
-            tracing::error!(
-                error = ?e,
-                request_id = ?inner.request_id,
-                "Failed to validate decrypt request {}",
-                format_user_request(inner.as_ref())
-            );
-        })?;
-
+    ) -> Result<Response<Empty>, MetricedError> {
         // Check for resource exhaustion once all the other checks are ok
         // because resource exhaustion can be recovered by sending the exact same request
         // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_user_decrypt().await?;
+        let permit = self.rate_limiter.start_user_decrypt().await.map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                None,
+                e,
+                tonic::Code::ResourceExhausted,
+            )
+        })?;
+        // Start timing and counting before any operations
+        let mut timer = metrics::METRICS
+            .time_operation(OP_USER_DECRYPT_REQUEST)
+            .start();
 
-        // Do some checks before we start modifying the database
-        {
-            let guarded_meta_store = self.user_decrypt_meta_store.read().await;
+        let inner = Arc::new(request.into_inner());
+        tracing::info!("{}", format_user_request(&inner));
 
-            if guarded_meta_store.exists(&req_id) {
-                return Err(Status::already_exists(format!(
-                    "User decryption request with ID {req_id} already exists"
-                )));
-            }
+        let (
+            typed_ciphertexts,
+            link,
+            client_enc_key,
+            client_address,
+            req_id,
+            key_id,
+            context_id,
+            epoch_id,
+            domain,
+        ) = validate_user_decrypt_req(inner.as_ref()).map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                None,
+                e, // Validation error
+                tonic::Code::InvalidArgument,
+            )
+        })?;
+
+        let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                Some(req_id),
+                e,
+                tonic::Code::Internal,
+            )
+        })?;
+        let dec_mode = self.decryption_mode;
+        let metric_tags = vec![
+            (TAG_PARTY_ID, my_role.to_string()),
+            (TAG_KEY_ID, key_id.as_str()), // TODO will this be too many labels or does it make sense to keep key, conetxt and epoch
+            (TAG_CONTEXT_ID, context_id.as_str()),
+            (TAG_EPOCH_ID, epoch_id.as_str()),
+            (TAG_USER_DECRYPTION_KIND, dec_mode.as_str_name().to_string()),
+        ];
+        timer.tags(metric_tags.clone());
+
+        if !self.key_meta_store.read().await.exists(&key_id.into()) {
+            return Err(MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                Some(req_id),
+                anyhow::anyhow!("Key ID {} not found", key_id),
+                tonic::Code::NotFound,
+            ));
         }
-
-        timer.tags([(TAG_KEY_ID, key_id.as_str())]);
-
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let rng = self.base_kms.new_rng().await;
-
-        self.crypto_storage
-            .refresh_threshold_fhe_keys(&key_id)
-            .await
-            .map_err(|e| {
-                tracing::warn!(error=?e, key_id=?key_id, "Failed to refresh threshold FHE keys");
-                Status::not_found(format!("Threshold FHE keys with key ID {key_id} not found"))
-            })?;
-
         // Below we write to the meta-store.
         // After writing, the the meta-store on this [req_id] will be in the "Started" state
         // So we need to update it everytime something bad happens,
         // or put all the code that may error before the first write to the meta-store,
         // otherwise it'll be in the "Started" state forever.
-        {
-            let mut guarded_meta_store = self.user_decrypt_meta_store.write().await;
-            ok_or_tonic_abort(
-                guarded_meta_store.insert(&req_id),
-                "Could not insert user decryption request".to_string(),
-            )?;
-        }
+        add_req_to_meta_store(
+            &mut meta_store.write().await,
+            &req_id,
+            OP_USER_DECRYPT_REQUEST,
+        )
+        .await?;
 
-        let dec_mode = self.decryption_mode;
-
-        let metric_tags = vec![
-            (TAG_PARTY_ID, my_role.to_string()),
-            (TAG_KEY_ID, key_id.as_str()),
-            (
-                TAG_PUBLIC_DECRYPTION_KIND,
-                dec_mode.as_str_name().to_string(),
-            ),
-        ];
         let sk = (*self.base_kms.sig_key().map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::FailedPrecondition,
-                    format!(
-                        "Signing key is not present. This should only happen when server is booted in recovery mode: {}",
-                        e
-                    ),
-                )
-            })?).clone();
+            MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                Some(req_id),
+                e,
+                tonic::Code::FailedPrecondition,
+            )
+        })?)
+        .clone();
         let signcryption_key = Arc::new(UnifiedSigncryptionKeyOwned::new(
             sk,
             client_enc_key,
@@ -572,92 +543,97 @@ impl<
         ));
         // the result of the computation is tracked the tracker
         let session_maker = self.session_maker.clone();
-        self.tracker.spawn(
-            async move {
-                // Capture the timer, it is stopped when it's dropped
-                let _timer = timer;
-                // explicitly move the rate limiter context
-                let _permit = permit;
 
-                // Note that we'll hold a read lock for some time
-                // but this should be ok since write locks
-                // happen rarely as keygen is a rare event.
-                let fhe_keys_rlock = crypto_storage
-                    .read_guarded_threshold_fhe_keys_from_cache(&key_id)
-                    .await;
-                let tmp = match fhe_keys_rlock {
-                    Ok(k) => {
-                        Self::inner_user_decrypt(
-                            &req_id,
-                            session_maker,
-                            context_id,
-                            epoch_id,
-                            rng,
-                            typed_ciphertexts,
-                            link,
-                            signcryption_key,
-                            k,
-                            dec_mode,
-                            &domain,
-                            metric_tags,
-                        )
-                        .await
-                    }
-                    Err(e) => Err(e),
-                };
-                let mut guarded_meta_store = meta_store.write().await;
-                match tmp {
-                    Ok((payload, sig, extra_data)) => {
-                        // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store
-                            .update(&req_id, Ok((payload, sig, extra_data)))
-                            .inspect_err(|_| {
-                                metrics::METRICS.increment_error_counter(
-                                    OP_USER_DECRYPT_REQUEST,
-                                    ERR_WITH_META_STORAGE,
-                                );
-                            });
-                    }
-                    Result::Err(e) => {
-                        metrics::METRICS.increment_error_counter(
-                            OP_USER_DECRYPT_REQUEST,
-                            ERR_USER_DECRYPTION_FAILED,
-                        );
-                        // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store
-                            .update(&req_id, Err(format!("Failed decryption: {e}")));
-                    }
+        let inner_dec_future = move |_permit| async move {
+            // Capture the timer, it is stopped when it's dropped
+            let _timer = timer;
+
+            // Note that we'll hold a read lock for some time
+            // but this should be ok since write locks
+            // happen rarely as keygen is a rare event.
+            let fhe_keys_rlock = crypto_storage
+                .read_guarded_threshold_fhe_keys(&key_id.into())
+                .await;
+            let result = match fhe_keys_rlock {
+                Ok(k) => {
+                    Self::inner_user_decrypt(
+                        &req_id,
+                        session_maker,
+                        context_id,
+                        epoch_id,
+                        rng,
+                        typed_ciphertexts,
+                        link,
+                        signcryption_key,
+                        k,
+                        dec_mode,
+                        &domain,
+                        metric_tags,
+                    )
+                    .await
                 }
-            }
-            .instrument(tracing::Span::current()),
-        );
+                Err(e) => Err(e),
+            };
+            update_req_in_meta_store(
+                &mut meta_store.write().await,
+                &req_id,
+                result,
+                OP_USER_DECRYPT_REQUEST,
+            );
+        };
+        self.tracker.spawn(async move {
+            // Ignore the result since this is a background thread.
+            let _ = inner_dec_future(permit)
+                .instrument(tracing::Span::current())
+                .await;
+        });
         Ok(Response::new(Empty {}))
     }
 
     async fn get_result(
         &self,
         request: Request<v1::RequestId>,
-    ) -> Result<Response<UserDecryptionResponse>, Status> {
+    ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
         let request_id =
-            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecResponse)?;
+            proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecResponse).map_err(
+                |e| {
+                    MetricedError::new(
+                        OP_USER_DECRYPT_RESULT,
+                        None,
+                        e,
+                        tonic::Code::InvalidArgument,
+                    )
+                },
+            )?;
 
         // Retrieve the UserDecryptMetaStore object
-        let status = {
-            let guarded_meta_store = self.user_decrypt_meta_store.read().await;
-            guarded_meta_store.retrieve(&request_id)
-        };
-        let (payload, external_signature, extra_data) =
-            handle_res_mapping(status, &request_id, "UserDecryption").await?;
+        let (payload, external_signature, extra_data) = retrieve_from_meta_store(
+            self.user_decrypt_meta_store.read().await,
+            &request_id,
+            OP_USER_DECRYPT_RESULT,
+        )
+        .await?;
 
-        let sig_payload_vec = ok_or_tonic_abort(
-            bc2wrap::serialize(&payload),
-            format!("Could not convert payload to bytes {payload:?}"),
-        )?;
+        let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_RESULT,
+                Some(request_id),
+                anyhow!("Could not convert payload to bytes {payload:?}: {e:?}"),
+                tonic::Code::Internal,
+            )
+        })?;
 
-        let sig = ok_or_tonic_abort(
-            self.base_kms.sign(&DSEP_USER_DECRYPTION, &sig_payload_vec),
-            format!("Could not sign payload {payload:?}"),
-        )?;
+        let sig = self
+            .base_kms
+            .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_USER_DECRYPT_RESULT,
+                    Some(request_id),
+                    anyhow!("Could not sign payload {payload:?}: {e:?}"),
+                    tonic::Code::Internal,
+                )
+            })?;
         Ok(Response::new(UserDecryptionResponse {
             signature: sig.sig.to_vec(),
             external_signature,
@@ -665,6 +641,14 @@ impl<
             extra_data,
         }))
     }
+}
+
+// We want most of the metadata but not the actual ciphertexts
+fn format_user_request(request: &UserDecryptionRequest) -> String {
+    format!(
+        "UserDecryptionRequest {{ request_id: {:?}, key_id: {:?}, context_id: {:?}, epoch_id: {:?}, client_address: {:?}, enc_key: {:?}, domain: {:?}, typed_ciphertexts_count: {} }}",
+        request.request_id, request.key_id, request.context_id, request.epoch_id, request.client_address, hex::encode(&request.enc_key), request.domain, request.typed_ciphertexts.len(),
+    )
 }
 
 #[cfg(test)]
@@ -682,7 +666,7 @@ mod tests {
     };
 
     use crate::{
-        consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
+        consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::gen_sig_keys,
@@ -733,10 +717,18 @@ mod tests {
         pub async fn init_test_dummy_decryptor(
             base_kms: BaseKmsStruct,
             session_maker: ImmutableSessionMaker,
+            key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(base_kms, pub_storage, priv_storage, session_maker).await
+            Self::init_test(
+                base_kms,
+                pub_storage,
+                priv_storage,
+                session_maker,
+                key_meta_store,
+            )
+            .await
         }
     }
 
@@ -769,11 +761,18 @@ mod tests {
             prss_setup_z64,
             base_kms.new_rng().await,
         );
-        let user_decryptor =
-            RealUserDecryptor::init_test_dummy_decryptor(base_kms, session_maker.make_immutable())
-                .await;
 
         let key_id = RequestId::new_random(rng);
+        let mut key_store = MetaStore::new_unlimited();
+        key_store.insert(&key_id).unwrap();
+        let key_meta_store = Arc::new(RwLock::new(key_store));
+
+        let user_decryptor = RealUserDecryptor::init_test_dummy_decryptor(
+            base_kms,
+            session_maker.make_immutable(),
+            Arc::clone(&key_meta_store),
+        )
+        .await;
 
         // make a dummy private keyset
         let (threshold_fhe_keys, fhe_key_set) =
@@ -801,13 +800,6 @@ mod tests {
         )
         .unwrap();
 
-        let dummy_meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
-        {
-            // initialize the dummy meta store
-            let meta_store = dummy_meta_store.clone();
-            let mut guard = meta_store.write().await;
-            guard.insert(&key_id).unwrap();
-        }
         user_decryptor
             .crypto_storage
             .write_threshold_keys_with_dkg_meta_store(
@@ -815,7 +807,7 @@ mod tests {
                 threshold_fhe_keys,
                 fhe_key_set,
                 info,
-                dummy_meta_store,
+                Arc::clone(&key_meta_store),
             )
             .await;
 
@@ -823,7 +815,7 @@ mod tests {
             // check existance
             let _guard = user_decryptor
                 .crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&key_id)
+                .read_guarded_threshold_fhe_keys(&key_id)
                 .await
                 .unwrap();
         }

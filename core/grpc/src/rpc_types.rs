@@ -111,13 +111,10 @@ pub struct CrsGenSignedPubDataHandleInternalWrapper(pub SignedPubDataHandleInter
 #[cfg(feature = "non-wasm")]
 pub fn optional_protobuf_to_alloy_domain(
     domain_ref: Option<&Eip712DomainMsg>,
-) -> Result<Eip712Domain, crate::utils::tonic_result::BoxedStatus> {
-    let inner = domain_ref.ok_or(tonic::Status::invalid_argument("missing domain"))?;
-    let out = protobuf_to_alloy_domain(inner).map_err(|e| {
-        tonic::Status::invalid_argument(format!(
-            "failed to convert protobuf domain to alloy domain: {e}"
-        ))
-    })?;
+) -> anyhow::Result<Eip712Domain> {
+    let inner = domain_ref.ok_or(anyhow::anyhow!("missing domain"))?;
+    let out = protobuf_to_alloy_domain(inner)
+        .map_err(|e| anyhow::anyhow!("failed to convert protobuf domain to alloy domain: {e}"))?;
     Ok(out)
 }
 

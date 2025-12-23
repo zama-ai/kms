@@ -79,9 +79,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+        op_metric_tag: &'static str,
     ) {
         self.inner
-            .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)
+            .write_crs_with_meta_store(req_id, pp, crs_info, meta_store, op_metric_tag)
             .await
     }
 
@@ -307,18 +308,31 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     /// The object [ThresholdFheKeys] is big so
     /// we return a lock guard instead of the whole object to avoid copying.
     ///
-    /// This function only uses the cache. If there's a chance that
-    /// the key is not in the cache, consider calling [refresh_threshold_fhe_keys] first.
-    pub async fn read_guarded_threshold_fhe_keys_from_cache(
+    /// This function ensures that the keys will be in the cache. If it is not already there it will be fetched first.
+    pub async fn read_guarded_threshold_fhe_keys(
         &self,
-        req_id: &RequestId,
+        req_id: &RequestId, // TODO(#2849) change to keyid
     ) -> anyhow::Result<OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>>
     {
-        CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
+        // First try to read from cache
+        match CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
             req_id,
             self.fhe_keys.clone(),
         )
         .await
+        {
+            Ok(guarded_keys) => Ok(guarded_keys),
+            Err(_) => {
+                // Refresh the cache if the first read was an error
+                self.refresh_threshold_fhe_keys(req_id).await?;
+                // Retry reading after the refresh
+                CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
+                    req_id,
+                    self.fhe_keys.clone(),
+                )
+                .await
+            }
+        }
     }
 
     /// Check if the threshold FHE keys exist in the storage.

@@ -5,8 +5,19 @@ use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
 };
-use tonic::Status;
+#[cfg(feature = "non-wasm")]
+use tokio::sync::RwLockReadGuard;
 use tracing;
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "non-wasm")] {
+        use crate::engine::utils::MetricedError;
+        use anyhow::anyhow;
+        use std::fmt::{self};
+        use tokio::sync::RwLockWriteGuard;
+        use tonic::Status;
+    }
+}
 
 /// Data structure that stores elements that are being processed and their status (Started, Done, Error).
 /// It holds elements up to a given capacity, and once it is full, it will remove old elements that have status [Done]/[Error], if there are sufficiently many.
@@ -269,9 +280,157 @@ impl<T: Clone> MetaStore<T> {
     }
 }
 
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn add_req_to_meta_store<T: Clone>(
+    meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
+    req_id: &RequestId,
+    request_metric: &'static str,
+) -> Result<(), MetricedError> {
+    if meta_store.exists(req_id) {
+        return Err(MetricedError::new(
+            request_metric,
+            Some(*req_id),
+            anyhow::anyhow!("Duplicate request ID in meta store"),
+            tonic::Code::AlreadyExists,
+        ));
+    }
+    meta_store.insert(req_id).map_err(|e| {
+        // We likely reached capacity here
+        MetricedError::new(request_metric, Some(*req_id), e, tonic::Code::Aborted)
+    })?;
+    Ok(())
+}
+
+#[cfg(feature = "non-wasm")]
+pub(crate) fn update_req_in_meta_store<
+    T: Clone,
+    E: Into<Box<dyn std::error::Error + Send + Sync>> + fmt::Debug,
+>(
+    meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
+    req_id: &RequestId,
+    result: Result<T, E>,
+    request_metric: &'static str,
+) -> bool {
+    match result {
+        Ok(res) => update_ok_req_in_meta_store(meta_store, req_id, res, request_metric),
+        Result::Err(e) => {
+            update_err_req_in_meta_store(meta_store, req_id, format!("{e:?}"), request_metric)
+        }
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+pub(crate) fn update_ok_req_in_meta_store<T: Clone>(
+    meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
+    req_id: &RequestId,
+    result: T,
+    request_metric: &'static str,
+) -> bool {
+    match meta_store.update(req_id, Ok(result)) {
+        Ok(()) => true,
+        Err(e) => {
+            // Update error counter for meta-store update failure
+            MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), e);
+
+            false
+        }
+    }
+}
+
+/// Helper method for updating the meta store with an error result
+/// The method gracefully handles potential update failures by logging and updating metrics
+/// [req_id] is the request ID to update
+/// [error] is the error message to store
+/// [request_metric] is a free-form string used only for error logging the origin of the failure
+/// Returns true if the update was successful, false otherwise
+#[cfg(feature = "non-wasm")]
+pub(crate) fn update_err_req_in_meta_store<T: Clone>(
+    meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
+    req_id: &RequestId,
+    error: String,
+    request_metric: &'static str,
+) -> bool {
+    // Log and increment relevant metrics according to error
+    MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), error.clone());
+
+    match meta_store.update(req_id, Err(error.clone())) {
+        Ok(()) => true,
+        Err(e) => {
+            // We already logged the original error, so just log the update failure here as there is not much else we can do
+            tracing::error!("Failed to update meta store on request ID {req_id} with error message \"{error}\" due to update error: {e}");
+            false
+        }
+    }
+}
+
 /// Helper method for retrieving the result of a request from an appropriate meta store
 /// [req_id] is the request ID to retrieve
 /// [request_type] is a free-form string used only for error logging the origin of the failure
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn retrieve_from_meta_store<T: Clone>(
+    meta_store: RwLockReadGuard<'_, MetaStore<T>>,
+    req_id: &RequestId,
+    metric_scope: &'static str,
+) -> Result<T, MetricedError> {
+    let handle = meta_store.retrieve(req_id);
+    drop(meta_store); // Release the read lock early as we otherwise risk holding it for up to DURATION_WAITING_ON_RESULT_SECONDS!
+    match handle {
+        None => {
+            let msg = format!(
+                "Could not retrieve the result in scope {metric_scope} with request ID {req_id}. It does not exist"
+            );
+
+            Err(MetricedError::new(
+                metric_scope,
+                Some(*req_id),
+                anyhow!(msg),
+                tonic::Code::NotFound,
+            ))
+        }
+        Some(cell) => {
+            let result = tokio::time::timeout(
+                tokio::time::Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS),
+                cell.get(),
+            )
+            .await;
+            // Peel off the potential errors
+            if let Ok(result) = result {
+                match result {
+                    Ok(result) => Ok(result),
+                    Err(e) => {
+                        let msg = format!(
+                                "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it finished with an error: {e}"
+                            );
+                        tracing::warn!(msg);
+                        Err(MetricedError::new(
+                            metric_scope,
+                            Some(*req_id),
+                            anyhow!(msg),
+                            tonic::Code::Internal,
+                        ))
+                    }
+                }
+            } else {
+                let msg = format!(
+                    "Could not retrieve the result in scope {metric_scope} with request ID {req_id} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
+                );
+                tracing::info!(msg);
+                Err(MetricedError::new(
+                    metric_scope,
+                    Some(*req_id),
+                    anyhow!(msg),
+                    tonic::Code::Unavailable,
+                ))
+            }
+            // Note that this is not logged as an error as we expect calls to take some time to be completed
+        }
+    }
+}
+
+/// Helper method for retrieving the result of a request from an appropriate meta store
+/// [req_id] is the request ID to retrieve
+/// [request_type] is a free-form string used only for error logging the origin of the failure
+#[cfg(feature = "non-wasm")]
 pub(crate) async fn handle_res_mapping<T: Clone>(
     handle: Option<Arc<AsyncCell<Result<T, String>>>>,
     req_id: &RequestId,

@@ -8,7 +8,7 @@ mod non_wasm {
     use tracing;
 
     /// Truncates a string to a maximum of 1024 chars to limit error message size.
-    pub(crate) fn top_1k_chars(mut s: String) -> String {
+    pub fn top_1k_chars(mut s: String) -> String {
         s.truncate(1024);
         s
     }

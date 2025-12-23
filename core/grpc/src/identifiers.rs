@@ -13,6 +13,7 @@ use anyhow::{Error, Result};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::fmt::Display;
 use std::str::FromStr;
 use tfhe::{Unversionize, Versionize};
 use tfhe_versionable::{NotVersioned, VersionizeOwned};
@@ -84,6 +85,12 @@ impl PartialOrd for RequestId {
 impl Ord for RequestId {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.0.cmp(&other.0)
+    }
+}
+
+impl Display for v1::RequestId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", hex::encode(self.request_id.as_bytes()))
     }
 }
 
