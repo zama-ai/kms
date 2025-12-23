@@ -1167,7 +1167,7 @@ impl TestedModule for KMS {
                 Ok(test.success(format)).into()
             }
             Self::Metadata::NodeInfo(test) => {
-                // test_node_info(test_dir.as_ref(), test, format).into()
+                // TODO (#2850) test_node_info(test_dir.as_ref(), test, format).into()
                 Ok(test.success(format)).into()
             }
             Self::Metadata::SoftwareVersion(test) => {
