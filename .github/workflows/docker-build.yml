@@ -198,7 +198,7 @@ jobs:
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'pr-preview')
     needs:
       - enclave
-    uses: ./.github/workflows/pr-preview.yml
+    uses: ./.github/workflows/pr-preview-deploy.yml
     with:
       image_tag: ${{ needs.core-service.outputs.image_tag }}
 

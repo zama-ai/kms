@@ -1,7 +1,7 @@
 ##############################################################################
 # pr-preview workflow
 ##############################################################################
-name: pr-preview
+name: pr-preview-deploy
 
 on:
   pull_request:
@@ -18,8 +18,8 @@ jobs:
   ############################################################################
   # PR Preview Job
   ############################################################################
-  pr-preview:
-    name: pr-preview
+  pr-preview-deploy:
+    name: pr-preview-deploy
     runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=true
     timeout-minutes: 1800
 
@@ -63,10 +63,10 @@ jobs:
           echo "JQ version: $(jq --version)"
 
           echo "Extracting PCR measurements for provided enclave image..."
-          docker pull "${IMAGE_REPO}/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
-          PCR0=$(docker inspect "${IMAGE_REPO}/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
-          PCR1=$(docker inspect "${IMAGE_REPO}/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
-          PCR2=$(docker inspect "${IMAGE_REPO}/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
+          docker pull "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
+          PCR0=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
+          PCR1=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
+          PCR2=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
           {
             echo "PCR0=${PCR0}"
             echo "PCR1=${PCR1}"
