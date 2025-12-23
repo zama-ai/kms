@@ -5,6 +5,7 @@ use crate::{
 };
 use aes_prng::AesRng;
 use kms_grpc::{rpc_types::WrappedPublicKey, RequestId};
+use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -63,7 +64,13 @@ async fn write_crs() {
 
     // writing to an empty meta store should fail
     crypto_storage
-        .write_crs_with_meta_store(&req_id, pp.clone(), crs_info.clone(), meta_store.clone())
+        .write_crs_with_meta_store(
+            &req_id,
+            pp.clone(),
+            crs_info.clone(),
+            meta_store.clone(),
+            OP_CRS_GEN_REQUEST,
+        )
         .await;
 
     // update the meta store and we should be ok
@@ -73,12 +80,24 @@ async fn write_crs() {
         guard.insert(&req_id).unwrap();
     }
     crypto_storage
-        .write_crs_with_meta_store(&req_id, pp.clone(), crs_info.clone(), meta_store.clone())
+        .write_crs_with_meta_store(
+            &req_id,
+            pp.clone(),
+            crs_info.clone(),
+            meta_store.clone(),
+            OP_CRS_GEN_REQUEST,
+        )
         .await;
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
     crypto_storage
-        .write_crs_with_meta_store(&req_id, pp.clone(), crs_info.clone(), meta_store.clone())
+        .write_crs_with_meta_store(
+            &req_id,
+            pp.clone(),
+            crs_info.clone(),
+            meta_store.clone(),
+            OP_CRS_GEN_REQUEST,
+        )
         .await;
 
     // writing on a failed storage device should fail
@@ -88,7 +107,13 @@ async fn write_crs() {
     }
     let new_req_id = derive_request_id("write_crs_2").unwrap();
     crypto_storage
-        .write_crs_with_meta_store(&new_req_id, pp, crs_info, meta_store.clone())
+        .write_crs_with_meta_store(
+            &new_req_id,
+            pp,
+            crs_info,
+            meta_store.clone(),
+            OP_CRS_GEN_REQUEST,
+        )
         .await;
     assert!(logs_contain("storage failed!"));
     assert!(logs_contain("Deleted all crs material for request"));

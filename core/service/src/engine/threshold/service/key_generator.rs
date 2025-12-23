@@ -12,8 +12,8 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_CANCELLED, ERR_KEYGEN_FAILED, OP_DECOMPRESSION_KEYGEN,
-        OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN, OP_KEYGEN, TAG_PARTY_ID,
+        ERR_CANCELLED, OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN,
+        OP_INSECURE_STANDARD_KEYGEN, OP_KEYGEN_REQUEST, OP_STANDARD_KEYGEN, TAG_PARTY_ID,
     },
 };
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -57,6 +57,7 @@ use crate::{
             service::{session::ImmutableSessionMaker, ThresholdFheKeys},
             traits::KeyGenerator,
         },
+        utils::MetricedError,
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -231,14 +232,14 @@ impl<
             internal_keyset_config.keyset_config(),
         ) {
             (PreprocHandleWithMode::Secure(_), ddec_keyset_config::KeySetConfig::Standard(_)) => {
-                OP_KEYGEN
+                OP_STANDARD_KEYGEN
             }
             (
                 PreprocHandleWithMode::Secure(_),
                 ddec_keyset_config::KeySetConfig::DecompressionOnly,
             ) => OP_DECOMPRESSION_KEYGEN,
             (PreprocHandleWithMode::Insecure, ddec_keyset_config::KeySetConfig::Standard(_)) => {
-                OP_INSECURE_KEYGEN
+                OP_INSECURE_STANDARD_KEYGEN
             }
             (
                 PreprocHandleWithMode::Insecure,
@@ -344,12 +345,17 @@ impl<
                 let _timer = timer.start();
                 tokio::select! {
                     res = keygen_background => {
-                        if res.is_err() {
-                            // We use the more specific tag to increment the error counter
-                            metrics::METRICS.increment_error_counter(op_tag, ERR_KEYGEN_FAILED);
-                            tracing::error!("Key generation of request {} failed.", req_id);
-                        } else {
-                            tracing::info!("Key generation of request {} exiting normally.", req_id);
+                                                match res {
+                            Ok(()) => {
+                                tracing::info!("Key generation of request {} exiting normally.", req_id);
+                            },
+                            Err(()) => {
+                                MetricedError::handle_unreturnable_error(
+                                    OP_KEYGEN_REQUEST,
+                                    Some(req_id),
+                                    format!("Key generation background task failed for request ID {}", &req_id),
+                                );
+                            }
                         }
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&req_id);
@@ -391,7 +397,15 @@ impl<
         let request_id =
             parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::KeyGenRequest)?;
 
-        let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
+        let eip712_domain =
+            optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
+                MetricedError::new(
+                    OP_KEYGEN_REQUEST,
+                    Some(request_id),
+                    anyhow::anyhow!("EIP712 domain validation for inner key generation: {e}"),
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
 
         let internal_keyset_config =
             InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info.clone())
@@ -602,7 +616,7 @@ impl<
 
         let private_compression_share = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&from_key_id)
+                .read_guarded_threshold_fhe_keys(&from_key_id)
                 .await?;
             let compression_sk_share = threshold_keys
                 .private_keys
@@ -618,7 +632,7 @@ impl<
         };
         let private_glwe_compute_share = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&to_key_id)
+                .read_guarded_threshold_fhe_keys(&to_key_id)
                 .await?;
             match threshold_keys.private_keys.glwe_secret_key_share.clone() {
                 GlweSecretKeyShareEnum::Z64(_share) => {
@@ -662,12 +676,9 @@ impl<
             )
         })?;
 
-        crypto_storage
-            .refresh_threshold_fhe_keys(&glwe_req_id)
-            .await?;
         let glwe_shares = {
             let guard = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&glwe_req_id)
+                .read_guarded_threshold_fhe_keys(&glwe_req_id)
                 .await?;
             match &guard.private_keys.glwe_secret_key_share {
                 GlweSecretKeyShareEnum::Z64(_) => anyhow::bail!("expected glwe shares to be z128"),
@@ -675,12 +686,9 @@ impl<
             }
         };
 
-        crypto_storage
-            .refresh_threshold_fhe_keys(&compression_req_id)
-            .await?;
         let compression_shares = {
             let guard = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&compression_req_id)
+                .read_guarded_threshold_fhe_keys(&compression_req_id)
                 .await?;
             match &guard.private_keys.glwe_secret_key_share_compression {
                 Some(compression_enum) => match compression_enum {
@@ -932,7 +940,7 @@ impl<
     {
         let existing_compression_sk = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&compression_key_id)
+                .read_guarded_threshold_fhe_keys(&compression_key_id)
                 .await?;
             let compression_sk_share = threshold_keys
                 .private_keys
