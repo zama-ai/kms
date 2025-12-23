@@ -1,14 +1,14 @@
-use std::{collections::HashMap, sync::Arc};
-
 use itertools::Itertools;
 use kms_grpc::{
-    identifiers::{ContextId, EpochId},
+    identifiers::{ContextId, EpochId, RequestId},
     kms::v1::{
         InitiateResharingRequest, InitiateResharingResponse, KeyDigest, ResharingResultResponse,
     },
     rpc_types::{optional_protobuf_to_alloy_domain, PubDataType, WrappedPublicKeyOwned},
-    IdentifierError, RequestId,
+    IdentifierError,
 };
+use observability::metrics_names::OP_INITIATE_RESHARING;
+use std::{collections::HashMap, sync::Arc};
 use tfhe::ServerKey;
 use threshold_fhe::{
     execution::{
@@ -61,6 +61,7 @@ use crate::{
             service::{session::ImmutableSessionMaker, ThresholdFheKeys},
             traits::Resharer,
         },
+        utils::MetricedError,
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -392,7 +393,15 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             RequestIdParsingErr::ReshareRequest,
         )?;
 
-        let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
+        let eip712_domain =
+            optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
+                MetricedError::new(
+                    OP_INITIATE_RESHARING,
+                    Some(request_id),
+                    anyhow::anyhow!("EIP712 domain parsing for initiate resharing: {}", e),
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
 
         let dkg_params = retrieve_parameters(Some(inner.key_parameters))?;
 
@@ -492,7 +501,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // Read the old keys if they exists, otherwise we enter resharing with no keys
             let mut mutable_keys = {
                 let old_fhe_keys_rlock = crypto_storage
-                    .read_guarded_threshold_fhe_keys_from_cache(&key_id_to_reshare)
+                    .read_guarded_threshold_fhe_keys(&key_id_to_reshare)
                     .await
                     .ok();
                 // Note: the function is supposed to zeroize the keys (hence requires mut access),

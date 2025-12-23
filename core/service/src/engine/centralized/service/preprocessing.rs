@@ -3,6 +3,7 @@ use crate::{
         base::{compute_external_signature_preprocessing, retrieve_parameters},
         centralized::central_kms::{CentralizedKms, CentralizedPreprocBucket},
         traits::{BackupOperator, ContextManager},
+        utils::MetricedError,
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -15,6 +16,7 @@ use kms_grpc::{
     rpc_types::optional_protobuf_to_alloy_domain,
     utils::tonic_result::ok_or_tonic_abort,
 };
+use observability::metrics_names::OP_KEYGEN_PREPROC_REQUEST;
 use tonic::{Request, Response, Status};
 
 /// Handles preprocessing requests for centralized KMS key generation.
@@ -49,10 +51,16 @@ pub async fn preprocessing_impl<
     request: Request<KeyGenPreprocRequest>,
 ) -> Result<Response<Empty>, Status> {
     let inner = request.into_inner();
-    let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
     let request_id =
         parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::PreprocRequest)?;
-
+    let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
+        MetricedError::new(
+            OP_KEYGEN_PREPROC_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("EIP712 domain validation for key preprocessing: {e}"),
+            tonic::Code::InvalidArgument,
+        )
+    })?;
     // context_id is not used in the centralized KMS, but we validate it if present
     let _context_id = match &inner.context_id {
         Some(ctx) => Some(parse_proto_request_id(ctx, RequestIdParsingErr::Context)?),

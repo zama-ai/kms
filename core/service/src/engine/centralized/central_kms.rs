@@ -114,11 +114,8 @@ where
 
     let existing_key_handle = match compression_key_id {
         Some(compression_key_id_inner) => {
-            storage
-                .refresh_centralized_fhe_keys(&compression_key_id_inner)
-                .await?;
             let existing_key_handle = storage
-                .read_cloned_centralized_fhe_keys_from_cache(&compression_key_id_inner)
+                .read_centralized_fhe_keys(&compression_key_id_inner)
                 .await?;
             Some(existing_key_handle)
         }
@@ -156,13 +153,13 @@ where
 
     // we need the private glwe key from keyset 2
     let (client_key_2, _, _, _, _, _, _) = storage
-        .read_cloned_centralized_fhe_keys_from_cache(keyset2_id)
+        .read_centralized_fhe_keys(keyset2_id)
         .await?
         .client_key
         .into_raw_parts();
     // we need the private compression key from keyset 1
     let (_, _, compression_private_key_1, _, _, _, _) = storage
-        .read_cloned_centralized_fhe_keys_from_cache(keyset1_id)
+        .read_centralized_fhe_keys(keyset1_id)
         .await?
         .client_key
         .into_raw_parts();
@@ -1331,7 +1328,7 @@ pub(crate) mod tests {
         };
         let key_handle = kms
             .crypto_storage
-            .read_cloned_centralized_fhe_keys_from_cache(key_id)
+            .read_centralized_fhe_keys(key_id)
             .await
             .unwrap();
         let raw_plaintext = RealCentralizedKms::<FileStorage, FileStorage>::public_decrypt(
@@ -1507,7 +1504,7 @@ pub(crate) mod tests {
         let mut rng = kms.base_kms.new_rng().await;
         let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage
-                .read_cloned_centralized_fhe_keys_from_cache(key_handle)
+                .read_centralized_fhe_keys(key_handle)
                 .await
                 .unwrap(),
             kms.base_kms.sig_key().unwrap().as_ref(),

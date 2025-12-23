@@ -9,38 +9,73 @@ All metrics follow a consistent naming pattern with a configurable prefix (defau
 ### Operation Names
 Standard operation names are defined as constants:
 ```rust
-// Key Generation Operations
-pub const OP_INSECURE_KEYGEN: &str = "insecure_keygen";
+// Preprocessing and generation related operations
+pub const OP_KEYGEN_REQUEST: &str = "keygen_request";
+pub const OP_KEYGEN_RESULT: &str = "keygen_result";
+pub const OP_INSECURE_KEYGEN_REQUEST: &str = "insecure_keygen_request";
+pub const OP_INSECURE_KEYGEN_RESULT: &str = "insecure_keygen_result";
+pub const OP_KEYGEN_PREPROC_REQUEST: &str = "keygen_preproc_request";
+pub const OP_KEYGEN_PREPROC_RESULT: &str = "keygen_preproc_result";
+// More specific metrics for key generation, only used with counters
+pub const OP_INSECURE_STANDARD_KEYGEN: &str = "insecure_standard_keygen";
 pub const OP_INSECURE_DECOMPRESSION_KEYGEN: &str = "insecure_decompression_keygen";
-pub const OP_KEYGEN: &str = "keygen";
+pub const OP_STANDARD_KEYGEN: &str = "standard_keygen";
 pub const OP_DECOMPRESSION_KEYGEN: &str = "decompression_keygen";
-pub const OP_KEYGEN_PREPROC: &str = "keygen_preproc";
 
 // Public/User decryption Operations
 // Corresponds to a request, a request may contain several ciphertexts
 pub const OP_PUBLIC_DECRYPT_REQUEST: &str = "public_decrypt_request";
+pub const OP_PUBLIC_DECRYPT_RESULT: &str = "public_decrypt_result";
 pub const OP_USER_DECRYPT_REQUEST: &str = "user_decrypt_request";
+pub const OP_USER_DECRYPT_RESULT: &str = "user_decrypt_result";
 // Inner variants of the OP
 // Corresponds to a single ciphertext
 pub const OP_PUBLIC_DECRYPT_INNER: &str = "public_decrypt_inner";
 pub const OP_USER_DECRYPT_INNER: &str = "user_decrypt_inner";
 
 // CRS Operations
-pub const OP_CRS_GEN: &str = "crs_gen";
-pub const OP_INSECURE_CRS_GEN: &str = "insecure_crs_gen";
+pub const OP_CRS_GEN_REQUEST: &str = "crs_gen_request";
+pub const OP_CRS_GEN_RESULT: &str = "crs_gen_result";
+pub const OP_INSECURE_CRS_GEN_REQUEST: &str = "insecure_crs_gen_request";
+pub const OP_INSECURE_CRS_GEN_RESULT: &str = "insecure_crs_gen_result";
+
+// PRSS init
+pub const OP_INIT: &str = "init";
+
+// Context operations
+pub const OP_NEW_MPC_CONTEXT: &str = "new_mpc_context";
+pub const OP_DESTROY_MPC_CONTEXT: &str = "destroy_mpc_context";
+pub const OP_NEW_CUSTODIAN_CONTEXT: &str = "new_custodian_context";
+pub const OP_DESTROY_CUSTODIAN_CONTEXT: &str = "destroy_custodian_context";
+pub const OP_CUSTODIAN_BACKUP_RECOVERY: &str = "custodian_backup_recovery";
+pub const OP_CUSTODIAN_RECOVERY_INIT: &str = "custodian_recovery_init";
+pub const OP_RESTORE_FROM_BACKUP: &str = "restore_from_backup";
+
+// Resharing
+pub const OP_INITIATE_RESHARING: &str = "initiate_resharing";
+pub const OP_GET_INITIATE_RESHARING_RESULT: &str = "get_initiate_resharing_result";
+
+// PK fetch
+pub const OP_FETCH_PK: &str = "fetch_pk";
 ```
 
 ### Error Types
-Standard error types are defined as constants:
+Standard grpc error types are defined as constants:
 ```rust
-// Common error values
-pub const ERR_RATE_LIMIT_EXCEEDED: &str = "rate_limit_exceeded";
-pub const ERR_KEY_EXISTS: &str = "key_already_exists";
-pub const ERR_KEY_NOT_FOUND: &str = "key_not_found";
-pub const ERR_PUBLIC_DECRYPTION_FAILED: &str = "public_decryption_failed";
-pub const ERR_USER_DECRYPTION_FAILED: &str = "user_decryption_failed";
-pub const ERR_VERIFICATION_FAILED: &str = "verification_failed";
-pub const ERR_CRS_GEN_FAILED: &str = "crs_gen_failed";
+pub const ERR_FAILED_PRECONDITION: &str = "failed_precondition";
+pub const ERR_RESOURCE_EXHAUSTED: &str = "resource_exhausted";
+pub const ERR_CANCELLED: &str = "cancelled";
+pub const ERR_INVALID_ARGUMENT: &str = "invalid_argument";
+pub const ERR_ABORTED: &str = "aborted";
+pub const ERR_ALREADY_EXISTS: &str = "already_exists";
+pub const ERR_NOT_FOUND: &str = "not_found";
+pub const ERR_INTERNAL: &str = "internal_error";
+pub const ERR_UNAVAILABLE: &str = "unavailable";
+pub const ERR_OTHER: &str = "other";
+```
+Finally another error is there for problems happening in an async worker thread. I.e. after the initial grpc call has been returned:
+```rust
+pub const ERR_ASYNC: &str = "async_call_error";
 ```
 
 ### Tag Keys
@@ -50,60 +85,58 @@ Standard metric tag keys are defined as constants:
 pub const TAG_OPERATION: &str = "operation";
 pub const TAG_ERROR: &str = "error";
 pub const TAG_KEY_ID: &str = "key_id";
+pub const TAG_CRS_ID: &str = "crs_id";
+pub const TAG_CONTEXT_ID: &str = "context_id";
+pub const TAG_EPOCH_ID: &str = "epoch_id";
 pub const TAG_ALGORITHM: &str = "algorithm";
 pub const TAG_OPERATION_TYPE: &str = "operation_type";
 pub const TAG_PARTY_ID: &str = "party_id";
-pub const TAG_REQUEST_ID: &str = "request_id";
 pub const TAG_TFHE_TYPE: &str = "tfhe_type";
 pub const TAG_PUBLIC_DECRYPTION_KIND: &str = "public_decryption_mode";
-```
-
-### Tag Values
-Standard tag values are defined as constants:
-```rust
-// Common operation type values
-pub const OP_TYPE_TOTAL: &str = "total";
-pub const OP_TYPE_LOAD_CRS_PK: &str = "load_crs_pk";
-pub const OP_TYPE_PROOF_VERIFICATION: &str = "proof_verification";
-pub const OP_TYPE_CT_PROOF: &str = "ct_proof";
+pub const TAG_USER_DECRYPTION_KIND: &str = "user_decryption_mode";
 ```
 
 ### Counters
 Track values that only increase:
 - `{prefix}_operations_total` - Total number of operations processed
   ```rust
-  metrics.increment_request_counter(OP_KEYGEN)?;  // {prefix}_operations_total{operation="keygen"}
+  metrics.increment_request_counter(OP_KEYGEN_REQUEST)?;  // {prefix}_operations_total{operation="keygen"}
   ```
 - `{prefix}_operation_errors_total` - Total number of operation errors
   ```rust
-  metrics.increment_error_counter(OP_DECRYPT, ERR_KEY_NOT_FOUND)?;  // {prefix}_operation_errors_total{operation="decrypt",error="key_not_found"}
+  metrics.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND)?;  // {prefix}_operation_errors_total{operation="public_decrypt_request",error="not_found"}
   ```
 
 ### Histograms
 Track the distribution of values:
 - `{prefix}_operation_duration_ms` - Duration of operations in milliseconds
   ```rust
-  let _timer = metrics.time_operation(OP_KEYGEN)?
+  let _timer = metrics.time_operation(OP_KEYGEN_REQUEST)?
       .tag(TAG_OPERATION_TYPE, OP_TYPE_TOTAL.to_string())?
-      .start();  // {prefix}_operation_duration_ms{operation="keygen",operation_type="total"}
+      .start();  // {prefix}_operation_duration_ms{operation="keygen_request",operation_type="total"}
   ```
 - `{prefix}_payload_size_bytes` - Size of operation payloads in bytes
   ```rust
   metrics.observe_size(OP_DECRYPT, data.len() as f64)?;  // {prefix}_payload_size_bytes{operation="decrypt"}
   ```
+NOTE: these are not fully implemented yet!
 
 ### Gauges
 Track instantaneous values that can increase or decrease:
 - `{prefix}_gauge` - General purpose gauge for recording independent values
   ```rust
-  // Record current number of active connections
-  metrics.gauge("active_connections", 42)?;  // {prefix}_gauge{operation="active_connections"}
-
-  // Record current memory usage
-  metrics.gauge("memory_usage_mb", memory_mb)?;  // {prefix}_gauge{operation="memory_usage_mb"}
-
-  // Record queue depth
-  metrics.gauge("queue_depth", queue.len() as i64)?;  // {prefix}_gauge{operation="queue_depth"}
+    cpu_load_gauge: TaggedMetric<Gauge<f64>>, 
+    memory_usage_gauge: TaggedMetric<Gauge<u64>>,
+    file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of file descriptors of the KMS
+    socat_file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of socat file descriptors
+    socat_task_gauge: TaggedMetric<Gauge<u64>>,      // Number of socat file descriptors
+    task_gauge: TaggedMetric<Gauge<u64>>,            // Numbers active child processes of the KMS
+    // Internal system gauges
+    rate_limiter_gauge: TaggedMetric<Gauge<u64>>, // Number tokens used in the rate limiter
+    active_session_gauge: TaggedMetric<Gauge<u64>>, // Number of active sessions
+    inactive_session_gauge: TaggedMetric<Gauge<u64>>, // Number of inactive sessions
+    meta_storage_pub_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing public decryptions in meta storage
+    meta_storage_user_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing user decryptions in meta storage
   ```
 
 ## Usage Examples
@@ -111,14 +144,11 @@ Track instantaneous values that can increase or decrease:
 ### Basic Usage
 
 ```rust
-use observability::metrics::METRICS;
-use observability::metrics_names::{OP_KEYGEN, TAG_OPERATION_TYPE, OP_TYPE_TOTAL};
-
 // Record operation counter
-METRICS.increment_request_counter(OP_KEYGEN)?;  // kms_operations_total{operation="keygen"}
+METRICS.increment_request_counter(OP_KEYGEN_REQUEST)?;  // kms_operations_total{operation="keygen_request"}
 
 // Record error with context
-METRICS.increment_error_counter(OP_DECRYPT, ERR_KEY_NOT_FOUND)?;  // kms_operation_errors_total{operation="decrypt",error="key_not_found"}
+METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_NOT_FOUND)?;  // kms_operation_errors_total{operation="public_decrypt_request",error="not_found"}
 
 // Record duration with tags
 let _timer = METRICS.time_operation(OP_KEYGEN)?
@@ -145,7 +175,7 @@ let config = MetricsConfig {
 let metrics = CoreMetrics::with_config(config)?;
 
 // Now metrics will use "app" prefix
-metrics.increment_request_counter(OP_KEYGEN)?;  // app_operations_total{operation="keygen"}
+metrics.increment_request_counter(OP_KEYGEN_REQUEST)?;  // app_operations_total{operation="keygen_request"}
 ```
 
 ### Duration Measurement with Tags
@@ -155,10 +185,10 @@ The preferred way to measure operation duration is using RAII guards with option
 ```rust
 fn process_key(key_id: &str, algorithm: &str) -> Result<(), Error> {
     // Basic timing with multiple tags
-    let _timer = METRICS.time_operation(OP_KEYGEN)?
+    let _timer = METRICS.time_operation(OP_KEYGEN_REQUEST)?
         .tag("key_id", key_id)?
         .tag("algorithm", algorithm)?
-        .start();  // kms_operation_duration_ms{operation="keygen",key_id="...",algorithm="..."}
+        .start();  // kms_operation_duration_ms{operation="keygen_requets",key_id="...",algorithm="..."}
 
     // Timer automatically records duration when dropped
     process_data()?;
@@ -201,24 +231,19 @@ fn explicit_timing() -> Result<(), Error> {
 ```rust
 use observability::metrics::CoreMetrics; // or ::METRICS;
 
-fn handle_request(data: &[u8]) -> Result<(), Error> {
+fn handle_request(request: Request) -> Result<(), Error> {
     let metrics = CoreMetrics::new()?;
-    let _timer = metrics.time_operation(OP_KEYGEN)?
+    let _timer = metrics.time_operation(OP_KEYGEN_REQUEST)?
         .tag("size", data.len().to_string())?
-        .start();  // kms_operation_duration_ms{operation="keygen",size="..."}
+        .start();  // kms_operation_duration_ms{operation="keygen_request",size="..."}
 
-    match validate_data(data) {
-        Ok(()) => {
-            metrics.increment_request_counter(OP_KEYGEN)?;
+    metrics.increment_request_counter(OP_KEYGEN_REQUEST)?;
+    match validate_data(request) {
+        Ok(()) => {        
             process_valid_data(data)
         }
         Err(e) => {
-            let error_type = match e {
-                ValidationError::InvalidFormat => ERR_KEY_NOT_FOUND,
-                ValidationError::TooLarge => ERR_RATE_LIMIT_EXCEEDED,
-                _ => ERR_USER_DECRYPTION_FAILED,
-            };
-            metrics.increment_error_counter(OP_KEYGEN, error_type)?;  // kms_operation_errors_total{operation="keygen",error="..."}
+            metrics.increment_error_counter(OP_KEYGEN_REQUEST, ERR_INVALID_ARGUMENT)?;  // kms_operation_errors_total{operation="keygen_request",error="invalid_argument"}
             Err(e.into())
         }
     }
@@ -235,8 +260,7 @@ fn handle_request(data: &[u8]) -> Result<(), Error> {
 
 ### 2. Error Recording
 - Use predefined error type constants from `metrics_names` module
-- Keep error types consistent across similar operations
-- If a new error type is needed, add it to the `metrics_names` module
+- These should match gRPC errors along with any special cases indicating other ways a request could fail than at the grpc level. For now this only means the `ERR_ASYNC` which is used in case of an error occuring in the async worker thread for a gRPC request. 
 
 ### 3. Tag Usage
 - Use tag keys that match parameter names when possible
@@ -246,7 +270,8 @@ fn handle_request(data: &[u8]) -> Result<(), Error> {
   - `error`: standardized error type
   - `key_id`: matches the key identifier parameter
   - `operation_type`: type of the operation (e.g., "total")
-- Avoid introducing new tag keys without adding them to `metrics_names`
+- Avoid introducing new tag keys without adding them to `metrics_names`.
+- Also to _not_ use tags that will have high cardinality. E.g. using `RequestId` as tag would not be acceptable.
 
 ### 4. Duration Measurement
 - Use the `observe_duration_with_tags` method with proper operation name constants

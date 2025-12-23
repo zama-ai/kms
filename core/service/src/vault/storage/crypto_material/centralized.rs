@@ -67,9 +67,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+        op_metric_tag: &'static str,
     ) {
         self.inner
-            .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)
+            .write_crs_with_meta_store(req_id, pp, crs_info, meta_store, op_metric_tag)
             .await
     }
 
@@ -235,15 +236,30 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     }
 
     /// Read the key materials for decryption in the centralized case.
-    pub async fn read_cloned_centralized_fhe_keys_from_cache(
+    ///
+    /// If the key material is not in the cache,
+    /// an attempt is made to read from the storage to update the cache.
+    pub async fn read_centralized_fhe_keys(
         &self,
         req_id: &RequestId,
     ) -> anyhow::Result<KmsFheKeyHandles> {
-        CryptoMaterialStorage::<PubS, PrivS>::read_cloned_crypto_material_from_cache(
+        match CryptoMaterialStorage::<PubS, PrivS>::read_cloned_crypto_material_from_cache(
             self.fhe_keys.clone(),
             req_id,
         )
         .await
+        {
+            Ok(k) => Ok(k),
+            Err(_) => {
+                // No keys in cache -- try to refresh from storage
+                self.refresh_centralized_fhe_keys(req_id).await?;
+                CryptoMaterialStorage::<PubS, PrivS>::read_cloned_crypto_material_from_cache(
+                    self.fhe_keys.clone(),
+                    req_id,
+                )
+                .await
+            }
+        }
     }
 
     /// Refresh the key materials for decryption in the centralized case.
