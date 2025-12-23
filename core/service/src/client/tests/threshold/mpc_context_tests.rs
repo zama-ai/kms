@@ -2,8 +2,7 @@ use aes_prng::AesRng;
 use kms_grpc::{rpc_types::PubDataType, RequestId};
 use rand::SeedableRng;
 use threshold_fhe::execution::{
-    endpoints::decryption::DecryptionMode, runtime::party::Role,
-    tfhe_internals::parameters::DKGParams,
+    endpoints::decryption::DecryptionMode, tfhe_internals::parameters::DKGParams,
 };
 use tokio::task::JoinSet;
 
@@ -14,7 +13,10 @@ use crate::{
             run_decryption_threshold, run_decryption_threshold_optionally_fail,
         },
     },
-    consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID_4P},
+    consts::{
+        DEFAULT_MPC_CONTEXT, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+        PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID_4P,
+    },
     cryptography::signatures::PublicSigKey,
     util::{
         key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
@@ -67,14 +69,16 @@ async fn do_context_switch(
     // we need to change this test to create a new context first before switching contexts.
     let previous_context_id = *DEFAULT_MPC_CONTEXT;
 
-    let all_private_storage = (1..=amount_parties)
-        .map(|i| {
-            FileStorage::new(None, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap()
-        })
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let all_private_storage = priv_storage_prefixes
+        .iter()
+        .map(|prefix| FileStorage::new(None, StorageType::PRIV, prefix.as_deref()).unwrap())
         .collect::<Vec<_>>();
 
-    let all_public_storage = (1..=amount_parties)
-        .map(|i| FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap())
+    let all_public_storage = pub_storage_prefixes
+        .iter()
+        .map(|prefix| FileStorage::new(None, StorageType::PUB, prefix.as_deref()).unwrap())
         .collect::<Vec<_>>();
 
     let previous_context = read_context_at_id(&all_private_storage[0], &previous_context_id)

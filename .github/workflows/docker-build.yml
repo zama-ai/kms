@@ -190,6 +190,7 @@ jobs:
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
+
   ############################################################################
   # PR Preview Job
   ############################################################################
@@ -202,27 +203,25 @@ jobs:
     with:
       image_tag: ${{ needs.core-service.outputs.image_tag }}
 
-
   ############################################################################
-  # Launch performance testing
+  # Launch performance testing with enclave nightly or manual dispatch
   ############################################################################
   performance-testing:
     name: docker-build/performance-testing
     needs:
-      # - start-amd64-runner
-      - golden-image
       - core-client
       - core-service
       - enclave
     runs-on: ubuntu-latest
-    if: inputs.testing
+    if: github.event_name == 'schedule' || inputs.testing
     steps:
       - name: Launch performance testing
         env:
           GH_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          DEPLOYMENT_TYPE: ${{ inputs.deployment_type }}
+          DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
           KMS_CORE_IMAGE_TAG: ${{ needs.core-service.outputs.image_tag }}
           KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.core-client.outputs.image_tag }}
+          BRANCH_NAME: ${{ github.ref }}
         run: |
           gh api \
             --method POST \
@@ -230,35 +229,9 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             repos/zama-ai/kms-testing/dispatches \
             -f 'event_type=performance-testing' \
-            -F "client_payload[deployment_type]=${DEPLOYMENT_TYPE}" \
-            -F "client_payload[kms_core_image_tag]=${KMS_CORE_IMAGE_TAG}" \
-            -F "client_payload[kms_core_client_image_tag]=${KMS_CORE_CLIENT_IMAGE_TAG}"
-
-  ############################################################################
-  # Launch performance testing with enclave nightly
-  ############################################################################
-  performance-testing-with-enclave:
-    name: docker-build/performance-testing-with-enclave
-    needs:
-      - core-client
-      - core-service
-      - enclave
-    runs-on: ubuntu-latest
-    if: github.event_name == 'schedule'
-    steps:
-      - name: Launch performance testing
-        env:
-          GH_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          DEPLOYMENT_TYPE: 'thresholdWithEnclave'
-          KMS_CORE_IMAGE_TAG: ${{ needs.core-service.outputs.image_tag }}
-          KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.core-client.outputs.image_tag }}
-        run: |
-          gh api \
-            --method POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            repos/zama-ai/kms-testing/dispatches \
-            -f 'event_type=performance-testing' \
+            -F "client_payload[tls]=true" \
+            -F "client_payload[kms_branch]=${BRANCH_NAME}" \
+            -F "client_payload[kms_chart_version]=repository" \
             -F "client_payload[deployment_type]=${DEPLOYMENT_TYPE}" \
             -F "client_payload[kms_core_image_tag]=${KMS_CORE_IMAGE_TAG}" \
             -F "client_payload[kms_core_client_image_tag]=${KMS_CORE_CLIENT_IMAGE_TAG}"

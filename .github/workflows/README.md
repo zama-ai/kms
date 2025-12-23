@@ -221,7 +221,7 @@ Our CI uses intelligent change detection to only run tests for modified componen
   - `node-tkms`: Node.js target with `--target nodejs`
   - `tkms`: Web target with `--target web`
 - 🔄 **Version Tagging**: Automatic latest/prerelease tag assignment
-- 🔐 **Security**: Uses NPM_TOKEN for authentication
+- 🔐 **Security**: Uses [NPM trusted publishers](https://docs.npmjs.com/trusted-publishers) for authentication
 
 ### 2. 🐳 Release Docker Images
 [`.github/workflows/on-release-images.yml`](on-release-images.yml)
@@ -275,8 +275,8 @@ Our CI uses intelligent change detection to only run tests for modified componen
 - 🦀 **Rust Toolchain**: Uses stable Rust with efficient tool installation
 - 📝 **Cargo.lock Validation**: Ensures lock file integrity
 - 🔐 **Security Scanning**:
-  - **License Compliance**: `cargo-deny` v0.16.2 for license whitelist
-  - **Vulnerability Detection**: `cargo-audit` v0.21.0 for security issues
+  - **License Compliance**: `cargo-deny` v0.18.9 for license whitelist
+  - **Vulnerability Detection**: `cargo-audit` v0.22.0 for security issues
 - 🚀 **Efficient Installation**: Uses `cargo-binstall` for faster tool setup
 
 ---

@@ -75,8 +75,6 @@ use tfhe::{FheTypes, ServerKey};
 use threshold_fhe::execution::keyset_config::KeySetCompressionConfig;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
-#[cfg(feature = "non-wasm")]
-use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
@@ -867,7 +865,6 @@ impl<
                 base_kms.new_instance().await,
                 crypto_storage.inner.clone(),
                 Arc::clone(&custodian_meta_store),
-                Role::indexed_from_one(1), // Centralized KMS is always party 1
             );
         let backup_operator = RealBackupOperator::new(
             base_kms.new_instance().await,

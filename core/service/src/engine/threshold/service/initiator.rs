@@ -166,7 +166,12 @@ impl<
         // TODO(zama-ai/kms-internal/issues/2721),
         // we never try to store the PRSS in meta_store, so the ID is not guaranteed to be unique
 
-        let own_identity = self.session_maker.my_identity(context_id).await?;
+        let own_identity = self
+            .session_maker
+            .my_identity(context_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("own identity not found in context {}", context_id))?;
+
         let session_id = epoch_id.derive_session_id()?;
 
         // PRSS robust init requires broadcast, which is implemented with Sync network assumption
@@ -312,7 +317,10 @@ mod tests {
 
     use crate::{
         client::test_tools::{self},
-        consts::PRSS_INIT_REQ_ID,
+        consts::{
+            PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PRSS_INIT_REQ_ID,
+            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
+        },
         cryptography::signatures::gen_sig_keys,
         engine::base::BaseKmsStruct,
         util::key_setup::test_tools::purge,
@@ -321,9 +329,8 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{kms::v1::InitRequest, rpc_types::KMSType};
     use rand::SeedableRng;
-    use threshold_fhe::{
-        execution::runtime::party::Role,
-        malicious_execution::small_execution::malicious_prss::{EmptyPrss, FailingPrss},
+    use threshold_fhe::malicious_execution::small_execution::malicious_prss::{
+        EmptyPrss, FailingPrss,
     };
 
     impl<
@@ -356,26 +363,44 @@ mod tests {
         let mut priv_storage = Vec::new();
         let mut vaults = Vec::new();
         let mut vaults2 = Vec::new();
-        // TODO use clone instead
-        for i in 1..=PRSS_AMOUNT_PARTIES {
-            let cur_pub =
-                FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap();
+        let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[..PRSS_AMOUNT_PARTIES];
+        let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[..PRSS_AMOUNT_PARTIES];
+
+        for (priv_prefix, pub_prefix) in priv_storage_prefixes
+            .iter()
+            .zip(pub_storage_prefixes.iter())
+        {
+            let cur_pub = FileStorage::new(None, StorageType::PUB, pub_prefix.as_deref()).unwrap();
             pub_storage.push(cur_pub);
             let cur_priv =
-                FileStorage::new(None, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap();
+                FileStorage::new(None, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
 
             // make sure the store does not contain any PRSS info (currently stored under ID 1)
             let req_id = derive_request_id(&format!(
                 "PRSSSetup_Z128_ID_{PRSS_INIT_REQ_ID}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}"
             ))
             .unwrap();
-            purge(None, None, &req_id, PRSS_AMOUNT_PARTIES).await;
+            purge(
+                None,
+                None,
+                &req_id,
+                pub_storage_prefixes,
+                priv_storage_prefixes,
+            )
+            .await;
 
             let req_id = derive_request_id(&format!(
                 "PRSSSetup_Z64_ID_{PRSS_INIT_REQ_ID}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}"
             ))
             .unwrap();
-            purge(None, None, &req_id, PRSS_AMOUNT_PARTIES).await;
+            purge(
+                None,
+                None,
+                &req_id,
+                pub_storage_prefixes,
+                priv_storage_prefixes,
+            )
+            .await;
 
             priv_storage.push(cur_priv);
             vaults.push(None);

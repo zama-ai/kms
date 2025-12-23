@@ -23,7 +23,6 @@ use threshold_fhe::{
             create_memory_factory, create_redis_factory,
             orchestration::producer_traits::SecureSmallProducerFactory, DKGPreprocessing,
         },
-        runtime::party::Role,
         small_execution::prss::RobustSecurePrssInit,
         tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
         zk::ceremony::SecureCeremony,
@@ -49,7 +48,7 @@ use crate::{
     backup::operator::RecoveryValidationMaterial,
     conf::CoreConfig,
     consts::{DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
-    cryptography::attestation::SecurityModuleProxy,
+    cryptography::{attestation::SecurityModuleProxy, signatures::PublicSigKey},
     engine::{
         backup_operator::RealBackupOperator,
         base::{
@@ -295,9 +294,9 @@ where
         .add_service(threshold_health_service);
 
     tracing::info!(
-        "Starting core-to-core server for party {} on address {:?}.",
+        "Starting core-to-core server on address {:?} with initial party ID {:?}.",
+        mpc_socket_addr,
         threshold_config.my_id,
-        mpc_socket_addr
     );
 
     // clone the verifier for later use
@@ -362,7 +361,9 @@ where
     // If no RedisConf is provided, we just use in-memory storage for storing preprocessing materials
     let preproc_factory = match &threshold_config.preproc_redis {
         None => create_memory_factory(),
-        Some(ref conf) => create_redis_factory(format!("PARTY_{}", threshold_config.my_id), conf),
+        Some(ref conf) => {
+            create_redis_factory(format!("REDIS_{}", base_kms.verf_key().address()), conf)
+        }
     };
 
     let num_sessions_preproc = threshold_config
@@ -407,10 +408,20 @@ where
                         .transpose()
                     {
                         Ok(pem_string) => {
+                            let verification_key = if let Some(my_id) = threshold_config.my_id {
+                                if peer.party_id == my_id {
+                                    Some(PublicSigKey::clone(&base_kms.verf_key()))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                // we do not know the verification key of the other parties at startup
+                                None
+                            };
                             Ok(NodeInfo {
                                 mpc_identity: identity.mpc_identity().to_string(),
                                 party_id: role.one_based() as u32,
-                                verification_key: None, // we do not know the verification key of the other parties at startup
+                                verification_key,
                                 external_url: format!(
                                     "{}://{}:{}",
                                     scheme,
@@ -459,6 +470,8 @@ where
         None => None,
     };
 
+    let private_storage_info = private_storage.info();
+
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         public_storage,
         private_storage,
@@ -503,7 +516,6 @@ where
         base_kms.new_instance().await,
         crypto_storage.inner.clone(),
         custodian_meta_store,
-        Role::indexed_from_one(threshold_config.my_id),
         session_maker,
     );
     context_manager
@@ -511,8 +523,7 @@ where
         .await
         .inspect_err(|e| {
             tracing::error!(
-                "Failed to load MPC context from storage during KMS startup for party {}: {}",
-                threshold_config.my_id,
+                "Failed to load MPC context from storage during KMS startup: {}",
                 e
             )
         })?;
@@ -520,15 +531,15 @@ where
     // Load existing PRSS from storage and optionally run a new setup with default IDs.
     if let Err(e) = initiator.init_legacy_prss_from_storage().await {
         tracing::warn!(
-            "Could not read legacy PRSS Setup from storage for {}: {}.",
-            threshold_config.my_id,
+            "Could not read legacy PRSS Setup from private storage {:?}: {}.",
+            private_storage_info,
             e
         );
     }
     if let Err(e) = initiator.init_all_prss_from_storage().await {
         tracing::warn!(
-            "Could not read all PRSS Setup from storage for {}: {}. You may need to call the init end-point later before you can use the KMS server",
-            threshold_config.my_id,
+            "Could not read all PRSS Setups from storage from private storage {:?}: {}. You may need to call the init end-point later before you can use the KMS server",
+            private_storage_info,
             e
         );
     }
@@ -537,8 +548,8 @@ where
         let epoch_id_prss: EpochId = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?.into(); // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
         let default_context_id = *DEFAULT_MPC_CONTEXT;
         tracing::info!(
-            "Initializing threshold KMS server and generating a new PRSS Setup for {}",
-            threshold_config.my_id
+            "Initializing threshold KMS server and generating a new PRSS Setup for private storage {:?}",
+            private_storage_info,
         );
         initiator
             .init_prss(&default_context_id, &epoch_id_prss)

@@ -11,7 +11,7 @@ use kms_grpc::{
 };
 use kms_lib::{
     client::client_wasm::Client,
-    util::key_setup::test_tools::{load_material_from_storage, load_pk_from_storage},
+    util::key_setup::test_tools::{load_material_from_pub_storage, load_pk_from_pub_storage},
 };
 use std::{collections::HashMap, path::Path};
 use tfhe::ServerKey;
@@ -153,17 +153,22 @@ pub(crate) async fn do_reshare(
         "Did not fetch keys from all parties after resharing!"
     );
 
-    let public_key = load_pk_from_storage(
-        Some(destination_prefix),
-        &key_id,
-        *party_ids.first().expect("no party IDs found"),
-    )
-    .await;
-    let server_key: ServerKey = load_material_from_storage(
+    let storage_prefix = Some(
+        cc_conf
+            .cores
+            .iter()
+            .find(|c| c.party_id == party_ids[0])
+            .expect("party ID not found in config")
+            .object_folder
+            .as_str(),
+    );
+    let public_key =
+        load_pk_from_pub_storage(Some(destination_prefix), &key_id, storage_prefix).await;
+    let server_key: ServerKey = load_material_from_pub_storage(
         Some(destination_prefix),
         &key_id,
         PubDataType::ServerKey,
-        *party_ids.first().expect("no party IDs found"),
+        storage_prefix,
     )
     .await;
 

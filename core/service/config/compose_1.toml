@@ -17,13 +17,16 @@ storage_cache_size = 1000
 
 [public_vault.storage.s3]
 bucket = "kms"
+prefix = "PUB-p1"
 
 [private_vault.storage.s3]
 bucket = "kms"
+prefix = "PRIV-p1"
 
 [backup_vault]
 [backup_vault.storage.file]
 path = "./backup_vault"
+prefix = "BACKUP-p1"
 
 [threshold]
 listen_address = "0.0.0.0"
