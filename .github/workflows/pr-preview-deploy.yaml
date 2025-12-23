@@ -1,0 +1,395 @@
+##############################################################################
+# pr-preview workflow
+##############################################################################
+name: pr-preview
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: 'Image tag'
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  ############################################################################
+  # PR Preview Job
+  ############################################################################
+  pr-preview:
+    name: pr-preview
+    runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=true
+    timeout-minutes: 1800
+
+    # Environment variables used throughout the job
+    env:
+      NAMESPACE: 'kms-ci-${{ github.actor }}-${{ github.ref }}'
+      TKMS_INFRA_CHART_VERSION: '0.3.2'
+      SYNC_SECRETS_CHART_VERSION: '0.2.1'
+      KMS_CORE_IMAGE_TAG: ${{ inputs.image_tag }}
+      KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.image_tag }}
+      IMAGE_REPO: 'ghcr.io/zama-ai/kms'
+      DEPLOYMENT_TYPE: 'thresholdWithEnclave'
+      TLS: 'true'
+      FHE_PARAMS: 'Test'
+    steps:
+
+      # ======================================================================
+      # DOCKER BUILD STATUS HANDLING
+      # ======================================================================
+      - name: Login to zws GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.ZWS_BOT_TOKEN }}
+
+      - name: Handle pre-built images
+        env:
+          JQ_VERSION: 1.8.1
+        run: |
+          ###################################################################
+          # USING PRE-BUILT IMAGES
+          # This handles manual runs with dockerBuild=false, using provided tags
+          ###################################################################
+          # Download JQ.
+          wget https://github.com/jqlang/jq/releases/download/jq-"${JQ_VERSION}"/jq-linux-amd64 -P /tmp
+
+          # Install JQ.
+          sudo mv /tmp/jq-linux-amd64 /usr/local/bin/jq
+          sudo chmod +x /usr/local/bin/jq
+          echo "JQ version: $(jq --version)"
+
+          echo "Extracting PCR measurements for provided enclave image..."
+          docker pull "${IMAGE_REPO}/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
+          PCR0=$(docker inspect "${IMAGE_REPO}/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
+          PCR1=$(docker inspect "${IMAGE_REPO}/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
+          PCR2=$(docker inspect "${IMAGE_REPO}/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
+          {
+            echo "PCR0=${PCR0}"
+            echo "PCR1=${PCR1}"
+            echo "PCR2=${PCR2}"
+          } >> "$GITHUB_ENV"
+
+      - name: Set up path suffix based on deployment type
+        run: |
+          ###################################################################
+          # Set up path suffix based on deployment type
+          ###################################################################
+          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            echo "Using enclave-enabled configuration..."
+            echo "PATH_SUFFIX=kms-enclave-ci" >> "$GITHUB_ENV"
+          else
+            echo "Using standard threshold configuration..."
+            echo "PATH_SUFFIX=kms-ci" >> "$GITHUB_ENV"
+          fi
+
+      # ======================================================================
+      # TOOLING SETUP
+      # ======================================================================
+      - name: Setup tailscale
+        uses: tailscale/github-action@84a3f23bb4d843bcf4da6cf824ec1be473daf4de # v3.2.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:${NAMESPACE}
+
+      - name: Setup helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          export PATH=$PATH:/usr/local/bin
+
+      - name: setup kubectl
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
+
+      - name: Setup Vcluster CLI
+        run: |
+          curl -L -o vcluster "https://github.com/loft-sh/vcluster/releases/latest/download/vcluster-linux-amd64" && \
+          sudo install -c -m 0755 vcluster /usr/local/bin && \
+          rm -f vcluster
+          vcluster version
+
+      # ======================================================================
+      # KUBERNETES & HELM SETUP
+      # ======================================================================
+      - name: Setup kubeconfig
+        run: |
+          ###################################################################
+          # Configure kubeconfig to connect to the Tailscale Kubernetes cluster
+          ###################################################################
+          echo "Configuring kubeconfig for Tailscale cluster..."
+          tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
+
+      - name: Checkout Project KMS
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: kms
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: false
+
+      - name: Setup Vcluster
+        run: |
+          vcluster create "vcluster-${NAMESPACE}" \
+            --namespace "vcluster-${NAMESPACE}" \
+            --kubernetes-version "v1.31.0"
+          vcluster connect "vcluster-${NAMESPACE}" --namespace "vcluster-${NAMESPACE}"
+          kubectl get namespace
+
+      # ======================================================================
+      # REGISTRY & SECRETS CONFIGURATION
+      # ======================================================================
+      - name: Setup registry credentials secrets
+        run: |
+          ###################################################################
+          # Deploy sync-secrets to manage registry credentials
+          ###################################################################
+          echo "Deploying sync-secrets for registry credentials..."
+          helm upgrade --install sync-secrets \
+            oci://ghcr.io/zama-zws/helm-charts/sync-secrets \
+            --namespace "${NAMESPACE}" \
+            --version "${SYNC_SECRETS_CHART_VERSION:-"0.2.1"}" \
+            --values ./ci/kube-testing/pr-preview/registry-credential/values-kms-ci.yaml
+            --create-namespace
+
+      # ======================================================================
+      # TKMS INFRASTRUCTURE DEPLOYMENT
+      # ======================================================================
+      - name: Setup tkms-infra
+        run: |
+          ###################################################################
+          # Deploy TKMS infrastructure based on deployment type
+          ###################################################################
+          if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
+            echo "Deploying standard infrastructure..."
+            helm upgrade --install tkms-infra \
+              oci://ghcr.io/zama-zws/crossplane/tkms-infra \
+              --namespace "${NAMESPACE}" \
+              --version "${TKMS_INFRA_CHART_VERSION}" \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/tkms-infra/values-"${PATH_SUFFIX}".yaml
+
+          elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            echo "Deploying infrastructure with enclave support with PCR0: ${{ env.PCR0 }}"
+            helm upgrade --install tkms-infra \
+              oci://ghcr.io/zama-zws/crossplane/tkms-infra \
+              --namespace "${NAMESPACE}" \
+              --version "${TKMS_INFRA_CHART_VERSION}" \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/tkms-infra/values-"${PATH_SUFFIX}".yaml \
+              --set kmsParties.awsKms.recipientAttestationImageSHA384="${{ env.PCR0 }}"
+          fi
+
+      - name: Wait tkms-infra to be ready
+        run: |
+          ###################################################################
+          # Wait for TKMS infrastructure components to be ready
+          ###################################################################
+          echo "Waiting for KMS parties to be ready..."
+          if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            kubectl wait --for=condition=ready Kmsparties kms-party-"${PATH_SUFFIX}-1" \
+              -n "${NAMESPACE}" --timeout=120s
+
+          elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            for i in {1..13}; do
+              kubectl wait --for=condition=ready Kmsparties kms-party-"${PATH_SUFFIX}"-"${i}" \
+                -n "${NAMESPACE}" --timeout=120s
+            done
+          fi
+
+          if [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            echo "Waiting for enclave nodegroups to be ready..."
+            kubectl wait --for=condition=ready enclavenodegroup \
+              kms-party-"${PATH_SUFFIX}"\
+              -n "${NAMESPACE}" --timeout=1200s
+          fi
+
+      # ======================================================================
+      # KMS CORE DEPLOYMENT
+      # ======================================================================
+      - name: Setup kms-core with 13 parties
+        run: |
+          ###################################################################
+          # Deploy KMS Core in threshold mode (standard)
+          ###################################################################
+          if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
+            echo "Deploying KMS Core in threshold mode across 13 parties..."
+            for i in {1..13}; do
+              echo "Deploying KMS Core party ${i}/13..."
+              helm upgrade --install kms-service-threshold-"${i}"-"${PATH_SUFFIX}" \
+                "${{ github.workspace }}/kms/charts/kms-core" \
+                --namespace "${NAMESPACE}" \
+                --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-"${PATH_SUFFIX}".yaml \
+                --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-"${i}"-"${PATH_SUFFIX}".yaml \
+                --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+                --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}"
+            done
+
+          ###################################################################
+          # Deploy KMS Core in threshold mode with enclave
+          ###################################################################
+          elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            echo "Deploying KMS Core in threshold mode with enclave support across 13 parties..."
+            for i in {1..13}; do
+              echo "Deploying KMS Core party ${i}/13 with enclave attestation..."
+              helm upgrade --install  kms-service-threshold-"${i}"-"${PATH_SUFFIX}" \
+                "${{ github.workspace }}/kms/charts/kms-core" \
+                --namespace "${NAMESPACE}" \
+                --values ./ci/kube-testing/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-"${PATH_SUFFIX}".yaml \
+                --values ./ci/kube-testing/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-threshold-"${i}"-"${PATH_SUFFIX}".yaml \
+                --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+                --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+                --set kmsCore.thresholdMode.tls.enabled="${TLS}" \
+                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
+                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
+                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}" \
+                --wait \
+                --wait-for-jobs \
+                --timeout=1200s &
+            done
+            wait
+
+          ###################################################################
+          # Deploy KMS Core in centralized mode
+          ###################################################################
+          elif [[ "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
+            echo "Deploying KMS Core in centralized mode..."
+            helm upgrade --install kms-service-centralized-"${PATH_SUFFIX}" \
+              "${{ github.workspace }}/kms/charts/kms-core" \
+              --namespace "${NAMESPACE}" \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-"${PATH_SUFFIX}".yaml \
+              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}"
+
+          ###################################################################
+          # Deploy KMS Core in centralized mode with enclave
+          ###################################################################
+          elif [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            echo "Deploying KMS Core in centralized mode with enclave..."
+            helm upgrade --install  kms-service-centralized-"${PATH_SUFFIX}" \
+              "${{ github.workspace }}/kms/charts/kms-core" \
+              --namespace "${NAMESPACE}" \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-"${PATH_SUFFIX}".yaml \
+              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+              --wait \
+              --wait-for-jobs \
+              --timeout=1200s
+          fi
+
+          ###################################################################
+          # Wait for KMS Core deployment to be ready
+          ###################################################################
+          echo "Waiting for KMS Core pods to be ready..."
+          sleep 60
+          if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            kubectl wait --for=condition=ready pod kms-service-centralized-"${PATH_SUFFIX}"-core-1 \
+              -n "${NAMESPACE}" --timeout=600s
+          elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            for i in {1..13}; do
+              kubectl wait --for=condition=ready pod kms-service-threshold-"${i}"-"${PATH_SUFFIX}"-core-"${i}" \
+                -n "${NAMESPACE}" --timeout=600s
+            done
+          fi
+
+          if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+          ###################################################################
+          # Deploy KMS Core initialization job
+          ###################################################################
+            echo "Deploying KMS Core initialization job..."
+            helm upgrade --install kms-core-init \
+              "${helm_chart_location}" ${helm_version_arg} \
+              --namespace "${NAMESPACE}" \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-init-"${PATH_SUFFIX}".yaml \
+              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+              --wait \
+              --wait-for-jobs \
+              --timeout=1200s
+
+            ###################################################################
+            # Wait for KMS Core initialization to complete
+            ###################################################################
+            echo "Waiting for KMS Core initialization to complete..."
+            sleep 30
+            kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
+              -n "${NAMESPACE}" --timeout=600s
+          fi
+
+      # ======================================================================
+      # SAVE ARGO WORKFLOW LOGS
+      # ======================================================================
+      - name: Upload Argo workflow logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: argo-workflow-logs.txt
+          path: argo-workflow-logs.txt
+          retention-days: 30
+
+
+      # ======================================================================
+      # CLEANUP
+      # ======================================================================
+      - name: Cleanup
+        if: always()
+        run: |
+          ###################################################################
+          # Clean up all resources to avoid unnecessary costs
+          ###################################################################
+          echo "Starting cleanup of KMS resources..."
+
+          # Uninstall KMS Core instances
+          echo "Uninstalling KMS Core instances..."
+          if [[ ${DEPLOYMENT_TYPE} == "threshold" || ${DEPLOYMENT_TYPE} == "thresholdWithEnclave" ]]; then
+            for i in {1..13}; do
+              echo "Uninstalling KMS Core instance ${i}/13..."
+              helm uninstall "kms-service-threshold-${i}-${PATH_SUFFIX}" -n "${NAMESPACE}" || true
+            done
+          fi
+          if [[ ${DEPLOYMENT_TYPE} == "centralized" || ${DEPLOYMENT_TYPE} == "centralizedWithEnclave" ]]; then
+            echo "Uninstalling KMS Core instance..."
+            helm uninstall "kms-service-centralized-${PATH_SUFFIX}" -n "${NAMESPACE}" || true
+          fi
+
+          # Clean up ConfigMaps
+          echo "Cleaning up ConfigMaps..."
+          kubectl delete cm -l app=kms-core -n "${NAMESPACE}" || true
+          kubectl delete cm -l app=kms-core-client -n "${NAMESPACE}" || true
+
+          # Clean up StatefulSets
+          echo "Cleaning up StatefulSets..."
+          kubectl delete sts -l app=kms-core-client -n "${NAMESPACE}" || true
+
+          # Clean up Jobs
+          echo "Cleaning up Jobs..."
+          kubectl delete job -l app=kms-core -n "${NAMESPACE}" || true
+          kubectl delete job -l app=kms-threshold-init-job -n "${NAMESPACE}" || true
+
+          # Clean up workflow
+          echo "Cleaning up workflow..."
+          argo delete @latest -n kms-ci -n "${NAMESPACE}" || true
+
+          # Uninstall Helm releases
+          echo "Uninstalling Helm releases..."
+          helm uninstall kms-core-init -n "${NAMESPACE}" || true
+          helm uninstall tkms-infra -n "${NAMESPACE}" || true
+          helm uninstall sync-secrets -n "${NAMESPACE}" || true
+
+          echo "✅ Cleanup completed successfully"
+
+  ############################################################################
+  # Stop AMD64 Runner
+  ############################################################################
+  stop-amd64-runner:
+    name: performance-testing/stop-amd64-runner
+    needs: [start-amd64-runner, performance-testing]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Stop AMD64 runner
+        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
+        with:
+          mode: stop
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+          label: ${{ needs.start-amd64-runner.outputs.label }}
