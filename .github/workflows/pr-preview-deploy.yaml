@@ -376,21 +376,3 @@ jobs:
           helm uninstall sync-secrets -n "${NAMESPACE}" || true
 
           echo "✅ Cleanup completed successfully"
-
-  ############################################################################
-  # Stop AMD64 Runner
-  ############################################################################
-  stop-amd64-runner:
-    name: performance-testing/stop-amd64-runner
-    needs: [start-amd64-runner, performance-testing]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Stop AMD64 runner
-        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
-        with:
-          mode: stop
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          label: ${{ needs.start-amd64-runner.outputs.label }}
