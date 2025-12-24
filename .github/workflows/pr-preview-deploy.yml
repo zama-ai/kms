@@ -254,6 +254,13 @@ jobs:
           ###################################################################
           elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             echo "Deploying KMS Core in threshold mode with enclave support across ${NB_KMS_PARTIES} parties..."
+            if [[ "${NB_KMS_PARTIES}" == "13" ]]; then
+              THRESHOLD_VALUE=4
+            elif [[ "${NB_KMS_PARTIES}" == "4" ]]; then
+              THRESHOLD_VALUE=1
+            else
+              THRESHOLD_VALUE=1
+            fi
             for i in $(seq 1 "${NB_KMS_PARTIES}"); do
               echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES} with enclave attestation..."
               helm upgrade --install  kms-core-"${i}" \
@@ -269,6 +276,7 @@ jobs:
                 --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
                 --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
                 --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+                --set kmsCore.thresholdMode.thresholdValue="${THRESHOLD_VALUE}" \
                 --set kmsCore.thresholdMode.tls.enabled="${TLS}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
