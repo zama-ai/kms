@@ -168,8 +168,7 @@ async fn fetch_public_materials_from_peers<
             s3_client,
             bucket,
             StorageType::PUB,
-            // TODO(zama-ai/kms-internal#2850): this is a workaround to get storage working when context does not have the prefix
-            Some(format!("PUB-p{}", node.party_id).as_str()),
+            node.public_storage_prefix.as_deref(),
             None,
         )?;
 
@@ -774,6 +773,7 @@ mod tests {
                     // the storage url does not matter as we're using the mock
                     public_storage_url:
                         "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
+                    public_storage_prefix: None,
                     extra_verification_keys: vec![],
                 }],
                 if two_nodes {
@@ -787,6 +787,7 @@ mod tests {
                         public_storage_url:
                             "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/"
                                 .to_string(),
+                        public_storage_prefix: None,
                         extra_verification_keys: vec![],
                     }]
                 } else {

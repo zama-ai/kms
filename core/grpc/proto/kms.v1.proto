@@ -511,10 +511,14 @@ message MpcNode {
   // evaluation keys and other public data.
   string public_storage_url = 6;
 
+  // The prefix to use when storing public data for this node.
+  // When not given, this defaults to "PUB".
+  optional string public_storage_prefix = 7;
+
   // A list of public keys that are permitted to make transactions to the public chain on behalf this node.
   // I.e. the signing keys of this entity which they will use to make transactions to the Gateway.
   // It may be empty if the node does not have any such keys, in this case the verification_key will be used.
-  repeated bytes extra_verification_keys = 7;
+  repeated bytes extra_verification_keys = 8;
 }
 
 // The context of the MPC, containing the list of MPC nodes and other metadata.
