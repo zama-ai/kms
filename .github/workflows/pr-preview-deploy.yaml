@@ -177,7 +177,7 @@ jobs:
               -n "${NAMESPACE}" --timeout=120s
 
           elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            for i in {1..${NB_KMS_PARTIES}}; do
+            for i in $(seq 1 "${NB_KMS_PARTIES}"); do
               kubectl wait --for=condition=ready Kmsparties kms-party-${NAMESPACE}-${i} \
                 -n "${NAMESPACE}" --timeout=120s
             done
@@ -200,7 +200,7 @@ jobs:
           ###################################################################
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
             echo "Deploying KMS Core in threshold mode across ${NB_KMS_PARTIES} parties..."
-            for i in {1.."${NB_KMS_PARTIES}"}; do
+            for i in $(seq 1 "${NB_KMS_PARTIES}"); do
               echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES}..."
               helm upgrade --install kms-service-threshold-"${i}"-kms-ci \
                 "./charts/kms-core" \
@@ -216,7 +216,7 @@ jobs:
           ###################################################################
           elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             echo "Deploying KMS Core in threshold mode with enclave support across ${NB_KMS_PARTIES} parties..."
-            for i in {1.."${NB_KMS_PARTIES}"}; do
+            for i in $(seq 1 "${NB_KMS_PARTIES}"); do
               echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES} with enclave attestation..."
               helm upgrade --install  kms-service-threshold-"${i}"-kms-ci \
                 "./charts/kms-core" \
@@ -272,7 +272,7 @@ jobs:
             kubectl wait --for=condition=ready pod kms-service-centralized-kms-ci-core-1 \
               -n "${NAMESPACE}" --timeout=600s
           elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            for i in {1..${NB_KMS_PARTIES}}; do
+            for i in $(seq 1 "${NB_KMS_PARTIES}"); do
               kubectl wait --for=condition=ready pod kms-service-threshold-"${i}"-kms-ci-core-"${i}" \
                 -n "${NAMESPACE}" --timeout=600s
             done
