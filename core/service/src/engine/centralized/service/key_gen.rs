@@ -1,19 +1,3 @@
-use alloy_sol_types::Eip712Domain;
-use anyhow::Result;
-use itertools::Itertools;
-use kms_grpc::identifiers::EpochId;
-use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
-use kms_grpc::rpc_types::optional_protobuf_to_alloy_domain;
-use kms_grpc::RequestId;
-use observability::metrics::METRICS;
-use observability::metrics_names::{ERR_KEYGEN_FAILED, ERR_KEY_EXISTS, OP_KEYGEN};
-use std::sync::Arc;
-use threshold_fhe::execution::keyset_config::KeySetConfig;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use tokio::sync::{OwnedSemaphorePermit, RwLock};
-use tonic::{Request, Response, Status};
-use tracing::Instrument;
-
 use crate::consts::PRSS_INIT_REQ_ID;
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{
@@ -24,6 +8,7 @@ use crate::engine::centralized::central_kms::{
 };
 use crate::engine::keyset_configuration::InternalKeySetConfig;
 use crate::engine::traits::{BackupOperator, ContextManager};
+use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
 };
@@ -31,6 +16,20 @@ use crate::ok_or_tonic_abort;
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::{Storage, StorageExt};
+use alloy_sol_types::Eip712Domain;
+use anyhow::Result;
+use itertools::Itertools;
+use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
+use kms_grpc::rpc_types::optional_protobuf_to_alloy_domain;
+use kms_grpc::{EpochId, RequestId};
+use observability::metrics::METRICS;
+use observability::metrics_names::OP_KEYGEN_REQUEST;
+use std::sync::Arc;
+use threshold_fhe::execution::keyset_config::KeySetConfig;
+use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use tokio::sync::{OwnedSemaphorePermit, RwLock};
+use tonic::{Request, Response, Status};
+use tracing::Instrument;
 
 /// Implementation of the key_gen endpoint
 pub async fn key_gen_impl<
@@ -43,7 +42,7 @@ pub async fn key_gen_impl<
     request: Request<KeyGenRequest>,
     #[cfg(feature = "insecure")] check_preproc_id: bool,
 ) -> Result<Response<Empty>, Status> {
-    let _timer = METRICS.time_operation(OP_KEYGEN).start();
+    let _timer = METRICS.time_operation(OP_KEYGEN_REQUEST).start();
 
     let inner = request.into_inner();
     tracing::info!(
@@ -74,7 +73,14 @@ pub async fn key_gen_impl<
             )
         })?;
 
-    let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
+    let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
+        MetricedError::new(
+            OP_KEYGEN_REQUEST,
+            Some(req_id),
+            anyhow::anyhow!("EIP712 domain validation for key generation: {e}"),
+            tonic::Code::InvalidArgument,
+        )
+    })?;
 
     // Check for existance of request preprocessing ID
     // also check that the request ID is not used yet
@@ -147,7 +153,7 @@ pub async fn key_gen_impl<
     let handle = service.tracker.spawn(
         async move {
             let _timer = _timer;
-            if let Err(e) = key_gen_background(
+            match key_gen_background(
                 &req_id,
                 &preproc_id,
                 &epoch_id,
@@ -161,13 +167,15 @@ pub async fn key_gen_impl<
             )
             .await
             {
-                METRICS.increment_error_counter(OP_KEYGEN, ERR_KEYGEN_FAILED);
-                tracing::error!("Key generation of request {} failed: {}", req_id, e);
-            } else {
-                tracing::info!(
-                    "Key generation of request {} completed successfully.",
-                    req_id
-                );
+                Ok(()) => {
+                    tracing::info!(
+                        "Key generation of request {} completed successfully.",
+                        req_id
+                    );
+                }
+                Err(e) => {
+                    MetricedError::handle_unreturnable_error(OP_KEYGEN_REQUEST, Some(req_id), e);
+                }
             }
         }
         .instrument(tracing::Span::current()),
@@ -265,12 +273,11 @@ pub(crate) async fn key_gen_background<
     {
         // Check if the key already exists
         if crypto_storage
-            .read_cloned_centralized_fhe_keys_from_cache(req_id, epoch_id)
+            .read_centralized_fhe_keys(req_id, epoch_id)
             .await
             .is_ok()
         {
             let mut guarded_meta_store = meta_store.write().await;
-            METRICS.increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS);
             let _ = guarded_meta_store.update(
                 req_id,
                 Err(format!(

@@ -155,6 +155,8 @@ pub trait StorageForBytes: Storage {
 
 /// Store some data at a location defined by `request_id` and `data_type`.
 /// Under the hood, the versioned data will be stored.
+/// If the object with `data_id` and `data_type` already exists, it will not be overwritten and
+/// instead a warning is logged, but the call will succeed.
 pub async fn store_versioned_at_request_id<
     'a,
     S: Storage,

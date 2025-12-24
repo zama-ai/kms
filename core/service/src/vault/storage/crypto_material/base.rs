@@ -2,7 +2,7 @@
 //!
 //! This module provides the foundational storage implementation used by
 //! both centralized and threshold KMS variants.
-use super::{check_data_exists_at_epoch, log_storage_success, CryptoMaterialReader};
+use crate::util::meta_store::update_ok_req_in_meta_store;
 use crate::{
     anyhow_error_and_warn_log,
     backup::operator::RecoveryValidationMaterial,
@@ -18,8 +18,9 @@ use crate::{
         keychain::KeychainProxy,
         storage::{
             crypto_material::{
-                check_data_exists, log_storage_success_optional_variant,
-                traits::PrivateCryptoMaterialReader,
+                check_data_exists, check_data_exists_at_epoch, log_storage_success,
+                log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
+                CryptoMaterialReader,
             },
             delete_all_at_request_id, delete_at_request_and_epoch_id, delete_at_request_id,
             delete_pk_at_request_id, read_all_data_versioned, read_context_at_id,
@@ -424,6 +425,7 @@ where
         pp: CompactPkeCrs,
         crs_info: CrsGenMetadata,
         meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
+        op_metric_tag: &'static str,
     ) {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
@@ -501,12 +503,7 @@ where
         if r1
             && r2
             && r3
-            && guarded_meta_store
-                .update(req_id, Ok(crs_info))
-                .inspect_err(|e| {
-                    tracing::error!("Error ({e}) while updating CRS meta store for {}", req_id)
-                })
-                .is_ok()
+            && update_ok_req_in_meta_store(&mut guarded_meta_store, req_id, crs_info, op_metric_tag)
         {
             // everything is ok, there's no cache to update
         } else {
@@ -913,9 +910,8 @@ where
         }
     }
 
-    pub(crate) async fn read_guarded_fhe_private_material_from_cache<
-        T: PrivateFheMaterial + Clone + std::fmt::Debug,
-    >(
+    // TODO(#2849) should be changed to KeyId
+    pub async fn read_guarded_crypto_material_from_cache<T: Clone>(
         key_id: &RequestId,
         epoch_id: &EpochId,
         fhe_keys: Arc<RwLock<HashMap<(RequestId, EpochId), T>>>,

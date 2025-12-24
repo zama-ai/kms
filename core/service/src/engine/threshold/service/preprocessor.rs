@@ -10,9 +10,7 @@ use kms_grpc::{
 };
 use observability::{
     metrics,
-    metrics_names::{
-        ERR_CANCELLED, ERR_USER_PREPROC_FAILED, OP_KEYGEN_PREPROC_REQUEST, TAG_PARTY_ID,
-    },
+    metrics_names::{ERR_CANCELLED, OP_KEYGEN_PREPROC_REQUEST, TAG_PARTY_ID},
 };
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
@@ -41,6 +39,7 @@ use crate::{
         base::{compute_external_signature_preprocessing, retrieve_parameters, BaseKmsStruct},
         keyset_configuration::preproc_proto_to_keyset_config,
         threshold::{service::session::ImmutableSessionMaker, traits::KeyGenPreprocessor},
+        utils::MetricedError,
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -149,12 +148,20 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                         permit,
                         #[cfg(feature = "insecure")] percentage_offline
                     ) => {
-                        if res.is_err() {
-                            metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, ERR_USER_PREPROC_FAILED);
+                        match res {
+                            Ok(()) => {
+                                tracing::info!("Preprocessing of request {} exiting normally.", &request_id);
+                            },
+                            Err(()) => {
+                                MetricedError::handle_unreturnable_error(
+                                    OP_KEYGEN_PREPROC_REQUEST,
+                                    Some(request_id),
+                                    format!("Preprocessing background task failed for request ID {}", &request_id),
+                                );
+                            }
                         }
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&request_id);
-                        tracing::info!("Preprocessing of request {} exiting normally.", &request_id);
                     },
                     () = token.cancelled() => {
                         // NOTE: Any correlated randomness that was already generated should be cleaned up from Redis on drop.
@@ -320,11 +327,18 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
     ) -> Result<Response<Empty>, Status> {
-        let domain = optional_protobuf_to_alloy_domain(request.domain.as_ref())?;
         let request_id = parse_optional_proto_request_id(
             &request.request_id,
             RequestIdParsingErr::PreprocRequest,
         )?;
+        let domain = optional_protobuf_to_alloy_domain(request.domain.as_ref()).map_err(|e| {
+            MetricedError::new(
+                OP_KEYGEN_PREPROC_REQUEST,
+                Some(request_id),
+                e,
+                tonic::Code::InvalidArgument,
+            )
+        })?;
 
         //Retrieve the DKG parameters
         let dkg_params = retrieve_parameters(Some(request.params))?;

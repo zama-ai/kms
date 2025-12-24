@@ -208,7 +208,7 @@ async fn test_largecipher() {
         .err()
         .unwrap()
         .message()
-        .contains("finished with an error"));
+        .contains("Failed on requestID"));
     tracing::info!("aborting");
     kms_server.assert_shutdown().await;
 }

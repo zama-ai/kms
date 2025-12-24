@@ -437,6 +437,7 @@ where
                                 ),
                                 ca_cert: pem_string.map(|cert_pem| cert_pem.into_bytes()),
                                 public_storage_url: "".to_string(),
+                                public_storage_prefix: None,
                                 extra_verification_keys: vec![],
                             })
                         }
@@ -571,6 +572,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         user_decrypt_meta_store: user_decrypt_meta_store.clone(),
+        key_meta_store: dkg_pubinfo_meta_store.clone(),
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
@@ -582,6 +584,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         pub_dec_meta_store: pub_dec_meta_store.clone(),
+        key_meta_store: dkg_pubinfo_meta_store.clone(),
         session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),

@@ -1,5 +1,4 @@
-use std::collections::{HashMap, HashSet};
-
+use crate::consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID};
 use crate::engine::base::retrieve_parameters;
 use crate::{
     anyhow_error_and_log,
@@ -11,10 +10,9 @@ use crate::{
 };
 use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
-use kms_grpc::identifiers::ContextId;
+use kms_grpc::identifiers::{ContextId, EpochId};
 use kms_grpc::kms::v1::CrsGenRequest;
 use kms_grpc::utils::tonic_result::BoxedStatus;
-use kms_grpc::RequestId;
 use kms_grpc::{
     kms::v1::{
         PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
@@ -22,7 +20,10 @@ use kms_grpc::{
     },
     rpc_types::optional_protobuf_to_alloy_domain,
 };
+use kms_grpc::{KeyId, RequestId};
+use std::collections::{HashMap, HashSet};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_fhe::execution::zk::ceremony::compute_witness_dim;
 use threshold_fhe::hashing::DomainSep;
 
 pub(crate) const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
@@ -129,6 +130,27 @@ impl std::fmt::Display for RequestIdParsingErr {
     }
 }
 
+pub(crate) fn optional_proto_request_id(
+    request_id: &Option<kms_grpc::kms::v1::RequestId>,
+    id_type: RequestIdParsingErr,
+) -> anyhow::Result<RequestId> {
+    let req_id = request_id.clone().ok_or(anyhow::anyhow!(
+        "Request ID not present: {id_type}: {request_id:?}"
+    ))?;
+    proto_request_id(&req_id, id_type)
+}
+
+pub(crate) fn proto_request_id(
+    request_id: &kms_grpc::kms::v1::RequestId,
+    id_type: RequestIdParsingErr,
+) -> anyhow::Result<RequestId> {
+    request_id.try_into().map_err(|e| {
+        anyhow::anyhow!(format!(
+            "Invalid request ID: {id_type}: {request_id:?}: {e}"
+        ))
+    })
+}
+
 /// Parse a protobuf request ID and returns an appropriate tonic error if it is invalid.
 pub(crate) fn parse_optional_proto_request_id(
     request_id: &Option<kms_grpc::kms::v1::RequestId>,
@@ -185,32 +207,39 @@ pub fn validate_user_decrypt_req(
         UnifiedPublicEncKey,
         alloy_primitives::Address,
         RequestId,
-        RequestId,
+        KeyId,
+        ContextId,
+        EpochId,
         alloy_sol_types::Eip712Domain,
     ),
-    BoxedStatus,
+    Box<dyn std::error::Error + Send + Sync>,
 > {
-    let key_id =
-        parse_optional_proto_request_id(&req.key_id, RequestIdParsingErr::UserDecRequestBadKeyId)?;
     let request_id =
         parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::UserDecRequest)?;
+    let key_id =
+        parse_optional_proto_request_id(&req.key_id, RequestIdParsingErr::UserDecRequestBadKeyId)?
+            .into();
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // remove the default context when all of context is ready
+    let context_id: ContextId = match &req.context_id {
+        Some(context_id) => context_id.try_into()?,
+        None => *DEFAULT_MPC_CONTEXT,
+    };
+    let epoch_id: EpochId = match &req.epoch_id {
+        Some(epoch_id) => epoch_id.try_into()?,
+        None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
+    };
 
     if req.typed_ciphertexts.is_empty() {
-        return Err(BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("{ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS} (Request ID: {request_id})"),
-        )));
+        return Err(anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS).into());
     }
 
     let client_verf_key = alloy_primitives::Address::parse_checksummed(&req.client_address, None)
         .map_err(|e| {
-        BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!(
-                "Error parsing checksummed client address: {} - {e}",
-                &req.client_address
-            ),
-        ))
+        anyhow::anyhow!(
+            "Error parsing checksummed client address: {} - {e}",
+            &req.client_address
+        )
     })?;
 
     let domain = match verify_user_decrypt_eip712(req) {
@@ -218,28 +247,13 @@ pub fn validate_user_decrypt_req(
             tracing::debug!("🔒 Signature verified successfully");
             domain
         }
-        Err(e) => {
-            return Err(BoxedStatus::from(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!(
-                    "Signature verification failed with error {e} for request: {:?}",
-                    req.request_id,
-                ),
-            )));
-        }
+        Err(e) => return Err(anyhow::anyhow!("Failed to verify the EIP-712 domain: {e}").into()),
     };
 
-    let (link, _) = req.compute_link_checked().map_err(|e| {
-        BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("Error computing link: {e}"),
-        ))
-    })?;
+    let (link, _) = req.compute_link_checked()?;
     let client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(&req.enc_key).map_err(|e| {
-        tracing::error!("Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}");
-        BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"),
+        Into::<Box<dyn std::error::Error + Send + Sync>>::into(anyhow::anyhow!(
+            "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
         ))
     })?;
     Ok((
@@ -247,8 +261,10 @@ pub fn validate_user_decrypt_req(
         link,
         client_enc_key,
         client_verf_key,
-        key_id,
         request_id,
+        key_id,
+        context_id,
+        epoch_id,
         domain,
     ))
 }
@@ -262,24 +278,52 @@ pub fn validate_user_decrypt_req(
 #[allow(clippy::type_complexity)]
 pub fn validate_public_decrypt_req(
     req: &PublicDecryptionRequest,
-) -> Result<(Vec<TypedCiphertext>, RequestId, RequestId, Eip712Domain), BoxedStatus> {
-    let key_id = parse_optional_proto_request_id(
-        &req.key_id,
-        RequestIdParsingErr::PublicDecRequestBadKeyId,
-    )?;
-    let request_id =
-        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::PublicDecRequest)?;
+) -> Result<
+    (
+        Vec<TypedCiphertext>,
+        RequestId,
+        KeyId,
+        ContextId,
+        EpochId,
+        Eip712Domain,
+    ),
+    Box<dyn std::error::Error + Send + Sync>,
+> {
+    let req_id: RequestId =
+        optional_proto_request_id(&req.request_id, RequestIdParsingErr::PublicDecRequest)?;
+
+    tracing::info!(
+        request_id = ?req_id,
+        "Received new decryption request"
+    );
+
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // remove the default context when all of context is ready
+    let context_id: ContextId = match &req.context_id {
+        Some(context_id) => context_id.try_into()?,
+        None => *DEFAULT_MPC_CONTEXT,
+    };
+    let epoch_id: EpochId = match &req.epoch_id {
+        Some(epoch_id) => epoch_id.try_into()?,
+        None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
+    };
+    let key_id: KeyId =
+        optional_proto_request_id(&req.key_id, RequestIdParsingErr::PublicDecRequestBadKeyId)?
+            .into();
 
     if req.ciphertexts.is_empty() {
-        return Err(BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("{ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS} (Request ID: {request_id})"),
-        )));
+        return Err(anyhow::anyhow!(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS).into());
     }
 
     let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
-
-    Ok((req.ciphertexts.clone(), key_id, request_id, eip712_domain))
+    Ok((
+        req.ciphertexts.clone(),
+        req_id,
+        key_id,
+        context_id,
+        epoch_id,
+        eip712_domain,
+    ))
 }
 
 /// Verify the EIP-712 encoded payload in the request.
@@ -512,39 +556,44 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
 
 pub(crate) fn validate_crs_gen_request(
     req: CrsGenRequest,
-) -> Result<(RequestId, DKGParams, Eip712Domain, Option<ContextId>), BoxedStatus> {
+) -> anyhow::Result<(RequestId, ContextId, usize, DKGParams, Eip712Domain)> {
     let req_id =
         parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
-    let params = retrieve_parameters(Some(req.params))?;
 
-    // This verification is more strict than the checks in [compute_witness_dim]
+    // This verification is more strict than the checks in [compute_witness_dim] below
     // because it only allows powers of 2. But there are no strong reasons
     // to use max_num_bits that are not powers of 2 so we enforce it here.
     if let Some(max_num_bits) = req.max_num_bits {
         verify_max_num_bits(max_num_bits as usize)?;
     }
 
+    let params = retrieve_parameters(Some(req.params))?;
+    let crs_params = params
+        .get_params_basics_handle()
+        .get_compact_pk_enc_params();
+
+    let witness_dim = compute_witness_dim(&crs_params, req.max_num_bits.map(|x| x as usize))?;
+
     // context_id is not used at the moment, but we validate it if present
     let context_id = match &req.context_id {
-        Some(ctx) => Some(parse_proto_context_id(ctx, RequestIdParsingErr::Context)?),
-        None => None,
+        Some(ctx) => parse_proto_context_id(ctx, RequestIdParsingErr::Context)?,
+        None => *DEFAULT_MPC_CONTEXT,
     };
 
     let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
-    Ok((req_id, params, eip712_domain, context_id))
+    Ok((req_id, context_id, witness_dim, params, eip712_domain))
 }
 
 /// The max_num_bits should be a power of 2 between 1 and 2048 (inclusive)
-fn verify_max_num_bits(max_num_bits: usize) -> Result<(), BoxedStatus> {
+fn verify_max_num_bits(max_num_bits: usize) -> anyhow::Result<()> {
     if max_num_bits > 0 && max_num_bits <= 2048 && usize::is_power_of_two(max_num_bits) {
         Ok(())
     } else {
-        Err(tonic::Status::invalid_argument(format!(
+        Err(anyhow::anyhow!(
             "max_num_bits must be a power of 2 between 1 and 2048, got {}",
             max_num_bits
         ))
-        .into())
     }
 }
 
@@ -691,10 +740,11 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            let (_, _, _, _domain) = validate_public_decrypt_req(&req).unwrap();
+            let (_, _, _, _, _, _domain) = validate_public_decrypt_req(&req).unwrap();
         }
     }
 
+    #[tracing_test::traced_test]
     #[test]
     fn test_validate_user_decrypt_req() {
         // setup data we're going to use in this test

@@ -1,14 +1,14 @@
-use std::{collections::HashMap, sync::Arc};
-
 use itertools::Itertools;
 use kms_grpc::{
-    identifiers::{ContextId, EpochId},
+    identifiers::{ContextId, EpochId, RequestId},
     kms::v1::{
         InitiateResharingRequest, InitiateResharingResponse, KeyDigest, ResharingResultResponse,
     },
     rpc_types::{optional_protobuf_to_alloy_domain, PubDataType, WrappedPublicKeyOwned},
-    IdentifierError, RequestId,
+    IdentifierError,
 };
+use observability::metrics_names::OP_INITIATE_RESHARING;
+use std::{collections::HashMap, sync::Arc};
 use tfhe::ServerKey;
 use threshold_fhe::{
     execution::{
@@ -61,6 +61,7 @@ use crate::{
             service::{session::ImmutableSessionMaker, ThresholdFheKeys},
             traits::Resharer,
         },
+        utils::MetricedError,
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -167,8 +168,7 @@ async fn fetch_public_materials_from_peers<
             s3_client,
             bucket,
             StorageType::PUB,
-            // TODO(zama-ai/kms-internal#2850): this is a workaround to get storage working when context does not have the prefix
-            Some(format!("PUB-p{}", node.party_id).as_str()),
+            node.public_storage_prefix.as_deref(),
             None,
         )?;
 
@@ -386,7 +386,15 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             RequestIdParsingErr::ReshareRequest,
         )?;
 
-        let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
+        let eip712_domain =
+            optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
+                MetricedError::new(
+                    OP_INITIATE_RESHARING,
+                    Some(request_id),
+                    anyhow::anyhow!("EIP712 domain parsing for initiate resharing: {}", e),
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
 
         let dkg_params = retrieve_parameters(Some(inner.key_parameters))?;
 
@@ -486,7 +494,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             // Read the old keys if they exists, otherwise we enter resharing with no keys
             let mut mutable_keys = {
                 let old_fhe_keys_rlock = crypto_storage
-                    .read_guarded_threshold_fhe_keys_from_cache(&key_id_to_reshare, &old_epoch_id)
+                    .read_guarded_threshold_fhe_keys(&key_id_to_reshare, &old_epoch_id)
                     .await
                     .ok();
                 // Note: the function is supposed to zeroize the keys (hence requires mut access),
@@ -764,6 +772,7 @@ mod tests {
                     // the storage url does not matter as we're using the mock
                     public_storage_url:
                         "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/".to_string(),
+                    public_storage_prefix: None,
                     extra_verification_keys: vec![],
                 }],
                 if two_nodes {
@@ -777,6 +786,7 @@ mod tests {
                         public_storage_url:
                             "https://zama-zws-dev-tkms-b6q87.s3.eu-west-1.amazonaws.com/"
                                 .to_string(),
+                        public_storage_prefix: None,
                         extra_verification_keys: vec![],
                     }]
                 } else {

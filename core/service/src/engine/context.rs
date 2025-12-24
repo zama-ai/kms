@@ -128,6 +128,7 @@ pub struct NodeInfo {
     pub ca_cert: Option<Vec<u8>>,
 
     pub public_storage_url: String,
+    pub public_storage_prefix: Option<String>,
     pub extra_verification_keys: Vec<PublicSigKey>,
 }
 
@@ -162,6 +163,7 @@ impl TryFrom<kms_grpc::kms::v1::MpcNode> for NodeInfo {
             external_url: value.external_url,
             ca_cert,
             public_storage_url: value.public_storage_url,
+            public_storage_prefix: value.public_storage_prefix,
             extra_verification_keys,
         })
     }
@@ -181,6 +183,7 @@ impl TryFrom<NodeInfo> for kms_grpc::kms::v1::MpcNode {
             external_url: value.external_url,
             ca_cert: value.ca_cert,
             public_storage_url: value.public_storage_url,
+            public_storage_prefix: value.public_storage_prefix,
             extra_verification_keys: value
                 .extra_verification_keys
                 .into_iter()
@@ -513,6 +516,7 @@ mod tests {
                     external_url: "localhost:12345".to_string(),
                     ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
+                    public_storage_prefix: None,
                     extra_verification_keys: vec![],
                 },
                 NodeInfo {
@@ -522,6 +526,7 @@ mod tests {
                     external_url: "localhost:12345".to_string(),
                     ca_cert: None,
                     public_storage_url: "http://storage".to_string(),
+                    public_storage_prefix: None,
                     extra_verification_keys: vec![],
                 },
             ],
