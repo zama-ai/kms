@@ -343,7 +343,7 @@ jobs:
               -n "${NAMESPACE}" --timeout=600s
           elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             for i in $(seq 1 "${NB_KMS_PARTIES}"); do
-              kubectl wait --for=condition=ready pod kms-service-threshold-"${i}"-kms-ci-core-"${i}" \
+              kubectl wait --for=condition=ready pod kms-core-"${i}"-core-"${i}" \
                 -n "${NAMESPACE}" --timeout=600s
             done
           fi
