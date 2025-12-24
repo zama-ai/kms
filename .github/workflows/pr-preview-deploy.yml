@@ -4,22 +4,22 @@
 name: pr-preview-deploy
 
 on:
-  # pull_request:
-  workflow_call:
-    inputs:
-      image_tag:
-        description: 'Image tag'
-        required: true
-        type: string
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN:
-        required: true
-      ZWS_BOT_TOKEN:
-        required: true
-      TS_OAUTH_CLIENT_ID:
-        required: true
-      TS_OAUTH_SECRET:
-        required: true
+  pull_request:
+  # workflow_call:
+  #   inputs:
+  #     image_tag:
+  #       description: 'Image tag'
+  #       required: true
+  #       type: string
+  #   secrets:
+  #     BLOCKCHAIN_ACTIONS_TOKEN:
+  #       required: true
+  #     ZWS_BOT_TOKEN:
+  #       required: true
+  #     TS_OAUTH_CLIENT_ID:
+  #       required: true
+  #     TS_OAUTH_SECRET:
+  #       required: true
 
 permissions: {}
 
@@ -37,8 +37,8 @@ jobs:
       NAMESPACE: 'kms-ci-${{ github.actor }}-${{ github.event.pull_request.number }}'
       TKMS_INFRA_CHART_VERSION: '0.3.2'
       SYNC_SECRETS_CHART_VERSION: '0.2.1'
-      KMS_CORE_IMAGE_TAG: 'v0.12.5'
-      KMS_CORE_CLIENT_IMAGE_TAG: 'v0.12.5'
+      KMS_CORE_IMAGE_TAG: c48b648 # ${{ inputs.image_tag }}
+      KMS_CORE_CLIENT_IMAGE_TAG: c48b648 # ${{ inputs.image_tag }}
       IMAGE_REPO: 'ghcr.io/zama-ai/kms'
       DEPLOYMENT_TYPE: 'thresholdWithEnclave'
       TLS: 'true'
@@ -269,6 +269,8 @@ jobs:
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}" \
+                --set kmsCore.publicVault.s3.prefix="PUB-p${i}" \
+                --set kmsCore.privateVault.s3.prefix="PRIV-p${i}" \
                 --set kmsCore.tolerations[0].key=app \
                 --set kmsCore.tolerations[0].effect="NoSchedule" \
                 --set kmsCore.tolerations[0].operator="Equal" \
