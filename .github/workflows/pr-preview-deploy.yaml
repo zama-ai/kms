@@ -120,7 +120,6 @@ jobs:
       - name: Checkout Project KMS
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          path: kms
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
 
@@ -210,7 +209,7 @@ jobs:
             for i in {1..${NB_KMS_PARTIES}}; do
               echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES}..."
               helm upgrade --install kms-service-threshold-"${i}"-"${PATH_SUFFIX}" \
-                "${{ github.workspace }}/kms/charts/kms-core" \
+                "./charts/kms-core" \
                 --namespace "${NAMESPACE}" \
                 --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-"${PATH_SUFFIX}".yaml \
                 --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"kms-service/values-kms-service-threshold-"${i}"-"${PATH_SUFFIX}".yaml \
@@ -226,7 +225,7 @@ jobs:
             for i in {1..${NB_KMS_PARTIES}}; do
               echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES} with enclave attestation..."
               helm upgrade --install  kms-service-threshold-"${i}"-"${PATH_SUFFIX}" \
-                "${{ github.workspace }}/kms/charts/kms-core" \
+                "./charts/kms-core" \
                 --namespace "${NAMESPACE}" \
                 --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-"${PATH_SUFFIX}".yaml \
                 --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-threshold-"${i}"-"${PATH_SUFFIX}".yaml \
@@ -248,7 +247,7 @@ jobs:
           elif [[ "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
             echo "Deploying KMS Core in centralized mode..."
             helm upgrade --install kms-service-centralized-"${PATH_SUFFIX}" \
-              "${{ github.workspace }}/kms/charts/kms-core" \
+              "./charts/kms-core" \
               --namespace "${NAMESPACE}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}/"kms-service/values-"${PATH_SUFFIX}".yaml \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
@@ -260,7 +259,7 @@ jobs:
           elif [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
             echo "Deploying KMS Core in centralized mode with enclave..."
             helm upgrade --install  kms-service-centralized-"${PATH_SUFFIX}" \
-              "${{ github.workspace }}/kms/charts/kms-core" \
+              "./charts/kms-core" \
               --namespace "${NAMESPACE}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-"${PATH_SUFFIX}".yaml \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
@@ -311,8 +310,8 @@ jobs:
 
       - name: Destroy namespace
         run: |
-          kubectl delete namespace "${NAMESPACE}" --force && \
-          kubectl proxy && \
-          kubectl get namespace "${NAMESPACE}" -o json |jq '.spec = {"finalizers":[]}' >temp.json && \
-          curl -k -H "Content-Type: application/json" -X PUT --data-binary @temp.json 127.0.0.1:8001/api/v1/namespaces/"${NAMESPACE}"/finalize && \
+          kubectl delete namespace "${NAMESPACE}" --force &
+          kubectl proxy &
+          kubectl get namespace "${NAMESPACE}" -o json |jq '.spec = {"finalizers":[]}' >temp.json
+          curl -k -H "Content-Type: application/json" -X PUT --data-binary @temp.json 127.0.0.1:8001/api/v1/namespaces/"${NAMESPACE}"/finalize
           kubectl get namespace
