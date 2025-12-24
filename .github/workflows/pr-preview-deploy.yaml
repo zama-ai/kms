@@ -153,7 +153,7 @@ jobs:
               oci://ghcr.io/zama-zws/crossplane/tkms-infra \
               --namespace "${NAMESPACE}" \
               --version "${TKMS_INFRA_CHART_VERSION}" \
-              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/tkms-infra/values-"${PATH_SUFFIX}".yaml
+              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/tkms-infra/values-"${PATH_SUFFIX}".yaml \
               --set kmsParties.replicas="${NB_KMS_PARTIES}"
 
           elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
@@ -163,7 +163,7 @@ jobs:
               --namespace "${NAMESPACE}" \
               --version "${TKMS_INFRA_CHART_VERSION}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/tkms-infra/values-"${PATH_SUFFIX}".yaml \
-              --set kmsParties.awsKms.recipientAttestationImageSHA384="${{ env.PCR0 }}"
+              --set kmsParties.awsKms.recipientAttestationImageSHA384="${{ env.PCR0 }}" \
               --set kmsParties.replicas="${NB_KMS_PARTIES}"
           fi
 
