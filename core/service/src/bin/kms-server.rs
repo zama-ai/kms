@@ -17,7 +17,7 @@ use kms_lib::{
     },
     engine::{
         base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms, run_server,
-        threshold::service::new_real_threshold_kms,
+        threshold::service::new_real_threshold_kms, utils::migrate_legacy_fhe_keys,
     },
     grpc::MetaStoreStatusServiceImpl,
     vault::{
@@ -503,7 +503,7 @@ async fn main_exec() -> anyhow::Result<()> {
     };
 
     // private vault
-    let private_storage = make_storage(
+    let mut private_storage = make_storage(
         core_config
             .private_vault
             .as_ref()
@@ -513,6 +513,16 @@ async fn main_exec() -> anyhow::Result<()> {
         s3_client.clone(),
     )
     .inspect_err(|e| tracing::warn!("Could not private storage: {e}"))?;
+
+    // Migrate legacy FHE keys to epoch-aware format
+    let kms_type = match core_config.threshold {
+        Some(_) => KMSType::Threshold,
+        None => KMSType::Centralized,
+    };
+    migrate_legacy_fhe_keys(&mut private_storage, kms_type)
+        .await
+        .inspect_err(|e| tracing::warn!("Could not migrate legacy FHE keys: {e}"))?;
+
     let private_keychain = OptionFuture::from(
         core_config
             .private_vault

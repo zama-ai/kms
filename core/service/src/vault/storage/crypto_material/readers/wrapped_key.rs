@@ -3,7 +3,7 @@
 //! This module provides the implementation of the CryptoMaterialReader trait
 //! for the WrappedPublicKeyOwned type, enabling it to be read from storage.
 
-use crate::vault::storage::{read_pk_at_request_id, Storage};
+use crate::vault::storage::{read_pk_at_request_id, StorageReader};
 use crate::{
     anyhow_error_and_warn_log, vault::storage::crypto_material::traits::CryptoMaterialReader,
 };
@@ -14,7 +14,7 @@ use kms_grpc::RequestId;
 impl CryptoMaterialReader for WrappedPublicKeyOwned {
     async fn read_from_storage<S>(storage: &S, request_id: &RequestId) -> anyhow::Result<Self>
     where
-        S: Storage + Send + Sync + 'static,
+        S: StorageReader + Send + Sync + 'static,
     {
         read_pk_at_request_id(storage, request_id)
             .await
