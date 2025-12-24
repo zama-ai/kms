@@ -32,7 +32,7 @@ pub mod solidity_types;
 pub mod utils;
 
 // Re-export identifier types for easier access
-pub use identifiers::{ContextId, IdentifierError, KeyId, RequestId};
+pub use identifiers::{ContextId, EpochId, IdentifierError, KeyId, RequestId};
 
 #[cfg(feature = "non-wasm")]
 use anyhow::anyhow;

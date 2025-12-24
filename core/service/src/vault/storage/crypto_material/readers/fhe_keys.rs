@@ -3,23 +3,28 @@
 //! This module provides the implementation of the CryptoMaterialReader trait
 //! for the KmsFheKeyHandles type, enabling it to be read from storage.
 
+use crate::anyhow_error_and_warn_log;
 use crate::engine::base::KmsFheKeyHandles;
-use crate::vault::storage::{read_versioned_at_request_id, Storage};
-use crate::{
-    anyhow_error_and_warn_log, vault::storage::crypto_material::traits::CryptoMaterialReader,
-};
+use crate::vault::storage::crypto_material::traits::PrivateCryptoMaterialReader;
+use crate::vault::storage::{read_versioned_at_request_and_epoch_id, StorageReaderExt};
+use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::RequestId;
 
 #[tonic::async_trait]
-impl CryptoMaterialReader for KmsFheKeyHandles {
-    async fn read_from_storage<S>(storage: &S, request_id: &RequestId) -> anyhow::Result<Self>
+impl PrivateCryptoMaterialReader for KmsFheKeyHandles {
+    async fn read_from_storage_at_epoch<S>(
+        storage: &S,
+        request_id: &RequestId,
+        epoch_id: &EpochId,
+    ) -> anyhow::Result<Self>
     where
-        S: Storage + Send + Sync + 'static,
+        S: StorageReaderExt + Send + Sync + 'static,
     {
-        read_versioned_at_request_id(
+        read_versioned_at_request_and_epoch_id(
             storage,
             request_id,
+            epoch_id,
             &PrivDataType::FhePrivateKey.to_string(),
         )
         .await
