@@ -260,7 +260,10 @@ jobs:
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}" \
-                --set tolerations[0].value="${NAMESPACE}" \
+                --set kmsCore.tolerations[0].key=app \
+                --set kmsCore.tolerations[0].effect="NoSchedule" \
+                --set kmsCore.tolerations[0].operator="Equal" \
+                --set kmsCore.tolerations[0].value="${NAMESPACE}" \
                 --wait \
                 --wait-for-jobs \
                 --timeout=1200s &
