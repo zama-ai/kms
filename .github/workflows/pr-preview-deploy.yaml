@@ -123,11 +123,6 @@ jobs:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: false
 
-      - name: Create namespace
-        run: |
-          kubectl create namespace "${NAMESPACE}"
-          kubectl get namespace
-
       # ======================================================================
       # REGISTRY & SECRETS CONFIGURATION
       # ======================================================================
@@ -141,7 +136,8 @@ jobs:
             oci://ghcr.io/zama-zws/helm-charts/sync-secrets \
             --namespace "${NAMESPACE}" \
             --version "${SYNC_SECRETS_CHART_VERSION:-"0.2.1"}" \
-            --values ./ci/pr-preview/registry-credential/values-kms-ci.yaml
+            --values ./ci/pr-preview/registry-credential/values-kms-ci.yaml \
+            --create-namespace
 
       # ======================================================================
       # TKMS INFRASTRUCTURE DEPLOYMENT
