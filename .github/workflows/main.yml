@@ -107,6 +107,9 @@ jobs:
     uses: ./.github/workflows/docker-build.yml
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
