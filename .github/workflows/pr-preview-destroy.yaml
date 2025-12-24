@@ -1,17 +1,11 @@
 ##############################################################################
-# pr-preview workflow
+# pr-preview-destroy workflow
 ##############################################################################
-name: pr-preview
+name: pr-preview-destroy
 
 on:
   pull_request:
-    types: [unlabeled, closed]
-  # workflow_call:
-  #   inputs:
-  #     image_tag:
-  #       description: 'Image tag'
-  #       required: true
-  #       type: string
+    types: [closed]
 
 permissions: {}
 
@@ -19,14 +13,14 @@ jobs:
   ############################################################################
   # PR Preview Job
   ############################################################################
-  pr-preview:
-    name: pr-preview
+  pr-preview-destroy:
+    name: pr-preview-destroy
     runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=true
     timeout-minutes: 1800
 
     # Environment variables used throughout the job
     env:
-      NAMESPACE: 'kms-ci-${{ github.actor }}-${{ github.ref }}'
+      NAMESPACE: 'kms-ci-${{ github.actor }}-${{ github.event.pull_request.number }}'
     steps:
       # ======================================================================
       # TOOLING SETUP
@@ -38,23 +32,11 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:${NAMESPACE}
 
-      - name: Setup helm
-        run: |
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          export PATH=$PATH:/usr/local/bin
-
       - name: setup kubectl
         uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
 
-      - name: Setup Vcluster CLI
-        run: |
-          curl -L -o vcluster "https://github.com/loft-sh/vcluster/releases/latest/download/vcluster-linux-amd64" && \
-          sudo install -c -m 0755 vcluster /usr/local/bin && \
-          rm -f vcluster
-          vcluster version
-
       # ======================================================================
-      # KUBERNETES & HELM SETUP
+      # KUBERNETES CONFIG & DESTROY NAMESPACE
       # ======================================================================
       - name: Setup kubeconfig
         run: |
@@ -64,20 +46,7 @@ jobs:
           echo "Configuring kubeconfig for Tailscale cluster..."
           tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
 
-      - name: Checkout Project KMS
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          path: kms
-          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          persist-credentials: false
-
-      - name: Setup Vcluster
+      - name: Destroy namespace
         run: |
-          helm upgrade --install vcluster-${NAMESPACE} vcluster \
-          --repo https://charts.loft.sh \
-          --namespace "vcluster-${NAMESPACE}" \
-          --repository-config='' \
-          --create-namespace
-
-          vcluster connect "vcluster-${NAMESPACE}" --namespace "vcluster-${NAMESPACE}"
+          kubectl delete namespace "${NAMESPACE}" --force --grace-period=0
           kubectl get namespace
