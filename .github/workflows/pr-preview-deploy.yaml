@@ -208,7 +208,9 @@ jobs:
                 --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
                 --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"kms-service/values-kms-service-threshold-"${i}"-kms-ci.yaml \
                 --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-                --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}"
+                --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+                --set kmsCore.serviceAccountName=${NAMESPACE}-${i} \
+                --set kmsCore.envFrom.configmap.name=${NAMESPACE}-${i} \
             done
 
           ###################################################################
@@ -229,6 +231,8 @@ jobs:
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}" \
+                --set kmsCore.serviceAccountName=${NAMESPACE}-${i} \
+                --set kmsCore.envFrom.configmap.name=${NAMESPACE}-${i} \
                 --wait \
                 --wait-for-jobs \
                 --timeout=1200s &
@@ -245,7 +249,9 @@ jobs:
               --namespace "${NAMESPACE}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}/"kms-service/values-kms-ci.yaml \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}"
+              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+              --set kmsCore.serviceAccountName=${NAMESPACE} \
+              --set kmsCore.envFrom.configmap.name=${NAMESPACE} \
 
           ###################################################################
           # Deploy KMS Core in centralized mode with enclave
@@ -258,6 +264,8 @@ jobs:
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+              --set kmsCore.serviceAccountName=${NAMESPACE} \
+              --set kmsCore.envFrom.configmap.name=${NAMESPACE} \
               --wait \
               --wait-for-jobs \
               --timeout=1200s
@@ -289,6 +297,8 @@ jobs:
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-init-kms-ci.yaml \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+              --set kmsCore.serviceAccountName=${NAMESPACE}-${i} \
+              --set kmsCore.envFrom.configmap.name=${NAMESPACE}-${i} \
               --wait \
               --wait-for-jobs \
               --timeout=1200s
