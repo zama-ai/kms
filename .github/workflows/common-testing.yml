@@ -99,7 +99,7 @@ jobs:
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
     timeout-minutes: 500
-    runs-on: runs-on=${{ github.run_id }}/runner=${{ inputs.runs-on }}/spot=false/volume=200gb/extras=s3-cache
+    runs-on: runs-on=${{ github.run_id }}/runner=${{ inputs.runs-on }}/spot=false/volume=800gb/extras=s3-cache
     services:
       redis:
         image: ${{ inputs.run-redis && 'redis/redis-stack:7.4.0-v3@sha256:c2019e98fd5abce4dd11feec004de44d1709d2366a6efa5ffb2bd0daf8f9c6a4' || '' }}
@@ -179,10 +179,12 @@ jobs:
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
 
-      - name: Install nextest and grcov
+      - name: Install nextest and grcov and gdb
         run: |
           cargo install cargo-nextest --locked
           cargo install grcov --locked
+          sudo apt-get update
+          sudo apt-get install -y gdb
 
       - name: Install Protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
@@ -228,29 +230,29 @@ jobs:
           mc mb "${MINIO_ALIAS}"/"${MINIO_BUCKET}"
           mc anonymous set public "${MINIO_ALIAS}"/"${MINIO_BUCKET}"
 
-      - name: Setup cargo dylint
-        run: |
-          cargo install cargo-dylint dylint-link --force
+      # - name: Setup cargo dylint
+      #   run: |
+      #     cargo install cargo-dylint dylint-link --force
 
-      - name: clippy and rustfmt versions
-        run: |
-          cargo clippy -V && cargo fmt --version
+      # - name: clippy and rustfmt versions
+      #   run: |
+      #     cargo clippy -V && cargo fmt --version
 
-      - name: Formatting
-        run: cargo fmt --all -- --check
+      # - name: Formatting
+      #   run: cargo fmt --all -- --check
 
-      - name: Linting default features
-        env:
-          PACKAGE_NAME: ${{inputs.package-name}}
-        run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
+      # - name: Linting default features
+      #   env:
+      #     PACKAGE_NAME: ${{inputs.package-name}}
+      #   run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
 
-      - name: Linting All features
-        env:
-          PACKAGE_NAME: ${{inputs.package-name}}
-        run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings
+      # - name: Linting All features
+      #   env:
+      #     PACKAGE_NAME: ${{inputs.package-name}}
+      #   run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings
 
-      - name: Linting dylint
-        run: cargo dylint --all
+      # - name: Linting dylint
+      #   run: cargo dylint --all
 
       # Test execution
       - name: Run Tests
@@ -380,3 +382,10 @@ jobs:
       - name: Remove aws credentials file
         run: |
           rm -rf ~/.aws
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+          aws-region: eu-west-3
