@@ -136,10 +136,9 @@ impl SessionMaker {
     pub(crate) fn four_party_dummy_session(
         prss_setup_z128: Option<PRSSSetup<ResiduePolyF4Z128>>,
         prss_setup_z64: Option<PRSSSetup<ResiduePolyF4Z64>>,
+        epoch_id: &EpochId,
         rng: AesRng,
     ) -> Self {
-        use crate::consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID};
-
         let role_assignment = RoleAssignment {
             inner: HashMap::from_iter((1..=4).map(|i| {
                 (
@@ -152,14 +151,13 @@ impl SessionMaker {
             GrpcNetworkingManager::new(None, None, false).unwrap(),
         ));
 
-        let default_context_id = *DEFAULT_MPC_CONTEXT;
+        let default_context_id = *crate::consts::DEFAULT_MPC_CONTEXT;
         let default_context = Context {
             threshold: 1,
             my_role: Some(Role::indexed_from_one(1)),
             role_assignment,
         };
 
-        let default_epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID).unwrap();
         let default_prss = match (prss_setup_z128, prss_setup_z64) {
             (Some(z128), Some(z64)) => Some(PRSSSetupCombined {
                 prss_setup_z128: z128,
@@ -177,7 +175,7 @@ impl SessionMaker {
                 default_context,
             )]))),
             epoch_map: Arc::new(RwLock::new(match default_prss {
-                Some(prss) => HashMap::from_iter([(default_epoch_id, prss)]),
+                Some(prss) => HashMap::from_iter([(*epoch_id, prss)]),
                 None => HashMap::new(),
             })),
             verifier: None,

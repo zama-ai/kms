@@ -789,6 +789,7 @@ pub struct KeyGenMetadataInner {
     pub preprocessing_id: RequestId,
     pub key_digest_map: HashMap<PubDataType, Vec<u8>>,
     pub external_signature: Vec<u8>,
+    // TODO consider adding epoch_id
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]

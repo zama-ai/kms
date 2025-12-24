@@ -8,7 +8,7 @@ use anyhow::anyhow;
 use aws_sdk_s3::Client as S3Client;
 use enum_dispatch::enum_dispatch;
 use kms_grpc::{
-    identifiers::ContextId,
+    identifiers::{ContextId, EpochId},
     rpc_types::{
         PrivDataType, PubDataType, PublicKeyType, WrappedPublicKey, WrappedPublicKeyOwned,
     },
@@ -52,6 +52,41 @@ pub trait StorageReader {
     fn info(&self) -> String;
 }
 
+/// Extended storage reader trait for epoch-aware data access.
+///
+/// This trait extends [`StorageReader`] with methods that support reading data
+/// organized by epoch IDs. Epochs represent distinct time periods or versions
+/// of the private key material, which is created during resharing.
+#[enum_dispatch]
+#[trait_variant::make(Send)]
+pub trait StorageReaderExt: StorageReader {
+    /// Returns all data IDs stored under the given epoch and data type.
+    async fn all_data_ids_at_epoch(
+        &self,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<HashSet<RequestId>>;
+
+    /// Returns all epoch IDs that contain data of the given type.
+    async fn all_epoch_ids_for_data(&self, data_type: &str) -> anyhow::Result<HashSet<EpochId>>;
+
+    /// Checks whether data exists for the given data ID, epoch ID, and data type.
+    async fn data_exists_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<bool>;
+
+    /// Reads and deserializes data stored at the given data ID, epoch ID, and data type.
+    async fn read_data_at_epoch<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<T>;
+}
+
 // Trait for KMS public storage reading and writing
 // Warning: There is no compiler validation that the data being stored are of a versioned type!
 #[enum_dispatch]
@@ -70,6 +105,32 @@ pub trait Storage: StorageReader {
 
     /// Delete the given `data_id` with the given `data_type`.
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()>;
+}
+
+/// Extended storage trait for epoch-aware data storage and deletion.
+///
+/// This trait combines [`StorageReaderExt`] and [`Storage`] with additional methods
+/// for storing and deleting data organized by epoch IDs. Use this trait when you need
+/// to manage private key material that may belong to a specific epoch.
+#[enum_dispatch]
+#[trait_variant::make(Send)]
+pub trait StorageExt: StorageReaderExt + Storage {
+    /// Stores the given data at the specified data ID, epoch ID, and data type.
+    async fn store_data_at_epoch<T: Serialize + Versionize + Named + Send + Sync>(
+        &mut self,
+        data: &T,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Deletes data at the specified data ID, epoch ID, and data type.
+    async fn delete_data_at_epoch(
+        &mut self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()>;
 }
 
 /// Sometimes we want to store bytes directly, without the need for versioning
@@ -119,6 +180,32 @@ where
         })
 }
 
+/// Store some data at a location defined by `request_id` and `data_type`.
+/// Under the hood, the versioned data will be stored.
+pub async fn store_versioned_at_request_and_epoch_id<
+    'a,
+    S: StorageExt,
+    T: Serialize + Versionize + Named + Send + Sync,
+>(
+    storage: &mut S,
+    request_id: &RequestId,
+    epoch_id: &EpochId,
+    data: &'a T,
+    data_type: &str,
+) -> anyhow::Result<()>
+where
+    <T as Versionize>::Versioned<'a>: Send + Sync,
+{
+    storage
+        .store_data_at_epoch(data, request_id, epoch_id, data_type)
+        .await
+        .map_err(|e| {
+            anyhow_error_and_log(format!(
+                "Could not store data with ID {request_id}, epoch ID {epoch_id} and type {data_type}: {e}"
+            ))
+        })
+}
+
 // Helper method for storing text under a request ID.
 // An error will be returned if the data already exists.
 pub async fn store_text_at_request_id<S: StorageForBytes>(
@@ -164,7 +251,15 @@ pub async fn delete_all_at_request_id<S: Storage>(
     request_id: &RequestId,
 ) -> anyhow::Result<()> {
     for cur_type in PrivDataType::iter() {
-        delete_at_request_id(storage, request_id, &cur_type.to_string()).await?;
+        match cur_type {
+            PrivDataType::FhePrivateKey | PrivDataType::FheKeyInfo => {
+                // These types might have epoch-specific data
+                continue;
+            }
+            _ => {
+                delete_at_request_id(storage, request_id, &cur_type.to_string()).await?;
+            }
+        }
     }
     for cur_type in PubDataType::iter() {
         delete_at_request_id(storage, request_id, &cur_type.to_string()).await?;
@@ -200,6 +295,39 @@ pub async fn delete_at_request_id<S: Storage>(
     }
 }
 
+/// Helper method to remove data based on a data type, request ID and epoch ID.
+/// An error will be returned if the data exists but could not be deleted.
+/// In case the data does not exist, an info log is made but no error returned.
+pub async fn delete_at_request_and_epoch_id<S: StorageExt>(
+    storage: &mut S,
+    request_id: &RequestId,
+    epoch_id: &EpochId,
+    data_type: &str,
+) -> anyhow::Result<()> {
+    if storage
+        .data_exists_at_epoch(request_id, epoch_id, data_type)
+        .await?
+    {
+        storage
+            .delete_data_at_epoch(request_id, epoch_id, data_type)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(format!(
+                    "Could not delete data with ID {} and epoch {} and type {}: {}",
+                    request_id, epoch_id, data_type, e
+                ))
+            })
+    } else {
+        tracing::info!(
+            "Tried to delete data with ID {} and epoch {} and type {}, but did not exist",
+            request_id,
+            epoch_id,
+            data_type
+        );
+        Ok(())
+    }
+}
+
 /// Helper method to remove data based on a data type and request ID.
 pub async fn delete_pk_at_request_id<S: Storage>(
     storage: &mut S,
@@ -229,6 +357,25 @@ where
     <T as tfhe_versionable::VersionizeOwned>::VersionedOwned: Send,
 {
     storage.read_data(request_id, data_type).await
+}
+
+/// Read some data stored in a location defined by `request_id`, `epoch_id`, and `data_type`.
+/// The returned result is automatically unversioned.
+pub async fn read_versioned_at_request_and_epoch_id<
+    S: StorageReaderExt,
+    T: DeserializeOwned + Unversionize + Named + Send,
+>(
+    storage: &S,
+    request_id: &RequestId,
+    epoch_id: &EpochId,
+    data_type: &str,
+) -> anyhow::Result<T>
+where
+    <T as tfhe_versionable::VersionizeOwned>::VersionedOwned: Send,
+{
+    storage
+        .read_data_at_epoch(request_id, epoch_id, data_type)
+        .await
 }
 
 /// This function will perform verionize on the type.
@@ -339,6 +486,40 @@ pub async fn delete_custodian_context_at_id<PubS: Storage>(
     )
     .await
 }
+/// Helper method for reading all data of a specific type.
+pub async fn read_all_data_form_all_epochs_versioned<
+    S: StorageReaderExt,
+    T: DeserializeOwned + Unversionize + Named + Send,
+>(
+    storage: &S,
+    data_type: &str,
+) -> anyhow::Result<HashMap<(RequestId, EpochId), T>> {
+    // first read all the PRSS data
+    let epochs = storage
+        .all_data_ids(&PrivDataType::PrssSetupCombined.to_string())
+        .await?;
+
+    // then we know all the epochs, and we can read the data stored under each epoch
+    let mut res = HashMap::new();
+    for epoch in epochs {
+        let epoch_id: EpochId = epoch.into();
+        let id_set = storage.all_data_ids_at_epoch(&epoch_id, data_type).await?;
+        for data_id in id_set.iter() {
+            if !data_id.is_valid() {
+                return Err(anyhow_error_and_log(format!(
+                    "Request ID {data_id} is not valid"
+                )));
+            }
+            let data: T = storage
+                .read_data_at_epoch(data_id, &epoch_id, data_type)
+                .await
+                .map_err(|e| anyhow!("reading failed for {data_type} with id {data_id} and epoch id {epoch_id}: {e}"))?;
+            res.insert((*data_id, epoch_id), data);
+        }
+    }
+
+    Ok(res)
+}
 
 /// Helper method for reading all data of a specific type.
 pub async fn read_all_data_versioned<
@@ -382,7 +563,7 @@ impl fmt::Display for StorageType {
 /// required to enable multiple dispatch on non-dyn compatible Storage* traits.
 #[cfg(feature = "non-wasm")]
 #[allow(clippy::large_enum_variant)]
-#[enum_dispatch(StorageReader, Storage, StorageForBytes)]
+#[enum_dispatch(StorageReader, Storage, StorageReaderExt, StorageExt, StorageForBytes)]
 #[derive(Debug, Clone)]
 pub enum StorageProxy {
     File(file::FileStorage),
@@ -465,7 +646,9 @@ pub mod tests {
     use crate::engine::base::derive_request_id;
 
     use super::*;
+    use aes_prng::AesRng;
     use kms_grpc::rpc_types::PubDataType;
+    use rand::SeedableRng;
     use serde::{Deserialize, Serialize};
     use tfhe_versionable::VersionsDispatch;
 
@@ -506,6 +689,65 @@ pub mod tests {
         let reretrieved_store: anyhow::Result<TestType> =
             read_versioned_at_request_id(storage, &req_id, data_type).await;
         assert!(reretrieved_store.is_err());
+    }
+
+    pub async fn test_epoch_methods<S: StorageExt>(storage: &mut S) {
+        // create two epochs and write two objects on each epoch
+        let mut rng = AesRng::seed_from_u64(12121212);
+        let epoch1 = EpochId::new_random(&mut rng);
+        let epoch2 = EpochId::new_random(&mut rng);
+
+        let data1 = TestType { i: 42 };
+        let data2 = TestType { i: 43 };
+        let data3 = TestType { i: 44 };
+        let data4 = TestType { i: 45 };
+
+        let id1 = derive_request_id("DATA1").unwrap();
+        let id2 = derive_request_id("DATA2").unwrap();
+        let id3 = derive_request_id("DATA3").unwrap();
+        let id4 = derive_request_id("DATA4").unwrap();
+
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+        storage
+            .store_data_at_epoch(&data1, &id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_data_at_epoch(&data2, &id2, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_data_at_epoch(&data3, &id3, &epoch2, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_data_at_epoch(&data4, &id4, &epoch2, &data_type)
+            .await
+            .unwrap();
+
+        // read all data in epoch1
+        let ids_epoch1 = storage
+            .all_data_ids_at_epoch(&epoch1, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(ids_epoch1.len(), 2);
+        assert!(ids_epoch1.contains(&id1));
+        assert!(ids_epoch1.contains(&id2));
+
+        // read all data in epoch2
+        let ids_epoch2 = storage
+            .all_data_ids_at_epoch(&epoch2, &data_type)
+            .await
+            .unwrap();
+        assert_eq!(ids_epoch2.len(), 2);
+        assert!(ids_epoch2.contains(&id3));
+        assert!(ids_epoch2.contains(&id4));
+
+        // read all epochs for PrivDataType::FheKeyInfo
+        let epochs = storage.all_epoch_ids_for_data(&data_type).await.unwrap();
+        assert_eq!(epochs.len(), 2);
+        assert!(epochs.contains(&epoch1));
+        assert!(epochs.contains(&epoch2));
     }
 
     pub async fn test_batch_helper_methods<S: Storage>(storage: &mut S) {
