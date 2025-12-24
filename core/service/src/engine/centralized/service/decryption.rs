@@ -82,13 +82,24 @@ pub async fn user_decrypt_impl<
     ];
     timer.tags(metric_tags.clone());
 
-    if !service
+    let keys_exist = match service
         .crypto_storage
         .inner
         .fhe_keys_exist(&key_id.into(), &epoch_id)
         .await
-        .unwrap_or(false)
     {
+        Ok(exists) => exists,
+        Err(e) => {
+            tracing::error!(
+                "Error checking if keys exist for key_id={}, epoch_id={}: {}",
+                key_id,
+                epoch_id,
+                e
+            );
+            false
+        }
+    };
+    if !keys_exist {
         return Err(MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
             Some(request_id),
@@ -283,13 +294,24 @@ pub async fn public_decrypt_impl<
     ];
     timer.tags(metric_tags.clone());
 
-    if !service
+    let keys_exist = match service
         .crypto_storage
         .inner
         .fhe_keys_exist(&key_id.into(), &epoch_id)
         .await
-        .unwrap_or(false)
     {
+        Ok(exists) => exists,
+        Err(e) => {
+            tracing::error!(
+                "Error checking if keys exist for key_id={}, epoch_id={}: {}",
+                key_id,
+                epoch_id,
+                e
+            );
+            false
+        }
+    };
+    if !keys_exist {
         return Err(MetricedError::new(
             OP_PUBLIC_DECRYPT_REQUEST,
             Some(request_id),

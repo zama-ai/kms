@@ -507,7 +507,23 @@ impl<
         ];
         timer.tags(metric_tags.clone());
 
-        if !self.key_meta_store.read().await.exists(&key_id.into()) {
+        let keys_exist = match self
+            .crypto_storage
+            .threshold_fhe_keys_exists(&key_id.into(), &epoch_id)
+            .await
+        {
+            Ok(exists) => exists,
+            Err(e) => {
+                tracing::error!(
+                    "Error checking if keys exist for key_id={}, epoch_id={}: {}",
+                    key_id,
+                    epoch_id,
+                    e
+                );
+                false
+            }
+        };
+        if !keys_exist {
             return Err(MetricedError::new(
                 OP_USER_DECRYPT_REQUEST,
                 Some(req_id),
