@@ -152,8 +152,8 @@ async fn nightly_test_insecure_threshold_dkg_backup() {
         Some(DecryptionMode::NoiseFloodSmall),
     )
     .await;
-    purge_priv(test_path, priv_storage_prefixes).await;
-    purge_pub(test_path, pub_storage_prefixes).await;
+    purge_priv(test_path, &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL).await;
+    purge_pub(test_path, &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -229,8 +229,8 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
             .await
             .unwrap());
     }
-    purge_priv(test_path, priv_storage_prefixes).await;
-    purge_pub(test_path, pub_storage_prefixes).await;
+    purge_priv(test_path, &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL).await;
+    purge_pub(test_path, &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -325,6 +325,6 @@ async fn test_insecure_threshold_crs_backup() {
             .await
             .unwrap());
     }
-    purge_priv(test_path, priv_storage_prefixes).await;
-    purge_pub(test_path, pub_storage_prefixes).await;
+    purge_priv(test_path, &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL).await;
+    purge_pub(test_path, &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL).await;
 }
