@@ -210,7 +210,11 @@ jobs:
                 --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
                 --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
                 --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
-                --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}"
+                --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
+                --set tolerations[0].key="app" \
+                --set tolerations[0].effect="NoSchedule" \
+                --set tolerations[0].operator="Equal" \
+                --set tolerations[0].value="kms-pool"
             done
 
           ###################################################################
@@ -233,6 +237,10 @@ jobs:
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}" \
                 --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
                 --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
+                --set tolerations[0].key=app \
+                --set tolerations[0].effect="NoSchedule" \
+                --set tolerations[0].operator="Equal" \
+                --set tolerations[0].value="${NAMESPACE}"
                 --wait \
                 --wait-for-jobs \
                 --timeout=1200s &
@@ -251,7 +259,11 @@ jobs:
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
               --set kmsCore.serviceAccountName="${NAMESPACE}" \
-              --set kmsCore.envFrom.configmap.name="${NAMESPACE}"
+              --set kmsCore.envFrom.configmap.name="${NAMESPACE}" \
+              --set tolerations[0].key="app" \
+              --set tolerations[0].effect="NoSchedule" \
+              --set tolerations[0].operator="Equal" \
+              --set tolerations[0].value="kms-pool"
 
           ###################################################################
           # Deploy KMS Core in centralized mode with enclave
@@ -266,6 +278,10 @@ jobs:
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
               --set kmsCore.serviceAccountName="${NAMESPACE}" \
               --set kmsCore.envFrom.configmap.name="${NAMESPACE}" \
+              --set tolerations[0].key="app" \
+              --set tolerations[0].effect="NoSchedule" \
+              --set tolerations[0].operator="Equal" \
+              --set tolerations[0].value="${NAMESPACE}" \
               --wait \
               --wait-for-jobs \
               --timeout=1200s
@@ -299,6 +315,10 @@ jobs:
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
               --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
               --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
+              --set tolerations[0].key="app" \
+              --set tolerations[0].effect="NoSchedule" \
+              --set tolerations[0].operator="Equal" \
+              --set tolerations[0].value="kms-pool" \
               --wait \
               --wait-for-jobs \
               --timeout=1200s
