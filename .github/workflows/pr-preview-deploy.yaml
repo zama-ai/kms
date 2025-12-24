@@ -142,7 +142,6 @@ jobs:
             --namespace "${NAMESPACE}" \
             --version "${SYNC_SECRETS_CHART_VERSION:-"0.2.1"}" \
             --values ./ci/pr-preview/registry-credential/values-kms-ci.yaml
-            --create-namespace
 
       # ======================================================================
       # TKMS INFRASTRUCTURE DEPLOYMENT
