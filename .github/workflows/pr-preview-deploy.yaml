@@ -311,11 +311,3 @@ jobs:
             kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
               -n "${NAMESPACE}" --timeout=600s
           fi
-
-      - name: Destroy namespace
-        run: |
-          kubectl delete namespace "${NAMESPACE}" --force &
-          kubectl proxy &
-          kubectl get namespace "${NAMESPACE}" -o json |jq '.spec = {"finalizers":[]}' >temp.json
-          curl -k -H "Content-Type: application/json" -X PUT --data-binary @temp.json 127.0.0.1:8001/api/v1/namespaces/"${NAMESPACE}"/finalize
-          kubectl get namespace
