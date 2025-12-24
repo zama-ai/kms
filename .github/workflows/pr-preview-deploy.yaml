@@ -173,12 +173,12 @@ jobs:
           ###################################################################
           echo "Waiting for KMS parties to be ready..."
           if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-            kubectl wait --for=condition=ready Kmsparties kms-party-"${NAMESPACE}-1" \
+            kubectl wait --for=condition=ready Kmsparties kms-party-${NAMESPACE}-1 \
               -n "${NAMESPACE}" --timeout=120s
 
           elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            for i in {1.."${NB_KMS_PARTIES}"}; do
-              kubectl wait --for=condition=ready Kmsparties kms-party-"${NAMESPACE}"-"${i}" \
+            for i in {1..${NB_KMS_PARTIES}}; do
+              kubectl wait --for=condition=ready Kmsparties kms-party-${NAMESPACE}-${i} \
                 -n "${NAMESPACE}" --timeout=120s
             done
           fi
@@ -186,7 +186,7 @@ jobs:
           if [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             echo "Waiting for enclave nodegroups to be ready..."
             kubectl wait --for=condition=ready enclavenodegroup \
-              kms-party-"${NAMESPACE}"\
+              kms-party-${NAMESPACE}\
               -n "${NAMESPACE}" --timeout=1200s
           fi
 
