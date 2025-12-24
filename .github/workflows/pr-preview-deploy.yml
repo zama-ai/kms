@@ -1,0 +1,379 @@
+##############################################################################
+# pr-preview workflow
+##############################################################################
+name: pr-preview-deploy
+
+on:
+  pull_request:
+  # workflow_call:
+  #   inputs:
+  #     image_tag:
+  #       description: 'Image tag'
+  #       required: true
+  #       type: string
+  #   secrets:
+  #     BLOCKCHAIN_ACTIONS_TOKEN:
+  #       required: true
+  #     ZWS_BOT_TOKEN:
+  #       required: true
+  #     TS_OAUTH_CLIENT_ID:
+  #       required: true
+  #     TS_OAUTH_SECRET:
+  #       required: true
+
+permissions: {}
+
+jobs:
+  ############################################################################
+  # PR Preview Job
+  ############################################################################
+  pr-preview-deploy:
+    name: pr-preview-deploy
+    runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=true
+    timeout-minutes: 1800
+
+    # Environment variables used throughout the job
+    env:
+      NAMESPACE: 'kms-ci-${{ github.actor }}-${{ github.event.pull_request.number }}'
+      TKMS_INFRA_CHART_VERSION: '0.3.2'
+      SYNC_SECRETS_CHART_VERSION: '0.2.1'
+      KMS_CORE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service-enclave'
+      KMS_CORE_CLIENT_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-client'
+      KMS_CORE_IMAGE_TAG: c48b648 # ${{ inputs.image_tag }}
+      KMS_CORE_CLIENT_IMAGE_TAG: c48b648 # ${{ inputs.image_tag }}
+      IMAGE_REPO: 'ghcr.io/zama-ai/kms'
+      DEPLOYMENT_TYPE: 'thresholdWithEnclave'
+      TLS: 'true'
+      FHE_PARAMS: 'Test'
+      NB_KMS_PARTIES: '4'
+    steps:
+
+      # ======================================================================
+      # DOCKER BUILD STATUS HANDLING
+      # ======================================================================
+      - name: Login to zws GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.ZWS_BOT_TOKEN }}
+
+      - name: Handle pre-built images
+        env:
+          JQ_VERSION: 1.8.1
+        run: |
+          ###################################################################
+          # USING PRE-BUILT IMAGES
+          # This handles manual runs with dockerBuild=false, using provided tags
+          ###################################################################
+          # Download JQ.
+          wget https://github.com/jqlang/jq/releases/download/jq-"${JQ_VERSION}"/jq-linux-amd64 -P /tmp
+
+          # Install JQ.
+          sudo mv /tmp/jq-linux-amd64 /usr/local/bin/jq
+          sudo chmod +x /usr/local/bin/jq
+          echo "JQ version: $(jq --version)"
+
+          echo "Extracting PCR measurements for provided enclave image..."
+          docker pull "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
+          PCR0=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
+          PCR1=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
+          PCR2=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
+          {
+            echo "PCR0=${PCR0}"
+            echo "PCR1=${PCR1}"
+            echo "PCR2=${PCR2}"
+          } >> "$GITHUB_ENV"
+
+      # ======================================================================
+      # TOOLING SETUP
+      # ======================================================================
+      - name: Setup tailscale
+        uses: tailscale/github-action@84a3f23bb4d843bcf4da6cf824ec1be473daf4de # v3.2.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:kms-ci
+
+      - name: Setup helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          export PATH=$PATH:/usr/local/bin
+
+      - name: setup kubectl
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
+
+
+      # ======================================================================
+      # KUBERNETES & HELM SETUP
+      # ======================================================================
+      - name: Setup kubeconfig
+        run: |
+          ###################################################################
+          # Configure kubeconfig to connect to the Tailscale Kubernetes cluster
+          ###################################################################
+          echo "Configuring kubeconfig for Tailscale cluster..."
+          tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
+
+      - name: Checkout Project KMS
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: false
+
+      # ======================================================================
+      # REGISTRY & SECRETS CONFIGURATION
+      # ======================================================================
+      - name: Setup registry credentials secrets
+        run: |
+          ###################################################################
+          # Deploy sync-secrets to manage registry credentials
+          ###################################################################
+          echo "Deploying sync-secrets for registry credentials..."
+          helm upgrade --install sync-secrets \
+            oci://ghcr.io/zama-zws/helm-charts/sync-secrets \
+            --namespace "${NAMESPACE}" \
+            --version "${SYNC_SECRETS_CHART_VERSION:-"0.2.1"}" \
+            --values ./ci/pr-preview/registry-credential/values-kms-ci.yaml \
+            --create-namespace
+
+      # ======================================================================
+      # TKMS INFRASTRUCTURE DEPLOYMENT
+      # ======================================================================
+      - name: Setup tkms-infra
+        run: |
+          ###################################################################
+          # Deploy TKMS infrastructure based on deployment type
+          ###################################################################
+          if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
+            echo "Deploying standard infrastructure..."
+            helm upgrade --install tkms-infra \
+              oci://ghcr.io/zama-zws/crossplane/tkms-infra \
+              --namespace "${NAMESPACE}" \
+              --version "${TKMS_INFRA_CHART_VERSION}" \
+              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/tkms-infra/values-kms-ci.yaml \
+              --set kmsParties.replicas="${NB_KMS_PARTIES}" \
+              --set fullnameOverride="kms-party-${NAMESPACE}" \
+              --set publicBucketVault.labels.environment="${NAMESPACE}" \
+              --set kmsParties.serviceAccountPrefixName="${NAMESPACE}" \
+              --set kmsParties.publishConnectionDetailsTo.prefixName="${NAMESPACE}" \
+              --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}" \
+              --set kmsParties.enclaveNodeGroup.taint[0].value="${NAMESPACE}"
+
+          elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            echo "Deploying infrastructure with enclave support with PCR0: ${{ env.PCR0 }}"
+            helm upgrade --install tkms-infra \
+              oci://ghcr.io/zama-zws/crossplane/tkms-infra \
+              --namespace "${NAMESPACE}" \
+              --version "${TKMS_INFRA_CHART_VERSION}" \
+              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/tkms-infra/values-kms-ci.yaml \
+              --set kmsParties.awsKms.recipientAttestationImageSHA384="${{ env.PCR0 }}" \
+              --set kmsParties.replicas="${NB_KMS_PARTIES}" \
+              --set fullnameOverride="kms-party-${NAMESPACE}" \
+              --set publicBucketVault.labels.environment="${NAMESPACE}" \
+              --set kmsParties.serviceAccountPrefixName="${NAMESPACE}" \
+              --set kmsParties.publishConnectionDetailsTo.prefixName="${NAMESPACE}" \
+              --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}" \
+              --set kmsParties.enclaveNodeGroup.taint[0].value="${NAMESPACE}"
+          fi
+
+      - name: Wait tkms-infra to be ready
+        run: |
+          ###################################################################
+          # Wait for TKMS infrastructure components to be ready
+          ###################################################################
+          echo "Waiting for KMS parties to be ready..."
+          if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            kubectl wait --for=condition=ready Kmsparties "kms-party-${NAMESPACE}-1" \
+              -n "${NAMESPACE}" --timeout=120s
+
+          elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            for i in $(seq 1 "${NB_KMS_PARTIES}"); do
+              kubectl wait --for=condition=ready Kmsparties "kms-party-${NAMESPACE}-${i}" \
+                -n "${NAMESPACE}" --timeout=120s
+            done
+          fi
+
+          if [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            echo "Waiting for enclave nodegroups to be ready..."
+            kubectl wait --for=condition=ready enclavenodegroup \
+              "kms-party-${NAMESPACE}"\
+              -n "${NAMESPACE}" --timeout=1200s
+          fi
+
+      - name: Generate peers list override
+        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' }}
+        run: |
+          ###################################################################
+          # Build peersList dynamically from NB_KMS_PARTIES for thresholdWithEnclave
+          ###################################################################
+          NB="${NB_KMS_PARTIES}"
+          cat > /tmp/kms-peers-values.yaml <<EOF
+          kmsCore:
+            thresholdMode:
+              peersList:
+          $(for i in $(seq 1 "${NB}"); do
+            echo "      - id: ${i}"
+            echo "        host: kms-core-${i}-core-${i}"
+            echo "        port: 50001"
+          done)
+          EOF
+
+          echo "Generated peers values file:"
+          cat /tmp/kms-peers-values.yaml
+
+      # ======================================================================
+      # KMS CORE DEPLOYMENT
+      # ======================================================================
+      - name: Setup kms-core with ${NB_KMS_PARTIES} parties
+        run: |
+          ###################################################################
+          # Deploy KMS Core in threshold mode (standard)
+          ###################################################################
+          if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
+            echo "Deploying KMS Core in threshold mode across ${NB_KMS_PARTIES} parties..."
+            for i in $(seq 1 "${NB_KMS_PARTIES}"); do
+              echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES}..."
+              helm upgrade --install "kms-core-${i}" \
+                "./charts/kms-core" \
+                --namespace "${NAMESPACE}" \
+                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
+                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-threshold-"${i}"-kms-ci.yaml \
+                --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+                --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+                --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
+                --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
+                --set tolerations[0].key="app" \
+                --set tolerations[0].effect="NoSchedule" \
+                --set tolerations[0].operator="Equal" \
+                --set tolerations[0].value="kms-pool"
+            done
+
+          ###################################################################
+          # Deploy KMS Core in threshold mode with enclave
+          ###################################################################
+          elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            echo "Deploying KMS Core in threshold mode with enclave support across ${NB_KMS_PARTIES} parties..."
+            if [[ "${NB_KMS_PARTIES}" == "13" ]]; then
+              THRESHOLD_VALUE=4
+            elif [[ "${NB_KMS_PARTIES}" == "4" ]]; then
+              THRESHOLD_VALUE=1
+            else
+              THRESHOLD_VALUE=1
+            fi
+            for i in $(seq 1 "${NB_KMS_PARTIES}"); do
+              echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES} with enclave attestation..."
+              helm upgrade --install  kms-core-"${i}" \
+                "./charts/kms-core" \
+                --namespace "${NAMESPACE}" \
+                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
+                --values /tmp/kms-peers-values.yaml \
+                --set kmsPeers.id="${i}" \
+                --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
+                --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
+                --set kmsGenCertAndKeys.enabled=true \
+                --set kmsCore.image.name="${KMS_CORE_IMAGE_NAME}" \
+                --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+                --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
+                --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+                --set kmsCore.thresholdMode.thresholdValue="${THRESHOLD_VALUE}" \
+                --set kmsCore.thresholdMode.tls.enabled="${TLS}" \
+                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
+                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
+                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}" \
+                --set kmsCore.publicVault.s3.prefix="PUB-p${i}" \
+                --set kmsCore.privateVault.s3.prefix="PRIV-p${i}" \
+                --set kmsCore.tolerations[0].key=app \
+                --set kmsCore.tolerations[0].effect="NoSchedule" \
+                --set kmsCore.tolerations[0].operator="Equal" \
+                --set kmsCore.tolerations[0].value="${NAMESPACE}" \
+                --wait \
+                --wait-for-jobs \
+                --timeout=1200s &
+            done
+            wait
+
+          ###################################################################
+          # Deploy KMS Core in centralized mode
+          ###################################################################
+          elif [[ "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
+            echo "Deploying KMS Core in centralized mode..."
+            helm upgrade --install kms-core-centralized \
+              "./charts/kms-core" \
+              --namespace "${NAMESPACE}" \
+              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}/"kms-service/values-kms-ci.yaml \
+              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+              --set kmsCore.serviceAccountName="${NAMESPACE}" \
+              --set kmsCore.envFrom.configmap.name="${NAMESPACE}" \
+              --set tolerations[0].key="app" \
+              --set tolerations[0].effect="NoSchedule" \
+              --set tolerations[0].operator="Equal" \
+              --set tolerations[0].value="kms-pool"
+
+          ###################################################################
+          # Deploy KMS Core in centralized mode with enclave
+          ###################################################################
+          elif [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            echo "Deploying KMS Core in centralized mode with enclave..."
+            helm upgrade --install  kms-core-centralized \
+              "./charts/kms-core" \
+              --namespace "${NAMESPACE}" \
+              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
+              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+              --set kmsCore.serviceAccountName="${NAMESPACE}" \
+              --set kmsCore.envFrom.configmap.name="${NAMESPACE}" \
+              --set tolerations[0].key="app" \
+              --set tolerations[0].effect="NoSchedule" \
+              --set tolerations[0].operator="Equal" \
+              --set tolerations[0].value="${NAMESPACE}" \
+              --wait \
+              --wait-for-jobs \
+              --timeout=1200s
+          fi
+
+          ###################################################################
+          # Wait for KMS Core deployment to be ready
+          ###################################################################
+          echo "Waiting for KMS Core pods to be ready..."
+          sleep 60
+          if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            kubectl wait --for=condition=ready pod kms-service-centralized-kms-ci-core-1 \
+              -n "${NAMESPACE}" --timeout=600s
+          elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            for i in $(seq 1 "${NB_KMS_PARTIES}"); do
+              kubectl wait --for=condition=ready pod kms-core-"${i}"-core-"${i}" \
+                -n "${NAMESPACE}" --timeout=600s
+            done
+          fi
+
+          if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+          ###################################################################
+          # Deploy KMS Core initialization job
+          ###################################################################
+            echo "Deploying KMS Core initialization job..."
+            helm upgrade --install kms-core-init \
+              "./charts/kms-core" \
+              --namespace "${NAMESPACE}" \
+              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-init-kms-ci.yaml \
+              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+              --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
+              --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
+              --set tolerations[0].key="app" \
+              --set tolerations[0].effect="NoSchedule" \
+              --set tolerations[0].operator="Equal" \
+              --set tolerations[0].value="kms-pool" \
+              --wait \
+              --wait-for-jobs \
+              --timeout=1200s
+
+            ###################################################################
+            # Wait for KMS Core initialization to complete
+            ###################################################################
+            echo "Waiting for KMS Core initialization to complete..."
+            sleep 30
+            kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
+              -n "${NAMESPACE}" --timeout=600s
+          fi
