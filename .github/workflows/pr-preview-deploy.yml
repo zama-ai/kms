@@ -11,6 +11,15 @@ on:
         description: 'Image tag'
         required: true
         type: string
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN:
+        required: true
+      ZWS_BOT_TOKEN:
+        required: true
+      TS_OAUTH_CLIENT_ID:
+        required: true
+      TS_OAUTH_SECRET:
+        required: true
 
 permissions: {}
 
