@@ -74,19 +74,6 @@ jobs:
             echo "PCR2=${PCR2}"
           } >> "$GITHUB_ENV"
 
-      - name: Set up path suffix based on deployment type
-        run: |
-          ###################################################################
-          # Set up path suffix based on deployment type
-          ###################################################################
-          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-            echo "Using enclave-enabled configuration..."
-            echo "PATH_SUFFIX=kms-enclave-ci" >> "$GITHUB_ENV"
-          else
-            echo "Using standard threshold configuration..."
-            echo "PATH_SUFFIX=kms-ci" >> "$GITHUB_ENV"
-          fi
-
       # ======================================================================
       # TOOLING SETUP
       # ======================================================================
@@ -153,8 +140,14 @@ jobs:
               oci://ghcr.io/zama-zws/crossplane/tkms-infra \
               --namespace "${NAMESPACE}" \
               --version "${TKMS_INFRA_CHART_VERSION}" \
-              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/tkms-infra/values-"${PATH_SUFFIX}".yaml \
-              --set kmsParties.replicas="${NB_KMS_PARTIES}"
+              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/tkms-infra/values-kms-ci.yaml \
+              --set kmsParties.replicas="${NB_KMS_PARTIES}" \
+              --set fullnameOverride=kms-party-${NAMESPACE} \
+              --set publicBucketVault.labels.environment=${NAMESPACE} \
+              --set kmsParties.serviceAccountPrefixName=${NAMESPACE} \
+              --set kmsParties.publishConnectionDetailsTo.prefixName=${NAMESPACE} \
+              --set kmsParties.publicBucketVaultRef.matchLabels.environment=${NAMESPACE} \
+              --set kmsParties.enclaveNodeGroup.taint[0].value=${NAMESPACE}
 
           elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
             echo "Deploying infrastructure with enclave support with PCR0: ${{ env.PCR0 }}"
@@ -162,9 +155,15 @@ jobs:
               oci://ghcr.io/zama-zws/crossplane/tkms-infra \
               --namespace "${NAMESPACE}" \
               --version "${TKMS_INFRA_CHART_VERSION}" \
-              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/tkms-infra/values-"${PATH_SUFFIX}".yaml \
+              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/tkms-infra/values-kms-ci.yaml \
               --set kmsParties.awsKms.recipientAttestationImageSHA384="${{ env.PCR0 }}" \
-              --set kmsParties.replicas="${NB_KMS_PARTIES}"
+              --set kmsParties.replicas="${NB_KMS_PARTIES}" \
+              --set fullnameOverride=kms-party-${NAMESPACE} \
+              --set publicBucketVault.labels.environment=${NAMESPACE} \
+              --set kmsParties.serviceAccountPrefixName=${NAMESPACE} \
+              --set kmsParties.publishConnectionDetailsTo.prefixName=${NAMESPACE} \
+              --set kmsParties.publicBucketVaultRef.matchLabels.environment=${NAMESPACE} \
+              --set kmsParties.enclaveNodeGroup.taint[0].value=${NAMESPACE}
           fi
 
       - name: Wait tkms-infra to be ready
@@ -174,12 +173,12 @@ jobs:
           ###################################################################
           echo "Waiting for KMS parties to be ready..."
           if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-            kubectl wait --for=condition=ready Kmsparties kms-party-"${PATH_SUFFIX}-1" \
+            kubectl wait --for=condition=ready Kmsparties kms-party-"${NAMESPACE}-1" \
               -n "${NAMESPACE}" --timeout=120s
 
           elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            for i in {1..13}; do
-              kubectl wait --for=condition=ready Kmsparties kms-party-"${PATH_SUFFIX}"-"${i}" \
+            for i in {1.."${NB_KMS_PARTIES}"}; do
+              kubectl wait --for=condition=ready Kmsparties kms-party-"${NAMESPACE}"-"${i}" \
                 -n "${NAMESPACE}" --timeout=120s
             done
           fi
@@ -187,27 +186,27 @@ jobs:
           if [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             echo "Waiting for enclave nodegroups to be ready..."
             kubectl wait --for=condition=ready enclavenodegroup \
-              kms-party-"${PATH_SUFFIX}"\
+              kms-party-"${NAMESPACE}"\
               -n "${NAMESPACE}" --timeout=1200s
           fi
 
       # ======================================================================
       # KMS CORE DEPLOYMENT
       # ======================================================================
-      - name: Setup kms-core with 13 parties
+      - name: Setup kms-core with ${NB_KMS_PARTIES} parties
         run: |
           ###################################################################
           # Deploy KMS Core in threshold mode (standard)
           ###################################################################
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
-            echo "Deploying KMS Core in threshold mode across 13 parties..."
-            for i in {1..${NB_KMS_PARTIES}}; do
+            echo "Deploying KMS Core in threshold mode across ${NB_KMS_PARTIES} parties..."
+            for i in {1.."${NB_KMS_PARTIES}"}; do
               echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES}..."
-              helm upgrade --install kms-service-threshold-"${i}"-"${PATH_SUFFIX}" \
+              helm upgrade --install kms-service-threshold-"${i}"-kms-ci \
                 "./charts/kms-core" \
                 --namespace "${NAMESPACE}" \
-                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-"${PATH_SUFFIX}".yaml \
-                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"kms-service/values-kms-service-threshold-"${i}"-"${PATH_SUFFIX}".yaml \
+                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
+                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"kms-service/values-kms-service-threshold-"${i}"-kms-ci.yaml \
                 --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
                 --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}"
             done
@@ -216,14 +215,14 @@ jobs:
           # Deploy KMS Core in threshold mode with enclave
           ###################################################################
           elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            echo "Deploying KMS Core in threshold mode with enclave support across 13 parties..."
-            for i in {1..${NB_KMS_PARTIES}}; do
+            echo "Deploying KMS Core in threshold mode with enclave support across ${NB_KMS_PARTIES} parties..."
+            for i in {1.."${NB_KMS_PARTIES}"}; do
               echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES} with enclave attestation..."
-              helm upgrade --install  kms-service-threshold-"${i}"-"${PATH_SUFFIX}" \
+              helm upgrade --install  kms-service-threshold-"${i}"-kms-ci \
                 "./charts/kms-core" \
                 --namespace "${NAMESPACE}" \
-                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-"${PATH_SUFFIX}".yaml \
-                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-threshold-"${i}"-"${PATH_SUFFIX}".yaml \
+                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
+                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-threshold-"${i}"-kms-ci.yaml \
                 --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
                 --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
                 --set kmsCore.thresholdMode.tls.enabled="${TLS}" \
@@ -241,10 +240,10 @@ jobs:
           ###################################################################
           elif [[ "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
             echo "Deploying KMS Core in centralized mode..."
-            helm upgrade --install kms-service-centralized-"${PATH_SUFFIX}" \
+            helm upgrade --install kms-service-centralized-kms-ci \
               "./charts/kms-core" \
               --namespace "${NAMESPACE}" \
-              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}/"kms-service/values-"${PATH_SUFFIX}".yaml \
+              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}/"kms-service/values-kms-ci.yaml \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}"
 
@@ -253,10 +252,10 @@ jobs:
           ###################################################################
           elif [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
             echo "Deploying KMS Core in centralized mode with enclave..."
-            helm upgrade --install  kms-service-centralized-"${PATH_SUFFIX}" \
+            helm upgrade --install  kms-service-centralized-kms-ci \
               "./charts/kms-core" \
               --namespace "${NAMESPACE}" \
-              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-"${PATH_SUFFIX}".yaml \
+              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
               --wait \
@@ -270,11 +269,11 @@ jobs:
           echo "Waiting for KMS Core pods to be ready..."
           sleep 60
           if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-            kubectl wait --for=condition=ready pod kms-service-centralized-"${PATH_SUFFIX}"-core-1 \
+            kubectl wait --for=condition=ready pod kms-service-centralized-kms-ci-core-1 \
               -n "${NAMESPACE}" --timeout=600s
           elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             for i in {1..${NB_KMS_PARTIES}}; do
-              kubectl wait --for=condition=ready pod kms-service-threshold-"${i}"-"${PATH_SUFFIX}"-core-"${i}" \
+              kubectl wait --for=condition=ready pod kms-service-threshold-"${i}"-kms-ci-core-"${i}" \
                 -n "${NAMESPACE}" --timeout=600s
             done
           fi
@@ -285,9 +284,9 @@ jobs:
           ###################################################################
             echo "Deploying KMS Core initialization job..."
             helm upgrade --install kms-core-init \
-              "${helm_chart_location}" ${helm_version_arg} \
+              "./charts/kms-core" \
               --namespace "${NAMESPACE}" \
-              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-init-"${PATH_SUFFIX}".yaml \
+              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-init-kms-ci.yaml \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
               --wait \
