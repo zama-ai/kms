@@ -199,7 +199,7 @@ jobs:
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'pr-preview')
     needs:
       - enclave
-    uses: zama-ai/kms/.github/workflows/pr-preview-deploy.yml@fred/feat/add-devspace-for-dev-testing
+    uses: ./.github/workflows/pr-preview-deploy.yml
     with:
       image_tag: ${{ needs.core-service.outputs.image_tag }}
 

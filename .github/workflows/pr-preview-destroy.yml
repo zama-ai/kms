@@ -48,6 +48,7 @@ jobs:
 
       - name: Destroy namespace
         run: |
+          helm list -n "${NAMESPACE}" --short | xargs -L1 helm uninstall -n "${NAMESPACE}"
           kubectl delete namespace "${NAMESPACE}" --force && \
           kubectl proxy && \
           kubectl get namespace "${NAMESPACE}" -o json |jq '.spec = {"finalizers":[]}' >temp.json && \
