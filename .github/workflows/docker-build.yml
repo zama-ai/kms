@@ -198,6 +198,8 @@ jobs:
     name: docker-build/pr-preview
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'pr-preview')
     needs:
+      - core-client
+      - core-service
       - enclave
     uses: ./.github/workflows/pr-preview-deploy.yml
     with:

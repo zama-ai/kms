@@ -142,12 +142,12 @@ jobs:
               --version "${TKMS_INFRA_CHART_VERSION}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/tkms-infra/values-kms-ci.yaml \
               --set kmsParties.replicas="${NB_KMS_PARTIES}" \
-              --set fullnameOverride=kms-party-${NAMESPACE} \
-              --set publicBucketVault.labels.environment=${NAMESPACE} \
-              --set kmsParties.serviceAccountPrefixName=${NAMESPACE} \
-              --set kmsParties.publishConnectionDetailsTo.prefixName=${NAMESPACE} \
-              --set kmsParties.publicBucketVaultRef.matchLabels.environment=${NAMESPACE} \
-              --set kmsParties.enclaveNodeGroup.taint[0].value=${NAMESPACE}
+              --set fullnameOverride="kms-party-${NAMESPACE}" \
+              --set publicBucketVault.labels.environment="${NAMESPACE}" \
+              --set kmsParties.serviceAccountPrefixName="${NAMESPACE}" \
+              --set kmsParties.publishConnectionDetailsTo.prefixName="${NAMESPACE}" \
+              --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}" \
+              --set kmsParties.enclaveNodeGroup.taint[0].value="${NAMESPACE}"
 
           elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
             echo "Deploying infrastructure with enclave support with PCR0: ${{ env.PCR0 }}"
@@ -158,12 +158,12 @@ jobs:
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/tkms-infra/values-kms-ci.yaml \
               --set kmsParties.awsKms.recipientAttestationImageSHA384="${{ env.PCR0 }}" \
               --set kmsParties.replicas="${NB_KMS_PARTIES}" \
-              --set fullnameOverride=kms-party-${NAMESPACE} \
-              --set publicBucketVault.labels.environment=${NAMESPACE} \
-              --set kmsParties.serviceAccountPrefixName=${NAMESPACE} \
-              --set kmsParties.publishConnectionDetailsTo.prefixName=${NAMESPACE} \
-              --set kmsParties.publicBucketVaultRef.matchLabels.environment=${NAMESPACE} \
-              --set kmsParties.enclaveNodeGroup.taint[0].value=${NAMESPACE}
+              --set fullnameOverride="kms-party-${NAMESPACE}" \
+              --set publicBucketVault.labels.environment="${NAMESPACE}" \
+              --set kmsParties.serviceAccountPrefixName="${NAMESPACE}" \
+              --set kmsParties.publishConnectionDetailsTo.prefixName="${NAMESPACE}" \
+              --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}" \
+              --set kmsParties.enclaveNodeGroup.taint[0].value="${NAMESPACE}"
           fi
 
       - name: Wait tkms-infra to be ready
@@ -173,12 +173,12 @@ jobs:
           ###################################################################
           echo "Waiting for KMS parties to be ready..."
           if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-            kubectl wait --for=condition=ready Kmsparties kms-party-${NAMESPACE}-1 \
+            kubectl wait --for=condition=ready Kmsparties "kms-party-${NAMESPACE}-1" \
               -n "${NAMESPACE}" --timeout=120s
 
           elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             for i in $(seq 1 "${NB_KMS_PARTIES}"); do
-              kubectl wait --for=condition=ready Kmsparties kms-party-${NAMESPACE}-${i} \
+              kubectl wait --for=condition=ready Kmsparties "kms-party-${NAMESPACE}-${i}" \
                 -n "${NAMESPACE}" --timeout=120s
             done
           fi
@@ -186,7 +186,7 @@ jobs:
           if [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             echo "Waiting for enclave nodegroups to be ready..."
             kubectl wait --for=condition=ready enclavenodegroup \
-              kms-party-${NAMESPACE}\
+              "kms-party-${NAMESPACE}"\
               -n "${NAMESPACE}" --timeout=1200s
           fi
 
@@ -202,11 +202,11 @@ jobs:
             echo "Deploying KMS Core in threshold mode across ${NB_KMS_PARTIES} parties..."
             for i in $(seq 1 "${NB_KMS_PARTIES}"); do
               echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES}..."
-              helm upgrade --install kms-service-threshold-"${i}"-kms-ci \
+              helm upgrade --install "kms-service-threshold-${i}-kms-ci" \
                 "./charts/kms-core" \
                 --namespace "${NAMESPACE}" \
                 --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
-                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"kms-service/values-kms-service-threshold-"${i}"-kms-ci.yaml \
+                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-threshold-"${i}"-kms-ci.yaml \
                 --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
                 --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
                 --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
@@ -250,8 +250,8 @@ jobs:
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}/"kms-service/values-kms-ci.yaml \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
-              --set kmsCore.serviceAccountName=${NAMESPACE} \
-              --set kmsCore.envFrom.configmap.name=${NAMESPACE}
+              --set kmsCore.serviceAccountName="${NAMESPACE}" \
+              --set kmsCore.envFrom.configmap.name="${NAMESPACE}"
 
           ###################################################################
           # Deploy KMS Core in centralized mode with enclave
@@ -264,8 +264,8 @@ jobs:
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
-              --set kmsCore.serviceAccountName=${NAMESPACE} \
-              --set kmsCore.envFrom.configmap.name=${NAMESPACE} \
+              --set kmsCore.serviceAccountName="${NAMESPACE}" \
+              --set kmsCore.envFrom.configmap.name="${NAMESPACE}" \
               --wait \
               --wait-for-jobs \
               --timeout=1200s
