@@ -190,6 +190,27 @@ jobs:
               -n "${NAMESPACE}" --timeout=1200s
           fi
 
+      - name: Generate peers list override
+        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' }}
+        run: |
+          ###################################################################
+          # Build peersList dynamically from NB_KMS_PARTIES for thresholdWithEnclave
+          ###################################################################
+          NB="${NB_KMS_PARTIES}"
+          cat > /tmp/kms-peers-values.yaml <<EOF
+          kmsCore:
+            thresholdMode:
+              peersList:
+          $(for i in $(seq 1 "${NB}"); do
+            echo "      - id: ${i}"
+            echo "        host: kms-core-${i}-core-${i}"
+            echo "        port: 50001"
+          done)
+          EOF
+
+          echo "Generated peers values file:"
+          cat /tmp/kms-peers-values.yaml
+
       # ======================================================================
       # KMS CORE DEPLOYMENT
       # ======================================================================
@@ -202,7 +223,7 @@ jobs:
             echo "Deploying KMS Core in threshold mode across ${NB_KMS_PARTIES} parties..."
             for i in $(seq 1 "${NB_KMS_PARTIES}"); do
               echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES}..."
-              helm upgrade --install "kms-service-threshold-${i}-kms-ci" \
+              helm upgrade --install "kms-core-${i}" \
                 "./charts/kms-core" \
                 --namespace "${NAMESPACE}" \
                 --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
@@ -224,23 +245,25 @@ jobs:
             echo "Deploying KMS Core in threshold mode with enclave support across ${NB_KMS_PARTIES} parties..."
             for i in $(seq 1 "${NB_KMS_PARTIES}"); do
               echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES} with enclave attestation..."
-              helm upgrade --install  kms-service-threshold-"${i}"-kms-ci \
+              helm upgrade --install  kms-core-"${i}" \
                 "./charts/kms-core" \
                 --namespace "${NAMESPACE}" \
                 --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
-                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-threshold-"${i}"-kms-ci.yaml \
+                --values /tmp/kms-peers-values.yaml \
+                --set kmsPeers.id="${i}" \
+                --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
+                --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
+                --set kmsGenCertAndKeys.enabled=true \
                 --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
                 --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
                 --set kmsCore.thresholdMode.tls.enabled="${TLS}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}" \
-                --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
-                --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
                 --set tolerations[0].key=app \
                 --set tolerations[0].effect="NoSchedule" \
                 --set tolerations[0].operator="Equal" \
-                --set tolerations[0].value="${NAMESPACE}"
+                --set tolerations[0].value="${NAMESPACE}" \
                 --wait \
                 --wait-for-jobs \
                 --timeout=1200s &
@@ -252,7 +275,7 @@ jobs:
           ###################################################################
           elif [[ "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
             echo "Deploying KMS Core in centralized mode..."
-            helm upgrade --install kms-service-centralized-kms-ci \
+            helm upgrade --install kms-core-centralized \
               "./charts/kms-core" \
               --namespace "${NAMESPACE}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}/"kms-service/values-kms-ci.yaml \
@@ -270,7 +293,7 @@ jobs:
           ###################################################################
           elif [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
             echo "Deploying KMS Core in centralized mode with enclave..."
-            helm upgrade --install  kms-service-centralized-kms-ci \
+            helm upgrade --install  kms-core-centralized \
               "./charts/kms-core" \
               --namespace "${NAMESPACE}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
