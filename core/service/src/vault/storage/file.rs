@@ -314,8 +314,8 @@ impl StorageExt for FileStorage {
             );
             return Ok(());
         }
-        println!(
-            "storing data {} at epoch {:?} at path {}",
+        tracing::info!(
+            "Storing data {} at epoch {:?} at path {}",
             data_type,
             epoch_id,
             path.display()

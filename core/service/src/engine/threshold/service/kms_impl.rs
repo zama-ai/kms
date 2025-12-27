@@ -72,7 +72,7 @@ use crate::{
     vault::{
         storage::{
             crypto_material::ThresholdCryptoMaterialStorage, delete_context_at_id,
-            read_all_data_form_all_epochs_versioned, read_all_data_versioned,
+            read_all_data_from_all_epochs_versioned, read_all_data_versioned,
             read_pk_at_request_id, store_context_at_id, Storage, StorageExt,
         },
         Vault,
@@ -248,7 +248,7 @@ where
 
     // load keys from storage
     let key_info_versioned: HashMap<(RequestId, EpochId), ThresholdFheKeys> =
-        read_all_data_form_all_epochs_versioned(
+        read_all_data_from_all_epochs_versioned(
             &private_storage,
             &PrivDataType::FheKeyInfo.to_string(),
         )

@@ -487,7 +487,7 @@ pub async fn delete_custodian_context_at_id<PubS: Storage>(
     .await
 }
 /// Helper method for reading all data of a specific type.
-pub async fn read_all_data_form_all_epochs_versioned<
+pub async fn read_all_data_from_all_epochs_versioned<
     S: StorageReaderExt,
     T: DeserializeOwned + Unversionize + Named + Send,
 >(

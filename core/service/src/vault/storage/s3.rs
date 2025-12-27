@@ -253,7 +253,7 @@ impl S3Storage {
             .send()
             .await
         {
-            tracing::error!("S3 delete failed: {:?}", e);
+            tracing::warn!("S3 delete failed: {:?}", e);
         }
 
         Ok(())

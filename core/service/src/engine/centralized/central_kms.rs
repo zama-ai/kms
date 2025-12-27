@@ -32,7 +32,7 @@ use crate::grpc::metastore_status_service::CustodianMetaStore;
 use crate::util::key_setup::FhePublicKey;
 use crate::util::meta_store::MetaStore;
 #[cfg(feature = "non-wasm")]
-use crate::vault::storage::{read_all_data_form_all_epochs_versioned, StorageExt};
+use crate::vault::storage::{read_all_data_from_all_epochs_versioned, StorageExt};
 
 use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
 use crate::vault::storage::{
@@ -835,7 +835,7 @@ impl<
         rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> anyhow::Result<(RealCentralizedKms<PubS, PrivS>, HealthServer<impl Health>)> {
         let key_info: HashMap<(RequestId, EpochId), KmsFheKeyHandles> =
-            read_all_data_form_all_epochs_versioned(
+            read_all_data_from_all_epochs_versioned(
                 &private_storage,
                 &PrivDataType::FhePrivateKey.to_string(),
             )
