@@ -365,7 +365,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             None => *DEFAULT_MPC_CONTEXT,
         };
 
-        // TODO grpc messages need to be changed to support both epoch IDs
+        // TODO(zama-ai/kms-internal/issues/2788)
+        // grpc messages need to be changed to support both epoch IDs
         let old_epoch_id: EpochId = match &inner.epoch_id {
             Some(c) => c
                 .try_into()

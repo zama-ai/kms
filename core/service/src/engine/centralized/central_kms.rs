@@ -143,6 +143,12 @@ where
     recv.await.map_err(|e| anyhow::anyhow!(e.to_string()))?
 }
 
+/// Generate a decompression key that can decompress ciphertexts in keyset1
+/// to ciphertexts in keyset2.
+///
+/// Since this function takes one epoch_id,
+/// it implies the two keys must come from the same epoch,
+/// if it's not the case this function will not work.
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn async_generate_decompression_keys<PubS, PrivS>(
     storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
@@ -154,8 +160,6 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 {
-    // NOTE: this implies the two keys must come from the same epoch,
-    // if it's not the case this function will not work.
     storage
         .refresh_centralized_fhe_keys(keyset1_id, epoch_id)
         .await?;

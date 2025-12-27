@@ -395,7 +395,6 @@ where
     PrivS: StorageExt,
 {
     // Check if data already exists in both storages
-    // TODO use epoch
     match check_data_exists_at_epoch(
         pub_storage,
         priv_storage,
