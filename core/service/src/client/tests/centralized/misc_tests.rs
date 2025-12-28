@@ -122,7 +122,7 @@ async fn test_central_close_after_drop() {
 async fn test_largecipher() {
     use crate::{
         consts::DEFAULT_CENTRAL_KEY_ID,
-        consts::PRSS_INIT_REQ_ID,
+        consts::DEFAULT_EPOCH_ID,
         cryptography::encryption::PkeSchemeType,
         engine::centralized::central_kms::tests::{
             new_priv_ram_storage_from_existing_keys, new_pub_ram_storage_from_existing_keys,
@@ -131,7 +131,7 @@ async fn test_largecipher() {
     use kms_grpc::identifiers::EpochId;
 
     let keys = get_default_keys().await;
-    let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID).unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100,
         pub_decrypt: 1,

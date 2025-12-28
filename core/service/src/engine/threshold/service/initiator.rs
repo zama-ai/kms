@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::{collections::HashMap, marker::PhantomData, str::FromStr, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // === External Crates ===
 use kms_grpc::{
@@ -23,7 +23,7 @@ use tonic_health::server::HealthReporter;
 
 // === Internal Crate ===
 use crate::{
-    consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
+    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
     engine::{
         base::derive_request_id,
         threshold::{
@@ -90,7 +90,7 @@ impl<
     #[expect(deprecated)]
     pub async fn init_legacy_prss_from_storage(&self) -> anyhow::Result<()> {
         // TODO(zama-ai/kms-internal#2530) set the correct context ID here.
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID)?;
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let context_id = *DEFAULT_MPC_CONTEXT;
         let threshold = self.session_maker.threshold(&context_id).await?;
         let num_parties = self.session_maker.num_parties(&context_id).await?;
@@ -450,7 +450,7 @@ mod tests {
 
     // write prss to storage using the legacy method
     async fn write_legacy_empty_prss_to_storage(private_storage: &mut ram::RamStorage) {
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let num_parties = 4;
         let threshold = 1u8;
 
@@ -500,7 +500,7 @@ mod tests {
 
         initiator.init_legacy_prss_from_storage().await.unwrap();
 
-        let default_epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let default_epoch_id = *DEFAULT_EPOCH_ID;
         assert!(
             initiator
                 .session_maker
@@ -555,7 +555,7 @@ mod tests {
     ) -> RealInitiator<ram::RamStorage, I> {
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
 

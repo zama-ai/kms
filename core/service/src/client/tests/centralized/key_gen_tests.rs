@@ -1,6 +1,6 @@
 use crate::client::client_wasm::Client;
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
-use crate::consts::PRSS_INIT_REQ_ID;
+use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
@@ -27,7 +27,7 @@ use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_te
 #[serial]
 async fn test_key_gen_centralized() {
     let request_id = derive_request_id("test_key_gen_centralized").unwrap();
-    let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID).unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
     purge(None, None, &request_id, &[None], &[None]).await;
     key_gen_centralized(&request_id, &epoch_id, FheParameter::Test, None, None).await;
@@ -39,7 +39,7 @@ async fn test_decompression_key_gen_centralized() {
     let request_id_1 = derive_request_id("test_key_gen_centralized-1").unwrap();
     let request_id_2 = derive_request_id("test_key_gen_centralized-2").unwrap();
     let request_id_3 = derive_request_id("test_decompression_key_gen_centralized").unwrap();
-    let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID).unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
     purge(None, None, &request_id_1, &[None], &[None]).await;
     purge(None, None, &request_id_2, &[None], &[None]).await;
@@ -70,7 +70,7 @@ async fn test_decompression_key_gen_centralized() {
 #[serial]
 async fn default_key_gen_centralized() {
     let request_id = derive_request_id("default_key_gen_centralized").unwrap();
-    let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID).unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
     purge(None, None, &request_id, &[None], &[None]).await;
     key_gen_centralized(&request_id, &epoch_id, FheParameter::Default, None, None).await;
@@ -83,7 +83,7 @@ async fn default_decompression_key_gen_centralized() {
     let request_id_1 = derive_request_id("default_key_gen_centralized-1").unwrap();
     let request_id_2 = derive_request_id("default_key_gen_centralized-2").unwrap();
     let request_id_3 = derive_request_id("default_decompression_key_gen_centralized").unwrap();
-    let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID).unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
     purge(None, None, &request_id_1, &[None], &[None]).await;
     purge(None, None, &request_id_2, &[None], &[None]).await;

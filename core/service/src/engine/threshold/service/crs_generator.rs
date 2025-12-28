@@ -486,12 +486,11 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use std::{str::FromStr, time::Duration};
+    use std::time::Duration;
 
     use kms_grpc::{
         kms::v1::FheParameter,
         rpc_types::{alloy_to_protobuf_domain, KMSType},
-        EpochId,
     };
     use rand::SeedableRng;
     use threshold_fhe::{
@@ -503,7 +502,7 @@ mod tests {
     };
 
     use crate::{
-        consts::{DEFAULT_MPC_CONTEXT, DURATION_WAITING_ON_RESULT_SECONDS, PRSS_INIT_REQ_ID},
+        consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, DURATION_WAITING_ON_RESULT_SECONDS},
         cryptography::signatures::gen_sig_keys,
         dummy_domain,
         engine::threshold::service::session::SessionMaker,
@@ -598,7 +597,7 @@ mod tests {
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let prss_setup_z128 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
         let prss_setup_z64 = Some(PRSSSetup::new_testing_prss(vec![], vec![]));
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,

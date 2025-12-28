@@ -2,10 +2,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use core::fmt;
 use futures_util::future::OptionFuture;
 use itertools::Itertools;
-use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
-use kms_lib::consts::PRSS_INIT_REQ_ID;
+use kms_lib::consts::DEFAULT_EPOCH_ID;
 use kms_lib::vault::storage::StorageExt;
 use kms_lib::{
     conf::{
@@ -35,7 +34,7 @@ use kms_lib::{
 use observability::conf::TelemetryConfig;
 use observability::telemetry::init_tracing;
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 use strum::EnumIs;
 use url::Url;
 
@@ -451,7 +450,7 @@ async fn handle_central_cmd<PubS: StorageForBytes, PrivS: StorageForBytes + Stor
         DEFAULT_PARAM
     };
 
-    let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     match cmd {
         ConstructCommand::All => {
             panic!("\"All\" command must be handled in an outer call");
@@ -541,7 +540,7 @@ async fn handle_threshold_cmd<PubS: StorageForBytes, PrivS: StorageForBytes + St
         DEFAULT_PARAM
     };
 
-    let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
 
     match cmd {
         ConstructCommand::All => panic!("\"All\" command must be handled in an outer call"),

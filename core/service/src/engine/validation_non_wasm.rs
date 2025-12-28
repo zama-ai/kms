@@ -1,4 +1,4 @@
-use crate::consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID};
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::retrieve_parameters;
 use crate::{
     anyhow_error_and_log,
@@ -227,7 +227,7 @@ pub fn validate_user_decrypt_req(
     };
     let epoch_id: EpochId = match &req.epoch_id {
         Some(epoch_id) => epoch_id.try_into()?,
-        None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
+        None => *DEFAULT_EPOCH_ID,
     };
 
     if req.typed_ciphertexts.is_empty() {
@@ -305,7 +305,7 @@ pub fn validate_public_decrypt_req(
     };
     let epoch_id: EpochId = match &req.epoch_id {
         Some(epoch_id) => epoch_id.try_into()?,
-        None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
+        None => *DEFAULT_EPOCH_ID,
     };
     let key_id: KeyId =
         optional_proto_request_id(&req.key_id, RequestIdParsingErr::PublicDecRequestBadKeyId)?

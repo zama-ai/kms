@@ -47,7 +47,7 @@ use crate::{
     anyhow_error_and_log,
     backup::operator::RecoveryValidationMaterial,
     conf::CoreConfig,
-    consts::{DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
+    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC},
     cryptography::{attestation::SecurityModuleProxy, signatures::PublicSigKey},
     engine::{
         backup_operator::RealBackupOperator,
@@ -553,7 +553,7 @@ where
     }
 
     if run_prss {
-        let epoch_id_prss: EpochId = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?.into(); // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
+        let epoch_id_prss = *DEFAULT_EPOCH_ID;
         let default_context_id = *DEFAULT_MPC_CONTEXT;
         tracing::info!(
             "Initializing threshold KMS server and generating a new PRSS Setup for private storage {:?}",

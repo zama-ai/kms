@@ -1,4 +1,4 @@
-use crate::consts::PRSS_INIT_REQ_ID;
+use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{
     compute_info_decompression_keygen, retrieve_parameters, KeyGenMetadata, DSEP_PUBDATA_KEY,
@@ -62,7 +62,7 @@ pub async fn key_gen_impl<
 
     let epoch_id: EpochId = match &inner.epoch_id {
         Some(ctx) => parse_proto_request_id(ctx, RequestIdParsingErr::Epoch)?.into(),
-        None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
+        None => *DEFAULT_EPOCH_ID,
     };
 
     let internal_keyset_config =

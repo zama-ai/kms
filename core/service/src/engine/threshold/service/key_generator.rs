@@ -45,7 +45,7 @@ use tracing::Instrument;
 
 // === Internal Crate Imports ===
 use crate::{
-    consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
+    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{
@@ -224,9 +224,7 @@ impl<
         // TODO(zama-ai/kms-internal/issues/2809)
         // we don't need epoch ID for the actual keygen
         // but it will be needed when we store the key material
-        let epoch_id: EpochId = epoch_id
-            .unwrap_or(RequestId::try_from(PRSS_INIT_REQ_ID).unwrap())
-            .into();
+        let epoch_id: EpochId = epoch_id.map(Into::into).unwrap_or(*DEFAULT_EPOCH_ID);
 
         //Retrieve the right metric tag
         let op_tag = match (
@@ -1162,8 +1160,6 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use kms_grpc::{
         kms::v1::{FheParameter, KeySetConfig},
         rpc_types::{alloy_to_protobuf_domain, KMSType},
@@ -1250,7 +1246,7 @@ mod tests {
     ) {
         use crate::cryptography::signatures::gen_sig_keys;
         let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let session_maker =
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);

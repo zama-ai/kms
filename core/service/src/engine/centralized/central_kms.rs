@@ -1015,7 +1015,7 @@ pub(crate) mod tests {
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, OTHER_CENTRAL_DEFAULT_ID,
     };
     use crate::consts::{
-        DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, PRSS_INIT_REQ_ID, TEST_CENTRAL_KEYS_PATH,
+        DEFAULT_EPOCH_ID, DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEYS_PATH,
         TEST_CENTRAL_KEY_ID, TEST_PARAM,
     };
     use crate::cryptography::error::CryptographyError;
@@ -1277,14 +1277,14 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial(test_keys)]
     async fn sunshine_test_decrypt() {
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         sunshine_decrypt(get_test_keys().await, &TEST_CENTRAL_KEY_ID, &epoch_id).await;
     }
 
     #[tokio::test]
     #[serial(test_keys)]
     async fn decrypt_with_bad_client_key() {
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         simulate_decrypt(
             SimulationType::BadFheKey,
             get_test_keys().await,
@@ -1298,14 +1298,14 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial(default_keys)]
     async fn sunshine_default_decrypt() {
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         sunshine_decrypt(get_default_keys().await, &DEFAULT_CENTRAL_KEY_ID, &epoch_id).await;
     }
 
     #[tokio::test]
     #[serial(test_keys)]
     async fn multiple_test_keys_decrypt() {
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         sunshine_decrypt(get_test_keys().await, &OTHER_CENTRAL_TEST_ID, &epoch_id).await;
     }
 
@@ -1313,7 +1313,7 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial(default_keys)]
     async fn multiple_default_keys_decrypt() {
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         sunshine_decrypt(
             get_default_keys().await,
             &OTHER_CENTRAL_DEFAULT_ID,
@@ -1414,13 +1414,13 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn sunshine_test_user_decrypt() {
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         sunshine_user_decrypt(get_test_keys().await, &TEST_CENTRAL_KEY_ID, &epoch_id).await;
     }
 
     #[tokio::test]
     async fn user_decrypt_with_bad_ephemeral_key() {
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         simulate_user_decrypt(
             SimulationType::BadEphemeralKey,
             get_test_keys().await,
@@ -1432,7 +1432,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn user_decrypt_with_bad_sig_key() {
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         simulate_user_decrypt(
             SimulationType::BadSigKey,
             get_test_keys().await,
@@ -1444,7 +1444,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn user_decrypt_with_bad_client_key() {
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         simulate_user_decrypt(
             SimulationType::BadFheKey,
             get_test_keys().await,
@@ -1457,21 +1457,21 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn sunshine_default_user_decrypt() {
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         sunshine_user_decrypt(get_default_keys().await, &DEFAULT_CENTRAL_KEY_ID, &epoch_id).await;
     }
 
     #[tokio::test]
     #[serial]
     async fn multiple_test_keys_user_decrypt() {
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         sunshine_user_decrypt(get_test_keys().await, &OTHER_CENTRAL_TEST_ID, &epoch_id).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn multiple_default_keys_user_decrypt() {
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         sunshine_user_decrypt(
             get_default_keys().await,
             &OTHER_CENTRAL_DEFAULT_ID,

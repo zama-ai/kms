@@ -4,7 +4,7 @@ use crate::client::test_tools::{
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::tests::threshold::common::threshold_handles;
 use crate::consts::{
-    PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PRSS_INIT_REQ_ID, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
+    DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
     TEST_PARAM, TEST_THRESHOLD_KEY_ID,
 };
 use crate::engine::threshold::service::RealThresholdKms;
@@ -18,12 +18,10 @@ cfg_if::cfg_if! {
         use crate::util::rate_limiter::RateLimiterConfig;
     }
 }
-use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::InitRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::RequestId;
 use serial_test::serial;
-use std::str::FromStr;
 use threshold_fhe::networking::grpc::GrpcServer;
 use tokio::task::JoinSet;
 use tonic::server::NamedService;
@@ -41,8 +39,8 @@ async fn test_threshold_health_endpoint_availability() {
     let amount_parties = 4;
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    // make sure the store does not contain any PRSS info (currently stored under ID PRSS_INIT_REQ_ID)
-    let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+    // make sure the store does not contain any PRSS info
+    let epoch_id = *DEFAULT_EPOCH_ID;
     purge(
         None,
         None,
@@ -113,7 +111,7 @@ async fn test_threshold_health_endpoint_availability() {
     for i in 1..=4 {
         let mut cur_client = kms_clients.get(&i).unwrap().clone();
         req_tasks.spawn(async move {
-            let req_id = RequestId::from_str(PRSS_INIT_REQ_ID).unwrap();
+            let req_id: RequestId = (*DEFAULT_EPOCH_ID).into();
             cur_client
                 .init(tonic::Request::new(InitRequest {
                     request_id: Some(req_id.into()),

@@ -3,7 +3,7 @@ use crate::{
         crs_gen_tests::crs_gen_centralized, key_gen_tests::key_gen_centralized,
         public_decryption_tests::decryption_centralized,
     },
-    consts::PRSS_INIT_REQ_ID,
+    consts::DEFAULT_EPOCH_ID,
     cryptography::internal_crypto_types::WrappedDKGParams,
     engine::base::derive_request_id,
     util::key_setup::test_tools::{
@@ -29,7 +29,7 @@ async fn test_insecure_central_dkg_backup() {
     let dkg_param: WrappedDKGParams = param.into();
     let key_id_1 = derive_request_id("test_insecure_central_dkg_backup-1").unwrap();
     let key_id_2 = derive_request_id("test_insecure_central_dkg_backup-2").unwrap();
-    let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID).unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
     purge(None, None, &key_id_1, &[None], &[None]).await;
     purge(None, None, &key_id_2, &[None], &[None]).await;
@@ -87,7 +87,7 @@ async fn test_insecure_central_autobackup_after_deletion() {
     let param = FheParameter::Test;
     let dkg_param: WrappedDKGParams = param.into();
     let key_id = derive_request_id("test_insecure_central_autobackup_after_deletion").unwrap();
-    let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID).unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
     purge(None, None, &key_id, &[None], &[None]).await;
     purge_backup(None, &[None]).await;

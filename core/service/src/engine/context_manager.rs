@@ -693,10 +693,7 @@ async fn gen_recovery_validation(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        str::FromStr,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
     use crate::{
@@ -705,7 +702,7 @@ mod tests {
             operator::InternalRecoveryRequest,
             seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
         },
-        consts::PRSS_INIT_REQ_ID,
+        consts::DEFAULT_EPOCH_ID,
         cryptography::{
             encryption::{Encryption, PkeScheme, PkeSchemeType},
             signatures::{gen_sig_keys, PublicSigKey},
@@ -730,7 +727,7 @@ mod tests {
             NewMpcContextRequest,
         },
         rpc_types::{KMSType, PrivDataType, PubDataType},
-        EpochId, RequestId,
+        RequestId,
     };
     use rand::{rngs::OsRng, SeedableRng};
     use tokio::sync::Mutex;
@@ -815,7 +812,7 @@ mod tests {
         let request = Request::new(NewMpcContextRequest {
             new_context: Some(new_context.clone().try_into().unwrap()),
         });
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
         let context_manager = ThresholdContextManager::new(
@@ -970,7 +967,7 @@ mod tests {
         let amount_custodians = 2 * threshold + 1; // Minimum amount of custodians is 2 * threshold + 1
         let mut setup_msgs = Vec::new();
         let mut rng = AesRng::seed_from_u64(42);
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         for custodian_index in 1..=amount_custodians {
             let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
             let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();

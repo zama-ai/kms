@@ -51,7 +51,7 @@ fn verify_key_digest(
 }
 
 use crate::{
-    consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
+    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
     engine::{
         base::{
             compute_info_standard_keygen, retrieve_parameters,
@@ -371,7 +371,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             Some(c) => c
                 .try_into()
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
-            None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe to unwrap here because PRSS ID is hardcoded
+            None => *DEFAULT_EPOCH_ID,
         };
 
         let key_id_to_reshare =

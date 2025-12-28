@@ -33,7 +33,7 @@ use tracing::Instrument;
 
 // === Internal Crate ===
 use crate::{
-    consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
+    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{compute_external_signature_preprocessing, retrieve_parameters, BaseKmsStruct},
@@ -87,7 +87,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         // TODO(zama-ai/kms-internal/issues/2758)
         // remove the default context when all of context is ready
         let context_id = context_id.unwrap_or(*DEFAULT_MPC_CONTEXT);
-        let epoch_id = epoch_id.unwrap_or(EpochId::try_from(PRSS_INIT_REQ_ID).unwrap());
+        let epoch_id = epoch_id.unwrap_or(*DEFAULT_EPOCH_ID);
         let my_role = self.session_maker.my_role(&context_id).await?;
         let my_identity = self.session_maker.my_identity(&context_id).await?;
 
@@ -456,8 +456,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use super::*;
     use crate::engine::{base::BaseKmsStruct, threshold::service::session::SessionMaker};
     use crate::{cryptography::signatures::gen_sig_keys, dummy_domain};
@@ -507,7 +505,7 @@ mod tests {
         rng: &mut AesRng,
         use_prss: bool,
     ) -> RealPreprocessor<P> {
-        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
         let prss_setup_z128 = if use_prss {
