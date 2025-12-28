@@ -3,7 +3,7 @@ use crate::consts::KEY_PATH_PREFIX;
 use crate::util::file_handling::{
     safe_read_element_versioned, safe_write_element_versioned, write_bytes,
 };
-use crate::vault::storage::{StorageExt, StorageReaderExt};
+use crate::vault::storage::{all_data_ids_from_all_epochs_impl, StorageExt, StorageReaderExt};
 use crate::vault::storage_prefix_safety;
 use crate::{anyhow_error_and_log, some_or_err};
 use kms_grpc::identifiers::EpochId;
@@ -223,6 +223,13 @@ impl StorageReaderExt for FileStorage {
             .into_iter()
             .map(|inner| inner.into())
             .collect())
+    }
+
+    async fn all_data_ids_from_all_epochs(
+        &self,
+        data_type: &str,
+    ) -> anyhow::Result<HashSet<RequestId>> {
+        all_data_ids_from_all_epochs_impl(self, data_type).await
     }
 }
 
@@ -506,6 +513,14 @@ pub mod tests {
         let path = temp_dir.path();
         let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
         test_epoch_methods(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_all_data_ids_from_all_epochs_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path();
+        let mut storage = FileStorage::new(Some(path), StorageType::PRIV, None).unwrap();
+        test_all_data_ids_from_all_epochs(&mut storage).await;
     }
 
     #[tokio::test]

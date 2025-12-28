@@ -1,6 +1,6 @@
 use super::{Storage, StorageForBytes, StorageReader};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::vault::storage::StorageExt;
+use crate::vault::storage::{all_data_ids_from_all_epochs_impl, StorageExt};
 use crate::{anyhow_error_and_log, vault::storage::StorageReaderExt};
 use anyhow::anyhow;
 use kms_grpc::{identifiers::EpochId, RequestId};
@@ -59,8 +59,9 @@ impl StorageReader for RamStorage {
 
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
         let mut res = HashSet::new();
-        for ((cur_data_id, _), cur_data_type) in self.internal_storage.keys() {
-            if cur_data_type == data_type {
+        for ((cur_data_id, cur_epoch_id), cur_data_type) in self.internal_storage.keys() {
+            // Only return IDs stored without an epoch (non-epoch storage)
+            if cur_data_type == data_type && cur_epoch_id.is_none() {
                 res.insert(*cur_data_id);
             }
         }
@@ -132,6 +133,13 @@ impl StorageReaderExt for RamStorage {
             }
         }
         Ok(res)
+    }
+
+    async fn all_data_ids_from_all_epochs(
+        &self,
+        data_type: &str,
+    ) -> anyhow::Result<HashSet<RequestId>> {
+        all_data_ids_from_all_epochs_impl(self, data_type).await
     }
 }
 
@@ -348,6 +356,12 @@ pub mod tests {
         let mut storage = RamStorage::new();
         test_storage_read_store_methods(&mut storage).await;
         test_batch_helper_methods(&mut storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_all_data_ids_from_all_epochs_ram() {
+        let mut storage = RamStorage::new();
+        test_all_data_ids_from_all_epochs(&mut storage).await;
     }
 
     /// Test that files don't get silently overwritten

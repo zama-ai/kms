@@ -52,6 +52,39 @@ pub trait StorageReader {
     fn info(&self) -> String;
 }
 
+/// Return all URLs stored of a specific data type
+pub(crate) async fn all_data_ids_from_all_epochs_impl(
+    storage: &impl StorageReaderExt,
+    data_type: &str,
+) -> anyhow::Result<HashSet<RequestId>> {
+    // First, get IDs from non-epoch path using StorageReader's implementation
+    let ids_from_non_epoch_storage = storage.all_data_ids(data_type).await?;
+
+    // Also check for data stored under epochs
+    let mut ids_from_epoch_storage = HashSet::new();
+    let epoch_ids = storage.all_epoch_ids_for_data(data_type).await?;
+    for epoch_id in epoch_ids {
+        let epoch_data_ids = storage.all_data_ids_at_epoch(&epoch_id, data_type).await?;
+        ids_from_epoch_storage.extend(epoch_data_ids);
+    }
+
+    if ids_from_non_epoch_storage.is_empty() && ids_from_epoch_storage.is_empty() {
+        // Both are empty, return empty set
+        Ok(HashSet::new())
+    } else if ids_from_non_epoch_storage.is_empty() && !ids_from_epoch_storage.is_empty() {
+        Ok(ids_from_epoch_storage)
+    } else if !ids_from_non_epoch_storage.is_empty() && ids_from_epoch_storage.is_empty() {
+        Ok(ids_from_non_epoch_storage)
+    } else {
+        // when both are non empty, then we have some inconsistency
+        // there is no correct set to return and returning the union is also problematic
+        let msg = format!("inconsistent storage, ids_from_non_epoch_storage.len()={}, ids_from_epoch_storage.len()={}",
+                ids_from_non_epoch_storage.len(),ids_from_epoch_storage.len());
+        tracing::error!(msg);
+        Err(anyhow::anyhow!(msg))
+    }
+}
+
 /// Extended storage reader trait for epoch-aware data access.
 ///
 /// This trait extends [`StorageReader`] with methods that support reading data
@@ -85,6 +118,17 @@ pub trait StorageReaderExt: StorageReader {
         epoch_id: &EpochId,
         data_type: &str,
     ) -> anyhow::Result<T>;
+
+    /// Return all URLs stored of a specific data type
+    // In theory only a default implementation is needed,
+    // but we cannot implement it easily due to this issue
+    // https://github.com/rust-lang/impl-trait-utils/issues/17
+    // so all implementers must implement this function by calling
+    // [all_data_ids_from_all_epochs_impl]
+    async fn all_data_ids_from_all_epochs(
+        &self,
+        data_type: &str,
+    ) -> anyhow::Result<HashSet<RequestId>>;
 }
 
 // Trait for KMS public storage reading and writing
@@ -881,6 +925,97 @@ pub mod tests {
         // Read back and verify it is still the original data
         let loaded: TestType = storage.read_data(&data_id, &data_type).await.unwrap();
         assert_eq!(loaded.i, original_data.i, "Data should not be overwritten");
+    }
+
+    pub async fn test_all_data_ids_from_all_epochs<S: StorageExt>(storage: &mut S) {
+        let mut rng = AesRng::seed_from_u64(98765);
+        let epoch1 = EpochId::new_random(&mut rng);
+        let epoch2 = EpochId::new_random(&mut rng);
+
+        let data1 = TestType { i: 100 };
+        let data2 = TestType { i: 101 };
+        let data3 = TestType { i: 102 };
+
+        let id1 = derive_request_id("ALL_EPOCHS_1").unwrap();
+        let id2 = derive_request_id("ALL_EPOCHS_2").unwrap();
+        let id3 = derive_request_id("ALL_EPOCHS_3").unwrap();
+
+        let data_type = PrivDataType::FheKeyInfo.to_string();
+
+        // Case 1: Data only in epoch storage
+        storage
+            .store_data_at_epoch(&data1, &id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_data_at_epoch(&data2, &id2, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .store_data_at_epoch(&data3, &id3, &epoch2, &data_type)
+            .await
+            .unwrap();
+
+        let ids = storage
+            .all_data_ids_from_all_epochs(&data_type)
+            .await
+            .unwrap();
+        assert_eq!(ids.len(), 3);
+        assert!(ids.contains(&id1));
+        assert!(ids.contains(&id2));
+        assert!(ids.contains(&id3));
+
+        // Clean up epoch data
+        storage
+            .delete_data_at_epoch(&id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&id2, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage
+            .delete_data_at_epoch(&id3, &epoch2, &data_type)
+            .await
+            .unwrap();
+
+        // Case 2: Data only in non-epoch storage
+        let id4 = derive_request_id("ALL_EPOCHS_4").unwrap();
+        let id5 = derive_request_id("ALL_EPOCHS_5").unwrap();
+        let data4 = TestType { i: 200 };
+        let data5 = TestType { i: 201 };
+
+        storage.store_data(&data4, &id4, &data_type).await.unwrap();
+        storage.store_data(&data5, &id5, &data_type).await.unwrap();
+
+        let ids = storage
+            .all_data_ids_from_all_epochs(&data_type)
+            .await
+            .unwrap();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&id4));
+        assert!(ids.contains(&id5));
+
+        // Case 3: Data in both epoch and non-epoch storage (should error)
+        storage
+            .store_data_at_epoch(&data1, &id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+
+        let result = storage.all_data_ids_from_all_epochs(&data_type).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("inconsistent storage"));
+
+        // Clean up
+        storage
+            .delete_data_at_epoch(&id1, &epoch1, &data_type)
+            .await
+            .unwrap();
+        storage.delete_data(&id4, &data_type).await.unwrap();
+        storage.delete_data(&id5, &data_type).await.unwrap();
     }
 
     #[test]

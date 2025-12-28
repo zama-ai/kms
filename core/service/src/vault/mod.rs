@@ -276,6 +276,24 @@ impl StorageReaderExt for Vault {
                 .map_err(|e| anyhow!("Unencrypted load failed: {e}")),
         }
     }
+
+    async fn all_data_ids_from_all_epochs(
+        &self,
+        data_type: &str,
+    ) -> anyhow::Result<HashSet<RequestId>> {
+        let backup_type = self.get_vault_data_type(data_type)?.to_string();
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref() {
+            if secret_share_keychain.get_current_backup_id().is_err() {
+                tracing::info!(
+                    "No custodian context has been set yet! Returning empty set of data ids."
+                );
+                return Ok(HashSet::new());
+            }
+        }
+        self.storage
+            .all_data_ids_from_all_epochs(&backup_type)
+            .await
+    }
 }
 
 #[cfg(feature = "non-wasm")]

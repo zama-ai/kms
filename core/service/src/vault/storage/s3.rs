@@ -1,5 +1,5 @@
 use super::{Storage, StorageCache, StorageForBytes, StorageReader, StorageType};
-use crate::vault::storage::{StorageExt, StorageReaderExt};
+use crate::vault::storage::{all_data_ids_from_all_epochs_impl, StorageExt, StorageReaderExt};
 use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
 use aws_config::{self, SdkConfig};
 use aws_sdk_s3::{error::ProvideErrorMetadata, primitives::ByteStream, Client as S3Client};
@@ -392,6 +392,13 @@ impl StorageReaderExt for S3Storage {
         }
         Ok(ids)
     }
+
+    async fn all_data_ids_from_all_epochs(
+        &self,
+        data_type: &str,
+    ) -> anyhow::Result<HashSet<RequestId>> {
+        all_data_ids_from_all_epochs_impl(self, data_type).await
+    }
 }
 
 impl Storage for S3Storage {
@@ -734,6 +741,25 @@ mod tests {
         )
         .unwrap();
         test_epoch_methods(&mut priv_storage).await;
+    }
+
+    #[tokio::test]
+    async fn test_all_data_ids_from_all_epochs_s3() {
+        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
+            .await
+            .unwrap();
+        let mut rng = AesRng::from_random_seed();
+        let prefix = Alphanumeric.sample_string(&mut rng, 10);
+        let mut priv_storage = S3Storage::new(
+            s3_client,
+            BUCKET_NAME.to_string(),
+            StorageType::PRIV,
+            Some(&prefix),
+            None,
+        )
+        .unwrap();
+        crate::vault::storage::tests::test_all_data_ids_from_all_epochs(&mut priv_storage).await;
     }
 
     /// Test that files don't get silently overwritten
