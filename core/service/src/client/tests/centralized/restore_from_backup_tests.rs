@@ -15,7 +15,6 @@ use crate::{
     },
 };
 use kms_grpc::{
-    identifiers::EpochId,
     kms::v1::{Empty, FheParameter},
     rpc_types::PrivDataType,
     RequestId,

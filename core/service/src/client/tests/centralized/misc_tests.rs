@@ -128,7 +128,6 @@ async fn test_largecipher() {
             new_priv_ram_storage_from_existing_keys, new_pub_ram_storage_from_existing_keys,
         },
     };
-    use kms_grpc::identifiers::EpochId;
 
     let keys = get_default_keys().await;
     let epoch_id = *DEFAULT_EPOCH_ID;
