@@ -6,7 +6,7 @@ use crate::client::tests::centralized::crs_gen_tests::run_crs_centralized;
 use crate::client::tests::centralized::custodian_context_tests::run_new_cus_context;
 use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized;
-use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
+use crate::consts::{PRSS_INIT_REQ_ID, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::util::key_setup::test_tools::{purge_backup, read_custodian_backup_files};
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
@@ -17,6 +17,7 @@ use crate::{
     engine::base::derive_request_id, util::key_setup::test_tools::purge_priv,
 };
 use aes_prng::AesRng;
+use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{
     CustodianRecoveryInitRequest, CustodianRecoveryRequest, Empty, RecoveryRequest,
 };
@@ -168,6 +169,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let req_new_cus: RequestId =
         derive_request_id("test_decrypt_after_recovery_central_cus").unwrap();
     let key_id: RequestId = derive_request_id("test_decrypt_after_recovery_central_key").unwrap();
+    let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID).unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = Some(temp_dir.path());
 
@@ -185,6 +187,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         &mut kms_client,
         &internal_client,
         &key_id,
+        &epoch_id,
         FheParameter::Test,
         None,
         None,

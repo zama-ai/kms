@@ -29,8 +29,8 @@ pub(crate) async fn do_reshare(
     kms_addrs: &[alloy_primitives::Address],
     num_parties: usize,
     param: FheParameter,
-    key_id: RequestId,
-    preproc_id: RequestId,
+    key_id: &RequestId,
+    preproc_id: &RequestId,
     context_id: Option<&ContextId>,
     epoch_id: Option<&EpochId>,
     server_key_digest: &str,
@@ -46,8 +46,8 @@ pub(crate) async fn do_reshare(
     // Create the request
     let request = internal_client.reshare_request(
         &request_id,
-        &key_id,
-        &preproc_id,
+        key_id,
+        preproc_id,
         context_id,
         epoch_id,
         Some(param),
@@ -124,8 +124,8 @@ pub(crate) async fn do_reshare(
         let (party_id, resp) = response?;
         let resp = resp?.into_inner();
         assert_eq!(resp.request_id, Some(request_id.into()));
-        assert_eq!(resp.key_id, Some(key_id.into()));
-        assert_eq!(resp.preprocessing_id, Some(preproc_id.into()));
+        assert_eq!(resp.key_id, Some((*key_id).into()));
+        assert_eq!(resp.preprocessing_id, Some((*preproc_id).into()));
         response_vec.push((party_id, resp));
     }
 
@@ -163,10 +163,10 @@ pub(crate) async fn do_reshare(
             .as_str(),
     );
     let public_key =
-        load_pk_from_pub_storage(Some(destination_prefix), &key_id, storage_prefix).await;
+        load_pk_from_pub_storage(Some(destination_prefix), key_id, storage_prefix).await;
     let server_key: ServerKey = load_material_from_pub_storage(
         Some(destination_prefix),
-        &key_id,
+        key_id,
         PubDataType::ServerKey,
         storage_prefix,
     )
@@ -176,8 +176,8 @@ pub(crate) async fn do_reshare(
         check_standard_keyset_ext_signature(
             &public_key,
             &server_key,
-            &preproc_id,
-            &key_id,
+            preproc_id,
+            key_id,
             &response.1.external_signature,
             &dummy_domain(),
             kms_addrs,

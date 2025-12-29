@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::{collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, str::FromStr, sync::Arc};
 
 // === External Crates ===
 use kms_grpc::{
@@ -36,7 +36,7 @@ use crate::{
     },
     vault::storage::{
         delete_at_request_id, read_all_data_versioned, read_versioned_at_request_id,
-        store_versioned_at_request_id, Storage,
+        store_versioned_at_request_id, StorageExt,
     },
 };
 
@@ -44,7 +44,7 @@ use crate::{
 use super::RealThresholdKms;
 
 pub struct RealInitiator<
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
     Init: PRSSInit<ResiduePolyF4Z64> + PRSSInit<ResiduePolyF4Z128>,
 > {
     // TODO eventually add mode to allow for nlarge as well.
@@ -56,7 +56,7 @@ pub struct RealInitiator<
 }
 
 impl<
-        PrivS: Storage + Send + Sync + 'static,
+        PrivS: StorageExt + Send + Sync + 'static,
         Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
             + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
             + Default,
@@ -90,7 +90,7 @@ impl<
     #[expect(deprecated)]
     pub async fn init_legacy_prss_from_storage(&self) -> anyhow::Result<()> {
         // TODO(zama-ai/kms-internal#2530) set the correct context ID here.
-        let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID.to_string())?;
+        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID)?;
         let context_id = *DEFAULT_MPC_CONTEXT;
         let threshold = self.session_maker.threshold(&context_id).await?;
         let num_parties = self.session_maker.num_parties(&context_id).await?;
@@ -254,7 +254,7 @@ impl<
 
 #[tonic::async_trait]
 impl<
-        PrivS: Storage + Send + Sync + 'static,
+        PrivS: StorageExt + Send + Sync + 'static,
         Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
             + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
             + Default,
@@ -450,7 +450,7 @@ mod tests {
 
     // write prss to storage using the legacy method
     async fn write_legacy_empty_prss_to_storage(private_storage: &mut ram::RamStorage) {
-        let epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID.to_string()).unwrap();
+        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
         let num_parties = 4;
         let threshold = 1u8;
 
@@ -500,7 +500,7 @@ mod tests {
 
         initiator.init_legacy_prss_from_storage().await.unwrap();
 
-        let default_epoch_id = EpochId::try_from(PRSS_INIT_REQ_ID.to_string()).unwrap();
+        let default_epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
         assert!(
             initiator
                 .session_maker
@@ -555,8 +555,9 @@ mod tests {
     ) -> RealInitiator<ram::RamStorage, I> {
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let epoch_id = EpochId::from_str(PRSS_INIT_REQ_ID).unwrap();
         let session_maker =
-            SessionMaker::four_party_dummy_session(None, None, base_kms.new_rng().await);
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
 
         RealInitiator::<ram::RamStorage, I>::init_test(base_kms, session_maker)
     }

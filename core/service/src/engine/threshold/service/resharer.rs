@@ -1,11 +1,10 @@
 use itertools::Itertools;
 use kms_grpc::{
-    identifiers::{ContextId, EpochId, RequestId},
     kms::v1::{
         InitiateResharingRequest, InitiateResharingResponse, KeyDigest, ResharingResultResponse,
     },
-    rpc_types::{optional_protobuf_to_alloy_domain, PubDataType, WrappedPublicKeyOwned},
-    IdentifierError,
+    rpc_types::{optional_protobuf_to_alloy_domain, PubDataType},
+    ContextId, EpochId, IdentifierError, RequestId,
 };
 use observability::metrics_names::OP_INITIATE_RESHARING;
 use std::{collections::HashMap, sync::Arc};
@@ -19,6 +18,7 @@ use threshold_fhe::{
         small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
         tfhe_internals::public_keysets::FhePubKeySet,
     },
+    hashing::hash_element,
     networking::NetworkMode,
 };
 use tokio::sync::RwLock;
@@ -29,16 +29,17 @@ const ERR_SERVER_KEY_DIGEST_MISMATCH: &str = "Server key digest mismatch";
 const ERR_PUBLIC_KEY_DIGEST_MISMATCH: &str = "Public key digest mismatch";
 const ERR_FAILED_TO_FETCH_PUBLIC_MATERIALS: &str = "Failed to fetch public materials";
 
-fn verify_key_digest(
-    server_key: &ServerKey,
-    public_key: &tfhe::CompactPublicKey,
+/// Verify key digests using raw bytes from storage.
+/// This avoids re-serializing the keys, which would produce different bytes
+/// if there was a version upgrade since the original digest was computed.
+fn verify_key_digest_from_bytes(
+    server_key_bytes: &[u8],
+    public_key_bytes: &[u8],
     expected_server_key_digest: &[u8],
     expected_public_key_digest: &[u8],
 ) -> anyhow::Result<()> {
-    let actual_server_key_digest =
-        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
-    let actual_public_key_digest =
-        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
+    let actual_server_key_digest = hash_element(&DSEP_PUBDATA_KEY, server_key_bytes);
+    let actual_public_key_digest = hash_element(&DSEP_PUBDATA_KEY, public_key_bytes);
 
     if actual_server_key_digest != expected_server_key_digest {
         anyhow::bail!(ERR_SERVER_KEY_DIGEST_MISMATCH);
@@ -54,8 +55,8 @@ use crate::{
     consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
     engine::{
         base::{
-            compute_info_standard_keygen, retrieve_parameters,
-            safe_serialize_hash_element_versioned, BaseKmsStruct, KeyGenMetadata, DSEP_PUBDATA_KEY,
+            compute_info_standard_keygen, retrieve_parameters, BaseKmsStruct, KeyGenMetadata,
+            DSEP_PUBDATA_KEY,
         },
         threshold::{
             service::{session::ImmutableSessionMaker, ThresholdFheKeys},
@@ -72,12 +73,12 @@ use crate::{
     },
     vault::storage::{
         crypto_material::ThresholdCryptoMaterialStorage,
-        read_context_at_id, read_pk_at_request_id, read_versioned_at_request_id,
+        read_context_at_id,
         s3::{
             build_anonymous_s3_client, ReadOnlyS3Storage, ReadOnlyS3StorageGetter,
             RealReadOnlyS3StorageGetter,
         },
-        Storage, StorageReader, StorageType,
+        Storage, StorageExt, StorageReader, StorageType,
     },
 };
 
@@ -128,12 +129,12 @@ fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String)> {
 
 async fn fetch_public_materials_from_peers<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
     G: ReadOnlyS3StorageGetter<R>,
     R: StorageReader,
 >(
     crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
-    key_id: RequestId,
+    key_id: &RequestId,
     context_id: &ContextId,
     key_digests: &HashMap<PubDataType, Vec<u8>>,
     ro_storage_getter: &G,
@@ -172,29 +173,42 @@ async fn fetch_public_materials_from_peers<
             None,
         )?;
 
-        // attempt to fetch the public materials from this node
-        let public_key = read_pk_at_request_id(&pub_storage, &key_id)
-            .await
-            .map(|pk| match pk {
-                WrappedPublicKeyOwned::Compact(compact_pk) => compact_pk,
-            });
+        // Load raw bytes from storage to verify digests before deserializing.
+        // This avoids issues with version upgrades where re-serialization produces different bytes.
+        let public_key_bytes = pub_storage
+            .load_bytes(key_id, &PubDataType::PublicKey.to_string())
+            .await;
 
-        let server_key = read_versioned_at_request_id::<_, ServerKey>(
-            &pub_storage,
-            &key_id,
-            &PubDataType::ServerKey.to_string(),
-        )
-        .await;
+        let server_key_bytes = pub_storage
+            .load_bytes(key_id, &PubDataType::ServerKey.to_string())
+            .await;
 
-        match (public_key, server_key) {
-            (Ok(public_key), Ok(server_key)) => {
-                match verify_key_digest(
-                    &server_key,
-                    &public_key,
+        match (public_key_bytes, server_key_bytes) {
+            (Ok(public_key_bytes), Ok(server_key_bytes)) => {
+                // Verify digests using raw bytes
+                match verify_key_digest_from_bytes(
+                    &server_key_bytes,
+                    &public_key_bytes,
                     expected_server_key_digest,
                     expected_public_key_digest,
                 ) {
                     Ok(()) => {
+                        // Only deserialize after digest verification passes
+                        let public_key: tfhe::CompactPublicKey =
+                            tfhe::safe_serialization::safe_deserialize(
+                                std::io::Cursor::new(&public_key_bytes),
+                                crate::consts::SAFE_SER_SIZE_LIMIT,
+                            )
+                            .map_err(|e| {
+                                anyhow::anyhow!("Failed to deserialize public key: {}", e)
+                            })?;
+
+                        let server_key: ServerKey = tfhe::safe_serialization::safe_deserialize(
+                            std::io::Cursor::new(&server_key_bytes),
+                            crate::consts::SAFE_SER_SIZE_LIMIT,
+                        )
+                        .map_err(|e| anyhow::anyhow!("Failed to deserialize server key: {}", e))?;
+
                         return Ok(FhePubKeySet {
                             public_key,
                             server_key,
@@ -238,78 +252,84 @@ async fn fetch_public_materials_from_peers<
 /// Attempt to get and verify the public materials needed for resharing.
 async fn get_verified_public_materials<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
     G: ReadOnlyS3StorageGetter<R>,
     R: StorageReader,
 >(
     crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
-    key_id: RequestId,
+    key_id: &RequestId,
     context_id: &ContextId,
     key_digests: &HashMap<PubDataType, Vec<u8>>,
     ro_storage_getter: &G,
 ) -> Result<FhePubKeySet, tonic::Status> {
-    // Refresh keys but ignore any error as we might not have them yet
-    // (e.g. resharing due to a failed DKG)
-    let _ = crypto_storage
-        .refresh_threshold_fhe_keys(&key_id)
-        .await
-        .inspect_err(|e|tracing::warn!("During reshare, failed to refresh keys with id {}: {}. Will try to do the reshare anyway.", key_id, e));
+    // obtain the digests
+    let expected_public_key_digest = key_digests.get(&PubDataType::PublicKey).ok_or_else(|| {
+        tonic::Status::new(tonic::Code::Internal, "missing digest for public key")
+    })?;
 
-    // We assume the operators have manually copied the public keys to the public storage
-    let public_key_res = crypto_storage
-        .read_cloned_pk(&key_id)
-        .await
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                format!("Failed to fetch public key from public storage: {}", e),
-            )
-        })
-        .map(|pk| match pk {
-            WrappedPublicKeyOwned::Compact(compact_public_key) => compact_public_key,
-        });
+    let expected_server_key_digest = key_digests.get(&PubDataType::ServerKey).ok_or_else(|| {
+        tonic::Status::new(tonic::Code::Internal, "missing digest for server key")
+    })?;
 
-    let server_key_res = crypto_storage
-        .read_cloned_server_key(&key_id)
-        .await
-        .map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                format!("Failed to fetch server key from public storage: {}", e),
-            )
-        });
+    // Load raw bytes from own public storage to verify digests before deserializing.
+    // This avoids issues with version upgrades where re-serialization produces different bytes.
+    let (public_key_bytes_res, server_key_bytes_res): (
+        anyhow::Result<Vec<u8>>,
+        anyhow::Result<Vec<u8>>,
+    ) = {
+        let pub_storage = crypto_storage.inner.get_public_storage();
+        let guard_storage = pub_storage.lock().await;
 
-    let verify_keys_from_own_pub_storage = |public_key,
-                                            server_key,
-                                            key_digests: &HashMap<PubDataType, Vec<u8>>|
-     -> anyhow::Result<()> {
-        // obtain the digests
-        let expected_public_key_digest = key_digests
-            .get(&PubDataType::PublicKey)
-            .ok_or(anyhow::anyhow!("missing digest for public key"))?;
+        let public_key_bytes = guard_storage
+            .load_bytes(key_id, &PubDataType::PublicKey.to_string())
+            .await;
 
-        let expected_server_key_digest = key_digests
-            .get(&PubDataType::ServerKey)
-            .ok_or(anyhow::anyhow!("missing digest for server key"))?;
+        let server_key_bytes = guard_storage
+            .load_bytes(key_id, &PubDataType::ServerKey.to_string())
+            .await;
 
-        verify_key_digest(
-            server_key,
-            public_key,
-            expected_server_key_digest,
-            expected_public_key_digest,
-        )
+        (public_key_bytes, server_key_bytes)
     };
 
-    match (public_key_res, server_key_res) {
-        (Ok(public_key), Ok(server_key)) => {
-            verify_keys_from_own_pub_storage(&public_key, &server_key, key_digests).map_err(
-                |e| {
-                    tonic::Status::new(
-                        tonic::Code::Internal,
-                        format!("Key digest verification failed: {}", e),
-                    )
-                },
-            )?;
+    match (public_key_bytes_res, server_key_bytes_res) {
+        (Ok(public_key_bytes), Ok(server_key_bytes)) => {
+            // Verify digests using raw bytes
+            verify_key_digest_from_bytes(
+                &server_key_bytes,
+                &public_key_bytes,
+                expected_server_key_digest,
+                expected_public_key_digest,
+            )
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!("Key digest verification failed: {}", e),
+                )
+            })?;
+
+            // Only deserialize after digest verification passes
+            let public_key: tfhe::CompactPublicKey = tfhe::safe_serialization::safe_deserialize(
+                std::io::Cursor::new(&public_key_bytes),
+                crate::consts::SAFE_SER_SIZE_LIMIT,
+            )
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!("Failed to deserialize public key: {}", e),
+                )
+            })?;
+
+            let server_key: ServerKey = tfhe::safe_serialization::safe_deserialize(
+                std::io::Cursor::new(&server_key_bytes),
+                crate::consts::SAFE_SER_SIZE_LIMIT,
+            )
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!("Failed to deserialize server key: {}", e),
+                )
+            })?;
+
             Ok(FhePubKeySet {
                 public_key,
                 server_key,
@@ -337,7 +357,7 @@ async fn get_verified_public_materials<
 
 pub struct RealResharer<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -349,7 +369,7 @@ pub struct RealResharer<
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> Resharer
+impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static> Resharer
     for RealResharer<PubS, PrivS>
 {
     async fn initiate_resharing(
@@ -372,7 +392,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             None => *DEFAULT_MPC_CONTEXT,
         };
 
-        let new_epoch_id: EpochId = match &inner.epoch_id {
+        // TODO grpc messages need to be changed to support both epoch IDs
+        let old_epoch_id: EpochId = match &inner.epoch_id {
             Some(c) => c
                 .try_into()
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
@@ -469,11 +490,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // TODO(zama-ai/kms-internal/issues/2810)
             // when resharing is fully implemented, we need to use the new context *and* the old context
             let mut session_z64 = session_maker
-                .make_small_sync_session_z64(session_id_z64, old_context, new_epoch_id)
+                .make_small_sync_session_z64(session_id_z64, old_context, old_epoch_id)
                 .await?;
 
             let mut session_z128 = session_maker
-                .make_small_sync_session_z128(session_id_z128, old_context, new_epoch_id)
+                .make_small_sync_session_z128(session_id_z128, old_context, old_epoch_id)
                 .await?;
 
             // Figure out how much preprocessing we need
@@ -500,7 +521,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // Read the old keys if they exists, otherwise we enter resharing with no keys
             let mut mutable_keys = {
                 let old_fhe_keys_rlock = crypto_storage
-                    .read_guarded_threshold_fhe_keys(&key_id_to_reshare)
+                    .read_guarded_threshold_fhe_keys(&key_id_to_reshare, &old_epoch_id)
                     .await
                     .ok();
                 // Note: the function is supposed to zeroize the keys (hence requires mut access),
@@ -522,7 +543,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // use the real instantiation here for ReadOnlyS3StorageGetter
             let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
                 &crypto_storage,
-                key_id_to_reshare,
+                &key_id_to_reshare,
                 &old_context, // it should be the old context ID as that's where the public materials are
                 &key_digests,
                 &RealReadOnlyS3StorageGetter {},
@@ -566,7 +587,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // Dummy insert to avoid error logs during purge
             dummy_meta_store.write().await.insert(&key_id_to_reshare)?;
             crypto_storage
-                .purge_key_material(&key_id_to_reshare, dummy_meta_store.write().await)
+                .purge_key_material(
+                    &key_id_to_reshare,
+                    &old_epoch_id,
+                    dummy_meta_store.write().await,
+                )
                 .await;
 
             // HOTFIX(keygen-recovery): Note that this overwrites the private storage
@@ -576,6 +601,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 .write_threshold_keys_with_reshare_meta_store(
                     &request_id,
                     &key_id_to_reshare,
+                    &old_epoch_id,
                     threshold_fhe_keys,
                     fhe_pubkeys,
                     info.clone(),
@@ -841,7 +867,7 @@ mod tests {
             };
             let err = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
-                key_id,
+                &key_id,
                 &context_id,
                 &key_digests,
                 &ro_storage_getter,
@@ -870,7 +896,7 @@ mod tests {
             ]);
             let err = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
-                key_id,
+                &key_id,
                 &context_id,
                 &wrong_key_digests,
                 &ro_storage_getter,
@@ -894,7 +920,7 @@ mod tests {
             // use the dummy s3 storage to fetch the keys from ram storage
             let _keyset = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
-                key_id,
+                &key_id,
                 &context_id,
                 &key_digests,
                 &ro_storage_getter,
@@ -915,7 +941,7 @@ mod tests {
 
             let _keyset = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
-                key_id,
+                &key_id,
                 &context_id,
                 &key_digests,
                 &two_ro_storage_getter,
@@ -964,7 +990,7 @@ mod tests {
             ]);
             let err = get_verified_public_materials(
                 &crypto_storage,
-                key_id,
+                &key_id,
                 &context_id,
                 &bad_key_digests,
                 &ro_storage_getter,
@@ -1013,7 +1039,7 @@ mod tests {
 
             let _key = get_verified_public_materials(
                 &crypto_storage,
-                key_id,
+                &key_id,
                 &context_id,
                 &key_digests,
                 &ro_storage_getter,
