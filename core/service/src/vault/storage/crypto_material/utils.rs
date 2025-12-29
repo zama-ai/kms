@@ -5,13 +5,14 @@
 //! storage system.
 
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
-use crate::vault::storage::StorageReader;
+use crate::vault::storage::{StorageExt, StorageReader, StorageReaderExt};
 use crate::{
     anyhow_error_and_warn_log,
     client::client_non_wasm::ClientDataType,
     vault::storage::{read_all_data_versioned, Storage},
 };
 use aes_prng::AesRng;
+use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
 use rand::SeedableRng;
@@ -60,13 +61,38 @@ pub fn get_rng(deterministic: bool, seed: Option<u64>) -> AesRng {
 ///
 /// # Errors
 /// Returns an error if URL computation or storage access fails.
-pub async fn data_exists<S: Storage>(
+pub async fn data_exists<S: StorageReader>(
     storage: &S,
     req_id: &RequestId,
     data_type: &str,
 ) -> anyhow::Result<bool> {
     storage
         .data_exists(req_id, data_type)
+        .await
+        .map_err(|e| anyhow_error_and_warn_log(format!("Failed to check if data exists: {e}")))
+}
+
+/// Checks if data of the specified type exists in the provided storage.
+///
+/// # Arguments
+/// * `storage` - The storage backend to check for data existence
+/// * `req_id` - The request ID used to compute the storage URL
+/// * `epoch_id` - The epoch ID used to compute the storage URL
+/// * `data_type` - Type of the data to check (used for URL computation)
+///
+/// # Returns
+/// `Ok(true)` if data exists, `Ok(false)` if it doesn't, or an error if the check fails.
+///
+/// # Errors
+/// Returns an error if URL computation or storage access fails.
+pub async fn data_exists_at_epoch<S: StorageReaderExt>(
+    storage: &S,
+    req_id: &RequestId,
+    epoch_id: &EpochId,
+    data_type: &str,
+) -> anyhow::Result<bool> {
+    storage
+        .data_exists_at_epoch(req_id, epoch_id, data_type)
         .await
         .map_err(|e| anyhow_error_and_warn_log(format!("Failed to check if data exists: {e}")))
 }
@@ -97,6 +123,7 @@ pub async fn check_data_exists<PubS: Storage, PrivS: Storage>(
     pub_data_type: &str,
     priv_data_type: &str,
 ) -> anyhow::Result<bool> {
+    // No need to use epoch for public data existence check
     let pub_exists = data_exists(pub_storage, req_id, pub_data_type).await?;
 
     if !pub_exists {
@@ -104,6 +131,44 @@ pub async fn check_data_exists<PubS: Storage, PrivS: Storage>(
     }
 
     data_exists(priv_storage, req_id, priv_data_type).await
+}
+
+/// Checks if both public and private data exist in their respective storages.
+///
+/// This is a convenience function that verifies the existence of related public
+/// and private data in a single operation.
+///
+/// # Arguments
+/// * `pub_storage` - Storage backend for public data
+/// * `priv_storage` - Storage backend for private data
+/// * `req_id` - The request ID used to compute storage URLs
+/// * `epoch_id` - The epoch ID used to compute storage URLs
+/// * `pub_data_type` - Type of the public data
+/// * `priv_data_type` - Type of the private data
+///
+/// # Returns
+/// `Ok(true)` if both public and private data exist, `Ok(false)` if either is missing,
+/// or an error if any check fails.
+///
+/// # Note
+/// This function short-circuits and returns `Ok(false)` if public data is not found,
+/// without checking for private data.
+pub async fn check_data_exists_at_epoch<PubS: Storage, PrivS: StorageExt>(
+    pub_storage: &PubS,
+    priv_storage: &PrivS,
+    req_id: &RequestId,
+    epoch_id: &EpochId,
+    pub_data_type: &str,
+    priv_data_type: &str,
+) -> anyhow::Result<bool> {
+    // No need to use epoch for public data existence check
+    let pub_exists = data_exists(pub_storage, req_id, pub_data_type).await?;
+
+    if !pub_exists {
+        return Ok(false);
+    }
+
+    data_exists_at_epoch(priv_storage, req_id, epoch_id, priv_data_type).await
 }
 
 /// Logs a message indicating that data already exists and generation is being skipped.

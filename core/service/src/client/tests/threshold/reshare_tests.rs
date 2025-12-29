@@ -139,7 +139,7 @@ pub(crate) async fn reshare(
     let public_key_digest =
         safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap();
 
-    // Run the reshare
+    // Run the reshare with a new epoch ID
     let (reshared_keyset, reshared_all_private_keys) = run_reshare(
         amount_parties,
         parameters,
