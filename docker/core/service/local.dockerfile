@@ -41,7 +41,7 @@ CMD ["kms-server", "centralized"]
 
 ################################################################
 # Third stage: Build the grpc-health-probe binary for development
-FROM cgr.dev/zama.ai/golang:1.25.4 AS go-builder
+FROM cgr.dev/zama.ai/golang:1.25 AS go-builder
 
 ARG GRPC_HEALTH_PROBE_VERSION=v0.4.42
 
@@ -56,7 +56,7 @@ RUN git clone https://github.com/grpc-ecosystem/grpc-health-probe && \
 ## Fourth stage: Build and install grpc-health-probe -- For development only with extra tools
 FROM --platform=$BUILDPLATFORM prod AS dev
 
-ARG YQ_VERSION=v4.48.2
+ARG YQ_VERSION=v4.50.1
 ARG TARGETARCH=amd64
 
 USER root
