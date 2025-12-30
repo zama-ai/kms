@@ -1,7 +1,7 @@
 use clap::Parser;
 use kms_grpc::kms::v1::{InitRequest, RequestId};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_lib::consts::PRSS_INIT_REQ_ID;
+use kms_lib::consts::DEFAULT_EPOCH_ID;
 use observability::conf::TelemetryConfig;
 use observability::telemetry::init_tracing;
 
@@ -39,10 +39,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         handles.push(tokio::spawn(async {
             let mut kms_client = CoreServiceEndpointClient::connect(addr).await.unwrap();
 
-            // TODO: the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
+            // TODO: the init epoch ID is currently fixed to DEFAULT_EPOCH_ID
             // change this once we want to trigger another init for a different context/epoch
             let req_id = RequestId {
-                request_id: PRSS_INIT_REQ_ID.to_string(),
+                request_id: DEFAULT_EPOCH_ID.to_string(),
             };
 
             let request = InitRequest {

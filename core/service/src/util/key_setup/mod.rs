@@ -3,17 +3,21 @@ cfg_if::cfg_if! {
         pub mod test_tools;
 
         use crate::dummy_domain;
-        use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
         use crate::engine::base::INSECURE_PREPROCESSING_ID;
         use crate::engine::base::{compute_info_crs, CrsGenMetadata};
+        use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
-        use crate::engine::threshold::service::{ThresholdFheKeys};
+        use crate::engine::threshold::service::ThresholdFheKeys;
         use crate::vault::storage::crypto_material::{
-            calculate_max_num_bits, check_data_exists, get_core_signing_key,
+            calculate_max_num_bits, check_data_exists, check_data_exists_at_epoch, get_core_signing_key,
         };
-        use crate::vault::storage::{store_pk_at_request_id, Storage};
+        use crate::vault::storage::{
+            store_pk_at_request_id, store_versioned_at_request_and_epoch_id, Storage, StorageExt,
+        };
         use futures_util::future;
+        use kms_grpc::identifiers::EpochId;
         use kms_grpc::rpc_types::WrappedPublicKey;
+        use std::sync::Arc;
         use tfhe::Seed;
         use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
         use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -21,8 +25,6 @@ cfg_if::cfg_if! {
         use threshold_fhe::execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
         use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
         use threshold_fhe::session_id::SessionId;
-        use std::sync::Arc;
-
     }
 }
 
@@ -276,9 +278,10 @@ pub async fn ensure_central_crs_exists<PubS, PrivS>(
 ) -> bool
 where
     PubS: Storage,
-    PrivS: Storage,
+    PrivS: StorageExt,
 {
     // Check if data already exists in both storages
+
     match check_data_exists(
         pub_storage,
         priv_storage,
@@ -376,24 +379,27 @@ where
 /// - If key generation fails
 /// - If storage operations fail
 #[cfg(any(test, feature = "testing"))]
+#[allow(clippy::too_many_arguments)]
 pub async fn ensure_central_keys_exist<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
     dkg_params: DKGParams,
     key_id: &RequestId,
     other_key_id: &RequestId,
+    epoch_id: &EpochId,
     deterministic: bool,
     write_privkey: bool,
 ) -> bool
 where
     PubS: Storage,
-    PrivS: Storage,
+    PrivS: StorageExt,
 {
     // Check if data already exists in both storages
-    match check_data_exists(
+    match check_data_exists_at_epoch(
         pub_storage,
         priv_storage,
         key_id,
+        epoch_id,
         &PubDataType::PublicKey.to_string(),
         &PrivDataType::FhePrivateKey.to_string(),
     )
@@ -471,9 +477,10 @@ where
     // Store private key data
     for (req_id, key_info) in &priv_fhe_map {
         // Store key info
-        if let Err(e) = store_versioned_at_request_id(
+        if let Err(e) = store_versioned_at_request_and_epoch_id(
             priv_storage,
             req_id,
+            epoch_id,
             key_info,
             &PrivDataType::FhePrivateKey.to_string(),
         )
@@ -486,9 +493,10 @@ where
 
         // When the flag [write_privkey] is set, store the private key separately
         if write_privkey {
-            if let Err(e) = store_versioned_at_request_id(
+            if let Err(e) = store_versioned_at_request_and_epoch_id(
                 priv_storage,
                 req_id,
+                epoch_id,
                 &key_info.client_key,
                 &PrivDataType::FhePrivateKey.to_string(),
             )
@@ -830,11 +838,12 @@ pub async fn ensure_threshold_keys_exist<PubS, PrivS>(
     priv_storages: &mut [PrivS],
     dkg_params: DKGParams,
     key_id: &RequestId,
+    epoch_id: &EpochId,
     deterministic: bool,
 ) -> bool
 where
     PubS: Storage,
-    PrivS: Storage,
+    PrivS: StorageExt,
 {
     // Validate input parameters
     if pub_storages.len() != priv_storages.len() {
@@ -857,10 +866,11 @@ where
 
     let mut all_data_exists = true;
     for (pub_storage, priv_storage) in pub_storages.iter().zip_eq(priv_storages.iter()) {
-        match check_data_exists(
+        match check_data_exists_at_epoch(
             pub_storage,
             priv_storage,
             key_id,
+            epoch_id,
             &PubDataType::PublicKey.to_string(),
             &PrivDataType::FheKeyInfo.to_string(),
         )
@@ -993,9 +1003,10 @@ where
         );
 
         // Store private key data
-        if let Err(store_err) = store_versioned_at_request_id(
+        if let Err(store_err) = store_versioned_at_request_and_epoch_id(
             &mut priv_storages[i - 1],
             key_id,
+            epoch_id,
             &threshold_fhe_keys,
             &PrivDataType::FheKeyInfo.to_string(),
         )
@@ -1041,7 +1052,7 @@ pub async fn ensure_threshold_crs_exists<PubS, PrivS>(
 ) -> bool
 where
     PubS: Storage,
-    PrivS: Storage,
+    PrivS: StorageExt,
 {
     if pub_storages.len() != priv_storages.len() {
         panic!("Number of public storages and private storages must be equal");

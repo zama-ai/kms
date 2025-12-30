@@ -1,4 +1,4 @@
-use crate::vault::storage::Storage;
+use crate::vault::storage::StorageExt;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::rpc_types::{KMSType, PrivDataType};
 use kms_grpc::utils::tonic_result::top_1k_chars;
@@ -22,16 +22,16 @@ pub async fn query_key_material_availability<S>(
     preprocessing_ids: Vec<String>,
 ) -> Result<KeyMaterialAvailabilityResponse, Status>
 where
-    S: Storage + Sync + Send,
+    S: StorageExt + Sync + Send,
 {
     // Query FHE key IDs
     let fhe_key_ids_set = match kms_type {
         KMSType::Centralized => priv_storage
-            .all_data_ids(&PrivDataType::FhePrivateKey.to_string())
+            .all_data_ids_from_all_epochs(&PrivDataType::FhePrivateKey.to_string())
             .await
             .map_err(|e| Status::internal(format!("Failed to query central FHE keys: {}", e)))?,
         KMSType::Threshold => priv_storage
-            .all_data_ids(&PrivDataType::FheKeyInfo.to_string())
+            .all_data_ids_from_all_epochs(&PrivDataType::FheKeyInfo.to_string())
             .await
             .map_err(|e| Status::internal(format!("Failed to query threshold FHE keys: {}", e)))?,
     };

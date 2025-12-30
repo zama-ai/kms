@@ -1,6 +1,9 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
 use crate::engine::utils::query_key_material_availability;
+use crate::vault::storage::{
+    store_versioned_at_request_and_epoch_id, StorageExt, StorageReaderExt,
+};
 use crate::{
     anyhow_error_and_log,
     backup::operator::{InnerOperatorBackupOutput, Operator, RecoveryValidationMaterial},
@@ -52,7 +55,7 @@ use tonic::{Code, Request, Response, Status};
 
 pub struct RealBackupOperator<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 > {
     // note that base_kms also contains the verification key
     base_kms: BaseKmsStruct,
@@ -65,7 +68,7 @@ pub struct RealBackupOperator<
 impl<PubS, PrivS> RealBackupOperator<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 {
     pub fn new(
         base_kms: BaseKmsStruct,
@@ -132,7 +135,7 @@ where
 impl<PubS, PrivS> BackupOperator for RealBackupOperator<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 {
     async fn get_operator_public_key(
         &self,
@@ -615,18 +618,79 @@ where
     Ok(())
 }
 
+async fn restore_data_type_for_all_epochs<
+    S1: StorageExt + Sync + Send + 'static,
+    T: serde::de::DeserializeOwned
+        + tfhe::Unversionize
+        + tfhe::named::Named
+        + Send
+        + serde::ser::Serialize
+        + tfhe::Versionize
+        + Sync
+        + 'static,
+>(
+    priv_storage: &mut S1,
+    backup_vault: &Vault,
+    data_type_enum: PrivDataType,
+) -> anyhow::Result<()>
+where
+    for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
+{
+    let epoch_ids = backup_vault
+        .all_epoch_ids_for_data(&data_type_enum.to_string())
+        .await?;
+    tracing::info!(
+        "Restoring data type {:?} for epochs {:?}",
+        data_type_enum,
+        epoch_ids
+    );
+    for epoch_id in epoch_ids {
+        let req_ids = backup_vault
+            .all_data_ids_at_epoch(&epoch_id, &data_type_enum.to_string())
+            .await?;
+        for request_id in req_ids.iter() {
+            if priv_storage
+                .data_exists_at_epoch(request_id, &epoch_id, &data_type_enum.to_string())
+                .await?
+            {
+                tracing::warn!(
+                "Data for {:?} with request ID {request_id} already exists. I am NOT overwriting it!",
+                data_type_enum
+            );
+                continue;
+            }
+            let cur_data: T = backup_vault
+                .read_data_at_epoch(request_id, &epoch_id, &data_type_enum.to_string())
+                .await?;
+            store_versioned_at_request_and_epoch_id(
+                priv_storage,
+                request_id,
+                &epoch_id,
+                &cur_data,
+                &data_type_enum.to_string(),
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 async fn restore_data<PrivS>(
     backup_vault: &MutexGuard<'_, Vault>,
     priv_storage: &mut MutexGuard<'_, PrivS>,
 ) -> anyhow::Result<()>
 where
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 {
     for cur_type in PrivDataType::iter() {
         match cur_type {
             PrivDataType::FheKeyInfo => {
-                restore_data_type::<PrivS, ThresholdFheKeys>(priv_storage, backup_vault, cur_type)
-                    .await?;
+                restore_data_type_for_all_epochs::<PrivS, ThresholdFheKeys>(
+                    priv_storage,
+                    backup_vault,
+                    cur_type,
+                )
+                .await?;
             }
             PrivDataType::SigningKey => {
                 restore_data_type::<PrivS, PrivateSigKey>(priv_storage, backup_vault, cur_type)
@@ -637,8 +701,12 @@ where
                     .await?;
             }
             PrivDataType::FhePrivateKey => {
-                restore_data_type::<PrivS, KmsFheKeyHandles>(priv_storage, backup_vault, cur_type)
-                    .await?;
+                restore_data_type_for_all_epochs::<PrivS, KmsFheKeyHandles>(
+                    priv_storage,
+                    backup_vault,
+                    cur_type,
+                )
+                .await?;
             }
             #[expect(deprecated)]
             PrivDataType::PrssSetup => {
@@ -652,6 +720,53 @@ where
             PrivDataType::ContextInfo => {
                 restore_data_type::<PrivS, ContextInfo>(priv_storage, backup_vault, cur_type)
                     .await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn update_specific_backup_vault_for_all_epochs<
+    S1: StorageExt + Sync + Send + 'static,
+    T: serde::de::DeserializeOwned
+        + tfhe::Unversionize
+        + tfhe::named::Named
+        + Send
+        + serde::ser::Serialize
+        + tfhe::Versionize
+        + Sync
+        + 'static,
+>(
+    priv_storage: &S1,
+    backup_vault: &mut Vault,
+    data_type_enum: PrivDataType,
+) -> anyhow::Result<()>
+where
+    for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
+{
+    let epoch_ids = priv_storage
+        .all_epoch_ids_for_data(&data_type_enum.to_string())
+        .await?;
+    for epoch_id in epoch_ids {
+        let req_ids = priv_storage
+            .all_data_ids_at_epoch(&epoch_id, &data_type_enum.to_string())
+            .await?;
+        for request_id in req_ids.iter() {
+            if !backup_vault
+                .data_exists_at_epoch(request_id, &epoch_id, &data_type_enum.to_string())
+                .await?
+            {
+                let cur_data: T = priv_storage
+                    .read_data_at_epoch(request_id, &epoch_id, &data_type_enum.to_string())
+                    .await?;
+                store_versioned_at_request_and_epoch_id(
+                    backup_vault,
+                    request_id,
+                    &epoch_id,
+                    &cur_data,
+                    &data_type_enum.to_string(),
+                )
+                .await?;
             }
         }
     }
@@ -702,7 +817,7 @@ where
 impl<PubS, PrivS> RealBackupOperator<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 {
     pub async fn update_backup_vault(&self) -> anyhow::Result<()> {
         match self.crypto_storage.backup_vault {
@@ -726,7 +841,7 @@ where
                             .await?;
                         }
                         PrivDataType::FheKeyInfo => {
-                            update_specific_backup_vault::<PrivS, ThresholdFheKeys>(
+                            update_specific_backup_vault_for_all_epochs::<PrivS, ThresholdFheKeys>(
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
@@ -742,7 +857,7 @@ where
                             .await?;
                         }
                         PrivDataType::FhePrivateKey => {
-                            update_specific_backup_vault::<PrivS, KmsFheKeyHandles>(
+                            update_specific_backup_vault_for_all_epochs::<PrivS, KmsFheKeyHandles>(
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,

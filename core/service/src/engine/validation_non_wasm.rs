@@ -1,4 +1,4 @@
-use crate::consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID};
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::retrieve_parameters;
 use crate::{
     anyhow_error_and_log,
@@ -51,6 +51,7 @@ const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user dec
 pub(crate) enum RequestIdParsingErr {
     Other(String),
     Context,
+    Epoch,
     Init,
 
     CrsGenRequest,
@@ -80,6 +81,7 @@ impl std::fmt::Display for RequestIdParsingErr {
         match self {
             RequestIdParsingErr::Other(msg) => write!(f, "Other request ID error: {msg}"),
             RequestIdParsingErr::Context => write!(f, "Invalid context ID"),
+            RequestIdParsingErr::Epoch => write!(f, "Invalid epoch ID"),
             RequestIdParsingErr::Init => write!(f, "Invalid init ID"),
             RequestIdParsingErr::CrsGenRequest => write!(f, "Invalid CRS generation request ID"),
             RequestIdParsingErr::PreprocRequest => write!(f, "Invalid pre-processing request ID"),
@@ -225,7 +227,7 @@ pub fn validate_user_decrypt_req(
     };
     let epoch_id: EpochId = match &req.epoch_id {
         Some(epoch_id) => epoch_id.try_into()?,
-        None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
+        None => *DEFAULT_EPOCH_ID,
     };
 
     if req.typed_ciphertexts.is_empty() {
@@ -303,7 +305,7 @@ pub fn validate_public_decrypt_req(
     };
     let epoch_id: EpochId = match &req.epoch_id {
         Some(epoch_id) => epoch_id.try_into()?,
-        None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe unwrap because PRSS_INIT_REQ_ID is valid
+        None => *DEFAULT_EPOCH_ID,
     };
     let key_id: KeyId =
         optional_proto_request_id(&req.key_id, RequestIdParsingErr::PublicDecRequestBadKeyId)?

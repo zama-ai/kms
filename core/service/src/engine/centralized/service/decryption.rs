@@ -13,7 +13,7 @@ use crate::util::meta_store::{
     add_req_to_meta_store, retrieve_from_meta_store, update_err_req_in_meta_store,
     update_req_in_meta_store,
 };
-use crate::vault::storage::Storage;
+use crate::vault::storage::{Storage, StorageExt};
 use kms_grpc::kms::v1::{
     Empty, PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
     UserDecryptionRequest, UserDecryptionResponse,
@@ -30,7 +30,7 @@ use tracing::Instrument;
 /// Implementation of the user_decrypt endpoint
 pub async fn user_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
@@ -82,7 +82,24 @@ pub async fn user_decrypt_impl<
     ];
     timer.tags(metric_tags.clone());
 
-    if !service.key_meta_map.read().await.exists(&key_id.into()) {
+    let keys_exist = match service
+        .crypto_storage
+        .inner
+        .fhe_keys_exist(&key_id.into(), &epoch_id)
+        .await
+    {
+        Ok(exists) => exists,
+        Err(e) => {
+            tracing::error!(
+                "Error checking if keys exist for key_id={}, epoch_id={}: {}",
+                key_id,
+                epoch_id,
+                e
+            );
+            false
+        }
+    };
+    if !keys_exist {
         return Err(MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
             Some(request_id),
@@ -125,7 +142,7 @@ pub async fn user_decrypt_impl<
             let _timer = timer;
             let _permit = permit;
             let keys = match crypto_storage
-                .read_centralized_fhe_keys(&key_id.into())
+                .read_centralized_fhe_keys(&key_id.into(), &epoch_id)
                 .await
             {
                 Ok(k) => k,
@@ -179,7 +196,7 @@ pub async fn user_decrypt_impl<
 /// Implementation of the get_user_decryption_result endpoint
 pub async fn get_user_decryption_result_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
@@ -235,7 +252,7 @@ pub async fn get_user_decryption_result_impl<
 /// Implementation of the public_decrypt endpoint
 pub async fn public_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
@@ -277,9 +294,26 @@ pub async fn public_decrypt_impl<
     ];
     timer.tags(metric_tags.clone());
 
-    if !service.key_meta_map.read().await.exists(&key_id.into()) {
+    let keys_exist = match service
+        .crypto_storage
+        .inner
+        .fhe_keys_exist(&key_id.into(), &epoch_id)
+        .await
+    {
+        Ok(exists) => exists,
+        Err(e) => {
+            tracing::error!(
+                "Error checking if keys exist for key_id={}, epoch_id={}: {}",
+                key_id,
+                epoch_id,
+                e
+            );
+            false
+        }
+    };
+    if !keys_exist {
         return Err(MetricedError::new(
-            OP_USER_DECRYPT_REQUEST,
+            OP_PUBLIC_DECRYPT_REQUEST,
             Some(request_id),
             anyhow::anyhow!("Key ID {} not found", key_id),
             tonic::Code::NotFound,
@@ -320,7 +354,7 @@ pub async fn public_decrypt_impl<
         let _timer = timer;
         let _permit = permit;
         let keys = match crypto_storage
-            .read_centralized_fhe_keys(&key_id.into())
+            .read_centralized_fhe_keys(&key_id.into(), &epoch_id)
             .await
         {
             Ok(k) => k,
@@ -391,7 +425,7 @@ pub async fn public_decrypt_impl<
 /// Implementation of the get_public_decryption_result endpoint
 pub async fn get_public_decryption_result_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
