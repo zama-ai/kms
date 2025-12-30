@@ -27,9 +27,13 @@ pub mod file;
 pub mod ram;
 pub mod s3;
 
-// TODO add a wrapper struct for both public and private storage.
-
-/// Trait for public KMS storage reading
+/// Trait for KMS storage reading.
+///
+/// This reader does not consider data that are stored under epochs.
+/// In most cases, attempting to read data that are only available under certain epochs
+/// will fail as they will not exist when using this trait to read.
+/// In general, we do not guarantee its behaviour when attempting to read data that's under epochs.
+/// For that scenario, use StorageReaderExt.
 #[enum_dispatch]
 #[trait_variant::make(Send)]
 pub trait StorageReader {
@@ -131,8 +135,11 @@ pub trait StorageReaderExt: StorageReader {
     ) -> anyhow::Result<HashSet<RequestId>>;
 }
 
-// Trait for KMS public storage reading and writing
-// Warning: There is no compiler validation that the data being stored are of a versioned type!
+/// Trait for KMS storage reading and writing.
+/// Warning: There is no compiler validation that the data being stored are of a versioned type!
+///
+/// See the documentation for [StorageReader] for behaviour related to epochs.
+/// To write data under specific epochs, use [StorageExt].
 #[enum_dispatch]
 #[trait_variant::make(Send)]
 pub trait Storage: StorageReader {

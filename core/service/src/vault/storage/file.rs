@@ -108,10 +108,13 @@ impl FileStorage {
             .map_err(|_| anyhow_error_and_log(format!("Path {} does not exist", path.display())))
     }
 
+    /// Find all data under a given path.
+    /// If ensure_file_xor_directory flag is true, then only consider files,
+    /// otheriwse, only consider directories.
     async fn all_data_from_path(
         &self,
         path: &Path,
-        ensure_file: bool,
+        ensure_file_xor_directory: bool,
     ) -> anyhow::Result<HashSet<RequestId>> {
         if !path.try_exists()? {
             // If the path does not exist, then return an empty hashmap.
@@ -129,8 +132,10 @@ impl FileStorage {
         while let Some(cur_file) = files.next_entry().await? {
             let cur_path = cur_file.path();
 
-            // if ensure_file is true, only consider files, else only consider directories
-            if (ensure_file && !cur_path.is_file()) || !ensure_file && !cur_path.is_dir() {
+            // if ensure_file_xor_directory is true, only consider files, else only consider directories
+            if (ensure_file_xor_directory && !cur_path.is_file())
+                || !ensure_file_xor_directory && !cur_path.is_dir()
+            {
                 continue;
             }
 

@@ -42,10 +42,10 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 /// Marker trait for private FHE materials.
 /// This exists because FHE materials are stored by epochs, unlike other materials.
 /// So we use this trait to differentiate FHE materials from others.
-pub(crate) trait PrivateFheMaterial {}
+pub(crate) trait PrivateMaterialUnderEpoch {}
 
-impl PrivateFheMaterial for ThresholdFheKeys {}
-impl PrivateFheMaterial for KmsFheKeyHandles {}
+impl PrivateMaterialUnderEpoch for ThresholdFheKeys {}
+impl PrivateMaterialUnderEpoch for KmsFheKeyHandles {}
 
 /// A cached generic storage entity for the common data structures
 /// used by both the centralized and the threshold KMS.
@@ -928,7 +928,7 @@ where
     }
 
     pub(crate) async fn read_cloned_private_fhe_material_from_cache<
-        T: PrivateFheMaterial + Clone,
+        T: PrivateMaterialUnderEpoch + Clone,
     >(
         cache: Arc<RwLock<HashMap<(RequestId, EpochId), T>>>,
         req_id: &RequestId,
@@ -951,7 +951,7 @@ where
     ) -> anyhow::Result<()>
     where
         S: StorageReaderExt + Send + Sync + 'static,
-        T: PrivateCryptoMaterialReader + PrivateFheMaterial,
+        T: PrivateCryptoMaterialReader + PrivateMaterialUnderEpoch,
     {
         // This function does not need to be atomic, so we take a read lock
         // on the cache first and check for existance, then release it.
