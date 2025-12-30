@@ -701,6 +701,7 @@ pub struct NodeInfoTest {
     pub mpc_identity: Cow<'static, str>,
     pub party_id: u32,
     pub public_storage_url: Cow<'static, str>,
+    pub public_storage_prefix: Cow<'static, str>,
     pub external_url: Cow<'static, str>,
     pub ca_cert: Option<Vec<u8>>,
     pub state: u64,

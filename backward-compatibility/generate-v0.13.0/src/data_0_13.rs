@@ -453,6 +453,7 @@ fn node_info_test() -> NodeInfoTest {
         party_id: 4,
         external_url: Cow::Borrowed("https://node4.example.com/mpc/something-something"),
         public_storage_url: Cow::Borrowed("https://storage.example.com/node4"),
+        public_storage_prefix: Cow::Borrowed("PUB"),
         ca_cert: Some(vec![1, 2, 3, 4, 6, 7, 8, 9]),
         state: 500,
     }

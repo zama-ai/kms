@@ -1619,7 +1619,7 @@ checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 [[package]]
 name = "bc2wrap"
 version = "2.0.1"
-source = "git+https://github.com/zama-ai/kms.git?rev=c2329613c709bc5fbac783cfaefdb5a910b28566#c2329613c709bc5fbac783cfaefdb5a910b28566"
+source = "git+https://github.com/zama-ai/kms.git?rev=25cc5fc35556275ca6d38b8308d4eb4038f77e16#25cc5fc35556275ca6d38b8308d4eb4038f77e16"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -3789,7 +3789,7 @@ dependencies = [
 [[package]]
 name = "kms"
 version = "0.13.0-rc.0"
-source = "git+https://github.com/zama-ai/kms.git?rev=c2329613c709bc5fbac783cfaefdb5a910b28566#c2329613c709bc5fbac783cfaefdb5a910b28566"
+source = "git+https://github.com/zama-ai/kms.git?rev=25cc5fc35556275ca6d38b8308d4eb4038f77e16#25cc5fc35556275ca6d38b8308d4eb4038f77e16"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3802,6 +3802,7 @@ dependencies = [
  "alloy-sol-types",
  "anyhow",
  "async_cell",
+ "attestation-doc-validation",
  "aws-config",
  "aws-nitro-enclaves-nsm-api",
  "aws-sdk-kms",
@@ -3868,7 +3869,7 @@ dependencies = [
 [[package]]
 name = "kms-grpc"
 version = "0.13.0-rc.0"
-source = "git+https://github.com/zama-ai/kms.git?rev=c2329613c709bc5fbac783cfaefdb5a910b28566#c2329613c709bc5fbac783cfaefdb5a910b28566"
+source = "git+https://github.com/zama-ai/kms.git?rev=25cc5fc35556275ca6d38b8308d4eb4038f77e16#25cc5fc35556275ca6d38b8308d4eb4038f77e16"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -4377,7 +4378,7 @@ dependencies = [
 [[package]]
 name = "observability"
 version = "0.13.0-rc.0"
-source = "git+https://github.com/zama-ai/kms.git?rev=c2329613c709bc5fbac783cfaefdb5a910b28566#c2329613c709bc5fbac783cfaefdb5a910b28566"
+source = "git+https://github.com/zama-ai/kms.git?rev=25cc5fc35556275ca6d38b8308d4eb4038f77e16#25cc5fc35556275ca6d38b8308d4eb4038f77e16"
 dependencies = [
  "anyhow",
  "axum",
@@ -6655,7 +6656,7 @@ dependencies = [
 [[package]]
 name = "threshold-fhe"
 version = "0.13.0-rc.0"
-source = "git+https://github.com/zama-ai/kms.git?rev=c2329613c709bc5fbac783cfaefdb5a910b28566#c2329613c709bc5fbac783cfaefdb5a910b28566"
+source = "git+https://github.com/zama-ai/kms.git?rev=25cc5fc35556275ca6d38b8308d4eb4038f77e16#25cc5fc35556275ca6d38b8308d4eb4038f77e16"
 dependencies = [
  "aes",
  "aes-prng",
@@ -6846,8 +6847,7 @@ dependencies = [
 [[package]]
 name = "tokio-rustls"
 version = "0.26.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e727b36a1a0e8b74c376ac2211e40c2c8af09fb4013c60d910495810f008e9b"
+source = "git+https://github.com/mkmks/tokio-rustls.git?branch=k256#fc6d96eee433d492dbaa8503cb67239fda89b190"
 dependencies = [
  "rustls 0.23.31",
  "tokio",
@@ -8165,3 +8165,18 @@ dependencies = [
  "quote",
  "syn 2.0.108",
 ]
+
+[[patch.unused]]
+name = "rustls"
+version = "0.24.0-dev.1"
+source = "git+https://github.com/mkmks/rustls.git?branch=k256#71a29c7c617e901d2a74883f778236d9d9da9e3b"
+
+[[patch.unused]]
+name = "rustls-pki-types"
+version = "1.13.2"
+source = "git+https://github.com/mkmks/pki-types.git?branch=k256#6fe2ed55f33ccee5e437ee287c64bacbbcc157dd"
+
+[[patch.unused]]
+name = "rustls-webpki"
+version = "0.104.0-alpha.3"
+source = "git+https://github.com/mkmks/webpki.git?branch=k256#5cfa16a733dfa583cc7a96f6e224716eb29e4ede"
