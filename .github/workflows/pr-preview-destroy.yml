@@ -1,0 +1,57 @@
+##############################################################################
+# pr-preview-destroy workflow
+##############################################################################
+name: pr-preview-destroy
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  ############################################################################
+  # PR Preview Job
+  ############################################################################
+  pr-preview-destroy:
+    if: contains(github.event.pull_request.labels.*.name, 'pr-preview')
+    name: pr-preview-destroy
+    runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=false
+    timeout-minutes: 1800
+
+    # Environment variables used throughout the job
+    env:
+      NAMESPACE: 'kms-ci-${{ github.actor }}-${{ github.event.pull_request.number }}'
+    steps:
+      # ======================================================================
+      # TOOLING SETUP
+      # ======================================================================
+      - name: Setup tailscale
+        uses: tailscale/github-action@84a3f23bb4d843bcf4da6cf824ec1be473daf4de # v3.2.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:${NAMESPACE}
+
+      - name: setup kubectl
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
+
+      # ======================================================================
+      # KUBERNETES CONFIG & DESTROY NAMESPACE
+      # ======================================================================
+      - name: Setup kubeconfig
+        run: |
+          ###################################################################
+          # Configure kubeconfig to connect to the Tailscale Kubernetes cluster
+          ###################################################################
+          echo "Configuring kubeconfig for Tailscale cluster..."
+          tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
+
+      - name: Destroy namespace
+        run: |
+          helm list -n "${NAMESPACE}" --short | xargs -L1 helm uninstall -n "${NAMESPACE}"
+          kubectl delete namespace "${NAMESPACE}" --force && \
+          kubectl proxy && \
+          kubectl get namespace "${NAMESPACE}" -o json |jq '.spec = {"finalizers":[]}' >temp.json && \
+          curl -k -H "Content-Type: application/json" -X PUT --data-binary @temp.json 127.0.0.1:8001/api/v1/namespaces/"${NAMESPACE}"/finalize && \
+          kubectl get namespace

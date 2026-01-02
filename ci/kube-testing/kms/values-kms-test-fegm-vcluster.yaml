@@ -5,7 +5,7 @@ kmsPeers:
 kmsCore:
   image:
     name: hub.zama.org/dev-kms/core-service
-    tag:
+    tag: latest
   envFrom:
     configmap:
       key:
@@ -39,16 +39,16 @@ kmsCore:
     #=============================================================
     peersList:
       - id: 1
-        host: kms-service-threshold-1-kms-test-core-1
+        host: kms-service-threshold-1-kms-test-fegm-core-1
         port: 50001
       - id: 2
-        host: kms-service-threshold-2-kms-test-core-2
+        host: kms-service-threshold-2-kms-test-fegm-core-2
         port: 50001
       - id: 3
-        host: kms-service-threshold-3-kms-test-core-3
+        host: kms-service-threshold-3-kms-test-fegm-core-3
         port: 50001
       - id: 4
-        host: kms-service-threshold-4-kms-test-core-4
+        host: kms-service-threshold-4-kms-test-fegm-core-4
         port: 50001
   publicVault:
     s3:
@@ -92,7 +92,7 @@ environment: dev
 
 kubeUtils:
   image:
-    name: ghcr.io/zama-ai/security-hub/infra/kube-utils
+    name: hub.zama.org/ghcr/zama-ai/security-hub/infra/kube-utils
     tag: v0.4.3
     pullPolicy: Always
 
