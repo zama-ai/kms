@@ -31,7 +31,7 @@ jobs:
     name: pr-preview-deploy
     permissions:
       pull-requests: write
-    runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=true
+    runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=false
     timeout-minutes: 1800
 
     # Environment variables used throughout the job
