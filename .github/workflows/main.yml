@@ -101,7 +101,7 @@ jobs:
       actions: read # Required to read workflow run information
       contents: write # Required to checkout repository code
       id-token: write # Required for OIDC authentication
-      pull-requests: read # Required to read pull request information
+      pull-requests: write # Required to create comments on pull requests
       packages: write # Required to publish Docker images
       attestations: write # Required to create build attestations
     uses: ./.github/workflows/docker-build.yml
