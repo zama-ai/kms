@@ -208,6 +208,8 @@ jobs:
       - core-service
       - enclave
     uses: ./.github/workflows/pr-preview-deploy.yml
+    permissions:
+      pull-requests: write
     with:
       image_tag: ${{ needs.core-service.outputs.image_tag }}
     secrets:
