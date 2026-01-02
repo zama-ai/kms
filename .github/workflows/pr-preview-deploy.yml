@@ -358,22 +358,12 @@ jobs:
               --namespace "${NAMESPACE}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-init-kms-ci.yaml \
               --values /tmp/kms-peers-values.yaml \
-              --set kmsPeers.id="${i}" \
-              --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
-              --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
-              --set kmsCoreClient.envFrom.configmap.name="${NAMESPACE}-${i}" \
-              --set kmsGenCertAndKeys.enabled=true \
+              --set kmsCore.envFrom.configmap.name="${NAMESPACE}-1" \
+              --set kmsCoreClient.envFrom.configmap.name="${NAMESPACE}-1" \
               --set kmsCore.image.name="${KMS_CORE_IMAGE_NAME}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
               --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-              --set kmsCore.thresholdMode.thresholdValue="${THRESHOLD_VALUE}" \
-              --set kmsCore.thresholdMode.tls.enabled="${TLS}" \
-              --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
-              --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
-              --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}" \
-              --set kmsCore.publicVault.s3.prefix="PUB-p${i}" \
-              --set kmsCore.privateVault.s3.prefix="PRIV-p${i}" \
               --wait \
               --wait-for-jobs \
               --timeout=1200s
