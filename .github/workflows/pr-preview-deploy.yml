@@ -4,22 +4,22 @@
 name: pr-preview-deploy
 
 on:
-  pull_request:
-  # workflow_call:
-  #   inputs:
-  #     image_tag:
-  #       description: 'Image tag'
-  #       required: true
-  #       type: string
-  #   secrets:
-  #     BLOCKCHAIN_ACTIONS_TOKEN:
-  #       required: true
-  #     ZWS_BOT_TOKEN:
-  #       required: true
-  #     TS_OAUTH_CLIENT_ID:
-  #       required: true
-  #     TS_OAUTH_SECRET:
-  #       required: true
+  # pull_request:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: 'Image tag'
+        required: true
+        type: string
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN:
+        required: true
+      ZWS_BOT_TOKEN:
+        required: true
+      TS_OAUTH_CLIENT_ID:
+        required: true
+      TS_OAUTH_SECRET:
+        required: true
 
 permissions: {}
 
@@ -29,6 +29,8 @@ jobs:
   ############################################################################
   pr-preview-deploy:
     name: pr-preview-deploy
+    permissions:
+      pull-requests: write
     runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=true
     timeout-minutes: 1800
 
@@ -39,8 +41,8 @@ jobs:
       SYNC_SECRETS_CHART_VERSION: '0.2.1'
       KMS_CORE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service-enclave'
       KMS_CORE_CLIENT_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-client'
-      KMS_CORE_IMAGE_TAG: c48b648 # ${{ inputs.image_tag }}
-      KMS_CORE_CLIENT_IMAGE_TAG: c48b648 # ${{ inputs.image_tag }}
+      KMS_CORE_IMAGE_TAG: ${{ inputs.image_tag }}
+      KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.image_tag }}
       IMAGE_REPO: 'ghcr.io/zama-ai/kms'
       DEPLOYMENT_TYPE: 'thresholdWithEnclave'
       TLS: 'true'
@@ -268,6 +270,7 @@ jobs:
                 --namespace "${NAMESPACE}" \
                 --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
                 --values /tmp/kms-peers-values.yaml \
+                --set kmsCore.nameOverride="kms-core-${i}" \
                 --set kmsPeers.id="${i}" \
                 --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
                 --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
@@ -376,3 +379,29 @@ jobs:
             kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
               -n "${NAMESPACE}" --timeout=600s
           fi
+
+      - name: Update pull request
+        if: success()
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            **:rocket: PR preview environment is ready**
+            You can now port-forward the kms-core to run your tests locally against the preview environment.
+            ```bash
+            tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
+            kubectl port-forward svc/kms-core-1-core-1 -n ${NAMESPACE} 50100:50100 & \
+            kubectl port-forward svc/kms-core-2-core-2 -n ${NAMESPACE} 50200:50100 & \
+            kubectl port-forward svc/kms-core-3-core-3 -n ${NAMESPACE} 50300:50100 & \
+            kubectl port-forward svc/kms-core-4-core-4 -n ${NAMESPACE} 50400:50100 &
+            ```
+            And launch your tests:
+            ```bash
+            cargo nextest run --test <your-test-name>
+            ```
+            You can connect to the core-client with:
+            ```bash
+            kubectl exec kms-core-client -n ${NAMESPACE} -it -- /bin/bash
+            ```
+
+          reactions: 'rocket'

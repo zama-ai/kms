@@ -1,5 +1,0 @@
-kmsPeers:
-  id: 1
-
-kmsGenCertAndKeys:
-  enabled: true

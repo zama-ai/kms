@@ -21,7 +21,7 @@ kmsCore:
 
 kmsCoreClient:
   enabled: true
-  nameOverride: kms-core-client-threshold-kms-enclave-ci
+  nameOverride: kms-core-client
   image:
     name: ghcr.io/zama-ai/kms/core-client
     tag: <version>
