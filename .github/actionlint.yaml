@@ -4,4 +4,4 @@ self-hosted-runner:
   labels:
     - large_ubuntu_16_arm
     - large_ubuntu_32
-    - runs-on=github.run_id/runner=16cpu-linux-x64/spot=true
+    - runs-on=github.run_id/runner=16cpu-linux-x64/spot=false

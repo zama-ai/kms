@@ -386,21 +386,25 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           body: |
             **:rocket: PR preview environment is ready**
+
             You can now port-forward the kms-core to run your tests locally against the preview environment.
+
             ```bash
             tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
-            kubectl port-forward svc/kms-core-1-core-1 -n ${NAMESPACE} 50100:50100 & \
-            kubectl port-forward svc/kms-core-2-core-2 -n ${NAMESPACE} 50200:50100 & \
-            kubectl port-forward svc/kms-core-3-core-3 -n ${NAMESPACE} 50300:50100 & \
-            kubectl port-forward svc/kms-core-4-core-4 -n ${NAMESPACE} 50400:50100 &
+            kubectl port-forward svc/kms-core-1-core-1 -n "${{ env.NAMESPACE }}" 50100:50100 & \
+            kubectl port-forward svc/kms-core-2-core-2 -n "${{ env.NAMESPACE }}" 50200:50100 & \
+            kubectl port-forward svc/kms-core-3-core-3 -n "${{ env.NAMESPACE }}" 50300:50100 & \
+            kubectl port-forward svc/kms-core-4-core-4 -n "${{ env.NAMESPACE }}" 50400:50100 &
             ```
+
             And launch your tests:
             ```bash
             cargo nextest run --test <your-test-name>
             ```
+
             You can connect to the core-client with:
             ```bash
-            kubectl exec kms-core-client -n ${NAMESPACE} -it -- /bin/bash
+            kubectl exec kms-core-client -n "${{ env.NAMESPACE }}" -it -- /bin/bash
             ```
 
           reactions: 'rocket'
