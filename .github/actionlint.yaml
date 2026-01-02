@@ -5,3 +5,4 @@ self-hosted-runner:
     - large_ubuntu_16_arm
     - large_ubuntu_32
     - runs-on=github.run_id/runner=16cpu-linux-x64/spot=false
+    - runs-on=github.run_id/runner=16cpu-linux-x64/spot=true
