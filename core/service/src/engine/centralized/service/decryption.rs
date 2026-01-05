@@ -82,31 +82,22 @@ pub async fn user_decrypt_impl<
     ];
     timer.tags(metric_tags.clone());
 
-    let keys_exist = match service
+    match service
         .crypto_storage
         .inner
         .fhe_keys_exist(&key_id.into(), &epoch_id)
         .await
     {
-        Ok(exists) => exists,
-        Err(e) => {
-            tracing::error!(
-                "Error checking if keys exist for key_id={}, epoch_id={}: {}",
-                key_id,
-                epoch_id,
-                e
-            );
-            false
+        Ok(true) => {}
+        e_or_false => {
+            return Err(MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                Some(request_id),
+                anyhow::anyhow!("Key ID {} not found: exists={:?}", key_id, e_or_false),
+                tonic::Code::NotFound,
+            ));
         }
     };
-    if !keys_exist {
-        return Err(MetricedError::new(
-            OP_USER_DECRYPT_REQUEST,
-            Some(request_id),
-            anyhow::anyhow!("Key ID {} not found", key_id),
-            tonic::Code::NotFound,
-        ));
-    }
 
     let meta_store = Arc::clone(&service.user_dec_meta_store);
     let crypto_storage = service.crypto_storage.clone();

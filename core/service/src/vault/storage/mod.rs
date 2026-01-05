@@ -136,7 +136,6 @@ pub trait StorageReaderExt: StorageReader {
 }
 
 /// Trait for KMS storage reading and writing.
-/// Warning: There is no compiler validation that the data being stored are of a versioned type!
 ///
 /// See the documentation for [StorageReader] for behaviour related to epochs.
 /// To write data under specific epochs, use [StorageExt].

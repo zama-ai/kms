@@ -132,7 +132,6 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
 #[case(7, 3)]
 #[case(3, 1)]
 #[serial]
-#[tracing_test::traced_test]
 async fn test_backup_after_crs_threshold(#[case] custodians: usize, #[case] threshold: u32) {
     backup_after_crs(custodians, threshold).await;
 }

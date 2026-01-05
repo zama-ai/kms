@@ -16,7 +16,6 @@ pub mod aws;
 pub mod keychain;
 pub mod storage;
 
-// TODO do we need another type here?
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
 pub enum VaultDataType {
     // Backup of a piece of private data under a given backup id (RequestId) for custodian-based backup
