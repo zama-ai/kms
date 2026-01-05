@@ -50,6 +50,14 @@ jobs:
       NB_KMS_PARTIES: '4'
     steps:
 
+      - name: Check if PR is a PR-Preview
+        if: startsWith(github.event.pull_request.labels.*.name, 'pr-preview-')
+        run: |
+          echo "PR is a PR-Preview"
+          echo "PR number: ${{ github.event.pull_request.number }}"
+          echo "PR labels: ${{ github.event.pull_request.labels.*.name }}"
+          echo "PR title: ${{ github.event.pull_request.title }}"
+          echo "PR body: ${{ github.event.pull_request.body }}"
       # ======================================================================
       # DOCKER BUILD STATUS HANDLING
       # ======================================================================

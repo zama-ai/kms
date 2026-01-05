@@ -202,7 +202,7 @@ jobs:
   ############################################################################
   pr-preview-deploy:
     name: docker-build/pr-preview-deploy
-    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'pr-preview')
+    if: github.event_name == 'pull_request' && startsWith(github.event.pull_request.labels.*.name, 'pr-preview-')
     needs:
       - core-client
       - core-service
