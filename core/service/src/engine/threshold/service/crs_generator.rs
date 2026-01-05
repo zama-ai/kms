@@ -46,9 +46,7 @@ use crate::{
     },
     vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage, StorageExt},
 };
-use crate::{
-    engine::utils::MetricedError, util::meta_store::update_err_req_in_meta_store,
-};
+use crate::{engine::utils::MetricedError, util::meta_store::update_err_req_in_meta_store};
 
 // === Insecure Feature-Specific Imports ===
 cfg_if::cfg_if! {
@@ -102,9 +100,11 @@ impl<
         // Check for resource exhaustion once all the other checks are ok
         // because resource exhaustion can be recovered by sending the exact same request
         // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_crsgen().await.map_err(|e| {
-            MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted)
-        })?;
+        let permit = self
+            .rate_limiter
+            .start_crsgen()
+            .await
+            .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
 
         let inner = request.into_inner();
         tracing::info!(
@@ -146,9 +146,7 @@ impl<
             insecure,
         )
         .await
-        .map_err(|e| {
-            MetricedError::new(op_tag, Some(req_id), e, tonic::Code::Internal)
-        })?;
+        .map_err(|e| MetricedError::new(op_tag, Some(req_id), e, tonic::Code::Internal))?;
         Ok(Response::new(Empty {}))
     }
 
@@ -242,9 +240,8 @@ impl<
             OP_CRS_GEN_RESULT
         };
         let request_id =
-            proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse).map_err(
-                |e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument),
-            )?;
+            proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)
+                .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
 
         let crs_data =
             retrieve_from_meta_store(self.crs_meta_store.read().await, &request_id, op_tag).await?;

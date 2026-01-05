@@ -181,8 +181,7 @@ impl From<MetricedError> for Status {
             "Failed on requestID {:?} with metric {}",
             metriced_error.request_id, metriced_error.op_metric,
         ));
-        let status = tonic::Status::new(metriced_error.error_code, error_string);
-        status
+        tonic::Status::new(metriced_error.error_code, error_string)
     }
 }
 // Add tests
