@@ -466,7 +466,7 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           reactions: 'rocket'
           body: |
-            **:rocket: PR preview environment is deployed in "${DEPLOYMENT_TYPE}" mode**
+            **:rocket: PR preview environment is deployed in "${{ env.DEPLOYMENT_TYPE }}" mode**
 
             You can now port-forward the kms-core to run your tests locally against the preview environment.
 
@@ -495,7 +495,7 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           reactions: 'rocket'
           body: |
-            **:rocket: PR preview environment is deployed in "${DEPLOYMENT_TYPE}" mode**
+            **:rocket: PR preview environment is deployed in "${{ env.DEPLOYMENT_TYPE }}" mode**
 
             You can now port-forward the kms-core to run your tests locally against the preview environment.
 
