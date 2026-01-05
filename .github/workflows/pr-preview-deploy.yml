@@ -156,12 +156,13 @@ jobs:
             echo "Destroying namespace ${NAMESPACE}..."
             helm list -n "${NAMESPACE}" --short | xargs -L1 helm uninstall -n "${NAMESPACE}"
             kubectl delete namespace "${NAMESPACE}" --grace-period=1 --timeout=5s --wait=false
-            sleep 15
+            sleep 30
             kubectl proxy &
             kubectl get namespace "${NAMESPACE}" -o json |jq '.spec = {"finalizers":[]}' >temp.json
             curl -k -H "Content-Type: application/json" -X PUT --data-binary @temp.json 127.0.0.1:8001/api/v1/namespaces/"${NAMESPACE}"/finalize
             echo "Waiting for namespace to be destroyed..."
             sleep 15
+            kubectl wait --for=delete namespace/"${NAMESPACE}" --timeout=60s
             echo "Namespace ${NAMESPACE} destroyed"
             kubectl get namespace
           else
