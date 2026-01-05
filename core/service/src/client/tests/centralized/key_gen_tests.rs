@@ -1,11 +1,12 @@
 use crate::client::client_wasm::Client;
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
+use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::purge;
 use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::storage::StorageReader;
+use crate::vault::storage::StorageReaderExt;
 use crate::vault::storage::{file::FileStorage, StorageType};
 use alloy_dyn_abi::Eip712Domain;
 use kms_grpc::identifiers::EpochId;
@@ -26,9 +27,10 @@ use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_te
 #[serial]
 async fn test_key_gen_centralized() {
     let request_id = derive_request_id("test_key_gen_centralized").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
     purge(None, None, &request_id, &[None], &[None]).await;
-    key_gen_centralized(&request_id, FheParameter::Test, None, None).await;
+    key_gen_centralized(&request_id, &epoch_id, FheParameter::Test, None, None).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -37,16 +39,18 @@ async fn test_decompression_key_gen_centralized() {
     let request_id_1 = derive_request_id("test_key_gen_centralized-1").unwrap();
     let request_id_2 = derive_request_id("test_key_gen_centralized-2").unwrap();
     let request_id_3 = derive_request_id("test_decompression_key_gen_centralized").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
     purge(None, None, &request_id_1, &[None], &[None]).await;
     purge(None, None, &request_id_2, &[None], &[None]).await;
     purge(None, None, &request_id_3, &[None], &[None]).await;
 
-    key_gen_centralized(&request_id_1, FheParameter::Default, None, None).await;
-    key_gen_centralized(&request_id_2, FheParameter::Default, None, None).await;
+    key_gen_centralized(&request_id_1, &epoch_id, FheParameter::Default, None, None).await;
+    key_gen_centralized(&request_id_2, &epoch_id, FheParameter::Default, None, None).await;
 
     key_gen_centralized(
         &request_id_3,
+        &epoch_id,
         FheParameter::Default,
         Some(KeySetConfig {
             keyset_type: KeySetType::DecompressionOnly.into(),
@@ -66,9 +70,10 @@ async fn test_decompression_key_gen_centralized() {
 #[serial]
 async fn default_key_gen_centralized() {
     let request_id = derive_request_id("default_key_gen_centralized").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
     purge(None, None, &request_id, &[None], &[None]).await;
-    key_gen_centralized(&request_id, FheParameter::Default, None, None).await;
+    key_gen_centralized(&request_id, &epoch_id, FheParameter::Default, None, None).await;
 }
 
 #[cfg(feature = "slow_tests")]
@@ -78,16 +83,18 @@ async fn default_decompression_key_gen_centralized() {
     let request_id_1 = derive_request_id("default_key_gen_centralized-1").unwrap();
     let request_id_2 = derive_request_id("default_key_gen_centralized-2").unwrap();
     let request_id_3 = derive_request_id("default_decompression_key_gen_centralized").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
     purge(None, None, &request_id_1, &[None], &[None]).await;
     purge(None, None, &request_id_2, &[None], &[None]).await;
     purge(None, None, &request_id_3, &[None], &[None]).await;
 
-    key_gen_centralized(&request_id_1, FheParameter::Default, None, None).await;
-    key_gen_centralized(&request_id_2, FheParameter::Default, None, None).await;
+    key_gen_centralized(&request_id_1, &epoch_id, FheParameter::Default, None, None).await;
+    key_gen_centralized(&request_id_2, &epoch_id, FheParameter::Default, None, None).await;
 
     key_gen_centralized(
         &request_id_3,
+        &epoch_id,
         FheParameter::Default,
         Some(KeySetConfig {
             keyset_type: KeySetType::DecompressionOnly.into(),
@@ -145,6 +152,7 @@ async fn preproc_centralized(
 
 pub(crate) async fn key_gen_centralized(
     request_id: &RequestId,
+    epoch_id: &EpochId,
     params: FheParameter,
     keyset_config: Option<KeySetConfig>,
     keyset_added_info: Option<KeySetAddedInfo>,
@@ -167,6 +175,7 @@ pub(crate) async fn key_gen_centralized(
         &mut kms_client,
         &internal_client,
         request_id,
+        epoch_id,
         params,
         keyset_config,
         keyset_added_info,
@@ -176,10 +185,12 @@ pub(crate) async fn key_gen_centralized(
     kms_server.assert_shutdown().await;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_key_gen_centralized(
     kms_client: &mut CoreServiceEndpointClient<Channel>,
     internal_client: &Client,
     key_req_id: &RequestId,
+    epoch_id: &EpochId,
     params: FheParameter,
     keyset_config: Option<KeySetConfig>,
     keyset_added_info: Option<KeySetAddedInfo>,
@@ -250,8 +261,9 @@ pub async fn run_key_gen_centralized(
 
         // read the client key
         let handle: crate::engine::base::KmsFheKeyHandles = priv_storage
-            .read_data(
+            .read_data_at_epoch(
                 &req_id.clone().try_into().unwrap(),
+                epoch_id,
                 &PrivDataType::FhePrivateKey.to_string(),
             )
             .await
@@ -294,11 +306,11 @@ pub async fn run_key_gen_centralized(
             )
             .unwrap();
             let handles_1: crate::engine::base::KmsFheKeyHandles = priv_storage
-                .read_data(&keyid_1, &PrivDataType::FhePrivateKey.to_string())
+                .read_data_at_epoch(&keyid_1, epoch_id, &PrivDataType::FhePrivateKey.to_string())
                 .await
                 .unwrap();
             let handles_2: crate::engine::base::KmsFheKeyHandles = priv_storage
-                .read_data(&keyid_2, &PrivDataType::FhePrivateKey.to_string())
+                .read_data_at_epoch(&keyid_2, epoch_id, &PrivDataType::FhePrivateKey.to_string())
                 .await
                 .unwrap();
 

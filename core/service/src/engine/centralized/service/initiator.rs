@@ -7,7 +7,7 @@ use crate::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
     },
-    vault::storage::Storage,
+    vault::storage::{Storage, StorageExt},
 };
 use kms_grpc::{
     kms::v1::{Empty, InitRequest},
@@ -39,7 +39,7 @@ use tonic::{Request, Response, Status};
 /// Logs a warning when initialization is called on a centralized KMS, indicating no action is taken.
 pub async fn init_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(

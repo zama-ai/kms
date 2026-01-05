@@ -51,7 +51,7 @@ fn verify_key_digest(
 }
 
 use crate::{
-    consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
+    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
     engine::{
         base::{
             compute_info_standard_keygen, retrieve_parameters,
@@ -77,7 +77,7 @@ use crate::{
             build_anonymous_s3_client, ReadOnlyS3Storage, ReadOnlyS3StorageGetter,
             RealReadOnlyS3StorageGetter,
         },
-        Storage, StorageReader, StorageType,
+        Storage, StorageExt, StorageReader, StorageType,
     },
 };
 
@@ -128,12 +128,12 @@ fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String)> {
 
 async fn fetch_public_materials_from_peers<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
     G: ReadOnlyS3StorageGetter<R>,
     R: StorageReader,
 >(
     crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
-    key_id: RequestId,
+    key_id: &RequestId,
     context_id: &ContextId,
     key_digests: &HashMap<PubDataType, Vec<u8>>,
     ro_storage_getter: &G,
@@ -173,7 +173,7 @@ async fn fetch_public_materials_from_peers<
         )?;
 
         // attempt to fetch the public materials from this node
-        let public_key = read_pk_at_request_id(&pub_storage, &key_id)
+        let public_key = read_pk_at_request_id(&pub_storage, key_id)
             .await
             .map(|pk| match pk {
                 WrappedPublicKeyOwned::Compact(compact_pk) => compact_pk,
@@ -181,7 +181,7 @@ async fn fetch_public_materials_from_peers<
 
         let server_key = read_versioned_at_request_id::<_, ServerKey>(
             &pub_storage,
-            &key_id,
+            key_id,
             &PubDataType::ServerKey.to_string(),
         )
         .await;
@@ -238,26 +238,19 @@ async fn fetch_public_materials_from_peers<
 /// Attempt to get and verify the public materials needed for resharing.
 async fn get_verified_public_materials<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
     G: ReadOnlyS3StorageGetter<R>,
     R: StorageReader,
 >(
     crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
-    key_id: RequestId,
+    key_id: &RequestId,
     context_id: &ContextId,
     key_digests: &HashMap<PubDataType, Vec<u8>>,
     ro_storage_getter: &G,
 ) -> Result<FhePubKeySet, tonic::Status> {
-    // Refresh keys but ignore any error as we might not have them yet
-    // (e.g. resharing due to a failed DKG)
-    let _ = crypto_storage
-        .refresh_threshold_fhe_keys(&key_id)
-        .await
-        .inspect_err(|e|tracing::warn!("During reshare, failed to refresh keys with id {}: {}. Will try to do the reshare anyway.", key_id, e));
-
     // We assume the operators have manually copied the public keys to the public storage
     let public_key_res = crypto_storage
-        .read_cloned_pk(&key_id)
+        .read_cloned_pk(key_id)
         .await
         .map_err(|e| {
             tonic::Status::new(
@@ -270,7 +263,7 @@ async fn get_verified_public_materials<
         });
 
     let server_key_res = crypto_storage
-        .read_cloned_server_key(&key_id)
+        .read_cloned_server_key(key_id)
         .await
         .map_err(|e| {
             tonic::Status::new(
@@ -337,7 +330,7 @@ async fn get_verified_public_materials<
 
 pub struct RealResharer<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -349,7 +342,7 @@ pub struct RealResharer<
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> Resharer
+impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static> Resharer
     for RealResharer<PubS, PrivS>
 {
     async fn initiate_resharing(
@@ -372,11 +365,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             None => *DEFAULT_MPC_CONTEXT,
         };
 
-        let new_epoch_id: EpochId = match &inner.epoch_id {
+        // TODO(zama-ai/kms-internal/issues/2788)
+        // grpc messages need to be changed to support both epoch IDs
+        let old_epoch_id: EpochId = match &inner.epoch_id {
             Some(c) => c
                 .try_into()
                 .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
-            None => EpochId::try_from(PRSS_INIT_REQ_ID).unwrap(), // safe to unwrap here because PRSS ID is hardcoded
+            None => *DEFAULT_EPOCH_ID,
         };
 
         let key_id_to_reshare =
@@ -469,11 +464,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // TODO(zama-ai/kms-internal/issues/2810)
             // when resharing is fully implemented, we need to use the new context *and* the old context
             let mut session_z64 = session_maker
-                .make_small_sync_session_z64(session_id_z64, old_context, new_epoch_id)
+                .make_small_sync_session_z64(session_id_z64, old_context, old_epoch_id)
                 .await?;
 
             let mut session_z128 = session_maker
-                .make_small_sync_session_z128(session_id_z128, old_context, new_epoch_id)
+                .make_small_sync_session_z128(session_id_z128, old_context, old_epoch_id)
                 .await?;
 
             // Figure out how much preprocessing we need
@@ -500,7 +495,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // Read the old keys if they exists, otherwise we enter resharing with no keys
             let mut mutable_keys = {
                 let old_fhe_keys_rlock = crypto_storage
-                    .read_guarded_threshold_fhe_keys(&key_id_to_reshare)
+                    .read_guarded_threshold_fhe_keys(&key_id_to_reshare, &old_epoch_id)
                     .await
                     .ok();
                 // Note: the function is supposed to zeroize the keys (hence requires mut access),
@@ -522,7 +517,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // use the real instantiation here for ReadOnlyS3StorageGetter
             let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
                 &crypto_storage,
-                key_id_to_reshare,
+                &key_id_to_reshare,
                 &old_context, // it should be the old context ID as that's where the public materials are
                 &key_digests,
                 &RealReadOnlyS3StorageGetter {},
@@ -566,7 +561,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // Dummy insert to avoid error logs during purge
             dummy_meta_store.write().await.insert(&key_id_to_reshare)?;
             crypto_storage
-                .purge_key_material(&key_id_to_reshare, dummy_meta_store.write().await)
+                .purge_key_material(
+                    &key_id_to_reshare,
+                    &old_epoch_id,
+                    dummy_meta_store.write().await,
+                )
                 .await;
 
             // HOTFIX(keygen-recovery): Note that this overwrites the private storage
@@ -576,6 +575,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 .write_threshold_keys_with_reshare_meta_store(
                     &request_id,
                     &key_id_to_reshare,
+                    &old_epoch_id,
                     threshold_fhe_keys,
                     fhe_pubkeys,
                     info.clone(),
@@ -841,7 +841,7 @@ mod tests {
             };
             let err = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
-                key_id,
+                &key_id,
                 &context_id,
                 &key_digests,
                 &ro_storage_getter,
@@ -870,7 +870,7 @@ mod tests {
             ]);
             let err = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
-                key_id,
+                &key_id,
                 &context_id,
                 &wrong_key_digests,
                 &ro_storage_getter,
@@ -894,7 +894,7 @@ mod tests {
             // use the dummy s3 storage to fetch the keys from ram storage
             let _keyset = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
-                key_id,
+                &key_id,
                 &context_id,
                 &key_digests,
                 &ro_storage_getter,
@@ -915,7 +915,7 @@ mod tests {
 
             let _keyset = fetch_public_materials_from_peers::<_, _, _, DummyReadOnlyS3Storage>(
                 &crypto_storage,
-                key_id,
+                &key_id,
                 &context_id,
                 &key_digests,
                 &two_ro_storage_getter,
@@ -964,7 +964,7 @@ mod tests {
             ]);
             let err = get_verified_public_materials(
                 &crypto_storage,
-                key_id,
+                &key_id,
                 &context_id,
                 &bad_key_digests,
                 &ro_storage_getter,
@@ -1013,7 +1013,7 @@ mod tests {
 
             let _key = get_verified_public_materials(
                 &crypto_storage,
-                key_id,
+                &key_id,
                 &context_id,
                 &key_digests,
                 &ro_storage_getter,

@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use keychain::{EnvelopeLoad, EnvelopeStore, Keychain, KeychainProxy};
-use kms_grpc::{rpc_types::PrivDataType, RequestId};
+use kms_grpc::{identifiers::EpochId, rpc_types::PrivDataType, RequestId};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{collections::HashSet, fmt, path::MAIN_SEPARATOR};
 use storage::{Storage, StorageForBytes, StorageProxy, StorageReader};
@@ -8,16 +8,24 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::{named::Named, Unversionize, Versionize};
 
+#[cfg(feature = "non-wasm")]
+use crate::vault::storage::StorageExt;
+use crate::vault::storage::StorageReaderExt;
+
 pub mod aws;
 pub mod keychain;
 pub mod storage;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
 pub enum VaultDataType {
-    CustodianBackupData(RequestId, PrivDataType), // Backup of a piece of private data under a given backup id (RequestId) for custodian-based backup
-    EncryptedPrivData(PrivDataType), // Backup a piece of private data for the import/export based backup
-    UnencryptedData(String),         // Unencrypted data. May be either private or public data.
+    // Backup of a piece of private data under a given backup id (RequestId) for custodian-based backup
+    CustodianBackupData(RequestId, PrivDataType),
+    // Backup a piece of private data for the import/export based backup
+    EncryptedPrivData(PrivDataType),
+    // Unencrypted data. May be either private or public data.
+    UnencryptedData(String),
 }
+
 impl fmt::Display for VaultDataType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -174,6 +182,120 @@ impl StorageReader for Vault {
 }
 
 #[cfg(feature = "non-wasm")]
+impl StorageReaderExt for Vault {
+    async fn all_data_ids_at_epoch(
+        &self,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<HashSet<RequestId>> {
+        let backup_type = self.get_vault_data_type(data_type)?.to_string();
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref() {
+            if secret_share_keychain.get_current_backup_id().is_err() {
+                tracing::info!(
+                    "No custodian context has been set yet! Returning empty set of data ids."
+                );
+                return Ok(HashSet::new());
+            }
+        }
+        self.storage
+            .all_data_ids_at_epoch(epoch_id, &backup_type)
+            .await
+            .map_err(|e| anyhow!("Getting all ids failed: {e}"))
+    }
+
+    async fn all_epoch_ids_for_data(&self, data_type: &str) -> anyhow::Result<HashSet<EpochId>> {
+        let backup_type = self.get_vault_data_type(data_type)?.to_string();
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref() {
+            if secret_share_keychain.get_current_backup_id().is_err() {
+                tracing::info!(
+                    "No custodian context has been set yet! Returning empty set of data ids."
+                );
+                return Ok(HashSet::new());
+            }
+        }
+        self.storage
+            .all_epoch_ids_for_data(&backup_type)
+            .await
+            .map_err(|e| anyhow!("Getting all ids failed: {e}"))
+    }
+
+    async fn data_exists_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<bool> {
+        let backup_type = self.get_vault_data_type(data_type)?.to_string();
+        self.storage
+            .data_exists_at_epoch(data_id, epoch_id, &backup_type)
+            .await
+            .map_err(|e| anyhow!("Existence check failed: {e}"))
+    }
+
+    async fn read_data_at_epoch<T: DeserializeOwned + Unversionize + Named + Send>(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<T> {
+        let vault_data_type = self.get_vault_data_type(data_type)?.to_string();
+        match self.keychain.as_ref() {
+            Some(keychain_proxy) => {
+                let mut envelope = match keychain_proxy {
+                    KeychainProxy::AwsKmsSymm(_awskmskeychain) => EnvelopeLoad::AppKeyBlob(
+                        self.storage
+                            .read_data_at_epoch(data_id, epoch_id, &vault_data_type)
+                            .await
+                            .map_err(|e| anyhow!("Key blob load failed: {e}"))?,
+                    ),
+                    KeychainProxy::AwsKmsAsymm(_awskmskeychain) => EnvelopeLoad::AppKeyBlob(
+                        self.storage
+                            .read_data_at_epoch(data_id, epoch_id, &vault_data_type)
+                            .await
+                            .map_err(|e| anyhow!("Key blob load failed: {e}"))?,
+                    ),
+                    KeychainProxy::SecretSharing(_secret_share_keychain) => {
+                        EnvelopeLoad::OperatorRecoveryInput(
+                            self.storage
+                                .read_data_at_epoch(data_id, epoch_id, &vault_data_type)
+                                .await
+                                .map_err(|e| anyhow!("Backup recovery input load failed: {e}"))?,
+                        )
+                    }
+                };
+                keychain_proxy
+                    .decrypt(&mut envelope)
+                    .await
+                    .map_err(|e| anyhow!("Decryption failed during load: {e}"))
+            }
+            None => self
+                .storage
+                .read_data_at_epoch(data_id, epoch_id, &vault_data_type)
+                .await
+                .map_err(|e| anyhow!("Unencrypted load failed: {e}")),
+        }
+    }
+
+    async fn all_data_ids_from_all_epochs(
+        &self,
+        data_type: &str,
+    ) -> anyhow::Result<HashSet<RequestId>> {
+        let backup_type = self.get_vault_data_type(data_type)?.to_string();
+        if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) = self.keychain.as_ref() {
+            if secret_share_keychain.get_current_backup_id().is_err() {
+                tracing::info!(
+                    "No custodian context has been set yet! Returning empty set of data ids."
+                );
+                return Ok(HashSet::new());
+            }
+        }
+        self.storage
+            .all_data_ids_from_all_epochs(&backup_type)
+            .await
+    }
+}
+
+#[cfg(feature = "non-wasm")]
 impl Storage for Vault {
     async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
@@ -215,6 +337,59 @@ impl Storage for Vault {
         let backup_type = self.get_vault_data_type(data_type)?.to_string();
         self.storage
             .delete_data(data_id, &backup_type)
+            .await
+            .map_err(|e| anyhow!("Delete failed: {e}"))
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+impl StorageExt for Vault {
+    async fn store_data_at_epoch<T: Serialize + Versionize + Named + Send + Sync>(
+        &mut self,
+        data: &T,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        let vault_data_type = self.get_vault_data_type(data_type)?.to_string();
+        match self.keychain.as_mut() {
+            Some(kcp) => {
+                let envelope = kcp
+                    .encrypt(data, data_type)
+                    .await
+                    .map_err(|e| anyhow!("Encryption failed during store: {e}"))?;
+                match envelope {
+                    EnvelopeStore::AppKeyBlob(blob) => self
+                        .storage
+                        .store_data_at_epoch(&blob, data_id, epoch_id, data_type)
+                        .await
+                        .map_err(|e| anyhow!("Key blob store failed: {e}"))?,
+                    EnvelopeStore::OperatorBackupOutput(ct) => {
+                        self.storage
+                            .store_data_at_epoch(&ct, data_id, epoch_id, &vault_data_type)
+                            .await
+                            .map_err(|e| anyhow!("Backup output store failed: {e}"))?;
+                    }
+                }
+                Ok(())
+            }
+            None => self
+                .storage
+                .store_data_at_epoch(data, data_id, epoch_id, &vault_data_type)
+                .await
+                .map_err(|e| anyhow!("Unencrypted store failed: {e}")),
+        }
+    }
+
+    async fn delete_data_at_epoch(
+        &mut self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        let backup_type = self.get_vault_data_type(data_type)?.to_string();
+        self.storage
+            .delete_data_at_epoch(data_id, epoch_id, &backup_type)
             .await
             .map_err(|e| anyhow!("Delete failed: {e}"))
     }

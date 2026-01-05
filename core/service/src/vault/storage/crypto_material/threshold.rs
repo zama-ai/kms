@@ -7,6 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 use kms_grpc::{
+    identifiers::EpochId,
     rpc_types::{KMSType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
     RequestId,
 };
@@ -22,7 +23,8 @@ use crate::{
     vault::{
         storage::{
             crypto_material::log_storage_success, store_pk_at_request_id,
-            store_versioned_at_request_id, Storage, StorageReader,
+            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id, Storage,
+            StorageExt, StorageReader,
         },
         Vault,
     },
@@ -34,14 +36,14 @@ use super::base::CryptoMaterialStorage;
 /// Cloning this object is cheap since it uses Arc internally.
 pub struct ThresholdCryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
 > {
     pub(crate) inner: CryptoMaterialStorage<PubS, PrivS>,
     /// Note that `fhe_keys` should be locked after any locking of elements in `inner`.
-    fhe_keys: Arc<RwLock<HashMap<RequestId, ThresholdFheKeys>>>,
+    fhe_keys: Arc<RwLock<HashMap<(RequestId, EpochId), ThresholdFheKeys>>>,
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
     ThresholdCryptoMaterialStorage<PubS, PrivS>
 {
     /// Create a new cached storage device for threshold KMS.
@@ -50,7 +52,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         private_storage: PrivS,
         backup_vault: Option<Vault>,
         pk_cache: HashMap<RequestId, WrappedPublicKeyOwned>,
-        fhe_keys: HashMap<RequestId, ThresholdFheKeys>,
+        fhe_keys: HashMap<(RequestId, EpochId), ThresholdFheKeys>,
     ) -> Self {
         Self {
             inner: CryptoMaterialStorage {
@@ -91,10 +93,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         CryptoMaterialStorage::<PubS, PrivS>::crs_exists(&self.inner, req_id).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn inner_write_threshold_keys(
         &self,
         reshare_id: Option<&RequestId>,
         key_id: &RequestId,
+        epoch_id: &EpochId,
         threshold_fhe_keys: ThresholdFheKeys,
         fhe_key_set: FhePubKeySet,
         info: KeyGenMetadata,
@@ -114,9 +118,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             };
 
             let f1 = async {
-                let store_result = store_versioned_at_request_id(
+                let store_result = store_versioned_at_request_and_epoch_id(
                     &mut (*priv_storage),
                     key_id,
+                    epoch_id,
                     &threshold_fhe_keys,
                     &PrivDataType::FheKeyInfo.to_string(),
                 )
@@ -182,9 +187,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             let f3 = async move {
                 match back_vault {
                     Some(mut guarded_backup_vault) => {
-                        let backup_result = store_versioned_at_request_id(
+                        let backup_result = store_versioned_at_request_and_epoch_id(
                             &mut (*guarded_backup_vault),
                             key_id,
+                            epoch_id,
                             &threshold_key_clone,
                             &PrivDataType::FheKeyInfo.to_string(),
                         )
@@ -236,7 +242,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             }
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
-                let previous = guarded_fhe_keys.insert(*key_id, threshold_fhe_keys);
+                let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);
                 if previous.is_some() {
                     tracing::warn!(
                         "Threshold FHE keys already exist in cache for {}, overwriting",
@@ -256,14 +262,17 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 "Failed to ensure existence of threshold key material for Key with ID: {}",
                 key_id
             );
-            self.purge_key_material(key_id, guarded_meta_storage).await;
+            self.purge_key_material(key_id, epoch_id, guarded_meta_storage)
+                .await;
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn write_threshold_keys_with_reshare_meta_store(
         &self,
         reshare_id: &RequestId,
         key_id: &RequestId,
+        epoch_id: &EpochId,
         threshold_fhe_keys: ThresholdFheKeys,
         fhe_key_set: FhePubKeySet,
         info: KeyGenMetadata,
@@ -272,6 +281,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         self.inner_write_threshold_keys(
             Some(reshare_id),
             key_id,
+            epoch_id,
             threshold_fhe_keys,
             fhe_key_set,
             info,
@@ -288,6 +298,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     pub async fn write_threshold_keys_with_dkg_meta_store(
         &self,
         key_id: &RequestId,
+        epoch_id: &EpochId,
         threshold_fhe_keys: ThresholdFheKeys,
         fhe_key_set: FhePubKeySet,
         info: KeyGenMetadata,
@@ -296,6 +307,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         self.inner_write_threshold_keys(
             None,
             key_id,
+            epoch_id,
             threshold_fhe_keys,
             fhe_key_set,
             info,
@@ -312,11 +324,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     pub async fn read_guarded_threshold_fhe_keys(
         &self,
         req_id: &RequestId, // TODO(#2849) change to keyid
-    ) -> anyhow::Result<OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>>
-    {
+        epoch_id: &EpochId,
+    ) -> anyhow::Result<
+        OwnedRwLockReadGuard<HashMap<(RequestId, EpochId), ThresholdFheKeys>, ThresholdFheKeys>,
+    > {
         // First try to read from cache
         match CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
             req_id,
+            epoch_id,
             self.fhe_keys.clone(),
         )
         .await
@@ -324,10 +339,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             Ok(guarded_keys) => Ok(guarded_keys),
             Err(_) => {
                 // Refresh the cache if the first read was an error
-                self.refresh_threshold_fhe_keys(req_id).await?;
+                self.refresh_threshold_fhe_keys(req_id, epoch_id).await?;
                 // Retry reading after the refresh
                 CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
                     req_id,
+                    epoch_id,
                     self.fhe_keys.clone(),
                 )
                 .await
@@ -336,8 +352,19 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     }
 
     /// Check if the threshold FHE keys exist in the storage.
-    pub async fn threshold_fhe_keys_exists(&self, req_id: &RequestId) -> anyhow::Result<bool> {
-        CryptoMaterialStorage::<PubS, PrivS>::threshold_fhe_keys_exist(&self.inner, req_id).await
+    ///
+    /// The `epoch_id` identifies the epoch that the secret FHE key share belongs to.
+    pub async fn threshold_fhe_keys_exists(
+        &self,
+        req_id: &RequestId,
+        epoch_id: &EpochId,
+    ) -> anyhow::Result<bool> {
+        CryptoMaterialStorage::<PubS, PrivS>::threshold_fhe_keys_exist(
+            &self.inner,
+            req_id,
+            epoch_id,
+        )
+        .await
     }
 
     /// Refresh the key materials for decryption in the threshold case.
@@ -346,28 +373,36 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     /// The object [ThresholdFheKeys] is big so
     /// we return a lock guard instead of the whole object.
     ///
+    /// The `epoch_id` identifies the epoch that the secret FHE key share belongs to.
+    ///
     /// Developers: try not to interleave calls to [refresh_threshold_fhe_keys]
     /// with calls to [read_threshold_fhe_keys] on the same tokio task
     /// since it's easy to deadlock, it's a consequence of RwLocks.
     /// see https://docs.rs/tokio/latest/tokio/sync/struct.RwLock.html#method.read_owned
-    pub async fn refresh_threshold_fhe_keys(&self, req_id: &RequestId) -> anyhow::Result<()> {
-        CryptoMaterialStorage::<PubS, PrivS>::refresh_crypto_material::<ThresholdFheKeys, _>(
+    pub async fn refresh_threshold_fhe_keys(
+        &self,
+        req_id: &RequestId,
+        epoch_id: &EpochId,
+    ) -> anyhow::Result<()> {
+        CryptoMaterialStorage::<PubS, PrivS>::refresh_fhe_private_material::<ThresholdFheKeys, _>(
             self.fhe_keys.clone(),
             req_id,
+            epoch_id,
             self.inner.private_storage.clone(),
         )
         .await
     }
 
-    /// Tries to delete all the types of key material related to a specific [RequestId].
+    /// Tries to delete all the types of key material related to a specific [RequestId] and [EpochId].
     /// WARNING: This also deletes the BACKUP of the keys. Hence the method should should only be used as cleanup after a failed DKG.
     pub async fn purge_key_material(
         &self,
         req_id: &RequestId,
+        epoch_id: &EpochId,
         guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
     ) {
         self.inner
-            .purge_key_material(req_id, KMSType::Threshold, guarded_meta_store)
+            .purge_key_material(req_id, epoch_id, KMSType::Threshold, guarded_meta_store)
             .await
     }
 
@@ -412,7 +447,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 }
 
 // we need to manually implement clone, see  https://github.com/rust-lang/rust/issues/26925
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> Clone
+impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static> Clone
     for ThresholdCryptoMaterialStorage<PubS, PrivS>
 {
     fn clone(&self) -> Self {
@@ -422,7 +457,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         }
     }
 }
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static>
     From<&ThresholdCryptoMaterialStorage<PubS, PrivS>> for CryptoMaterialStorage<PubS, PrivS>
 {
     fn from(value: &ThresholdCryptoMaterialStorage<PubS, PrivS>) -> Self {
