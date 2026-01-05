@@ -62,9 +62,9 @@ jobs:
           echo "PR labels: $PR_LABELS"
           DEPLOYMENT_TYPE=$(echo "$PR_LABELS" | jq -r '.[] | select(startswith("pr-preview-"))' | head -n 1 | sed 's/.*-//')
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            NB_KMS_PARTIES: '4'
+            NB_KMS_PARTIES='4'
           elif [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-            NB_KMS_PARTIES: '1'
+            NB_KMS_PARTIES='1'
           fi
           echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}" >> "$GITHUB_ENV"
           echo "NB_KMS_PARTIES=${NB_KMS_PARTIES}" >> "$GITHUB_ENV"
@@ -82,7 +82,7 @@ jobs:
           password: ${{ secrets.ZWS_BOT_TOKEN }}
 
       - name: Handle pre-built images
-        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'centralizedWithEnclave' }}
+        if: "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave"
         env:
           JQ_VERSION: 1.8.1
         run: |
