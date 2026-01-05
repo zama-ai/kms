@@ -76,7 +76,7 @@ pub const ERR_NOT_FOUND: &str = "not_found";
 pub const ERR_INTERNAL: &str = "internal_error";
 pub const ERR_UNAVAILABLE: &str = "unavailable";
 pub const ERR_OTHER: &str = "other";
-// Specific non-grpc error used to indicate that failure happened in an async task, after a request has been returned
+/// Specific non-grpc error used to indicate that failure happened in an async task, after a request has been returned
 pub const ERR_ASYNC: &str = "async_call_error";
 
 // Common operation type values

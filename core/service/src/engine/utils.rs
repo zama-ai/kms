@@ -65,29 +65,32 @@ where
 /// MetricedError wraps an internal error with additional context for metrics and logging.
 /// The struct is used to ensure that appropriate metrics are incremented and errors are logged
 /// consistently across different operations.
+///
+/// In case a MetricedError is dropped without being converted into a tonic::Status,
+/// the Drop implementation will increment the appropriate error metric and log an error message.
+///
 /// # Fields
 /// * `op_metric` - The operation metric name associated with the error
 /// * `request_id` - Optional RequestId associated with the error
-/// * `internal_error` - The internal error being wrapped
+/// * `internal_error` - The internal error being handled
 /// * `error_code` - The tonic::Code representing the gRPC error code
-/// * `counted` - A boolean flag indicating whether the error has already been counted in metrics
+/// * `returned` - A boolean flag indicating whether the error has already been counted in metrics
 #[derive(Debug)]
 pub struct MetricedError {
     op_metric: &'static str,
     request_id: Option<RequestId>,
-    // Currently we do not return the internal error to the client
-    #[expect(unused)]
     internal_error: Box<dyn std::error::Error + Send + Sync>,
     error_code: tonic::Code,
-    counted: bool,
+    returned: bool,
 }
 
 impl MetricedError {
-    /// Create a new MetricedError, logging the error and incrementing metrics if it gets converted into a tonic error using the `From` trait.
+    /// Create a new MetricedError wrapping the given MetricedError and gRPC error code.
+    ///
     /// # Arguments
     /// * `op_metric` - The operation metric name associated with the error
     /// * `request_id` - Optional RequestId associated with the error
-    /// * `internal_error` - The internal error being wrapped
+    /// * `internal_error` - The internal error being handled
     /// * `error_code` - The tonic::Code representing the gRPC error code
     pub fn new<E: Into<Box<dyn std::error::Error + Send + Sync>>>(
         op_metric: &'static str,
@@ -95,26 +98,12 @@ impl MetricedError {
         internal_error: E,
         error_code: tonic::Code,
     ) -> Self {
-        let error = internal_error.into(); // converts anyhow::Error or any other error
-        let error_string = format!(
-            "Grpc failure on requestID {} with metric {}. Error: {}",
-            request_id.unwrap_or_default(),
-            op_metric,
-            error
-        );
-
-        tracing::error!(
-            error = ?error,
-            request_id = ?request_id,
-            "Grpc error {error_string}",
-        );
-
         Self {
             op_metric,
             request_id,
-            internal_error: error,
+            internal_error: internal_error.into(),
             error_code,
-            counted: false,
+            returned: false,
         }
     }
 
@@ -124,47 +113,62 @@ impl MetricedError {
         self.error_code
     }
 
-    /// Helper function to log the error and increment metrics in places where no error return is possible.
-    /// More specifically this is to be utilized in the async execution of KMS service commands where errors cannot be returned.
+    /// Handles an error that cannot be returned through gRPC by logging the error and incrementing metrics.
+    /// This is _not_ indempotent and should only be called once per error.
     ///
-    /// Arguments:
+    /// # Arguments
     /// * `op_metric` - The operation metric name associated with the error
     /// * `request_id` - Optional RequestId associated with the error
-    /// * `internal_error` - The internal error being handled
-    ///   Returns:
-    /// * Box<dyn std::error::Error + Send + Sync> - The boxed internal error after logging and metric incrementing
+    /// * `internal_error` - The internal error being wrapped
     pub fn handle_unreturnable_error<E: Into<Box<dyn std::error::Error + Send + Sync>>>(
         op_metric: &'static str,
         request_id: Option<RequestId>,
         internal_error: E,
-    ) -> Box<dyn std::error::Error + Send + Sync> {
+    ) {
         let error = internal_error.into(); // converts anyhow::Error or any other error
         let error_string = format!(
-            "Async failure on requestID {} with metric {}. Error: {}",
-            request_id.unwrap_or_default(),
-            op_metric,
-            error
+            "Failure on requestID {:?} with metric {}. Error: {}",
+            request_id, op_metric, error
         );
 
-        tracing::error!(
-            error = ?error,
-            request_id = ?request_id,
-            "Async error {error_string}",
-        );
+        tracing::error!(error_string);
 
         // Increment the method specific metric
         METRICS.increment_error_counter(op_metric, ERR_ASYNC);
-        error
+    }
+
+    fn handle_error(&mut self) {
+        // Ensure that we only handle the error once
+        if !self.returned {
+            self.returned = true;
+            // Increment the method specific metric
+            METRICS.increment_error_counter(
+                self.op_metric,
+                map_tonic_code_to_metric_err_tag(self.error_code),
+            );
+            let error_string = format!(
+                "Grpc failure on requestID {} with metric {} and error code {}. Error message: {}",
+                self.request_id.unwrap_or_default(),
+                self.op_metric,
+                self.error_code,
+                self.internal_error
+            );
+
+            tracing::error!(error_string);
+        }
     }
 }
 
 impl Drop for MetricedError {
     fn drop(&mut self) {
-        if !self.counted {
-            // Increment the method specific metric
-            METRICS.increment_error_counter(
+        if !self.returned {
+            self.handle_error();
+            // Print an error since a returnable error was dropped without being returned
+            tracing::error!(
+                "MetricedError for requestID {} with metric {} for error {} was dropped without being returned.",
+                self.request_id.unwrap_or_default(),
                 self.op_metric,
-                map_tonic_code_to_metric_err_tag(self.error_code),
+                self.error_code
             );
         }
     }
@@ -172,19 +176,64 @@ impl Drop for MetricedError {
 
 impl From<MetricedError> for Status {
     fn from(mut metriced_error: MetricedError) -> Self {
-        // Increment the method specific metric
-        METRICS.increment_error_counter(
-            metriced_error.op_metric,
-            map_tonic_code_to_metric_err_tag(metriced_error.error_code),
-        );
-        metriced_error.counted = true;
-
+        metriced_error.handle_error();
         let error_string = top_1k_chars(format!(
-            "Failed on requestID {} with metric {}",
-            metriced_error.request_id.unwrap_or_default(),
-            metriced_error.op_metric,
+            "Failed on requestID {:?} with metric {}",
+            metriced_error.request_id, metriced_error.op_metric,
         ));
+        let status = tonic::Status::new(metriced_error.error_code, error_string);
+        status
+    }
+}
+// Add tests
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        tonic::Status::new(metriced_error.error_code, error_string)
+    #[test]
+    fn test_metriced_error_creation() {
+        let error = MetricedError::new(
+            "test_op",
+            Some(RequestId::zeros()),
+            anyhow::anyhow!("test error"),
+            tonic::Code::Internal,
+        );
+        assert_eq!(error.code(), tonic::Code::Internal);
+
+        let status: Status = error.into();
+        assert!(status.message().contains("test_op"));
+        assert!(status.message().contains("test error"));
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn test_metriced_error_drop_logging() {
+        let error = MetricedError::new(
+            "test_op_drop",
+            Some(RequestId::zeros()),
+            anyhow::anyhow!("dropped error"),
+            tonic::Code::Internal,
+        );
+        drop(error);
+        // Check that the log contains the error message about being dropped without being returned
+        assert!(logs_contain("dropped without being returned"));
+        // Check that the error is indeed logged
+        assert!(logs_contain("Grpc failure on requestID"));
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn test_metriced_error_no_dropping() {
+        let error = MetricedError::new(
+            "test_no_drop",
+            Some(RequestId::zeros()),
+            anyhow::anyhow!("dropped error"),
+            tonic::Code::Internal,
+        );
+        let _status: Status = error.into();
+        // Check that the log does NOT contains the error message about being dropped without being returned
+        assert!(!logs_contain("dropped without being returned"));
+        // Check that the error is indeed logged
+        assert!(logs_contain("Grpc failure on requestID"));
     }
 }

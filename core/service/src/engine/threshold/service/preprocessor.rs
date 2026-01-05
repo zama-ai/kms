@@ -39,7 +39,7 @@ use crate::{
         base::{compute_external_signature_preprocessing, retrieve_parameters, BaseKmsStruct},
         keyset_configuration::preproc_proto_to_keyset_config,
         threshold::{service::session::ImmutableSessionMaker, traits::KeyGenPreprocessor},
-        utils::MetricedError,
+        utils::{MetricedError, },
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
