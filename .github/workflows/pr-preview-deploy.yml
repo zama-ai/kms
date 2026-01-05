@@ -82,7 +82,7 @@ jobs:
           password: ${{ secrets.ZWS_BOT_TOKEN }}
 
       - name: Handle pre-built images
-        if: "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave"
+        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'centralizedWithEnclave' }}
         env:
           JQ_VERSION: 1.8.1
         run: |
