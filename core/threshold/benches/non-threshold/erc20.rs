@@ -9,13 +9,11 @@ mod utilities;
 use crate::utilities::set_plan;
 use aes_prng::AesRng;
 #[cfg(not(feature = "measure_memory"))]
-use criterion::{measurement::WallTime, BenchmarkGroup, Criterion};
+use criterion::Criterion;
 use rand::prelude::*;
 use tfhe::{prelude::*, CompactPublicKey, ReRandomizationContext};
 use tfhe::{set_server_key, ClientKey, FheUint64, ServerKey};
 use utilities::ALL_PARAMS;
-#[cfg(not(feature = "measure_memory"))]
-use x509_parser::public_key;
 
 /// This one uses overflowing sub to remove the need for comparison
 /// it also uses the 'boolean' multiplication
