@@ -36,7 +36,7 @@ jobs:
         run: |
           echo "GitHub event name: ${{ github.event_name }}"
           echo "GitHub event pull request: ${{ github.event.pull_request }}"
-          echo "GitHub event pull request labels: ${{ github.event.pull_request.labels.*.name }}"
+          echo "PR labels: ${{ toJSON(github.event.pull_request.labels.*.name) }}"
           echo "GitHub event pull request title: ${{ github.event.pull_request.title }}"
   # Initial job that determines which components have changed
   # Used by subsequent jobs to decide whether they need to run

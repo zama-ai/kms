@@ -55,7 +55,7 @@ jobs:
         run: |
           echo "PR is a PR-Preview"
           echo "PR number: ${{ github.event.pull_request.number }}"
-          echo "PR labels: ${{ join(github.event.pull_request.labels.*.name, ', ') }}"
+          echo "PR labels: ${{ toJSON(github.event.pull_request.labels.*.name) }}"
           echo "PR title: ${{ github.event.pull_request.title }}"
           echo "PR body: ${{ github.event.pull_request.body }}"
       # ======================================================================
