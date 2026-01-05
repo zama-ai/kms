@@ -101,7 +101,7 @@ jobs:
       actions: read # Required to read workflow run information
       contents: write # Required to checkout repository code
       id-token: write # Required for OIDC authentication
-      pull-requests: write # Required to create comments on pull requests
+      pull-requests: read # Required to read pull requests information
       packages: write # Required to publish Docker images
       attestations: write # Required to create build attestations
     uses: ./.github/workflows/docker-build.yml
@@ -117,6 +117,25 @@ jobs:
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  ############################################################################
+  # PR Preview Deploy Job
+  ############################################################################
+  pr-preview-deploy:
+    name: docker-build/pr-preview-deploy
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'pr-preview-')
+    needs:
+      - docker-build
+    uses: ./.github/workflows/pr-preview-deploy.yml
+    permissions:
+      pull-requests: write
+    with:
+      image_tag: ${{ needs.docker-build.outputs.image_tag }}
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
 
   ############################################################################
   # Helm chart pipeline

@@ -27,7 +27,7 @@ jobs:
       actions: read # Read workflow run information
       contents: write # Checkout repository code
       id-token: write # OIDC authentication
-      pull-requests: write # Create comments on pull requests
+      pull-requests: read # read pull requests information
       packages: write # Publish Docker images
       attestations: write # Create build attestations
     uses: ./.github/workflows/docker-build.yml
