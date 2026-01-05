@@ -122,8 +122,8 @@ jobs:
   # PR Preview Deploy Job
   ############################################################################
   pr-preview-deploy:
-    name: docker-build/pr-preview-deploy
-    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'pr-preview-')
+    name: pr-preview-deploy
+    if: github.event_name == 'pull_request' && contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-')
     needs:
       - docker-build
     uses: ./.github/workflows/pr-preview-deploy.yml

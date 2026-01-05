@@ -55,7 +55,7 @@ jobs:
       # - pr-preview-centralizedWithEnclave: centralizedWithEnclave
       # ======================================================================
       - name: Determine Deployment Type
-        if: contains(github.event.pull_request.labels.*.name, 'pr-preview-')
+        if: contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-')
         env:
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
