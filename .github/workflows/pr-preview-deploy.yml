@@ -44,20 +44,33 @@ jobs:
       KMS_CORE_IMAGE_TAG: ${{ inputs.image_tag }}
       KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.image_tag }}
       IMAGE_REPO: 'ghcr.io/zama-ai/kms'
-      DEPLOYMENT_TYPE: 'thresholdWithEnclave'
       TLS: 'true'
       FHE_PARAMS: 'Test'
-      NB_KMS_PARTIES: '4'
     steps:
-
-      - name: Check if PR is a PR-Preview
-        if: startsWith(github.event.pull_request.labels.*.name, 'pr-preview-')
+      # ======================================================================
+      # DETERMINE DEPLOYMENT TYPE:
+      # - pr-preview-threshold: threshold
+      # - pr-preview-thresholdWithEnclave: thresholdWithEnclave
+      # - pr-preview-centralized: centralized
+      # - pr-preview-centralizedWithEnclave: centralizedWithEnclave
+      # ======================================================================
+      - name: Determine Deployment Type
+        if: contains(github.event.pull_request.labels.*.name, 'pr-preview-')
+        env:
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
-          echo "PR is a PR-Preview"
-          echo "PR number: ${{ github.event.pull_request.number }}"
-          echo "PR labels: ${{ toJSON(github.event.pull_request.labels.*.name) }}"
-          echo "PR title: ${{ github.event.pull_request.title }}"
-          echo "PR body: ${{ github.event.pull_request.body }}"
+          echo "PR labels: $PR_LABELS"
+          DEPLOYMENT_TYPE=$(echo "$PR_LABELS" | jq -r '.[] | select(startswith("pr-preview-"))' | head -n 1)
+          if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            NB_KMS_PARTIES: '4'
+          elif [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+            NB_KMS_PARTIES: '1'
+          fi
+          echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}" >> "$GITHUB_ENV"
+          echo "NB_KMS_PARTIES=${NB_KMS_PARTIES}" >> "$GITHUB_ENV"
+          echo "Deployment type: $DEPLOYMENT_TYPE"
+          echo "Number of KMS parties: $NB_KMS_PARTIES"
+
       # ======================================================================
       # DOCKER BUILD STATUS HANDLING
       # ======================================================================
@@ -69,6 +82,7 @@ jobs:
           password: ${{ secrets.ZWS_BOT_TOKEN }}
 
       - name: Handle pre-built images
+        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'centralizedWithEnclave' }}
         env:
           JQ_VERSION: 1.8.1
         run: |
@@ -132,6 +146,24 @@ jobs:
           persist-credentials: false
 
       # ======================================================================
+      # CHECK IF NAMESPACE EXISTS
+      # ======================================================================
+      - name: Check if namespace exists
+        run: |
+          if kubectl get namespace "${NAMESPACE}" > /dev/null 2>&1; then
+            echo "Namespace ${NAMESPACE} already exists"
+            echo "Destroying namespace ${NAMESPACE}..."
+            helm list -n "${NAMESPACE}" --short | xargs -L1 helm uninstall -n "${NAMESPACE}"
+            kubectl delete namespace "${NAMESPACE}" --force && \
+            kubectl proxy && \
+            kubectl get namespace "${NAMESPACE}" -o json |jq '.spec = {"finalizers":[]}' >temp.json && \
+            curl -k -H "Content-Type: application/json" -X PUT --data-binary @temp.json 127.0.0.1:8001/api/v1/namespaces/"${NAMESPACE}"/finalize && \
+            kubectl get namespace
+          else
+            echo "Namespace ${NAMESPACE} does not exist"
+          fi
+
+      # ======================================================================
       # REGISTRY & SECRETS CONFIGURATION
       # ======================================================================
       - name: Setup registry credentials secrets
@@ -167,8 +199,7 @@ jobs:
               --set publicBucketVault.labels.environment="${NAMESPACE}" \
               --set kmsParties.serviceAccountPrefixName="${NAMESPACE}" \
               --set kmsParties.publishConnectionDetailsTo.prefixName="${NAMESPACE}" \
-              --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}" \
-              --set kmsParties.enclaveNodeGroup.taint[0].value="${NAMESPACE}"
+              --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}"
 
           elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
             echo "Deploying infrastructure with enclave support with PCR0: ${{ env.PCR0 }}"
@@ -212,7 +243,7 @@ jobs:
           fi
 
       - name: Generate peers list override
-        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' }}
+        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
         run: |
           ###################################################################
           # Build peersList dynamically from NB_KMS_PARTIES for thresholdWithEnclave
@@ -236,27 +267,48 @@ jobs:
       # KMS CORE DEPLOYMENT
       # ======================================================================
       - name: Setup kms-core with ${NB_KMS_PARTIES} parties
+        env:
+          DEPLOYMENT_TYPE: ${{ env.DEPLOYMENT_TYPE }}
+          NB_KMS_PARTIES: ${{ env.NB_KMS_PARTIES }}
         run: |
           ###################################################################
           # Deploy KMS Core in threshold mode (standard)
           ###################################################################
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
             echo "Deploying KMS Core in threshold mode across ${NB_KMS_PARTIES} parties..."
+            THRESHOLD_VALUE=1
+            if [[ "${NB_KMS_PARTIES}" == "13" ]]; then
+              THRESHOLD_VALUE=4
+            elif [[ "${NB_KMS_PARTIES}" == "4" ]]; then
+              THRESHOLD_VALUE=1
+            else
+              echo "Invalid number of KMS parties: ${NB_KMS_PARTIES}"
+              exit 1
+            fi
             for i in $(seq 1 "${NB_KMS_PARTIES}"); do
               echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES}..."
               helm upgrade --install "kms-core-${i}" \
                 "./charts/kms-core" \
                 --namespace "${NAMESPACE}" \
                 --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
-                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-threshold-"${i}"-kms-ci.yaml \
-                --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-                --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+                --values /tmp/kms-peers-values.yaml \
+                --set kmsPeers.id="${i}" \
                 --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
                 --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
-                --set tolerations[0].key="app" \
+                --set kmsGenCertAndKeys.enabled=false \
+                --set kmsCore.image.name="${KMS_CORE_IMAGE_NAME}" \
+                --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+                --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
+                --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+                --set kmsCore.thresholdMode.thresholdValue="${THRESHOLD_VALUE}" \
+                --set nodeSelector.karpenter.sh/nodepool="kms-bench-spot-64" \
+                --set tolerations[0].key="karpenter.sh/nodepool" \
                 --set tolerations[0].effect="NoSchedule" \
                 --set tolerations[0].operator="Equal" \
-                --set tolerations[0].value="kms-pool"
+                --set tolerations[0].value="kms-bench-spot-64" \
+                --wait \
+                --wait-for-jobs \
+                --timeout=1200s
             done
 
           ###################################################################
@@ -269,7 +321,8 @@ jobs:
             elif [[ "${NB_KMS_PARTIES}" == "4" ]]; then
               THRESHOLD_VALUE=1
             else
-              THRESHOLD_VALUE=1
+              echo "Invalid number of KMS parties: ${NB_KMS_PARTIES}"
+              exit 1
             fi
             for i in $(seq 1 "${NB_KMS_PARTIES}"); do
               echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES} with enclave attestation..."
@@ -312,8 +365,10 @@ jobs:
               "./charts/kms-core" \
               --namespace "${NAMESPACE}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}/"kms-service/values-kms-ci.yaml \
-              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+              --set kmsCore.image.name="${KMS_CORE_IMAGE_NAME}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+              --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
+              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.serviceAccountName="${NAMESPACE}" \
               --set kmsCore.envFrom.configmap.name="${NAMESPACE}" \
               --set tolerations[0].key="app" \
@@ -330,8 +385,10 @@ jobs:
               "./charts/kms-core" \
               --namespace "${NAMESPACE}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
-              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+              --set kmsCore.image.name="${KMS_CORE_IMAGE_NAME}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
+              --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
+              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.serviceAccountName="${NAMESPACE}" \
               --set kmsCore.envFrom.configmap.name="${NAMESPACE}" \
               --set tolerations[0].key="app" \
@@ -374,6 +431,8 @@ jobs:
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
               --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
+              --set kmsCoreClient.num_majority="${NB_KMS_PARTIES == 4 ? 2 : 5}" \
+              --set kmsCoreClient.num_reconstruct="${NB_KMS_PARTIES == 4 ? 3 : 9}" \
               --wait \
               --wait-for-jobs \
               --timeout=1200s

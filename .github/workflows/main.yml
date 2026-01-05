@@ -28,21 +28,6 @@ permissions:
   packages: read # Required to read GitHub packages/container registry
 
 jobs:
-  debug:
-    name: main/debug
-    runs-on: ubuntu-latest
-    steps:
-      - name: Debug
-        env:
-          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-        run: |
-          echo "GitHub event name: ${{ github.event_name }}"
-          echo "GitHub event pull request: ${{ github.event.pull_request }}"
-          echo "PR labels: $PR_LABELS"
-          echo "GitHub event pull request title: ${{ github.event.pull_request.title }}"
-
-          PR_PREVIEW_LABEL=$(echo "$PR_LABELS" | jq -r '.[] | select(startswith("pr-preview-"))' | head -n 1)
-          echo "Found PR preview label: $PR_PREVIEW_LABEL"
   # Initial job that determines which components have changed
   # Used by subsequent jobs to decide whether they need to run
   check-changes:
