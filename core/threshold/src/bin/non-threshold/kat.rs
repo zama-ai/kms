@@ -80,12 +80,12 @@ fn read_keys(expected_params: DKGParams, storage_path: &str) -> (ClientKey, Comp
 
     assert_eq!(
         expected_params, params,
-        "Parameters read from client key KAT do not match expected parameters"
+        "❌ Parameters read from client key KAT do not match expected parameters"
     );
 
     assert_eq!(
         params, params_sk,
-        "Mismatched parameters between client and server keys"
+        "❌ Mismatched parameters between client and server keys"
     );
     (client_key, compressed_server_key)
 }
@@ -210,16 +210,16 @@ fn main() {
         assert_eq!(
             bc2wrap::serialize(&expected_client_key).unwrap(),
             bc2wrap::serialize(&client_key).unwrap(),
-            "Client key read from KAT does not match generated client key"
+            "❌ Client key read from KAT does not match generated client key"
         );
 
         assert_eq!(
             bc2wrap::serialize(&expected_compressed_server_key).unwrap(),
             bc2wrap::serialize(&compressed_server_key).unwrap(),
-            "Compressed server key read from KAT does not match generated compressed server key"
+            "❌ Compressed server key read from KAT does not match generated compressed server key"
         );
 
-        println!("Keys are identical !");
+        println!("✅ Keys are identical !");
     }
 
     set_server_key(compressed_server_key.decompress());
@@ -239,27 +239,27 @@ fn main() {
         assert_eq!(
             bc2wrap::serialize(&expected_ciphertext_43).unwrap(),
             bc2wrap::serialize(&ciphertext_43).unwrap(),
-            "Ciphertext of 43 read from KAT does not match generated ciphertext"
+            "❌ Ciphertext of 43 read from KAT does not match generated ciphertext"
         );
 
         assert_eq!(
             bc2wrap::serialize(&expected_ciphertext_4445).unwrap(),
             bc2wrap::serialize(&ciphertext_4445).unwrap(),
-            "Ciphertext of 4445 read from KAT does not match generated ciphertext"
+            "❌ Ciphertext of 4445 read from KAT does not match generated ciphertext"
         );
 
         assert_eq!(
             bc2wrap::serialize(&expected_ciphertext_add).unwrap(),
             bc2wrap::serialize(&ciphertext_add).unwrap(),
-            "Ciphertext of addition read from KAT does not match generated ciphertext"
+            "❌ Ciphertext of addition read from KAT does not match generated ciphertext"
         );
 
         assert_eq!(
             bc2wrap::serialize(&expected_ciphertext_mult).unwrap(),
             bc2wrap::serialize(&ciphertext_mult).unwrap(),
-            "Ciphertext of multiplication read from KAT does not match generated ciphertext"
+            "❌ Ciphertext of multiplication read from KAT does not match generated ciphertext"
         );
-        println!("All ciphertexts are identical !");
+        println!("✅ All ciphertexts are identical !");
     }
 
     println!("Decrypting ciphertexts and verifying results...");
@@ -270,21 +270,21 @@ fn main() {
 
     assert_eq!(
         decrypted_43, 43u64,
-        "Decryption of 43 ciphertext did not yield expected result"
+        "❌ Decryption of 43 ciphertext did not yield expected result"
     );
     assert_eq!(
         decrypted_4445, 4445u64,
-        "Decryption of 4445 ciphertext did not yield expected result"
+        "❌ Decryption of 4445 ciphertext did not yield expected result"
     );
     assert_eq!(
         decrypted_add,
         43u64 + 4445u64,
-        "Decryption of addition ciphertext did not yield expected result"
+        "❌ Decryption of addition ciphertext did not yield expected result"
     );
     assert_eq!(
         decrypted_mult,
         43u64 * 4445u64,
-        "Decryption of multiplication ciphertext did not yield expected result"
+        "❌ Decryption of multiplication ciphertext did not yield expected result"
     );
-    println!("All decrypted results are correct !");
+    println!("✅ All decrypted results are correct !");
 }
