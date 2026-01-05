@@ -2,14 +2,15 @@
   "apiVersion": "v1",
   "kind": "Namespace",
   "metadata": {
-    "creationTimestamp": "2025-12-24T09:42:44Z",
-    "deletionTimestamp": "2025-12-24T09:50:43Z",
+    "creationTimestamp": "2025-12-24T09:53:22Z",
+    "deletionTimestamp": "2026-01-05T12:47:23Z",
     "labels": {
-      "kubernetes.io/metadata.name": "kms-ci-fegmorte-350"
+      "kubernetes.io/metadata.name": "kms-ci-fegmorte-350",
+      "name": "kms-ci-fegmorte-350"
     },
     "name": "kms-ci-fegmorte-350",
-    "resourceVersion": "699218082",
-    "uid": "f183ed59-0cf6-4022-88d4-23e1b7c56bae"
+    "resourceVersion": "935043456",
+    "uid": "edafb3af-8491-4cd5-82d6-ae3124c244c8"
   },
   "spec": {
     "finalizers": []
@@ -17,38 +18,38 @@
   "status": {
     "conditions": [
       {
-        "lastTransitionTime": "2025-12-24T09:50:48Z",
+        "lastTransitionTime": "2026-01-05T12:47:28Z",
         "message": "Discovery failed for some groups, 2 failing: unable to retrieve the complete list of server APIs: cluster.loft.sh/v1: stale GroupVersion discovery: cluster.loft.sh/v1, management.loft.sh/v1: stale GroupVersion discovery: management.loft.sh/v1",
         "reason": "DiscoveryFailed",
         "status": "True",
         "type": "NamespaceDeletionDiscoveryFailure"
       },
       {
-        "lastTransitionTime": "2025-12-24T09:50:54Z",
+        "lastTransitionTime": "2026-01-05T12:47:44Z",
         "message": "All legacy kube types successfully parsed",
         "reason": "ParsedGroupVersions",
         "status": "False",
         "type": "NamespaceDeletionGroupVersionParsingFailure"
       },
       {
-        "lastTransitionTime": "2025-12-24T09:50:54Z",
+        "lastTransitionTime": "2026-01-05T12:47:44Z",
         "message": "All content successfully deleted, may be waiting on finalization",
         "reason": "ContentDeleted",
         "status": "False",
         "type": "NamespaceDeletionContentFailure"
       },
       {
-        "lastTransitionTime": "2025-12-24T09:50:54Z",
-        "message": "Some resources are remaining: kmsparties.zama.ai has 12 resource instances, s3s.zama.ai has 1 resource instances",
-        "reason": "SomeResourcesRemain",
-        "status": "True",
+        "lastTransitionTime": "2026-01-05T12:47:44Z",
+        "message": "All content successfully removed",
+        "reason": "ContentRemoved",
+        "status": "False",
         "type": "NamespaceContentRemaining"
       },
       {
-        "lastTransitionTime": "2025-12-24T09:50:54Z",
-        "message": "Some content in the namespace has finalizers remaining: finalizer.apiextensions.crossplane.io in 13 resource instances",
-        "reason": "SomeFinalizersRemain",
-        "status": "True",
+        "lastTransitionTime": "2026-01-05T12:47:44Z",
+        "message": "All content-preserving finalizers finished",
+        "reason": "ContentHasNoFinalizers",
+        "status": "False",
         "type": "NamespaceFinalizersRemaining"
       }
     ],

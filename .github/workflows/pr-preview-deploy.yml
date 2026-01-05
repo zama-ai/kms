@@ -154,10 +154,10 @@ jobs:
             echo "Namespace ${NAMESPACE} already exists"
             echo "Destroying namespace ${NAMESPACE}..."
             helm list -n "${NAMESPACE}" --short | xargs -L1 helm uninstall -n "${NAMESPACE}"
-            kubectl delete namespace "${NAMESPACE}" --force && \
-            kubectl proxy && \
-            kubectl get namespace "${NAMESPACE}" -o json |jq '.spec = {"finalizers":[]}' >temp.json && \
-            curl -k -H "Content-Type: application/json" -X PUT --data-binary @temp.json 127.0.0.1:8001/api/v1/namespaces/"${NAMESPACE}"/finalize && \
+            kubectl delete namespace "${NAMESPACE}" --grace-period=1 --timeout=5s --wait=false
+            kubectl proxy &
+            kubectl get namespace "${NAMESPACE}" -o json |jq '.spec = {"finalizers":[]}' >temp.json
+            curl -k -H "Content-Type: application/json" -X PUT --data-binary @temp.json 127.0.0.1:8001/api/v1/namespaces/"${NAMESPACE}"/finalize
             kubectl get namespace
           else
             echo "Namespace ${NAMESPACE} does not exist"
