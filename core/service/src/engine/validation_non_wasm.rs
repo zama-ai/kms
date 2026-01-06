@@ -560,6 +560,11 @@ pub(crate) fn validate_crs_gen_request(
     let req_id =
         parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
 
+    tracing::info!(
+        request_id = ?req_id,
+        "Received new crs generation request"
+    );
+
     // This verification is more strict than the checks in [compute_witness_dim] below
     // because it only allows powers of 2. But there are no strong reasons
     // to use max_num_bits that are not powers of 2 so we enforce it here.
@@ -574,9 +579,11 @@ pub(crate) fn validate_crs_gen_request(
 
     let witness_dim = compute_witness_dim(&crs_params, req.max_num_bits.map(|x| x as usize))?;
 
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // remove the default context when all of context is ready
     // context_id is not used at the moment, but we validate it if present
-    let context_id = match &req.context_id {
-        Some(ctx) => parse_proto_context_id(ctx, RequestIdParsingErr::Context)?,
+    let context_id: ContextId = match &req.context_id {
+        Some(context_id) => context_id.try_into()?,
         None => *DEFAULT_MPC_CONTEXT,
     };
 
