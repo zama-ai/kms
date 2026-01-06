@@ -411,8 +411,8 @@ jobs:
               --set kmsCoreClient.num_majority=1 \
               --set kmsCoreClient.num_reconstruct=1 \
               --set kmsCore.tolerations[0].key=app \
-              --set kmsCore.tolerations[0].effect=NoSchedule \
-              --set kmsCore.tolerations[0].operator=Equal \
+              --set kmsCore.tolerations[0].effect="NoSchedule" \
+              --set kmsCore.tolerations[0].operator="Equal" \
               --set kmsCore.tolerations[0].value="${NAMESPACE}" \
               --set kmsCoreClient.tolerations[0].key=karpenter.sh/nodepool \
               --set kmsCoreClient.tolerations[0].effect=NoSchedule \
