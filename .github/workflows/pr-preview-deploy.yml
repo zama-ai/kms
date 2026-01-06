@@ -307,7 +307,6 @@ jobs:
                 --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
                 --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
                 --set kmsCore.thresholdMode.thresholdValue="${THRESHOLD_VALUE}" \
-                --set kmsCore.nodeSelector.karpenter\.sh/nodepool=kms-bench-spot-64 \
                 --set kmsCore.tolerations[0].key="karpenter.sh/nodepool" \
                 --set kmsCore.tolerations[0].effect="NoSchedule" \
                 --set kmsCore.tolerations[0].operator="Equal" \
@@ -381,12 +380,10 @@ jobs:
               --set kmsCoreClient.envFrom.configmap.name="${NAMESPACE}" \
               --set kmsCoreClient.num_majority=1 \
               --set kmsCoreClient.num_reconstruct=1 \
-              --set kmsCore.nodeSelector.karpenter\.sh/nodepool=kms-bench-spot-64 \
               --set kmsCore.tolerations[0].key=karpenter.sh/nodepool \
               --set kmsCore.tolerations[0].effect=NoSchedule \
               --set kmsCore.tolerations[0].operator=Equal \
               --set kmsCore.tolerations[0].value=kms-bench-spot-64 \
-              --set kmsCoreClient.nodeSelector.karpenter\.sh/nodepool=zws-pool \
               --set kmsCoreClient.tolerations[0].key=karpenter.sh/nodepool \
               --set kmsCoreClient.tolerations[0].effect=NoSchedule \
               --set kmsCoreClient.tolerations[0].operator=Equal \
@@ -415,7 +412,6 @@ jobs:
               --set kmsCore.tolerations[0].effect=NoSchedule \
               --set kmsCore.tolerations[0].operator=Equal \
               --set kmsCore.tolerations[0].value="${NAMESPACE}" \
-              --set kmsCoreClient.nodeSelector.karpenter\.sh/nodepool=zws-pool \
               --set kmsCoreClient.tolerations[0].key=karpenter.sh/nodepool \
               --set kmsCoreClient.tolerations[0].effect=NoSchedule \
               --set kmsCoreClient.tolerations[0].operator=Equal \
