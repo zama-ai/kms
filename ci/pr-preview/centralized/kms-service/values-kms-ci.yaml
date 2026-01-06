@@ -7,6 +7,14 @@ kmsCore:
     enabled: false
   aws:
     region: eu-west-1
+  publicVault:
+    s3:
+      enabled: true
+      prefix:
+  privateVault:
+    s3:
+      enabled: true
+      prefix:
   storage:
     storageClassName: gp3
     capacity: 5Gi
