@@ -390,6 +390,19 @@ impl<
             // we do not need to hold the handle,
             // the result of the computation is tracked by the pub_dec_meta_store
             let session_maker = self.session_maker.clone();
+
+            let fhe_keys_rlock = crypto_storage
+                .read_guarded_threshold_fhe_keys(&key_id.into(), &epoch_id)
+                .await
+                .map_err(|e| {
+                    MetricedError::new(
+                        OP_PUBLIC_DECRYPT_INNER,
+                        Some(req_id),
+                        anyhow::anyhow!("fhe key not found due to {e:?}"),
+                        tonic::Code::NotFound,
+                    )
+                })?;
+
             let decrypt_future = || async move {
                 let fhe_type_string = typed_ciphertext.fhe_type_string();
                 let fhe_type = if let Ok(f) = typed_ciphertext.fhe_type() {
@@ -407,9 +420,6 @@ impl<
 
                 let ct_format = typed_ciphertext.ciphertext_format();
                 let ciphertext = typed_ciphertext.ciphertext;
-                let fhe_keys_rlock = crypto_storage
-                    .read_guarded_threshold_fhe_keys(&key_id.into(), &epoch_id)
-                    .await?;
 
                 let res_plaintext = match fhe_type {
                     FheTypes::Uint2048 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<

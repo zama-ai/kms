@@ -461,6 +461,41 @@ async fn write_threshold_keys_failed_storage() {
     }
 }
 
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn read_guarded_threshold_fhe_keys_not_found() {
+    let req_id = derive_request_id("read_guarded_threshold_fhe_keys_not_found").unwrap();
+    let epoch_id: EpochId = derive_request_id("read_guarded_threshold_fhe_keys_not_found_epoch")
+        .unwrap()
+        .into();
+
+    // Create a threshold storage with no keys in the cache and no keys in storage
+    let crypto_storage = ThresholdCryptoMaterialStorage::new(
+        FailingRamStorage::new(100),
+        RamStorage::new(),
+        None,
+        HashMap::new(),
+        HashMap::new(),
+    );
+
+    // Try to read a non-existent key - should return an error
+    let result = crypto_storage
+        .read_guarded_threshold_fhe_keys(&req_id, &epoch_id)
+        .await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    let expected_msg = format!(
+        "Could not find data at (FheKeyInfo, {}, {})",
+        req_id, epoch_id
+    );
+    assert!(
+        err.to_string().contains(&expected_msg),
+        "Unexpected error message: {}",
+        err
+    );
+}
+
 fn setup_threshold_store(
     req_id: &RequestId,
 ) -> (

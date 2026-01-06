@@ -539,36 +539,41 @@ impl<
         // the result of the computation is tracked the tracker
         let session_maker = self.session_maker.clone();
 
+        // Note that we'll hold a read lock for some time
+        // as it is moved into the tokio task
+        // but this should be ok since write locks
+        // happen rarely as keygen is a rare event.
+        let fhe_keys_rlock = crypto_storage
+            .read_guarded_threshold_fhe_keys(&key_id.into(), &epoch_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_USER_DECRYPT_REQUEST,
+                    Some(req_id),
+                    anyhow::anyhow!("fhe key not found due to {e:?}"),
+                    tonic::Code::NotFound,
+                )
+            })?;
+
         let inner_dec_future = move |_permit| async move {
             // Capture the timer, it is stopped when it's dropped
             let _timer = timer;
 
-            // Note that we'll hold a read lock for some time
-            // but this should be ok since write locks
-            // happen rarely as keygen is a rare event.
-            let fhe_keys_rlock = crypto_storage
-                .read_guarded_threshold_fhe_keys(&key_id.into(), &epoch_id)
-                .await;
-            let result = match fhe_keys_rlock {
-                Ok(k) => {
-                    Self::inner_user_decrypt(
-                        &req_id,
-                        session_maker,
-                        context_id,
-                        epoch_id,
-                        rng,
-                        typed_ciphertexts,
-                        link,
-                        signcryption_key,
-                        k,
-                        dec_mode,
-                        &domain,
-                        metric_tags,
-                    )
-                    .await
-                }
-                Err(e) => Err(e),
-            };
+            let result = Self::inner_user_decrypt(
+                &req_id,
+                session_maker,
+                context_id,
+                epoch_id,
+                rng,
+                typed_ciphertexts,
+                link,
+                signcryption_key,
+                fhe_keys_rlock,
+                dec_mode,
+                &domain,
+                metric_tags,
+            )
+            .await;
             update_req_in_meta_store(
                 &mut meta_store.write().await,
                 &req_id,

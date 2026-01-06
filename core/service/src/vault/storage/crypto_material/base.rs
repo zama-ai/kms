@@ -214,23 +214,6 @@ where
         .await
     }
 
-    /// Check if threshold FHE keys exist.
-    ///
-    /// The `epoch_id` identifies the epoch that the secret key belongs to.
-    pub async fn threshold_fhe_keys_exist(
-        &self,
-        key_id: &RequestId,
-        epoch_id: &EpochId,
-    ) -> anyhow::Result<bool> {
-        self.data_exists_at_epoch(
-            key_id,
-            epoch_id,
-            &PubDataType::PublicKey.to_string(),
-            &PrivDataType::FheKeyInfo.to_string(),
-        )
-        .await
-    }
-
     /// Check if CRS exists
     pub async fn crs_exists(&self, crs_handle: &RequestId) -> anyhow::Result<bool> {
         self.data_exists(
