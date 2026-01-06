@@ -59,7 +59,7 @@ use crate::{
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
     },
     engine::{
-        base::{deserialize_to_low_level, BaseKmsStruct, KeyGenMetadata, UserDecryptCallValues},
+        base::{deserialize_to_low_level, BaseKmsStruct, UserDecryptCallValues},
         threshold::{service::session::ImmutableSessionMaker, traits::UserDecryptor},
         traits::BaseKms,
         utils::MetricedError,
@@ -144,7 +144,6 @@ pub struct RealUserDecryptor<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub user_decrypt_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
-    pub key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
@@ -399,7 +398,6 @@ impl<
         pub_storage: PubS,
         priv_storage: PrivS,
         session_maker: ImmutableSessionMaker,
-        key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) -> Self {
         let crypto_storage = ThresholdCryptoMaterialStorage::new(
             pub_storage,
@@ -416,7 +414,6 @@ impl<
             base_kms,
             crypto_storage,
             user_decrypt_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-            key_meta_store,
             session_maker,
             tracker,
             rate_limiter,
@@ -717,18 +714,10 @@ mod tests {
         pub async fn init_test_dummy_decryptor(
             base_kms: BaseKmsStruct,
             session_maker: ImmutableSessionMaker,
-            key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(
-                base_kms,
-                pub_storage,
-                priv_storage,
-                session_maker,
-                key_meta_store,
-            )
-            .await
+            Self::init_test(base_kms, pub_storage, priv_storage, session_maker).await
         }
     }
 
@@ -770,12 +759,9 @@ mod tests {
         key_store.insert(&key_id).unwrap();
         let key_meta_store = Arc::new(RwLock::new(key_store));
 
-        let user_decryptor = RealUserDecryptor::init_test_dummy_decryptor(
-            base_kms,
-            session_maker.make_immutable(),
-            Arc::clone(&key_meta_store),
-        )
-        .await;
+        let user_decryptor =
+            RealUserDecryptor::init_test_dummy_decryptor(base_kms, session_maker.make_immutable())
+                .await;
 
         // make a dummy private keyset
         let (threshold_fhe_keys, fhe_key_set) =

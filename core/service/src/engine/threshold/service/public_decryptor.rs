@@ -50,7 +50,7 @@ use crate::{
     cryptography::internal_crypto_types::LegacySerialization,
     engine::{
         base::{
-            compute_external_pt_signature, deserialize_to_low_level, BaseKmsStruct, KeyGenMetadata,
+            compute_external_pt_signature, deserialize_to_low_level, BaseKmsStruct,
             PubDecCallValues,
         },
         threshold::{service::session::ImmutableSessionMaker, traits::PublicDecryptor},
@@ -135,7 +135,6 @@ pub struct RealPublicDecryptor<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
-    pub key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
@@ -804,7 +803,6 @@ mod tests {
             pub_storage: PubS,
             priv_storage: PrivS,
             session_maker: ImmutableSessionMaker,
-            key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         ) -> Self {
             let crypto_storage = ThresholdCryptoMaterialStorage::new(
                 pub_storage,
@@ -821,7 +819,6 @@ mod tests {
                 base_kms,
                 crypto_storage,
                 pub_dec_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-                key_meta_store,
                 session_maker,
                 tracker,
                 rate_limiter,
@@ -843,18 +840,10 @@ mod tests {
         async fn init_test_dummy_decryptor(
             base_kms: BaseKmsStruct,
             session_maker: ImmutableSessionMaker,
-            key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(
-                base_kms,
-                pub_storage,
-                priv_storage,
-                session_maker,
-                key_meta_store,
-            )
-            .await
+            Self::init_test(base_kms, pub_storage, priv_storage, session_maker).await
         }
     }
 
@@ -915,7 +904,6 @@ mod tests {
         let public_decryptor = RealPublicDecryptor::init_test_dummy_decryptor(
             base_kms,
             session_maker.make_immutable(),
-            Arc::clone(&key_meta_store),
         )
         .await;
 
