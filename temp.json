@@ -2,57 +2,20 @@
   "apiVersion": "v1",
   "kind": "Namespace",
   "metadata": {
-    "creationTimestamp": "2026-01-05T20:14:35Z",
-    "deletionTimestamp": "2026-01-05T20:59:32Z",
+    "creationTimestamp": "2026-01-06T09:09:08Z",
+    "deletionTimestamp": "2026-01-06T09:22:06Z",
     "labels": {
       "kubernetes.io/metadata.name": "kms-ci-fegmorte-350",
       "name": "kms-ci-fegmorte-350"
     },
     "name": "kms-ci-fegmorte-350",
-    "resourceVersion": "941894568",
-    "uid": "178579bb-0c8f-4f77-8d24-876c6567ef29"
+    "resourceVersion": "952200548",
+    "uid": "070199f8-9e9f-47c1-ae05-9f464efd07f6"
   },
   "spec": {
     "finalizers": []
   },
   "status": {
-    "conditions": [
-      {
-        "lastTransitionTime": "2026-01-05T20:59:37Z",
-        "message": "Discovery failed for some groups, 2 failing: unable to retrieve the complete list of server APIs: cluster.loft.sh/v1: stale GroupVersion discovery: cluster.loft.sh/v1, management.loft.sh/v1: stale GroupVersion discovery: management.loft.sh/v1",
-        "reason": "DiscoveryFailed",
-        "status": "True",
-        "type": "NamespaceDeletionDiscoveryFailure"
-      },
-      {
-        "lastTransitionTime": "2026-01-05T20:59:51Z",
-        "message": "All legacy kube types successfully parsed",
-        "reason": "ParsedGroupVersions",
-        "status": "False",
-        "type": "NamespaceDeletionGroupVersionParsingFailure"
-      },
-      {
-        "lastTransitionTime": "2026-01-05T20:59:51Z",
-        "message": "All content successfully deleted, may be waiting on finalization",
-        "reason": "ContentDeleted",
-        "status": "False",
-        "type": "NamespaceDeletionContentFailure"
-      },
-      {
-        "lastTransitionTime": "2026-01-05T21:00:21Z",
-        "message": "All content successfully removed",
-        "reason": "ContentRemoved",
-        "status": "False",
-        "type": "NamespaceContentRemaining"
-      },
-      {
-        "lastTransitionTime": "2026-01-05T20:59:51Z",
-        "message": "All content-preserving finalizers finished",
-        "reason": "ContentHasNoFinalizers",
-        "status": "False",
-        "type": "NamespaceFinalizersRemaining"
-      }
-    ],
     "phase": "Terminating"
   }
 }
