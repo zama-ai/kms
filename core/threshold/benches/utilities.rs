@@ -43,6 +43,7 @@ pub fn bench_memory<
     input: I,
     bench_name: String,
 ) {
+    eprintln!("Measuring memory usage for {bench_name}...");
     let mut results = Vec::new();
 
     for _ in 0..10 {
