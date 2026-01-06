@@ -2,7 +2,7 @@ version: v2beta1
 name: kmsgit
 
 vars:
-  RUST_IMAGE_VERSION: "$(cat toolchain.txt)"
+  RUST_IMAGE_VERSION: "$(grep 'channel' rust-toolchain.toml | awk -F' = ' '{print $2}' | tr -d '\"')"
 
 # localRegistry:
 #   enabled: true

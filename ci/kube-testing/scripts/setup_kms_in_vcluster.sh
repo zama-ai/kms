@@ -40,7 +40,7 @@ NUM_PARTIES="${NUM_PARTIES:-$([ "${DEPLOYMENT_TYPE}" = "centralized" ] && echo "
 KUBE_CONFIG="${HOME}/.kube/config"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-RUST_IMAGE_VERSION="$(cat ${REPO_ROOT}/toolchain.txt)"
+RUST_IMAGE_VERSION="$(grep 'channel' "${REPO_ROOT}/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
 CLEANUP=false
 BUILD=false
 LOCAL=false

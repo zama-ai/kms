@@ -28,7 +28,7 @@ jobs:
         env:
           GH_WORKSPACE: ${{ github.workspace }}
         run: |
-          version="$(cat "$GH_WORKSPACE/toolchain.txt")"
+          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "Required version: $version"
           stable_version="$(rustc --version)"
           echo "Latest stable version: $stable_version"
@@ -36,6 +36,6 @@ jobs:
             echo "Rust version is correct"
           else
             echo ":crab: **New Stable Rust version is available: $stable_version** :crab:" >> "$GITHUB_STEP_SUMMARY"
-            echo "Please update the toolchain.txt and the .env files with the new version" >> "$GITHUB_STEP_SUMMARY"
+            echo "Please update the rust-toolchain.toml and the .env files with the new version" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
