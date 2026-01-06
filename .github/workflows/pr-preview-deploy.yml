@@ -400,6 +400,7 @@ jobs:
               "./charts/kms-core" \
               --namespace "${NAMESPACE}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
+              --set kmsPeers.id="1" \
               --set kmsCore.image.name="${KMS_CORE_IMAGE_NAME}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
               --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
