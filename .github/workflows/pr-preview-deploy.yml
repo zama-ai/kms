@@ -165,8 +165,10 @@ jobs:
             kubectl wait --for=delete namespace/"${NAMESPACE}" --timeout=60s
             echo "Namespace ${NAMESPACE} destroyed"
             kubectl get namespace
+            kubectl create namespace "${NAMESPACE}"
           else
             echo "Namespace ${NAMESPACE} does not exist"
+            kubectl create namespace "${NAMESPACE}"
           fi
 
       # ======================================================================
