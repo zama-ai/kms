@@ -268,7 +268,7 @@ jobs:
       # ======================================================================
       # KMS CORE DEPLOYMENT
       # ======================================================================
-      - name: Setup kms-core with ${NB_KMS_PARTIES} parties
+      - name: Setup kms-core
         env:
           DEPLOYMENT_TYPE: ${{ env.DEPLOYMENT_TYPE }}
           NB_KMS_PARTIES: ${{ env.NB_KMS_PARTIES }}
