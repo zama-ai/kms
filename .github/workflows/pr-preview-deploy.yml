@@ -4,22 +4,22 @@
 name: pr-preview-deploy
 
 on:
-  # pull_request:
-  workflow_call:
-    inputs:
-      image_tag:
-        description: 'Image tag'
-        required: true
-        type: string
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN:
-        required: true
-      ZWS_BOT_TOKEN:
-        required: true
-      TS_OAUTH_CLIENT_ID:
-        required: true
-      TS_OAUTH_SECRET:
-        required: true
+  pull_request:
+  # workflow_call:
+  #   inputs:
+  #     image_tag:
+  #       description: 'Image tag'
+  #       required: true
+  #       type: string
+  #   secrets:
+  #     BLOCKCHAIN_ACTIONS_TOKEN:
+  #       required: true
+  #     ZWS_BOT_TOKEN:
+  #       required: true
+  #     TS_OAUTH_CLIENT_ID:
+  #       required: true
+  #     TS_OAUTH_SECRET:
+  #       required: true
 
 permissions: {}
 
@@ -41,8 +41,8 @@ jobs:
       SYNC_SECRETS_CHART_VERSION: '0.2.1'
       KMS_CORE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service-enclave'
       KMS_CORE_CLIENT_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-client'
-      KMS_CORE_IMAGE_TAG: ${{ inputs.image_tag }}
-      KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.image_tag }}
+      KMS_CORE_IMAGE_TAG: 740c54e # ${{ inputs.image_tag }}
+      KMS_CORE_CLIENT_IMAGE_TAG: 740c54e # ${{ inputs.image_tag }}
       IMAGE_REPO: 'ghcr.io/zama-ai/kms'
       TLS: 'true'
       FHE_PARAMS: 'Test'
