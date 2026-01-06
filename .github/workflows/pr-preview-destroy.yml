@@ -13,39 +13,12 @@ permissions: {}
 
 jobs:
   ############################################################################
-  # Scheduled Job
-  ############################################################################
-  scheduled-destroy:
-    if: github.event_name == 'schedule'
-    name: find-namespaces-to-destroy
-    runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=false
-    outputs:
-      namespaces: ${{ steps.find-namespaces-to-destroy.outputs.namespaces }}
-    steps:
-      - name: Find namespaces to destroy
-        id: find-namespaces-to-destroy
-        run: |
-          echo "Finding namespaces to destroy..."
-          echo "namespaces=$(kubectl get namespaces -o json | jq -r '.items[] | select(.metadata.name | startswith("kms-ci-")) | .metadata.name')" >> "$GITHUB_OUTPUT"
-      - name: Destroy namespaces
-        run: |
-          echo "Destroying namespaces: ${{ steps.find-namespaces-to-destroy.outputs.namespaces }}"
-          for namespace in ${{ steps.find-namespaces-to-destroy.outputs.namespaces }}; do
-            echo "Destroying namespace: $namespace"
-            helm list -n "${namespace}" --short | xargs -L1 helm uninstall -n "${namespace}"
-            kubectl delete namespace "${namespace}" --grace-period=1 --timeout=5s --wait=false
-            echo "Waiting for namespace to be destroyed..."
-            kubectl wait --for=delete namespace/"${namespace}" --timeout=120s
-            echo "Namespace ${namespace} destroyed"
-          done
-
-  ############################################################################
   # PR Preview Destroy Job
   ############################################################################
   pr-preview-destroy:
     name: pr-preview-destroy
     if: >-
-      github.event_name == 'pull_request' &&
+      (github.event_name == 'schedule' || github.event_name == 'pull_request') &&
       (github.event.action == 'unlabeled' && contains(github.event.label.name, 'pr-preview-')) ||
       (github.event.action == 'closed' && contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-'))
     runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=false
@@ -63,7 +36,12 @@ jobs:
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:${NAMESPACE}
+          tags: tag:kms-ci
+
+      - name: Setup helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          export PATH=$PATH:/usr/local/bin
 
       - name: setup kubectl
         uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
@@ -80,14 +58,41 @@ jobs:
           tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
 
       - name: Destroy namespace
+        if: github.event_name != 'schedule'
         run: |
           ###################################################################
           # Destroy namespace
           ###################################################################
-          echo "Destroying namespace ${NAMESPACE}..."
-          helm list -n "${NAMESPACE}" --short | xargs -L1 helm uninstall -n "${NAMESPACE}"
-          kubectl delete namespace "${NAMESPACE}" --grace-period=1 --timeout=5s --wait=false
-          echo "Waiting for namespace to be destroyed..."
-          kubectl wait --for=delete namespace/"${NAMESPACE}" --timeout=120s
-          echo "Namespace ${NAMESPACE} destroyed"
-          kubectl get namespace
+          if kubectl get namespace "${NAMESPACE}" > /dev/null 2>&1; then
+            echo "Namespace ${NAMESPACE} exists"
+            echo "Destroying namespace ${NAMESPACE}..."
+            helm list -n "${NAMESPACE}" --short | xargs -L1 helm uninstall -n "${NAMESPACE}"
+            kubectl delete namespace "${NAMESPACE}" --grace-period=1 --timeout=5s --wait=false
+            echo "Waiting for namespace to be destroyed..."
+            kubectl wait --for=delete namespace/"${NAMESPACE}" --timeout=120s
+            echo "Namespace ${NAMESPACE} destroyed"
+            kubectl get namespace
+          else
+            echo "Namespace ${NAMESPACE} does not exist"
+            exit 0
+          fi
+
+      - name: Find namespaces to destroy
+        if: github.event_name == 'schedule'
+        id: find-namespaces-to-destroy
+        run: |
+          echo "Finding namespaces to destroy..."
+          echo "namespaces=$(kubectl get namespaces -o json | jq -r '.items[] | select(.metadata.name | startswith("kms-ci-")) | .metadata.name')" >> "$GITHUB_OUTPUT"
+
+      - name: Destroy namespaces
+        if: github.event_name == 'schedule'
+        run: |
+          echo "Destroying namespaces: ${{ steps.find-namespaces-to-destroy.outputs.namespaces }}"
+          for namespace in ${{ steps.find-namespaces-to-destroy.outputs.namespaces }}; do
+            echo "Destroying namespace: $namespace"
+            helm list -n "${namespace}" --short | xargs -L1 helm uninstall -n "${namespace}"
+            kubectl delete namespace "${namespace}" --grace-period=1 --timeout=5s --wait=false
+            echo "Waiting for namespace to be destroyed..."
+            kubectl wait --for=delete namespace/"${namespace}" --timeout=120s
+            echo "Namespace ${namespace} destroyed"
+          done
