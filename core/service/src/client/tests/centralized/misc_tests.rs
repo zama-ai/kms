@@ -122,6 +122,7 @@ async fn test_central_close_after_drop() {
 async fn test_largecipher() {
     use crate::{
         consts::DEFAULT_CENTRAL_KEY_ID,
+        consts::DEFAULT_EPOCH_ID,
         cryptography::encryption::PkeSchemeType,
         engine::centralized::central_kms::tests::{
             new_priv_ram_storage_from_existing_keys, new_pub_ram_storage_from_existing_keys,
@@ -129,6 +130,7 @@ async fn test_largecipher() {
     };
 
     let keys = get_default_keys().await;
+    let epoch_id = *DEFAULT_EPOCH_ID;
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100,
         pub_decrypt: 1,
@@ -143,7 +145,7 @@ async fn test_largecipher() {
         new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
             .await
             .unwrap(),
-        new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
+        new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys, &epoch_id)
             .await
             .unwrap(),
         None,

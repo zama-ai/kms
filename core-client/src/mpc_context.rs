@@ -98,38 +98,52 @@ pub async fn create_test_context_info_from_core_config(
         )?;
 
         // build the s3 endpoint URL
-        let s3_endpoint = match (core_config.public_vault.as_ref(), core_config.aws.as_ref()) {
-            (Some(public_vault), Some(aws_conf)) => {
-                let bucket = match &public_vault.storage {
-                    kms_lib::conf::Storage::S3(s3_storage) => &s3_storage.bucket,
-                    _ => {
-                        return Err(anyhow::anyhow!(
-                            "Public vault storage is not S3 for core {}",
-                            c.party_id
-                        ));
-                    }
-                };
+        let (s3_endpoint, prefix) =
+            match (core_config.public_vault.as_ref(), core_config.aws.as_ref()) {
+                (Some(public_vault), Some(aws_conf)) => {
+                    let (bucket, prefix) = match &public_vault.storage {
+                        kms_lib::conf::Storage::S3(s3_storage) => {
+                            (&s3_storage.bucket, s3_storage.prefix.clone())
+                        }
+                        _ => {
+                            return Err(anyhow::anyhow!(
+                                "Public vault storage is not S3 for core {}",
+                                c.party_id
+                            ));
+                        }
+                    };
 
-                let s3_endpoint = aws_conf.s3_endpoint.as_ref().ok_or(anyhow::anyhow!(
-                    "No public S3 endpoint found for core {}",
-                    c.party_id
-                ))?;
+                    let s3_endpoint = aws_conf.s3_endpoint.as_ref().ok_or(anyhow::anyhow!(
+                        "No public S3 endpoint found for core {}",
+                        c.party_id
+                    ))?;
 
-                // we try to detect whether the s3 endpoint is a custom one or a standard AWS one
-                if s3_endpoint.as_str().contains("dev-s3-mock:9000") {
-                    s3_endpoint.to_string()
-                } else {
-                    // if it's the s3 endpoint, we need to build the full bucket URL
-                    format!("https://{}.s3.{}.amazonaws.com", bucket, aws_conf.region)
+                    // we try to detect whether the s3 endpoint is a custom one or a standard AWS one
+                    let s3_endpoint = if s3_endpoint.as_str().contains("dev-s3-mock:9000") {
+                        s3_endpoint.to_string()
+                    } else {
+                        // if it's the s3 endpoint, we need to build the full bucket URL
+                        format!("https://{}.s3.{}.amazonaws.com", bucket, aws_conf.region)
+                    };
+                    (s3_endpoint, prefix)
                 }
-            }
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "No public S3 endpoint or AWS config found for core {}",
-                    c.party_id
-                ));
-            }
-        };
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "No public S3 endpoint or AWS config found for core {}",
+                        c.party_id
+                    ));
+                }
+            };
+
+        // sanity check that the storage prefix matches object_folder
+        if Some(c.object_folder.as_str()) != prefix.as_deref() {
+            return Err(anyhow::anyhow!(
+                "Storage prefix mismatch for core {}: config object_folder {:?}, public vault prefix {:?}",
+                c.party_id,
+                c.object_folder,
+                prefix
+            ));
+        }
 
         mpc_nodes.push(NodeInfo {
             mpc_identity: mpc_identity.to_string(),
@@ -138,6 +152,7 @@ pub async fn create_test_context_info_from_core_config(
             external_url: format!("https://{}:{}", identity.hostname(), identity.port()),
             ca_cert: Some(ca_cert.pem().as_bytes().to_vec()),
             public_storage_url: s3_endpoint,
+            public_storage_prefix: prefix,
             extra_verification_keys: vec![],
         });
 

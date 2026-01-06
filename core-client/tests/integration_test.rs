@@ -1488,7 +1488,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInit) {
     let public_key_digest =
         hex::encode(safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap());
 
-    // create the resharing requeset
+    // create the resharing request
     let config = CmdConfig {
         file_conf: Some(String::from(config_path.to_str().unwrap())),
         command: CCCommand::Reshare(ReshareParameters {

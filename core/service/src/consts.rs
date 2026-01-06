@@ -1,7 +1,7 @@
 #[cfg(feature = "non-wasm")]
 use crate::engine::base::derive_request_id;
 #[cfg(feature = "non-wasm")]
-use kms_grpc::{identifiers::ContextId, RequestId};
+use kms_grpc::{identifiers::ContextId, EpochId, RequestId};
 use threshold_fhe::execution::tfhe_internals::parameters::{
     DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS,
 };
@@ -154,6 +154,13 @@ lazy_static::lazy_static! {
     pub static ref DEFAULT_MPC_CONTEXT: ContextId = ContextId::from_bytes([
         1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
         4,
+    ]);
+
+    // The default epoch ID used for initial PRSS setup and as fallback when no epoch is specified.
+    // This is equivalent to PRSS_INIT_REQ_ID parsed as an EpochId.
+    pub static ref DEFAULT_EPOCH_ID: EpochId = EpochId::from_bytes([
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
     ]);
 }
 
