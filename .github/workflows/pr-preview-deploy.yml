@@ -157,9 +157,9 @@ jobs:
             helm list -n "${NAMESPACE}" --short | xargs -L1 helm uninstall -n "${NAMESPACE}"
             kubectl delete namespace "${NAMESPACE}" --grace-period=1 --timeout=5s --wait=false
             sleep 30
-            kubectl proxy &
-            kubectl get namespace "${NAMESPACE}" -o json |jq '.spec = {"finalizers":[]}' >temp.json
-            curl -k -H "Content-Type: application/json" -X PUT --data-binary @temp.json 127.0.0.1:8001/api/v1/namespaces/"${NAMESPACE}"/finalize
+            kubectl get namespace "${NAMESPACE}" -o json \
+              | jq 'del(.spec.finalizers)' \
+              | kubectl replace --raw "/api/v1/namespaces/${NAMESPACE}/finalize" -f -
             echo "Waiting for namespace to be destroyed..."
             sleep 15
             kubectl wait --for=delete namespace/"${NAMESPACE}" --timeout=60s
@@ -424,7 +424,7 @@ jobs:
           echo "Waiting for KMS Core pods to be ready..."
           sleep 60
           if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-            kubectl wait --for=condition=ready pod kms-core \
+            kubectl wait --for=condition=ready pod kms-core-core-1 \
               -n "${NAMESPACE}" --timeout=600s
           elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             for i in $(seq 1 "${NB_KMS_PARTIES}"); do
@@ -516,7 +516,7 @@ jobs:
 
             ```bash
             tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
-            kubectl port-forward svc/kms-core -n "${{ env.NAMESPACE }}" 50100:50100
+            kubectl port-forward svc/kms-core-core -n "${{ env.NAMESPACE }}" 50100:50100
             ```
 
             And launch your tests:
