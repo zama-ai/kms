@@ -361,6 +361,18 @@ pub(crate) fn update_err_req_in_meta_store<T: Clone>(
     }
 }
 
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn delete_req_from_meta_store<T: Clone>(
+    mut meta_store: RwLockWriteGuard<'_, MetaStore<T>>,
+    req_id: &RequestId,
+    request_metric: &'static str,
+) -> Result<T, MetricedError> {
+    tracing::info!("Deleting request ID {req_id} from meta store");
+    let handle = meta_store.delete(req_id);
+    drop(meta_store); // Release the lock early as we otherwise risk holding it for up to DURATION_WAITING_ON_RESULT_SECONDS!
+    handle_res(handle, req_id, request_metric).await
+}
+
 /// Helper method for retrieving the result of a request from an appropriate meta store
 /// [req_id] is the request ID to retrieve
 /// [request_type] is a free-form string used only for error logging the origin of the failure
@@ -372,6 +384,14 @@ pub(crate) async fn retrieve_from_meta_store<T: Clone>(
 ) -> Result<T, MetricedError> {
     let handle = meta_store.retrieve(req_id);
     drop(meta_store); // Release the read lock early as we otherwise risk holding it for up to DURATION_WAITING_ON_RESULT_SECONDS!
+    handle_res(handle, req_id, metric_scope).await
+}
+
+async fn handle_res<T: Clone>(
+    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
+    req_id: &RequestId,
+    metric_scope: &'static str,
+) -> Result<T, MetricedError> {
     match handle {
         None => {
             let msg = format!(

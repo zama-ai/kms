@@ -100,7 +100,6 @@ pub async fn preprocessing_impl<
         .map_err(|e| e.to_string());
 
     let preproc_bucket = external_signature.map(|external_signature| CentralizedPreprocBucket {
-        preprocessing_id: request_id,
         external_signature,
         dkg_param: params,
     });

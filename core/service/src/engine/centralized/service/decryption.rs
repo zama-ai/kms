@@ -20,7 +20,7 @@ use kms_grpc::kms::v1::{
 };
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
+    CENTRAL_TAG, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
     OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
 };
 use std::sync::Arc;
@@ -51,7 +51,7 @@ pub async fn user_decrypt_impl<
         })?;
     let mut timer = METRICS
         .time_operation(OP_USER_DECRYPT_REQUEST)
-        .tag(TAG_PARTY_ID, "central".to_string())
+        .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
         .start();
 
     let inner = request.into_inner();
@@ -265,7 +265,7 @@ pub async fn public_decrypt_impl<
     let mut timer = METRICS
         .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
         // Use a constant party ID since this is the central KMS
-        .tag(TAG_PARTY_ID, "central".to_string())
+        .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
         .start();
     let inner = request.into_inner();
     let (ciphertexts, request_id, key_id, context_id, epoch_id, eip712_domain) =

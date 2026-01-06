@@ -102,10 +102,9 @@ impl<
         request: Request<kms_grpc::kms::v1::KeyGenRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_INSECURE_KEYGEN_REQUEST);
-        key_gen_impl(self, request, false).await.inspect_err(|err| {
-            let tag = map_tonic_code_to_metric_err_tag(err.code());
-            let _ = METRICS.increment_error_counter(OP_INSECURE_KEYGEN_REQUEST, tag);
-        })
+        key_gen_impl(self, request, false)
+            .await
+            .map_err(|e| e.into())
     }
 
     #[cfg(feature = "insecure")]
@@ -140,10 +139,7 @@ impl<
             true,
         )
         .await
-        .inspect_err(|err| {
-            let tag = map_tonic_code_to_metric_err_tag(err.code());
-            let _ = METRICS.increment_error_counter(OP_KEYGEN_REQUEST, tag);
-        })
+        .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]

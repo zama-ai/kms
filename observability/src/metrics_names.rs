@@ -64,6 +64,8 @@ pub const TAG_PARTY_ID: &str = "party_id";
 pub const TAG_TFHE_TYPE: &str = "tfhe_type";
 pub const TAG_PUBLIC_DECRYPTION_KIND: &str = "public_decryption_mode";
 pub const TAG_USER_DECRYPTION_KIND: &str = "user_decryption_mode";
+// Special tag used for the central party
+pub const CENTRAL_TAG: &str = "central";
 
 // gRPC errors
 pub const ERR_FAILED_PRECONDITION: &str = "failed_precondition";

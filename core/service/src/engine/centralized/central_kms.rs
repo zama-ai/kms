@@ -361,7 +361,6 @@ pub(crate) struct CentralizedTestingKeys {
 #[cfg(feature = "non-wasm")]
 #[derive(Debug, Clone)]
 pub struct CentralizedPreprocBucket {
-    pub(crate) preprocessing_id: RequestId,
     pub(crate) external_signature: Vec<u8>,
     pub(crate) dkg_param: DKGParams,
 }

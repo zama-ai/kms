@@ -214,7 +214,7 @@ impl<
                 let _inner_timer = timer;
                 let _inner_permit = permit;
                 tokio::select! {
-                   ()  = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, permit,  insecure) => {
+                   ()  = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, insecure) => {
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&req_id);
                         tracing::info!("CRS generation of request {} exiting normally.", req_id);
@@ -307,7 +307,6 @@ impl<
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
         eip712_domain: alloy_sol_types::Eip712Domain,
-        permit: OwnedSemaphorePermit,
         insecure: bool,
     ) {
         tracing::info!(
@@ -320,7 +319,6 @@ impl<
             OP_CRS_GEN_REQUEST
         };
 
-        let _permit = permit;
         let crs_start_timer = Instant::now();
         let pke_params = params
             .get_params_basics_handle()

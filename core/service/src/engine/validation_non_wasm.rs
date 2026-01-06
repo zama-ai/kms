@@ -1,5 +1,6 @@
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::retrieve_parameters;
+use crate::engine::keyset_configuration::InternalKeySetConfig;
 use crate::{
     anyhow_error_and_log,
     cryptography::{
@@ -11,7 +12,7 @@ use crate::{
 use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
-use kms_grpc::kms::v1::CrsGenRequest;
+use kms_grpc::kms::v1::{CrsGenRequest, KeyGenRequest};
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::{
     kms::v1::{
@@ -552,6 +553,58 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
             Ok(())
         }
     }
+}
+
+pub(crate) fn validate_key_gen_request(
+    req: KeyGenRequest,
+) -> anyhow::Result<(
+    RequestId,
+    RequestId,
+    ContextId,
+    EpochId,
+    InternalKeySetConfig,
+    Eip712Domain,
+)> {
+    let req_id =
+        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
+    let preproc_id =
+        parse_optional_proto_request_id(&req.preproc_id, RequestIdParsingErr::PreprocRequest)?;
+
+    tracing::info!(
+        request_id = ?req_id,
+        "Received new key generation request"
+    );
+
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // remove the default context when all of context is ready
+    // context_id is not used at the moment, but we validate it if present
+    let context_id: ContextId = match &req.context_id {
+        Some(context_id) => context_id.try_into()?,
+        None => *DEFAULT_MPC_CONTEXT,
+    };
+    let epoch_id: EpochId = match &req.epoch_id {
+        Some(epoch_id) => epoch_id.try_into()?,
+        None => *DEFAULT_EPOCH_ID,
+    };
+
+    let internal_keyset_config =
+        InternalKeySetConfig::new(req.keyset_config, req.keyset_added_info).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("Failed to parse KeySetConfig: {e}"),
+            )
+        })?;
+
+    let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+
+    Ok((
+        req_id,
+        preproc_id,
+        context_id,
+        epoch_id,
+        internal_keyset_config,
+        eip712_domain,
+    ))
 }
 
 pub(crate) fn validate_crs_gen_request(
