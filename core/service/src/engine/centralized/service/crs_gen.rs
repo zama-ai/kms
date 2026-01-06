@@ -7,11 +7,11 @@ use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_CONTEXT_ID,
+    OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_CONTEXT_ID, TAG_CRS_ID,
     TAG_PARTY_ID,
 };
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use tokio::sync::{OwnedSemaphorePermit, RwLock};
+use tokio::sync::RwLock;
 use tonic::{Request, Response};
 use tracing::Instrument;
 
@@ -65,7 +65,11 @@ pub async fn crs_gen_impl<
                 tonic::Code::InvalidArgument,
             )
         })?;
-    timer.tag(TAG_CONTEXT_ID, context_id.to_string());
+    let metric_tags = vec![
+        (TAG_CRS_ID, req_id.to_string()),
+        (TAG_CONTEXT_ID, context_id.to_string()),
+    ];
+    timer.tags(metric_tags.clone());
 
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused
@@ -91,6 +95,7 @@ pub async fn crs_gen_impl<
     let handle = service.tracker.spawn(
         async move {
             let _timer = timer;
+            let _permit = permit;
             crs_gen_background(
                 &req_id,
                 rng,
@@ -100,7 +105,6 @@ pub async fn crs_gen_impl<
                 params,
                 eip712_domain,
                 inner.max_num_bits,
-                permit,
                 op_tag,
             )
             .await;
@@ -193,10 +197,8 @@ pub(crate) async fn crs_gen_background<
     params: DKGParams,
     eip712_domain: Eip712Domain,
     max_number_bits: Option<u32>,
-    permit: OwnedSemaphorePermit,
     op_tag: &'static str,
 ) {
-    let _permit = permit;
     let start = tokio::time::Instant::now();
 
     let (pp, crs_info) =

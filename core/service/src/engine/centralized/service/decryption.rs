@@ -397,7 +397,7 @@ pub async fn public_decrypt_impl<
             Err(e) => Err(format!("Error collecting decrypt result: {e:?}")),
             Ok(Err(e)) => Err(format!("Error during decryption computation: {e}")),
         };
-        update_req_in_meta_store(
+        let _ = update_req_in_meta_store(
             &mut meta_store.write().await,
             &request_id,
             res,

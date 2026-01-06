@@ -212,6 +212,7 @@ impl<
                 // Capture the timer inside the generation tasks, such that when the task
                 // exits, the timer is dropped and thus exported
                 let _inner_timer = timer;
+                let _inner_permit = permit;
                 tokio::select! {
                    ()  = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, permit,  insecure) => {
                         // Remove cancellation token since generation is now done.
