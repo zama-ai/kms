@@ -333,22 +333,6 @@ impl<
         ];
         timer.tags(metric_tags.clone());
 
-        match self
-            .crypto_storage
-            .threshold_fhe_keys_exists(&key_id.into(), &epoch_id)
-            .await
-        {
-            Ok(true) => {}
-            e_or_false => {
-                return Err(MetricedError::new(
-                    OP_PUBLIC_DECRYPT_REQUEST,
-                    Some(req_id),
-                    anyhow::anyhow!("Key ID {} not found: exists={:?}", key_id, e_or_false),
-                    tonic::Code::NotFound,
-                ));
-            }
-        };
-
         tracing::debug!(
             request_id = ?req_id,
             key_id = ?key_id,
