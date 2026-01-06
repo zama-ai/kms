@@ -2,15 +2,15 @@
   "apiVersion": "v1",
   "kind": "Namespace",
   "metadata": {
-    "creationTimestamp": "2026-01-06T10:25:58Z",
-    "deletionTimestamp": "2026-01-06T10:44:44Z",
+    "creationTimestamp": "2026-01-06T10:45:57Z",
+    "deletionTimestamp": "2026-01-06T10:55:10Z",
     "labels": {
       "kubernetes.io/metadata.name": "kms-ci-fegmorte-350",
       "name": "kms-ci-fegmorte-350"
     },
     "name": "kms-ci-fegmorte-350",
-    "resourceVersion": "953364057",
-    "uid": "fb5539a7-f6fd-4fff-82a0-ea594df43711"
+    "resourceVersion": "953512286",
+    "uid": "3a4af7be-e8ef-4500-b170-3bce889dfa1b"
   },
   "spec": {
     "finalizers": []
@@ -18,35 +18,35 @@
   "status": {
     "conditions": [
       {
-        "lastTransitionTime": "2026-01-06T10:44:49Z",
+        "lastTransitionTime": "2026-01-06T10:55:15Z",
         "message": "Discovery failed for some groups, 2 failing: unable to retrieve the complete list of server APIs: cluster.loft.sh/v1: stale GroupVersion discovery: cluster.loft.sh/v1, management.loft.sh/v1: stale GroupVersion discovery: management.loft.sh/v1",
         "reason": "DiscoveryFailed",
         "status": "True",
         "type": "NamespaceDeletionDiscoveryFailure"
       },
       {
-        "lastTransitionTime": "2026-01-06T10:45:03Z",
+        "lastTransitionTime": "2026-01-06T10:55:30Z",
         "message": "All legacy kube types successfully parsed",
         "reason": "ParsedGroupVersions",
         "status": "False",
         "type": "NamespaceDeletionGroupVersionParsingFailure"
       },
       {
-        "lastTransitionTime": "2026-01-06T10:45:03Z",
+        "lastTransitionTime": "2026-01-06T10:55:30Z",
         "message": "All content successfully deleted, may be waiting on finalization",
         "reason": "ContentDeleted",
         "status": "False",
         "type": "NamespaceDeletionContentFailure"
       },
       {
-        "lastTransitionTime": "2026-01-06T10:45:36Z",
+        "lastTransitionTime": "2026-01-06T10:55:30Z",
         "message": "All content successfully removed",
         "reason": "ContentRemoved",
         "status": "False",
         "type": "NamespaceContentRemaining"
       },
       {
-        "lastTransitionTime": "2026-01-06T10:45:03Z",
+        "lastTransitionTime": "2026-01-06T10:55:30Z",
         "message": "All content-preserving finalizers finished",
         "reason": "ContentHasNoFinalizers",
         "status": "False",

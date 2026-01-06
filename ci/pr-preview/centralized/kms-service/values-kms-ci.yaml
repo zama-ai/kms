@@ -55,28 +55,3 @@ kmsCoreClient:
       effect: NoSchedule
       operator: Equal
       value: zws-pool
-
-
-environment: dev
-
-tracing:
-  enabled: false
-  endpoint: "http://otel-deployment-opentelemetry-collector.observability.svc.cluster.local:4317"
-  metrics:
-    enabled: false
-    interval_sec: 20
-
-socat:
-  image:
-    name: alpine/socat
-    tag: latest
-
-rustLog: info
-kmsGenCertAndKeys:
-  enabled: false
-kmsCoreClientTesting:
-  enabled: false
-mtls:
-  enabled: false
-minio:
-  enabled: false
