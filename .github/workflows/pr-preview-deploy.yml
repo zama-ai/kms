@@ -374,10 +374,10 @@ jobs:
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
               --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-              --set kmsCore.serviceAccountName="${NAMESPACE}" \
-              --set kmsCore.envFrom.configmap.name="${NAMESPACE}" \
+              --set kmsCore.serviceAccountName="${NAMESPACE}-1" \
+              --set kmsCore.envFrom.configmap.name="${NAMESPACE}-1" \
               --set kmsCoreClient.nameOverride="kms-core-client" \
-              --set kmsCoreClient.envFrom.configmap.name="${NAMESPACE}" \
+              --set kmsCoreClient.envFrom.configmap.name="${NAMESPACE}-1" \
               --set kmsCoreClient.num_majority=1 \
               --set kmsCoreClient.num_reconstruct=1 \
               --set kmsCore.tolerations[0].key=karpenter.sh/nodepool \
@@ -402,10 +402,10 @@ jobs:
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
               --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-              --set kmsCore.serviceAccountName="${NAMESPACE}" \
-              --set kmsCore.envFrom.configmap.name="${NAMESPACE}" \
+              --set kmsCore.serviceAccountName="${NAMESPACE}-1" \
+              --set kmsCore.envFrom.configmap.name="${NAMESPACE}-1" \
               --set kmsCoreClient.nameOverride="kms-core-client" \
-              --set kmsCoreClient.envFrom.configmap.name="${NAMESPACE}" \
+              --set kmsCoreClient.envFrom.configmap.name="${NAMESPACE}-1" \
               --set kmsCoreClient.num_majority=1 \
               --set kmsCoreClient.num_reconstruct=1 \
               --set kmsCore.tolerations[0].key=app \
