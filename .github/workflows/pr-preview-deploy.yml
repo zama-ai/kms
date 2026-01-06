@@ -157,9 +157,6 @@ jobs:
             helm list -n "${NAMESPACE}" --short | xargs -L1 helm uninstall -n "${NAMESPACE}"
             kubectl delete namespace "${NAMESPACE}" --grace-period=1 --timeout=5s --wait=false
             sleep 30
-            kubectl get namespace "${NAMESPACE}" -o json \
-              | jq 'del(.spec.finalizers)' \
-              | kubectl replace --raw "/api/v1/namespaces/${NAMESPACE}/finalize" -f -
             echo "Waiting for namespace to be destroyed..."
             sleep 15
             kubectl wait --for=delete namespace/"${NAMESPACE}" --timeout=60s
