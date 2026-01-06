@@ -3,7 +3,7 @@ use keychain::{EnvelopeLoad, EnvelopeStore, Keychain, KeychainProxy};
 use kms_grpc::{identifiers::EpochId, rpc_types::PrivDataType, RequestId};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{collections::HashSet, fmt, path::MAIN_SEPARATOR};
-use storage::{Storage, StorageForBytes, StorageProxy, StorageReader};
+use storage::{Storage, StorageProxy, StorageReader};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::{named::Named, Unversionize, Versionize};
@@ -179,6 +179,14 @@ impl StorageReader for Vault {
     fn info(&self) -> String {
         self.storage.info()
     }
+
+    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
+        let backup_type = self.get_vault_data_type(data_type)?.to_string();
+        self.storage
+            .load_bytes(data_id, &backup_type)
+            .await
+            .map_err(|e| anyhow!("Byte load failed: {e}"))
+    }
 }
 
 #[cfg(feature = "non-wasm")]
@@ -340,6 +348,19 @@ impl Storage for Vault {
             .await
             .map_err(|e| anyhow!("Delete failed: {e}"))
     }
+
+    async fn store_bytes(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        let backup_type = self.get_vault_data_type(data_type)?.to_string();
+        self.storage
+            .store_bytes(bytes, data_id, &backup_type)
+            .await
+            .map_err(|e| anyhow!("Byte store failed: {e}"))
+    }
 }
 
 #[cfg(feature = "non-wasm")]
@@ -392,30 +413,6 @@ impl StorageExt for Vault {
             .delete_data_at_epoch(data_id, epoch_id, &backup_type)
             .await
             .map_err(|e| anyhow!("Delete failed: {e}"))
-    }
-}
-
-#[cfg(feature = "non-wasm")]
-impl StorageForBytes for Vault {
-    async fn store_bytes(
-        &mut self,
-        bytes: &[u8],
-        data_id: &RequestId,
-        data_type: &str,
-    ) -> anyhow::Result<()> {
-        let backup_type = self.get_vault_data_type(data_type)?.to_string();
-        self.storage
-            .store_bytes(bytes, data_id, &backup_type)
-            .await
-            .map_err(|e| anyhow!("Byte store failed: {e}"))
-    }
-
-    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
-        let backup_type = self.get_vault_data_type(data_type)?.to_string();
-        self.storage
-            .load_bytes(data_id, &backup_type)
-            .await
-            .map_err(|e| anyhow!("Byte load failed: {e}"))
     }
 }
 

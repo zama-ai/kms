@@ -1,4 +1,4 @@
-use super::{Storage, StorageCache, StorageForBytes, StorageReader, StorageType};
+use super::{Storage, StorageCache, StorageReader, StorageType};
 use crate::vault::storage::{all_data_ids_from_all_epochs_impl, StorageExt, StorageReaderExt};
 use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
 use aws_config::{self, SdkConfig};
@@ -69,6 +69,10 @@ impl StorageReader for ReadOnlyS3Storage {
         data_type: &str,
     ) -> anyhow::Result<T> {
         self.inner.read_data(data_id, data_type).await
+    }
+
+    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
+        self.inner.load_bytes(data_id, data_type).await
     }
 
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
@@ -284,6 +288,19 @@ impl StorageReader for S3Storage {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
+    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
+        let key = &self.item_key(data_id, data_type);
+
+        tracing::info!(
+            "Reading text from bucket {} under key {}",
+            &self.bucket,
+            key
+        );
+
+        // Check cache first, then S3 if not found
+        self.get_with_cache(key).await
+    }
+
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
         let mut ids = HashSet::new();
         let result = self
@@ -423,6 +440,33 @@ impl Storage for S3Storage {
         self.store_data_at_key(key, data).await
     }
 
+    async fn store_bytes(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        if self.data_exists(data_id, data_type).await? {
+            tracing::warn!(
+                "The data {}-{} already exists. Keeping the data without overwriting",
+                data_id,
+                data_type
+            );
+            return Ok(());
+        }
+        let key = &self.item_key(data_id, data_type);
+
+        tracing::info!("Storing text in bucket {} under key {}", &self.bucket, key);
+
+        // Store in S3 FIRST - only update cache if S3 operation succeeds
+        s3_put_blob(&self.s3_client, &self.bucket, key, bytes.to_vec()).await?;
+
+        // Update cache ONLY after successful S3 storage
+        self.update_cache(key, bytes).await;
+
+        Ok(())
+    }
+
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
         let key = &self.item_key(data_id, data_type);
         self.delete_data_at_key(key).await
@@ -461,48 +505,6 @@ impl StorageExt for S3Storage {
     ) -> anyhow::Result<()> {
         let key = &self.item_key_at_epoch(data_id, epoch_id, data_type);
         self.delete_data_at_key(key).await
-    }
-}
-
-impl StorageForBytes for S3Storage {
-    async fn store_bytes(
-        &mut self,
-        bytes: &[u8],
-        data_id: &RequestId,
-        data_type: &str,
-    ) -> anyhow::Result<()> {
-        if self.data_exists(data_id, data_type).await? {
-            tracing::warn!(
-                "The data {}-{} already exists. Keeping the data without overwriting",
-                data_id,
-                data_type
-            );
-            return Ok(());
-        }
-        let key = &self.item_key(data_id, data_type);
-
-        tracing::info!("Storing text in bucket {} under key {}", &self.bucket, key);
-
-        // Store in S3 FIRST - only update cache if S3 operation succeeds
-        s3_put_blob(&self.s3_client, &self.bucket, key, bytes.to_vec()).await?;
-
-        // Update cache ONLY after successful S3 storage
-        self.update_cache(key, bytes).await;
-
-        Ok(())
-    }
-
-    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
-        let key = &self.item_key(data_id, data_type);
-
-        tracing::info!(
-            "Reading text from bucket {} under key {}",
-            &self.bucket,
-            key
-        );
-
-        // Check cache first, then S3 if not found
-        self.get_with_cache(key).await
     }
 }
 
@@ -866,6 +868,10 @@ impl StorageReader for DummyReadOnlyS3Storage {
         data_type: &str,
     ) -> anyhow::Result<T> {
         self.ram_storage.read_data(data_id, data_type).await
+    }
+
+    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
+        self.ram_storage.load_bytes(data_id, data_type).await
     }
 
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
