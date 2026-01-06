@@ -406,6 +406,7 @@ jobs:
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.serviceAccountName="${NAMESPACE}-1" \
               --set kmsCore.envFrom.configmap.name="${NAMESPACE}-1" \
+              --set kmsGenCertAndKeys.enabled=true \
               --set kmsCoreClient.nameOverride="kms-core-client" \
               --set kmsCoreClient.envFrom.configmap.name="${NAMESPACE}-1" \
               --set kmsCoreClient.num_majority=1 \
