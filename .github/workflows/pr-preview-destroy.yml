@@ -4,6 +4,8 @@
 name: pr-preview-destroy
 
 on:
+  schedule:
+    - cron: '0 0 * * *'
   pull_request:
     types: [closed]
 
@@ -11,10 +13,37 @@ permissions: {}
 
 jobs:
   ############################################################################
-  # PR Preview Job
+  # Scheduled Job
+  ############################################################################
+  scheduled-destroy:
+    if: github.event_name == 'schedule'
+    name: find-namespaces-to-destroy
+    runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=false
+    outputs:
+      namespaces: ${{ steps.find-namespaces-to-destroy.outputs.namespaces }}
+    steps:
+      - name: Find namespaces to destroy
+        id: find-namespaces-to-destroy
+        run: |
+          echo "Finding namespaces to destroy..."
+          echo "namespaces=$(kubectl get namespaces -o json | jq -r '.items[] | select(.metadata.name | startswith("kms-ci-")) | .metadata.name')" >> $GITHUB_OUTPUT
+      - name: Destroy namespaces
+        run: |
+          echo "Destroying namespaces: ${{ steps.find-namespaces-to-destroy.outputs.namespaces }}"
+          for namespace in ${{ steps.find-namespaces-to-destroy.outputs.namespaces }}; do
+            echo "Destroying namespace: $namespace"
+            helm list -n "${NAMESPACE}" --short | xargs -L1 helm uninstall -n "${NAMESPACE}"
+            kubectl delete namespace "${NAMESPACE}" --grace-period=1 --timeout=5s --wait=false
+            echo "Waiting for namespace to be destroyed..."
+            kubectl wait --for=delete namespace/"${NAMESPACE}" --timeout=120s
+            echo "Namespace ${NAMESPACE} destroyed"
+          done
+
+  ############################################################################
+  # PR Preview Destroy Job
   ############################################################################
   pr-preview-destroy:
-    if: contains(github.event.pull_request.labels.*.name, 'pr-preview-')
+    if: github.event_name == 'pull_request' && contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-')
     name: pr-preview-destroy
     runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=false
     timeout-minutes: 1800
@@ -49,9 +78,13 @@ jobs:
 
       - name: Destroy namespace
         run: |
+          ###################################################################
+          # Destroy namespace
+          ###################################################################
+          echo "Destroying namespace ${NAMESPACE}..."
           helm list -n "${NAMESPACE}" --short | xargs -L1 helm uninstall -n "${NAMESPACE}"
-          kubectl delete namespace "${NAMESPACE}" --force && \
-          kubectl proxy && \
-          kubectl get namespace "${NAMESPACE}" -o json |jq '.spec = {"finalizers":[]}' >temp.json && \
-          curl -k -H "Content-Type: application/json" -X PUT --data-binary @temp.json 127.0.0.1:8001/api/v1/namespaces/"${NAMESPACE}"/finalize && \
+          kubectl delete namespace "${NAMESPACE}" --grace-period=1 --timeout=5s --wait=false
+          echo "Waiting for namespace to be destroyed..."
+          kubectl wait --for=delete namespace/"${NAMESPACE}" --timeout=120s
+          echo "Namespace ${NAMESPACE} destroyed"
           kubectl get namespace
