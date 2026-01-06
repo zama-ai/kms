@@ -52,6 +52,7 @@ const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user dec
 pub(crate) enum RequestIdParsingErr {
     Other(String),
     Context,
+    #[allow(unused)]
     Epoch,
     Init,
 
