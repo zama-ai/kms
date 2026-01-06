@@ -1,5 +1,5 @@
 use crate::engine::context::ContextInfo;
-use crate::vault::storage::{read_context_at_id, Storage};
+use crate::vault::storage::{read_context_at_id, StorageReader};
 use crate::{
     anyhow_error_and_warn_log, vault::storage::crypto_material::traits::CryptoMaterialReader,
 };
@@ -9,7 +9,7 @@ use kms_grpc::RequestId;
 impl CryptoMaterialReader for ContextInfo {
     async fn read_from_storage<S>(storage: &S, request_id: &RequestId) -> anyhow::Result<Self>
     where
-        S: Storage + Send + Sync + 'static,
+        S: StorageReader + Send + Sync + 'static,
     {
         read_context_at_id(storage, &(*request_id).into())
             .await

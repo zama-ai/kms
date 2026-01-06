@@ -66,6 +66,7 @@ mod tests {
             external_url: "http://test_node.com:1234".to_string(),
             ca_cert: None,
             public_storage_url: "http://test_storage.com:1234".to_string(),
+            public_storage_prefix: None,
             extra_verification_keys: vec![],
         };
         let mut software_version = Vec::new();

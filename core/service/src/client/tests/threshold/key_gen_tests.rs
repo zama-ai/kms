@@ -3,17 +3,17 @@ cfg_if::cfg_if! {
     use crate::client::tests::threshold::common::threshold_handles;
     use crate::client::client_wasm::Client;
     use crate::consts::MAX_TRIES;
+    use crate::consts::DEFAULT_EPOCH_ID;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
     use crate::engine::base::INSECURE_PREPROCESSING_ID;
     use crate::engine::threshold::service::ThresholdFheKeys;
     use crate::util::key_setup::test_tools::purge;
-    use crate::vault::storage::StorageReader;
+    use crate::vault::storage::crypto_material::PrivateCryptoMaterialReader;
     use crate::vault::storage::{file::FileStorage, StorageType};
     use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-    use kms_grpc::rpc_types::PrivDataType;
     use kms_grpc::rpc_types::PubDataType;
     use kms_grpc::RequestId;
     use serial_test::serial;
@@ -1198,10 +1198,10 @@ pub(crate) async fn verify_keygen_responses(
         let key_id = RequestId::from_str(kg_res.request_id.unwrap().request_id.as_str()).unwrap();
         let priv_storage =
             FileStorage::new(data_root_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
-        let mut threshold_fhe_keys: ThresholdFheKeys = priv_storage
-            .read_data(&key_id, &PrivDataType::FheKeyInfo.to_string())
-            .await
-            .unwrap();
+        let mut threshold_fhe_keys =
+            ThresholdFheKeys::read_from_storage_at_epoch(&priv_storage, &key_id, &DEFAULT_EPOCH_ID)
+                .await
+                .unwrap();
         // we do not need the sns key to reconstruct, remove it to save memory
         threshold_fhe_keys.sns_key = None;
         all_threshold_fhe_keys.insert(role, threshold_fhe_keys);

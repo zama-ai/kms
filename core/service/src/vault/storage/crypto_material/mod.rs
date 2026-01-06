@@ -49,4 +49,5 @@ pub use base::CryptoMaterialStorage;
 pub use centralized::CentralizedCryptoMaterialStorage;
 pub use threshold::ThresholdCryptoMaterialStorage;
 pub use traits::CryptoMaterialReader;
+pub use traits::PrivateCryptoMaterialReader;
 pub use utils::*;

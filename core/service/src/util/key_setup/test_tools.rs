@@ -5,12 +5,13 @@ use crate::util::key_setup::FhePublicKey;
 use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
-    delete_all_at_request_id, make_storage, read_versioned_at_request_id, StorageReader,
+    delete_all_at_request_id, delete_at_request_and_epoch_id, make_storage,
+    read_versioned_at_request_id, StorageReader, StorageReaderExt,
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
 use crate::vault::{Vault, VaultDataType};
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
-use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
+use kms_grpc::rpc_types::{PrivDataType, PubDataType, WrappedPublicKeyOwned};
 use kms_grpc::RequestId;
 use serde::de::DeserializeOwned;
 use std::path::Path;
@@ -375,6 +376,22 @@ pub async fn purge(
         delete_all_at_request_id(&mut threshold_priv, id)
             .await
             .unwrap();
+
+        // Also delete epoch-specific data types that delete_all_at_request_id skips
+        for data_type in [PrivDataType::FhePrivateKey, PrivDataType::FheKeyInfo] {
+            let data_type_str = data_type.to_string();
+            if let Ok(epoch_ids) = threshold_priv.all_epoch_ids_for_data(&data_type_str).await {
+                for epoch_id in epoch_ids {
+                    let _ = delete_at_request_and_epoch_id(
+                        &mut threshold_priv,
+                        id,
+                        &epoch_id,
+                        &data_type_str,
+                    )
+                    .await;
+                }
+            }
+        }
     }
 }
 
@@ -528,6 +545,7 @@ pub async fn purge_recovery_material(path: Option<&Path>, storage_prefixes: &[Op
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod setup {
+    use crate::consts::DEFAULT_EPOCH_ID;
     use crate::consts::{
         PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
     };
@@ -552,6 +570,7 @@ pub(crate) mod setup {
         },
         vault::storage::{file::FileStorage, StorageType},
     };
+    use kms_grpc::identifiers::EpochId;
     use kms_grpc::RequestId;
     use std::path::Path;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -575,21 +594,25 @@ pub(crate) mod setup {
 
     async fn testing_material(path: Option<&Path>) {
         ensure_dir_exist(path).await;
+        let epoch_id = *DEFAULT_EPOCH_ID;
         ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
         central_material(
             &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_TEST_ID,
             &TEST_CENTRAL_CRS_ID,
+            &epoch_id,
             path,
         )
         .await;
+        let epoch_id = *DEFAULT_EPOCH_ID;
         threshold_material(
             &TEST_PARAM,
             &TEST_THRESHOLD_KEY_ID_4P,
             &TEST_THRESHOLD_CRS_ID_4P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
+            &epoch_id,
             path,
         )
         .await;
@@ -599,6 +622,7 @@ pub(crate) mod setup {
             &TEST_THRESHOLD_CRS_ID_10P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
+            &epoch_id,
             path,
         )
         .await;
@@ -609,6 +633,7 @@ pub(crate) mod setup {
             &TEST_THRESHOLD_CRS_ID_13P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
+            &epoch_id,
             path,
         )
         .await;
@@ -627,12 +652,14 @@ pub(crate) mod setup {
             DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
         };
         ensure_dir_exist(None).await;
+        let epoch_id = *DEFAULT_EPOCH_ID;
         ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
         central_material(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_DEFAULT_ID,
             &DEFAULT_CENTRAL_CRS_ID,
+            &epoch_id,
             None,
         )
         .await;
@@ -642,6 +669,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_CRS_ID_4P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
+            &epoch_id,
             None,
         )
         .await;
@@ -651,6 +679,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_CRS_ID_10P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
+            &epoch_id,
             None,
         )
         .await;
@@ -660,6 +689,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_CRS_ID_13P,
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
+            &epoch_id,
             None,
         )
         .await;
@@ -670,6 +700,7 @@ pub(crate) mod setup {
         fhe_key_id: &RequestId,
         other_fhe_key_id: &RequestId,
         crs_id: &RequestId,
+        epoch_id: &EpochId,
         path: Option<&Path>,
     ) {
         let mut central_pub_storage = FileStorage::new(path, StorageType::PUB, None).unwrap();
@@ -688,6 +719,7 @@ pub(crate) mod setup {
             params.to_owned(),
             fhe_key_id,
             other_fhe_key_id,
+            epoch_id,
             true,
             false,
         )
@@ -708,6 +740,7 @@ pub(crate) mod setup {
         crs_id: &RequestId,
         public_storage_prefixes: &[Option<String>],
         private_storage_prefixes: &[Option<String>],
+        epoch_id: &EpochId,
         path: Option<&Path>,
     ) {
         assert_eq!(
@@ -743,6 +776,7 @@ pub(crate) mod setup {
             &mut threshold_priv_storages,
             params.to_owned(),
             fhe_key_id,
+            epoch_id,
             true,
         )
         .await;

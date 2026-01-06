@@ -2,14 +2,13 @@
 //!
 //! This module provides the foundational storage implementation used by
 //! both centralized and threshold KMS variants.
-use super::{check_data_exists, log_storage_success, CryptoMaterialReader};
 use crate::util::meta_store::update_ok_req_in_meta_store;
 use crate::{
     anyhow_error_and_warn_log,
     backup::operator::RecoveryValidationMaterial,
     cryptography::signatures::PrivateSigKey,
     engine::{
-        base::{CrsGenMetadata, KeyGenMetadata},
+        base::{CrsGenMetadata, KeyGenMetadata, KmsFheKeyHandles},
         context::ContextInfo,
         threshold::service::ThresholdFheKeys,
     },
@@ -18,22 +17,35 @@ use crate::{
     vault::{
         keychain::KeychainProxy,
         storage::{
-            crypto_material::log_storage_success_optional_variant, delete_all_at_request_id,
-            delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned,
-            read_context_at_id, store_context_at_id, store_pk_at_request_id,
-            store_versioned_at_request_id, Storage,
+            crypto_material::{
+                check_data_exists, check_data_exists_at_epoch, log_storage_success,
+                log_storage_success_optional_variant, traits::PrivateCryptoMaterialReader,
+                CryptoMaterialReader,
+            },
+            delete_all_at_request_id, delete_at_request_and_epoch_id, delete_at_request_id,
+            delete_pk_at_request_id, read_all_data_versioned, read_context_at_id,
+            store_context_at_id, store_pk_at_request_id, store_versioned_at_request_id, Storage,
+            StorageExt, StorageReaderExt,
         },
         Vault,
     },
 };
 use kms_grpc::{
-    identifiers::ContextId,
+    identifiers::{ContextId, EpochId},
     rpc_types::{KMSType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
     RequestId,
 };
 use std::{collections::HashMap, sync::Arc};
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
+
+/// Marker trait for private FHE materials.
+/// This exists because FHE materials are stored by epochs, unlike other materials.
+/// So we use this trait to differentiate FHE materials from others.
+pub(crate) trait PrivateMaterialUnderEpoch {}
+
+impl PrivateMaterialUnderEpoch for ThresholdFheKeys {}
+impl PrivateMaterialUnderEpoch for KmsFheKeyHandles {}
 
 /// A cached generic storage entity for the common data structures
 /// used by both the centralized and the threshold KMS.
@@ -42,7 +54,7 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 /// along with a cache for generated public keys. Cloning is cheap due to internal Arc usage.
 pub struct CryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
 > {
     /// Storage for publicly readable data (may be susceptible to malicious modifications)
     /// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
@@ -67,7 +79,7 @@ pub struct CryptoMaterialStorage<
 impl<PubS, PrivS> CryptoMaterialStorage<PubS, PrivS>
 where
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
 {
     // =========================
     // Initializers
@@ -145,6 +157,30 @@ where
         .await
     }
 
+    /// Check if data exists in both public and private storage,
+    /// where the private part is stored at a specific epoch.
+    pub async fn data_exists_at_epoch(
+        &self,
+        req_id: &RequestId,
+        epoch_id: &EpochId,
+        pub_data_type: &str,
+        priv_data_type: &str,
+    ) -> anyhow::Result<bool> {
+        // First locking public storage, then private storage as per concurrency rules
+        let pub_storage = self.public_storage.lock().await;
+        let priv_storage = self.private_storage.lock().await;
+
+        check_data_exists_at_epoch(
+            &*pub_storage,
+            &*priv_storage,
+            req_id,
+            epoch_id,
+            pub_data_type,
+            priv_data_type,
+        )
+        .await
+    }
+
     /// Check if signing keys exist in the storage.
     ///
     /// This method checks if signing keys exist in the private storage.
@@ -161,22 +197,19 @@ where
         Ok(!keys.is_empty())
     }
 
-    /// Check if FHE keys exist (for central server)
-    pub async fn fhe_keys_exist(&self, key_id: &RequestId) -> anyhow::Result<bool> {
-        self.data_exists(
+    /// Check if FHE keys exist (for central server).
+    ///
+    /// The `epoch_id` identifies the epoch that the secret key belongs to.
+    pub async fn fhe_keys_exist(
+        &self,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+    ) -> anyhow::Result<bool> {
+        self.data_exists_at_epoch(
             key_id,
+            epoch_id,
             &PubDataType::PublicKey.to_string(),
             &PrivDataType::FhePrivateKey.to_string(),
-        )
-        .await
-    }
-
-    /// Check if threshold FHE keys exist
-    pub async fn threshold_fhe_keys_exist(&self, key_id: &RequestId) -> anyhow::Result<bool> {
-        self.data_exists(
-            key_id,
-            &PubDataType::PublicKey.to_string(),
-            &PrivDataType::FheKeyInfo.to_string(),
         )
         .await
     }
@@ -248,6 +281,7 @@ where
     pub async fn purge_key_material(
         &self,
         req_id: &RequestId,
+        epoch_id: &EpochId,
         kms_type: KMSType,
         mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
     ) {
@@ -279,18 +313,20 @@ where
             let result = match kms_type {
                 KMSType::Centralized => {
                     // In centralized KMS there is no FHE key info to delete, instead delete the FhePrivateKey
-                    delete_at_request_id(
+                    delete_at_request_and_epoch_id(
                         &mut (*priv_storage),
                         req_id,
+                        epoch_id,
                         &PrivDataType::FhePrivateKey.to_string(),
                     )
                     .await
                 }
                 KMSType::Threshold => {
                     // In threshold KMS we need to delete the FHE key info
-                    delete_at_request_id(
+                    delete_at_request_and_epoch_id(
                         &mut (*priv_storage),
                         req_id,
+                        epoch_id,
                         &PrivDataType::FheKeyInfo.to_string(),
                     )
                     .await
@@ -308,12 +344,26 @@ where
         let f3 = async {
             match back_vault {
                 Some(mut guarded_backup_vault) => {
-                    let result = delete_at_request_id(
-                        &mut (*guarded_backup_vault),
-                        req_id,
-                        &PrivDataType::FheKeyInfo.to_string(),
-                    )
-                    .await;
+                    let result = match kms_type {
+                        KMSType::Centralized => {
+                            delete_at_request_and_epoch_id(
+                                &mut (*guarded_backup_vault),
+                                req_id,
+                                epoch_id,
+                                &PrivDataType::FhePrivateKey.to_string(),
+                            )
+                            .await
+                        }
+                        KMSType::Threshold => {
+                            delete_at_request_and_epoch_id(
+                                &mut (*guarded_backup_vault),
+                                req_id,
+                                epoch_id,
+                                &PrivDataType::FheKeyInfo.to_string(),
+                            )
+                            .await
+                        }
+                    };
                     if let Err(e) = &result {
                         tracing::warn!(
                             "Failed to delete FHE key info from backup storage for request {}: {}",
@@ -845,56 +895,61 @@ where
 
     // TODO(#2849) should be changed to KeyId
     pub async fn read_guarded_crypto_material_from_cache<T: Clone>(
-        req_id: &RequestId,
-        fhe_keys: Arc<RwLock<HashMap<RequestId, T>>>,
-    ) -> anyhow::Result<OwnedRwLockReadGuard<HashMap<RequestId, T>, T>> {
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+        fhe_keys: Arc<RwLock<HashMap<(RequestId, EpochId), T>>>,
+    ) -> anyhow::Result<OwnedRwLockReadGuard<HashMap<(RequestId, EpochId), T>, T>> {
         // Returning a OwnedRwLockReadGuard just saves some data-copying
         // if the value is already in the cache.
         let fhe_keys = fhe_keys.clone();
         let guard = fhe_keys.read_owned().await;
-        OwnedRwLockReadGuard::try_map(guard, |m| m.get(req_id)).map_err(|_| {
+        OwnedRwLockReadGuard::try_map(guard, |m| m.get(&(*key_id, *epoch_id))).map_err(|_| {
             anyhow_error_and_warn_log(format!(
-                "Failed to find crypto material in cache for request ID {req_id}"
+                "Failed to find crypto material in cache for request ID {key_id}, epoch ID {epoch_id}"
             ))
         })
     }
 
-    pub async fn read_cloned_crypto_material_from_cache<T: Clone>(
-        cache: Arc<RwLock<HashMap<RequestId, T>>>,
+    pub(crate) async fn read_cloned_private_fhe_material_from_cache<
+        T: PrivateMaterialUnderEpoch + Clone,
+    >(
+        cache: Arc<RwLock<HashMap<(RequestId, EpochId), T>>>,
         req_id: &RequestId,
+        epoch_id: &EpochId,
     ) -> anyhow::Result<T> {
         let out = {
             let guard = cache.read().await;
-            guard.get(req_id).cloned()
+            guard.get(&(*req_id, *epoch_id)).cloned()
         };
         out.ok_or_else(|| {
             anyhow_error_and_warn_log(format!("Key handles are not in the cache for ID {req_id}"))
         })
     }
 
-    pub async fn refresh_crypto_material<T, S>(
-        cache: Arc<RwLock<HashMap<RequestId, T>>>,
+    pub(crate) async fn refresh_fhe_private_material<T, S>(
+        cache: Arc<RwLock<HashMap<(RequestId, EpochId), T>>>,
         req_id: &RequestId,
+        epoch_id: &EpochId,
         storage: Arc<Mutex<S>>,
     ) -> anyhow::Result<()>
     where
-        S: Storage + Send + Sync + 'static,
-        T: CryptoMaterialReader,
+        S: StorageReaderExt + Send + Sync + 'static,
+        T: PrivateCryptoMaterialReader + PrivateMaterialUnderEpoch,
     {
         // This function does not need to be atomic, so we take a read lock
         // on the cache first and check for existance, then release it.
         // We do this because we want to avoid write locks unless necessary.
         let exists = {
             let guarded_fhe_keys = cache.read().await;
-            guarded_fhe_keys.contains_key(req_id)
+            guarded_fhe_keys.contains_key(&(*req_id, *epoch_id))
         };
 
         if !exists {
             let storage = storage.lock().await;
-            match T::read_from_storage(&(*storage), req_id).await {
+            match T::read_from_storage_at_epoch(&(*storage), req_id, epoch_id).await {
                 Ok(new_fhe_keys) => {
                     let mut guarded_fhe_keys = cache.write().await;
-                    guarded_fhe_keys.insert(*req_id, new_fhe_keys);
+                    guarded_fhe_keys.insert((*req_id, *epoch_id), new_fhe_keys);
                 }
                 Err(e) => {
                     return Err(anyhow_error_and_warn_log(format!(
@@ -950,7 +1005,7 @@ where
 }
 
 // we need to manually implement clone, see  https://github.com/rust-lang/rust/issues/26925
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> Clone
+impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 'static> Clone
     for CryptoMaterialStorage<PubS, PrivS>
 {
     fn clone(&self) -> Self {

@@ -4,6 +4,8 @@ use futures_util::future::OptionFuture;
 use itertools::Itertools;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
+use kms_lib::consts::DEFAULT_EPOCH_ID;
+use kms_lib::vault::storage::StorageExt;
 use kms_lib::{
     conf::{
         AwsKmsKeySpec, AwsKmsKeychain, FileStorage, Keychain, S3Storage, Storage as StorageConf,
@@ -22,10 +24,7 @@ use kms_lib::{
     vault::{
         aws::build_aws_sdk_config,
         keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
-        storage::{
-            delete_at_request_id, make_storage, s3::build_s3_client, Storage, StorageForBytes,
-            StorageType,
-        },
+        storage::{delete_at_request_id, make_storage, s3::build_s3_client, Storage, StorageType},
         Vault,
     },
 };
@@ -437,7 +436,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn handle_central_cmd<PubS: StorageForBytes, PrivS: StorageForBytes>(
+async fn handle_central_cmd<PubS: Storage, PrivS: Storage + StorageExt>(
     param_test: bool,
     args: &mut CentralCmdArgs<'_, PubS, PrivS>,
     cmd: ConstructCommand,
@@ -448,6 +447,7 @@ async fn handle_central_cmd<PubS: StorageForBytes, PrivS: StorageForBytes>(
         DEFAULT_PARAM
     };
 
+    let epoch_id = *DEFAULT_EPOCH_ID;
     match cmd {
         ConstructCommand::All => {
             panic!("\"All\" command must be handled in an outer call");
@@ -487,6 +487,7 @@ async fn handle_central_cmd<PubS: StorageForBytes, PrivS: StorageForBytes>(
                 params,
                 &DEFAULT_CENTRAL_KEY_ID,
                 &OTHER_CENTRAL_DEFAULT_ID,
+                &epoch_id,
                 args.deterministic,
                 args.write_privkey,
             )
@@ -525,7 +526,7 @@ async fn handle_central_cmd<PubS: StorageForBytes, PrivS: StorageForBytes>(
     }
 }
 
-async fn handle_threshold_cmd<PubS: StorageForBytes, PrivS: StorageForBytes>(
+async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage + StorageExt>(
     param_test: bool,
     args: &mut ThresholdCmdArgs<'_, PubS, PrivS>,
     cmd: ConstructCommand,
@@ -535,6 +536,8 @@ async fn handle_threshold_cmd<PubS: StorageForBytes, PrivS: StorageForBytes>(
     } else {
         DEFAULT_PARAM
     };
+
+    let epoch_id = *DEFAULT_EPOCH_ID;
 
     match cmd {
         ConstructCommand::All => panic!("\"All\" command must be handled in an outer call"),
@@ -599,6 +602,7 @@ async fn handle_threshold_cmd<PubS: StorageForBytes, PrivS: StorageForBytes>(
                 args.priv_storages,
                 params,
                 &DEFAULT_THRESHOLD_KEY_ID_4P,
+                &epoch_id,
                 args.deterministic,
             )
             .await

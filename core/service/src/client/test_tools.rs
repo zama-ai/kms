@@ -8,10 +8,10 @@ use crate::engine::{run_server, Shutdown};
 use crate::util::key_setup::test_tools::file_backup_vault;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::storage::make_storage;
 use crate::vault::storage::{
     crypto_material::get_core_signing_key, file::FileStorage, Storage, StorageType,
 };
+use crate::vault::storage::{make_storage, StorageExt};
 use crate::vault::Vault;
 use crate::{
     conf::{
@@ -47,7 +47,7 @@ const GRPC_MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
 
 pub async fn setup_threshold_no_client<
     PubS: Storage + Clone + Sync + Send + 'static,
-    PrivS: Storage + Clone + Sync + Send + 'static,
+    PrivS: StorageExt + Clone + Sync + Send + 'static,
 >(
     threshold: u8,
     pub_storage: Vec<PubS>,
@@ -364,7 +364,7 @@ impl ServerHandle {
 
 pub async fn setup_threshold<
     PubS: Storage + Clone + Sync + Send + 'static,
-    PrivS: Storage + Clone + Sync + Send + 'static,
+    PrivS: StorageExt + Clone + Sync + Send + 'static,
 >(
     threshold: u8,
     pub_storage: Vec<PubS>,
@@ -408,7 +408,7 @@ pub async fn setup_threshold<
 /// Setup a client and a server running with non-persistent storage.
 pub async fn setup_centralized_no_client<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 >(
     pub_storage: PubS,
     priv_storage: PrivS,
@@ -467,7 +467,7 @@ pub async fn setup_centralized_no_client<
 
 pub(crate) async fn setup_centralized<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 >(
     pub_storage: PubS,
     priv_storage: PrivS,

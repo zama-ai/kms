@@ -33,7 +33,7 @@ use tracing::Instrument;
 
 // === Internal Crate ===
 use crate::{
-    consts::{DEFAULT_MPC_CONTEXT, PRSS_INIT_REQ_ID},
+    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{compute_external_signature_preprocessing, retrieve_parameters, BaseKmsStruct},
@@ -87,7 +87,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         // TODO(zama-ai/kms-internal/issues/2758)
         // remove the default context when all of context is ready
         let context_id = context_id.unwrap_or(*DEFAULT_MPC_CONTEXT);
-        let epoch_id = epoch_id.unwrap_or(EpochId::try_from(PRSS_INIT_REQ_ID).unwrap());
+        let epoch_id = epoch_id.unwrap_or(*DEFAULT_EPOCH_ID);
         let my_role = self.session_maker.my_role(&context_id).await?;
         let my_identity = self.session_maker.my_identity(&context_id).await?;
 
@@ -505,6 +505,7 @@ mod tests {
         rng: &mut AesRng,
         use_prss: bool,
     ) -> RealPreprocessor<P> {
+        let epoch_id = *DEFAULT_EPOCH_ID;
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
         let prss_setup_z128 = if use_prss {
@@ -521,6 +522,7 @@ mod tests {
         let session_maker = SessionMaker::four_party_dummy_session(
             prss_setup_z128,
             prss_setup_z64,
+            &epoch_id,
             base_kms.new_rng().await,
         );
         RealPreprocessor::<P>::init_test(base_kms, session_maker.make_immutable())

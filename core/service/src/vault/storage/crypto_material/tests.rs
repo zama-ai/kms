@@ -4,7 +4,7 @@ use crate::{
     engine::base::{derive_request_id, KeyGenMetadata},
 };
 use aes_prng::AesRng;
-use kms_grpc::{rpc_types::WrappedPublicKey, RequestId};
+use kms_grpc::{rpc_types::WrappedPublicKey, EpochId, RequestId};
 use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use rand::SeedableRng;
 use std::collections::HashMap;
@@ -179,6 +179,9 @@ async fn write_central_keys() {
     let pub_storage = crypto_storage.inner.public_storage.clone();
 
     let req_id = derive_request_id("write_central_keys").unwrap();
+    let epoch_id: EpochId = derive_request_id("write_central_keys_epoch")
+        .unwrap()
+        .into();
 
     let pbs_params: ClassicPBSParameters =
         param.get_params_basics_handle().to_classic_pbs_parameters();
@@ -207,6 +210,7 @@ async fn write_central_keys() {
     crypto_storage
         .write_centralized_keys_with_meta_store(
             &req_id,
+            &epoch_id,
             key_info.clone(),
             fhe_key_set.clone(),
             meta_store.clone(),
@@ -224,6 +228,7 @@ async fn write_central_keys() {
     crypto_storage
         .write_centralized_keys_with_meta_store(
             &req_id,
+            &epoch_id,
             key_info.clone(),
             fhe_key_set.clone(),
             meta_store.clone(),
@@ -235,6 +240,7 @@ async fn write_central_keys() {
     crypto_storage
         .write_centralized_keys_with_meta_store(
             &req_id,
+            &epoch_id,
             key_info.clone(),
             fhe_key_set.clone(),
             meta_store.clone(),
@@ -252,6 +258,7 @@ async fn write_central_keys() {
     crypto_storage
         .write_centralized_keys_with_meta_store(
             &new_req_id,
+            &epoch_id,
             key_info,
             fhe_key_set,
             meta_store.clone(),
@@ -272,6 +279,9 @@ async fn write_central_keys() {
 #[tracing_test::traced_test]
 async fn write_threshold_empty_update() {
     let req_id = derive_request_id("write_threshold_empty_update").unwrap();
+    let epoch_id = derive_request_id("write_threshold_empty_update_epoch")
+        .unwrap()
+        .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
@@ -289,6 +299,7 @@ async fn write_threshold_empty_update() {
     crypto_storage
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
+            &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
             dummy_info(),
@@ -307,6 +318,7 @@ async fn write_threshold_empty_update() {
     crypto_storage
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
+            &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
             dummy_info(),
@@ -325,6 +337,9 @@ async fn write_threshold_empty_update() {
 #[tracing_test::traced_test]
 async fn write_threshold_keys_meta_update() {
     let req_id = derive_request_id("write_threshold_keys_meta_update").unwrap();
+    let epoch_id: EpochId = derive_request_id("write_threshold_keys_meta_update_epoch")
+        .unwrap()
+        .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
@@ -337,6 +352,7 @@ async fn write_threshold_keys_meta_update() {
     crypto_storage
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
+            &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
             dummy_info(),
@@ -364,6 +380,7 @@ async fn write_threshold_keys_meta_update() {
     crypto_storage
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
+            &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
             dummy_info(),
@@ -377,6 +394,9 @@ async fn write_threshold_keys_meta_update() {
 #[tracing_test::traced_test]
 async fn write_threshold_keys_failed_storage() {
     let req_id = derive_request_id("write_threshold_keys_failed_storage").unwrap();
+    let epoch_id: EpochId = derive_request_id("write_threshold_keys_failed_storage_epoch")
+        .unwrap()
+        .into();
     let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let pub_storage = crypto_storage.inner.public_storage.clone();
@@ -390,6 +410,7 @@ async fn write_threshold_keys_failed_storage() {
     crypto_storage
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
+            &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
             dummy_info(),
@@ -422,6 +443,7 @@ async fn write_threshold_keys_failed_storage() {
     crypto_storage
         .write_threshold_keys_with_dkg_meta_store(
             &new_req_id,
+            &epoch_id,
             threshold_fhe_keys.clone(),
             fhe_key_set.clone(),
             dummy_info(),
@@ -437,6 +459,75 @@ async fn write_threshold_keys_failed_storage() {
         assert!(guard.exists(&req_id));
         assert!(!guard.exists(&new_req_id));
     }
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn read_guarded_threshold_fhe_keys_not_found() {
+    let req_id = derive_request_id("read_guarded_threshold_fhe_keys_not_found").unwrap();
+    let epoch_id: EpochId = derive_request_id("read_guarded_threshold_fhe_keys_not_found_epoch")
+        .unwrap()
+        .into();
+
+    // Create a threshold storage with no keys in the cache and no keys in storage
+    let crypto_storage = ThresholdCryptoMaterialStorage::new(
+        FailingRamStorage::new(100),
+        RamStorage::new(),
+        None,
+        HashMap::new(),
+        HashMap::new(),
+    );
+
+    // Try to read a non-existent key - should return an error
+    let result = crypto_storage
+        .read_guarded_threshold_fhe_keys(&req_id, &epoch_id)
+        .await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    let expected_msg = format!(
+        "Could not find data at (FheKeyInfo, {}, {})",
+        req_id, epoch_id
+    );
+    assert!(
+        err.to_string().contains(&expected_msg),
+        "Unexpected error message: {}",
+        err
+    );
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn read_guarded_crypto_material_from_cache_not_found() {
+    let key_id = derive_request_id("read_guarded_crypto_material_from_cache_not_found").unwrap();
+    let epoch_id: EpochId =
+        derive_request_id("read_guarded_crypto_material_from_cache_not_found_epoch")
+            .unwrap()
+            .into();
+
+    // Create an empty cache
+    let empty_cache: Arc<RwLock<HashMap<(RequestId, EpochId), ThresholdFheKeys>>> =
+        Arc::new(RwLock::new(HashMap::new()));
+
+    // Try to read from an empty cache - should return an error
+    let result = CryptoMaterialStorage::<FailingRamStorage, RamStorage>::read_guarded_crypto_material_from_cache(
+        &key_id,
+        &epoch_id,
+        empty_cache,
+    )
+    .await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    let expected_msg = format!(
+        "Failed to find crypto material in cache for request ID {}, epoch ID {}",
+        key_id, epoch_id
+    );
+    assert!(
+        err.to_string().contains(&expected_msg),
+        "Unexpected error message: {}",
+        err
+    );
 }
 
 fn setup_threshold_store(
