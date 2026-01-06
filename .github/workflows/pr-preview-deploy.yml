@@ -377,11 +377,20 @@ jobs:
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.serviceAccountName="${NAMESPACE}" \
               --set kmsCore.envFrom.configmap.name="${NAMESPACE}" \
-              --set nodeSelector.karpenter.sh/nodepool="kms-bench-spot-64" \
-              --set tolerations[0].key="karpenter.sh/nodepool" \
-              --set tolerations[0].effect="NoSchedule" \
-              --set tolerations[0].operator="Equal" \
-              --set tolerations[0].value="kms-bench-spot-64"
+              --set kmsCoreClient.nameOverride="kms-core-client" \
+              --set kmsCoreClient.envFrom.configmap.name="${NAMESPACE}" \
+              --set kmsCoreClient.num_majority=1 \
+              --set kmsCoreClient.num_reconstruct=1 \
+              --set kmsCore.nodeSelector.karpenter.sh/nodepool="kms-bench-spot-64" \
+              --set kmsCore.tolerations[0].key="karpenter.sh/nodepool" \
+              --set kmsCore.tolerations[0].effect="NoSchedule" \
+              --set kmsCore.tolerations[0].operator="Equal" \
+              --set kmsCore.tolerations[0].value="kms-bench-spot-64" \
+              --set kmsCoreClient.nodeSelector.karpenter.sh/nodepool="zws-pool" \
+              --set kmsCoreClient.tolerations[0].key="karpenter.sh/nodepool" \
+              --set kmsCoreClient.tolerations[0].effect="NoSchedule" \
+              --set kmsCoreClient.tolerations[0].operator="Equal" \
+              --set kmsCoreClient.tolerations[0].value="zws-pool"
 
           ###################################################################
           # Deploy KMS Core in centralized mode with enclave
@@ -398,10 +407,19 @@ jobs:
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
               --set kmsCore.serviceAccountName="${NAMESPACE}" \
               --set kmsCore.envFrom.configmap.name="${NAMESPACE}" \
+              --set kmsCoreClient.nameOverride="kms-core-client" \
+              --set kmsCoreClient.envFrom.configmap.name="${NAMESPACE}" \
+              --set kmsCoreClient.num_majority=1 \
+              --set kmsCoreClient.num_reconstruct=1 \
               --set kmsCore.tolerations[0].key=app \
               --set kmsCore.tolerations[0].effect="NoSchedule" \
               --set kmsCore.tolerations[0].operator="Equal" \
-              --set kmsCore.tolerations[0].value="${NAMESPACE}"
+              --set kmsCore.tolerations[0].value="${NAMESPACE}" \
+              --set kmsCoreClient.nodeSelector.karpenter.sh/nodepool="zws-pool" \
+              --set kmsCoreClient.tolerations[0].key="karpenter.sh/nodepool" \
+              --set kmsCoreClient.tolerations[0].effect="NoSchedule" \
+              --set kmsCoreClient.tolerations[0].operator="Equal" \
+              --set kmsCoreClient.tolerations[0].value="zws-pool"
           fi
 
           ###################################################################
