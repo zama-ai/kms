@@ -1,8 +1,8 @@
 use crate::{
     client::tests::threshold::{common::threshold_handles, crs_gen_tests::run_crs},
     consts::{
-        BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_PARAM, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-        PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
+        BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, DEFAULT_EPOCH_ID, DEFAULT_PARAM,
+        PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
     },
     cryptography::internal_crypto_types::WrappedDKGParams,
     engine::base::{derive_request_id, INSECURE_PREPROCESSING_ID},
@@ -10,7 +10,9 @@ use crate::{
         file_backup_vault, purge, purge_backup, purge_priv, purge_pub, EncryptionConfig,
         TestingPlaintext,
     },
-    vault::storage::{delete_all_at_request_id, file::FileStorage, StorageReader, StorageType},
+    vault::storage::{
+        delete_all_at_request_id, file::FileStorage, StorageReader, StorageReaderExt, StorageType,
+    },
 };
 use kms_grpc::{
     kms::v1::{Empty, FheParameter},
@@ -225,7 +227,11 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
         )
         .await;
         assert!(backup_storage
-            .data_exists(&key_id, &PrivDataType::FheKeyInfo.to_string())
+            .data_exists_at_epoch(
+                &key_id,
+                &DEFAULT_EPOCH_ID,
+                &PrivDataType::FheKeyInfo.to_string()
+            )
             .await
             .unwrap());
     }
