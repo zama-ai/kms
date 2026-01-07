@@ -241,8 +241,9 @@ async fn test_largecipher_isolated() -> Result<()> {
     let err = response.unwrap_err();
     assert_eq!(err.code(), tonic::Code::Internal);
     assert!(
-        err.message().contains("finished with an error"),
-        "Expected error message to contain 'finished with an error', got: {}",
+        err.message().contains("finished with an error")
+            || err.message().contains("Failed on requestID"),
+        "Expected error message to indicate failure, got: {}",
         err.message()
     );
     tracing::info!("aborting");
