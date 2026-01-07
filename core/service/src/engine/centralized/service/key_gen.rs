@@ -8,12 +8,10 @@ use crate::engine::centralized::central_kms::{
 use crate::engine::keyset_configuration::InternalKeySetConfig;
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::MetricedError;
-use crate::engine::validation::{
-    parse_proto_request_id, validate_key_gen_request, RequestIdParsingErr,
-};
+use crate::engine::validation::{proto_request_id, validate_key_gen_request, RequestIdParsingErr};
 use crate::util::meta_store::{
-    add_req_to_meta_store, delete_req_from_meta_store, handle_res_mapping,
-    retrieve_from_meta_store, update_err_req_in_meta_store, MetaStore,
+    add_req_to_meta_store, delete_req_from_meta_store, retrieve_from_meta_store,
+    update_err_req_in_meta_store, MetaStore,
 };
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::{Storage, StorageExt};
@@ -24,13 +22,14 @@ use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
 use kms_grpc::{EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    CENTRAL_TAG, OP_KEYGEN_REQUEST, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
+    CENTRAL_TAG, OP_INSECURE_KEYGEN_REQUEST, OP_KEYGEN_REQUEST, TAG_CONTEXT_ID, TAG_EPOCH_ID,
+    TAG_KEY_ID, TAG_PARTY_ID,
 };
 use std::sync::Arc;
 use threshold_fhe::execution::keyset_config::KeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::sync::RwLock;
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response};
 use tracing::Instrument;
 
 /// Implementation of the key_gen endpoint
@@ -42,13 +41,24 @@ pub async fn key_gen_impl<
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<KeyGenRequest>,
-    #[cfg(feature = "insecure")] check_preproc_id: bool,
+    insecure: bool,
 ) -> Result<Response<Empty>, MetricedError> {
-    let permit = service.rate_limiter.start_keygen().await.map_err(|e| {
-        MetricedError::new(OP_KEYGEN_REQUEST, None, e, tonic::Code::ResourceExhausted)
-    })?;
+    // Retrieve the correct tag
+    let op_tag = if insecure {
+        OP_INSECURE_KEYGEN_REQUEST
+    } else {
+        OP_KEYGEN_REQUEST
+    };
+    let permit = service
+        .rate_limiter
+        .start_keygen()
+        .await
+        .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
+    // TODO add serial lock to have similar flow to threshold case
+    // Acquire the serial lock to make sure no other keygen is running concurrently
+    // let _guard = service.serial_lock.lock().await;
     let mut timer = METRICS
-        .time_operation(OP_KEYGEN_REQUEST)
+        .time_operation(op_tag)
         // Use a constant party ID since this is the central KMS
         .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
         .start();
@@ -58,7 +68,7 @@ pub async fn key_gen_impl<
     let (req_id, preproc_id, context_id, epoch_id, internal_keyset_config, eip712_domain) =
         validate_key_gen_request(inner.clone()).map_err(|e| {
             MetricedError::new(
-                OP_KEYGEN_REQUEST,
+                op_tag,
                 None,
                 e, // Validation error
                 tonic::Code::InvalidArgument,
@@ -83,41 +93,30 @@ pub async fn key_gen_impl<
         // Note that the keygen meta store should be checked first
         // because we do not want to delete the preprocessing ID
         // if the keygen request cannot proceed.
-        if retrieve_from_meta_store(
-            service.key_meta_map.read().await,
-            &req_id,
-            OP_KEYGEN_REQUEST,
-        )
-        .await
-        .is_ok()
+        if retrieve_from_meta_store(service.key_meta_map.read().await, &req_id, op_tag)
+            .await
+            .is_ok()
         {
             return Err(MetricedError::new(
-                OP_KEYGEN_REQUEST,
+                op_tag,
                 Some(req_id),
                 anyhow::anyhow!("Key generation request ID {req_id} is already in use."),
                 tonic::Code::AlreadyExists,
             ));
         }
-        let check_meta_store = {
-            #[cfg(feature = "insecure")]
-            {
-                check_preproc_id
-            }
-            #[cfg(not(feature = "insecure"))]
-            true
-        };
-        let params = if check_meta_store {
+        // If we're in insecure mode, we skip removing preprocessed material since it may not exist
+        let params = if !insecure {
             let preproc = delete_req_from_meta_store(
                 service.preprocessing_meta_store.write().await,
                 &preproc_id,
-                OP_KEYGEN_REQUEST,
+                op_tag,
             )
             .await?;
             preproc.dkg_param
         } else {
             retrieve_parameters(inner.params).map_err(|e| {
                 MetricedError::new(
-                    OP_KEYGEN_REQUEST,
+                    op_tag,
                     Some(req_id),
                     anyhow::anyhow!("Failed to retrieve DKG parameters: {}", e),
                     tonic::Code::InvalidArgument,
@@ -128,12 +127,7 @@ pub async fn key_gen_impl<
         // check that the request ID is not used yet
         // and then insert the request ID only if it's unused
         // all validation must be done before inserting the request ID
-        add_req_to_meta_store(
-            &mut service.crs_meta_map.write().await,
-            &req_id,
-            OP_KEYGEN_REQUEST,
-        )
-        .await?;
+        add_req_to_meta_store(&mut service.crs_meta_map.write().await, &req_id, op_tag).await?;
 
         (params, permit)
     };
@@ -145,7 +139,7 @@ pub async fn key_gen_impl<
             .sig_key()
             .map_err(|e| {
         MetricedError::new(
-            OP_KEYGEN_REQUEST,
+            op_tag,
             Some(req_id),
             anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
             tonic::Code::FailedPrecondition,
@@ -166,6 +160,7 @@ pub async fn key_gen_impl<
                 params,
                 internal_keyset_config,
                 eip712_domain,
+                op_tag,
             )
             .await;
         }
@@ -185,24 +180,35 @@ pub async fn get_key_gen_result_impl<
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
-) -> Result<Response<KeyGenResult>, Status> {
+    insecure: bool,
+) -> Result<Response<KeyGenResult>, MetricedError> {
+    // Retrieve the correct tag
+    let op_tag = if insecure {
+        OP_INSECURE_KEYGEN_REQUEST
+    } else {
+        OP_KEYGEN_REQUEST
+    };
     let request_id =
-        parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)?;
+        proto_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)
+            .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
+
     tracing::debug!("Received get key gen result request with id {}", request_id);
 
-    let status = {
-        let guarded_meta_store = service.key_meta_map.read().await;
-        guarded_meta_store.retrieve(&request_id)
-    };
-    let res = handle_res_mapping(status, &request_id, "Key generation").await?;
-
-    match res {
+    let key_gen_res =
+        retrieve_from_meta_store(service.key_meta_map.read().await, &request_id, op_tag).await?;
+    match key_gen_res {
         KeyGenMetadata::Current(res) => {
             if request_id != res.key_id {
-                return Err(Status::internal(format!(
-                    "Request ID mismatch: expected {}, got {}",
-                    request_id, res.key_id
-                )));
+                return Err(MetricedError::new(
+                    op_tag,
+                    Some(request_id),
+                    anyhow::anyhow!(
+                        "Request key ID mismatch: expected {}, got {}",
+                        request_id,
+                        res.key_id
+                    ),
+                    tonic::Code::Internal,
+                ));
             }
             let key_digests = res
                 .key_digest_map
@@ -257,6 +263,7 @@ pub(crate) async fn key_gen_background<
     params: DKGParams,
     internal_keyset_config: InternalKeySetConfig,
     eip712_domain: Eip712Domain,
+    op_tag: &'static str,
 ) {
     let start = tokio::time::Instant::now();
     {
@@ -270,7 +277,7 @@ pub(crate) async fn key_gen_background<
                 &mut meta_store.write().await,
                 req_id,
                 format!("Failed key generation: Key with ID {req_id} already exists!"),
-                OP_KEYGEN_REQUEST,
+                op_tag,
             );
             return;
         }
@@ -284,7 +291,7 @@ pub(crate) async fn key_gen_background<
                         &mut meta_store.write().await,
                         req_id,
                         format!("Failed to use standard key generation parameters: {e}"),
-                        OP_KEYGEN_REQUEST,
+                        op_tag,
                     );
                     return;
                 }
@@ -310,7 +317,7 @@ pub(crate) async fn key_gen_background<
                         &mut meta_store.write().await,
                         req_id,
                         format!("Failed key generation: {e}"),
-                        OP_KEYGEN_REQUEST,
+                        op_tag,
                     );
                     return;
                 }
@@ -337,7 +344,7 @@ pub(crate) async fn key_gen_background<
                         &mut meta_store.write().await,
                         req_id,
                         format!("Failed to use decompression key generation parameters: {e}"),
-                        OP_KEYGEN_REQUEST,
+                        op_tag,
                     );
                     return;
                 }
@@ -356,7 +363,7 @@ pub(crate) async fn key_gen_background<
                         &mut meta_store.write().await,
                         req_id,
                         format!("Failed decompression key generation: {e}"),
-                        OP_KEYGEN_REQUEST,
+                        op_tag,
                     );
                     return;
                 }
@@ -375,7 +382,7 @@ pub(crate) async fn key_gen_background<
                         &mut meta_store.write().await,
                         req_id,
                         format!("Failed to compute decompression key info: {e}"),
-                        OP_KEYGEN_REQUEST,
+                        op_tag,
                     );
                     return;
                 }
@@ -470,7 +477,7 @@ pub(crate) mod tests {
         .unwrap();
 
         // no need to wait because get result is semi-blocking
-        let _res = get_key_gen_result_impl(kms, tonic::Request::new((*req_id).into()))
+        let _res = get_key_gen_result_impl(kms, tonic::Request::new((*req_id).into()), false)
             .await
             .unwrap();
     }
@@ -697,7 +704,7 @@ pub(crate) mod tests {
         )
         .await
         .unwrap();
-        let _res = get_key_gen_result_impl(&kms, tonic::Request::new(request_id.into()))
+        let _res = get_key_gen_result_impl(&kms, tonic::Request::new(request_id.into()), false)
             .await
             .unwrap();
 
@@ -751,7 +758,8 @@ pub(crate) mod tests {
         // we try to get a key that does not exist
         {
             let bad_key_id = derive_request_id("test_keygen_not_found").unwrap();
-            let get_result = get_key_gen_result_impl(&kms, Request::new(bad_key_id.into())).await;
+            let get_result =
+                get_key_gen_result_impl(&kms, Request::new(bad_key_id.into()), false).await;
             assert_eq!(get_result.unwrap_err().code(), tonic::Code::NotFound);
         }
     }

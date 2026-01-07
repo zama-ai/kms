@@ -69,7 +69,7 @@ impl_endpoint! {
     impl CoreServiceEndpoint {
         async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_INIT);
-            self.initiator.init(request).await.map_err(|e| e.into())
+            self.initiator.init(request).await
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -238,7 +238,7 @@ impl_endpoint! {
             request: Request<InitiateResharingRequest>,
         ) -> Result<Response<InitiateResharingResponse>, Status> {
             METRICS.increment_request_counter(OP_INITIATE_RESHARING);
-            self.resharer.initiate_resharing(request).await.map_err(|e| e.into())
+            self.resharer.initiate_resharing(request).await
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -247,7 +247,7 @@ impl_endpoint! {
             request: Request<RequestId>,
         ) -> Result<Response<ResharingResultResponse>, Status> {
             METRICS.increment_request_counter(OP_GET_INITIATE_RESHARING_RESULT);
-            self.resharer.get_resharing_result(request).await.map_err(|e| e.into())
+            self.resharer.get_resharing_result(request).await
         }
 
         #[tracing::instrument(skip(self, request))]

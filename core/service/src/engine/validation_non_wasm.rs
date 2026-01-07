@@ -641,7 +641,6 @@ pub(crate) fn validate_key_gen_request(
                 format!("Failed to parse KeySetConfig: {e}"),
             )
         })?;
-
     let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
     Ok((

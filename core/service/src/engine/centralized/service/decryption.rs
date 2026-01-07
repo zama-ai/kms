@@ -449,7 +449,7 @@ pub async fn get_public_decryption_result_impl<
             OP_PUBLIC_DECRYPT_RESULT,
             Some(request_id),
             anyhow::anyhow!("Request ID mismatch: expected {request_id}, got {retrieved_req_id}"),
-            tonic::Code::NotFound,
+            tonic::Code::Internal,
         ));
     }
 

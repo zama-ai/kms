@@ -169,7 +169,7 @@ pub async fn get_crs_gen_result_impl<
                         "Request ID mismatch: expected {request_id}, got {}",
                         crs_info.crs_id
                     ),
-                    tonic::Code::NotFound,
+                    tonic::Code::Internal,
                 ));
             }
 

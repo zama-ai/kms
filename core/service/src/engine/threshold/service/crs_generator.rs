@@ -97,9 +97,6 @@ impl<
         } else {
             OP_CRS_GEN_REQUEST
         };
-        // Check for resource exhaustion once all the other checks are ok
-        // because resource exhaustion can be recovered by sending the exact same request
-        // but the errors above cannot be tried again.
         let permit = self
             .rate_limiter
             .start_crsgen()
@@ -109,10 +106,7 @@ impl<
         let mut timer = metrics::METRICS.time_operation(op_tag).start();
 
         let inner = request.into_inner();
-        tracing::info!(
-            "Starting crs generation on kms for request ID {:?}, context ID {:?}, max_num_bits {:?}",
-            inner.request_id, inner.context_id, inner.max_num_bits
-        );
+
         let (req_id, context_id, witness_dim, dkg_params, eip712_domain) =
             validate_crs_gen_request(inner.clone()).map_err(|e| {
                 MetricedError::new(
@@ -146,6 +140,10 @@ impl<
         let sigkey = self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(op_tag, Some(req_id), e, tonic::Code::FailedPrecondition)
         })?;
+        tracing::info!(
+            "Starting crs generation on kms for request ID {:?}, context ID {:?}, max_num_bits {:?}",
+            inner.request_id, inner.context_id, inner.max_num_bits
+        );
         // NOTE: everything inside this function will cause an Aborted error code
         // so before calling it we should do as much validation as possible without modifying state
         self.inner_crs_gen(
@@ -263,7 +261,7 @@ impl<
                             request_id,
                             crs_data.crs_id
                         ),
-                        tonic::Code::NotFound,
+                        tonic::Code::Internal,
                     ));
                 }
                 Ok(Response::new(CrsGenResult {

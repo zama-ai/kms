@@ -6,14 +6,15 @@ use itertools::Itertools;
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
     kms::v1::{self, Empty, KeyDigest, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
-    rpc_types::optional_protobuf_to_alloy_domain,
     RequestId,
 };
 use observability::{
     metrics,
     metrics_names::{
         ERR_CANCELLED, OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN,
-        OP_INSECURE_STANDARD_KEYGEN, OP_KEYGEN_REQUEST, OP_STANDARD_KEYGEN, TAG_PARTY_ID,
+        OP_INSECURE_KEYGEN_REQUEST, OP_INSECURE_KEYGEN_RESULT, OP_INSECURE_STANDARD_KEYGEN,
+        OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_STANDARD_KEYGEN, TAG_CONTEXT_ID, TAG_EPOCH_ID,
+        TAG_KEY_ID, TAG_PARTY_ID,
     },
 };
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -38,14 +39,13 @@ use threshold_fhe::{
     },
     networking::NetworkMode,
 };
-use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockReadGuard};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response};
 use tracing::Instrument;
 
 // === Internal Crate Imports ===
 use crate::{
-    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{
@@ -59,12 +59,12 @@ use crate::{
         },
         utils::MetricedError,
         validation::{
-            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+            parse_optional_proto_request_id, proto_request_id, validate_key_gen_request,
+            RequestIdParsingErr,
         },
     },
-    ok_or_tonic_abort,
     util::{
-        meta_store::{handle_res_mapping, MetaStore},
+        meta_store::{add_req_to_meta_store, retrieve_from_meta_store, MetaStore},
         rate_limiter::RateLimiter,
     },
     vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage, StorageExt},
@@ -155,7 +155,7 @@ impl<
     async fn insecure_key_gen(
         &self,
         request: Request<KeyGenRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<Empty>, MetricedError> {
         tracing::info!("starting insecure key gen in RealInsecureKeyGenerator");
         self.real_key_generator.inner_key_gen(request, true).await
     }
@@ -163,8 +163,10 @@ impl<
     async fn get_result(
         &self,
         request: Request<v1::RequestId>,
-    ) -> Result<Response<KeyGenResult>, Status> {
-        self.real_key_generator.inner_get_result(request).await
+    ) -> Result<Response<KeyGenResult>, MetricedError> {
+        self.real_key_generator
+            .inner_get_result(request, true)
+            .await
     }
 }
 
@@ -211,21 +213,12 @@ impl<
         internal_keyset_config: InternalKeySetConfig,
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
-        preproc_id: Option<RequestId>,
+        preproc_id: RequestId,
         eip712_domain: &alloy_sol_types::Eip712Domain,
-        context_id: Option<ContextId>,
-        epoch_id: Option<RequestId>,
+        context_id: ContextId,
+        epoch_id: EpochId,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
-        // TODO(zama-ai/kms-internal/issues/2758)
-        // remove the default context when all of context is ready
-        let context_id = context_id.unwrap_or(*DEFAULT_MPC_CONTEXT);
-
-        // TODO(zama-ai/kms-internal/issues/2809)
-        // we don't need epoch ID for the actual keygen
-        // but it will be needed when we store the key material
-        let epoch_id: EpochId = epoch_id.map(Into::into).unwrap_or(*DEFAULT_EPOCH_ID);
-
         //Retrieve the right metric tag
         let op_tag = match (
             &preproc_handle_w_mode,
@@ -259,12 +252,6 @@ impl<
             .time_operation(op_tag)
             .tag(TAG_PARTY_ID, my_role.to_string());
 
-        // Update status
-        {
-            let mut guarded_meta_store = self.dkg_pubinfo_meta_store.write().await;
-            guarded_meta_store.insert(&req_id)?;
-        }
-
         // Create the base session necessary to run the DKG
         let base_session = {
             let session_id = req_id.derive_session_id()?;
@@ -294,15 +281,19 @@ impl<
 
         // right before keygen starts, we delete the preprocessing entry from the bucket
         // so that it cannot be used again.
-        if let Some(preproc_id) = preproc_id {
-            tracing::info!(
+        // TODO should it actually not be invalidated st we do not allow generating again under the same id
+        tracing::info!(
                     "Deleting preprocessing ID {} from bucket store before starting keygen for request ID {}",
                     preproc_id,
                     req_id_clone
                 );
+
+        {
             let mut map = self.preproc_buckets.write().await;
             map.delete(&preproc_id);
         }
+        // TODO ensure proper deletion using short hand methods
+        // delete_req_from_meta_store(self.preproc_buckets.write().await, &preproc_id, op_tag).await?;
 
         let keygen_background = async move {
             match internal_keyset_config.keyset_config() {
@@ -381,11 +372,61 @@ impl<
         &self,
         request: Request<KeyGenRequest>,
         insecure: bool,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<Empty>, MetricedError> {
+        // Retrieve the correct tag
+        let op_tag = if insecure {
+            OP_INSECURE_KEYGEN_REQUEST
+        } else {
+            OP_KEYGEN_REQUEST
+        };
+        // Acquire the serial lock to make sure no other keygen is running concurrently
+        let _guard = self.serial_lock.lock().await;
+        let permit = self
+            .rate_limiter
+            .start_keygen()
+            .await
+            .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
+
+        let mut timer = metrics::METRICS.time_operation(op_tag).start();
+
         // Note: We increase the request counter only in launch_dkg
         // so we don't increase the error counter here either
-
         let inner = request.into_inner();
+        let (req_id, preproc_id, context_id, epoch_id, internal_keyset_config, eip712_domain) =
+            validate_key_gen_request(inner.clone()).map_err(|e| {
+                MetricedError::new(
+                    op_tag,
+                    None,
+                    e, // Validation error
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
+        let metric_tags = vec![
+            (TAG_KEY_ID, req_id.to_string()),
+            (TAG_CONTEXT_ID, context_id.to_string()),
+            (TAG_EPOCH_ID, epoch_id.to_string()),
+        ];
+        timer.tags(metric_tags.clone());
+
+        // This function does not modify the meta store,
+        // so if the preproc handle is consumed,
+        // we need to delete it from the meta store later on.
+        let (preproc_handle, dkg_params) = Self::retrieve_preproc_handle(
+            self.preproc_buckets.read().await,
+            req_id,
+            preproc_id,
+            inner.params,
+            insecure,
+        )
+        .await?;
+
+        add_req_to_meta_store(
+            &mut self.dkg_pubinfo_meta_store.write().await,
+            &req_id,
+            op_tag,
+        )
+        .await?;
+
         tracing::info!(
             "Keygen starting with request_id={:?}, keyset_config={:?}, keyset_added_info={:?}, insecure={}",
             inner.request_id,
@@ -394,92 +435,19 @@ impl<
             insecure
         );
 
-        // Acquire the serial lock to make sure no other keygen is running concurrently
-        let _guard = self.serial_lock.lock().await;
-
-        let request_id =
-            parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::KeyGenRequest)?;
-
-        let eip712_domain =
-            optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
-                MetricedError::new(
-                    OP_KEYGEN_REQUEST,
-                    Some(request_id),
-                    anyhow::anyhow!("EIP712 domain validation for inner key generation: {e}"),
-                    tonic::Code::InvalidArgument,
-                )
-            })?;
-
-        let internal_keyset_config =
-            InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info.clone())
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::InvalidArgument,
-                        format!("Failed to parse KeySetConfig: {e}"),
-                    )
-                })?;
-
-        // Check for existance of request ID
-        {
-            let guarded_meta_store = self.dkg_pubinfo_meta_store.read().await;
-            if guarded_meta_store.exists(&request_id) {
-                return Err(tonic::Status::new(
-                    tonic::Code::AlreadyExists,
-                    format!("Request ID {request_id} already exists for keygen"),
-                ));
-            }
-        }
-
-        // Check for resource exhaustion once all the other checks are ok
-        // because resource exhaustion can be recovered by sending the exact same request
-        // but the errors above cannot be tried again.
-        let permit = self.rate_limiter.start_keygen().await?;
-
-        // This function does not modify the meta store,
-        // so if the preproc handle is consumed,
-        // we need to delete it from the meta store later on.
-        let (preproc_handle, dkg_params, preproc_id) =
-            self.retrieve_preproc_handle(insecure, &inner).await?;
-
-        let context_id = inner
-            .context_id
-            .as_ref()
-            .map(|id| id.try_into())
-            .transpose()
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::InvalidArgument,
-                    format!("invalid context id: {e}"),
-                )
-            })?;
-
-        let epoch_id = inner
-            .epoch_id
-            .as_ref()
-            .map(|id| id.try_into())
-            .transpose()
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::InvalidArgument,
-                    format!("invalid epoch id: {e}"),
-                )
-            })?;
-
-        ok_or_tonic_abort(
-            self.launch_dkg(
-                dkg_params,
-                internal_keyset_config,
-                preproc_handle,
-                request_id,
-                preproc_id,
-                &eip712_domain,
-                context_id,
-                epoch_id,
-                permit,
-            )
-            .await,
-            format!("Error launching dkg for request ID {request_id}"),
-        )?;
+        self.launch_dkg(
+            dkg_params,
+            internal_keyset_config,
+            preproc_handle,
+            req_id,
+            preproc_id,
+            &eip712_domain,
+            context_id,
+            epoch_id,
+            permit,
+        )
+        .await
+        .map_err(|e| MetricedError::new(op_tag, Some(req_id), e, tonic::Code::Internal))?;
 
         //Always answer with Empty
         Ok(Response::new(Empty {}))
@@ -489,42 +457,45 @@ impl<
     /// This function does not delete the preprocessing handle from the meta store.
     /// The caller must make sure the handle is delete from the meta store if it is consumed.
     async fn retrieve_preproc_handle(
-        &self,
+        meta_store: RwLockReadGuard<'_, MetaStore<BucketMetaStore>>,
+        key_req_id: RequestId,
+        preproc_id: RequestId,
+        params: Option<i32>,
         insecure: bool,
-        inner: &KeyGenRequest,
-    ) -> Result<(PreprocHandleWithMode, DKGParams, Option<RequestId>), Status> {
-        // If inner.params is not set, then we need to retrieve the preprocessing
+    ) -> Result<(PreprocHandleWithMode, DKGParams), MetricedError> {
+        // Retrieve the correct tag
+        let op_tag = if insecure {
+            OP_INSECURE_KEYGEN_REQUEST
+        } else {
+            OP_KEYGEN_REQUEST
+        };
+        let standard_dkg_params = retrieve_parameters(params)
+            .map_err(|e| MetricedError::new(op_tag, Some(key_req_id), e, tonic::Code::Internal))?;
+        // If params are not set, then we need to retrieve the preprocessing
         // unless we are in insecure mode.
         // In the insecure mode the default parameters will be used if not set.
         if insecure {
-            let dkg_params = retrieve_parameters(inner.params)?;
-            Ok((PreprocHandleWithMode::Insecure, dkg_params, None))
+            Ok((PreprocHandleWithMode::Insecure, standard_dkg_params))
         } else {
-            let preproc_id = parse_optional_proto_request_id(
-                &inner.preproc_id,
-                RequestIdParsingErr::Other(
-                    "invalid preprocessing ID in keygen request".to_string(),
-                ),
-            )?;
-            let preproc = {
-                let map = self.preproc_buckets.read().await;
-                map.retrieve(&preproc_id)
-            };
-            let prep_bucket = handle_res_mapping(preproc, &preproc_id, "Preprocessing").await?;
+            let prep_bucket = retrieve_from_meta_store(meta_store, &preproc_id, op_tag).await?;
             if prep_bucket.preprocessing_id != preproc_id {
-                return Err(tonic::Status::internal(format!(
-                    "Preprocessing ID mismatch: expected {}, got {} in bucket",
-                    preproc_id, prep_bucket.preprocessing_id
-                )));
+                return Err(MetricedError::new(
+                    op_tag,
+                    Some(key_req_id),
+                    format!(
+                        "Preprocessing ID mismatch: expected {}, found {}",
+                        preproc_id, prep_bucket.preprocessing_id
+                    ),
+                    tonic::Code::Internal,
+                ));
             }
-            let dkg_param = match inner.params {
-                Some(fhe_param) => retrieve_parameters(Some(fhe_param))?,
+            let dkg_param = match params {
+                Some(_) => standard_dkg_params,
                 None => prep_bucket.dkg_param,
             };
             Ok((
                 PreprocHandleWithMode::Secure((preproc_id, prep_bucket.preprocessing_store)),
                 dkg_param,
-                Some(preproc_id),
             ))
         }
     }
@@ -532,22 +503,37 @@ impl<
     async fn inner_get_result(
         &self,
         request: Request<v1::RequestId>,
-    ) -> Result<Response<KeyGenResult>, Status> {
-        let request_id =
-            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)?;
-        let status = {
-            let guarded_meta_store = self.dkg_pubinfo_meta_store.read().await;
-            guarded_meta_store.retrieve(&request_id)
+        insecure: bool,
+    ) -> Result<Response<KeyGenResult>, MetricedError> {
+        // Retrieve the correct tag
+        let op_tag = if insecure {
+            OP_INSECURE_KEYGEN_RESULT
+        } else {
+            OP_KEYGEN_RESULT
         };
-        let res = handle_res_mapping(status, &request_id, "DKG").await?;
+        let request_id =
+            proto_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)
+                .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
+        let key_gen_res = retrieve_from_meta_store(
+            self.dkg_pubinfo_meta_store.read().await,
+            &request_id,
+            op_tag,
+        )
+        .await?;
 
-        match res {
+        match key_gen_res {
             KeyGenMetadata::Current(res) => {
                 if res.key_id != request_id {
-                    return Err(Status::internal(format!(
-                        "Key generation result not found for request ID: {}",
-                        request_id
-                    )));
+                    return Err(MetricedError::new(
+                        op_tag,
+                        Some(request_id),
+                        anyhow::anyhow!(
+                            "Key generation Request ID mismatch: expected {}, got {}",
+                            request_id,
+                            res.key_id
+                        ),
+                        tonic::Code::Internal,
+                    ));
                 }
 
                 // Note: This relies on the ordering of the PubDataType enum
@@ -1146,15 +1132,18 @@ impl<
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     > KeyGenerator for RealKeyGenerator<PubS, PrivS, KG>
 {
-    async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
+    async fn key_gen(
+        &self,
+        request: Request<KeyGenRequest>,
+    ) -> Result<Response<Empty>, MetricedError> {
         self.inner_key_gen(request, false).await
     }
 
     async fn get_result(
         &self,
         request: tonic::Request<v1::RequestId>,
-    ) -> Result<Response<KeyGenResult>, Status> {
-        self.inner_get_result(request).await
+    ) -> Result<Response<KeyGenResult>, MetricedError> {
+        self.inner_get_result(request, false).await
     }
 }
 
@@ -1173,7 +1162,9 @@ mod tests {
     };
 
     use crate::{
-        consts::TEST_PARAM, dummy_domain, engine::threshold::service::session::SessionMaker,
+        consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, TEST_PARAM},
+        dummy_domain,
+        engine::threshold::service::session::SessionMaker,
         vault::storage::ram,
     };
 
