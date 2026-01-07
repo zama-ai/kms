@@ -119,25 +119,6 @@ jobs:
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
-  # PR Preview Deploy Job
-  ############################################################################
-  pr-preview-deploy:
-    name: pr-preview-deploy
-    if: github.event_name == 'pull_request' && contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-')
-    needs:
-      - docker-build
-    uses: ./.github/workflows/pr-preview-deploy.yml
-    permissions:
-      pull-requests: write
-    with:
-      image_tag: ${{ needs.docker-build.outputs.image_tag }}
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
-      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
-
-  ############################################################################
   # Helm chart pipeline
   # Triggered by:
   # - Changes to charts/**
