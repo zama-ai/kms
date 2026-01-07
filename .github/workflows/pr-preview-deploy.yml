@@ -65,7 +65,8 @@ jobs:
       NAMESPACE: 'kms-ci-${{ github.actor }}-${{ github.event.pull_request.number }}'
       TKMS_INFRA_CHART_VERSION: '0.3.2'
       SYNC_SECRETS_CHART_VERSION: '0.2.1'
-      KMS_CORE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service-enclave'
+      KMS_CORE_ENCLAVE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service-enclave'
+      KMS_CORE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service'
       KMS_CORE_CLIENT_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-client'
       KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
       KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
@@ -365,7 +366,7 @@ jobs:
                 --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
                 --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
                 --set kmsGenCertAndKeys.enabled=true \
-                --set kmsCore.image.name="${KMS_CORE_IMAGE_NAME}" \
+                --set kmsCore.image.name="${KMS_CORE_ENCLAVE_IMAGE_NAME}" \
                 --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
                 --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
                 --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
@@ -424,7 +425,7 @@ jobs:
               --namespace "${NAMESPACE}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
               --set kmsPeers.id="1" \
-              --set kmsCore.image.name="${KMS_CORE_IMAGE_NAME}" \
+              --set kmsCore.image.name="${KMS_CORE_ENCLAVE_IMAGE_NAME}" \
               --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
               --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
               --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
