@@ -163,7 +163,7 @@ rayon = "=1.11.0"  # Data parallelism - LOW RISK: rayon-rs team
 rcgen = { version = "=0.14.0", default-features = false, features = ["aws_lc_rs", "crypto", "pem", "x509-parser"] }  # X.509 certificate generation - MEDIUM RISK: Using custom fork (see patch section), needs verification
 redis = { version = "=0.29.5" }  # Redis client - LOW RISK: redis-rs team
 reqwest = { version = "=0.12.22", default-features = false, features = ["json", "rustls-tls"] }  # HTTP client - MEDIUM RISK: Reputable individual maintainer (seanmonstar, member of tokio org), 275M+ downloads
-rsa = { version = "=0.9.8", features = ["sha2", "serde"] }  # RSA public key cryptography - LOW RISK: RustCrypto org
+rsa = { version = "=0.9.10", features = ["sha2", "serde"] }  # RSA public key cryptography - LOW RISK: RustCrypto org
 rstest = "=0.25.0"  # Test framework - HIGH RISK: Individual maintainer (la10736), test-only dependency
 rustls-webpki = { version = "=0.103.4", features = ["aws-lc-rs"] }  # WebPKI X.509 validation - LOW RISK: rustls team
 schemars = "=0.8.22"  # JSON Schema generation - HIGH RISK: Individual maintainer (GREsau), despite popularity, 81M+ downloads
