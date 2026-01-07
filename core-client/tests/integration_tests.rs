@@ -538,6 +538,7 @@ grpc_max_message_size = 104857600
 
 [public_vault.storage.s3]
 bucket = "kms-public"
+prefix = "PUB-p{}"
 
 [private_vault.storage.file]
 path = "{}/PRIV-p{}"
@@ -563,9 +564,10 @@ pcr2 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223
 {}
 "#,
             server.service_port,
+            i, // prefix for public_vault
             material_dir.path().display(),
-            i,
-            i,
+            i, // PRIV-p{i}
+            i, // my_id
             threshold_value,
             server.mpc_port.expect("MPC port should be set"),
             peers_config
@@ -860,6 +862,7 @@ grpc_max_message_size = 104857600
 
 [public_vault.storage.s3]
 bucket = "kms-public"
+prefix = "PUB-p{}"
 
 [private_vault.storage.file]
 path = "{}/PRIV-p{}"
@@ -885,9 +888,10 @@ pcr2 = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223
 {}
 "#,
             server.service_port,
+            server_id, // prefix for public_vault - use server_id to match client config
             material_dir.path().display(),
-            server_id,
-            my_party_id,
+            server_id,   // PRIV-p{server_id}
+            my_party_id, // my_id
             threshold_value,
             server.mpc_port.expect("MPC port should be set"),
             peers_config
