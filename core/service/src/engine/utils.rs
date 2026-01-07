@@ -564,6 +564,7 @@ mod tests {
         use crate::vault::storage::s3::{build_s3_client, S3Storage, AWS_S3_ENDPOINT, BUCKET_NAME};
         use aes_prng::AesRng;
         use rand::distributions::{Alphanumeric, DistString};
+        use rand::SeedableRng;
         use url::Url;
 
         async fn create_s3_storage() -> S3Storage {
@@ -571,7 +572,7 @@ mod tests {
             let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
                 .await
                 .unwrap();
-            let mut rng = AesRng::from_random_seed();
+            let mut rng = AesRng::seed_from_u64(1964);
             let prefix = Alphanumeric.sample_string(&mut rng, 10);
             S3Storage::new(
                 s3_client,

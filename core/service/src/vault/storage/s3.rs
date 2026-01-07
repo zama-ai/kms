@@ -753,13 +753,14 @@ mod tests {
     };
     use aes_prng::AesRng;
     use rand::distributions::{Alphanumeric, DistString};
+    use rand::SeedableRng;
 
     async fn create_s3_storage(storage_type: StorageType) -> S3Storage {
         let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
         let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
             .await
             .unwrap();
-        let mut rng = AesRng::from_random_seed();
+        let mut rng = AesRng::seed_from_u64(1946);
         let prefix = Alphanumeric.sample_string(&mut rng, 10);
         S3Storage::new(
             s3_client,
