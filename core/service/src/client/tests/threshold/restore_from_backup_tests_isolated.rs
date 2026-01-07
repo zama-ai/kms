@@ -22,7 +22,7 @@ use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::testing::helpers::domain_to_msg;
 use crate::testing::prelude::*;
-use crate::vault::storage::{delete_all_at_request_id, StorageReader};
+use crate::vault::storage::{delete_all_at_request_id, StorageReader, StorageReaderExt};
 use kms_grpc::kms::v1::{Empty, FheParameter};
 use kms_grpc::rpc_types::PrivDataType;
 use tokio::task::JoinSet;
@@ -104,16 +104,19 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
     }
 
     // Verify restoration (threshold uses FheKeyInfo, not FhePrivateKey)
+    // Data is stored with epoch_id, so we need to check using all_data_ids_from_all_epochs
     for prefix in priv_storage_prefixes {
         let priv_storage = FileStorage::new(
             Some(material_dir.path()),
             StorageType::PRIV,
             prefix.as_deref(),
         )?;
+        let all_ids = priv_storage
+            .all_data_ids_from_all_epochs(&PrivDataType::FheKeyInfo.to_string())
+            .await?;
         assert!(
-            priv_storage
-                .data_exists(&key_id_1, &PrivDataType::FheKeyInfo.to_string())
-                .await?
+            all_ids.contains(&key_id_1),
+            "key_id_1 should exist in storage after restore"
         );
     }
 
@@ -166,6 +169,7 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion_isolated() ->
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Verify backup was auto-created on shutdown (threshold uses FheKeyInfo)
+    // Data is stored with epoch_id, so we need to check using all_data_ids_from_all_epochs
     let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
     for prefix in backup_storage_prefixes {
         let backup_storage = FileStorage::new(
@@ -173,10 +177,12 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion_isolated() ->
             StorageType::BACKUP,
             prefix.as_deref(),
         )?;
+        let all_ids = backup_storage
+            .all_data_ids_from_all_epochs(&PrivDataType::FheKeyInfo.to_string())
+            .await?;
         assert!(
-            backup_storage
-                .data_exists(&key_id, &PrivDataType::FheKeyInfo.to_string())
-                .await?
+            all_ids.contains(&key_id),
+            "key_id should exist in backup storage after auto-backup"
         );
     }
 
