@@ -461,6 +461,75 @@ async fn write_threshold_keys_failed_storage() {
     }
 }
 
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn read_guarded_threshold_fhe_keys_not_found() {
+    let req_id = derive_request_id("read_guarded_threshold_fhe_keys_not_found").unwrap();
+    let epoch_id: EpochId = derive_request_id("read_guarded_threshold_fhe_keys_not_found_epoch")
+        .unwrap()
+        .into();
+
+    // Create a threshold storage with no keys in the cache and no keys in storage
+    let crypto_storage = ThresholdCryptoMaterialStorage::new(
+        FailingRamStorage::new(100),
+        RamStorage::new(),
+        None,
+        HashMap::new(),
+        HashMap::new(),
+    );
+
+    // Try to read a non-existent key - should return an error
+    let result = crypto_storage
+        .read_guarded_threshold_fhe_keys(&req_id, &epoch_id)
+        .await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    let expected_msg = format!(
+        "Could not find data at (data_type: FheKeyInfo, data_id: {}, epoch_id: {})",
+        req_id, epoch_id
+    );
+    assert!(
+        err.to_string().contains(&expected_msg),
+        "Unexpected error message: {}",
+        err
+    );
+}
+
+#[tokio::test]
+#[tracing_test::traced_test]
+async fn read_guarded_crypto_material_from_cache_not_found() {
+    let key_id = derive_request_id("read_guarded_crypto_material_from_cache_not_found").unwrap();
+    let epoch_id: EpochId =
+        derive_request_id("read_guarded_crypto_material_from_cache_not_found_epoch")
+            .unwrap()
+            .into();
+
+    // Create an empty cache
+    let empty_cache: Arc<RwLock<HashMap<(RequestId, EpochId), ThresholdFheKeys>>> =
+        Arc::new(RwLock::new(HashMap::new()));
+
+    // Try to read from an empty cache - should return an error
+    let result = CryptoMaterialStorage::<FailingRamStorage, RamStorage>::read_guarded_crypto_material_from_cache(
+        &key_id,
+        &epoch_id,
+        empty_cache,
+    )
+    .await;
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    let expected_msg = format!(
+        "Failed to find crypto material in cache for request ID {}, epoch ID {}",
+        key_id, epoch_id
+    );
+    assert!(
+        err.to_string().contains(&expected_msg),
+        "Unexpected error message: {}",
+        err
+    );
+}
+
 fn setup_threshold_store(
     req_id: &RequestId,
 ) -> (

@@ -59,7 +59,7 @@ use crate::{
         signcryption::{SigncryptFHEPlaintext, UnifiedSigncryptionKeyOwned},
     },
     engine::{
-        base::{deserialize_to_low_level, BaseKmsStruct, KeyGenMetadata, UserDecryptCallValues},
+        base::{deserialize_to_low_level, BaseKmsStruct, UserDecryptCallValues},
         threshold::{service::session::ImmutableSessionMaker, traits::UserDecryptor},
         traits::BaseKms,
         utils::MetricedError,
@@ -144,7 +144,6 @@ pub struct RealUserDecryptor<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub user_decrypt_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
-    pub key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
@@ -399,7 +398,6 @@ impl<
         pub_storage: PubS,
         priv_storage: PrivS,
         session_maker: ImmutableSessionMaker,
-        key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) -> Self {
         let crypto_storage = ThresholdCryptoMaterialStorage::new(
             pub_storage,
@@ -416,7 +414,6 @@ impl<
             base_kms,
             crypto_storage,
             user_decrypt_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-            key_meta_store,
             session_maker,
             tracker,
             rate_limiter,
@@ -507,22 +504,6 @@ impl<
         ];
         timer.tags(metric_tags.clone());
 
-        match self
-            .crypto_storage
-            .threshold_fhe_keys_exists(&key_id.into(), &epoch_id)
-            .await
-        {
-            Ok(true) => {}
-            e_or_false => {
-                return Err(MetricedError::new(
-                    OP_USER_DECRYPT_REQUEST,
-                    Some(req_id),
-                    anyhow::anyhow!("Key ID {} not found: exists={:?}", key_id, e_or_false),
-                    tonic::Code::NotFound,
-                ));
-            }
-        };
-
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let rng = self.base_kms.new_rng().await;
@@ -555,36 +536,41 @@ impl<
         // the result of the computation is tracked the tracker
         let session_maker = self.session_maker.clone();
 
+        // Note that we'll hold a read lock for some time
+        // as it is moved into the tokio task
+        // but this should be ok since write locks
+        // happen rarely as keygen is a rare event.
+        let fhe_keys_rlock = crypto_storage
+            .read_guarded_threshold_fhe_keys(&key_id.into(), &epoch_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_USER_DECRYPT_REQUEST,
+                    Some(req_id),
+                    anyhow::anyhow!("fhe key not found due to {e:?}"),
+                    tonic::Code::NotFound,
+                )
+            })?;
+
         let inner_dec_future = move |_permit| async move {
             // Capture the timer, it is stopped when it's dropped
             let _timer = timer;
 
-            // Note that we'll hold a read lock for some time
-            // but this should be ok since write locks
-            // happen rarely as keygen is a rare event.
-            let fhe_keys_rlock = crypto_storage
-                .read_guarded_threshold_fhe_keys(&key_id.into(), &epoch_id)
-                .await;
-            let result = match fhe_keys_rlock {
-                Ok(k) => {
-                    Self::inner_user_decrypt(
-                        &req_id,
-                        session_maker,
-                        context_id,
-                        epoch_id,
-                        rng,
-                        typed_ciphertexts,
-                        link,
-                        signcryption_key,
-                        k,
-                        dec_mode,
-                        &domain,
-                        metric_tags,
-                    )
-                    .await
-                }
-                Err(e) => Err(e),
-            };
+            let result = Self::inner_user_decrypt(
+                &req_id,
+                session_maker,
+                context_id,
+                epoch_id,
+                rng,
+                typed_ciphertexts,
+                link,
+                signcryption_key,
+                fhe_keys_rlock,
+                dec_mode,
+                &domain,
+                metric_tags,
+            )
+            .await;
             update_req_in_meta_store(
                 &mut meta_store.write().await,
                 &req_id,
@@ -728,18 +714,10 @@ mod tests {
         pub async fn init_test_dummy_decryptor(
             base_kms: BaseKmsStruct,
             session_maker: ImmutableSessionMaker,
-            key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(
-                base_kms,
-                pub_storage,
-                priv_storage,
-                session_maker,
-                key_meta_store,
-            )
-            .await
+            Self::init_test(base_kms, pub_storage, priv_storage, session_maker).await
         }
     }
 
@@ -781,12 +759,9 @@ mod tests {
         key_store.insert(&key_id).unwrap();
         let key_meta_store = Arc::new(RwLock::new(key_store));
 
-        let user_decryptor = RealUserDecryptor::init_test_dummy_decryptor(
-            base_kms,
-            session_maker.make_immutable(),
-            Arc::clone(&key_meta_store),
-        )
-        .await;
+        let user_decryptor =
+            RealUserDecryptor::init_test_dummy_decryptor(base_kms, session_maker.make_immutable())
+                .await;
 
         // make a dummy private keyset
         let (threshold_fhe_keys, fhe_key_set) =

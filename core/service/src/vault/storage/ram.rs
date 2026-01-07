@@ -47,7 +47,7 @@ impl StorageReader for RamStorage {
             Some(raw_data) => raw_data,
             None => {
                 return Err(anyhow!(
-                    "Could not find data at ({}, {})",
+                    "Could not find data at (data_type: {}, data_id: {})",
                     data_type,
                     data_id
                 ))
@@ -104,7 +104,7 @@ impl StorageReaderExt for RamStorage {
             Some(raw_data) => raw_data,
             None => {
                 return Err(anyhow!(
-                    "Could not find data at (RequestId: {}, Epoch_id: {}, data type: {})",
+                    "Could not find data at (data_type: {}, data_id: {}, epoch_id: {})",
                     data_type,
                     data_id,
                     epoch_id
@@ -172,7 +172,7 @@ impl StorageReaderExt for RamStorage {
             Some(raw_data) => raw_data,
             None => {
                 return Err(anyhow!(
-                    "Could not find data at ({}, {}, {})",
+                    "Could not find data at (data_type: {}, data_id: {}, epoch_id: {})",
                     data_id,
                     epoch_id,
                     data_type
