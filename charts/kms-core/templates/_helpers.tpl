@@ -132,21 +132,15 @@ export AWS_REGION="${AWS_REGION:={{ .Values.kmsCore.aws.region }}}"
 export AWS_ROLE_ARN="${AWS_ROLE_ARN:={{ .Values.kmsCore.aws.roleArn }}}"
 {{- if .Values.kmsCore.publicVault.s3.enabled }}
 export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET="${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.publicVault.s3.bucket }}}"
-{{- if .Values.kmsCore.publicVault.s3.prefix }}
 export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.prefix }}}"
-{{- end }}
 {{- end }}
 {{- if .Values.kmsCore.privateVault.s3.enabled }}
 export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET="${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.privateVault.s3.bucket }}}"
-{{- if .Values.kmsCore.privateVault.s3.prefix }}
 export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.privateVault.s3.prefix }}}"
-{{- end }}
 {{- end }}
 {{- if .Values.kmsCore.backupVault.s3.enabled }}
 export KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET="${KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.backupVault.s3.bucket }}}"
-{{- if .Values.kmsCore.backupVault.s3.prefix }}
 export KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.backupVault.s3.prefix }}}"
-{{- end }}
 {{- end }}
 {{- if .Values.kmsCore.nitroEnclave.enabled }}
 export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID:={{ .Values.kmsCore.privateVault.awskms.rootKeyId }}}"
