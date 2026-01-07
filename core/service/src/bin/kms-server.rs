@@ -16,8 +16,8 @@ use kms_lib::{
         signatures::PrivateSigKey,
     },
     engine::{
-        base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms, run_server,
-        threshold::service::new_real_threshold_kms, utils::migrate_legacy_fhe_keys,
+        base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
+        migration::migrate_legacy_fhe_keys, run_server, threshold::service::new_real_threshold_kms,
     },
     grpc::MetaStoreStatusServiceImpl,
     vault::{
