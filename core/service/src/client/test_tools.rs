@@ -285,7 +285,7 @@ pub async fn setup_threshold_no_client<
 /// ```
 pub async fn setup_threshold_with_custom_peers<
     PubS: Storage + Clone + Sync + Send + 'static,
-    PrivS: Storage + Clone + Sync + Send + 'static,
+    PrivS: StorageExt + Clone + Sync + Send + 'static,
 >(
     server_configs: Vec<(usize, u8, Vec<PeerConf>, Vec<usize>)>, // (my_id, threshold, peers, peer_server_indices)
     pub_storage: Vec<PubS>,
@@ -664,7 +664,7 @@ pub struct ThresholdTestConfig<'a> {
 #[cfg(any(test, feature = "testing"))]
 pub async fn setup_threshold_isolated<
     PubS: Storage + Clone + Sync + Send + 'static,
-    PrivS: Storage + Clone + Sync + Send + 'static,
+    PrivS: StorageExt + Clone + Sync + Send + 'static,
 >(
     threshold: u8,
     pub_storage: Vec<PubS>,
@@ -800,7 +800,7 @@ pub(crate) async fn setup_centralized<
 #[cfg(any(test, feature = "testing"))]
 pub async fn setup_centralized_isolated<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 >(
     pub_storage: PubS,
     priv_storage: PrivS,

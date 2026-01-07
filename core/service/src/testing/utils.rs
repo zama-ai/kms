@@ -651,15 +651,16 @@ pub mod setup {
             DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P,
             DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
         };
-        let epoch_id = *DEFAULT_EPOCH_ID;        ensure_dir_exist(path).await;
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        ensure_dir_exist(path).await;
         ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
         central_material(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_DEFAULT_ID,
             &DEFAULT_CENTRAL_CRS_ID,
-            path,
             &epoch_id,
+            path,
         )
         .await;
         threshold_material(

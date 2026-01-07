@@ -3,7 +3,7 @@
 //! This module provides reusable helper functions for test setup and utilities.
 
 use super::material::TestMaterialManager;
-use crate::consts::{OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM};
+use crate::consts::{DEFAULT_EPOCH_ID, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM};
 use crate::util::key_setup::ensure_central_keys_exist;
 use crate::vault::storage::{file::FileStorage, Storage};
 use anyhow::Result;
@@ -57,6 +57,7 @@ pub async fn fix_centralized_public_keys(
         TEST_PARAM,
         &TEST_CENTRAL_KEY_ID,
         &OTHER_CENTRAL_TEST_ID,
+        &DEFAULT_EPOCH_ID,
         true, // deterministic
         true, // write_privkey
     )

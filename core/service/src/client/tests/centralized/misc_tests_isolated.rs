@@ -173,9 +173,12 @@ async fn test_largecipher_isolated() -> Result<()> {
         new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
             .await
             .unwrap(),
-        new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
-            .await
-            .unwrap(),
+        new_priv_ram_storage_from_existing_keys(
+            &keys.centralized_kms_keys,
+            &crate::consts::DEFAULT_EPOCH_ID,
+        )
+        .await
+        .unwrap(),
         None,
         Some(rate_limiter_conf),
     )
