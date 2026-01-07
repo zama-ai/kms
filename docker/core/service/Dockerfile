@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 ################################################################
-## Second stage builds the kms-core binaries
+## First stage: Build the kms-core binaries
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS kms-core
 
 # By default, cargo build --release.
@@ -17,6 +17,7 @@ COPY ./core /app/kms/core
 COPY ./core-client /app/kms/core-client
 COPY ./observability /app/kms/observability
 COPY ./tools /app/kms/tools
+COPY ./docker /app/kms/docker
 COPY ./Cargo.lock /app/kms/Cargo.lock
 COPY ./Cargo.toml /app/kms/Cargo.toml
 
@@ -45,7 +46,7 @@ RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_V
 
 #############################################################
 #### INSECURE
-## Second stage builds the kms-core binaries
+## Second stage: Build the kms-core binaries for insecure mode
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS kms-core-insecure
 
 # By default, cargo build --release.
@@ -61,6 +62,7 @@ COPY ./core /app/kms/core
 COPY ./core-client /app/kms/core-client
 COPY ./observability /app/kms/observability
 COPY ./tools /app/kms/tools
+COPY ./docker /app/kms/docker
 COPY ./Cargo.lock /app/kms/Cargo.lock
 COPY ./Cargo.toml /app/kms/Cargo.toml
 
@@ -89,9 +91,8 @@ RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_V
 
 
 ################################################################
-## Third stage: Copy the binaries from preceding stages
-# This stage will be the final image
-FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
+## Third stage: Base image for prod and dev images
+FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS base
 
 USER root
 # Install required runtime dependencies
@@ -108,6 +109,10 @@ COPY --from=kms-core /usr/bin/yq /usr/bin/yq
 RUN chmod +x /usr/bin/yq
 
 COPY ./core/service/config/ /app/kms/core/service/config
+
+################################################################
+## Fourth stage: Copy the kms-core binaries for prod image
+FROM base AS prod
 
 # Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="/app/kms/core/service/bin:$PATH"
@@ -146,24 +151,8 @@ RUN git clone https://github.com/grpc-ecosystem/grpc-health-probe && \
 
 
 ################################################################
-## Fourth stage: Build and install grpc_health_probe -- For development only with extra tools
-FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS dev
-
-USER root
-# Install required runtime dependencies
-RUN apk update && apk add --no-cache \
-    libssl3 \
-    socat \
-    net-tools \
-    libgcc \
-    libstdc++
-
-WORKDIR /app/kms/core/service
-
-COPY --from=kms-core /usr/bin/yq /usr/bin/yq
-RUN chmod +x /usr/bin/yq
-
-COPY ./core/service/config/ /app/kms/core/service/config
+## Fifth stage: Copy the kms-core binaries for dev image -- For development only with extra tools
+FROM base AS dev
 
 # Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="/app/kms/core/service/bin:$PATH"
