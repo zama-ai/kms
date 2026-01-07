@@ -1,4 +1,4 @@
-use crate::consts::DEFAULT_EPOCH_ID;
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{
     compute_info_decompression_keygen, retrieve_parameters, KeyGenMetadata, DSEP_PUBDATA_KEY,
@@ -10,7 +10,8 @@ use crate::engine::keyset_configuration::InternalKeySetConfig;
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
-    parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+    parse_optional_proto_request_id, parse_proto_context_id, parse_proto_request_id,
+    RequestIdParsingErr,
 };
 use crate::ok_or_tonic_abort;
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
@@ -55,10 +56,21 @@ pub async fn key_gen_impl<
         parse_optional_proto_request_id(&inner.preproc_id, RequestIdParsingErr::PreprocRequest)?;
 
     // context_id is not used in the centralized KMS, but we validate it if present
-    let _context_id = match &inner.context_id {
-        Some(ctx) => Some(parse_proto_request_id(ctx, RequestIdParsingErr::Context)?),
-        None => None,
+    let context_id = match &inner.context_id {
+        Some(ctx) => parse_proto_context_id(ctx, RequestIdParsingErr::Context)?,
+        None => *DEFAULT_MPC_CONTEXT,
     };
+
+    if !service
+        .context_manager
+        .mpc_context_exists_in_cache(&context_id)
+        .await
+    {
+        return Err(tonic::Status::new(
+            tonic::Code::NotFound,
+            format!("context ID {context_id} not found"),
+        ));
+    }
 
     let epoch_id: EpochId = match &inner.epoch_id {
         Some(ctx) => parse_proto_request_id(ctx, RequestIdParsingErr::Epoch)?.into(),

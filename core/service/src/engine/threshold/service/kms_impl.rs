@@ -48,14 +48,13 @@ use crate::{
     backup::operator::RecoveryValidationMaterial,
     conf::CoreConfig,
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC},
-    cryptography::{attestation::SecurityModuleProxy, signatures::PublicSigKey},
+    cryptography::attestation::SecurityModuleProxy,
     engine::{
         backup_operator::RealBackupOperator,
         base::{
             BaseKmsStruct, CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues,
         },
-        context::{ContextInfo, NodeInfo, SoftwareVersion},
-        context_manager::ThresholdContextManager,
+        context_manager::{create_default_threshold_context_in_storage, ThresholdContextManager},
         prepare_shutdown_signals,
         threshold::{
             service::{
@@ -71,9 +70,9 @@ use crate::{
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
     vault::{
         storage::{
-            crypto_material::ThresholdCryptoMaterialStorage, delete_context_at_id,
+            crypto_material::ThresholdCryptoMaterialStorage,
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
-            read_pk_at_request_id, store_context_at_id, Storage, StorageExt,
+            read_pk_at_request_id, Storage, StorageExt,
         },
         Vault,
     },
@@ -396,87 +395,12 @@ where
     // TODO(zama-ai/kms-internal/issues/2758)
     // If we're still using peer config, we need to manually write the default context into storage.
     // This way we can load it into SessionMaker later when creating the ThresholdContextManager.
-    let _ = match threshold_config.peers {
-        Some(ref peers) => {
-            let context_id = *DEFAULT_MPC_CONTEXT;
-            let mpc_nodes = peers
-                .iter()
-                .map(|peer| {
-                    let (role, identity) = peer.into_role_identity();
-                    // URL format is only valid with a scheme, so we add it here
-                    let scheme = match peer.tls_cert {
-                        Some(_) => "https",
-                        None => "http",
-                    };
-                    match peer
-                        .tls_cert
-                        .as_ref()
-                        .map(|cert| cert.unchecked_cert_string())
-                        .transpose()
-                    {
-                        Ok(pem_string) => {
-                            let verification_key = if let Some(my_id) = threshold_config.my_id {
-                                if peer.party_id == my_id {
-                                    Some(PublicSigKey::clone(&base_kms.verf_key()))
-                                } else {
-                                    None
-                                }
-                            } else {
-                                // we do not know the verification key of the other parties at startup
-                                None
-                            };
-                            Ok(NodeInfo {
-                                mpc_identity: identity.mpc_identity().to_string(),
-                                party_id: role.one_based() as u32,
-                                verification_key,
-                                external_url: format!(
-                                    "{}://{}:{}",
-                                    scheme,
-                                    identity.hostname(),
-                                    identity.port()
-                                ),
-                                ca_cert: pem_string.map(|cert_pem| cert_pem.into_bytes()),
-                                public_storage_url: "".to_string(),
-                                public_storage_prefix: None,
-                                extra_verification_keys: vec![],
-                            })
-                        }
-                        Err(e) => Err(e),
-                    }
-                })
-                .collect::<anyhow::Result<Vec<_>>>()?;
-            let pcr_values = threshold_config
-                .tls
-                .to_owned()
-                .and_then(|tls_conf| match tls_conf {
-                    crate::conf::threshold::TlsConf::Manual { cert: _, key: _ } => None,
-                    crate::conf::threshold::TlsConf::Auto {
-                        eif_signing_cert: _,
-                        trusted_releases,
-                        ignore_aws_ca_chain: _,
-                        attest_private_vault_root_key: _,
-                        renew_slack_after_expiration: _,
-                        renew_fail_retry_timeout: _,
-                    } => Some(trusted_releases),
-                });
-            let context_info = ContextInfo {
-                mpc_nodes,
-                context_id,
-                software_version: SoftwareVersion::current(),
-                threshold: threshold_config.threshold as u32,
-                pcr_values: pcr_values.unwrap_or_default(),
-            };
-
-            // Note that we have to delete the old context under DEFAULT_MPC_CONTEXT
-            // because we may have previously stored a different context there with an older peerlist.
-            // The default context must always be consistent with the latest peerlist file if present.
-            delete_context_at_id(&mut private_storage, &context_id).await?;
-
-            store_context_at_id(&mut private_storage, &context_id, &context_info).await?;
-            Some(())
-        }
-        None => None,
-    };
+    create_default_threshold_context_in_storage(
+        &mut private_storage,
+        threshold_config,
+        &base_kms.verf_key(),
+    )
+    .await?;
 
     let private_storage_info = private_storage.info();
 

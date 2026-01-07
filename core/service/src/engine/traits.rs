@@ -80,7 +80,11 @@ pub trait ContextManager {
         request: Request<DestroyCustodianContextRequest>,
     ) -> Result<Response<Empty>, Status>;
 
-    async fn mpc_context_exists(&self, context_id: &ContextId) -> Result<bool, Status>;
+    async fn mpc_context_exists_and_consistent(
+        &self,
+        context_id: &ContextId,
+    ) -> Result<bool, Status>;
+    async fn mpc_context_exists_in_cache(&self, context_id: &ContextId) -> bool;
 }
 
 #[tonic::async_trait]

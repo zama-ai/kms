@@ -883,6 +883,8 @@ impl<
                 crypto_storage.inner.clone(),
                 Arc::clone(&custodian_meta_store),
             );
+        // Load existing MPC contexts from storage into the cache
+        context_manager.load_mpc_context_from_storage().await?;
         let backup_operator = RealBackupOperator::new(
             base_kms.new_instance().await,
             crypto_storage.inner.clone(),
