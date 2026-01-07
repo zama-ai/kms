@@ -5,12 +5,15 @@
 
 use crate::consts::{
     BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
-    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
+    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
 };
 use crate::testing::helpers::create_test_material_manager;
 use crate::testing::material::{TestMaterialHandle, TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
 pub use crate::testing::types::ThresholdTestConfig;
+use crate::util::key_setup::{
+    ensure_threshold_server_signing_keys_exist, ThresholdSigningKeyConfig,
+};
 use crate::vault::storage::{file::FileStorage, StorageType};
 use anyhow::Result;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -237,6 +240,21 @@ impl ThresholdTestEnvBuilder {
                 priv_prefix.as_deref(),
             )?);
         }
+
+        // Ensure signing keys exist (generates VerfAddress if missing)
+        let _ = ensure_threshold_server_signing_keys_exist(
+            &mut pub_storages,
+            &mut priv_storages,
+            &SIGNING_KEY_ID,
+            true, // deterministic
+            ThresholdSigningKeyConfig::AllParties(
+                (1..=self.party_count)
+                    .map(|i| format!("party-{i}"))
+                    .collect(),
+            ),
+            false, // don't skip if exists
+        )
+        .await;
 
         // Create backup vaults for each party if requested
         let vaults: Vec<Option<crate::vault::Vault>> = if self.with_backup_vault {

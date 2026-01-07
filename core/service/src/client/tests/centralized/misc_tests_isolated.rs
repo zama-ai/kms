@@ -234,12 +234,17 @@ async fn test_largecipher_isolated() -> Result<()> {
             .await;
     }
     // Check that we get a server error instead of a server crash
-    assert_eq!(response.as_ref().unwrap_err().code(), tonic::Code::Internal);
-    assert!(response
-        .err()
-        .unwrap()
-        .message()
-        .contains("finished with an error"));
+    assert!(
+        response.is_err(),
+        "Expected error response for large ciphertext, got Ok"
+    );
+    let err = response.unwrap_err();
+    assert_eq!(err.code(), tonic::Code::Internal);
+    assert!(
+        err.message().contains("finished with an error"),
+        "Expected error message to contain 'finished with an error', got: {}",
+        err.message()
+    );
     tracing::info!("aborting");
     kms_server.assert_shutdown().await;
 
