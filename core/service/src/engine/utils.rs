@@ -556,4 +556,61 @@ mod tests {
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
         test_migrate_legacy_fhe_keys_idempotent(&mut storage).await;
     }
+
+    // S3 storage tests
+    #[cfg(feature = "s3_tests")]
+    mod s3_tests {
+        use super::*;
+        use crate::vault::storage::s3::{build_s3_client, S3Storage, AWS_S3_ENDPOINT, BUCKET_NAME};
+        use aes_prng::AesRng;
+        use rand::distributions::{Alphanumeric, DistString};
+        use url::Url;
+
+        async fn create_s3_storage() -> S3Storage {
+            let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+            let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
+                .await
+                .unwrap();
+            let mut rng = AesRng::from_random_seed();
+            let prefix = Alphanumeric.sample_string(&mut rng, 10);
+            S3Storage::new(
+                s3_client,
+                BUCKET_NAME.to_string(),
+                StorageType::PRIV,
+                Some(&prefix),
+                None,
+            )
+            .unwrap()
+        }
+
+        #[tokio::test]
+        async fn test_migrate_threshold_s3() {
+            let mut storage = create_s3_storage().await;
+            test_migrate_legacy_fhe_keys_threshold(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_migrate_centralized_s3() {
+            let mut storage = create_s3_storage().await;
+            test_migrate_legacy_fhe_keys_centralized(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_migrate_skips_existing_s3() {
+            let mut storage = create_s3_storage().await;
+            test_migrate_legacy_fhe_keys_skips_existing(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_migrate_no_legacy_data_s3() {
+            let mut storage = create_s3_storage().await;
+            test_migrate_legacy_fhe_keys_no_legacy_data(&mut storage).await;
+        }
+
+        #[tokio::test]
+        async fn test_migrate_idempotent_s3() {
+            let mut storage = create_s3_storage().await;
+            test_migrate_legacy_fhe_keys_idempotent(&mut storage).await;
+        }
+    }
 }
