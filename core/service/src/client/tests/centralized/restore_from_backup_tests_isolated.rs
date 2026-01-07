@@ -20,7 +20,7 @@ use crate::engine::base::derive_request_id;
 use crate::testing::helpers::domain_to_msg;
 use crate::testing::prelude::*;
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
-use crate::vault::storage::{delete_all_at_request_id, StorageReader};
+use crate::vault::storage::{delete_all_at_request_id, StorageReader, StorageReaderExt};
 use kms_grpc::kms::v1::{Empty, FheParameter, TypedCiphertext};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PrivDataType;
@@ -225,11 +225,14 @@ async fn test_insecure_central_autobackup_after_deletion_isolated() -> Result<()
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Verify backup was created (no need to restart server for this check)
+    // Data is stored with epoch_id, so we need to check using all_data_ids_from_all_epochs
     let backup_storage = FileStorage::new(Some(material_dir.path()), StorageType::BACKUP, None)?;
+    let all_ids = backup_storage
+        .all_data_ids_from_all_epochs(&PrivDataType::FhePrivateKey.to_string())
+        .await?;
     assert!(
-        backup_storage
-            .data_exists(&key_id, &PrivDataType::FhePrivateKey.to_string())
-            .await?
+        all_ids.contains(&key_id),
+        "key_id should exist in backup storage after auto-backup"
     );
 
     Ok(())
