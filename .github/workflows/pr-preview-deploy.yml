@@ -521,14 +521,24 @@ jobs:
             kubectl port-forward svc/kms-core-4-core-4 -n "${{ env.NAMESPACE }}" 50400:50100 &
             ```
 
+            Copy config.toml from core-client to ./core-client/config/client_local_threshold.toml
+            ```bash
+            kubectl cp "${{ env.NAMESPACE }}"/kms-core-client-0:/app/kms-core-client/config.toml ./core-client/config/client_local_threshold.toml
+            ```
+
             And launch your tests:
             ```bash
-            cargo nextest run --test <your-test-name>
+            cargo nextest run --test kubernetes_test_threshold --profile ci --no-fail-fast
             ```
 
             You can connect to the core-client with:
             ```bash
             kubectl exec kms-core-client -n "${{ env.NAMESPACE }}" -it -- /bin/bash
+            ```
+
+            Close your port-forwarding with:
+            ```bash
+            pgrep -f "kubectl port-forward" | xargs -n 1 kill
             ```
 
       - name: Update pull request centralized mode
@@ -547,12 +557,22 @@ jobs:
             kubectl port-forward svc/kms-core-core -n "${{ env.NAMESPACE }}" 50100:50100
             ```
 
+            Copy config.toml from core-client to ./core-client/config/client_local_centralized.toml
+            ```bash
+            kubectl cp "${{ env.NAMESPACE }}"/kms-core-client-0:/app/kms-core-client/config.toml ./core-client/config/client_local_centralized.toml
+            ```
+
             And launch your tests:
             ```bash
-            cargo nextest run --test <your-test-name>
+            cargo nextest run --test kubernetes_test_centralized --profile ci --no-fail-fast
             ```
 
             You can connect to the core-client with:
             ```bash
             kubectl exec kms-core-client -n "${{ env.NAMESPACE }}" -it -- /bin/bash
+            ```
+
+            Close your port-forwarding with:
+            ```bash
+            pgrep -f "kubectl port-forward" | xargs -n 1 kill
             ```
