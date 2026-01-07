@@ -4,12 +4,15 @@ use std::collections::HashMap;
 //I put them there as they may not be needed anymore when/if
 //part of this code is integrated in tfhe-rs
 use itertools::Itertools;
+use tfhe::boolean::prelude::PolynomialSize;
 use tfhe::HlCompactable;
 use tfhe::{
     core_crypto::prelude::Numeric, prelude::Tagged, CompactCiphertextList, CompactPublicKey,
     HlExpandable,
 };
 
+use crate::execution::online::triple::{open, open_list};
+use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
 use crate::execution::sharing::shamir::RevealOp;
 use crate::{
     algebra::{
@@ -128,7 +131,7 @@ pub fn polynomial_wrapping_add_multisum_assign<Z: BaseRing, const EXTENSION_DEGR
     output_mask: &[Z],
     glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
 ) where
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let pol_dimension = glwe_secret_key_share.polynomial_size.0;
     let mut pol_output_body = Poly::from_coefs(output_body.to_vec());
@@ -251,6 +254,40 @@ where
         output_body_vec.push(body);
     }
     output_body_vec
+}
+
+/// Computes the Hamming weight of a vector of secret shared values.
+/// Assuming the input vector is indeed shares of bits !
+pub(super) async fn compute_hamming_weight_lwe_sk<
+    Z: Ring + ErrorCorrect,
+    Ses: BaseSessionHandles,
+>(
+    secret_vector: &[Share<Z>],
+    session: &mut Ses,
+) -> anyhow::Result<Z> {
+    let secret_hw = secret_vector
+        .iter()
+        .fold(Z::ZERO, |acc, share| acc + share.value());
+    let secret_hw = Share::new(session.my_role(), secret_hw);
+    open(secret_hw, session).await
+}
+
+/// Computes the Hamming weight of a vector of secret shared values.
+/// Assuming the input vector is indeed shares of bits !
+pub(super) async fn compute_hamming_weight_glwe_sk<
+    Z: Ring + ErrorCorrect,
+    Ses: BaseSessionHandles,
+>(
+    secret_vector: &[Share<Z>],
+    session: &mut Ses,
+    polynomial_size: PolynomialSize,
+) -> anyhow::Result<Vec<Z>> {
+    let secret_hws = secret_vector
+        .chunks(polynomial_size.0)
+        .map(|chunk| chunk.iter().fold(Z::ZERO, |acc, share| acc + share.value()))
+        .map(|chunk_hw| Share::new(session.my_role(), chunk_hw))
+        .collect::<Vec<_>>();
+    open_list(&secret_hws, session).await
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@ use crate::client::tests::threshold::common::threshold_handles;
 use crate::consts::DEFAULT_PARAM;
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
+use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
 use crate::consts::TEST_PARAM;
 use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
@@ -19,6 +20,7 @@ use crate::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
 };
 use crate::util::rate_limiter::RateLimiterConfig;
+use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::TypedCiphertext;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::RequestId;
@@ -223,6 +225,7 @@ pub async fn decryption_threshold(
         crsgen: 1,
         preproc: 1,
         keygen: 1,
+        reshare: 1,
     };
     let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
         dkg_params,
@@ -238,6 +241,7 @@ pub async fn decryption_threshold(
         &mut kms_clients,
         &mut internal_client,
         key_id,
+        None,
         msgs,
         enc_config,
         party_ids_to_crash,
@@ -246,7 +250,6 @@ pub async fn decryption_threshold(
     )
     .await;
 }
-
 #[expect(clippy::too_many_arguments)]
 pub async fn run_decryption_threshold(
     amount_parties: usize,
@@ -254,19 +257,58 @@ pub async fn run_decryption_threshold(
     kms_clients: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &mut Client,
     key_id: &RequestId,
+    context_id: Option<&ContextId>,
     msgs: Vec<TestingPlaintext>,
     enc_config: EncryptionConfig,
     party_ids_to_crash: Option<Vec<usize>>,
     parallelism: usize,
     data_root_path: Option<&Path>,
 ) {
+    run_decryption_threshold_optionally_fail(
+        amount_parties,
+        kms_servers,
+        kms_clients,
+        internal_client,
+        key_id,
+        context_id,
+        msgs,
+        enc_config,
+        party_ids_to_crash,
+        parallelism,
+        data_root_path,
+        false,
+    )
+    .await
+}
+
+#[expect(clippy::too_many_arguments)]
+pub async fn run_decryption_threshold_optionally_fail(
+    amount_parties: usize,
+    kms_servers: &mut HashMap<u32, ServerHandle>,
+    kms_clients: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    internal_client: &mut Client,
+    key_id: &RequestId,
+    context_id: Option<&ContextId>,
+    msgs: Vec<TestingPlaintext>,
+    enc_config: EncryptionConfig,
+    party_ids_to_crash: Option<Vec<usize>>,
+    parallelism: usize,
+    data_root_path: Option<&Path>,
+    expect_request_failure: bool,
+) {
     assert_eq!(kms_clients.len(), kms_servers.len());
     assert!(parallelism > 0);
     let mut cts = Vec::new();
     let mut bits = 0;
     for (i, msg) in msgs.clone().into_iter().enumerate() {
-        let (ct, ct_format, fhe_type) =
-            compute_cipher_from_stored_key(data_root_path, msg, key_id, 1, enc_config).await;
+        let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
+            data_root_path,
+            msg,
+            key_id,
+            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
+            enc_config,
+        )
+        .await;
         let ctt = TypedCiphertext {
             ciphertext: ct,
             fhe_type: fhe_type as i32,
@@ -282,11 +324,20 @@ pub async fn run_decryption_threshold(
     let reqs: Vec<_> = (0..parallelism)
         .map(|j| {
             // Make it unique wrt key_id as well do be sure there's no clash when running
-            // the dec test with multiple keys
-            let request_id = derive_request_id(&format!("TEST_DEC_ID_{j}_KEY_{key_id}")).unwrap();
+            // the dec test with multiple keys.
+            // Also, make it depend on the messages because we may use the same function
+            // to decrypt multiple messages.
+            let request_id =
+                derive_request_id(&format!("TEST_DEC_ID_{j}_KEY_{key_id}_{msgs:?}")).unwrap();
 
             internal_client
-                .public_decryption_request(cts.clone(), &dummy_domain(), &request_id, key_id)
+                .public_decryption_request(
+                    cts.clone(),
+                    &dummy_domain(),
+                    &request_id,
+                    context_id,
+                    key_id,
+                )
                 .unwrap()
         })
         .collect();
@@ -313,11 +364,21 @@ pub async fn run_decryption_threshold(
         }
     }
 
-    let mut req_response_vec = Vec::new();
-    while let Some(inner) = req_tasks.join_next().await {
-        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+    if expect_request_failure {
+        let mut req_response_vec = Vec::new();
+        while let Some(inner) = req_tasks.join_next().await {
+            req_response_vec.push(inner.unwrap().unwrap_err());
+        }
+        assert_eq!(req_response_vec.len(), kms_clients.len() * parallelism);
+        // return here because there won't be a response
+        return;
+    } else {
+        let mut req_response_vec = Vec::new();
+        while let Some(inner) = req_tasks.join_next().await {
+            req_response_vec.push(inner.unwrap().unwrap().into_inner());
+        }
+        assert_eq!(req_response_vec.len(), kms_clients.len() * parallelism);
     }
-    assert_eq!(req_response_vec.len(), kms_clients.len() * parallelism);
 
     // get all responses
     let mut resp_tasks = JoinSet::new();

@@ -7,6 +7,7 @@ use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::consts::TEST_PARAM;
+use crate::cryptography::encryption::PkeSchemeType;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::{
@@ -222,7 +223,7 @@ async fn default_user_decryption_centralized_precompute_sns(
 }
 
 /// Note that the `legacy` argument is used to determine whether to use the legacy
-/// user decryption request, created using [Client::user_decryption_request_legacy] or the current one.
+/// user decryption request, i.e using MlKem1024 and bincode2 serialization.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn user_decryption_centralized(
     dkg_params: &DKGParams,
@@ -239,7 +240,7 @@ pub(crate) async fn user_decryption_centralized(
     let (kms_server, kms_client, mut internal_client) =
         crate::client::test_tools::centralized_handles(dkg_params, None).await;
     let (ct, ct_format, fhe_type) =
-        compute_cipher_from_stored_key(None, msg, key_id, 1, enc_config).await;
+        compute_cipher_from_stored_key(None, msg, key_id, None, enc_config).await;
 
     // The following lines are used to generate integration test-code with javascript for test `new client` in test.js
     // println!(
@@ -260,13 +261,19 @@ pub(crate) async fn user_decryption_centralized(
                 external_handle: j.to_be_bytes().to_vec(),
             }];
             let request_id = derive_request_id(&format!("TEST_USER_DECRYPT_ID_{j}")).unwrap();
+
+            // This is the legacy version of the user decryption request
+            // where the encryption key is MlKem1024 serialized using bincode2.
+            // The normal version [Self::user_decryption_request] uses MlKem512 uses safe serialization.
             if legacy {
                 internal_client
-                    .user_decryption_request_legacy(
+                    .user_decryption_request(
                         &dummy_domain(),
                         typed_ciphertexts,
                         &request_id,
                         key_id,
+                        None,
+                        PkeSchemeType::MlKem1024,
                     )
                     .unwrap()
             } else {
@@ -276,6 +283,8 @@ pub(crate) async fn user_decryption_centralized(
                         typed_ciphertexts,
                         &request_id,
                         key_id,
+                        None,
+                        PkeSchemeType::MlKem512,
                     )
                     .unwrap()
             }

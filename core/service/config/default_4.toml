@@ -5,7 +5,6 @@ listen_address = "0.0.0.0"
 listen_port = 50400
 timeout_secs = 360
 grpc_max_message_size = 104857600 # 100 MiB
-decryption_mode = "NoiseFloodSmall"
 
 [aws]
 region = "us-east-1"
@@ -13,13 +12,16 @@ s3_endpoint = "http://dev-s3-mock:9000"
 
 [public_vault.storage.file]
 path = "./keys"
+prefix = "PUB-p4"
 
 [private_vault.storage.file]
 path = "./keys"
+prefix = "PRIV-p4"
 
 [backup_vault]
 [backup_vault.storage.file]
 path = "./backup_vault"
+prefix = "BACKUP-p4"
 
 [threshold]
 listen_address = "0.0.0.0"
@@ -100,3 +102,4 @@ user_decrypt = 1
 crsgen = 100
 preproc = 25000
 keygen = 1000
+reshare = 1

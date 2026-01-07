@@ -20,7 +20,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         online::{preprocessing::TriplePreprocessing, triple::mult_list},
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         sharing::share::Share,
         tfhe_internals::utils::slice_wrapping_scalar_mul_assign,
     },
@@ -248,7 +248,7 @@ pub fn encrypt_constant_ggsw_ciphertext<Z, Gen, const EXTENSION_DEGREE: usize>(
 ) where
     Z: BaseRing,
     Gen: ParallelByteRandomGenerator,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let max_level = output.decomposition_level_count();
     let gen_iter = generator
@@ -322,7 +322,7 @@ fn encrypt_constant_ggsw_level_matrix_row<Z, Gen, const EXTENSION_DEGREE: usize>
 where
     Z: BaseRing,
     Gen: ParallelByteRandomGenerator,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     //Do proper scaling using the provided list of secret shared plaintexts
     if row_index < last_row_index {
@@ -390,7 +390,9 @@ mod tests {
             },
             runtime::{
                 party::Role,
-                session::{LargeSession, ParameterHandles},
+                sessions::{
+                    large_session::LargeSession, session_parameters::GenericParameterHandles,
+                },
             },
             sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{

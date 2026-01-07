@@ -10,7 +10,7 @@ use crate::{
             single_sharing::SingleSharing,
         },
         online::triple::Triple,
-        runtime::session::LargeSessionHandles,
+        runtime::sessions::large_session::LargeSessionHandles,
         sharing::{open::RobustOpen, share::Share},
     },
     ProtocolDescription,
@@ -36,7 +36,7 @@ impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: RobustOpen> Protocol
     for CheatingLargePreprocessing<Z, S, D, RO>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-CheatingLargePreprocessing:\n{}\n{}\n{}",
             indent,

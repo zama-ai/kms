@@ -1,16 +1,17 @@
 use crate::client::client_wasm::Client;
-use crate::conf::{self, Keychain, SecretSharingKeychain};
+use crate::conf::{init_conf, CoreConfig, Keychain, SecretSharingKeychain};
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
+use crate::engine::base::BaseKmsStruct;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::threshold::service::new_real_threshold_kms;
 use crate::engine::{run_server, Shutdown};
+use crate::util::key_setup::test_tools::file_backup_vault;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::keychain::make_keychain_proxy;
-use crate::vault::storage::make_storage;
 use crate::vault::storage::{
     crypto_material::get_core_signing_key, file::FileStorage, Storage, StorageType,
 };
+use crate::vault::storage::{make_storage, StorageExt};
 use crate::vault::Vault;
 use crate::{
     conf::{
@@ -23,6 +24,7 @@ use futures_util::FutureExt;
 use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
+use kms_grpc::rpc_types::KMSType;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
@@ -45,7 +47,7 @@ const GRPC_MAX_MESSAGE_SIZE: usize = 100 * 1024 * 1024;
 
 pub async fn setup_threshold_no_client<
     PubS: Storage + Clone + Sync + Send + 'static,
-    PrivS: Storage + Clone + Sync + Send + 'static,
+    PrivS: StorageExt + Clone + Sync + Send + 'static,
 >(
     threshold: u8,
     pub_storage: Vec<PubS>,
@@ -86,6 +88,7 @@ pub async fn setup_threshold_no_client<
             mpc_identity: None,
             port,
             tls_cert: None,
+            verification_address: None,
         })
         .collect_vec();
 
@@ -114,38 +117,43 @@ pub async fn setup_threshold_no_client<
             tokio::sync::oneshot::Receiver<()>,
         ) = tokio::sync::oneshot::channel();
         mpc_shutdown_txs.push(mpc_core_tx);
-        let rl_conf = rate_limiter_conf.clone();
+        // Make a configuration based on the default, but customized with the needed changes for the test setup
+        let mut core_config: CoreConfig = init_conf("config/default_1").expect("config must parse");
+        let threshold_party_config = ThresholdPartyConf {
+            listen_address: mpc_conf[i - 1].address.clone(),
+            listen_port: mpc_conf[i - 1].port,
+            threshold,
+            dec_capacity: DEC_CAPACITY,
+            min_dec_cache: MIN_DEC_CACHE,
+            my_id: Some(i),
+            preproc_redis: None,
+            // Add some parallelism so CI runs a bit faster
+            // since it uses large machines
+            num_sessions_preproc: Some(5),
+            tls: None,
+            peers: Some(mpc_conf),
+            core_to_core_net: None,
+            decryption_mode,
+        };
+        core_config.threshold = Some(threshold_party_config);
+        core_config.rate_limiter_conf = rate_limiter_conf.clone();
+
         handles.push(tokio::spawn(async move {
-            let threshold_party_config = ThresholdPartyConf {
-                listen_address: mpc_conf[i - 1].address.clone(),
-                listen_port: mpc_conf[i - 1].port,
-                threshold,
-                dec_capacity: DEC_CAPACITY,
-                min_dec_cache: MIN_DEC_CACHE,
-                my_id: i,
-                preproc_redis: None,
-                // Add some parallelism so CI runs a bit faster
-                // since it uses large machines
-                num_sessions_preproc: Some(5),
-                tls: None,
-                peers: Some(mpc_conf),
-                core_to_core_net: None,
-                decryption_mode,
-            };
             let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+
             // TODO pass in cert_paths for testing TLS
             let server = new_real_threshold_kms(
-                threshold_party_config,
+                core_config,
                 cur_pub_storage,
                 cur_priv_storage,
                 cur_vault,
                 None,
                 mpc_listener,
-                sk,
+                base_kms,
                 None,
                 false,
                 run_prss,
-                rl_conf,
                 mpc_core_rx.map(drop),
             )
             .await;
@@ -215,7 +223,10 @@ pub async fn setup_threshold_no_client<
 /// try to connect to a URI and retry every 200ms for 50 times before giving up after 5 seconds.
 pub async fn connect_with_retry(uri: Uri) -> Channel {
     tracing::info!("Client connecting to {}", uri);
-    let mut channel = Channel::builder(uri.clone()).connect().await;
+    let mut channel = Channel::builder(uri.clone())
+        .tcp_nodelay(true)
+        .connect()
+        .await;
     let mut tries = 0usize;
     loop {
         match channel {
@@ -225,7 +236,10 @@ pub async fn connect_with_retry(uri: Uri) -> Channel {
             Err(_) => {
                 tracing::info!("Retrying: Client connection to {}", uri);
                 tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                channel = Channel::builder(uri.clone()).connect().await;
+                channel = Channel::builder(uri.clone())
+                    .tcp_nodelay(true)
+                    .connect()
+                    .await;
                 tries += 1;
                 if tries > MAX_TRIES {
                     break;
@@ -350,7 +364,7 @@ impl ServerHandle {
 
 pub async fn setup_threshold<
     PubS: Storage + Clone + Sync + Send + 'static,
-    PrivS: Storage + Clone + Sync + Send + 'static,
+    PrivS: StorageExt + Clone + Sync + Send + 'static,
 >(
     threshold: u8,
     pub_storage: Vec<PubS>,
@@ -394,7 +408,7 @@ pub async fn setup_threshold<
 /// Setup a client and a server running with non-persistent storage.
 pub async fn setup_centralized_no_client<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 >(
     pub_storage: PubS,
     priv_storage: PrivS,
@@ -453,7 +467,7 @@ pub async fn setup_centralized_no_client<
 
 pub(crate) async fn setup_centralized<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 >(
     pub_storage: PubS,
     priv_storage: PrivS,
@@ -512,7 +526,7 @@ pub async fn centralized_handles(
     param: &DKGParams,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
-    let backup_proxy_storage = make_storage(None, StorageType::BACKUP, None, None, None).unwrap();
+    let backup_proxy_storage = make_storage(None, StorageType::BACKUP, None, None).unwrap();
     let backup_vault = Vault {
         storage: backup_proxy_storage,
         keychain: None,
@@ -525,30 +539,17 @@ pub async fn centralized_custodian_handles(
     param: &DKGParams,
     rate_limiter_conf: Option<RateLimiterConfig>,
     test_data_path: Option<&Path>,
+    pub_storage_prefix: Option<&str>,
+    backup_storage_prefix: Option<&str>,
 ) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
-    let store_path = test_data_path.map(|p| {
-        conf::Storage::File(conf::FileStorage {
-            path: p.to_path_buf(),
-        })
-    });
-    let pub_proxy_storage =
-        make_storage(store_path.clone(), StorageType::PUB, None, None, None).unwrap();
-    let backup_proxy_storage =
-        make_storage(store_path, StorageType::BACKUP, None, None, None).unwrap();
-    let keychain = Some(
-        make_keychain_proxy(
-            &Keychain::SecretSharing(SecretSharingKeychain {}),
-            None,
-            None,
-            Some(&pub_proxy_storage),
-        )
-        .await
-        .unwrap(),
-    );
-    let backup_vault = Vault {
-        storage: backup_proxy_storage,
-        keychain,
-    };
+    let backup_vault = file_backup_vault(
+        Some(&Keychain::SecretSharing(SecretSharingKeychain {})),
+        test_data_path,
+        test_data_path,
+        pub_storage_prefix,
+        backup_storage_prefix,
+    )
+    .await;
     central_handle_w_vault(param, rate_limiter_conf, Some(backup_vault), test_data_path).await
 }
 /// Wait for a server to be ready for requests. I.e. wait until it enters the SERVING state.

@@ -8,10 +8,7 @@ use kms_lib::{
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
     consts::RND_SIZE,
-    cryptography::{
-        backup_pke::BackupPrivateKey,
-        internal_crypto_types::{PrivateSigKey, PublicSigKey},
-    },
+    cryptography::signatures::PublicSigKey,
     util::file_handling::{safe_read_element_versioned, safe_write_element_versioned},
 };
 use observability::{conf::TelemetryConfig, telemetry::init_tracing};
@@ -112,13 +109,15 @@ async fn main() -> Result<(), anyhow::Error> {
             tracing::info!("Generating custodian keys...");
             let role = Role::indexed_from_one(params.custodian_role);
             let mnemonic = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
-            let custodian: Custodian<PrivateSigKey, BackupPrivateKey> =
-                custodian_from_seed_phrase(&mnemonic, role).unwrap();
+            let custodian: Custodian = custodian_from_seed_phrase(&mnemonic, role).unwrap();
             let setup_msg = custodian
                 .generate_setup_message(&mut rng, params.custodian_name)
                 .unwrap();
             safe_write_element_versioned(&params.path, &setup_msg).await?;
-            tracing::info!("Custodian keys generated successfully! Mnemonic will now be printed:");
+            tracing::info!(
+                "Custodian keys generated successfully in {}! Mnemonic will now be printed:",
+                params.path.to_string_lossy(),
+            );
             println!("{SEED_PHRASE_DESC}{mnemonic}");
         }
         CustodianCommand::Verify(params) => {
@@ -130,11 +129,11 @@ async fn main() -> Result<(), anyhow::Error> {
             let recovered_keys =
                 custodian_from_seed_phrase(&params.seed_phrase, setup_msg.custodian_role)
                     .expect("Failed to recover keys");
-            if &setup_msg.public_verf_key != recovered_keys.verification_key() {
+            if setup_msg.public_verf_key != recovered_keys.verification_key() {
                 tracing::warn!("Verification failed: Public verification key does not match the generated key!");
                 validation_ok = false;
             }
-            if &setup_msg.public_enc_key != recovered_keys.public_key() {
+            if &setup_msg.public_enc_key != recovered_keys.public_enc_key() {
                 tracing::warn!(
                     "Verification failed: Public encryption key does not match the generated key!"
                 );
@@ -157,16 +156,10 @@ async fn main() -> Result<(), anyhow::Error> {
                 "Decrypting ciphertexts for custodian role: {}",
                 params.custodian_role
             );
-            let verf_key: PublicSigKey =
+            let operator_verf_key: PublicSigKey =
                 safe_read_element_versioned(&params.operator_verf_key).await?;
             let recovery_request: InternalRecoveryRequest =
                 safe_read_element_versioned(&params.recovery_request_path).await?;
-            if !recovery_request
-                .is_valid(&verf_key)
-                .expect("Failed to validate recovery request")
-            {
-                return Err(anyhow::anyhow!("Invalid RecoveryRequest data"));
-            }
             // Logic for decrypting payloads
             let custodian = custodian_from_seed_phrase(
                 &params.seed_phrase,
@@ -176,7 +169,7 @@ async fn main() -> Result<(), anyhow::Error> {
             tracing::info!("Custodian initialized successfully");
             let mut rng = get_rng(params.randomness.as_ref());
             let custodian_backup: &InnerOperatorBackupOutput = recovery_request
-                .ciphertexts()
+                .signcryptions()
                 .get(&Role::indexed_from_one(params.custodian_role))
                 .unwrap_or_else(|| {
                     panic!(
@@ -187,10 +180,9 @@ async fn main() -> Result<(), anyhow::Error> {
             let res = custodian.verify_reencrypt(
                 &mut rng,
                 custodian_backup,
-                &verf_key,
-                recovery_request.encryption_key(),
+                &operator_verf_key,
+                recovery_request.backup_enc_key(),
                 recovery_request.backup_id(),
-                recovery_request.operator_role(),
             )?;
             tracing::info!("Verified reencryption successfully");
             safe_write_element_versioned(&params.output_path, &res).await?;

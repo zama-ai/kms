@@ -2,14 +2,15 @@ use kms_grpc::kms::v1::CiphertextFormat;
 use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
 use kms_grpc::kms::v1::CustodianRecoveryRequest;
 use kms_grpc::kms::v1::DestroyCustodianContextRequest;
-use kms_grpc::kms::v1::DestroyKmsContextRequest;
+use kms_grpc::kms::v1::DestroyMpcContextRequest;
 use kms_grpc::kms::v1::Empty;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::kms::v1::NewCustodianContextRequest;
-use kms_grpc::kms::v1::NewKmsContextRequest;
+use kms_grpc::kms::v1::NewMpcContextRequest;
 use kms_grpc::kms::v1::OperatorPublicKey;
 use kms_grpc::kms::v1::RecoveryRequest;
 use kms_grpc::kms::v1::TypedPlaintext;
+use kms_grpc::ContextId;
 use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;
@@ -19,26 +20,17 @@ use tonic::Request;
 use tonic::Response;
 use tonic::Status;
 
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::cryptography::internal_crypto_types::PublicSigKey;
-use crate::cryptography::internal_crypto_types::Signature;
-use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::cryptography::encryption::UnifiedPublicEncKey;
+use crate::cryptography::signatures::{PrivateSigKey, Signature};
 
 use super::base::KmsFheKeyHandles;
 
 pub trait BaseKms {
-    fn verify_sig<T: Serialize + AsRef<[u8]>>(
-        dsep: &DomainSep,
-        payload: &T,
-        signature: &Signature,
-        verification_key: &PublicSigKey,
-    ) -> anyhow::Result<()>;
     fn sign<T: Serialize + AsRef<[u8]>>(
         &self,
         dsep: &DomainSep,
         msg: &T,
     ) -> anyhow::Result<Signature>;
-    fn get_serialized_verf_key(&self) -> Vec<u8>;
     fn digest<T: ?Sized + AsRef<[u8]>>(
         domain_separator: &DomainSep,
         msg: &T,
@@ -62,20 +54,20 @@ pub trait Kms: BaseKms {
         ct_format: CiphertextFormat,
         digest_link: &[u8],
         enc_key: &UnifiedPublicEncKey,
-        client_address: &alloy_primitives::Address,
+        client_address: &[u8],
     ) -> anyhow::Result<Vec<u8>>;
 }
 
 #[tonic::async_trait]
 pub trait ContextManager {
-    async fn new_kms_context(
+    async fn new_mpc_context(
         &self,
-        request: Request<NewKmsContextRequest>,
+        request: Request<NewMpcContextRequest>,
     ) -> Result<Response<Empty>, Status>;
 
-    async fn destroy_kms_context(
+    async fn destroy_mpc_context(
         &self,
-        request: Request<DestroyKmsContextRequest>,
+        request: Request<DestroyMpcContextRequest>,
     ) -> Result<Response<Empty>, Status>;
 
     async fn new_custodian_context(
@@ -87,6 +79,8 @@ pub trait ContextManager {
         &self,
         request: Request<DestroyCustodianContextRequest>,
     ) -> Result<Response<Empty>, Status>;
+
+    async fn mpc_context_exists(&self, context_id: &ContextId) -> Result<bool, Status>;
 }
 
 #[tonic::async_trait]

@@ -4,7 +4,7 @@ use crate::{
             dummy::DummyPreprocessing,
             orchestration::producers::randoms_producer::GenericRandomProducer,
         },
-        runtime::session::{LargeSession, SmallSession},
+        runtime::sessions::{large_session::LargeSession, small_session::SmallSession},
     },
     malicious_execution::small_execution::malicious_offline::FailingPreprocessing,
 };

@@ -1,7 +1,7 @@
+pub use crate::identifiers::{KeyId, RequestId, ID_LENGTH};
 use crate::kms::v1::UserDecryptionResponsePayload;
 use crate::kms::v1::{
-    CustodianRecoveryOutput, CustodianRecoveryRequest, Eip712DomainMsg, TypedCiphertext,
-    TypedPlaintext, TypedSigncryptedCiphertext,
+    Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
 };
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
@@ -13,10 +13,9 @@ use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{FheTypes, Versionize};
-use tfhe_versionable::{Version, VersionsDispatch};
-use threshold_fhe::execution::runtime::party::Role;
-
-pub use crate::identifiers::{KeyId, RequestId, ID_LENGTH};
+use tfhe_versionable::{
+    Unversionize, UnversionizeError, Upgrade, Version, VersionizeOwned, VersionsDispatch,
+};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
@@ -112,13 +111,10 @@ pub struct CrsGenSignedPubDataHandleInternalWrapper(pub SignedPubDataHandleInter
 #[cfg(feature = "non-wasm")]
 pub fn optional_protobuf_to_alloy_domain(
     domain_ref: Option<&Eip712DomainMsg>,
-) -> Result<Eip712Domain, crate::utils::tonic_result::BoxedStatus> {
-    let inner = domain_ref.ok_or(tonic::Status::invalid_argument("missing domain"))?;
-    let out = protobuf_to_alloy_domain(inner).map_err(|e| {
-        tonic::Status::invalid_argument(format!(
-            "failed to convert protobuf domain to alloy domain: {e}"
-        ))
-    })?;
+) -> anyhow::Result<Eip712Domain> {
+    let inner = domain_ref.ok_or(anyhow::anyhow!("missing domain"))?;
+    let out = protobuf_to_alloy_domain(inner)
+        .map_err(|e| anyhow::anyhow!("failed to convert protobuf domain to alloy domain: {e}"))?;
     Ok(out)
 }
 
@@ -231,8 +227,22 @@ pub enum PubDataType {
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
-    RecoveryRequest, // Recovery request for backup vault TODO(#2748) ensure that data gets validated at read, since we cannot fully trust the public storage
     RecoveryMaterial, // Recovery material for the backup vault
+}
+
+impl std::str::FromStr for PubDataType {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        for pub_data_type in PubDataType::iter() {
+            if value.to_ascii_lowercase().trim()
+                == pub_data_type.to_string().to_ascii_lowercase().trim()
+            {
+                return Ok(pub_data_type);
+            }
+        }
+        Err(anyhow::anyhow!("Unknown PubDataType: {}", value))
+    }
 }
 
 impl fmt::Display for PubDataType {
@@ -246,15 +256,23 @@ impl fmt::Display for PubDataType {
             PubDataType::VerfAddress => write!(f, "VerfAddress"),
             PubDataType::DecompressionKey => write!(f, "DecompressionKey"),
             PubDataType::CACert => write!(f, "CACert"),
-            PubDataType::RecoveryRequest => write!(f, "RecoveryRequest"),
             PubDataType::RecoveryMaterial => write!(f, "RecoveryMaterial"),
         }
     }
 }
 
+/// The default type is not important, but we need to have one for `EnumIter` derive.
+#[allow(clippy::derivable_impls)]
+impl Default for PubDataType {
+    fn default() -> Self {
+        PubDataType::PublicKey // Default is public FHE encryption key.
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum PrivDataTypeVersioned {
-    V0(PrivDataType),
+    V0(PrivDataTypeV0),
+    V1(PrivDataType),
 }
 
 /// PrivDataType
@@ -275,8 +293,36 @@ pub enum PrivDataType {
     FheKeyInfo, // Only for the threshold case
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
+    #[deprecated(
+        note = "Use PrssSetupCombined instead, but this is still because we need to read legacy data"
+    )]
     PrssSetup,
+    PrssSetupCombined,
     ContextInfo,
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Version)]
+pub enum PrivDataTypeV0 {
+    SigningKey,
+    FheKeyInfo, // Only for the threshold case
+    CrsInfo,
+    FhePrivateKey, // Only used for the centralized case
+    PrssSetup,
+    ContextInfo, // MPC context information
+}
+
+impl Upgrade<PrivDataType> for PrivDataTypeV0 {
+    type Error = std::convert::Infallible;
+    fn upgrade(self) -> Result<PrivDataType, Self::Error> {
+        Ok(match self {
+            PrivDataTypeV0::SigningKey => PrivDataType::SigningKey,
+            PrivDataTypeV0::FheKeyInfo => PrivDataType::FheKeyInfo,
+            PrivDataTypeV0::CrsInfo => PrivDataType::CrsInfo,
+            PrivDataTypeV0::FhePrivateKey => PrivDataType::FhePrivateKey,
+            PrivDataTypeV0::PrssSetup => PrivDataType::PrssSetup,
+            PrivDataTypeV0::ContextInfo => PrivDataType::ContextInfo,
+        })
+    }
 }
 
 impl fmt::Display for PrivDataType {
@@ -286,7 +332,9 @@ impl fmt::Display for PrivDataType {
             PrivDataType::SigningKey => write!(f, "SigningKey"),
             PrivDataType::CrsInfo => write!(f, "CrsInfo"),
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
+            #[expect(deprecated)]
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
+            PrivDataType::PrssSetupCombined => write!(f, "PrssSetupCombined"),
             PrivDataType::ContextInfo => write!(f, "Context"),
         }
     }
@@ -311,18 +359,6 @@ impl TryFrom<&str> for PrivDataType {
             }
         }
         Err(anyhow::anyhow!("Unknown PrivDataType: {}", value))
-    }
-}
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
-pub enum BackupDataType {
-    PrivData(PrivDataType), // Backup of a piece of private data
-}
-impl fmt::Display for BackupDataType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            BackupDataType::PrivData(data_type) => write!(f, "PrivData({data_type})"),
-        }
     }
 }
 
@@ -523,6 +559,43 @@ fn sub_slice<const N: usize>(vec: &[u8]) -> [u8; N] {
         }
     };
     padded
+}
+
+impl Versionize for TypedPlaintext {
+    type Versioned<'vers> = TypedPlaintextVersionsDispatch;
+
+    fn versionize(&self) -> Self::Versioned<'_> {
+        let ver = TypedPlaintext {
+            bytes: self.bytes.clone(),
+            fhe_type: self.fhe_type,
+        };
+        TypedPlaintextVersionsDispatch::V0(ver)
+    }
+}
+
+impl VersionizeOwned for TypedPlaintext {
+    type VersionedOwned = TypedPlaintextVersionsDispatchOwned;
+
+    fn versionize_owned(self) -> Self::VersionedOwned {
+        TypedPlaintextVersionsDispatchOwned::V0(self)
+    }
+}
+
+impl Unversionize for TypedPlaintext {
+    fn unversionize(versioned: Self::VersionedOwned) -> Result<Self, UnversionizeError> {
+        match versioned {
+            TypedPlaintextVersionsDispatchOwned::V0(v0) => Ok(v0),
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize)]
+pub enum TypedPlaintextVersionsDispatch {
+    V0(TypedPlaintext),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum TypedPlaintextVersionsDispatchOwned {
+    V0(TypedPlaintext),
 }
 
 /// Little endian encoding for easy serialization by allowing most significant bytes to be 0
@@ -1006,98 +1079,6 @@ impl From<(String, FheTypes)> for TypedPlaintext {
         }
     }
 }
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum CustodianRecoveryOutputVersioned {
-    V0(InternalCustodianRecoveryOutput),
-}
-
-/// This is the message that a custodian sends to an operator after starting recovery.
-/// TODO this should be changed to use proper signcryption to ensure that the operator role is signed as well
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(CustodianRecoveryOutputVersioned)]
-pub struct InternalCustodianRecoveryOutput {
-    pub signature: Vec<u8>,  // sigt_i_j
-    pub ciphertext: Vec<u8>, // st_i_j
-    pub custodian_role: Role,
-    pub operator_role: Role,
-}
-
-impl Named for InternalCustodianRecoveryOutput {
-    const NAME: &'static str = "backup::CustodianRecoveryOutput";
-}
-
-impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
-    type Error = anyhow::Error;
-
-    fn try_from(value: CustodianRecoveryOutput) -> Result<Self, Self::Error> {
-        if value.custodian_role == 0 {
-            return Err(anyhow::anyhow!(
-                "Invalid custodian role in CustodianRecoveryOutput"
-            ));
-        }
-        if value.operator_role == 0 {
-            return Err(anyhow::anyhow!(
-                "Invalid operator role in CustodianRecoveryOutput"
-            ));
-        }
-        Ok(InternalCustodianRecoveryOutput {
-            signature: value.signature.to_vec(),
-            ciphertext: value.ciphertext,
-            custodian_role: Role::indexed_from_one(value.custodian_role as usize),
-            operator_role: Role::indexed_from_one(value.operator_role as usize),
-        })
-    }
-}
-
-impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
-    type Error = anyhow::Error;
-
-    fn try_from(value: InternalCustodianRecoveryOutput) -> Result<Self, Self::Error> {
-        Ok(CustodianRecoveryOutput {
-            signature: value.signature,
-            ciphertext: value.ciphertext,
-            custodian_role: value.custodian_role.one_based() as u64,
-            operator_role: value.operator_role.one_based() as u64,
-        })
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum InternalCustodianRecoveryRequestVersioned {
-    V0(InternalCustodianRecoveryRequest),
-}
-
-/// This is the internal representation of the custodian context.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
-#[versionize(InternalCustodianRecoveryRequestVersioned)]
-pub struct InternalCustodianRecoveryRequest {
-    pub custodian_context_id: RequestId,
-    pub custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
-}
-
-impl Named for InternalCustodianRecoveryRequest {
-    const NAME: &'static str = "backup::BackupRestoreRequest";
-}
-
-impl TryFrom<CustodianRecoveryRequest> for InternalCustodianRecoveryRequest {
-    type Error = anyhow::Error;
-
-    fn try_from(value: CustodianRecoveryRequest) -> Result<Self, Self::Error> {
-        Ok(InternalCustodianRecoveryRequest {
-            custodian_context_id: value
-                .custodian_context_id
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Missing custodian context ID in BackupRestoreRequest")
-                })?
-                .try_into()?,
-            custodian_recovery_outputs: value
-                .custodian_recovery_outputs
-                .into_iter()
-                .map(InternalCustodianRecoveryOutput::try_from)
-                .collect::<Result<Vec<_>, _>>()?,
-        })
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -1424,6 +1405,29 @@ mod tests {
         assert!(
             logs_contain("Received unsupported FHE type for ABI encoding"),
             "Expected log for unsupported FHE type not found."
+        );
+    }
+
+    #[test]
+    fn test_types_plaintext_ser() {
+        let plaintext = TypedPlaintext {
+            bytes: vec![1, 2, 3, 4, 5],
+            fhe_type: 8, // FheTypes::Uint8
+        };
+
+        let serialized = bc2wrap::serialize(&plaintext).expect("serialization should succeed");
+        println!("Serialized bytes: {:?}", serialized);
+        // LOCKED V0 FORMAT - DO NOT CHANGE
+        let expected_bytes = vec![
+            5, 0, 0, 0, 0, 0, 0, 0, // plaintext.bytes length
+            1, 2, 3, 4, 5, // plaintext.bytes content
+            8, 0, 0, 0, // plaintext.fhe_type
+        ];
+
+        assert_eq!(
+            serialized, expected_bytes,
+            "BREAKING CHANGE: TypedPlaintext format changed!\n\
+             This will break user decryption for existing ciphertexts."
         );
     }
 }

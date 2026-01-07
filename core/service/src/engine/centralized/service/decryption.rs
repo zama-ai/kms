@@ -1,127 +1,148 @@
-use std::sync::Arc;
-
+use crate::cryptography::internal_crypto_types::LegacySerialization;
+use crate::engine::base::compute_external_pt_signature;
+use crate::engine::centralized::central_kms::{
+    async_user_decrypt, central_public_decrypt, CentralizedKms,
+};
+use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
+use crate::engine::utils::MetricedError;
+use crate::engine::validation::{
+    proto_request_id, validate_public_decrypt_req, validate_user_decrypt_req, RequestIdParsingErr,
+    DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
+};
+use crate::util::meta_store::{
+    add_req_to_meta_store, retrieve_from_meta_store, update_err_req_in_meta_store,
+    update_req_in_meta_store,
+};
+use crate::vault::storage::{Storage, StorageExt};
 use kms_grpc::kms::v1::{
     Empty, PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
     UserDecryptionRequest, UserDecryptionResponse,
 };
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    ERR_KEY_NOT_FOUND, ERR_PUBLIC_DECRYPTION_FAILED, ERR_USER_DECRYPTION_FAILED,
-    OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST, TAG_KEY_ID, TAG_PARTY_ID,
-    TAG_PUBLIC_DECRYPTION_KIND,
+    OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
+    OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
 };
-use tonic::{Request, Response, Status};
+use std::sync::Arc;
+use tonic::{Request, Response};
 use tracing::Instrument;
-
-use crate::engine::base::compute_external_pt_signature;
-use crate::engine::centralized::central_kms::{
-    async_user_decrypt, central_public_decrypt, CentralizedKms,
-};
-use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
-use crate::engine::validation::{
-    parse_proto_request_id, validate_public_decrypt_req, validate_user_decrypt_req,
-    RequestIdParsingErr, DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
-};
-use crate::ok_or_tonic_abort;
-use crate::util::meta_store::handle_res_mapping;
-use crate::vault::storage::Storage;
 
 /// Implementation of the user_decrypt endpoint
 pub async fn user_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<UserDecryptionRequest>,
-) -> Result<Response<Empty>, Status> {
-    // Start timing and counting before any operations
+) -> Result<Response<Empty>, MetricedError> {
+    let permit = service
+        .rate_limiter
+        .start_user_decrypt()
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                None,
+                e,
+                tonic::Code::ResourceExhausted,
+            )
+        })?;
     let mut timer = METRICS
         .time_operation(OP_USER_DECRYPT_REQUEST)
-        // Use a constant party ID since this is the central KMS
-        .tag(TAG_PARTY_ID, "central")
+        .tag(TAG_PARTY_ID, "central".to_string())
         .start();
 
-    let permit = service.rate_limiter.start_user_decrypt().await?;
-
     let inner = request.into_inner();
+    let (
+        typed_ciphertexts,
+        link,
+        client_enc_key,
+        client_address,
+        request_id,
+        key_id,
+        context_id,
+        epoch_id,
+        domain,
+    ) = validate_user_decrypt_req(&inner).map_err(|e| {
+        MetricedError::new(
+            OP_USER_DECRYPT_REQUEST,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })?;
 
-    let (typed_ciphertexts, link, client_enc_key, client_address, key_id, request_id, domain) =
-        validate_user_decrypt_req(&inner)?;
+    // Use a constant party ID since this is the central KMS
+    let metric_tags = vec![
+        (TAG_KEY_ID, key_id.to_string()),
+        (TAG_CONTEXT_ID, context_id.to_string()),
+        (TAG_EPOCH_ID, epoch_id.to_string()),
+    ];
+    timer.tags(metric_tags.clone());
 
-    // check that the key exists
+    match service
+        .crypto_storage
+        .inner
+        .fhe_keys_exist(&key_id.into(), &epoch_id)
+        .await
     {
-        if !ok_or_tonic_abort(
-            service.crypto_storage.inner.fhe_keys_exist(&key_id).await,
-            format!("Existence check failed for key_id {key_id} and request_id {request_id}"),
-        )? {
-            return Err(Status::not_found(format!(
-                "Key ID {key_id} not found for user decryption request {request_id}"
-            )));
-        }
-    }
-
-    // if the request already exists, then return the AlreadyExists error
-    // otherwise attempt to insert it to the meta store
-    {
-        let mut guarded_meta_store = service.user_dec_meta_store.write().await;
-        if guarded_meta_store.exists(&request_id) {
-            return Err(tonic::Status::new(
-                tonic::Code::AlreadyExists,
-                format!(
-                    "User decryption request with ID {} already exists",
-                    request_id
-                ),
+        Ok(true) => {}
+        e_or_false => {
+            return Err(MetricedError::new(
+                OP_USER_DECRYPT_REQUEST,
+                Some(request_id),
+                anyhow::anyhow!("Key ID {} not found: exists={:?}", key_id, e_or_false),
+                tonic::Code::NotFound,
             ));
         }
-
-        // everything after this point should result in an abort error
-        ok_or_tonic_abort(
-            guarded_meta_store.insert(&request_id),
-            format!(
-                "Could not insert user decryption with ID {} into meta store",
-                request_id
-            ),
-        )?;
-    }
-
-    timer.tags([(TAG_KEY_ID, key_id.as_str())]);
+    };
 
     let meta_store = Arc::clone(&service.user_dec_meta_store);
-    let sig_key = Arc::clone(&service.base_kms.sig_key);
     let crypto_storage = service.crypto_storage.clone();
     let mut rng = service.base_kms.new_rng().await;
-
-    ok_or_tonic_abort(
-        crypto_storage.refresh_centralized_fhe_keys(&key_id).await,
-        format!("Cannot find centralized keys with key ID {key_id}"),
-    )?;
+    add_req_to_meta_store(
+        &mut service.user_dec_meta_store.write().await,
+        &request_id,
+        OP_USER_DECRYPT_REQUEST,
+    )
+    .await?;
+    let sig_key = service.base_kms.sig_key().map_err(|e| {
+        MetricedError::new(
+            OP_USER_DECRYPT_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+            tonic::Code::FailedPrecondition,
+        )
+    })?;
 
     let mut handles = service.thread_handles.write().await;
 
-    let metric_tags = vec![
-        (TAG_KEY_ID, key_id.as_str()),
-        (TAG_PUBLIC_DECRYPTION_KIND, "centralized".to_string()),
-    ];
-
-    let server_verf_key = service.base_kms.get_serialized_verf_key();
+    let server_verf_key = sig_key.verf_key().to_legacy_bytes().map_err(|e| {
+        MetricedError::new(
+            OP_USER_DECRYPT_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("Failed to serialize server verification key: {e:?}"),
+            tonic::Code::Internal,
+        )
+    })?;
 
     let handle = tokio::spawn(
         async move {
             let _timer = timer;
             let _permit = permit;
             let keys = match crypto_storage
-                .read_cloned_centralized_fhe_keys_from_cache(&key_id)
+                .read_centralized_fhe_keys(&key_id.into(), &epoch_id)
                 .await
             {
                 Ok(k) => k,
                 Err(e) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
-                    let _ = guarded_meta_store.update(
+                    let _ = update_err_req_in_meta_store(
+                        &mut meta_store.write().await,
                         &request_id,
-                        Err(format!("Failed to get key ID {key_id} with error {e:?}")),
+                        format!("Failed to get key ID {key_id} with error {e:?}"),
+                        OP_USER_DECRYPT_REQUEST,
                     );
                     return;
                 }
@@ -134,7 +155,7 @@ pub async fn user_decrypt_impl<
             );
             // NOTE: extra_data is not used in the current implementation
             let extra_data = vec![];
-            match async_user_decrypt::<PubS, PrivS>(
+            let res = async_user_decrypt::<PubS, PrivS>(
                 &keys,
                 &sig_key,
                 &mut rng,
@@ -147,23 +168,14 @@ pub async fn user_decrypt_impl<
                 metric_tags,
                 extra_data.clone(),
             )
-            .await
-            {
-                Ok((payload, external_signature)) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store
-                        .update(&request_id, Ok((payload, external_signature, extra_data)));
-                }
-                Result::Err(e) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store
-                        .update(&request_id, Err(format!("Failed user decryption: {e}")));
-                    METRICS.increment_error_counter(
-                        OP_USER_DECRYPT_REQUEST,
-                        ERR_USER_DECRYPTION_FAILED,
-                    );
-                }
-            }
+            .await;
+            let res_with_extra_data = res.map(|(payload, sig)| (payload, sig, extra_data));
+            let _ = update_req_in_meta_store(
+                &mut meta_store.write().await,
+                &request_id,
+                res_with_extra_data,
+                OP_USER_DECRYPT_REQUEST,
+            );
         }
         .instrument(tracing::Span::current()),
     );
@@ -175,34 +187,50 @@ pub async fn user_decrypt_impl<
 /// Implementation of the get_user_decryption_result endpoint
 pub async fn get_user_decryption_result_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
-) -> Result<Response<UserDecryptionResponse>, Status> {
-    let request_id =
-        parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecResponse)?;
+) -> Result<Response<UserDecryptionResponse>, MetricedError> {
+    let request_id = proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecRequest)
+        .map_err(|e| {
+        MetricedError::new(
+            OP_USER_DECRYPT_RESULT,
+            None,
+            e,
+            tonic::Code::InvalidArgument,
+        )
+    })?;
 
-    let status = {
-        let guarded_meta_store = service.user_dec_meta_store.read().await;
-        guarded_meta_store.retrieve(&request_id)
-    };
-
-    let (payload, external_signature, extra_data) =
-        handle_res_mapping(status, &request_id, "UserDecryption").await?;
+    let (payload, external_signature, extra_data) = retrieve_from_meta_store(
+        service.user_dec_meta_store.read().await,
+        &request_id,
+        OP_USER_DECRYPT_RESULT,
+    )
+    .await?;
 
     // sign the response
-    let sig_payload_vec = ok_or_tonic_abort(
-        bc2wrap::serialize(&payload),
-        format!("Could not convert payload to bytes {payload:?}"),
-    )?;
+    let sig_payload_vec = bc2wrap::serialize(&payload).map_err(|e| {
+        MetricedError::new(
+            OP_USER_DECRYPT_RESULT,
+            Some(request_id),
+            anyhow::anyhow!("Could not serialize user decryption payload: {e}"),
+            tonic::Code::Internal,
+        )
+    })?;
 
-    let sig = ok_or_tonic_abort(
-        service.sign(&DSEP_USER_DECRYPTION, &sig_payload_vec),
-        format!("Could not sign payload {payload:?}"),
-    )?;
+    let sig = service
+        .sign(&DSEP_USER_DECRYPTION, &sig_payload_vec)
+        .map_err(|e| {
+            MetricedError::new(
+                OP_USER_DECRYPT_RESULT,
+                Some(request_id),
+                anyhow::anyhow!("Could not sign user decryption payload: {e}"),
+                tonic::Code::Aborted,
+            )
+        })?;
 
     Ok(Response::new(UserDecryptionResponse {
         signature: sig.sig.to_vec(),
@@ -215,30 +243,74 @@ pub async fn get_user_decryption_result_impl<
 /// Implementation of the public_decrypt endpoint
 pub async fn public_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<PublicDecryptionRequest>,
-) -> Result<Response<Empty>, Status> {
-    // Start timing and counting before any operations
+) -> Result<Response<Empty>, MetricedError> {
+    let permit = service
+        .rate_limiter
+        .start_pub_decrypt()
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                None,
+                e,
+                tonic::Code::ResourceExhausted,
+            )
+        })?;
     let mut timer = METRICS
         .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
         // Use a constant party ID since this is the central KMS
-        .tag(TAG_PARTY_ID, "central")
+        .tag(TAG_PARTY_ID, "central".to_string())
         .start();
-
-    let permit = service.rate_limiter.start_pub_decrypt().await?;
-
-    let start = tokio::time::Instant::now();
     let inner = request.into_inner();
-
-    let (ciphertexts, key_id, request_id, eip712_domain) = validate_public_decrypt_req(&inner)
-        .map_err(|e| {
-            tracing::error!("Failed to validate public decryption request: {inner:?}, error: {e}");
-            Status::invalid_argument("Failed to validate public decryption request: {e:?}")
+    let (ciphertexts, request_id, key_id, context_id, epoch_id, eip712_domain) =
+        validate_public_decrypt_req(&inner).map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_REQUEST,
+                None,
+                e,
+                tonic::Code::InvalidArgument,
+            )
         })?;
+
+    let metric_tags = vec![
+        (TAG_KEY_ID, key_id.to_string()),
+        (TAG_CONTEXT_ID, context_id.to_string()),
+        (TAG_EPOCH_ID, epoch_id.to_string()),
+    ];
+    timer.tags(metric_tags.clone());
+
+    let keys_exist = match service
+        .crypto_storage
+        .inner
+        .fhe_keys_exist(&key_id.into(), &epoch_id)
+        .await
+    {
+        Ok(exists) => exists,
+        Err(e) => {
+            tracing::error!(
+                "Error checking if keys exist for key_id={}, epoch_id={}: {}",
+                key_id,
+                epoch_id,
+                e
+            );
+            false
+        }
+    };
+    if !keys_exist {
+        return Err(MetricedError::new(
+            OP_PUBLIC_DECRYPT_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("Key ID {} not found", key_id),
+            tonic::Code::NotFound,
+        ));
+    }
+    let start = tokio::time::Instant::now();
 
     tracing::info!(
         "Decrypting {} ciphertexts using key {} with request id {}",
@@ -247,164 +319,96 @@ pub async fn public_decrypt_impl<
         request_id.as_str()
     );
 
-    // check that the key exists
-    {
-        let found = service
-            .crypto_storage
-            .inner
-            .fhe_keys_exist(&key_id)
-            .await
-            .map_err(|e| {
-                Status::aborted(format!(
-                    "Existence failed for key_id {key_id} and request_id {request_id}: {e:?}"
-                ))
-            })?;
-        if !found {
-            return Err(Status::not_found(format!(
-                "Key ID {key_id} not found for user decryption request {request_id}"
-            )));
-        }
-    }
-
     // if the request already exists, then return the AlreadyExists error
     // otherwise attempt to insert it to the meta store
-    {
-        let mut guarded_meta_store = service.pub_dec_meta_store.write().await;
-        if guarded_meta_store.exists(&request_id) {
-            return Err(tonic::Status::new(
-                tonic::Code::AlreadyExists,
-                format!(
-                    "Public decryption request with ID {} already exists",
-                    request_id
-                ),
-            ));
-        }
-
-        // everything after this point should result in an abort error
-        ok_or_tonic_abort(
-            guarded_meta_store.insert(&request_id),
-            "Could not insert public decryption request ID into meta store".to_string(),
-        )?;
-    }
-
-    timer.tags([(TAG_KEY_ID, key_id.as_str())]);
+    add_req_to_meta_store(
+        &mut service.pub_dec_meta_store.write().await,
+        &request_id,
+        OP_PUBLIC_DECRYPT_REQUEST,
+    )
+    .await?;
 
     let meta_store = Arc::clone(&service.pub_dec_meta_store);
-    let sigkey = Arc::clone(&service.base_kms.sig_key);
     let crypto_storage = service.crypto_storage.clone();
+    let sig_key = service.base_kms.sig_key().map_err(|e| {
+        MetricedError::new(
+            OP_PUBLIC_DECRYPT_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+            tonic::Code::FailedPrecondition,
+        )
+    })?;
 
-    ok_or_tonic_abort(
-        crypto_storage.refresh_centralized_fhe_keys(&key_id).await,
-        format!("Cannot find centralized keys with key ID {key_id}"),
-    )?;
-
-    let metric_tags = vec![
-        (TAG_KEY_ID, key_id.as_str()),
-        (TAG_PUBLIC_DECRYPTION_KIND, "centralized".to_string()),
-    ];
     // we do not need to hold the handle,
     // the result of the computation is tracked by the pub_dec_meta_store
-    let _handle = tokio::spawn(
-        async move {
-            let _timer = timer;
-            let _permit = permit;
-            let keys = match crypto_storage
-                .read_cloned_centralized_fhe_keys_from_cache(&key_id)
-                .await
-            {
-                Ok(k) => k,
-                Err(e) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
-                    let _ = guarded_meta_store.update(
-                        &request_id,
-                        Err(format!("Failed to get key ID {key_id} with error {e:?}")),
-                    );
-                    return;
-                }
-            };
-            tracing::info!(
-                "Starting decryption using key_id {} for request ID {}",
-                &key_id,
-                &request_id
-            );
+    let _handle = tokio::spawn(async move {
+        let _timer = timer;
+        let _permit = permit;
+        let keys = match crypto_storage
+            .read_centralized_fhe_keys(&key_id.into(), &epoch_id)
+            .await
+        {
+            Ok(k) => k,
+            Err(e) => {
+                let _ = update_err_req_in_meta_store(
+                    &mut meta_store.write().await,
+                    &request_id,
+                    format!("Failed to get key ID {key_id} with error {e:?}"),
+                    OP_PUBLIC_DECRYPT_REQUEST,
+                );
+                return;
+            }
+        };
+        tracing::info!(
+            "Starting decryption using key_id {} for request ID {}",
+            &key_id,
+            &request_id
+        );
 
-            let ext_handles_bytes = ciphertexts
-                .iter()
-                .map(|c| c.external_handle.to_owned())
-                .collect::<Vec<_>>();
+        let ext_handles_bytes = ciphertexts
+            .iter()
+            .map(|c| c.external_handle.to_owned())
+            .collect::<Vec<_>>();
 
-            // run the computation in a separate rayon thread to avoid blocking the tokio runtime
-            let (send, recv) = tokio::sync::oneshot::channel();
-            rayon::spawn_fifo(move || {
-                let decryptions =
-                    central_public_decrypt::<PubS, PrivS>(&keys, &ciphertexts, metric_tags);
-                let _ = send.send(decryptions);
-            });
-            let decryptions = recv.await;
+        // run the computation in a separate rayon thread to avoid blocking the tokio runtime
+        let (send, recv) = tokio::sync::oneshot::channel();
+        rayon::spawn_fifo(move || {
+            let decryptions =
+                central_public_decrypt::<PubS, PrivS>(&keys, &ciphertexts, metric_tags);
+            let _ = send.send(decryptions);
+        });
+        let decryptions = recv.await;
 
-            let extra_data = vec![]; // NOTE: extra_data is not used in the current implementation
-            match decryptions {
-                Ok(Ok(pts)) => {
-                    // sign the plaintexts and handles for external verification (in fhevm)
-                    let external_sig = match compute_external_pt_signature(
-                        &sigkey,
-                        ext_handles_bytes,
-                        &pts,
-                        extra_data.clone(),
-                        eip712_domain,
-                    )
-                    {
-                        Ok(sig) => sig,
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to compute external signature for public decrypt request {request_id}: {e:?}"
-                            );
-                            METRICS.increment_error_counter(
-                                OP_PUBLIC_DECRYPT_REQUEST,
-                                ERR_PUBLIC_DECRYPTION_FAILED,
-                            );
-                            let mut guarded_meta_store = meta_store.write().await;
-                            let _ = guarded_meta_store.update(
-                                &request_id,
-                                Err(format!(
-                                    "Failed to compute external signature: {e:?}"
-                                )),
-                            );
-                            return;
-                        }
-                    };
-
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store
-                        .update(&request_id, Ok((request_id, pts, external_sig, extra_data)));
-                    tracing::info!(
-                        "⏱️ Core Event Time for decryption computation: {:?}",
-                        start.elapsed()
-                    );
-                }
-                Err(e) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
-                        &request_id,
-                        Err(format!("Error collecting decrypt result: {e:?}")),
-                    );
-                }
-                Ok(Err(e)) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    METRICS.increment_error_counter(
-                        OP_PUBLIC_DECRYPT_REQUEST,
-                        ERR_PUBLIC_DECRYPTION_FAILED,
-                    );
-                    let _ = guarded_meta_store.update(
-                        &request_id,
-                        Err(format!("Error during decryption computation: {e}")),
-                    );
+        let extra_data = vec![]; // NOTE: extra_data is not used in the current implementation
+        let res = match decryptions {
+            Ok(Ok(pts)) => {
+                // sign the plaintexts and handles for external verification (in fhevm)
+                match compute_external_pt_signature(
+                    &sig_key,
+                    ext_handles_bytes,
+                    &pts,
+                    extra_data.clone(),
+                    eip712_domain,
+                ) {
+                    Ok(sig) => Ok((request_id, pts, sig, extra_data)),
+                    Err(e) => Err(format!("Failed to compute external signature: {e:?}")),
                 }
             }
-        }
-        .instrument(tracing::Span::current()),
-    );
+            Err(e) => Err(format!("Error collecting decrypt result: {e:?}")),
+            Ok(Err(e)) => Err(format!("Error during decryption computation: {e}")),
+        };
+        update_req_in_meta_store(
+            &mut meta_store.write().await,
+            &request_id,
+            res,
+            OP_PUBLIC_DECRYPT_REQUEST,
+        );
+        tracing::info!(
+            "⏱️ Core Event Time for decryption computation: {:?}",
+            start.elapsed()
+        );
+    })
+    .instrument(tracing::Span::current());
 
     Ok(Response::new(Empty {}))
 }
@@ -412,30 +416,41 @@ pub async fn public_decrypt_impl<
 /// Implementation of the get_public_decryption_result endpoint
 pub async fn get_public_decryption_result_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
-) -> Result<Response<PublicDecryptionResponse>, Status> {
-    let request_id = parse_proto_request_id(
+) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
+    let request_id = proto_request_id(
         &request.into_inner(),
         RequestIdParsingErr::PublicDecResponse,
-    )?;
+    )
+    .map_err(|e| {
+        MetricedError::new(
+            OP_PUBLIC_DECRYPT_RESULT,
+            None,
+            e,
+            tonic::Code::InvalidArgument,
+        )
+    })?;
     tracing::debug!("Received get key gen result request with id {}", request_id);
 
-    let status = {
-        let guarded_meta_store = service.pub_dec_meta_store.read().await;
-        guarded_meta_store.retrieve(&request_id)
-    };
-    let (retrieved_req_id, plaintexts, external_signature, extra_data) =
-        handle_res_mapping(status, &request_id, "Decryption").await?;
+    let (retrieved_req_id, plaintexts, external_signature, extra_data) = retrieve_from_meta_store(
+        service.pub_dec_meta_store.read().await,
+        &request_id,
+        OP_PUBLIC_DECRYPT_RESULT,
+    )
+    .await?;
 
     if retrieved_req_id != request_id {
-        return Err(Status::not_found(format!(
-            "Request ID mismatch: expected {request_id}, got {retrieved_req_id}",
-        )));
+        return Err(MetricedError::new(
+            OP_PUBLIC_DECRYPT_RESULT,
+            Some(request_id),
+            anyhow::anyhow!("Request ID mismatch: expected {request_id}, got {retrieved_req_id}"),
+            tonic::Code::NotFound,
+        ));
     }
 
     tracing::debug!(
@@ -445,7 +460,14 @@ pub async fn get_public_decryption_result_impl<
         external_signature
     );
 
-    let server_verf_key = service.get_serialized_verf_key();
+    let server_verf_key = service.base_kms.verf_key().to_legacy_bytes().map_err(|e| {
+        MetricedError::new(
+            OP_PUBLIC_DECRYPT_RESULT,
+            Some(request_id),
+            anyhow::anyhow!("Failed to serialize server verification key: {e:?}"),
+            tonic::Code::Internal,
+        )
+    })?;
 
     // the payload to be signed for verification inside the KMS
     let kms_sig_payload = PublicDecryptionResponsePayload {
@@ -454,16 +476,27 @@ pub async fn get_public_decryption_result_impl<
         request_id: Some(retrieved_req_id.into()),
     };
 
-    let kms_sig_payload_vec = ok_or_tonic_abort(
-        bc2wrap::serialize(&kms_sig_payload),
-        format!("Could not convert payload to bytes {kms_sig_payload:?}"),
-    )?;
+    let kms_sig_payload_vec = bc2wrap::serialize(&kms_sig_payload).map_err(|e| {
+        MetricedError::new(
+            OP_PUBLIC_DECRYPT_RESULT,
+            Some(request_id),
+            anyhow::anyhow!("Could not convert payload to bytes {kms_sig_payload:?}: {e:?}"),
+            tonic::Code::Internal,
+        )
+    })?;
 
     // sign the decryption result with the central KMS key
-    let sig = ok_or_tonic_abort(
-        service.sign(&DSEP_PUBLIC_DECRYPTION, &kms_sig_payload_vec),
-        format!("Could not sign payload {kms_sig_payload:?}"),
-    )?;
+    let sig = service
+        .base_kms
+        .sign(&DSEP_PUBLIC_DECRYPTION, &kms_sig_payload_vec)
+        .map_err(|e| {
+            MetricedError::new(
+                OP_PUBLIC_DECRYPT_RESULT,
+                Some(request_id),
+                anyhow::anyhow!("Could not sign payload {kms_sig_payload_vec:?}: {e:?}"),
+                tonic::Code::Aborted,
+            )
+        })?;
     Ok(Response::new(PublicDecryptionResponse {
         signature: sig.sig.to_vec(),
         payload: Some(kms_sig_payload),
@@ -482,7 +515,7 @@ pub(crate) mod tests {
     };
 
     use crate::{
-        cryptography::internal_crypto_types::PublicSigKey,
+        cryptography::signatures::PublicSigKey,
         engine::centralized::{
             central_kms::RealCentralizedKms,
             service::key_gen::tests::{setup_test_kms_with_preproc, test_standard_keygen},
@@ -793,15 +826,13 @@ mod tests_public_decryption {
 mod test_user_decryption {
     use aes_prng::AesRng;
     use kms_grpc::rpc_types::alloy_to_protobuf_domain;
-    use ml_kem::{kem::Kem, MlKem512Params};
     use rand::SeedableRng;
 
     use crate::{
         consts::SAFE_SER_SIZE_LIMIT,
         cryptography::{
-            hybrid_ml_kem,
-            internal_crypto_types::{Cipher, PrivateEncKey, UnifiedPublicEncKey},
-            signcryption::ephemeral_encryption_key_generation,
+            encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey},
+            hybrid_ml_kem::{self, HybridKemCt},
         },
         dummy_domain,
         engine::{
@@ -813,16 +844,13 @@ mod test_user_decryption {
 
     use super::*;
 
-    fn make_test_pk(rng: &mut AesRng) -> (Vec<u8>, PrivateEncKey<Kem<MlKem512Params>>) {
-        let (enc_pk, enc_sk) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(rng);
+    fn make_test_pk(rng: &mut AesRng) -> (Vec<u8>, UnifiedPrivateEncKey) {
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, rng);
+        let (enc_sk, enc_pk) = encryption.keygen().unwrap();
         let mut enc_key_buf = Vec::new();
         // The key is freshly generated, so we can safely unwrap the serialization
-        tfhe::safe_serialization::safe_serialize(
-            &UnifiedPublicEncKey::MlKem512(enc_pk.clone()),
-            &mut enc_key_buf,
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .expect("Failed to serialize ephemeral encryption key");
+        tfhe::safe_serialization::safe_serialize(&enc_pk, &mut enc_key_buf, SAFE_SER_SIZE_LIMIT)
+            .expect("Failed to serialize ephemeral encryption key");
 
         (enc_key_buf, enc_sk)
     }
@@ -858,7 +886,8 @@ mod test_user_decryption {
             get_user_decryption_result_impl(&kms, tonic::Request::new(request_id.into()))
                 .await
                 .unwrap();
-        let signcrypted_msg: Cipher = bc2wrap::deserialize(
+        // LEGACY should have been using safe_deserialize
+        let signcrypted_msg: HybridKemCt = bc2wrap::deserialize_unsafe(
             &response
                 .into_inner()
                 .payload
@@ -867,7 +896,12 @@ mod test_user_decryption {
                 .signcrypted_ciphertext,
         )
         .unwrap();
-        let res = hybrid_ml_kem::dec::<ml_kem::MlKem512>(signcrypted_msg.0, &enc_sk.0).unwrap();
+        // Extract the DecapsulationKey<MlKem512Params> from UnifiedPrivateDecKey
+        let decap_key = match &enc_sk {
+            UnifiedPrivateEncKey::MlKem512(sk) => sk,
+            _ => panic!("Expected UnifiedPrivateDecKey::MlKem512"),
+        };
+        let res = hybrid_ml_kem::dec::<ml_kem::MlKem512>(signcrypted_msg, &decap_key.0).unwrap();
         assert_eq!(TestingPlaintext::from((res, tfhe::FheTypes::Bool)), msg);
     }
 

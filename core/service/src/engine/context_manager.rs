@@ -1,18 +1,22 @@
 use crate::anyhow_error_and_log;
 use crate::backup::custodian::InternalCustodianContext;
-use crate::backup::operator::{Operator, RecoveryRequestPayload, RecoveryValidationMaterial};
+use crate::backup::operator::{Operator, RecoveryValidationMaterial};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::backup_pke::{self, BackupPrivateKey, BackupPublicKey};
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey};
+use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::ContextInfo;
+use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
-use crate::engine::validation::{parse_proto_context_id, RequestIdParsingErr};
+use crate::engine::validation::{
+    parse_optional_proto_request_id, parse_proto_context_id, RequestIdParsingErr,
+};
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::{
-    delete_at_request_id, delete_context_at_id, store_versioned_at_request_id,
+    delete_at_request_id, delete_context_at_id, delete_custodian_context_at_id,
+    store_versioned_at_request_id, StorageExt,
 };
 use crate::vault::Vault;
 use crate::{
@@ -21,7 +25,8 @@ use crate::{
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
-use kms_grpc::kms::v1::{CustodianContext, NewKmsContextRequest};
+use kms_grpc::identifiers::ContextId;
+use kms_grpc::kms::v1::CustodianContext;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::{kms::v1::Empty, utils::tonic_result::ok_or_tonic_abort};
 use std::sync::Arc;
@@ -31,61 +36,342 @@ use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::RwLock;
 use tonic::{Response, Status};
 
-pub struct RealContextManager<
+/// This is a shared data structure for both centralized and threshold context managers.
+struct SharedContextManager<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 > {
-    pub base_kms: BaseKmsStruct,
-    pub crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
-    pub custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
-    pub my_role: Role,
+    base_kms: BaseKmsStruct,
+    crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
+    custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
 }
 
-#[tonic::async_trait]
-impl<PubS, PrivS> ContextManager for RealContextManager<PubS, PrivS>
+impl<PubS, PrivS> SharedContextManager<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
 {
-    async fn new_kms_context(
+    async fn verify_and_extract_new_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::NewKmsContextRequest>,
-    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        request: tonic::Request<kms_grpc::kms::v1::NewMpcContextRequest>,
+    ) -> Result<(Option<Role>, ContextInfo), tonic::Status> {
         // first verify that the context is valid
-        let NewKmsContextRequest {
-            active_context,
-            new_context,
-        } = request.into_inner();
+        let kms_grpc::kms::v1::NewMpcContextRequest { new_context } = request.into_inner();
 
         let new_context =
             new_context.ok_or_else(|| Status::invalid_argument("new_context is required"))?;
         let new_context = ContextInfo::try_from(new_context)
             .map_err(|e| Status::invalid_argument(format!("Invalid context info: {e}")))?;
-
         // verify new context
-        {
-            let storage_ref = self.crypto_storage.private_storage.clone();
-            let guarded_priv_storage = storage_ref.lock().await;
-            // my_id is always 1 in the centralized case
-            new_context
-                .verify(
-                    1,
-                    &(*guarded_priv_storage),
-                    active_context
-                        .and_then(|c| ContextInfo::try_from(c).ok())
-                        .as_ref(),
+        let my_role = self.extract_my_role_from_context(&new_context).await?;
+
+        Ok((my_role, new_context))
+    }
+
+    async fn extract_my_role_from_context(
+        &self,
+        context: &ContextInfo,
+    ) -> Result<Option<Role>, tonic::Status> {
+        let storage_ref = self.crypto_storage.private_storage.clone();
+        let guarded_priv_storage = storage_ref.lock().await;
+        context
+            .verify(&(*guarded_priv_storage))
+            .await
+            .map_err(|e| Status::invalid_argument(format!("Failed to verify new context: {e}")))
+    }
+
+    async fn mpc_context_exists(&self, context_id: &ContextId) -> anyhow::Result<bool> {
+        let contexts = self
+            .crypto_storage
+            .read_all_context_info()
+            .await
+            .inspect_err(|e| tracing::error!("Failed to load all contexts from storage: {}", e))?;
+        for context in contexts {
+            if context.context_id() == context_id {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    async fn parse_mpc_context_for_destruction(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
+    ) -> Result<ContextId, tonic::Status> {
+        let proto_context_id = request
+            .into_inner()
+            .context_id
+            .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
+        let context_id =
+            parse_proto_context_id(&proto_context_id, RequestIdParsingErr::CustodianContext)?;
+
+        Ok(context_id)
+    }
+
+    async fn new_custodian_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
+    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        let inner = request.into_inner().new_context.ok_or_else(|| {
+            tonic::Status::invalid_argument("new_context is required in NewCustodianContextRequest")
+        })?;
+        tracing::info!(
+            "Custodian context addition starting with context_id={:?}, threshold={} from {} custodians",
+            inner.context_id,
+            inner.threshold,
+            inner.custodian_nodes.len()
+        );
+        ok_or_tonic_abort(
+            self.inner_new_custodian_context(inner).await,
+            "Could not create new custodian context".to_string(),
+        )?;
+
+        //Always answer with Empty
+        Ok(Response::new(Empty {}))
+    }
+
+    /// Removes a custodian context from disk storage and RAM (the meta-store).
+    async fn destroy_custodian_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
+    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        let context_id = parse_optional_proto_request_id(
+            &request.into_inner().context_id,
+            RequestIdParsingErr::CustodianContextDestruction,
+        )?;
+
+        // Note that care must be taken in the order of getting locks here
+        // Use meta store as sync point
+        let mut cus_meta_store = self.custodian_meta_store.write().await;
+        match cus_meta_store.delete(&context_id) {
+            Some(cell) => {
+                if cell.get().await.as_ref().is_err() {
+                    return Err(Status::internal(format!(
+                        "Custodian context with id {:?} could not be removed from meta store",
+                        context_id
+                    )));
+                }
+            }
+            None => {
+                // It might already have been automatically removed from the RAM, so we just log this and continue
+                tracing::warn!(
+                    "Custodian context with id {:?} does not exist in meta store",
+                    context_id
+                );
+            }
+        }
+
+        let mut guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
+        let guarded_backup_storage_ref =
+            self.crypto_storage.backup_vault.as_ref().ok_or_else(|| {
+                Status::new(
+                    tonic::Code::FailedPrecondition,
+                    "Backup vault is not configured",
                 )
-                .await
-                .map_err(|e| {
-                    Status::invalid_argument(format!("Failed to verify new context: {e}"))
-                })?;
+            })?;
+        let mut guarded_backup_storage = guarded_backup_storage_ref.lock().await;
+
+        // There is nothing we can do if deletion fails here.
+        // Note that it cannot fail if the context does not exist.
+        delete_custodian_context_at_id(
+            &mut *guarded_pub_storage,
+            &mut guarded_backup_storage,
+            &context_id,
+        )
+        .await
+        .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
+        Ok(Response::new(Empty {}))
+    }
+
+    /// Observe that in case a custodian is missing or something bad is detected in the data then the function will fail
+    async fn inner_new_custodian_context(&self, context: CustodianContext) -> anyhow::Result<()> {
+        let backup_vault = match self.crypto_storage.backup_vault {
+            Some(ref backup_vault) => backup_vault,
+            None => return Err(anyhow::anyhow!("Backup vault is not configured")),
+        };
+
+        let mut rng = self.base_kms.new_rng().await;
+        // Generate asymmetric keys for the operator to use to encrypt the backup
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (backup_dec_key, backup_enc_key) = enc.keygen()?;
+        let inner_context: InternalCustodianContext =
+            InternalCustodianContext::new(context, backup_enc_key.clone())?;
+        let recovery_validation = gen_recovery_validation(
+            &mut rng,
+            self.base_kms.sig_key()?.as_ref(),
+            backup_dec_key,
+            &inner_context,
+        )
+        .await?;
+
+        // Reencrypt everything
+        // Basically we want to ensure the recovery request contains the decryption key and everything else is encrypted using the public encryption key
+        let (lock_acquired_time, total_lock_time) = {
+            let lock_start = std::time::Instant::now();
+            let lock_acquired_time = lock_start.elapsed();
+            let guarded_priv_storage = self.crypto_storage.private_storage.lock().await;
+            let mut guarded_backup_vault = backup_vault.lock().await;
+            // First update the backup vault's context ID
+            if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
+                guarded_backup_vault.keychain.as_mut()
+            {
+                if let Ok(cur_backup_id) = secret_share_keychain.get_current_backup_id() {
+                    if cur_backup_id == inner_context.context_id {
+                        anyhow::bail!("A custodian context with the same context ID already exists in the backup vault!");
+                    }
+                }
+                secret_share_keychain
+                    .set_backup_enc_key(inner_context.context_id, backup_enc_key.clone());
+            } else {
+                return Err(anyhow_error_and_log("A secret sharing keychain is not configured! It is not possible to use custodian contexts"));
+            }
+            for cur_type in PrivDataType::iter() {
+                // We need to match on each type to manually specify the data type and to ensure that we do not forget anything in case the enum is extended
+                match cur_type {
+                    PrivDataType::SigningKey => {
+                        backup_priv_data::<PrivS, PrivateSigKey>(
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
+                            cur_type,
+                        )
+                        .await?;
+                    }
+                    PrivDataType::FheKeyInfo => {
+                        backup_priv_data::<PrivS, ThresholdFheKeys>(
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
+                            cur_type,
+                        )
+                        .await?;
+                    }
+                    PrivDataType::CrsInfo => {
+                        backup_priv_data::<PrivS, CrsGenMetadata>(
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
+                            cur_type,
+                        )
+                        .await?;
+                    }
+                    PrivDataType::FhePrivateKey => {
+                        // TODO needs fixing
+                        backup_priv_data::<PrivS, KmsFheKeyHandles>(
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
+                            cur_type,
+                        )
+                        .await?;
+                    }
+                    #[expect(deprecated)]
+                    PrivDataType::PrssSetup => {
+                        // We will not back up PRSS setup data
+                        continue;
+                    }
+                    PrivDataType::PrssSetupCombined => {
+                        // We will not back up Combined PRSS setup data
+                        continue;
+                    }
+                    PrivDataType::ContextInfo => {
+                        backup_priv_data::<PrivS, ContextInfo>(
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
+                            cur_type,
+                        )
+                        .await?;
+                    }
+                }
+            }
+            let total_lock_time = lock_start.elapsed();
+            (lock_acquired_time, total_lock_time)
+        };
+        tracing::info!(
+            "New context storage - context_id={}, lock_acquired_in={:?}, total_lock_held={:?}",
+            inner_context.context_id,
+            lock_acquired_time,
+            total_lock_time
+        );
+        // Then store the results
+        self.crypto_storage
+            .write_backup_keys_with_meta_store(
+                &recovery_validation,
+                Arc::clone(&self.custodian_meta_store),
+            )
+            .await;
+        tracing::info!(
+            "New custodian context created with context_id={}, threshold={} from {} custodians",
+            inner_context.context_id,
+            inner_context.threshold,
+            inner_context.custodian_nodes.len()
+        );
+        Ok(())
+    }
+}
+
+pub struct CentralizedContextManager<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+> {
+    inner: SharedContextManager<PubS, PrivS>,
+}
+
+impl<PubS, PrivS> CentralizedContextManager<PubS, PrivS>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+{
+    pub(crate) fn new(
+        base_kms: BaseKmsStruct,
+        crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
+        custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
+    ) -> Self {
+        Self {
+            inner: SharedContextManager {
+                base_kms,
+                crypto_storage,
+                custodian_meta_store,
+            },
+        }
+    }
+}
+
+#[tonic::async_trait]
+impl<PubS, PrivS> ContextManager for CentralizedContextManager<PubS, PrivS>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+{
+    async fn new_mpc_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::NewMpcContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        let (_my_role, new_context) = self
+            .inner
+            .verify_and_extract_new_mpc_context(request)
+            .await?;
+        // Check if the context already exists
+        if self
+            .inner
+            .crypto_storage
+            .read_context_info(new_context.context_id())
+            .await
+            .is_ok()
+        {
+            return Err(Status::already_exists(format!(
+                "Context with ID {} already exists",
+                new_context.context_id()
+            )));
         }
 
         // store the new context
         let res = self
+            .inner
             .crypto_storage
-            .write_context_info(new_context.context_id(), &new_context, false)
+            .write_context_info(new_context.context_id(), &new_context)
             .await;
+
+        // TODO(zama-ai/kms-internal/issues/2814)
+        // in addition to storing the context in storage
+        // we need to make sure it's also loaded in memory so that the centralized KMS
+        // can check whether context changes are valid
 
         ok_or_tonic_abort(
             res,
@@ -98,18 +384,209 @@ where
         Ok(Response::new(Empty {}))
     }
 
-    async fn destroy_kms_context(
+    async fn destroy_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
-    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
-        let proto_context_id = request
-            .into_inner()
-            .context_id
-            .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
-        let storage_ref = self.crypto_storage.private_storage.clone();
+        request: tonic::Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        let context_id = self
+            .inner
+            .parse_mpc_context_for_destruction(request)
+            .await?;
+
+        let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
-        let context_id =
-            parse_proto_context_id(&proto_context_id, RequestIdParsingErr::CustodianContext)?;
+
+        delete_context_at_id(&mut *guarded_priv_storage, &context_id)
+            .await
+            .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
+
+        // TODO(zama-ai/kms-internal/issues/2814)
+        // in addition to deleting the context from storage
+        // we need to make sure it's also deleted from memory so that the centralized KMS
+        // can check whether context changes are valid
+
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn new_custodian_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        self.inner.new_custodian_context(request).await
+    }
+
+    async fn destroy_custodian_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        self.inner.destroy_custodian_context(request).await
+    }
+
+    async fn mpc_context_exists(&self, context_id: &ContextId) -> Result<bool, Status> {
+        Ok(ok_or_tonic_abort(
+            self.inner.mpc_context_exists(context_id).await,
+            "Failed to check if context exists".to_string(),
+        )?)
+    }
+}
+
+pub struct ThresholdContextManager<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+> {
+    inner: SharedContextManager<PubS, PrivS>,
+    session_maker: SessionMaker,
+}
+
+impl<PubS, PrivS> ThresholdContextManager<PubS, PrivS>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+{
+    pub(crate) fn new(
+        base_kms: BaseKmsStruct,
+        crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
+        custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
+        session_maker: SessionMaker,
+    ) -> Self {
+        Self {
+            inner: SharedContextManager {
+                base_kms,
+                crypto_storage,
+                custodian_meta_store,
+            },
+            session_maker,
+        }
+    }
+
+    pub(crate) async fn load_mpc_context_from_storage(&self) -> anyhow::Result<()> {
+        let contexts = self
+            .inner
+            .crypto_storage
+            .read_all_context_info()
+            .await
+            .inspect_err(|e| tracing::error!("Failed to load all contexts from storage: {}", e))?;
+
+        for context in contexts {
+            let my_role = self.inner.extract_my_role_from_context(&context).await?;
+            self.session_maker
+                .add_context_info(my_role, &context)
+                .await
+                .inspect_err(|e| {
+                    tracing::error!(
+                        "Failed to add context {} into session maker: {}",
+                        context.context_id(),
+                        e
+                    )
+                })?;
+        }
+        Ok(())
+    }
+}
+
+/// Atomically update both the storage and the session maker with the new context info.
+/// If any of the two operations fail, rollback to the original state.
+///
+/// This function should only be used in the threshold setting since SessionMaker does not exist in centralized mode.
+async fn atomic_update_context<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+>(
+    session_maker: &SessionMaker,
+    crypto_storage: &CryptoMaterialStorage<PubS, PrivS>,
+    my_role: Option<Role>,
+    new_context: &ContextInfo,
+) -> anyhow::Result<()> {
+    let context_id = new_context.context_id();
+    let res1 = crypto_storage
+        .write_context_info(new_context.context_id(), new_context)
+        .await;
+
+    let res2 = session_maker.add_context_info(my_role, new_context).await;
+
+    match (res1, res2) {
+        (Ok(_), Ok(_)) => (),
+        _ => {
+            // Rollback if any operation failed
+            // first delete the context from storage
+            let storage_ref = crypto_storage.private_storage.clone();
+            let mut guarded_priv_storage = storage_ref.lock().await;
+            _ = delete_context_at_id(&mut *guarded_priv_storage, context_id).await;
+
+            // next delete the context from session maker
+            session_maker.remove_context(context_id).await;
+            return Err(anyhow::anyhow!("Failed to atomically update context"));
+        }
+    }
+
+    Ok(())
+}
+
+#[tonic::async_trait]
+impl<PubS, PrivS> ContextManager for ThresholdContextManager<PubS, PrivS>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
+{
+    async fn new_mpc_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::NewMpcContextRequest>,
+    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        let (my_role, new_context) = self
+            .inner
+            .verify_and_extract_new_mpc_context(request)
+            .await?;
+
+        // First check if the context already exists
+        if self
+            .inner
+            .crypto_storage
+            .read_context_info(new_context.context_id())
+            .await
+            .is_ok()
+            || self
+                .session_maker
+                .context_exists(new_context.context_id())
+                .await
+        {
+            return Err(Status::already_exists(format!(
+                "Context with ID {} already exists",
+                new_context.context_id()
+            )));
+        }
+        let res = atomic_update_context(
+            &self.session_maker,
+            &self.inner.crypto_storage,
+            my_role,
+            &new_context,
+        )
+        .await;
+        ok_or_tonic_abort(
+            res,
+            format!(
+                "Failed to write new KMS context for ID {}",
+                new_context.context_id()
+            ),
+        )?;
+
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn destroy_mpc_context(
+        &self,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
+    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        let context_id = self
+            .inner
+            .parse_mpc_context_for_destruction(request)
+            .await?;
+
+        let storage_ref = self.inner.crypto_storage.private_storage.clone();
+        let mut guarded_priv_storage = storage_ref.lock().await;
+        self.session_maker.remove_context(&context_id).await;
+
+        // There is nothing we can do if deletion fails here.
+        // Note that it cannot fail if the context does not exist.
         delete_context_at_id(&mut *guarded_priv_storage, &context_id)
             .await
             .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
@@ -120,30 +597,21 @@ where
         &self,
         request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
-        let inner = request.into_inner().new_context.ok_or_else(|| {
-            tonic::Status::invalid_argument("new_context is required in NewCustodianContextRequest")
-        })?;
-        tracing::info!(
-            "Custodian context addition starting with context_id={:?}, threshold={}, previous_context_id={:?}, from {} custodians",
-            inner.context_id,
-            inner.threshold,
-            inner.previous_context_id,
-            inner.custodian_nodes.len()
-        );
-        ok_or_tonic_abort(
-            self.inner_new_custodian_context(inner).await,
-            "Could not create new custodian context".to_string(),
-        )?;
-
-        //Always answer with Empty
-        Ok(Response::new(Empty {}))
+        self.inner.new_custodian_context(request).await
     }
 
     async fn destroy_custodian_context(
         &self,
-        _request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
+        request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
-        todo!()
+        self.inner.destroy_custodian_context(request).await
+    }
+
+    async fn mpc_context_exists(&self, context_id: &ContextId) -> Result<bool, Status> {
+        Ok(ok_or_tonic_abort(
+            self.inner.mpc_context_exists(context_id).await,
+            "Failed to check if context exists".to_string(),
+        )?)
     }
 }
 
@@ -181,135 +649,14 @@ where
     Ok(())
 }
 
-impl<PubS, PrivS> RealContextManager<PubS, PrivS>
-where
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
-{
-    /// Observe that in case a custodian is missing or something bad is detected in the data then the function will fail
-    async fn inner_new_custodian_context(&self, context: CustodianContext) -> anyhow::Result<()> {
-        let backup_vault = match self.crypto_storage.backup_vault {
-            Some(ref backup_vault) => backup_vault,
-            None => return Err(anyhow::anyhow!("Backup vault is not configured")),
-        };
-
-        let mut rng = self.base_kms.new_rng().await;
-        // Generate asymmetric keys for the operator to use to encrypt the backup
-        let (backup_enc_key, backup_priv_key) = backup_pke::keygen(&mut rng)?;
-        let inner_context = InternalCustodianContext::new(context, backup_enc_key.clone())?;
-        let (recovery_request_payload, commitments) = gen_recovery_request_payload(
-            &mut rng,
-            &self.base_kms.sig_key,
-            backup_enc_key.clone(),
-            backup_priv_key,
-            &inner_context,
-            self.my_role,
-        )
-        .await?;
-
-        // Reencrypt everything
-        // Basically we want to ensure the recovery request contains the decryption key and everything else is encrypted using the public encryption key
-        let (lock_acquired_time, total_lock_time) = {
-            let lock_start = std::time::Instant::now();
-            let lock_acquired_time = lock_start.elapsed();
-            let guarded_priv_storage = self.crypto_storage.private_storage.lock().await;
-            let mut guarded_backup_vault = backup_vault.lock().await;
-            // First update the backup vault's context ID
-            if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
-                guarded_backup_vault.keychain.as_mut()
-            {
-                secret_share_keychain
-                    .set_backup_enc_key(inner_context.context_id, backup_enc_key.clone());
-            } else {
-                return Err(anyhow_error_and_log("A secret sharing keychain is not configured! It is not possible to use custodian contexts"));
-            }
-            for cur_type in PrivDataType::iter() {
-                // We need to match on each type to manually specify the data type and to ensure that we do not forget anything in case the enum is extended
-                match cur_type {
-                    PrivDataType::SigningKey => {
-                        backup_priv_data::<PrivS, PrivateSigKey>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                        )
-                        .await?;
-                    }
-                    PrivDataType::FheKeyInfo => {
-                        backup_priv_data::<PrivS, ThresholdFheKeys>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                        )
-                        .await?;
-                    }
-                    PrivDataType::CrsInfo => {
-                        backup_priv_data::<PrivS, CrsGenMetadata>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                        )
-                        .await?;
-                    }
-                    PrivDataType::FhePrivateKey => {
-                        backup_priv_data::<PrivS, KmsFheKeyHandles>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                        )
-                        .await?;
-                    }
-                    PrivDataType::PrssSetup => {
-                        // We will not back up PRSS setup data
-                        continue;
-                    }
-                    PrivDataType::ContextInfo => {
-                        backup_priv_data::<PrivS, ContextInfo>(
-                            &guarded_priv_storage,
-                            &mut guarded_backup_vault,
-                            cur_type,
-                        )
-                        .await?;
-                    }
-                }
-            }
-            let total_lock_time = lock_start.elapsed();
-            (lock_acquired_time, total_lock_time)
-        };
-        tracing::info!(
-            "New context storage - context_id={}, lock_acquired_in={:?}, total_lock_held={:?}",
-            inner_context.context_id,
-            lock_acquired_time,
-            total_lock_time
-        );
-        // Then store the results
-        self.crypto_storage
-            .write_backup_keys_with_meta_store(
-                &recovery_request_payload,
-                &commitments,
-                Arc::clone(&self.custodian_meta_store),
-            )
-            .await;
-        tracing::info!(
-            "New custodian context created with context_id={}, threshold={} from {} custodians",
-            inner_context.context_id,
-            inner_context.threshold,
-            inner_context.custodian_nodes.len()
-        );
-        Ok(())
-    }
-}
-
 /// Generate a recovery request to the backup vault.
-async fn gen_recovery_request_payload(
+async fn gen_recovery_validation(
     rng: &mut AesRng,
     sig_key: &PrivateSigKey,
-    backup_enc_key: BackupPublicKey,
-    backup_priv_key: BackupPrivateKey,
+    backup_priv_key: UnifiedPrivateEncKey,
     custodian_context: &InternalCustodianContext,
-    my_role: Role,
-) -> anyhow::Result<(RecoveryRequestPayload, RecoveryValidationMaterial)> {
-    let operator = Operator::new(
-        my_role,
+) -> anyhow::Result<RecoveryValidationMaterial> {
+    let operator = Operator::new_for_sharing(
         custodian_context
             .custodian_nodes
             .values()
@@ -326,48 +673,60 @@ async fn gen_recovery_request_payload(
         &mut serialized_priv_key,
         SAFE_SER_SIZE_LIMIT,
     )?;
-    let (ct_map, commitments) = operator.secret_share_and_encrypt(
+    let (ct_map, commitments) = operator.secret_share_and_signcrypt(
         rng,
         &serialized_priv_key,
         custodian_context.context_id,
     )?;
-    let recovery_request = RecoveryRequestPayload {
-        cts: ct_map,
-        backup_enc_key,
-    };
-    let validation_material =
-        RecoveryValidationMaterial::new(commitments, custodian_context.to_owned(), sig_key)?;
+    let validation_material = RecoveryValidationMaterial::new(
+        ct_map,
+        commitments,
+        custodian_context.to_owned(),
+        sig_key,
+    )?;
     tracing::info!(
         "Generated inner recovery request for backup_id/context_id={}",
         custodian_context.context_id
     );
-    Ok((recovery_request, validation_material))
+    Ok(validation_material)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use super::*;
     use crate::{
         backup::{
-            custodian::Custodian,
+            custodian::{Custodian, InternalCustodianSetupMessage, HEADER},
             operator::InternalRecoveryRequest,
             seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
         },
+        consts::DEFAULT_EPOCH_ID,
         cryptography::{
-            internal_crypto_types::{gen_sig_keys, PublicSigKey},
-            signcryption::ephemeral_encryption_key_generation,
+            encryption::{Encryption, PkeScheme, PkeSchemeType},
+            signatures::{gen_sig_keys, PublicSigKey},
+            signcryption::UnifiedUnsigncryptionKey,
         },
         engine::context::{NodeInfo, SoftwareVersion},
         util::meta_store::MetaStore,
-        vault::storage::{
-            crypto_material::get_core_signing_key, ram::RamStorage, read_context_at_id,
-            store_versioned_at_request_id,
+        vault::{
+            keychain::secretsharing,
+            storage::{
+                crypto_material::get_core_signing_key,
+                ram::{self, RamStorage},
+                read_context_at_id, read_versioned_at_request_id, store_versioned_at_request_id,
+                StorageProxy,
+            },
         },
     };
     use kms_grpc::{
         identifiers::ContextId,
-        kms::v1::DestroyKmsContextRequest,
-        rpc_types::{KMSType, PrivDataType},
+        kms::v1::{
+            DestroyCustodianContextRequest, DestroyMpcContextRequest, NewCustodianContextRequest,
+            NewMpcContextRequest,
+        },
+        rpc_types::{KMSType, PrivDataType, PubDataType},
         RequestId,
     };
     use rand::{rngs::OsRng, SeedableRng};
@@ -383,9 +742,23 @@ mod tests {
     ) {
         let priv_storage = Arc::new(Mutex::new(RamStorage::new()));
         let pub_storage = Arc::new(Mutex::new(RamStorage::new()));
+        let guarded_pub_storage = pub_storage.lock().await;
+        let backup_proxy = StorageProxy::from(ram::RamStorage::new());
+        let ssk = secretsharing::SecretShareKeychain::new(
+            AesRng::seed_from_u64(1244),
+            Some(&*guarded_pub_storage),
+        )
+        .await
+        .unwrap();
+        let keychain_proxy = KeychainProxy::from(ssk);
+        let backup_vault = Arc::new(Mutex::new(Vault {
+            storage: backup_proxy,
+            keychain: Some(keychain_proxy),
+        }));
+        drop(guarded_pub_storage);
 
         let crypto_storage =
-            CryptoMaterialStorage::<_, _>::new(priv_storage, pub_storage, None, None);
+            CryptoMaterialStorage::<_, _>::new(priv_storage, pub_storage, Some(backup_vault), None);
 
         // store private signing key
         let (pk, sk) = gen_sig_keys(&mut OsRng);
@@ -411,23 +784,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_kms_context() {
-        let (backup_encryption_public_key, _) = ephemeral_encryption_key_generation(&mut OsRng);
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
         let context_id = ContextId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
-            kms_nodes: vec![NodeInfo {
-                name: "Node1".to_string(),
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: "Node1".to_string(),
                 party_id: 1,
-                verification_key: verification_key.clone(),
-                backup_encryption_public_key: backup_encryption_public_key.clone(),
-                external_url: "localhost:12345".to_string(),
-                tls_cert: vec![],
+                verification_key: Some(verification_key.clone()),
+                external_url: "http://localhost:12345".to_string(),
+                ca_cert: None,
                 public_storage_url: "http://storage".to_string(),
+                public_storage_prefix: None,
                 extra_verification_keys: vec![],
             }],
             context_id,
-            previous_context_id: None,
             software_version: SoftwareVersion {
                 major: 0,
                 minor: 1,
@@ -435,20 +806,23 @@ mod tests {
                 tag: None,
             },
             threshold: 0,
+            pcr_values: vec![],
         };
 
-        let request = Request::new(NewKmsContextRequest {
-            active_context: None,
-            new_context: Some(new_context.try_into().unwrap()),
+        let request = Request::new(NewMpcContextRequest {
+            new_context: Some(new_context.clone().try_into().unwrap()),
         });
-        let context_manager = RealContextManager {
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+        let context_manager = ThresholdContextManager::new(
             base_kms,
-            crypto_storage: crypto_storage.clone(),
-            custodian_meta_store: Arc::new(RwLock::new(MetaStore::new(100, 10))),
-            my_role: Role::indexed_from_one(1),
-        };
+            crypto_storage.clone(),
+            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+            session_maker,
+        );
 
-        let response = context_manager.new_kms_context(request).await;
+        let response = context_manager.new_mpc_context(request).await;
         response.unwrap();
 
         // check that the context is stored
@@ -460,20 +834,29 @@ mod tests {
                 .unwrap();
 
             assert_eq!(*stored_context.context_id(), context_id);
-            assert_eq!(stored_context.kms_nodes.len(), 1);
-            assert_eq!(stored_context.kms_nodes[0].party_id, 1);
+            assert_eq!(stored_context.mpc_nodes.len(), 1);
+            assert_eq!(stored_context.mpc_nodes[0].party_id, 1);
             assert_eq!(
-                stored_context.kms_nodes[0].verification_key,
-                verification_key
+                stored_context.mpc_nodes[0].verification_key,
+                Some(verification_key)
             );
         }
+        // Try to make a context with the same context ID (should fail)
+        {
+            let request = Request::new(NewMpcContextRequest {
+                new_context: Some(new_context.try_into().unwrap()),
+            });
+            let response = context_manager.new_mpc_context(request).await;
+            // Should fail since the same ID is used
+            assert!(response.is_err());
+        }
 
-        // now that it is stored, we try to delete it
-        let request = Request::new(DestroyKmsContextRequest {
+        // now we try to delete the stored context
+        let request = Request::new(DestroyMpcContextRequest {
             context_id: Some(context_id.into()),
         });
 
-        let response = context_manager.destroy_kms_context(request).await;
+        let response = context_manager.destroy_mpc_context(request).await;
         response.unwrap();
 
         // check that the context is deleted
@@ -486,20 +869,275 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn test_kms_context_load_from_storage() {
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let context_id = ContextId::from_bytes([4u8; 32]);
+        let new_context = ContextInfo {
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: "Node1".to_string(),
+                party_id: 1,
+                verification_key: Some(verification_key.clone()),
+                external_url: "http://localhost:12345".to_string(),
+                ca_cert: None,
+                public_storage_url: "http://storage".to_string(),
+                public_storage_prefix: None,
+                extra_verification_keys: vec![],
+            }],
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values: vec![],
+        };
+
+        let request = Request::new(NewMpcContextRequest {
+            new_context: Some(new_context.try_into().unwrap()),
+        });
+
+        // create the context manager and store the new context
+        {
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key.clone()).unwrap();
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
+            let context_manager = ThresholdContextManager::new(
+                base_kms,
+                crypto_storage.clone(),
+                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                session_maker,
+            );
+
+            let response = context_manager.new_mpc_context(request).await;
+            response.unwrap();
+
+            assert_eq!(1, context_manager.session_maker.context_count().await);
+        }
+
+        // check that the context is stored
+        {
+            let storage_ref = Arc::clone(&crypto_storage.private_storage);
+            let guarded_priv_storage = storage_ref.lock().await;
+            let stored_context = read_context_at_id(&*guarded_priv_storage, &context_id)
+                .await
+                .unwrap();
+
+            assert_eq!(*stored_context.context_id(), context_id);
+            assert_eq!(stored_context.mpc_nodes.len(), 1);
+            assert_eq!(stored_context.mpc_nodes[0].party_id, 1);
+            assert_eq!(
+                stored_context.mpc_nodes[0].verification_key,
+                Some(verification_key)
+            );
+        }
+
+        // recreate another new context manager that's initially empty
+        // and then we should have nothing in the session maker.
+        {
+            let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key.clone()).unwrap();
+            let session_maker = SessionMaker::empty_dummy_session(base_kms.new_rng().await);
+            let context_manager = ThresholdContextManager::new(
+                base_kms,
+                crypto_storage.clone(),
+                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                session_maker,
+            );
+
+            // check that there are no contexts
+            assert_eq!(0, context_manager.session_maker.context_count().await);
+
+            // load the contexts from disk
+            context_manager
+                .load_mpc_context_from_storage()
+                .await
+                .unwrap();
+            assert_eq!(1, context_manager.session_maker.context_count().await);
+        }
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_custodian_context() {
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
+        // Generate custodian keys
+        let threshold = 1;
+        let amount_custodians = 2 * threshold + 1; // Minimum amount of custodians is 2 * threshold + 1
+        let mut setup_msgs = Vec::new();
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        for custodian_index in 1..=amount_custodians {
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let (_sk_dec_key, pk_enc_key) = enc.keygen().unwrap();
+            let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+            let cur_msg = InternalCustodianSetupMessage {
+                header: HEADER.to_string(),
+                custodian_role: Role::indexed_from_one(custodian_index),
+                name: format!("Custodian-{}", custodian_index),
+                random_value: [2u8; 32],
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                public_enc_key: pk_enc_key,
+                public_verf_key: verf_key,
+            };
+            setup_msgs.push(cur_msg.try_into().unwrap());
+        }
+
+        // Create a new custodian context
+        let (context_manager, first_context_id) = {
+            let first_context_id = RequestId::from_bytes([4u8; 32]);
+            let first_context = CustodianContext {
+                custodian_nodes: setup_msgs.clone(),
+                context_id: Some(first_context_id.into()),
+                threshold: threshold as u32,
+            };
+            let request = Request::new(NewCustodianContextRequest {
+                new_context: Some(first_context),
+            });
+            let session_maker = SessionMaker::four_party_dummy_session(
+                None,
+                None,
+                &epoch_id,
+                base_kms.new_rng().await,
+            );
+            let context_manager = ThresholdContextManager::new(
+                base_kms,
+                crypto_storage.clone(),
+                Arc::new(RwLock::new(MetaStore::new(100, 10))),
+                session_maker,
+            );
+
+            let response = context_manager.new_custodian_context(request).await;
+            assert!(response.is_ok());
+            (context_manager, first_context_id)
+        };
+
+        // check that the context is stored
+        {
+            let pub_storage = Arc::clone(&crypto_storage.public_storage);
+            let guarded_pub_storage = pub_storage.lock().await;
+            let stored_context: RecoveryValidationMaterial = read_versioned_at_request_id(
+                &*guarded_pub_storage,
+                &first_context_id,
+                &PubDataType::RecoveryMaterial.to_string(),
+            )
+            .await
+            .unwrap();
+
+            assert!(stored_context.validate(&verification_key));
+            assert_eq!(
+                stored_context.custodian_context().context_id,
+                first_context_id
+            );
+            assert_eq!(
+                stored_context.custodian_context().threshold,
+                threshold as u32
+            );
+            assert_eq!(
+                stored_context.custodian_context().custodian_nodes.len(),
+                amount_custodians
+            );
+            for cur_cus_id in 0..amount_custodians {
+                assert_eq!(
+                    stored_context
+                        .custodian_context()
+                        .custodian_nodes
+                        .get(&Role::indexed_from_zero(cur_cus_id))
+                        .unwrap(),
+                    &setup_msgs
+                        .get(cur_cus_id)
+                        .unwrap()
+                        .clone()
+                        .try_into()
+                        .unwrap()
+                );
+            }
+        }
+
+        // now that it is stored, we try to delete it
+        {
+            let request = Request::new(DestroyCustodianContextRequest {
+                context_id: Some(first_context_id.into()),
+            });
+
+            let response = context_manager.destroy_custodian_context(request).await;
+            // This should fail since it is the current active context
+            assert!(response.is_err());
+        }
+
+        // Make a new context so we can delete the old one
+        {
+            // First try to do it with the same context ID (should fail)
+            let request = Request::new(NewCustodianContextRequest {
+                new_context: Some(CustodianContext {
+                    custodian_nodes: setup_msgs.clone(),
+                    context_id: Some(first_context_id.into()),
+                    threshold: threshold as u32,
+                }),
+            });
+            let response = context_manager.new_custodian_context(request).await;
+            // Should fail since the same ID is used
+            assert!(response.is_err());
+
+            // Now try with a different context ID (should succeed)
+            let second_context_id = RequestId::from_bytes([42u8; 32]);
+            let second_context = CustodianContext {
+                custodian_nodes: setup_msgs.clone(),
+                context_id: Some(second_context_id.into()),
+                threshold: threshold as u32,
+            };
+            let request = Request::new(NewCustodianContextRequest {
+                new_context: Some(second_context),
+            });
+
+            let response = context_manager.new_custodian_context(request).await;
+            assert!(response.is_ok());
+        }
+        // now try again to delete the first context
+        {
+            let request = Request::new(DestroyCustodianContextRequest {
+                context_id: Some(first_context_id.into()),
+            });
+
+            let response = context_manager.destroy_custodian_context(request).await;
+            assert!(response.is_ok());
+        }
+        // check that the context is deleted
+        {
+            let pub_storage = Arc::clone(&crypto_storage.public_storage);
+            let guarded_pub_storage = pub_storage.lock().await;
+            assert!(
+                read_versioned_at_request_id::<RamStorage, RecoveryValidationMaterial>(
+                    &*guarded_pub_storage,
+                    &first_context_id,
+                    &PubDataType::RecoveryMaterial.to_string(),
+                )
+                .await
+                .is_err(),
+                "Custodian context was not deleted"
+            );
+        }
+    }
+
     /// Test to sanity check the overall flow of construction of material needed for backup
     #[tracing_test::traced_test]
     #[tokio::test]
     async fn test_gen_recovery_request_payloads() {
         let mut rng = AesRng::seed_from_u64(40);
         let backup_id = RequestId::new_random(&mut rng);
-        let (verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let (ephemeral_enc_key, ephemeral_dec_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (server_verf_key, server_sig_key) = gen_sig_keys(&mut rng);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (backup_dec_key, backup_enc_key) = enc.keygen().unwrap();
         let mnemonic = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
-        let custodian1: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian1: Custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(1)).unwrap();
-        let custodian2: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian2: Custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(2)).unwrap();
-        let custodian3: Custodian<PrivateSigKey, BackupPrivateKey> =
+        let custodian3: Custodian =
             custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(3)).unwrap();
         let setup_msg_1 = custodian1
             .generate_setup_message(&mut rng, "Custodian-1".to_string())
@@ -517,29 +1155,34 @@ mod tests {
                 setup_msg_3.try_into().unwrap(),
             ],
             context_id: Some(backup_id.into()),
-            previous_context_id: None,
             threshold: 1,
         };
         let internal_context =
-            InternalCustodianContext::new(context, ephemeral_enc_key.clone()).unwrap();
-        let (recovery_request_payload, _commitments) = gen_recovery_request_payload(
+            InternalCustodianContext::new(context, backup_enc_key.clone()).unwrap();
+        let recovery_material = gen_recovery_validation(
             &mut rng,
-            &sig_key,
-            ephemeral_enc_key.clone(),
-            ephemeral_dec_key,
+            &server_sig_key,
+            backup_dec_key.clone(),
             &internal_context,
-            Role::indexed_from_one(1),
         )
         .await
         .unwrap();
         let internal_rec_req = InternalRecoveryRequest::new(
-            recovery_request_payload.backup_enc_key,
-            recovery_request_payload.cts,
+            recovery_material.payload.custodian_context.backup_enc_key,
+            recovery_material.payload.cts,
             backup_id,
-            Role::indexed_from_one(1),
-            Some(&verf_key),
+            server_verf_key.clone(),
         )
         .unwrap();
-        assert!(internal_rec_req.is_valid(&verf_key).unwrap());
+        let custodian_id = custodian1.verification_key().verf_key_id();
+        let unsign_key = UnifiedUnsigncryptionKey::new(
+            custodian1.public_dec_key(),
+            custodian1.public_enc_key(),
+            &server_verf_key,
+            &custodian_id,
+        );
+        assert!(internal_rec_req
+            .is_valid(Role::indexed_from_one(1), &unsign_key)
+            .unwrap());
     }
 }

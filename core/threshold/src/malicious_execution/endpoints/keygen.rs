@@ -7,7 +7,7 @@ use crate::{
     execution::{
         endpoints::keygen::OnlineDistributedKeyGen,
         online::preprocessing::DKGPreprocessing,
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         tfhe_internals::{
             compression_decompression_key::CompressionPrivateKeyShares, parameters::DKGParams,
             private_keysets::PrivateKeySet, public_keysets::FhePubKeySet,
@@ -31,13 +31,14 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
         _base_session: &mut S,
         _preprocessing: &mut P,
         params: DKGParams,
+        tag: tfhe::Tag,
         _existing_compression_sk: Option<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
         let mut rng = AesRng::seed_from_u64(42);
-        let fhe_key_set = gen_key_set(params, &mut rng);
+        let fhe_key_set = gen_key_set(params, tag, &mut rng);
 
         // the private key set is initialized with dummy values
         // they do not correspond to the fhe_key_set
@@ -54,6 +55,7 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
         _session: &mut S,
         _preprocessing: &mut P,
         _params: DKGParams,
+        _tag: tfhe::Tag,
         _existing_compression_sk: Option<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
@@ -76,6 +78,7 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
         _base_session: &mut S,
         _preprocessing: &mut P,
         _params: DKGParams,
+        _tag: tfhe::Tag,
         _existing_compression_sk: Option<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
@@ -93,6 +96,7 @@ impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGR
         _session: &mut S,
         _preprocessing: &mut P,
         _params: DKGParams,
+        _tag: tfhe::Tag,
         _existing_compression_sk: Option<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where

@@ -3,18 +3,20 @@ use crate::{
         base::{compute_external_signature_preprocessing, retrieve_parameters},
         centralized::central_kms::{CentralizedKms, CentralizedPreprocBucket},
         traits::{BackupOperator, ContextManager},
+        utils::MetricedError,
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
     },
     util::meta_store::handle_res_mapping,
-    vault::storage::Storage,
+    vault::storage::{Storage, StorageExt},
 };
 use kms_grpc::{
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
     rpc_types::optional_protobuf_to_alloy_domain,
     utils::tonic_result::ok_or_tonic_abort,
 };
+use observability::metrics_names::OP_KEYGEN_PREPROC_REQUEST;
 use tonic::{Request, Response, Status};
 
 /// Handles preprocessing requests for centralized KMS key generation.
@@ -41,19 +43,24 @@ use tonic::{Request, Response, Status};
 /// This is a dummy method for interface consistency; no actual preprocessing is performed.
 pub async fn preprocessing_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<KeyGenPreprocRequest>,
 ) -> Result<Response<Empty>, Status> {
-    let _permit = service.rate_limiter.start_preproc().await?;
     let inner = request.into_inner();
-    let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
     let request_id =
         parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::PreprocRequest)?;
-
+    let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
+        MetricedError::new(
+            OP_KEYGEN_PREPROC_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("EIP712 domain validation for key preprocessing: {e}"),
+            tonic::Code::InvalidArgument,
+        )
+    })?;
     // context_id is not used in the centralized KMS, but we validate it if present
     let _context_id = match &inner.context_id {
         Some(ctx) => Some(parse_proto_request_id(ctx, RequestIdParsingErr::Context)?),
@@ -61,48 +68,52 @@ pub async fn preprocessing_impl<
     };
 
     //Ensure there's no entry in preproc buckets for that request_id
-    let entry_exists = {
-        let preprocessing_meta_store = service.preprocessing_meta_store.read().await;
-        preprocessing_meta_store.exists(&request_id)
-    };
+    if service
+        .preprocessing_meta_store
+        .read()
+        .await
+        .exists(&request_id)
+    {
+        return Err(tonic::Status::already_exists(format!(
+            "Preprocessing for request ID {request_id} already exists"
+        )));
+    }
+
+    let _permit = service.rate_limiter.start_preproc().await?;
+
     // If the entry did not exist before, start the preproc
     // NOTE: We currently consider an existing entry is NOT an error
-    if !entry_exists {
-        let mut preprocessing_meta_store = service.preprocessing_meta_store.write().await;
-        ok_or_tonic_abort(
-            preprocessing_meta_store.insert(&request_id),
-            "Could not insert preprocessing ID into meta store".to_string(),
-        )?;
+    let mut preprocessing_meta_store = service.preprocessing_meta_store.write().await;
+    ok_or_tonic_abort(
+        preprocessing_meta_store.insert(&request_id),
+        "Could not insert preprocessing ID into meta store".to_string(),
+    )?;
 
-        let params = retrieve_parameters(Some(inner.params))?;
-        let external_signature = compute_external_signature_preprocessing(
-            &service.base_kms.sig_key,
-            &request_id,
-            &domain,
+    let params = retrieve_parameters(Some(inner.params))?;
+    let sk = service.base_kms.sig_key().map_err(|e| {
+        tonic::Status::new(
+            tonic::Code::FailedPrecondition,
+            format!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
         )
+    })?;
+    let external_signature = compute_external_signature_preprocessing(&sk, &request_id, &domain)
         .map_err(|e| e.to_string());
 
-        let preproc_bucket =
-            external_signature.map(|external_signature| CentralizedPreprocBucket {
-                preprocessing_id: request_id,
-                external_signature,
-                dkg_param: params,
-            });
+    let preproc_bucket = external_signature.map(|external_signature| CentralizedPreprocBucket {
+        preprocessing_id: request_id,
+        external_signature,
+        dkg_param: params,
+    });
 
-        ok_or_tonic_abort(
-            preprocessing_meta_store.update(&request_id, preproc_bucket),
-            "Could not update preprocessing ID in meta store".to_string(),
-        )?;
-        tracing::warn!(
-            "Received a preprocessing request for the central server {} - No action taken",
-            request_id
-        );
-        Ok(Response::new(Empty {}))
-    } else {
-        Err(tonic::Status::already_exists(format!(
-            "Preprocessing for request ID {request_id} already exists"
-        )))
-    }
+    ok_or_tonic_abort(
+        preprocessing_meta_store.update(&request_id, preproc_bucket),
+        "Could not update preprocessing ID in meta store".to_string(),
+    )?;
+    tracing::warn!(
+        "Received a preprocessing request for the central server {} - No action taken",
+        request_id
+    );
+    Ok(Response::new(Empty {}))
 }
 
 /// Retrieves the result of key generation preprocessing for centralized KMS.
@@ -126,7 +137,7 @@ pub async fn preprocessing_impl<
 /// This is a dummy method for interface consistency; no actual retrieval is performed.
 pub async fn get_preprocessing_res_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
@@ -153,15 +164,11 @@ pub async fn get_preprocessing_res_impl<
 mod tests {
     use super::*;
     use crate::{
-        cryptography::internal_crypto_types::PublicSigKey,
+        cryptography::signatures::recover_address_from_ext_signature,
         dummy_domain,
-        engine::{
-            base::{derive_request_id, tests::recover_address},
-            centralized::service::tests::setup_central_test_kms,
-        },
+        engine::{base::derive_request_id, centralized::service::tests::setup_central_test_kms},
     };
     use aes_prng::AesRng;
-    use k256::ecdsa::SigningKey;
     use kms_grpc::{
         kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain,
         solidity_types::PrepKeygenVerification,
@@ -172,8 +179,7 @@ mod tests {
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
-        let verf_key =
-            PublicSigKey::new(SigningKey::verifying_key(kms.base_kms.sig_key.sk()).to_owned());
+        let verf_key = kms.base_kms.verf_key();
         let preproc_req_id = derive_request_id("test_preprocessing_sunshine").unwrap();
         let domain = dummy_domain();
         let preproc_req = KeyGenPreprocRequest {
@@ -189,13 +195,13 @@ mod tests {
         let get_result =
             get_preprocessing_res_impl(&kms, Request::new(preproc_req_id.into())).await;
         assert!(get_result.is_ok());
-        let actual_address = alloy_signer::utils::public_key_to_address(verf_key.pk());
         let inner_res = get_result.unwrap().into_inner();
         let sol_struct =
             PrepKeygenVerification::new(&inner_res.preprocessing_id.unwrap().try_into().unwrap());
         assert_eq!(
-            recover_address(sol_struct, &domain, &inner_res.external_signature),
-            actual_address
+            recover_address_from_ext_signature(&sol_struct, &domain, &inner_res.external_signature)
+                .unwrap(),
+            verf_key.address()
         );
     }
 

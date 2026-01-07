@@ -1,3 +1,4 @@
+use crate::engine::utils::MetricedError;
 use kms_grpc::kms::v1::*;
 use tonic::{Request, Response, Status};
 
@@ -11,11 +12,11 @@ pub trait UserDecryptor {
     async fn user_decrypt(
         &self,
         request: Request<UserDecryptionRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<UserDecryptionResponse>, Status>;
+    ) -> Result<Response<UserDecryptionResponse>, MetricedError>;
 }
 
 #[tonic::async_trait]
@@ -23,11 +24,11 @@ pub trait PublicDecryptor {
     async fn public_decrypt(
         &self,
         request: Request<PublicDecryptionRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<PublicDecryptionResponse>, Status>;
+    ) -> Result<Response<PublicDecryptionResponse>, MetricedError>;
 }
 
 #[tonic::async_trait]
@@ -58,6 +59,13 @@ pub trait KeyGenPreprocessor {
         &self,
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status>;
+
+    #[cfg(feature = "insecure")]
+    async fn partial_key_gen_preproc(
+        &self,
+        request: Request<PartialKeyGenPreprocRequest>,
+    ) -> Result<Response<Empty>, Status>;
+
     async fn get_result(
         &self,
         request: Request<RequestId>,
@@ -67,11 +75,14 @@ pub trait KeyGenPreprocessor {
 
 #[tonic::async_trait]
 pub trait CrsGenerator {
-    async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status>;
+    async fn crs_gen(
+        &self,
+        request: Request<CrsGenRequest>,
+    ) -> Result<Response<Empty>, MetricedError>;
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<CrsGenResult>, Status>;
+    ) -> Result<Response<CrsGenResult>, MetricedError>;
 }
 
 #[cfg(feature = "insecure")]
@@ -80,9 +91,21 @@ pub trait InsecureCrsGenerator {
     async fn insecure_crs_gen(
         &self,
         request: Request<CrsGenRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<CrsGenResult>, Status>;
+    ) -> Result<Response<CrsGenResult>, MetricedError>;
+}
+
+#[tonic::async_trait]
+pub trait Resharer {
+    async fn initiate_resharing(
+        &self,
+        request: Request<InitiateResharingRequest>,
+    ) -> Result<Response<InitiateResharingResponse>, Status>;
+    async fn get_resharing_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<ResharingResultResponse>, Status>;
 }

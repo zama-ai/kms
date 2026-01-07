@@ -7,7 +7,7 @@ use crate::algebra::galois_rings::common::ResiduePoly;
 use crate::algebra::structure_traits::{BaseRing, BitExtract, ErrorCorrect, Solve, ZConsts};
 use crate::{
     algebra::structure_traits::Ring, error::error_handler::anyhow_error_and_log,
-    execution::runtime::session::BaseSessionHandles,
+    execution::runtime::sessions::base_session::BaseSessionHandles,
 };
 
 use super::preprocessing::TriplePreprocessing;
@@ -526,8 +526,8 @@ mod tests {
     use crate::execution::online::bit_manipulation::Bits;
     use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
     use crate::execution::online::triple::open_list;
-    use crate::execution::runtime::session::ParameterHandles;
-    use crate::execution::runtime::session::SmallSession;
+    use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
+    use crate::execution::runtime::sessions::small_session::SmallSession;
     use crate::execution::sharing::shamir::InputOp;
     use crate::execution::sharing::share::Share;
     use crate::tests::helper::tests_and_benches::execute_protocol_small;

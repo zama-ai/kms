@@ -5,6 +5,7 @@ use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
 };
+use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::{TypedCiphertext, TypedPlaintext};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::fhe_types_to_num_blocks;
@@ -21,20 +22,23 @@ pub(crate) const TIME_TO_SLEEP_MS: u64 = 500;
 pub(crate) async fn send_dec_reqs(
     amount_cts: usize,
     key_id: &RequestId,
+    context_id: Option<&ContextId>,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &mut Client,
+    storage_prefixes: &[Option<String>],
 ) -> (
     JoinSet<Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status>>,
     RequestId,
 ) {
     let mut cts = Vec::new();
+    let storage_prefix = storage_prefixes[0].as_deref(); // just need one storage prefix to compute cts
     for i in 0..amount_cts {
         let msg = TestingPlaintext::U32(i as u32);
         let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
             None,
             msg,
             key_id,
-            1,
+            storage_prefix,
             EncryptionConfig {
                 compression: true,
                 precompute_sns: false,
@@ -53,7 +57,13 @@ pub(crate) async fn send_dec_reqs(
     // make parallel requests by calling [public_decrypt] in a thread
     let request_id = derive_request_id("TEST_DEC_ID").unwrap();
     let req = internal_client
-        .public_decryption_request(cts.clone(), &dummy_domain(), &request_id, key_id)
+        .public_decryption_request(
+            cts.clone(),
+            &dummy_domain(),
+            &request_id,
+            context_id,
+            key_id,
+        )
         .unwrap();
     let mut join_set = JoinSet::new();
     for i in 1..=kms_clients.len() as u32 {

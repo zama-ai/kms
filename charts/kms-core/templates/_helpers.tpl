@@ -37,8 +37,10 @@ centralized
 
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
+     	     	   "timeout" int
      	     	   "from" string
-		           "to" string) */}}
+		      "to" string
+		      "timeout" int (optional, defaults to 60)) */}}
 {{- define "socatContainer" -}}
 name: {{ .name }}
 image: {{ .image.name }}:{{ .image.tag }}
@@ -47,6 +49,10 @@ restartPolicy: Always
 command:
   - socat
 args:
+  - -d0
+{{- if and (eq .name "grpc-peer-proxy") .timeout }}
+  - -T{{ .timeout }}
+{{- end }}
   - {{ .from }}
   - {{ .to }}
 {{- end -}}
@@ -60,7 +66,7 @@ args:
       (dict "name" .name
             "image" .image
             "from" (printf "VSOCK-LISTEN:%d,fork,reuseaddr" (int .vsockPort))
-	        "to" .to) }}
+	      "to" .to) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
@@ -73,33 +79,37 @@ args:
       (dict "name" .name
             "image" .image
             "vsockPort" .vsockPort
-	        "to" (printf "TCP:%s:%d" .address (int .port))) }}
+	      "to" (printf "TCP:%s:%d,nodelay" .address (int .port))) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
 		           "from" string
 		           "cid" int
-                   "port" int) */}}
+                   "port" int
+                   "timeout" int (optional, only used if name is "grpc-peer-proxy")) */}}
 {{- define "proxyToEnclave" -}}
 {{- include "socatContainer"
       (dict "name" .name
             "image" .image
             "from" .from
-	        "to" (printf "VSOCK-CONNECT:%d:%d" (int .cid) (int .port))) }}
+            "timeout" .timeout
+	      "to" (printf "VSOCK-CONNECT:%d:%d" (int .cid) (int .port))) }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
      	     	   "image" (dict "name" string "tag" string)
 		           "cid" int
-                   "port" int) */}}
+                   "port" int
+                   "timeout" int (optional, only used if name is "grpc-peer-proxy")) */}}
 {{- define "proxyToEnclaveTcp" -}}
 {{- include "proxyToEnclave"
       (dict "name" .name
             "image" .image
-            "from" (printf "TCP-LISTEN:%d,fork,reuseaddr" (int .port))
+            "from" (printf "TCP-LISTEN:%d,fork,nodelay,reuseaddr" (int .port))
             "cid" .cid
-	        "port" .port) }}
+            "port" .port
+            "timeout" .timeout) }}
 {{- end -}}
 
 {{- define "kmsInitJobName" -}}
@@ -146,6 +156,7 @@ export KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID="${KMS_CORE__BACKU
 export KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC:={{ .Values.kmsCore.backupVault.awskms.rootKeySpec }}}"
 {{- end }}
 {{- end }}
+{{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
 for i in $(seq 1 {{ len .Values.kmsCore.thresholdMode.peersList }}); do
 BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/?list-type=2&prefix=PUB-p${i}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
 curl -s -o ./ca_pem "${CORE_CLIENT__S3_ENDPOINT}/${BUCKET_PATH}"
@@ -154,4 +165,5 @@ done
 echo "### BEGIN - env ###"
 env
 echo "### END - env ###"
+{{- end }}
 {{- end -}}

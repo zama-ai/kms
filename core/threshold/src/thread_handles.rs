@@ -2,8 +2,9 @@
 
 use anyhow::anyhow;
 use futures::FutureExt;
+use rayon::ThreadPoolBuilder;
 use std::time::Duration;
-use tokio::task::JoinHandle;
+use tokio::{sync::OnceCell, task::JoinHandle};
 use tracing::error;
 
 use crate::error::error_handler::anyhow_error_and_log;
@@ -145,15 +146,39 @@ where
     }
 }
 
+static MPC_RAYON_THREAD_POOL: OnceCell<rayon::ThreadPool> = OnceCell::const_new();
+
+// Try to initialize the global rayon thread pool with the given number of threads.
+// Returns the number of threads in the pool.
+pub async fn init_rayon_thread_pool(num_threads: usize) -> anyhow::Result<usize> {
+    if MPC_RAYON_THREAD_POOL.initialized() {
+        return Err(anyhow!("Rayon thread pool already initialized"));
+    }
+
+    let pool = MPC_RAYON_THREAD_POOL
+        .get_or_try_init(|| async { ThreadPoolBuilder::new().num_threads(num_threads).build() })
+        .await?;
+
+    tracing::info!(
+        "Initialized rayon thread pool with {} threads",
+        pool.current_num_threads()
+    );
+
+    Ok(pool.current_num_threads())
+}
+
 /// Spawn a compute task on rayon and returns its result.
 ///
 /// This can be used to offload the tokio executor from CPU bound tasks.
 pub async fn spawn_compute_bound<R: Send + 'static, F: FnOnce() -> R + Send + 'static>(
     compute_fn: F,
 ) -> anyhow::Result<R> {
+    let pool = MPC_RAYON_THREAD_POOL
+        .get_or_try_init(|| async { ThreadPoolBuilder::new().build() })
+        .await?;
     let (tx, rx) = tokio::sync::oneshot::channel();
     let current_span = tracing::Span::current();
-    rayon::spawn(move || {
+    pool.spawn(move || {
         let _guard = current_span.enter();
         let res = compute_fn();
         let _ = tx

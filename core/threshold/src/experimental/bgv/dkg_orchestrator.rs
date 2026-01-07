@@ -37,7 +37,9 @@ use crate::{
             },
             secret_distributions::{RealSecretDistributions, SecretDistributions},
         },
-        runtime::session::{ParameterHandles, SmallSession},
+        runtime::sessions::{
+            session_parameters::GenericParameterHandles, small_session::SmallSession,
+        },
         sharing::share::Share,
         small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
     },

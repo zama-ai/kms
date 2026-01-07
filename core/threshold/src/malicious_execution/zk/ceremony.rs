@@ -21,7 +21,7 @@ cfg_if::cfg_if! {
 use crate::{
     algebra::structure_traits::Ring,
     execution::{
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         zk::{
             ceremony::{Ceremony, FinalizedInternalPublicParameter, InternalPublicParameter},
             constants::ZK_DEFAULT_MAX_NUM_BITS,

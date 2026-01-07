@@ -8,7 +8,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
-        runtime::{party::Role, session::LargeSessionHandles},
+        runtime::{party::Role, sessions::large_session::LargeSessionHandles},
         sharing::{
             shamir::{RevealOp, ShamirSharings},
             share::Share,
@@ -72,7 +72,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
     for RealLocalSingleShare<C, S, BCast>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-RealLocalSingleShare:\n{}\n{}\n{}",
             indent,
@@ -444,6 +444,7 @@ pub(crate) mod tests {
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
     use crate::algebra::structure_traits::{ErrorCorrect, Invert};
+    use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::execution::sharing::shamir::RevealOp;
     #[cfg(feature = "slow_tests")]
     use crate::execution::{
@@ -469,7 +470,7 @@ pub(crate) mod tests {
     use crate::{
         execution::{
             runtime::party::Role,
-            runtime::session::{BaseSessionHandles, LargeSession, LargeSessionHandles},
+            runtime::sessions::large_session::{LargeSession, LargeSessionHandles},
             sharing::{shamir::ShamirSharings, share::Share},
         },
         tests::helper::tests::{

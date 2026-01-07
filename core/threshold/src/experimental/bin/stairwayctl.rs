@@ -1,4 +1,6 @@
 //! CLI tool for interacting with a group of stairways
+//! It is not really an issue to have "unsafe" code here (e.g. unsafe deserialization)
+//! as this is meant for testing and benchmarking, and definitely not for production use.
 use tokio::time::{self, Duration};
 
 use aes_prng::AesRng;
@@ -273,7 +275,7 @@ async fn threshold_decrypt_command(
     let num_sessions = params.num_parallel_sessions;
     let pk_serialized = std::fs::read(params.pub_key_file)?;
     let (key_sid, pk): (SessionId, PublicKey<LevelEll, LevelKsw, N65536>) =
-        bc2wrap::deserialize(&pk_serialized)?;
+        bc2wrap::deserialize_unsafe(&pk_serialized)?;
 
     let mut rng = AesRng::from_entropy();
     let ms = (0..num_sessions)
@@ -329,7 +331,7 @@ async fn status_check_command(
     params: StatusCheckArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let session_id = SessionId::from(params.session_id);
-    let retry = params.retry.map_or_else(|| false, |val| val);
+    let retry = params.retry.unwrap_or(false);
     let interval = params
         .interval
         .map_or_else(|| Duration::from_secs(10), Duration::from_secs);

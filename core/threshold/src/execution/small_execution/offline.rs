@@ -10,7 +10,7 @@ use crate::execution::communication::broadcast::SyncReliableBroadcast;
 use crate::execution::config::BatchParams;
 use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
-use crate::execution::runtime::session::BaseSessionHandles;
+use crate::execution::runtime::sessions::base_session::BaseSessionHandles;
 use crate::execution::sharing::shamir::RevealOp;
 use crate::thread_handles::spawn_compute_bound;
 use crate::{
@@ -19,7 +19,7 @@ use crate::{
         communication::broadcast::Broadcast,
         online::triple::Triple,
         runtime::party::Role,
-        runtime::session::SmallSessionHandles,
+        runtime::sessions::small_session::SmallSessionHandles,
         sharing::{shamir::ShamirSharings, share::Share},
     },
     networking::value::BroadcastValue,
@@ -45,7 +45,7 @@ pub struct RealSmallPreprocessing<BCast: Broadcast> {
 
 impl<BCast: Broadcast> ProtocolDescription for RealSmallPreprocessing<BCast> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-RealSmallPreprocessing:\n{}",
             indent,
@@ -408,7 +408,8 @@ mod test {
     use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring};
     use crate::execution::communication::broadcast::SyncReliableBroadcast;
     use crate::execution::large_execution::vss::SecureVss;
-    use crate::execution::runtime::session::ToBaseSession;
+    use crate::execution::runtime::sessions::base_session::ToBaseSession;
+    use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::execution::sharing::shamir::{RevealOp, ShamirSharings};
     use crate::execution::small_execution::agree_random::RobustSecureAgreeRandom;
     use crate::execution::small_execution::offline::reconstruct_d_values;
@@ -434,7 +435,7 @@ mod test {
             },
             runtime::{
                 party::Role,
-                session::{BaseSessionHandles, ParameterHandles, SmallSession},
+                sessions::{base_session::GenericBaseSessionHandles, small_session::SmallSession},
             },
             sharing::share::Share,
             small_execution::{

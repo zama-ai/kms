@@ -4,15 +4,12 @@ use k256::{ecdsa::SigningKey, pkcs8::EncodePrivateKey};
 use rcgen::BasicConstraints::Constrained;
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
-    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, SerialNumber,
-    PKCS_ECDSA_P256K1_SHA256, PKCS_ECDSA_P256_SHA256,
+    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256K1_SHA256,
+    PKCS_ECDSA_P256_SHA256,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
-
-/// This is the serial number derived from DEFAULT_MPC_CONTEXT.derive_session_id().unwrap().
-pub const DEFAULT_SESSION_ID_FROM_CONTEXT: u128 = 75144625629816062620302474174838463545;
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy)]
 enum CertFileType {
@@ -153,14 +150,7 @@ fn create_ca_cert_from_keypair(
         } else {
             vec![]
         },
-        vec![
-            ca_name.to_string(),
-            "127.0.0.1".to_string(),
-            "localhost".to_string(),
-            "192.168.0.1".to_string(),
-            "0:0:0:0:0:0:0:1".to_string(),
-            "::1".to_string(),
-        ],
+        vec![ca_name.to_string()],
     ]
     .concat();
     let mut cp = CertificateParams::new(sans_vec)?;
@@ -174,24 +164,12 @@ fn create_ca_cert_from_keypair(
     // set CA cert CA flag
     cp.is_ca = *is_ca;
 
-    // set CA cert Key Usage Purposes
+    // set self-signed CA cert Key Usage Purposes
     cp.key_usages = vec![
         KeyUsagePurpose::DigitalSignature,
         KeyUsagePurpose::KeyCertSign,
         KeyUsagePurpose::CrlSign,
-        KeyUsagePurpose::KeyEncipherment,
-        KeyUsagePurpose::KeyAgreement,
     ];
-
-    // set CA cert Extended Key Usage Purposes
-    cp.extended_key_usages = vec![
-        ExtendedKeyUsagePurpose::ServerAuth,
-        ExtendedKeyUsagePurpose::ClientAuth,
-    ];
-
-    cp.serial_number = Some(SerialNumber::from_slice(
-        &DEFAULT_SESSION_ID_FROM_CONTEXT.to_be_bytes(),
-    ));
 
     // self-sign cert with CA key
     tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
@@ -217,13 +195,7 @@ fn create_core_certs(
                 } else {
                     vec![]
                 },
-                vec![
-                    core_name.clone(),
-                    "localhost".to_string(),
-                    "192.168.0.1".to_string(),
-                    "127.0.0.1".to_string(),
-                    "0:0:0:0:0:0:0:1".to_string(),
-                ],
+                vec![core_name.clone()],
             ]
             .concat();
             let mut cp = CertificateParams::new(sans_vec).unwrap();
@@ -248,10 +220,6 @@ fn create_core_certs(
                 ExtendedKeyUsagePurpose::ServerAuth,
                 ExtendedKeyUsagePurpose::ClientAuth,
             ];
-
-            cp.serial_number = Some(SerialNumber::from_slice(
-                &DEFAULT_SESSION_ID_FROM_CONTEXT.to_be_bytes(),
-            ));
 
             tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
             let core_cert = cp
@@ -507,17 +475,5 @@ mod tests {
             validate_ca_name("party/is#bad!").is_err(),
             "this should have been an invalid CA name."
         );
-    }
-
-    #[test]
-    fn test_serial_number() {
-        let ca_name = "p1.kms.zama.ai";
-        let is_ca = IsCa::NoCa;
-
-        let (_ca_keypair, ca_cert, _ca_cert_params) =
-            create_ca_cert(ca_name, &is_ca, false).unwrap();
-        let (_, cert) = x509_parser::parse_x509_certificate(ca_cert.der().as_ref()).unwrap();
-        let sid = u128::from_be_bytes(cert.serial.to_bytes_be().try_into().unwrap());
-        assert_eq!(sid, super::DEFAULT_SESSION_ID_FROM_CONTEXT);
     }
 }

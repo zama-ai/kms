@@ -2,7 +2,7 @@ use crate::client::client_wasm::Client;
 use crate::client::test_tools::centralized_custodian_handles;
 use crate::consts::SIGNING_KEY_ID;
 use crate::util::key_setup::test_tools::backup_exists;
-use crate::util::key_setup::test_tools::read_backup_files;
+use crate::util::key_setup::test_tools::read_custodian_backup_files;
 use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
 };
@@ -32,7 +32,7 @@ pub(crate) async fn new_custodian_context(
 
     let dkg_param: WrappedDKGParams = parameter.into();
     let (kms_server, mut kms_client, mut internal_client) =
-        centralized_custodian_handles(&dkg_param, None, test_path).await;
+        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
     run_new_cus_context(
         &mut kms_client,
         &mut internal_client,
@@ -41,14 +41,15 @@ pub(crate) async fn new_custodian_context(
         threshold,
     )
     .await;
+
     // Check that the files are backed up
-    assert!(backup_exists(1, test_path).await);
-    let first_sig_keys = read_backup_files(
-        1,
+    assert!(backup_exists(test_path, &[None]).await);
+    let first_sig_keys = read_custodian_backup_files(
         test_path,
         &req_new_cus,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
+        &[None],
     )
     .await;
     // Generate a new custodian context
@@ -60,12 +61,13 @@ pub(crate) async fn new_custodian_context(
         threshold,
     )
     .await;
-    let second_sig_keys = read_backup_files(
-        1,
+
+    let second_sig_keys = read_custodian_backup_files(
         test_path,
         &req_new_cus2,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
+        &[None],
     )
     .await;
     // Check that the backup is changed since we use randomized encryption
@@ -77,13 +79,13 @@ pub(crate) async fn new_custodian_context(
     drop(kms_client);
     drop(internal_client);
     let (_kms_server, _kms_client, _internal_client) =
-        centralized_custodian_handles(&dkg_param, None, test_path).await;
-    let reboot_sig_keys = read_backup_files(
-        1,
+        centralized_custodian_handles(&dkg_param, None, test_path, None, None).await;
+    let reboot_sig_keys = read_custodian_backup_files(
         test_path,
         &req_new_cus2,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
+        &[None],
     )
     .await;
     // Check that the backups are the same as the onces loaded before the reboot

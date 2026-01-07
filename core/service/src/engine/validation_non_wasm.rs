@@ -1,11 +1,18 @@
-use std::collections::{HashMap, HashSet};
-
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
+use crate::engine::base::retrieve_parameters;
+use crate::{
+    anyhow_error_and_log,
+    cryptography::{
+        encryption::UnifiedPublicEncKey,
+        internal_crypto_types::LegacySerialization,
+        signatures::{internal_verify_sig, PublicSigKey, Signature},
+    },
+};
 use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
-use kms_grpc::identifiers::ContextId;
+use kms_grpc::identifiers::{ContextId, EpochId};
 use kms_grpc::kms::v1::CrsGenRequest;
 use kms_grpc::utils::tonic_result::BoxedStatus;
-use kms_grpc::RequestId;
 use kms_grpc::{
     kms::v1::{
         PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
@@ -13,18 +20,11 @@ use kms_grpc::{
     },
     rpc_types::optional_protobuf_to_alloy_domain,
 };
+use kms_grpc::{KeyId, RequestId};
+use std::collections::{HashMap, HashSet};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_fhe::execution::zk::ceremony::compute_witness_dim;
 use threshold_fhe::hashing::DomainSep;
-
-use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
-use crate::engine::base::retrieve_parameters;
-use crate::{
-    anyhow_error_and_log,
-    cryptography::{
-        internal_crypto_types::{PublicEncKey, PublicSigKey, Signature},
-        signcryption::internal_verify_sig,
-    },
-};
 
 pub(crate) const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
 
@@ -51,6 +51,7 @@ const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user dec
 pub(crate) enum RequestIdParsingErr {
     Other(String),
     Context,
+    Epoch,
     Init,
 
     CrsGenRequest,
@@ -67,7 +68,11 @@ pub(crate) enum RequestIdParsingErr {
     UserDecResponse,
     PublicDecResponse,
 
+    ReshareRequest,
+    ReshareResponse,
+
     CustodianContext,
+    CustodianContextDestruction,
     BackupRecovery,
 }
 
@@ -76,8 +81,8 @@ impl std::fmt::Display for RequestIdParsingErr {
         match self {
             RequestIdParsingErr::Other(msg) => write!(f, "Other request ID error: {msg}"),
             RequestIdParsingErr::Context => write!(f, "Invalid context ID"),
+            RequestIdParsingErr::Epoch => write!(f, "Invalid epoch ID"),
             RequestIdParsingErr::Init => write!(f, "Invalid init ID"),
-
             RequestIdParsingErr::CrsGenRequest => write!(f, "Invalid CRS generation request ID"),
             RequestIdParsingErr::PreprocRequest => write!(f, "Invalid pre-processing request ID"),
             RequestIdParsingErr::KeyGenRequest => write!(f, "Invalid key generation request ID"),
@@ -91,7 +96,6 @@ impl std::fmt::Display for RequestIdParsingErr {
             RequestIdParsingErr::PublicDecRequestBadKeyId => {
                 write!(f, "Invalid key ID in public decryption request")
             }
-
             RequestIdParsingErr::CrsGenResponse => {
                 write!(f, "Invalid get CRS generation result request ID")
             }
@@ -110,11 +114,41 @@ impl std::fmt::Display for RequestIdParsingErr {
             RequestIdParsingErr::CustodianContext => {
                 write!(f, "Invalid new custodian context result response ID")
             }
+            RequestIdParsingErr::CustodianContextDestruction => {
+                write!(f, "Invalid new custodian context destruction ID")
+            }
             RequestIdParsingErr::BackupRecovery => {
                 write!(f, "Invalid new backup recovery result response ID")
             }
+            RequestIdParsingErr::ReshareRequest => {
+                write!(f, "Invalid reshare request ID")
+            }
+            RequestIdParsingErr::ReshareResponse => {
+                write!(f, "Invalid reshare response ID")
+            }
         }
     }
+}
+
+pub(crate) fn optional_proto_request_id(
+    request_id: &Option<kms_grpc::kms::v1::RequestId>,
+    id_type: RequestIdParsingErr,
+) -> anyhow::Result<RequestId> {
+    let req_id = request_id.clone().ok_or(anyhow::anyhow!(
+        "Request ID not present: {id_type}: {request_id:?}"
+    ))?;
+    proto_request_id(&req_id, id_type)
+}
+
+pub(crate) fn proto_request_id(
+    request_id: &kms_grpc::kms::v1::RequestId,
+    id_type: RequestIdParsingErr,
+) -> anyhow::Result<RequestId> {
+    request_id.try_into().map_err(|e| {
+        anyhow::anyhow!(format!(
+            "Invalid request ID: {id_type}: {request_id:?}: {e}"
+        ))
+    })
 }
 
 /// Parse a protobuf request ID and returns an appropriate tonic error if it is invalid.
@@ -173,32 +207,39 @@ pub fn validate_user_decrypt_req(
         UnifiedPublicEncKey,
         alloy_primitives::Address,
         RequestId,
-        RequestId,
+        KeyId,
+        ContextId,
+        EpochId,
         alloy_sol_types::Eip712Domain,
     ),
-    BoxedStatus,
+    Box<dyn std::error::Error + Send + Sync>,
 > {
-    let key_id =
-        parse_optional_proto_request_id(&req.key_id, RequestIdParsingErr::UserDecRequestBadKeyId)?;
     let request_id =
         parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::UserDecRequest)?;
+    let key_id =
+        parse_optional_proto_request_id(&req.key_id, RequestIdParsingErr::UserDecRequestBadKeyId)?
+            .into();
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // remove the default context when all of context is ready
+    let context_id: ContextId = match &req.context_id {
+        Some(context_id) => context_id.try_into()?,
+        None => *DEFAULT_MPC_CONTEXT,
+    };
+    let epoch_id: EpochId = match &req.epoch_id {
+        Some(epoch_id) => epoch_id.try_into()?,
+        None => *DEFAULT_EPOCH_ID,
+    };
 
     if req.typed_ciphertexts.is_empty() {
-        return Err(BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("{ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS} (Request ID: {request_id})"),
-        )));
+        return Err(anyhow::anyhow!(ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS).into());
     }
 
     let client_verf_key = alloy_primitives::Address::parse_checksummed(&req.client_address, None)
         .map_err(|e| {
-        BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!(
-                "Error parsing checksummed client address: {} - {e}",
-                &req.client_address
-            ),
-        ))
+        anyhow::anyhow!(
+            "Error parsing checksummed client address: {} - {e}",
+            &req.client_address
+        )
     })?;
 
     let domain = match verify_user_decrypt_eip712(req) {
@@ -206,54 +247,24 @@ pub fn validate_user_decrypt_req(
             tracing::debug!("🔒 Signature verified successfully");
             domain
         }
-        Err(e) => {
-            return Err(BoxedStatus::from(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!(
-                    "Signature verification failed with error {e} for request: {:?}",
-                    req.request_id,
-                ),
-            )));
-        }
+        Err(e) => return Err(anyhow::anyhow!("Failed to verify the EIP-712 domain: {e}").into()),
     };
 
-    let (link, _) = req.compute_link_checked().map_err(|e| {
-        BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("Error computing link: {e}"),
+    let (link, _) = req.compute_link_checked()?;
+    let client_enc_key = UnifiedPublicEncKey::from_legacy_bytes(&req.enc_key).map_err(|e| {
+        Into::<Box<dyn std::error::Error + Send + Sync>>::into(anyhow::anyhow!(
+            "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
         ))
     })?;
-    // NOTE: we need to do some backward compatibility support here so
-    // first try to deserialize it using the old format (ML-KEM1024 encoded with bincode)
-    let client_enc_key = match bc2wrap::deserialize::<PublicEncKey<ml_kem::MlKem1024>>(&req.enc_key)
-    {
-        Ok(inner) => {
-            // we got an old MlKem1024 public key, wrap it in the enum
-            tracing::warn!("🔒 Using MlKem1024 public encryption key");
-            UnifiedPublicEncKey::MlKem1024(inner)
-        }
-        // in case the old deserialization fails, try the new format
-        Err(_) => tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
-            std::io::Cursor::new(&req.enc_key),
-            crate::consts::SAFE_SER_SIZE_LIMIT,
-        )
-        .map_err(|e| {
-            tracing::error!(
-                "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
-            );
-            BoxedStatus::from(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"),
-            ))
-        })?,
-    };
     Ok((
         req.typed_ciphertexts.clone(),
         link,
         client_enc_key,
         client_verf_key,
-        key_id,
         request_id,
+        key_id,
+        context_id,
+        epoch_id,
         domain,
     ))
 }
@@ -267,24 +278,52 @@ pub fn validate_user_decrypt_req(
 #[allow(clippy::type_complexity)]
 pub fn validate_public_decrypt_req(
     req: &PublicDecryptionRequest,
-) -> Result<(Vec<TypedCiphertext>, RequestId, RequestId, Eip712Domain), BoxedStatus> {
-    let key_id = parse_optional_proto_request_id(
-        &req.key_id,
-        RequestIdParsingErr::PublicDecRequestBadKeyId,
-    )?;
-    let request_id =
-        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::PublicDecRequest)?;
+) -> Result<
+    (
+        Vec<TypedCiphertext>,
+        RequestId,
+        KeyId,
+        ContextId,
+        EpochId,
+        Eip712Domain,
+    ),
+    Box<dyn std::error::Error + Send + Sync>,
+> {
+    let req_id: RequestId =
+        optional_proto_request_id(&req.request_id, RequestIdParsingErr::PublicDecRequest)?;
+
+    tracing::info!(
+        request_id = ?req_id,
+        "Received new decryption request"
+    );
+
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // remove the default context when all of context is ready
+    let context_id: ContextId = match &req.context_id {
+        Some(context_id) => context_id.try_into()?,
+        None => *DEFAULT_MPC_CONTEXT,
+    };
+    let epoch_id: EpochId = match &req.epoch_id {
+        Some(epoch_id) => epoch_id.try_into()?,
+        None => *DEFAULT_EPOCH_ID,
+    };
+    let key_id: KeyId =
+        optional_proto_request_id(&req.key_id, RequestIdParsingErr::PublicDecRequestBadKeyId)?
+            .into();
 
     if req.ciphertexts.is_empty() {
-        return Err(BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("{ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS} (Request ID: {request_id})"),
-        )));
+        return Err(anyhow::anyhow!(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS).into());
     }
 
     let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
-
-    Ok((req.ciphertexts.clone(), key_id, request_id, eip712_domain))
+    Ok((
+        req.ciphertexts.clone(),
+        req_id,
+        key_id,
+        context_id,
+        epoch_id,
+        eip712_domain,
+    ))
 }
 
 /// Verify the EIP-712 encoded payload in the request.
@@ -314,7 +353,8 @@ fn validate_public_decrypt_meta_data(
                 );
         return Ok(false);
     }
-    let resp_verf_key: PublicSigKey = bc2wrap::deserialize(&other_resp.verification_key)?;
+    // TODO: Need to update this to a safer deserialization (which checks versions) with #2781 ?
+    let resp_verf_key: PublicSigKey = bc2wrap::deserialize_safe(&other_resp.verification_key)?;
     if !server_pks.values().contains(&resp_verf_key) {
         tracing::warn!("Server key is unknown or incorrect.");
         return Ok(false);
@@ -471,10 +511,6 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
     match request {
         Some(req) => {
             let pivot_payload = resp_parsed_payloads[0].clone();
-            // if req.fhe_type() != pivot_payload.fhe_type()? {
-            //     tracing::warn!("Fhe type in the decryption response is incorrect");
-            //     return Ok(false);
-            // } //TODO check fhe type?
 
             if req.ciphertexts.len() != pivot_payload.plaintexts.len() {
                 return Err(anyhow_error_and_log(
@@ -520,39 +556,44 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
 
 pub(crate) fn validate_crs_gen_request(
     req: CrsGenRequest,
-) -> Result<(RequestId, DKGParams, Eip712Domain, Option<ContextId>), BoxedStatus> {
+) -> anyhow::Result<(RequestId, ContextId, usize, DKGParams, Eip712Domain)> {
     let req_id =
         parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
-    let params = retrieve_parameters(Some(req.params))?;
 
-    // This verification is more strict than the checks in [compute_witness_dim]
+    // This verification is more strict than the checks in [compute_witness_dim] below
     // because it only allows powers of 2. But there are no strong reasons
     // to use max_num_bits that are not powers of 2 so we enforce it here.
     if let Some(max_num_bits) = req.max_num_bits {
         verify_max_num_bits(max_num_bits as usize)?;
     }
 
+    let params = retrieve_parameters(Some(req.params))?;
+    let crs_params = params
+        .get_params_basics_handle()
+        .get_compact_pk_enc_params();
+
+    let witness_dim = compute_witness_dim(&crs_params, req.max_num_bits.map(|x| x as usize))?;
+
     // context_id is not used at the moment, but we validate it if present
     let context_id = match &req.context_id {
-        Some(ctx) => Some(parse_proto_context_id(ctx, RequestIdParsingErr::Context)?),
-        None => None,
+        Some(ctx) => parse_proto_context_id(ctx, RequestIdParsingErr::Context)?,
+        None => *DEFAULT_MPC_CONTEXT,
     };
 
     let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
-    Ok((req_id, params, eip712_domain, context_id))
+    Ok((req_id, context_id, witness_dim, params, eip712_domain))
 }
 
 /// The max_num_bits should be a power of 2 between 1 and 2048 (inclusive)
-fn verify_max_num_bits(max_num_bits: usize) -> Result<(), BoxedStatus> {
+fn verify_max_num_bits(max_num_bits: usize) -> anyhow::Result<()> {
     if max_num_bits > 0 && max_num_bits <= 2048 && usize::is_power_of_two(max_num_bits) {
         Ok(())
     } else {
-        Err(tonic::Status::invalid_argument(format!(
+        Err(anyhow::anyhow!(
             "max_num_bits must be a power of 2 between 1 and 2048, got {}",
             max_num_bits
         ))
-        .into())
     }
 }
 
@@ -574,8 +615,8 @@ mod tests {
 
     use crate::{
         cryptography::{
-            internal_crypto_types::{gen_sig_keys, UnifiedPublicEncKey},
-            signcryption::ephemeral_encryption_key_generation,
+            encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPublicEncKey},
+            signatures::{gen_sig_keys, internal_sign},
         },
         engine::{
             base::derive_request_id,
@@ -699,10 +740,11 @@ mod tests {
                 context_id: None,
                 epoch_id: None,
             };
-            let (_, _, _, _domain) = validate_public_decrypt_req(&req).unwrap();
+            let (_, _, _, _, _, _domain) = validate_public_decrypt_req(&req).unwrap();
         }
     }
 
+    #[tracing_test::traced_test]
     #[test]
     fn test_validate_user_decrypt_req() {
         // setup data we're going to use in this test
@@ -717,12 +759,12 @@ mod tests {
         let key_id = derive_request_id("key_id").unwrap();
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let mut rng = AesRng::from_random_seed();
-        let (enc_pk, _enc_sk) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
-        let unified_enc_pk = UnifiedPublicEncKey::MlKem512(enc_pk.clone());
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
 
         let mut enc_pk_buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(
-            &unified_enc_pk,
+            &enc_pk,
             &mut enc_pk_buf,
             crate::consts::SAFE_SER_SIZE_LIMIT,
         )
@@ -837,8 +879,12 @@ mod tests {
 
         // bad public key
         {
-            // note that we're serializing the mlkem512 public key, which is not supported
-            let bad_enc_pk_buf = bc2wrap::serialize(&enc_pk).unwrap();
+            // note that we're serializing the inner mlkem512 public key, which is not supported
+            let inner_key = match &enc_pk {
+                UnifiedPublicEncKey::MlKem512(pk) => pk,
+                _ => panic!("expected MlKem512 key"),
+            };
+            let bad_enc_pk_buf = bc2wrap::serialize(&inner_key).unwrap();
             let req = UserDecryptionRequest {
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
@@ -897,9 +943,10 @@ mod tests {
     fn test_verify_user_decrypt_eip712() {
         let mut rng = AesRng::from_random_seed();
         let (client_pk, _client_sk) = gen_sig_keys(&mut rng);
-        let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
+        let client_address = client_pk.address();
         let ciphertext = vec![1, 2, 3];
-        let (enc_pk, _) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
         let key_id = derive_request_id("key_id").unwrap();
 
         let typed_ciphertext = TypedCiphertext {
@@ -916,11 +963,15 @@ mod tests {
         );
         let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
 
+        let inner_key = match &enc_pk {
+            UnifiedPublicEncKey::MlKem512(pk) => pk,
+            _ => panic!("expected MlKem512 key"),
+        };
         let req = UserDecryptionRequest {
             request_id: Some(v1::RequestId {
                 request_id: "dummy request ID".to_owned(),
             }),
-            enc_key: bc2wrap::serialize(&enc_pk).unwrap(),
+            enc_key: bc2wrap::serialize(&inner_key).unwrap(),
             client_address: client_address.to_checksum(None),
             key_id: Some(key_id.into()),
             typed_ciphertexts: vec![typed_ciphertext],
@@ -991,12 +1042,7 @@ mod tests {
 
         // use a bad signature (signed with wrong private key)
         {
-            let signature = &crate::cryptography::signcryption::internal_sign(
-                &DSEP_PUBLIC_DECRYPTION,
-                &pivot_buf,
-                &sk1,
-            )
-            .unwrap();
+            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk1).unwrap();
             let signature_buf = signature.sig.to_vec();
 
             assert!(
@@ -1006,12 +1052,7 @@ mod tests {
 
         // use a bad signature (malformed signature)
         {
-            let signature = &crate::cryptography::signcryption::internal_sign(
-                &DSEP_PUBLIC_DECRYPTION,
-                &pivot_buf,
-                &sk0,
-            )
-            .unwrap();
+            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
             // The signature is malformed because it's using bincode to serialize instead of `signature.sig.to_vec()`.
             let signature_buf = bc2wrap::serialize(&signature).unwrap();
 
@@ -1037,12 +1078,8 @@ mod tests {
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
-            let bad_signature = &crate::cryptography::signcryption::internal_sign(
-                &DSEP_PUBLIC_DECRYPTION,
-                &bad_value_buf,
-                &sk0,
-            )
-            .unwrap();
+            let bad_signature =
+                &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let bad_signature_buf = bad_signature.sig.to_vec();
 
             assert!(
@@ -1068,12 +1105,7 @@ mod tests {
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
-            let signature = &crate::cryptography::signcryption::internal_sign(
-                &DSEP_PUBLIC_DECRYPTION,
-                &bad_value_buf,
-                &sk0,
-            )
-            .unwrap();
+            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
             assert!(
@@ -1095,12 +1127,7 @@ mod tests {
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
-            let signature = &crate::cryptography::signcryption::internal_sign(
-                &DSEP_PUBLIC_DECRYPTION,
-                &bad_value_buf,
-                &sk0,
-            )
-            .unwrap();
+            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
             assert!(
@@ -1122,12 +1149,7 @@ mod tests {
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
-            let signature = &crate::cryptography::signcryption::internal_sign(
-                &DSEP_PUBLIC_DECRYPTION,
-                &bad_value_buf,
-                &sk0,
-            )
-            .unwrap();
+            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &bad_value_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
             assert!(
@@ -1138,12 +1160,7 @@ mod tests {
 
         // happy path
         {
-            let signature = &crate::cryptography::signcryption::internal_sign(
-                &DSEP_PUBLIC_DECRYPTION,
-                &pivot_buf,
-                &sk0,
-            )
-            .unwrap();
+            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
 
             assert!(
@@ -1181,12 +1198,7 @@ mod tests {
                 request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
-            let signature = &crate::cryptography::signcryption::internal_sign(
-                &DSEP_PUBLIC_DECRYPTION,
-                &payload_buf,
-                &sk0,
-            )
-            .unwrap();
+            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
             PublicDecryptionResponse {
@@ -1206,12 +1218,7 @@ mod tests {
                 request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
-            let signature = &crate::cryptography::signcryption::internal_sign(
-                &DSEP_PUBLIC_DECRYPTION,
-                &payload_buf,
-                &sk1,
-            )
-            .unwrap();
+            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
             let signature_buf = signature.sig.to_vec();
 
             PublicDecryptionResponse {
@@ -1279,12 +1286,8 @@ mod tests {
                     request_id,
                 };
                 let payload_buf = bc2wrap::serialize(&payload).unwrap();
-                let signature = &crate::cryptography::signcryption::internal_sign(
-                    &DSEP_PUBLIC_DECRYPTION,
-                    &payload_buf,
-                    &sk1,
-                )
-                .unwrap();
+                let signature =
+                    &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
                 let signature_buf = signature.sig.to_vec();
 
                 PublicDecryptionResponse {
@@ -1361,12 +1364,7 @@ mod tests {
                 request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
-            let signature = &crate::cryptography::signcryption::internal_sign(
-                &DSEP_PUBLIC_DECRYPTION,
-                &payload_buf,
-                &sk0,
-            )
-            .unwrap();
+            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk0).unwrap();
             let signature_buf = signature.sig.to_vec();
 
             PublicDecryptionResponse {
@@ -1386,12 +1384,7 @@ mod tests {
                 request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
-            let signature = &crate::cryptography::signcryption::internal_sign(
-                &DSEP_PUBLIC_DECRYPTION,
-                &payload_buf,
-                &sk1,
-            )
-            .unwrap();
+            let signature = &internal_sign(&DSEP_PUBLIC_DECRYPTION, &payload_buf, &sk1).unwrap();
             let signature_buf = signature.sig.to_vec();
 
             PublicDecryptionResponse {

@@ -1073,7 +1073,7 @@ mod tests {
     use crate::execution::config::BatchParams;
     use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
     use crate::execution::runtime::party::Role;
-    use crate::execution::runtime::session::SmallSession;
+    use crate::execution::runtime::sessions::small_session::SmallSession;
     use crate::execution::sharing::shamir::{InputOp, RevealOp};
     use crate::execution::sharing::shamir::{ShamirFieldPoly, ShamirSharings};
     use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};

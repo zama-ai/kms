@@ -7,7 +7,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         online::triple::Triple,
-        runtime::session::LargeSessionHandles,
+        runtime::sessions::large_session::LargeSessionHandles,
         sharing::{
             open::{RobustOpen, SecureRobustOpen},
             share::Share,
@@ -38,7 +38,7 @@ impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: RobustOpen> Protocol
     for RealLargePreprocessing<Z, S, D, RO>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-RealLargePreprocessing:\n{}\n{}\n{}",
             indent,
@@ -277,6 +277,7 @@ mod tests {
     use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert};
     use crate::execution::config::BatchParams;
     use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
+    use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::malicious_execution::large_execution::{
         malicious_coinflip::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
@@ -314,7 +315,7 @@ mod tests {
             online::triple::Triple,
             runtime::{
                 party::Role,
-                session::{BaseSessionHandles, LargeSession, LargeSessionHandles},
+                sessions::large_session::{LargeSession, LargeSessionHandles},
             },
             sharing::{
                 open::{RobustOpen, SecureRobustOpen},

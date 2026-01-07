@@ -6,68 +6,92 @@ use anyhow::Result;
 use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
-use observability::metrics_names::{ERR_CRS_GEN_FAILED, OP_CRS_GEN_REQUEST};
+use observability::metrics_names::{
+    OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_CONTEXT_ID,
+    TAG_PARTY_ID,
+};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::sync::{OwnedSemaphorePermit, RwLock};
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response};
 use tracing::Instrument;
 
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::cryptography::signatures::PrivateSigKey;
 use crate::engine::base::CrsGenMetadata;
 use crate::engine::centralized::central_kms::{async_generate_crs, CentralizedKms};
 use crate::engine::traits::{BackupOperator, ContextManager};
-use crate::engine::validation::{
-    parse_proto_request_id, validate_crs_gen_request, RequestIdParsingErr,
+use crate::engine::utils::MetricedError;
+use crate::engine::validation::{proto_request_id, validate_crs_gen_request, RequestIdParsingErr};
+use crate::util::meta_store::{
+    add_req_to_meta_store, retrieve_from_meta_store, update_err_req_in_meta_store, MetaStore,
 };
-use crate::ok_or_tonic_abort;
-use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
-use crate::vault::storage::Storage;
+use crate::vault::storage::{Storage, StorageExt};
 
 /// Implementation of the crs_gen endpoint
 pub async fn crs_gen_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<CrsGenRequest>,
-) -> Result<Response<Empty>, Status> {
+    insecure: bool,
+) -> Result<Response<Empty>, MetricedError> {
     tracing::info!("Received CRS generation request");
-    let _timer = METRICS.time_operation(OP_CRS_GEN_REQUEST).start();
+    // Retrieve the correct tag
+    let op_tag = if insecure {
+        OP_INSECURE_CRS_GEN_REQUEST
+    } else {
+        OP_CRS_GEN_REQUEST
+    };
 
-    let permit = service.rate_limiter.start_crsgen().await?;
-
+    let permit = service
+        .rate_limiter
+        .start_crsgen()
+        .await
+        .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
+    let mut timer = METRICS
+        .time_operation(op_tag)
+        .tag(TAG_PARTY_ID, "central".to_string())
+        .start();
     let inner = request.into_inner();
-    let (req_id, params, eip712_domain, _context_id) = validate_crs_gen_request(inner.clone())?;
+    let (req_id, context_id, _witness_dimension, params, eip712_domain) =
+        validate_crs_gen_request(inner.clone()).map_err(|e| {
+            MetricedError::new(
+                op_tag,
+                None,
+                e, // Validation error
+                tonic::Code::InvalidArgument,
+            )
+        })?;
+    timer.tag(TAG_CONTEXT_ID, context_id.to_string());
 
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused
     // all validation must be done before inserting the request ID
-    {
-        let mut guarded_meta_store = service.crs_meta_map.write().await;
-        if guarded_meta_store.exists(&req_id) {
-            return Err(tonic::Status::new(
-                tonic::Code::AlreadyExists,
-                format!("CRS with ID {req_id} already exists"),
-            ));
-        };
-        ok_or_tonic_abort(
-            guarded_meta_store.insert(&req_id),
-            "Could not insert CRS generation into meta store".to_string(),
-        )?;
-    }
+    add_req_to_meta_store(&mut service.crs_meta_map.write().await, &req_id, op_tag).await?;
 
     let meta_store = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();
-    let sk = Arc::clone(&service.base_kms.sig_key);
+    let sk = service
+            .base_kms
+            .sig_key()
+            .map_err(|e| {
+        MetricedError::new(
+            op_tag,
+            Some(req_id),
+            anyhow::anyhow!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+            tonic::Code::FailedPrecondition,
+        )
+    })?;
+
     let rng = service.base_kms.new_rng().await;
 
     let handle = service.tracker.spawn(
         async move {
-            let _timer = _timer;
-            if let Err(e) = crs_gen_background(
+            let _timer = timer;
+            crs_gen_background(
                 &req_id,
                 rng,
                 meta_store,
@@ -77,17 +101,9 @@ pub async fn crs_gen_impl<
                 eip712_domain,
                 inner.max_num_bits,
                 permit,
+                op_tag,
             )
-            .await
-            {
-                METRICS.increment_error_counter(OP_CRS_GEN_REQUEST, ERR_CRS_GEN_FAILED);
-                tracing::error!("CRS generation of request {} failed: {}", req_id, e);
-            } else {
-                tracing::info!(
-                    "CRS generation of request {} completed successfully.",
-                    req_id
-                );
-            }
+            .await;
         }
         .instrument(tracing::Span::current()),
     );
@@ -98,22 +114,27 @@ pub async fn crs_gen_impl<
 /// Implementation of the get_crs_gen_result endpoint
 pub async fn get_crs_gen_result_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
-) -> Result<Response<CrsGenResult>, Status> {
+    insecure: bool,
+) -> Result<Response<CrsGenResult>, MetricedError> {
+    // Retrieve the correct tag
+    let op_tag = if insecure {
+        OP_INSECURE_CRS_GEN_REQUEST
+    } else {
+        OP_CRS_GEN_RESULT
+    };
     let request_id =
-        parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)?;
+        proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)
+            .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
     tracing::debug!("Received CRS gen result request with id {}", request_id);
 
-    let status = {
-        let guarded_meta_store = service.crs_meta_map.read().await;
-        guarded_meta_store.retrieve(&request_id)
-    };
-    let crs_info = handle_res_mapping(status, &request_id, "CRS").await?;
+    let crs_info =
+        retrieve_from_meta_store(service.crs_meta_map.read().await, &request_id, op_tag).await?;
 
     match crs_info {
         CrsGenMetadata::LegacyV0(_) => {
@@ -137,10 +158,15 @@ pub async fn get_crs_gen_result_impl<
         }
         CrsGenMetadata::Current(crs_info) => {
             if request_id != crs_info.crs_id {
-                return Err(Status::internal(format!(
-                    "Request ID mismatch: expected {}, got {}",
-                    request_id, crs_info.crs_id
-                )));
+                return Err(MetricedError::new(
+                    op_tag,
+                    Some(request_id),
+                    anyhow::anyhow!(
+                        "Request ID mismatch: expected {request_id}, got {}",
+                        crs_info.crs_id
+                    ),
+                    tonic::Code::NotFound,
+                ));
             }
 
             Ok(Response::new(CrsGenResult {
@@ -157,7 +183,7 @@ pub async fn get_crs_gen_result_impl<
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn crs_gen_background<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
 >(
     req_id: &RequestId,
     rng: AesRng,
@@ -168,7 +194,8 @@ pub(crate) async fn crs_gen_background<
     eip712_domain: Eip712Domain,
     max_number_bits: Option<u32>,
     permit: OwnedSemaphorePermit,
-) -> Result<(), anyhow::Error> {
+    op_tag: &'static str,
+) {
     let _permit = permit;
     let start = tokio::time::Instant::now();
 
@@ -176,24 +203,25 @@ pub(crate) async fn crs_gen_background<
         match async_generate_crs(&sk, params, max_number_bits, eip712_domain, req_id, rng).await {
             Ok((pp, crs_info)) => (pp, crs_info),
             Err(e) => {
-                tracing::error!("Error in inner CRS generation: {}", e);
-                let mut guarded_meta_store = meta_store.write().await;
-                let _ = guarded_meta_store.update(
+                let _ = update_err_req_in_meta_store(
+                    &mut meta_store.write().await,
                     req_id,
-                    Err(format!(
-                        "Failed CRS generation for CRS with ID {req_id}: {e}"
-                    )),
+                    e.to_string(),
+                    op_tag,
                 );
-                return Err(anyhow::anyhow!("Failed CRS generation: {}", e));
+                return;
             }
         };
 
     crypto_storage
-        .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)
+        .write_crs_with_meta_store(req_id, pp, crs_info, meta_store, op_tag)
         .await;
 
     tracing::info!("⏱️ Core Event Time for CRS-gen: {:?}", start.elapsed());
-    Ok(())
+    tracing::info!(
+        "CRS generation of request {} completed successfully.",
+        req_id
+    );
 }
 
 #[cfg(test)]
@@ -221,8 +249,10 @@ mod tests {
             domain: Some(domain.clone()),
             max_num_bits: Some(2048),
         };
-        let _res = crs_gen_impl(&kms, Request::new(request)).await.unwrap();
-        let _ = get_crs_gen_result_impl(&kms, Request::new(req_id.into()))
+        let _res = crs_gen_impl(&kms, Request::new(request), true)
+            .await
+            .unwrap();
+        let _ = get_crs_gen_result_impl(&kms, Request::new(req_id.into()), false)
             .await
             .unwrap();
     }
@@ -240,10 +270,12 @@ mod tests {
             domain: Some(domain.clone()),
             max_num_bits: Some(2048),
         };
-        let _res = crs_gen_impl(&kms, Request::new(request.clone()))
+        let _res = crs_gen_impl(&kms, Request::new(request.clone()), false)
             .await
             .unwrap();
-        let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+        let err = crs_gen_impl(&kms, Request::new(request), true)
+            .await
+            .unwrap_err();
         assert_eq!(err.code(), tonic::Code::AlreadyExists);
     }
 
@@ -263,7 +295,9 @@ mod tests {
                 domain: Some(domain.clone()),
                 max_num_bits: None,
             };
-            let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+            let err = crs_gen_impl(&kms, Request::new(request), false)
+                .await
+                .unwrap_err();
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
 
@@ -276,7 +310,9 @@ mod tests {
                 domain: Some(domain.clone()),
                 max_num_bits: None,
             };
-            let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+            let err = crs_gen_impl(&kms, Request::new(request), false)
+                .await
+                .unwrap_err();
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
 
@@ -291,7 +327,9 @@ mod tests {
                 domain: Some(domain.clone()),
                 max_num_bits: None,
             };
-            let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+            let err = crs_gen_impl(&kms, Request::new(request), false)
+                .await
+                .unwrap_err();
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
 
@@ -304,7 +342,9 @@ mod tests {
                 domain: None, // missing
                 max_num_bits: None,
             };
-            let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+            let err = crs_gen_impl(&kms, Request::new(request), false)
+                .await
+                .unwrap_err();
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
 
@@ -319,7 +359,9 @@ mod tests {
                 domain: Some(domain.clone()),
                 max_num_bits: None,
             };
-            let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+            let err = crs_gen_impl(&kms, Request::new(request), false)
+                .await
+                .unwrap_err();
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
 
@@ -332,7 +374,9 @@ mod tests {
                 domain: Some(domain),
                 max_num_bits: Some(123), // invalid
             };
-            let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+            let err = crs_gen_impl(&kms, Request::new(request), false)
+                .await
+                .unwrap_err();
             assert_eq!(err.code(), tonic::Code::InvalidArgument);
         }
     }
@@ -342,7 +386,8 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let bad_req_id = derive_request_id("test_crs_gen_not_found").unwrap();
-        let get_result = get_crs_gen_result_impl(&kms, Request::new(bad_req_id.into())).await;
+        let get_result =
+            get_crs_gen_result_impl(&kms, Request::new(bad_req_id.into()), false).await;
         assert_eq!(get_result.unwrap_err().code(), tonic::Code::NotFound);
     }
 
@@ -361,7 +406,9 @@ mod tests {
             domain: Some(domain),
             max_num_bits: None,
         };
-        let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+        let err = crs_gen_impl(&kms, Request::new(request), false)
+            .await
+            .unwrap_err();
         assert_eq!(err.code(), tonic::Code::ResourceExhausted);
     }
 }

@@ -12,10 +12,11 @@ members = [
 ]
 
 # The backward-compatibility modules are excluded from the workspace to avoid dependency conflicts.
-# 
+#
 # backward-compatibility/                - Test loading/execution logic with current dependencies
 # backward-compatibility/generate-v0.11.0 - Data generation for v0.11.0 with old KMS version dependencies
 # backward-compatibility/generate-v0.11.1 - Data generation for v0.11.1 with old KMS version dependencies
+# backward-compatibility/generate-v0.13.0 - Data generation for v0.13.0 with old KMS version dependencies
 #
 # The generate crates need to import old KMS versions (e.g., v0.11.0, v0.11.1) which conflict with the
 # current workspace dependencies, creating name conflicts as described in:
@@ -24,14 +25,16 @@ members = [
 # Note: It's not possible to only generate the lock file using specific features as the resolver
 # builds the graph as if all features are enabled:
 # https://doc.rust-lang.org/cargo/reference/resolver.html#features
-exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11.0", "backward-compatibility/generate-v0.11.1"]
+exclude = ["backward-compatibility", "backward-compatibility/generate-v0.11.0", "backward-compatibility/generate-v0.11.1", "backward-compatibility/generate-v0.13.0"]
 
 [workspace.package]
 authors = ["Zama"]
 publish = true
 edition = "2021"
 license = "BSD-3-Clause-Clear"
-version = "0.12.0"
+version = "0.13.0-rc.0"
+repository = "https://github.com/zama-ai/kms"
+description = "Key Management System for the Zama Protocol."
 
 [workspace.dependencies]
 # ⚠️ WORKSPACE DEPENDENCY MANAGEMENT BEST PRACTICES ⚠️
@@ -64,6 +67,7 @@ version = "0.12.0"
 backward-compatibility = { path = "./backward-compatibility" }  # Internal backward compatibility testing
 bc2wrap = { path = "./bc2wrap" }  # Internal bincode wrapper custom implementation
 kms = { path = "./core/service", default-features = false }  # Core KMS service
+kms-core-client = { path = "./core-client" }  # Core KMS client library
 kms-grpc = { path = "./core/grpc", default-features = false }  # KMS gRPC interface
 observability = { path = "./observability" }  # Internal observability module
 threshold-fhe = { path = "./core/threshold/", default-features = false }  # Threshold FHE implementation
@@ -75,8 +79,8 @@ aes-gcm-siv = "=0.11.1"  # AES-GCM-SIV authenticated encryption - LOW RISK: Rust
 aes-prng = "=0.2.1"  # AES-based PRNG for deterministic randomness - LOW RISK: Maintained by @mortendahl (ZAMA) and Dragos
 alloy-dyn-abi = "=1.4.1"  # Ethereum ABI encoding - LOW RISK: Alloy/Paradigm team, reputable, growing ecosystem
 alloy-primitives = "=1.4.1"  # Ethereum primitives - LOW RISK: Alloy/Paradigm team
-alloy-signer = "=1.0.38"  # Ethereum signing abstraction - LOW RISK: Alloy/Paradigm team
-alloy-signer-local = "=1.0.38"  # Local Ethereum signer - LOW RISK: Alloy/Paradigm team
+alloy-signer = "=1.1.2"  # Ethereum signing abstraction - LOW RISK: Alloy/Paradigm team
+alloy-signer-local = "=1.1.2"  # Local Ethereum signer - LOW RISK: Alloy/Paradigm team
 alloy-sol-types = "=1.4.1"  # Solidity types & EIP-712 - LOW RISK: Alloy/Paradigm team
 anyhow = "=1.0.98"  # Error handling - MEDIUM RISK: Reputable individual maintainer (dtolnay), 410M downloadss
 assert_cmd = "=2.0.17"  # Assert command for testing - LOW RISK: assert-rs team, 1M+ downloads
@@ -94,12 +98,15 @@ aws-smithy-types = { version = "=1.2.9" }  # AWS Smithy types - LOW RISK: Offici
 axum = { version = "=0.8.4", features = ["tokio"] }  # Web framework - LOW RISK: tokio-rs team, 168M+ downloads, actively maintained
 backoff = "=0.4.0"  # Retry with exponential backoff - HIGH RISK: Individual maintainer (ihrwein), despite 50M+ downloads
 base64 = "=0.22.1"  # Base64 encoding - HIGH RISK: Individual maintainer (marshallpierce), despite 718M downloads
-bincode = { version = "=2.0.1", features = ["serde"] }  # Binary serialization - LOW RISK: bincode-org, 147M+ downloads
+# WARNING: Bincode beyond 2.0.1 may never be used! Due to actions by the project we consider newer versions compromised
+# See https://www.reddit.com/r/rust/comments/1pnz1iz/bincode_development_has_ceased_permanently/
+bincode = { version = "=2.0.1", features = ["serde"] }  # Binary serialization - CRITICAL RISK: bincode-org, 147M+ downloads
 bip39 = { version = "=2.2.0", features = ["alloc"] }  # BIP39 mnemonic seed phrases - LOW RISK: rust-bitcoin org (reputable), CI enabled
 bytes = "=1.10.1"  # Byte buffer utilities - LOW RISK: tokio team, 100M+ downloads
 cbc = { version = "=0.1.2", features = ["alloc"] }  # CBC block cipher mode - LOW RISK: RustCrypto org, standard cipher mode
 cfg-if = "=1.0.3"  # Conditional compilation - LOW RISK: Rust-lang org owned
 clap = { version = "=4.5.47", features = ["derive"] }  # CLI argument parsing - LOW RISK: clap-rs team
+ciborium = "0.2.2" # CBOR support for serde - LOW RISK: Enarx team, 100M+ downloads
 config = "=0.15.15"  # Configuration management - LOW RISK: rust-cli org (team maintained)
 const_format = "=0.2.34"  # Compile-time string formatting - HIGH RISK: Individual maintainer (rodrimati1992), despite 55M+ downloads
 console_error_panic_hook = { version = "=0.1.7" }  # WASM panic hook for better error messages - LOW RISK: rustwasm team
@@ -118,11 +125,12 @@ http = "=1.3.1"  # HTTP types - LOW RISK: hyperium team, 100M+ downloads
 http-legacy = { package = "http", version = "=0.2.12" }  # HTTP types (older version for compatibility) - LOW RISK: hyperium team
 hyper-rustls = { version = "=0.24.2" }  # TLS for hyper HTTP client - LOW RISK: rustls team, memory-safe TLS
 hyper-rustls-ring = { package = "hyper-rustls", version = "=0.27.7", default-features = false, features = ["http2", "ring"] }  # TLS for hyper (newer version) - LOW RISK: rustls team, uses ring backend
+iam-rs = { version = "=0.0.23" } # AWS IAM policy parser/generator - HIGH RISK: individual maintainer, 10K downloads
 itertools = "=0.14.0"  # Iterator utilities - LOW RISK: bluss/rust-itertools, 100M+ downloads
 k256 = "=0.13.4"  # secp256k1 elliptic curve - LOW RISK: RustCrypto org, 33M+ downloads
 lazy_static = "=1.5.0"  # Lazy static initialization - LOW RISK: rust-lang-nursery, 100M+ downloads
 minijinja = { version = "=2.11.0", features = ["loader"] }  # Template engine - HIGH RISK: Individual maintainer (mitsuhiko), despite exceptional track record
-ml-kem = "=0.2.1"  # ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: New standard implementation, needs security audit
+ml-kem = { version = "=0.2.1", features = ["zeroize"] }  # ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: New standard implementation, needs security audit
 mockall = "=0.13.1"  # Mocking for tests - HIGH RISK: Individual maintainer (asomers), test-only dependency
 ndarray = { version = "=0.16.1", features = ["serde"] }  # N-dimensional arrays - LOW RISK: rust-ndarray team
 nom = "=8.0.0"  # Parser combinator library - HIGH RISK: Individual maintainer (Geal), despite 319M+ downloads
@@ -173,7 +181,7 @@ syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - MEDIUM RIS
 sysinfo = "0.36.1"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
 tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency
 test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual maintainers (markhildreth, JasperV), test-only dependency
-tfhe = "=1.4.0-alpha.3"  # Fully Homomorphic Encryption library - LOW RISK: Zama
+tfhe = "=1.4.2"  # Fully Homomorphic Encryption library - LOW RISK: Zama
 tfhe-csprng = "=0.7.0"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
 tfhe-versionable = "=0.6.2"  # TFHE versioning support - LOW RISK: Zama
 tfhe-zk-pok = "=0.7.3"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
@@ -238,6 +246,7 @@ lto = "off"
 
 [patch.crates-io]
 # MEDIUM RISK: Using fork instead of upstream - verify changes, consider upstreaming
+attestation-doc-validation = { git = 'https://github.com/mkmks/attestation-doc-validation.git', branch = 'timestamps' }
 rcgen = { git = 'https://github.com/mkmks/rcgen.git', branch = 'k256' }
 rustls = { git = 'https://github.com/mkmks/rustls.git', branch = 'k256' }
 rustls-pki-types = { git = 'https://github.com/mkmks/pki-types.git', branch = 'k256' }

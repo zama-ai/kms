@@ -22,7 +22,7 @@ jobs:
     environment: main
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -44,7 +44,35 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
+      - name: Check if helm release already exists
+        id: check-release
+        env:
+          OCI_REGISTRY: 'oci://ghcr.io/${{ github.repository }}/charts'
+        run: |
+          CHART_NAME=$(grep '^name:' charts/kms-core/Chart.yaml | awk '{print $2}' | tr -d '[:space:]')
+          CHART_VERSION=$(grep '^version:' charts/kms-core/Chart.yaml | awk '{print $2}' | tr -d '[:space:]')
+
+          if [ -z "${CHART_NAME}" ] || [ -z "${CHART_VERSION}" ]; then
+            echo "Error: Failed to extract chart name or version from Chart.yaml"
+            echo "CHART_NAME: '${CHART_NAME}'"
+            echo "CHART_VERSION: '${CHART_VERSION}'"
+            exit 1
+          fi
+
+          CHART_REF="${OCI_REGISTRY}/${CHART_NAME}"
+
+          echo "Checking if release ${CHART_REF} already exists..."
+
+          if helm show chart "${CHART_REF}" --version "${CHART_VERSION}" > /dev/null 2>&1; then
+            echo "Release already exists for version ${CHART_VERSION}"
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release does not exist for version ${CHART_VERSION}"
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run chart-releaser
+        if: steps.check-release.outputs.release_exists == 'false'
         uses: helm/chart-releaser-action@cae68fefc6b5f367a0275617c9f83181ba54714f # v1.7.0
         env:
           CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -57,9 +85,9 @@ jobs:
           charts_dir: charts
 
       - name: Push Charts to GHCR
-        if: ${{ always() }}
+        if: always() && steps.check-release.outputs.release_exists == 'false'
         env:
-          OCI_REGISTRY: "oci://ghcr.io/${{ github.repository }}/charts"
+          OCI_REGISTRY: 'oci://ghcr.io/${{ github.repository }}/charts'
         run: |
           for pkg in .cr-release-packages/*; do
             if [ -z "${pkg:-}" ]; then

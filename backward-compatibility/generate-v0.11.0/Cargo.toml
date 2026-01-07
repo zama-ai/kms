@@ -9,6 +9,8 @@ license = "BSD-3-Clause-Clear"
 [dependencies]
 # Import the base backward-compatibility crate for shared types and utilities
 backward-compatibility = { path = ".." }
+# Import bc2wrap from v0.11.0 to match exact serialization behavior
+bc2wrap = { git = "https://github.com/zama-ai/kms.git", package = "bc2wrap", rev = "v0.11.0" }
 
 # NOTE: Some dependencies below are duplicated from ../Cargo.toml
 # This is intentional - these crates are excluded from the workspace for isolation.
@@ -36,7 +38,10 @@ alloy-primitives-1_1_2 = { package = "alloy-primitives", version = "=1.1.2" }
 # The old KMS types (kms_0_11_0) will use their own serde 1.0.219 from their dependency tree.
 # Both serde versions coexist in the same binary - this is intentional and correct!
 serde = { version = ">=1.0.219, <=1.0.226", features = ["derive"] }
-bincode = "=1.3.3"
+# bincode needed for generate.rs utility functions, must match bc2wrap version (2.0.1 from v0.11.0)
+# WARNING: Bincode beyond 2.0.1 may never be used! Due to actions by the project we consider newer versions compromised
+# See https://www.reddit.com/r/rust/comments/1pnz1iz/bincode_development_has_ceased_permanently/
+bincode = { version = "=2.0.1", features = ["serde"] }
 aes-prng = "=0.2.1"
 rand = "=0.8.5"
 ron = { version = "=0.10.1", features = ["integer128"] }

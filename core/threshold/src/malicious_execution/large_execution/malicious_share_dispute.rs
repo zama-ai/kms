@@ -7,7 +7,7 @@ use crate::{
             send_and_receive_share_dispute_single, share_secrets, ShareDispute, ShareDisputeOutput,
             ShareDisputeOutputDouble,
         },
-        runtime::{party::Role, session::LargeSessionHandles},
+        runtime::{party::Role, sessions::large_session::LargeSessionHandles},
     },
     networking::value::NetworkValue,
     ProtocolDescription,
@@ -22,7 +22,7 @@ pub struct DroppingShareDispute {}
 
 impl ProtocolDescription for DroppingShareDispute {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-DroppingShareDispute")
     }
 }
@@ -52,7 +52,7 @@ pub struct WrongShareDisputeRecons {}
 
 impl ProtocolDescription for WrongShareDisputeRecons {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-WrongShareDisputeRecons")
     }
 }
@@ -144,7 +144,7 @@ pub struct MaliciousShareDisputeRecons {
 
 impl ProtocolDescription for MaliciousShareDisputeRecons {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-MaliciousShareDisputeRecons")
     }
 }

@@ -1,9 +1,4 @@
-use alloy_dyn_abi::Eip712Domain;
-use alloy_primitives::B256;
 use anyhow::anyhow;
-use kms_grpc::{
-    kms::v1::UserDecryptionResponsePayload, solidity_types::UserDecryptResponseVerification,
-};
 use std::{fmt, panic::Location};
 
 pub mod client;
@@ -19,20 +14,11 @@ pub mod util {
     pub mod rate_limiter;
     pub mod retry;
 }
-pub mod cryptography {
-    #[cfg(feature = "non-wasm")]
-    pub mod attestation;
-    pub mod backup_pke;
-    pub mod decompression;
-    pub mod error;
-    pub mod hybrid_ml_kem;
-    pub mod internal_crypto_types;
-    pub mod signcryption;
-}
 #[cfg(feature = "non-wasm")]
 pub mod backup;
 #[cfg(feature = "non-wasm")]
 pub mod conf;
+pub mod cryptography;
 pub mod engine;
 #[cfg(feature = "non-wasm")]
 pub mod grpc;
@@ -80,52 +66,6 @@ pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) ->
     anyhow!("Warning in {}: {}", Location::caller(), msg)
 }
 
-pub fn compute_user_decrypt_message_hash(
-    payload: &UserDecryptionResponsePayload,
-    eip712_domain: &Eip712Domain,
-    user_pk: &UnifiedPublicEncKey,
-    extra_data: Vec<u8>,
-) -> anyhow::Result<B256> {
-    use alloy_sol_types::SolStruct;
-    // convert external_handles back to bytes32 to be signed
-    let external_handles: Vec<_> = payload
-        .signcrypted_ciphertexts
-        .iter()
-        .enumerate()
-        .map(|(idx, c)| {
-            if c.external_handle.len() > 32 {
-                anyhow::bail!(
-                    "external_handle at index {idx} too long: {} bytes (max 32)",
-                    c.external_handle.len()
-                );
-            } else {
-                Ok(alloy_primitives::FixedBytes::<32>::left_padding_from(
-                    c.external_handle.as_slice(),
-                ))
-            }
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let user_decrypted_share_buf = bc2wrap::serialize(payload)?;
-
-    // the solidity structure to sign with EIP-712
-    // note that the JS client must also use the same encoding to verify the result
-    let user_pk_buf = user_pk.bytes_for_hashing()?;
-    let message = UserDecryptResponseVerification {
-        publicKey: user_pk_buf.into(),
-        ctHandles: external_handles,
-        userDecryptedShare: user_decrypted_share_buf.into(),
-        extraData: extra_data.into(),
-    };
-
-    let message_hash = message.eip712_signing_hash(eip712_domain);
-    tracing::info!(
-        "UserDecryptResponseVerification EIP-712 Message hash: {:?}",
-        message_hash
-    );
-    Ok(message_hash)
-}
-
 /// Create a dummy domain for testing
 #[cfg(any(test, all(feature = "non-wasm", feature = "testing")))]
 pub(crate) fn dummy_domain() -> alloy_sol_types::Eip712Domain {
@@ -139,5 +79,3 @@ pub(crate) fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 
 // re-export DecryptionMode
 pub use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-
-use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;

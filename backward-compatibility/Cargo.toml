@@ -1,6 +1,6 @@
 [package]
 name = "backward-compatibility"
-version = "0.12.0"
+version = "0.13.0-rc.0"
 publish = false
 authors = ["Zama"]
 edition = "2021"
@@ -8,12 +8,14 @@ license = "BSD-3-Clause-Clear"
 
 [dependencies]
 # Dependencies for loading and testing backward compatibility data
-# Use ranges (starting from 0.11.0 deps) to support 
+# Use ranges (starting from 0.11.0 deps) to support
 # multiple generator versions while maintaining compatibility
 serde = { version = ">=1.0.219, <2", features = ["derive"] }
 strum = { version = ">=0.27, <1", features = ["derive"] }
 semver = { version = ">=1.0, <2", optional = true }
 ron = { version = ">=0.10, <0.11", features = ["integer128"] }
+# WARNING: Bincode beyond 2.0.1 may never be used! Due to actions by the project we consider newer versions compromised
+# See https://www.reddit.com/r/rust/comments/1pnz1iz/bincode_development_has_ceased_permanently/
 bincode = "=1.3.3"  # Keeping exact - binary format must be stable
 
 [features]

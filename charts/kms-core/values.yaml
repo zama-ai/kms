@@ -86,28 +86,38 @@ kmsCore:
         - pcr0: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
           pcr1: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
           pcr2: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      # Allows to ignore the results of AWS CA chain check (use with caution!)
+      ignoreAwsCaChain: false
+      # Enables mutual attestation of private vault root key policies
+      attestPrivateVaultRootKey: false
     # This value appears in the config file as `threshold`.
     multiplier: 2.0
     maxInterval: 60
     maxElapsedTime: 300
     networkTimeout: 300
     initialIntervalMs: 100
+    maxOpenedInactiveSessionsPerParty: 1000
     enableSysMetrics: true
     refreshIntervalMs: 5000
-    tokioWorkerThreads: 6
-    rayonNumThreads: 43
+    tokioWorkerThreads: 10
+    rayonNumThreads: 40
     # Threshold value is the number of corruptions that the protocol handles.
     # 1 for 4 parties, 4 for 13 parties
     thresholdValue: 4
     decCapacity: 10000
     minDecCache: 6000
     # Number of sessions to pre-process should be equal to number of vCPUs
-    numSessionsPreproc: 64
+    numSessionsPreproc: 100
     decryptionMode: "NoiseFloodSmall"
   # Add the following to enable nitro enclave:
   # Nitro enclave needs specific instance types
   nitroEnclave:
     enabled: false
+    # Socat proxy configuration
+    socat:
+      # Inactivity timeout in seconds for socat proxies
+      # This prevents child processes from hanging indefinitely
+      timeout: 180
     signed: false
     # Enclave CPU count, must be a multiple of 2 since whole cores (not hyperthreads) are sliced off and dedicated to the enclave
     cpuCount: 48
@@ -177,6 +187,18 @@ kmsCore:
     client: 50100
     peer: 50001
     metrics: 9646
+  readinessProbe:
+    failureThreshold: 30
+    initialDelaySeconds: 10
+    periodSeconds: 5
+  startupProbe:
+    failureThreshold: 10
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  livenessProbe:
+    failureThreshold: 10
+    initialDelaySeconds: 10
+    timeoutSeconds: 5
   workdir: /root
   serviceMonitor:
     enabled: false
@@ -291,8 +313,8 @@ podSecurityContext:
   #  runAsGroup: 1000
   #  fsGroup: 1000
   #  runAsNonRoot: true
+containerSecurityContext:
   allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: true
   capabilities:
     drop:
       - ALL

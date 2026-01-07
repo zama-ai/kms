@@ -3,17 +3,21 @@ cfg_if::cfg_if! {
         pub mod test_tools;
 
         use crate::dummy_domain;
-        use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
         use crate::engine::base::INSECURE_PREPROCESSING_ID;
         use crate::engine::base::{compute_info_crs, CrsGenMetadata};
+        use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
-        use crate::engine::threshold::service::{ThresholdFheKeys};
+        use crate::engine::threshold::service::ThresholdFheKeys;
         use crate::vault::storage::crypto_material::{
-            calculate_max_num_bits, check_data_exists, get_core_signing_key,
+            calculate_max_num_bits, check_data_exists, check_data_exists_at_epoch, get_core_signing_key,
         };
-        use crate::vault::storage::{store_pk_at_request_id, Storage};
+        use crate::vault::storage::{
+            store_pk_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt,
+        };
         use futures_util::future;
+        use kms_grpc::identifiers::EpochId;
         use kms_grpc::rpc_types::WrappedPublicKey;
+        use std::sync::Arc;
         use tfhe::Seed;
         use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
         use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -21,18 +25,17 @@ cfg_if::cfg_if! {
         use threshold_fhe::execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
         use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
         use threshold_fhe::session_id::SessionId;
-        use std::sync::Arc;
-
     }
 }
 
 use crate::client::client_non_wasm::ClientDataType;
-use crate::cryptography::internal_crypto_types::gen_sig_keys;
+use crate::consts::SIGNING_KEY_ID;
+use crate::cryptography::signatures::{gen_sig_keys, PrivateSigKey};
 use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{get_rng, log_data_exists, log_storage_success};
 use crate::vault::storage::{
     file::FileStorage, read_all_data_versioned, store_text_at_request_id,
-    store_versioned_at_request_id, StorageForBytes, StorageReader, StorageType,
+    store_versioned_at_request_id, Storage, StorageReader, StorageType,
 };
 use itertools::Itertools;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
@@ -79,13 +82,13 @@ pub async fn ensure_client_keys_exist(
     };
 
     // Check if keys already exist with error handling
-    let temp: HashMap<RequestId, crate::cryptography::internal_crypto_types::PrivateSigKey> =
+    let temp: HashMap<RequestId, PrivateSigKey> =
         match read_all_data_versioned(&client_storage, &ClientDataType::SigningKey.to_string())
             .await
         {
             Ok(keys) => keys,
             Err(e) => {
-                tracing::error!("Failed to read existing client keys: {}", e);
+                tracing::error!("Failed to read existing client signing keys: {}", e);
                 return false;
             }
         };
@@ -162,11 +165,11 @@ pub async fn ensure_central_server_signing_keys_exist<PubS, PrivS>(
     deterministic: bool,
 ) -> bool
 where
-    PubS: StorageForBytes,
-    PrivS: StorageForBytes,
+    PubS: Storage,
+    PrivS: Storage,
 {
     // Check if keys already exist with error handling
-    let temp: HashMap<RequestId, crate::cryptography::internal_crypto_types::PrivateSigKey> =
+    let temp: HashMap<RequestId, PrivateSigKey> =
         match read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string()).await {
             Ok(keys) => keys,
             Err(e) => {
@@ -205,7 +208,7 @@ where
         false,
     );
 
-    let ethereum_address = alloy_signer::utils::public_key_to_address(pk.pk());
+    let ethereum_address = pk.address();
 
     // Store ethereum address (derived from public key), needed for KMS signature verification
     if let Err(e) = store_text_at_request_id(
@@ -241,7 +244,7 @@ where
     log_storage_success(
         req_id,
         priv_storage.info(),
-        "central server signing key",
+        "server signing key",
         false,
         false,
     );
@@ -275,9 +278,10 @@ pub async fn ensure_central_crs_exists<PubS, PrivS>(
 ) -> bool
 where
     PubS: Storage,
-    PrivS: Storage,
+    PrivS: StorageExt,
 {
     // Check if data already exists in both storages
+
     match check_data_exists(
         pub_storage,
         priv_storage,
@@ -375,24 +379,27 @@ where
 /// - If key generation fails
 /// - If storage operations fail
 #[cfg(any(test, feature = "testing"))]
+#[allow(clippy::too_many_arguments)]
 pub async fn ensure_central_keys_exist<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
     dkg_params: DKGParams,
     key_id: &RequestId,
     other_key_id: &RequestId,
+    epoch_id: &EpochId,
     deterministic: bool,
     write_privkey: bool,
 ) -> bool
 where
     PubS: Storage,
-    PrivS: Storage,
+    PrivS: StorageExt,
 {
     // Check if data already exists in both storages
-    match check_data_exists(
+    match check_data_exists_at_epoch(
         pub_storage,
         priv_storage,
         key_id,
+        epoch_id,
         &PubDataType::PublicKey.to_string(),
         &PrivDataType::FhePrivateKey.to_string(),
     )
@@ -470,9 +477,10 @@ where
     // Store private key data
     for (req_id, key_info) in &priv_fhe_map {
         // Store key info
-        if let Err(e) = store_versioned_at_request_id(
+        if let Err(e) = store_versioned_at_request_and_epoch_id(
             priv_storage,
             req_id,
+            epoch_id,
             key_info,
             &PrivDataType::FhePrivateKey.to_string(),
         )
@@ -485,9 +493,10 @@ where
 
         // When the flag [write_privkey] is set, store the private key separately
         if write_privkey {
-            if let Err(e) = store_versioned_at_request_id(
+            if let Err(e) = store_versioned_at_request_and_epoch_id(
                 priv_storage,
                 req_id,
+                epoch_id,
                 &key_info.client_key,
                 &PrivDataType::FhePrivateKey.to_string(),
             )
@@ -591,8 +600,8 @@ pub async fn ensure_threshold_server_signing_keys_exist<PubS, PrivS>(
     tls_wildcard: bool,
 ) -> anyhow::Result<bool>
 where
-    PubS: StorageForBytes,
-    PrivS: StorageForBytes,
+    PubS: Storage,
+    PrivS: Storage,
 {
     // Validate input parameters
     if pub_storages.len() != priv_storages.len() {
@@ -630,23 +639,22 @@ where
         let mut rng = get_rng(deterministic, Some(i as u64));
 
         // Check if keys already exist with error handling
-        let temp: HashMap<RequestId, crate::cryptography::internal_crypto_types::PrivateSigKey> =
-            match read_all_data_versioned(
-                &priv_storages[i - 1],
-                &PrivDataType::SigningKey.to_string(),
-            )
-            .await
-            {
-                Ok(keys) => keys,
-                Err(e) => {
-                    tracing::error!(
-                        "Failed to read existing server signing keys for party {}: {}",
-                        { i },
-                        e
-                    );
-                    continue; // Skip this party but try others
-                }
-            };
+        let temp: HashMap<RequestId, PrivateSigKey> = match read_all_data_versioned(
+            &priv_storages[i - 1],
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        {
+            Ok(keys) => keys,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to read existing server signing keys for party {}: {}",
+                    { i },
+                    e
+                );
+                continue; // Skip this party but try others
+            }
+        };
 
         if !temp.is_empty() {
             // If signing keys already exist, then do nothing
@@ -656,17 +664,29 @@ where
                 "",
                 "Threshold server signing keys",
             );
+            // Even if signing keys exist, CA certificates might not
+            if let Some(sk) = temp.get(&SIGNING_KEY_ID) {
+                if !pub_storages[i - 1]
+                    .data_exists(&SIGNING_KEY_ID, &PubDataType::CACert.to_string())
+                    .await?
+                {
+                    ensure_ca_cert_exists(
+                        &mut pub_storages[i - 1],
+                        sk,
+                        request_id,
+                        subject_str,
+                        tls_wildcard,
+                    )
+                    .await?;
+                }
+            } else {
+                tracing::error!("Failed to regenerate CA certificate from existing server signing key for party {i}")
+            };
+
             continue;
         }
 
         let (pk, sk) = gen_sig_keys(&mut rng);
-
-        // self-sign a CA certificate with the private signing key
-        let (ca_cert_ki, ca_cert) = threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
-            subject_str.as_str(),
-            tls_wildcard,
-            sk.sk(),
-        )?;
 
         // Store public verification key
         if let Err(store_err) = store_versioned_at_request_id(
@@ -692,7 +712,7 @@ where
             true,
         );
 
-        let ethereum_address = alloy_signer::utils::public_key_to_address(pk.pk());
+        let ethereum_address = pk.address();
 
         // Store ethereum address (derived from public key), needed for KMS signature verification
         if let Err(store_err) = store_text_at_request_id(
@@ -713,29 +733,6 @@ where
         tracing::info!(
             "Successfully stored ethereum address {} under the handle {} in storage \"{}\"",
             ethereum_address,
-            request_id,
-            pub_storages[i - 1].info()
-        );
-
-        // Store self-signed CA certificate
-        if let Err(store_err) = store_text_at_request_id(
-            &mut pub_storages[i - 1],
-            request_id,
-            &ca_cert.pem(),
-            &PubDataType::CACert.to_string(),
-        )
-        .await
-        {
-            tracing::error!(
-                "Failed to store CA certificate for party {}: {}",
-                i,
-                store_err
-            );
-            continue; // Skip this party but try others
-        }
-        tracing::info!(
-            "Successfully stored CA certificate {} under the handle {} in storage \"{}\"",
-            hex::encode(ca_cert_ki),
             request_id,
             pub_storages[i - 1].info()
         );
@@ -763,9 +760,62 @@ where
             false,
             true,
         );
+
+        // Generate CA certificate
+        ensure_ca_cert_exists(
+            &mut pub_storages[i - 1],
+            &sk,
+            request_id,
+            subject_str,
+            tls_wildcard,
+        )
+        .await?;
     }
     Ok(true)
 }
+
+/// Generates stores CA certificates that are used to issue ephemeral mTLS
+/// certificates in the enclave.
+async fn ensure_ca_cert_exists<PubS: Storage>(
+    pub_storage: &mut PubS,
+    sk: &PrivateSigKey,
+    req_id: &RequestId,
+    subject: String,
+    tls_wildcard: bool,
+) -> anyhow::Result<()> {
+    // self-sign a CA certificate with the private signing key
+    let (ca_cert_ki, ca_cert) = threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
+        subject.as_str(),
+        tls_wildcard,
+        #[allow(deprecated)]
+        sk.sk(),
+    )?;
+
+    // Store self-signed CA certificate
+    if let Err(store_err) = store_text_at_request_id(
+        pub_storage,
+        req_id,
+        &ca_cert.pem(),
+        &PubDataType::CACert.to_string(),
+    )
+    .await
+    {
+        tracing::error!(
+            "Failed to store CA certificate for party {}: {}",
+            subject,
+            store_err
+        );
+    }
+    tracing::info!(
+        "Successfully stored CA certificate {} under the handle {} in storage \"{}\"",
+        hex::encode(ca_cert_ki),
+        req_id,
+        pub_storage.info()
+    );
+
+    Ok(())
+}
+
 /// Generates and stores threshold FHE key shares and metadata.
 ///
 /// Manages the complete threshold FHE key lifecycle:
@@ -788,11 +838,12 @@ pub async fn ensure_threshold_keys_exist<PubS, PrivS>(
     priv_storages: &mut [PrivS],
     dkg_params: DKGParams,
     key_id: &RequestId,
+    epoch_id: &EpochId,
     deterministic: bool,
 ) -> bool
 where
     PubS: Storage,
-    PrivS: Storage,
+    PrivS: StorageExt,
 {
     // Validate input parameters
     if pub_storages.len() != priv_storages.len() {
@@ -815,10 +866,11 @@ where
 
     let mut all_data_exists = true;
     for (pub_storage, priv_storage) in pub_storages.iter().zip_eq(priv_storages.iter()) {
-        match check_data_exists(
+        match check_data_exists_at_epoch(
             pub_storage,
             priv_storage,
             key_id,
+            epoch_id,
             &PubDataType::PublicKey.to_string(),
             &PrivDataType::FheKeyInfo.to_string(),
         )
@@ -858,7 +910,7 @@ where
     }
 
     // Generate key set and shares
-    let keyset = gen_key_set(dkg_params, &mut rng);
+    let keyset = gen_key_set(dkg_params, key_id.into(), &mut rng);
 
     // Generate key shares with error handling
     let key_shares = match keygen_all_party_shares_from_keyset(
@@ -951,9 +1003,10 @@ where
         );
 
         // Store private key data
-        if let Err(store_err) = store_versioned_at_request_id(
+        if let Err(store_err) = store_versioned_at_request_and_epoch_id(
             &mut priv_storages[i - 1],
             key_id,
+            epoch_id,
             &threshold_fhe_keys,
             &PrivDataType::FheKeyInfo.to_string(),
         )
@@ -999,7 +1052,7 @@ pub async fn ensure_threshold_crs_exists<PubS, PrivS>(
 ) -> bool
 where
     PubS: Storage,
-    PrivS: Storage,
+    PrivS: StorageExt,
 {
     if pub_storages.len() != priv_storages.len() {
         panic!("Number of public storages and private storages must be equal");
@@ -1153,7 +1206,7 @@ mod tests {
     use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
 
     use crate::{
-        consts::DEFAULT_PARAM, cryptography::internal_crypto_types::gen_sig_keys, dummy_domain,
+        consts::DEFAULT_PARAM, cryptography::signatures::gen_sig_keys, dummy_domain,
         engine::centralized::central_kms::gen_centralized_crs,
     };
 

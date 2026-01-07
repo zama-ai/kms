@@ -37,7 +37,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     ./core/service/bin
 
 
-ARG YQ_VERSION=v4.47.2
+ARG YQ_VERSION=v4.50.1
 # Overridable arg to allow building for different architectures
 ARG TARGETARCH=amd64
 RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH} && \
@@ -134,18 +134,13 @@ CMD ["/bin/bash", "/app/kms/core/service/bin/init_enclave.sh"]
 
 ################################################################
 # Build the grpc-health-probe binary for development
-FROM golang:1.24.1-alpine AS go-builder
+FROM cgr.dev/zama.ai/golang:1.25 AS go-builder
 
-ARG GRPC_HEALTH_PROBE_VERSION=v0.4.37
+ARG GRPC_HEALTH_PROBE_VERSION=v0.4.42
 
-RUN apk update && apk add --no-cache git && \
-    git clone https://github.com/grpc-ecosystem/grpc-health-probe && \
+RUN git clone https://github.com/grpc-ecosystem/grpc-health-probe && \
     cd grpc-health-probe && \
     git checkout ${GRPC_HEALTH_PROBE_VERSION} && \
-    # Fix CVE-2025-27144
-    go get github.com/go-jose/go-jose/v4@v4.0.5 && \
-    # Fix  CVE-2025-22870
-    go get golang.org/x/net@v0.36.0 && \
     go mod tidy && \
     go build -ldflags="-s -w -extldflags '-static'" -o /out/grpc_health_probe .
 

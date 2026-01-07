@@ -74,8 +74,12 @@ impl ChoreoRuntime {
             .map(|(role, host)| {
                 let endpoint: &Uri = host;
                 println!("connecting to endpoint: {:?}", endpoint);
+                // Use the TLS_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
+                // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
+                // then this should be changed
                 let channel = Channel::builder(endpoint.clone())
                     .timeout(*NETWORK_TIMEOUT_LONG)
+                    .tcp_nodelay(true)
                     .connect_lazy();
                 Ok((*role, channel))
             })
@@ -182,7 +186,8 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses
+                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
             }
         }
 
@@ -234,7 +239,8 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses
+                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
             }
         }
 
@@ -295,7 +301,7 @@ impl ChoreoRuntime {
         //    assert_eq!(response, ref_response);
         //}
         let pub_key = responses.pop().unwrap();
-        let pub_key = bc2wrap::deserialize(&pub_key)?;
+        let pub_key = bc2wrap::deserialize_safe(&pub_key)?;
         Ok(pub_key)
     }
 
@@ -343,7 +349,8 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses
+                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
             }
         }
 
@@ -404,7 +411,8 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses
+                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
             }
         }
 
@@ -443,7 +451,9 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().plaintext))?);
+                responses.push(bc2wrap::deserialize_safe(
+                    &(response?.into_inner().plaintext),
+                )?);
             }
         }
 
@@ -502,7 +512,8 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses
+                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
             }
         }
 
@@ -541,7 +552,7 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner()).crs).unwrap());
+                responses.push(bc2wrap::deserialize_safe(&(response?.into_inner()).crs).unwrap());
             }
         }
 
@@ -593,7 +604,8 @@ impl ChoreoRuntime {
                 println!("Malicious role {role} detected, skipping response.");
                 continue;
             } else {
-                responses.push(bc2wrap::deserialize(&(response?.into_inner().request_id)).unwrap());
+                responses
+                    .push(bc2wrap::deserialize_safe(&(response?.into_inner().request_id)).unwrap());
             }
         }
 
@@ -629,7 +641,7 @@ impl ChoreoRuntime {
 
             while let Some(response) = join_set.join_next().await {
                 let (role, response) = response?;
-                let status: Status = bc2wrap::deserialize(&response?.into_inner().status)?;
+                let status: Status = bc2wrap::deserialize_safe(&response?.into_inner().status)?;
                 result.push((role, status));
             }
 

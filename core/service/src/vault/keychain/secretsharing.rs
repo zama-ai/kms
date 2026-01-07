@@ -1,10 +1,9 @@
-use super::{EnvelopeLoad, EnvelopeStore, Keychain};
-use crate::cryptography::backup_pke::{BackupPrivateKey, BackupPublicKey};
+use super::{EnvelopeLoad, EnvelopeStore, Keychain, RootKeyMeasurements};
 use crate::{
     anyhow_error_and_log,
-    backup::operator::RecoveryRequestPayload,
+    backup::{operator::RecoveryValidationMaterial, BackupCiphertext},
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::backup_pke::{self, BackupCiphertext},
+    cryptography::encryption::{Decrypt, Encrypt, UnifiedPrivateEncKey, UnifiedPublicEncKey},
     vault::storage::{read_versioned_at_request_id, StorageReader},
 };
 use itertools::Itertools;
@@ -12,11 +11,8 @@ use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
 use serde::{de::DeserializeOwned, Serialize};
-use tfhe::{
-    named::Named,
-    safe_serialization::{safe_deserialize, safe_serialize},
-    Unversionize, Versionize,
-};
+use std::sync::Arc;
+use tfhe::{named::Named, safe_serialization::safe_serialize, Unversionize, Versionize};
 
 /// A keychain for managing secret shares.
 /// This key chain is used for backups in order to securely store and retrieve sensitive information.
@@ -29,8 +25,8 @@ use tfhe::{
 pub struct SecretShareKeychain<R: Rng + CryptoRng> {
     rng: R,
     custodian_context_id: Option<RequestId>,
-    backup_enc_key: Option<BackupPublicKey>,
-    dec_key: Option<BackupPrivateKey>,
+    backup_enc_key: Option<UnifiedPublicEncKey>,
+    dec_key: Option<UnifiedPrivateEncKey>,
 }
 
 /// Create a new [`SecretShareKeychain`] used for backups in order to securely store and retrieve sensitive information.
@@ -44,18 +40,29 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
             Some(pub_storage) => {
                 // Try to see if there is already a backup key set
                 let all_backup_ids = pub_storage
-                    .all_data_ids(&PubDataType::RecoveryRequest.to_string())
+                    .all_data_ids(&PubDataType::RecoveryMaterial.to_string())
                     .await?;
                 // Get the latest context ID which should be the most recent one
+                // TODO validate signature using SECRET KEY (since public storage cannot be trusted!)
                 match all_backup_ids.iter().sorted().last() {
                     Some(id) => {
-                        let rec_req: RecoveryRequestPayload = read_versioned_at_request_id(
-                            pub_storage,
-                            id,
-                            &PubDataType::RecoveryRequest.to_string(),
+                        let rec_material: RecoveryValidationMaterial =
+                            read_versioned_at_request_id(
+                                pub_storage,
+                                id,
+                                &PubDataType::RecoveryMaterial.to_string(),
+                            )
+                            .await?;
+                        (
+                            Some(
+                                rec_material
+                                    .payload
+                                    .custodian_context
+                                    .backup_enc_key
+                                    .clone(),
+                            ),
+                            Some(id.to_owned()),
                         )
-                        .await?;
-                        (Some(rec_req.backup_enc_key), Some(id.to_owned()))
                     }
                     None => {
                         tracing::warn!(
@@ -82,12 +89,17 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
 
     pub fn operator_public_key_bytes(&self) -> anyhow::Result<Vec<u8>> {
         match &self.backup_enc_key {
-            Some(backup_key) => Ok(backup_key.encapsulation_key.clone()),
+            Some(backup_key) => {
+                let mut res = Vec::new();
+                safe_serialize(backup_key, &mut res, SAFE_SER_SIZE_LIMIT)
+                    .map_err(|e| anyhow::anyhow!("Cannot serialize operator public key: {e}"))?;
+                Ok(res)
+            }
             None => anyhow::bail!("Secret sharing keychain is not initialized"),
         }
     }
 
-    pub fn get_backup_enc_key(&self) -> anyhow::Result<BackupPublicKey> {
+    pub fn get_backup_enc_key(&self) -> anyhow::Result<UnifiedPublicEncKey> {
         match &self.backup_enc_key {
             Some(backup_key) => Ok(backup_key.clone()),
             None => anyhow::bail!("Secret sharing keychain is not initialized"),
@@ -97,7 +109,7 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
     pub fn set_backup_enc_key(
         &mut self,
         custodian_context_id: RequestId,
-        backup_enc_key: BackupPublicKey,
+        backup_enc_key: UnifiedPublicEncKey,
     ) {
         self.backup_enc_key = Some(backup_enc_key);
         self.custodian_context_id = Some(custodian_context_id);
@@ -105,7 +117,7 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
 
     /// After recovery of the private decryption key has been carried out with the help of the custodians
     /// it is possible to set the backup operator in order to allow decryption
-    pub fn set_dec_key(&mut self, dec_key: Option<BackupPrivateKey>) {
+    pub fn set_dec_key(&mut self, dec_key: Option<UnifiedPrivateEncKey>) {
         self.dec_key = dec_key;
     }
 
@@ -124,11 +136,9 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
         data_type: &str,
     ) -> anyhow::Result<EnvelopeStore> {
         let priv_data_type: PrivDataType = data_type.try_into()?;
-        let mut payload_bytes = Vec::new();
-        safe_serialize(data, &mut payload_bytes, SAFE_SER_SIZE_LIMIT)?;
         let raw_ct = self
             .get_backup_enc_key()?
-            .encrypt(&mut self.rng, &payload_bytes)
+            .encrypt(&mut self.rng, data)
             .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt backup: {e}")))?;
         let ct = BackupCiphertext {
             ciphertext: raw_ct,
@@ -150,37 +160,66 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
             .as_ref()
             .ok_or_else(|| anyhow_error_and_log("Operator not set"))?;
         match backup_ct.priv_data_type {
-            PrivDataType::SigningKey => read_backup_data(&backup_ct.ciphertext, unwrapped_dec_key),
-            PrivDataType::FheKeyInfo => read_backup_data(&backup_ct.ciphertext, unwrapped_dec_key),
-            PrivDataType::CrsInfo => read_backup_data(&backup_ct.ciphertext, unwrapped_dec_key),
-            PrivDataType::FhePrivateKey => {
-                read_backup_data(&backup_ct.ciphertext, unwrapped_dec_key)
+            PrivDataType::SigningKey => {
+                unwrapped_dec_key
+                    .decrypt(&backup_ct.ciphertext)
+                    .map_err(|e| {
+                        anyhow::anyhow!("Could not decrypt backed up secret shared signing key {e}")
+                    })
             }
+            PrivDataType::FheKeyInfo => {
+                unwrapped_dec_key
+                    .decrypt(&backup_ct.ciphertext)
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Could not decrypt backed up secret shared fhe key info {e}"
+                        )
+                    })
+            }
+            PrivDataType::CrsInfo => {
+                unwrapped_dec_key
+                    .decrypt(&backup_ct.ciphertext)
+                    .map_err(|e| {
+                        anyhow::anyhow!("Could not decrypt backed up secret shared crs info {e}")
+                    })
+            }
+            PrivDataType::FhePrivateKey => unwrapped_dec_key
+                .decrypt(&backup_ct.ciphertext)
+                .map_err(|e| {
+                    anyhow::anyhow!("Could not decrypt backed up secret shared private fhe key {e}")
+                }),
+            #[expect(deprecated)]
             PrivDataType::PrssSetup => {
                 anyhow::bail!("PRSS backup is not supported")
             }
-            PrivDataType::ContextInfo => read_backup_data(&backup_ct.ciphertext, unwrapped_dec_key),
+            PrivDataType::PrssSetupCombined => {
+                anyhow::bail!("Combined PRSS backup is not supported")
+            }
+            PrivDataType::ContextInfo => {
+                unwrapped_dec_key
+                    .decrypt(&backup_ct.ciphertext)
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Could not decrypt backed up secret shared context info {e}"
+                        )
+                    })
+            }
         }
     }
-}
 
-fn read_backup_data<
-    T: serde::de::DeserializeOwned + tfhe::Unversionize + tfhe::named::Named + Send,
->(
-    ct: &[u8],
-    priv_dec_key: &backup_pke::BackupPrivateKey,
-) -> anyhow::Result<T> {
-    let plain_text = priv_dec_key.decrypt(ct)?;
-    let mut buf = std::io::Cursor::new(plain_text);
-    safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT)
-        .map_err(|e| anyhow_error_and_log(format!("Cannot decrypt backup: {e}")))
+    fn root_key_measurements(&self) -> Arc<RootKeyMeasurements> {
+        Arc::new(RootKeyMeasurements::SecretSharing {})
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        cryptography::internal_crypto_types::{gen_sig_keys, PrivateSigKey},
+        cryptography::{
+            encryption::{Encryption, PkeScheme, PkeSchemeType},
+            signatures::{gen_sig_keys, PrivateSigKey},
+        },
         engine::base::derive_request_id,
         vault::storage::ram::RamStorage,
     };
@@ -199,16 +238,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_and_get_backup_enc_key() {
-        let rng = AesRng::seed_from_u64(42);
+        let mut rng = AesRng::seed_from_u64(42);
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_dec_key, enc_key) = enc.keygen().unwrap();
         let mut keychain = SecretShareKeychain::<AesRng>::new::<RamStorage>(rng, None)
             .await
             .unwrap();
-        let backup_key = BackupPublicKey {
-            encapsulation_key: vec![1, 2, 3],
-        };
         let req_id = RequestId::zeros();
-        keychain.set_backup_enc_key(req_id, backup_key.clone());
-        assert_eq!(keychain.get_backup_enc_key().unwrap(), backup_key);
+        keychain.set_backup_enc_key(req_id, enc_key.clone());
+        assert_eq!(keychain.get_backup_enc_key().unwrap(), enc_key);
         assert_eq!(keychain.get_current_backup_id().unwrap(), req_id);
     }
 
@@ -226,7 +264,8 @@ mod tests {
     async fn test_encrypt_and_decrypt_roundtrip() {
         let mut rng = AesRng::seed_from_u64(42);
         let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let (enc_key, dec_key) = backup_pke::keygen(&mut rng).unwrap();
+        let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (dec_key, enc_key) = enc.keygen().unwrap();
         let mut keychain = SecretShareKeychain {
             rng,
             custodian_context_id: Some(derive_request_id("test").unwrap()),

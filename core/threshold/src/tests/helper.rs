@@ -8,7 +8,14 @@ pub mod tests_and_benches {
 
     use crate::{
         algebra::structure_traits::{ErrorCorrect, Invert, Ring},
-        execution::small_execution::prf::PRSSConversions,
+        execution::{
+            runtime::{
+                party::{Role, TwoSetsRole, TwoSetsThreshold},
+                sessions::base_session::{BaseSession, GenericBaseSession},
+                test_runtime::generate_fixed_roles_two_sets_with_intersection,
+            },
+            small_execution::prf::PRSSConversions,
+        },
         networking::NetworkMode,
     };
     use aes_prng::AesRng;
@@ -19,12 +26,146 @@ pub mod tests_and_benches {
 
     use crate::{
         execution::runtime::{
-            session::{LargeSession, SmallSession},
+            sessions::{large_session::LargeSession, small_session::SmallSession},
             test_runtime::{generate_fixed_roles, DistributedTestRuntime},
         },
         networking::Networking,
         session_id::SessionId,
     };
+
+    pub fn get_seed_for_two_sets_role(role: &TwoSetsRole) -> u64 {
+        match role {
+            TwoSetsRole::Set1(r) => r.one_based() as u64 | (1 << 60),
+            TwoSetsRole::Set2(r) => r.one_based() as u64 | (2 << 60),
+            TwoSetsRole::Both(r) => {
+                r.role_set_1.one_based() as u64
+                    | ((r.role_set_2.one_based() as u64) << 32)
+                    | (3 << 60)
+            }
+        }
+    }
+
+    pub struct TwoSetsExpectedRounds {
+        pub num_rounds_within_s1: usize,
+        pub num_rounds_within_s2: usize,
+        pub num_rounds_across_sets: usize,
+    }
+
+    pub async fn execute_protocol_two_sets<
+        TaskOutputT,
+        OutputT,
+        Z: ErrorCorrect,
+        const EXTENSION_DEGREE: usize,
+    >(
+        parties_set_1: usize,
+        parties_set_2: usize,
+        intersection_size: usize,
+        threshold: TwoSetsThreshold,
+        expected_rounds: Option<TwoSetsExpectedRounds>,
+        network_mode: NetworkMode,
+        task: &mut dyn FnMut(
+            GenericBaseSession<TwoSetsRole>,
+            Option<BaseSession>,
+            Option<BaseSession>,
+        ) -> TaskOutputT,
+    ) -> Vec<OutputT>
+    where
+        TaskOutputT: Future<Output = OutputT>,
+        TaskOutputT: Send + 'static,
+        OutputT: Send + 'static,
+    {
+        let roles = generate_fixed_roles_two_sets_with_intersection(
+            parties_set_1,
+            parties_set_2,
+            intersection_size,
+        );
+        let test_runtime_two_sets: DistributedTestRuntime<Z, TwoSetsRole, EXTENSION_DEGREE> =
+            DistributedTestRuntime::new(roles.clone(), threshold, network_mode, None);
+
+        let roles_set_1 = generate_fixed_roles(parties_set_1);
+        let test_runtime_set_1: DistributedTestRuntime<Z, Role, EXTENSION_DEGREE> =
+            DistributedTestRuntime::new(roles_set_1, threshold.threshold_set_1, network_mode, None);
+
+        let roles_set_2 = generate_fixed_roles(parties_set_2);
+        let test_runtime_set_2: DistributedTestRuntime<Z, Role, EXTENSION_DEGREE> =
+            DistributedTestRuntime::new(roles_set_2, threshold.threshold_set_2, network_mode, None);
+
+        let mut tasks = JoinSet::new();
+        for party in roles {
+            // Create distinct RNG seed per set
+            let rng_seed = get_seed_for_two_sets_role(&party);
+            let session = test_runtime_two_sets.base_session_for_party(
+                SessionId::from(1),
+                party,
+                Some(AesRng::seed_from_u64(rng_seed)),
+            );
+
+            let set_1_session = if party.is_set1() {
+                let role = match party {
+                    TwoSetsRole::Set1(r) => r,
+                    TwoSetsRole::Both(r) => r.role_set_1,
+                    _ => unreachable!(),
+                };
+                Some(test_runtime_set_1.base_session_for_party(
+                    SessionId::from(2),
+                    role,
+                    Some(AesRng::seed_from_u64(rng_seed + 1)),
+                ))
+            } else {
+                None
+            };
+
+            let set_2_session = if party.is_set2() {
+                let role = match party {
+                    TwoSetsRole::Set2(r) => r,
+                    TwoSetsRole::Both(r) => r.role_set_2,
+                    _ => unreachable!(),
+                };
+                Some(test_runtime_set_2.base_session_for_party(
+                    SessionId::from(3),
+                    role,
+                    Some(AesRng::seed_from_u64(rng_seed + 2)),
+                ))
+            } else {
+                None
+            };
+
+            tasks.spawn(task(session, set_1_session, set_2_session));
+        }
+
+        let mut results = Vec::with_capacity(tasks.len());
+        while let Some(v) = tasks.join_next().await {
+            results.push(v.unwrap());
+        }
+
+        if let Some(expected_rounds) = expected_rounds {
+            for two_sets_net in test_runtime_two_sets.user_nets.values() {
+                let rounds = two_sets_net.get_current_round().await;
+                assert_eq!(
+                    rounds, expected_rounds.num_rounds_across_sets,
+                    "incorrect number of expected communication rounds in TwoSets network"
+                );
+            }
+
+            for set_1_net in test_runtime_set_1.user_nets.values() {
+                let rounds = set_1_net.get_current_round().await;
+                assert_eq!(
+                    rounds, expected_rounds.num_rounds_within_s1,
+                    "incorrect number of expected communication rounds in Set 1 network"
+                );
+            }
+
+            for set_2_net in test_runtime_set_2.user_nets.values() {
+                let rounds = set_2_net.get_current_round().await;
+                assert_eq!(
+                    rounds, expected_rounds.num_rounds_within_s2,
+                    "incorrect number of expected communication rounds in Set 2 network"
+                );
+            }
+        }
+
+        results
+    }
 
     /// Helper method for executing networked tests with multiple parties for small session.
     /// The `task` argument contains the code to be execute per party which returns a value of type [OutputT].
@@ -58,7 +199,7 @@ pub mod tests_and_benches {
                 .zip(delay_vec.iter().cloned())
                 .collect()
         });
-        let test_runtime: DistributedTestRuntime<Z, EXTENSION_DEGREE> =
+        let test_runtime: DistributedTestRuntime<Z, Role, EXTENSION_DEGREE> =
             DistributedTestRuntime::new(roles.clone(), threshold, network_mode, delay_map);
         let session_id = SessionId::from(1);
 
@@ -124,6 +265,38 @@ pub mod tests_and_benches {
         TaskOutputT: Send + 'static,
         OutputT: Send + 'static,
     {
+        let mut f = |session: LargeSession, _: Option<String>| task(session);
+        execute_protocol_large_w_extra_data::<TaskOutputT, OutputT, Z, EXTENSION_DEGREE>(
+            parties,
+            threshold,
+            expected_rounds,
+            network_mode,
+            delay_vec,
+            None,
+            &mut f,
+        )
+        .await
+    }
+
+    pub async fn execute_protocol_large_w_extra_data<
+        TaskOutputT,
+        OutputT,
+        Z: Ring,
+        const EXTENSION_DEGREE: usize,
+    >(
+        parties: usize,
+        threshold: usize,
+        expected_rounds: Option<usize>,
+        network_mode: NetworkMode,
+        delay_vec: Option<Vec<Duration>>,
+        extra_data: Option<String>,
+        task: &mut dyn FnMut(LargeSession, Option<String>) -> TaskOutputT,
+    ) -> Vec<OutputT>
+    where
+        TaskOutputT: Future<Output = OutputT>,
+        TaskOutputT: Send + 'static,
+        OutputT: Send + 'static,
+    {
         let roles = generate_fixed_roles(parties);
         let delay_map = delay_vec.map(|delay_vec| {
             roles
@@ -132,7 +305,7 @@ pub mod tests_and_benches {
                 .zip(delay_vec.iter().cloned())
                 .collect()
         });
-        let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
+        let test_runtime = DistributedTestRuntime::<Z, Role, EXTENSION_DEGREE>::new(
             roles.clone(),
             threshold as u8,
             network_mode,
@@ -143,7 +316,8 @@ pub mod tests_and_benches {
         let mut tasks = JoinSet::new();
         for party in roles.iter() {
             let session = test_runtime.large_session_for_party(session_id, *party);
-            tasks.spawn(task(session));
+            let extra_data = extra_data.clone();
+            tasks.spawn(task(session, extra_data));
         }
         let mut results = Vec::with_capacity(tasks.len());
         while let Some(v) = tasks.join_next().await {
@@ -168,7 +342,7 @@ pub mod testing {
         execution::{
             runtime::{
                 party::Role,
-                session::{BaseSession, SessionParameters},
+                sessions::{base_session::BaseSession, session_parameters::SessionParameters},
                 test_runtime::generate_fixed_roles,
             },
             small_execution::{
@@ -239,12 +413,17 @@ pub mod tests {
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             runtime::{
-                party::Role,
-                session::{
-                    BaseSession, LargeSession, LargeSessionHandles, ParameterHandles,
-                    SessionParameters, SmallSession,
+                party::{Role, TwoSetsRole, TwoSetsThreshold},
+                sessions::{
+                    base_session::{BaseSession, GenericBaseSession},
+                    large_session::{LargeSession, LargeSessionHandles},
+                    session_parameters::{GenericParameterHandles, SessionParameters},
+                    small_session::SmallSession,
                 },
-                test_runtime::{generate_fixed_roles, DistributedTestRuntime},
+                test_runtime::{
+                    generate_fixed_roles, generate_fixed_roles_two_sets_with_intersection,
+                    DistributedTestRuntime,
+                },
             },
             small_execution::prf::PRSSConversions,
             tfhe_internals::{
@@ -254,7 +433,10 @@ pub mod tests {
         },
         networking::{local::LocalNetworkingProducer, NetworkMode, Networking},
         session_id::SessionId,
-        tests::test_data_setup::tests::DEFAULT_SEED,
+        tests::{
+            helper::tests_and_benches::get_seed_for_two_sets_role,
+            test_data_setup::tests::DEFAULT_SEED,
+        },
     };
     use crate::{
         execution::constants::{PARAMS_DIR, REAL_KEY_PATH, TEMP_DKG_DIR},
@@ -399,9 +581,9 @@ pub mod tests {
     }
 
     /// Deterministic key generation
-    pub fn generate_keys(params: DKGParams) -> KeySet {
+    pub fn generate_keys(params: DKGParams, tag: tfhe::Tag) -> KeySet {
         let mut seeded_rng = AesRng::seed_from_u64(DEFAULT_SEED);
-        gen_key_set(params, &mut seeded_rng)
+        gen_key_set(params, tag, &mut seeded_rng)
     }
 
     /// Generates dummy parameters for unit tests with role 1. Parameters contain a single party, session ID = 1 and threshold = 0
@@ -489,7 +671,7 @@ pub mod tests {
                 .collect()
         });
 
-        let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
+        let test_runtime = DistributedTestRuntime::<Z, Role, EXTENSION_DEGREE>::new(
             roles.clone(),
             threshold,
             network_mode,
@@ -600,7 +782,7 @@ pub mod tests {
                 .collect()
         });
 
-        let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
+        let test_runtime = DistributedTestRuntime::<Z, Role, EXTENSION_DEGREE>::new(
             roles.clone(),
             threshold,
             network_mode,
@@ -656,6 +838,158 @@ pub mod tests {
         )
     }
 
+    /// For each intersection party, remove the P_i from Set1 and P_{i+1} from Set2 roles
+    /// and add the corresponding dual role
+    #[allow(clippy::too_many_arguments)]
+    pub async fn execute_protocol_two_sets_w_malicious<
+        TaskOutputT,
+        OutputT,
+        TaskOutputM,
+        OutputM,
+        P: Clone,
+        Z: ErrorCorrect,
+        const EXTENSION_DEGREE: usize,
+    >(
+        parties_set_1: usize,
+        parties_set_2: usize,
+        intersection_size: usize,
+        threshold: TwoSetsThreshold,
+        malicious_role: HashSet<TwoSetsRole>,
+        malicious_strategy: P,
+        network_mode: NetworkMode,
+        task_honest: &mut dyn FnMut(
+            GenericBaseSession<TwoSetsRole>,
+            Option<BaseSession>,
+            Option<BaseSession>,
+        ) -> TaskOutputT,
+        task_malicious: &mut dyn FnMut(
+            GenericBaseSession<TwoSetsRole>,
+            Option<BaseSession>,
+            Option<BaseSession>,
+            P,
+        ) -> TaskOutputM,
+    ) -> (
+        HashMap<TwoSetsRole, OutputT>,
+        HashMap<TwoSetsRole, Result<OutputM, JoinError>>,
+    )
+    where
+        TaskOutputT: Future<Output = OutputT>,
+        TaskOutputT: Send + 'static,
+        OutputT: Send + 'static,
+        TaskOutputM: Future<Output = OutputM>,
+        TaskOutputM: Send + 'static,
+        OutputM: Send + 'static,
+    {
+        let roles = generate_fixed_roles_two_sets_with_intersection(
+            parties_set_1,
+            parties_set_2,
+            intersection_size,
+        );
+
+        let test_runtime_two_sets: DistributedTestRuntime<Z, TwoSetsRole, EXTENSION_DEGREE> =
+            DistributedTestRuntime::new(roles.clone(), threshold, network_mode, None);
+
+        let roles_set_1 = generate_fixed_roles(parties_set_1);
+        let test_runtime_set_1: DistributedTestRuntime<Z, Role, EXTENSION_DEGREE> =
+            DistributedTestRuntime::new(roles_set_1, threshold.threshold_set_1, network_mode, None);
+
+        let roles_set_2 = generate_fixed_roles(parties_set_2);
+        let test_runtime_set_2: DistributedTestRuntime<Z, Role, EXTENSION_DEGREE> =
+            DistributedTestRuntime::new(roles_set_2, threshold.threshold_set_2, network_mode, None);
+
+        // Assers that all malicious roles are part of the roles set (especially since it'we have the Both variant)
+        for malicious_role in malicious_role.iter() {
+            assert!(
+                roles.contains(malicious_role),
+                "malicious role {malicious_role:?} not part of roles set {roles:?}"
+            );
+        }
+
+        let sid_two_sets = SessionId::from(1);
+        let sid_set_1 = SessionId::from(2);
+        let sid_set_2 = SessionId::from(3);
+        let sessions = roles.into_iter().map(|party| {
+            let seed = get_seed_for_two_sets_role(&party);
+            let session = test_runtime_two_sets.base_session_for_party(
+                sid_two_sets,
+                party,
+                Some(AesRng::seed_from_u64(seed)),
+            );
+
+            let (set_1_session, set_2_session) = match party {
+                TwoSetsRole::Set1(role) => (
+                    Some(test_runtime_set_1.base_session_for_party(
+                        sid_set_1,
+                        role,
+                        Some(AesRng::seed_from_u64(seed + 1)),
+                    )),
+                    None,
+                ),
+                TwoSetsRole::Set2(role) => (
+                    None,
+                    Some(test_runtime_set_2.base_session_for_party(
+                        sid_set_2,
+                        role,
+                        Some(AesRng::seed_from_u64(seed + 2)),
+                    )),
+                ),
+                TwoSetsRole::Both(dual_role) => (
+                    Some(test_runtime_set_1.base_session_for_party(
+                        sid_set_1,
+                        dual_role.role_set_1,
+                        Some(AesRng::seed_from_u64(seed + 1)),
+                    )),
+                    Some(test_runtime_set_2.base_session_for_party(
+                        sid_set_2,
+                        dual_role.role_set_2,
+                        Some(AesRng::seed_from_u64(seed + 2)),
+                    )),
+                ),
+            };
+            (party, session, set_1_session, set_2_session)
+        });
+
+        let (malicious_sessions, honest_sessions): (Vec<_>, Vec<_>) =
+            sessions.partition(|(party, _, _, _)| malicious_role.contains(party));
+
+        let honest_tasks =
+            honest_sessions
+                .into_iter()
+                .map(|(party, session, session_set_1, session_set_2)| {
+                    task_honest(session, session_set_1, session_set_2)
+                        .map(move |output| (party, output))
+                });
+
+        // Spawn the malicious task in its own tokio task as it may panic
+        let mut malicious_task = Vec::new();
+        malicious_sessions.into_iter().for_each(
+            |(party, session, session_set_1, session_set_2)| {
+                malicious_task.push((
+                    party,
+                    tokio::spawn(task_malicious(
+                        session,
+                        session_set_1,
+                        session_set_2,
+                        malicious_strategy.clone(),
+                    )),
+                ));
+            },
+        );
+
+        let results_honest = tokio::task::JoinSet::from_iter(honest_tasks)
+            .join_all()
+            .await;
+        let mut results_malicious = Vec::new();
+        for (role, task) in malicious_task.into_iter() {
+            results_malicious.push((role, task.await));
+        }
+
+        (
+            results_honest.into_iter().collect(),
+            results_malicious.into_iter().collect(),
+        )
+    }
+
     #[ctor::ctor]
     fn setup_data_for_integration() {
         // Ensure temp/dkg dir exists (also creates the temp dir)
@@ -668,7 +1002,7 @@ pub mod tests {
         }
 
         // make sure keys exist (generate them if they do not)
-        ensure_keys_exist(SMALL_TEST_KEY_PATH, TEST_PARAMETERS);
-        ensure_keys_exist(REAL_KEY_PATH, REAL_PARAMETERS);
+        ensure_keys_exist(SMALL_TEST_KEY_PATH, TEST_PARAMETERS, tfhe::Tag::default());
+        ensure_keys_exist(REAL_KEY_PATH, REAL_PARAMETERS, tfhe::Tag::default());
     }
 }

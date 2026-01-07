@@ -190,6 +190,7 @@ deny = [
     # Wrapper crates can optionally be specified to allow the crate when it
     # is a direct dependency of the otherwise banned crate
     #{ crate = "ansi_term@0.11.0", wrappers = ["this-crate-directly-depends-on-ansi_term"] },
+    { crate = "bincode@>2.0.1", reason = "Due to actions by the project we consider newer versions compromised. See https://www.reddit.com/r/rust/comments/1pnz1iz/bincode_development_has_ceased_permanently/"}
 ]
 
 # List of features to allow/deny

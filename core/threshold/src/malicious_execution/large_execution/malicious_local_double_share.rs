@@ -11,7 +11,7 @@ use crate::{
             },
             share_dispute::ShareDispute,
         },
-        runtime::{party::Role, session::LargeSessionHandles},
+        runtime::{party::Role, sessions::large_session::LargeSessionHandles},
     },
     ProtocolDescription,
 };
@@ -32,7 +32,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
     for MaliciousSenderLocalDoubleShare<C, S, BCast>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-MaliciousSenderLocalDoubleShare:\n{}\n{}\n{}",
             indent,
@@ -72,7 +72,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
     for MaliciousReceiverLocalDoubleShare<C, S, BCast>
 {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-MaliciousReceiverLocalDoubleShare:\n{}\n{}\n{}",
             indent,

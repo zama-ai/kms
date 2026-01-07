@@ -5,7 +5,7 @@ use crate::execution::large_execution::local_single_share::MapsSharesChallenges;
 use crate::execution::large_execution::vss::{
     ExchangedDataRound1, ValueOrPoly, VerificationValues,
 };
-use crate::execution::runtime::session::DeSerializationRunTime;
+use crate::execution::runtime::sessions::session_parameters::DeSerializationRunTime;
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::execution::zk::ceremony;
@@ -48,6 +48,7 @@ pub enum BroadcastValue<Z: Eq + Zero + Sized> {
     LocalSingleShare(MapsSharesChallenges<Z>),
     LocalDoubleShare(MapsDoubleSharesChallenges<Z>),
     PartialProof(ceremony::PartialProof),
+    MapRingVector(BTreeMap<Role, Vec<Z>>),
 }
 
 impl<Z: Eq + Zero + Sized> BroadcastValue<Z> {
@@ -63,6 +64,7 @@ impl<Z: Eq + Zero + Sized> BroadcastValue<Z> {
             BroadcastValue::LocalSingleShare(_) => "LocalSingleShare".to_string(),
             BroadcastValue::LocalDoubleShare(_) => "LocalDoubleShare".to_string(),
             BroadcastValue::PartialProof(_) => "PartialProof".to_string(),
+            BroadcastValue::MapRingVector(_) => "MapRingVector".to_string(),
         }
     }
 }

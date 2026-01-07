@@ -14,6 +14,8 @@ service CoreServiceEndpoint {
 
   rpc KeyGenPreproc(kms.v1.KeyGenPreprocRequest) returns (kms.v1.Empty);
 
+  rpc PartialKeyGenPreproc(kms.v1.PartialKeyGenPreprocRequest) returns (kms.v1.Empty);
+
   rpc GetKeyGenPreprocResult(kms.v1.RequestId) returns (kms.v1.KeyGenPreprocResult);
 
   rpc KeyGen(kms.v1.KeyGenRequest) returns (kms.v1.Empty);
@@ -40,9 +42,13 @@ service CoreServiceEndpoint {
 
   rpc GetInsecureCrsGenResult(kms.v1.RequestId) returns (kms.v1.CrsGenResult);
 
-  rpc NewKmsContext(kms.v1.NewKmsContextRequest) returns (kms.v1.Empty);
+  rpc NewMpcContext(kms.v1.NewMpcContextRequest) returns (kms.v1.Empty);
 
-  rpc DestroyKmsContext(kms.v1.DestroyKmsContextRequest) returns (kms.v1.Empty);
+  rpc DestroyMpcContext(kms.v1.DestroyMpcContextRequest) returns (kms.v1.Empty);
+
+  rpc InitiateResharing(kms.v1.InitiateResharingRequest) returns (kms.v1.InitiateResharingResponse);
+
+  rpc GetResharingResult(kms.v1.RequestId) returns (kms.v1.ResharingResultResponse);
 
   rpc NewCustodianContext(kms.v1.NewCustodianContextRequest) returns (kms.v1.Empty);
 

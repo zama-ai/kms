@@ -23,9 +23,10 @@ use crate::execution::online::preprocessing::TriplePreprocessing;
 use crate::execution::online::secret_distributions::RealSecretDistributions;
 use crate::execution::online::secret_distributions::SecretDistributions;
 use crate::execution::online::triple::Triple;
-use crate::execution::runtime::session::BaseSession;
-use crate::execution::runtime::session::SessionParameters;
-use crate::execution::runtime::session::SmallSession;
+use crate::execution::runtime::sessions::base_session::BaseSession;
+use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
+use crate::execution::runtime::sessions::session_parameters::SessionParameters;
+use crate::execution::runtime::sessions::small_session::SmallSession;
 use crate::execution::sharing::shamir::RevealOp;
 use crate::execution::sharing::shamir::ShamirSharings;
 use crate::execution::small_execution::offline::Preprocessing;
@@ -35,7 +36,10 @@ use crate::{
     algebra::poly::Poly,
     algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
-    execution::{runtime::party::Role, runtime::session::ParameterHandles, sharing::share::Share},
+    execution::{
+        runtime::party::Role, runtime::sessions::session_parameters::ParameterHandles,
+        sharing::share::Share,
+    },
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
@@ -97,7 +101,7 @@ where
 
 impl<Z> crate::ProtocolDescription for DummyPreprocessing<Z> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-DummyPreprocessing")
     }
 }
@@ -124,7 +128,7 @@ impl<Z> Default for DummyPreprocessing<Z> {
 #[async_trait]
 impl<
         Z: ErrorCorrect + RingWithExceptionalSequence,
-        S: crate::execution::runtime::session::BaseSessionHandles,
+        S: crate::execution::runtime::sessions::base_session::BaseSessionHandles,
     > Preprocessing<Z, S> for DummyPreprocessing<Z>
 {
     async fn execute(
@@ -551,7 +555,9 @@ mod tests {
     use crate::execution::online::preprocessing::RandomPreprocessing;
     use crate::execution::online::preprocessing::TriplePreprocessing;
     use crate::execution::online::triple::Triple;
-    use crate::execution::runtime::session::{BaseSessionHandles, ParameterHandles};
+    use crate::execution::runtime::sessions::{
+        base_session::GenericBaseSessionHandles, session_parameters::GenericParameterHandles,
+    };
     use itertools::Itertools;
 
     #[test]

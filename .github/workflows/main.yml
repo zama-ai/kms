@@ -8,10 +8,10 @@ name: main
 
 on:
   schedule:
-    - cron: "0 0 * * 1-5" # Runs at midnight UTC (1 AM CET) Monday-Friday
+    - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
   pull_request:
   push:
-    branches: ["main", "release/*"]
+    branches: ['main', 'release/*']
 
 # Controls concurrent workflow runs:
 # - Groups runs by git ref
@@ -50,7 +50,7 @@ jobs:
       changes-docs: ${{ steps.filter.outputs.docs }}
       changes-helm-chart: ${{ steps.filter.outputs.helm-chart }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: true
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
@@ -129,7 +129,12 @@ jobs:
       contents: read # Required to checkout repository code
       id-token: write # Required for OIDC token generation
     needs: check-changes
-    if: needs.check-changes.outputs.changes-helm-chart == 'true'
+    if: >-
+      needs.check-changes.outputs.changes-helm-chart == 'true' &&
+      (github.event_name != 'schedule' ||
+      github.event_name == 'pull_request' ||
+      github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/heads/release/'))
     uses: ./.github/workflows/helm-test.yml
 
   lint-helm-chart:
@@ -141,7 +146,12 @@ jobs:
       contents: read # Required to checkout repository code
       id-token: write # Required for OIDC token generation
     needs: check-changes
-    if: needs.check-changes.outputs.changes-helm-chart == 'true'
+    if: >-
+      needs.check-changes.outputs.changes-helm-chart == 'true' &&
+      (github.event_name != 'schedule' ||
+      github.event_name == 'pull_request' ||
+      github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/heads/release/'))
     uses: ./.github/workflows/helm-lint.yml
 
   release-helm-chart:
@@ -152,7 +162,11 @@ jobs:
       id-token: write # Required for OIDC token generation
       packages: write # Required to publish packages
     needs: check-changes
-    if: github.ref == 'refs/heads/main' && needs.check-changes.outputs.changes-helm-chart == 'true' && github.event_name != 'schedule'
+    if: >-
+      needs.check-changes.outputs.changes-helm-chart == 'true' &&
+      (github.event_name != 'schedule' && github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/heads/release/'))
     uses: ./.github/workflows/helm-release.yml
 
   ############################################################################
@@ -175,7 +189,7 @@ jobs:
     container:
       image: python:3.10.17-bullseye@sha256:0b9be13617fed7d883b30e31a47371a8bdd60a4bb5e45fcda63cb4a3846f6d98
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
       - run: python3 -m pip install linkcheckmd
@@ -206,20 +220,27 @@ jobs:
       needs.check-changes.outputs.changes-core-grpc == 'true' ||
       needs.check-changes.outputs.changes-ci == 'true' ||
       github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: "./core/service"
-      args-tests: "backward_compatibility"
-      package-name: "kms"
-      slab-backend: "big-instance-service"
-      app-cache-dir: "kms"
+      working-directory: './core/service'
+      args-tests: 'backward_compatibility'
+      package-name: 'kms'
+      # slab-backend: 'big-instance-service'
+      app-cache-dir: 'kms'
+      # Availables runners:
+      #  - 1cpu-linux-x64 (m7a.medium)
+      #  - 2cpu-linux-x64 (m7i.large)
+      #  - 4cpu-linux-x64 (m7i.xlarge)
+      #  - 8cpu-linux-x64 (c7i.2xlarge)
+      #  - 16cpu-linux-x64 (c7i.4xlarge)
+      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
+      #  - 48cpu-linux-x64 (c7i.12xlarge)
+      #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
@@ -249,11 +270,11 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-      - id: set-matrix
+      - name: Set matrix
+        id: set-matrix
         run: |
           MATRIX="matrix={\"include\":["
-          # Regular tests: Run different test suites in parallel with specific features
-          MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests --skip nightly\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests\"}"
+          MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests --skip nightly --skip centralzd --skip threshld\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests --skip nightly --skip centralzd --skip threshld\"}"
           MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "$MATRIX"
@@ -281,19 +302,26 @@ jobs:
       github.ref == 'refs/heads/main'
     strategy:
       matrix: ${{fromJson(needs.prepare-core-client-matrix.outputs.matrix)}}
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: "./core-client"
-      package-name: "kms-core-client"
+      working-directory: './core-client'
+      package-name: 'kms-core-client'
       args-tests: ${{ matrix.args-tests }}
-      app-cache-dir: "kms-core-client"
+      app-cache-dir: 'kms-core-client'
+      # Availables runners:
+      #  - 1cpu-linux-x64 (m7a.medium)
+      #  - 2cpu-linux-x64 (m7i.large)
+      #  - 4cpu-linux-x64 (m7i.xlarge)
+      #  - 8cpu-linux-x64 (c7i.2xlarge)
+      #  - 16cpu-linux-x64 (c7i.4xlarge)
+      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
+      #  - 48cpu-linux-x64 (c7i.12xlarge)
+      #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '64cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
@@ -315,20 +343,27 @@ jobs:
       contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-client == 'true'
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: "./core-client"
-      package-name: "kms-core-client"
+      working-directory: './core-client'
+      package-name: 'kms-core-client'
       # Explicitly skip integration tests since they are all named something with centralized or threshold or full_gen_tests
-      args-tests: "-- --skip centralized --skip threshold --skip full_gen_tests --skip nightly"
-      app-cache-dir: "kms-core-client"
+      args-tests: '-- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip centralzd --skip threshld'
+      app-cache-dir: 'kms-core-client'
+      # Availables runners:
+      #  - 1cpu-linux-x64 (m7a.medium)
+      #  - 2cpu-linux-x64 (m7i.large)
+      #  - 4cpu-linux-x64 (m7i.xlarge)
+      #  - 8cpu-linux-x64 (c7i.2xlarge)
+      #  - 16cpu-linux-x64 (c7i.4xlarge)
+      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
+      #  - 48cpu-linux-x64 (c7i.12xlarge)
+      #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
@@ -355,19 +390,26 @@ jobs:
       contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: "./core/grpc"
-      args-tests: "--all-features"
-      package-name: "kms-grpc"
-      app-cache-dir: "kms-grpc"
+      working-directory: './core/grpc'
+      args-tests: '--all-features'
+      package-name: 'kms-grpc'
+      app-cache-dir: 'kms-grpc'
+      # Availables runners:
+      #  - 1cpu-linux-x64 (m7a.medium)
+      #  - 2cpu-linux-x64 (m7i.large)
+      #  - 4cpu-linux-x64 (m7i.xlarge)
+      #  - 8cpu-linux-x64 (c7i.2xlarge)
+      #  - 16cpu-linux-x64 (c7i.4xlarge)
+      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
+      #  - 48cpu-linux-x64 (c7i.12xlarge)
+      #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
@@ -408,14 +450,13 @@ jobs:
     env:
       EVENT_NAME: ${{ github.event_name }}
     steps:
-      - id: set-matrix
+      - name: Set matrix
+        id: set-matrix
         run: |
           MATRIX="matrix={\"include\":["
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
-            # Nightly tests: Run comprehensive test suite in release mode
-            MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly_tests\"}"
+            MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly\"}"
           else
-            # Regular tests: Run different test suites in parallel with specific features
             MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly\"}"
           fi
           MATRIX="${MATRIX%,}]}"
@@ -445,21 +486,28 @@ jobs:
       needs.check-changes.outputs.changes-ci == 'true'
     strategy:
       matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: "./core/service"
+      working-directory: './core/service'
       args-tests: ${{ matrix.args-tests }}
       run-minio: true
-      package-name: "kms"
-      slab-backend: "big-instance-service"
-      app-cache-dir: "kms"
+      package-name: 'kms'
+      # slab-backend: 'big-instance-service'
+      app-cache-dir: 'kms'
+      # Availables runners:
+      #  - 1cpu-linux-x64 (m7a.medium)
+      #  - 2cpu-linux-x64 (m7i.large)
+      #  - 4cpu-linux-x64 (m7i.xlarge)
+      #  - 8cpu-linux-x64 (c7i.2xlarge)
+      #  - 16cpu-linux-x64 (c7i.4xlarge)
+      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
+      #  - 48cpu-linux-x64 (c7i.12xlarge)
+      #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '64cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
@@ -495,22 +543,29 @@ jobs:
       contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true'
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: "./core/threshold"
+      working-directory: './core/threshold'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test run in parallel to 4
-      args-tests: "-F slow_tests --lib"
-      package-name: "threshold-fhe"
-      app-cache-dir: "threshold-fhe"
+      args-tests: '-F slow_tests --lib'
+      package-name: 'threshold-fhe'
+      app-cache-dir: 'threshold-fhe'
       nextest-test-threads: 4
+      # Availables runners:
+      #  - 1cpu-linux-x64 (m7a.medium)
+      #  - 2cpu-linux-x64 (m7i.large)
+      #  - 4cpu-linux-x64 (m7i.xlarge)
+      #  - 8cpu-linux-x64 (c7i.2xlarge)
+      #  - 16cpu-linux-x64 (c7i.4xlarge)
+      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
+      #  - 48cpu-linux-x64 (c7i.12xlarge)
+      #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '32cpu-linux-x64'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
@@ -534,22 +589,29 @@ jobs:
       contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/common-testing-big-instance.yml
+    uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: "./core/threshold"
+      working-directory: './core/threshold'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test ran in parallel to 4
-      args-tests: "-F slow_tests --lib"
+      args-tests: '-F slow_tests --lib'
       run-redis: true
-      package-name: "threshold-fhe"
-      app-cache-dir: "threshold-fhe"
+      package-name: 'threshold-fhe'
+      app-cache-dir: 'threshold-fhe'
       nextest-test-threads: 4
+      # Availables runners:
+      #  - 1cpu-linux-x64 (m7a.medium)
+      #  - 2cpu-linux-x64 (m7i.large)
+      #  - 4cpu-linux-x64 (m7i.xlarge)
+      #  - 8cpu-linux-x64 (c7i.2xlarge)
+      #  - 16cpu-linux-x64 (c7i.4xlarge)
+      #  - 32cpu-linux-x64 (m7i-flex.8xlarge)
+      #  - 48cpu-linux-x64 (c7i.12xlarge)
+      #  - 64cpu-linux-x64 (c7a.16xlarge)
+      runs-on: '32cpu-linux-x64'
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
@@ -575,10 +637,10 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: "./core/threshold"
-      args-tests: "--lib"
-      package-name: "threshold-fhe"
-      app-cache-dir: "threshold-fhe"
+      working-directory: './core/threshold'
+      args-tests: '--lib'
+      package-name: 'threshold-fhe'
+      app-cache-dir: 'threshold-fhe'
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -603,6 +665,7 @@ jobs:
       - test-core-service
       - test-core-threshold-pr
       - test-core-threshold-main
+      - test-wasm
       - build-dependabot
     uses: ./.github/workflows/test-reporter.yml
     permissions:
@@ -612,6 +675,29 @@ jobs:
       pull-requests: write # Required to create comments on pull requests
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
+  ############################################################################
+  # Wasm Testing Pipeline
+  ############################################################################
+  test-wasm:
+    name: main/test-wasm
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs:
+      - check-changes
+    if: >-
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      needs.check-changes.outputs.changes-ci == 'true'
+    uses: ./.github/workflows/wasm-testing.yml
+    with:
+      working-directory: './core/service'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 

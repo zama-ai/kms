@@ -20,7 +20,7 @@ use crate::{
         },
         runtime::{
             party::Role,
-            session::{BaseSessionHandles, ParameterHandles},
+            sessions::{base_session::BaseSessionHandles, session_parameters::ParameterHandles},
         },
         small_execution::prf::{chi, phi, psi, PhiAes},
     },
@@ -136,7 +136,7 @@ impl<A: AgreeRandom> AbortRealPrssInit<A> {
 
 impl<A: AgreeRandom> ProtocolDescription for AbortRealPrssInit<A> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-AbortRealPrssInit:\n{}\n{} ",
             indent,
@@ -170,7 +170,7 @@ pub struct RobustRealPrssInit<A: AgreeRandomFromShare, V: Vss> {
 
 impl<A: AgreeRandomFromShare, V: Vss> ProtocolDescription for RobustRealPrssInit<A, V> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-RobustRealPrssInit:\n{}\n{}\n{} ",
             indent,
@@ -363,11 +363,35 @@ pub struct PrssSet<Z> {
     f_a_points: Vec<Z>,
 }
 
+impl<Z> PrssSet<Z> {
+    // We need to be able to construct PrssSet in the backwards compatibility tests
+    #[cfg(feature = "testing")]
+    pub fn new(parties: PartySet, set_key: PrfKey, f_a_points: Vec<Z>) -> PrssSet<Z> {
+        PrssSet {
+            parties,
+            set_key,
+            f_a_points,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Version)]
 pub struct PrssSetV0<Z> {
     parties: PartySetV0,
     set_key: PrfKey,
     f_a_points: Vec<Z>,
+}
+
+impl<Z> PrssSetV0<Z> {
+    // We need to be able to construct PrssSet in the backwards compatibility tests
+    #[cfg(feature = "testing")]
+    pub fn new(parties: PartySetV0, set_key: PrfKey, f_a_points: Vec<Z>) -> PrssSetV0<Z> {
+        PrssSetV0 {
+            parties,
+            set_key,
+            f_a_points,
+        }
+    }
 }
 
 impl<Z> Upgrade<PrssSet<Z>> for PrssSetV0<Z> {
@@ -418,7 +442,7 @@ pub struct PRSSSetup<Z: Default + Clone + Serialize> {
 
 impl<Z: Default + Clone + Serialize> ProtocolDescription for PRSSSetup<Z> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         //Using a fat arrow here to indicate that this is a byproduct of Init and
         // not really a subprotocol
         format!(
@@ -465,7 +489,7 @@ pub struct PRSSState<Z: Default + Clone + Serialize, B: Broadcast> {
 
 impl<Z: Default + Clone + Serialize, B: Broadcast> ProtocolDescription for PRSSState<Z, B> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         // Using a fat arrow here to indicate that this is a byproduct of Setup
         format!("{}=>PRSSState:\n{}", indent, B::protocol_desc(depth + 1))
     }
@@ -1024,7 +1048,8 @@ pub(crate) fn create_sets(all_roles: &[Role], t: usize) -> Vec<Vec<Role>> {
 mod tests {
     use super::*;
     use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
-    use crate::execution::runtime::session::SmallSessionHandles;
+    use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
+    use crate::execution::runtime::sessions::small_session::SmallSessionHandles;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::small_execution::agree_random::DSEP_AR;
     use crate::execution::tfhe_internals::test_feature::{
@@ -1049,7 +1074,9 @@ mod tests {
             endpoints::decryption::{threshold_decrypt64, DecryptionMode},
             runtime::party::Role,
             runtime::{
-                session::{BaseSessionHandles, ParameterHandles, SmallSession},
+                sessions::{
+                    session_parameters::GenericParameterHandles, small_session::SmallSession,
+                },
                 test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
             sharing::{shamir::ShamirSharings, share::Share},
@@ -1552,6 +1579,7 @@ mod tests {
         //Could probably be run Async, but NIST doc says all offline is Sync
         let runtime = DistributedTestRuntime::<
             ResiduePolyF4Z128,
+            Role,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(roles.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId::from(23);
@@ -1613,6 +1641,7 @@ mod tests {
         //Could probably be run Async, but NIST doc says all offline is Sync
         let runtime = DistributedTestRuntime::<
             ResiduePolyF4Z128,
+            Role,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >::new(roles.clone(), threshold, NetworkMode::Sync, None);
         let session_id = SessionId::from(17);

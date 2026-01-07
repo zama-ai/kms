@@ -1,12 +1,10 @@
 use crate::client::client_wasm::Client;
-use crate::cryptography::internal_crypto_types::PublicSigKey;
-use crate::cryptography::internal_crypto_types::Signature;
-use crate::engine::base::BaseKmsStruct;
-use crate::engine::traits::BaseKms;
+use crate::cryptography::signatures::{internal_verify_sig, PublicSigKey, Signature};
 use crate::engine::validation::validate_public_decrypt_responses_against_request;
 use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
+use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext};
 use kms_grpc::rpc_types::alloy_to_protobuf_domain;
@@ -22,6 +20,7 @@ impl Client {
         ciphertexts: Vec<TypedCiphertext>,
         domain: &Eip712Domain,
         request_id: &RequestId,
+        context_id: Option<&ContextId>,
         key_id: &RequestId,
     ) -> anyhow::Result<PublicDecryptionRequest> {
         if !request_id.is_valid() {
@@ -38,7 +37,7 @@ impl Client {
             domain: Some(domain_msg),
             request_id: Some((*request_id).into()),
             extra_data: vec![],
-            context_id: None,
+            context_id: context_id.map(|c| (*c).into()),
             epoch_id: None,
         };
         Ok(req)
@@ -82,8 +81,9 @@ impl Client {
 
             // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissible keys
-            let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&cur_payload.verification_key)?;
-            BaseKmsStruct::verify_sig(
+            let cur_verf_key: PublicSigKey =
+                bc2wrap::deserialize_safe(&cur_payload.verification_key)?;
+            internal_verify_sig(
                 &DSEP_PUBLIC_DECRYPTION,
                 &bc2wrap::serialize(&cur_payload)?,
                 &sig,

@@ -1,24 +1,24 @@
 use crate::client::client_wasm::Client;
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
-#[cfg(feature = "slow_tests")]
-use crate::consts::DEFAULT_CENTRAL_KEY_ID;
-use crate::consts::TEST_CENTRAL_KEY_ID;
+use crate::consts::DEFAULT_EPOCH_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::purge;
 use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::storage::StorageReader;
+use crate::vault::storage::StorageReaderExt;
 use crate::vault::storage::{file::FileStorage, StorageType};
 use alloy_dyn_abi::Eip712Domain;
+use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::rpc_types::PubDataType;
-use kms_grpc::RequestId;
+use kms_grpc::{ContextId, RequestId};
 use serial_test::serial;
 use std::path::Path;
 use std::str::FromStr;
+use tfhe::prelude::Tagged;
 use tonic::transport::Channel;
 
 use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
@@ -27,9 +27,10 @@ use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_te
 #[serial]
 async fn test_key_gen_centralized() {
     let request_id = derive_request_id("test_key_gen_centralized").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
-    purge(None, None, None, &request_id, 1).await;
-    key_gen_centralized(&request_id, FheParameter::Test, None, None).await;
+    purge(None, None, &request_id, &[None], &[None]).await;
+    key_gen_centralized(&request_id, &epoch_id, FheParameter::Test, None, None).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -38,16 +39,18 @@ async fn test_decompression_key_gen_centralized() {
     let request_id_1 = derive_request_id("test_key_gen_centralized-1").unwrap();
     let request_id_2 = derive_request_id("test_key_gen_centralized-2").unwrap();
     let request_id_3 = derive_request_id("test_decompression_key_gen_centralized").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
-    purge(None, None, None, &request_id_1, 1).await;
-    purge(None, None, None, &request_id_2, 1).await;
-    purge(None, None, None, &request_id_3, 1).await;
+    purge(None, None, &request_id_1, &[None], &[None]).await;
+    purge(None, None, &request_id_2, &[None], &[None]).await;
+    purge(None, None, &request_id_3, &[None], &[None]).await;
 
-    key_gen_centralized(&request_id_1, FheParameter::Default, None, None).await;
-    key_gen_centralized(&request_id_2, FheParameter::Default, None, None).await;
+    key_gen_centralized(&request_id_1, &epoch_id, FheParameter::Default, None, None).await;
+    key_gen_centralized(&request_id_2, &epoch_id, FheParameter::Default, None, None).await;
 
     key_gen_centralized(
         &request_id_3,
+        &epoch_id,
         FheParameter::Default,
         Some(KeySetConfig {
             keyset_type: KeySetType::DecompressionOnly.into(),
@@ -57,30 +60,6 @@ async fn test_decompression_key_gen_centralized() {
             compression_keyset_id: None,
             from_keyset_id_decompression_only: Some(request_id_1.into()),
             to_keyset_id_decompression_only: Some(request_id_2.into()),
-            base_keyset_id_for_sns_compression_key: None,
-        }),
-    )
-    .await;
-}
-
-// TODO(2674)
-// test centralized sns compression keygen using the testing parameters
-// this test will use an existing base key stored under the key ID `TEST_CENTRAL_KEY_ID`
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-async fn test_sns_compression_key_gen_centralized() {
-    let request_id = derive_request_id("test_sns_compression_key_gen_centralized").unwrap();
-    // Delete potentially old data
-    purge(None, None, None, &request_id, 1).await;
-    key_gen_centralized(
-        &request_id,
-        FheParameter::Test,
-        None,
-        Some(KeySetAddedInfo {
-            compression_keyset_id: None,
-            from_keyset_id_decompression_only: None,
-            to_keyset_id_decompression_only: None,
-            base_keyset_id_for_sns_compression_key: Some((*TEST_CENTRAL_KEY_ID).into()),
         }),
     )
     .await;
@@ -91,9 +70,10 @@ async fn test_sns_compression_key_gen_centralized() {
 #[serial]
 async fn default_key_gen_centralized() {
     let request_id = derive_request_id("default_key_gen_centralized").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
-    purge(None, None, None, &request_id, 1).await;
-    key_gen_centralized(&request_id, FheParameter::Default, None, None).await;
+    purge(None, None, &request_id, &[None], &[None]).await;
+    key_gen_centralized(&request_id, &epoch_id, FheParameter::Default, None, None).await;
 }
 
 #[cfg(feature = "slow_tests")]
@@ -103,16 +83,18 @@ async fn default_decompression_key_gen_centralized() {
     let request_id_1 = derive_request_id("default_key_gen_centralized-1").unwrap();
     let request_id_2 = derive_request_id("default_key_gen_centralized-2").unwrap();
     let request_id_3 = derive_request_id("default_decompression_key_gen_centralized").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
-    purge(None, None, None, &request_id_1, 1).await;
-    purge(None, None, None, &request_id_2, 1).await;
-    purge(None, None, None, &request_id_3, 1).await;
+    purge(None, None, &request_id_1, &[None], &[None]).await;
+    purge(None, None, &request_id_2, &[None], &[None]).await;
+    purge(None, None, &request_id_3, &[None], &[None]).await;
 
-    key_gen_centralized(&request_id_1, FheParameter::Default, None, None).await;
-    key_gen_centralized(&request_id_2, FheParameter::Default, None, None).await;
+    key_gen_centralized(&request_id_1, &epoch_id, FheParameter::Default, None, None).await;
+    key_gen_centralized(&request_id_2, &epoch_id, FheParameter::Default, None, None).await;
 
     key_gen_centralized(
         &request_id_3,
+        &epoch_id,
         FheParameter::Default,
         Some(KeySetConfig {
             keyset_type: KeySetType::DecompressionOnly.into(),
@@ -122,46 +104,31 @@ async fn default_decompression_key_gen_centralized() {
             compression_keyset_id: None,
             from_keyset_id_decompression_only: Some(request_id_1.into()),
             to_keyset_id_decompression_only: Some(request_id_2.into()),
-            base_keyset_id_for_sns_compression_key: None,
         }),
     )
     .await;
 }
 
-// TODO(2674)
-// test centralized sns compression keygen using the default parameters
-// this test will use an existing base key stored under the key ID `DEFAULT_CENTRAL_KEY_ID`
-#[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-#[serial]
-async fn default_sns_compression_key_gen_centralized() {
-    let request_id = derive_request_id("default_sns_compression_key_gen_centralized").unwrap();
-    // Delete potentially old data
-    purge(None, None, None, &request_id, 1).await;
-    key_gen_centralized(
-        &request_id,
-        FheParameter::Test,
-        None,
-        Some(KeySetAddedInfo {
-            compression_keyset_id: None,
-            from_keyset_id_decompression_only: None,
-            to_keyset_id_decompression_only: None,
-            base_keyset_id_for_sns_compression_key: Some((*DEFAULT_CENTRAL_KEY_ID).into()),
-        }),
-    )
-    .await;
-}
-
+#[allow(clippy::too_many_arguments)]
 async fn preproc_centralized(
     preproc_id: &RequestId,
     params: FheParameter,
+    context_id: Option<&ContextId>,
+    epoch_id: Option<&EpochId>,
     keyset_config: Option<KeySetConfig>,
     domain: &Eip712Domain,
     kms_client: &mut CoreServiceEndpointClient<Channel>,
     internal_client: &Client,
 ) {
     let preproc_req = internal_client
-        .preproc_request(preproc_id, Some(params), keyset_config, domain)
+        .preproc_request(
+            preproc_id,
+            Some(params),
+            context_id,
+            epoch_id,
+            keyset_config,
+            domain,
+        )
         .unwrap();
     let preproc_response = kms_client
         .key_gen_preproc(tonic::Request::new(preproc_req.clone()))
@@ -185,6 +152,7 @@ async fn preproc_centralized(
 
 pub(crate) async fn key_gen_centralized(
     request_id: &RequestId,
+    epoch_id: &EpochId,
     params: FheParameter,
     keyset_config: Option<KeySetConfig>,
     keyset_added_info: Option<KeySetAddedInfo>,
@@ -198,6 +166,7 @@ pub(crate) async fn key_gen_centralized(
         crsgen: 1,
         preproc: 1,
         keygen: 100,
+        reshare: 1,
     };
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, mut kms_client, internal_client) =
@@ -206,6 +175,7 @@ pub(crate) async fn key_gen_centralized(
         &mut kms_client,
         &internal_client,
         request_id,
+        epoch_id,
         params,
         keyset_config,
         keyset_added_info,
@@ -215,10 +185,12 @@ pub(crate) async fn key_gen_centralized(
     kms_server.assert_shutdown().await;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_key_gen_centralized(
     kms_client: &mut CoreServiceEndpointClient<Channel>,
     internal_client: &Client,
     key_req_id: &RequestId,
+    epoch_id: &EpochId,
     params: FheParameter,
     keyset_config: Option<KeySetConfig>,
     keyset_added_info: Option<KeySetAddedInfo>,
@@ -229,6 +201,8 @@ pub async fn run_key_gen_centralized(
     preproc_centralized(
         &preproc_id,
         params,
+        None,
+        None,
         keyset_config,
         &domain,
         kms_client,
@@ -240,6 +214,8 @@ pub async fn run_key_gen_centralized(
         .key_gen_request(
             key_req_id,
             &preproc_id,
+            None,
+            None,
             Some(params),
             keyset_config,
             keyset_added_info.clone(),
@@ -271,7 +247,7 @@ pub async fn run_key_gen_centralized(
     let domain_clone = domain.clone();
     let basic_checks = async |resp: &kms_grpc::kms::v1::KeyGenResult| {
         let req_id = resp.request_id.clone().unwrap();
-        let (server_key, _public_key) = internal_client
+        let (server_key, public_key) = internal_client
             .retrieve_server_key_and_public_key(
                 &preproc_id,
                 key_req_id,
@@ -285,13 +261,19 @@ pub async fn run_key_gen_centralized(
 
         // read the client key
         let handle: crate::engine::base::KmsFheKeyHandles = priv_storage
-            .read_data(
-                &req_id.try_into().unwrap(),
+            .read_data_at_epoch(
+                &req_id.clone().try_into().unwrap(),
+                epoch_id,
                 &PrivDataType::FhePrivateKey.to_string(),
             )
             .await
             .unwrap();
         let client_key = handle.client_key;
+
+        let tag: tfhe::Tag = RequestId::try_from(&req_id).unwrap().into();
+        assert_eq!(&tag, client_key.tag());
+        assert_eq!(&tag, public_key.tag());
+        assert_eq!(&tag, server_key.tag());
 
         crate::client::key_gen::tests::check_conformance(server_key, client_key);
     };
@@ -299,25 +281,6 @@ pub async fn run_key_gen_centralized(
     match keyset_type {
         KeySetType::Standard => {
             basic_checks(&inner_resp).await;
-        }
-        KeySetType::AddSnsCompressionKey => {
-            basic_checks(&inner_resp).await;
-
-            // check that the integer server key are the same, before and after the sns compression key gen
-            let new_keyset_id: RequestId = keyset_added_info
-                .clone()
-                .unwrap()
-                .base_keyset_id_for_sns_compression_key
-                .unwrap()
-                .try_into()
-                .unwrap();
-            crate::client::key_gen::tests::identical_keys_except_sns_compression_from_storage(
-                internal_client,
-                &pub_storage,
-                key_req_id,
-                &new_keyset_id,
-            )
-            .await;
         }
         KeySetType::DecompressionOnly => {
             // setup storage
@@ -343,11 +306,11 @@ pub async fn run_key_gen_centralized(
             )
             .unwrap();
             let handles_1: crate::engine::base::KmsFheKeyHandles = priv_storage
-                .read_data(&keyid_1, &PrivDataType::FhePrivateKey.to_string())
+                .read_data_at_epoch(&keyid_1, epoch_id, &PrivDataType::FhePrivateKey.to_string())
                 .await
                 .unwrap();
             let handles_2: crate::engine::base::KmsFheKeyHandles = priv_storage
-                .read_data(&keyid_2, &PrivDataType::FhePrivateKey.to_string())
+                .read_data_at_epoch(&keyid_2, epoch_id, &PrivDataType::FhePrivateKey.to_string())
                 .await
                 .unwrap();
 

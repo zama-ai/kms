@@ -1,7 +1,11 @@
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
-use crate::conf::{self, Keychain, SecretSharingKeychain};
-use crate::consts::SIGNING_KEY_ID;
+use crate::conf::{Keychain, SecretSharingKeychain};
+use crate::consts::{
+    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID,
+};
+use crate::util::key_setup::test_tools::file_backup_vault;
 #[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
 use crate::util::key_setup::test_tools::setup::{ensure_dir_exist, ensure_testing_material_exists};
@@ -10,15 +14,13 @@ use crate::util::key_setup::{
     ThresholdSigningKeyConfig,
 };
 use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::keychain::make_keychain_proxy;
-use crate::vault::storage::make_storage;
 use crate::vault::storage::{file::FileStorage, StorageType};
 use crate::vault::Vault;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use std::collections::HashMap;
 use std::path::Path;
+use tfhe::core_crypto::commons::utils::ZipChecked;
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tonic::transport::Channel;
 
@@ -41,12 +43,18 @@ async fn threshold_handles_w_vaults(
     let threshold = max_threshold(amount_parties);
     let mut pub_storage = Vec::new();
     let mut priv_storage = Vec::new();
-    for i in 1..=amount_parties {
-        let cur_role = Role::indexed_from_one(i);
-        priv_storage
-            .push(FileStorage::new(test_data_path, StorageType::PRIV, Some(cur_role)).unwrap());
-        pub_storage
-            .push(FileStorage::new(test_data_path, StorageType::PUB, Some(cur_role)).unwrap());
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    for (pub_prefix, priv_prefix) in pub_storage_prefixes
+        .iter()
+        .zip(priv_storage_prefixes.iter())
+    {
+        pub_storage.push(
+            FileStorage::new(test_data_path, StorageType::PUB, pub_prefix.as_deref()).unwrap(),
+        );
+        priv_storage.push(
+            FileStorage::new(test_data_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap(),
+        );
     }
     if generate_test_material {
         ensure_testing_material_exists(test_data_path).await;
@@ -70,6 +78,7 @@ async fn threshold_handles_w_vaults(
         .await
         .unwrap();
     }
+
     let (kms_servers, kms_clients) = crate::client::test_tools::setup_threshold(
         threshold as u8,
         pub_storage,
@@ -81,15 +90,10 @@ async fn threshold_handles_w_vaults(
     )
     .await;
     let mut pub_storage = HashMap::with_capacity(amount_parties);
-    for i in 1..=amount_parties {
+    for (i, prefix) in pub_storage_prefixes.iter().enumerate() {
         pub_storage.insert(
-            i as u32,
-            FileStorage::new(
-                test_data_path,
-                StorageType::PUB,
-                Some(Role::indexed_from_one(i)),
-            )
-            .unwrap(),
+            (i + 1) as u32,
+            FileStorage::new(test_data_path, StorageType::PUB, prefix.as_deref()).unwrap(),
         );
     }
     let client_storage = FileStorage::new(test_data_path, StorageType::CLIENT, None).unwrap();
@@ -118,9 +122,20 @@ pub(crate) async fn threshold_handles(
     Client,
 ) {
     let mut vaults = Vec::new();
-    for i in 1..=amount_parties {
-        let cur_role = Role::indexed_from_one(i);
-        let cur_vault = file_system_vault(cur_role, None).await;
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    for (pub_prefix, backup_prefix) in pub_storage_prefixes
+        .iter()
+        .zip(backup_storage_prefixes.iter())
+    {
+        let cur_vault = file_backup_vault(
+            None,
+            None,
+            None,
+            pub_prefix.as_deref(),
+            backup_prefix.as_deref(),
+        )
+        .await;
         vaults.push(Some(cur_vault));
     }
     threshold_handles_w_vaults(
@@ -153,9 +168,20 @@ pub(crate) async fn threshold_handles_custodian_backup(
     Client,
 ) {
     let mut vaults = Vec::new();
-    for i in 1..=amount_parties {
-        let cur_role = Role::indexed_from_one(i);
-        let cur_vault = custodian_backup_vault(cur_role, test_data_path).await;
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    for (pub_prefix, backup_prefix) in pub_storage_prefixes
+        .iter()
+        .zip_checked(backup_storage_prefixes.iter())
+    {
+        let cur_vault = file_backup_vault(
+            Some(&Keychain::SecretSharing(SecretSharingKeychain {})),
+            test_data_path,
+            test_data_path,
+            pub_prefix.as_deref(),
+            backup_prefix.as_deref(),
+        )
+        .await;
         vaults.push(Some(cur_vault));
     }
     threshold_handles_w_vaults(
@@ -169,44 +195,4 @@ pub(crate) async fn threshold_handles_custodian_backup(
         test_data_path,
     )
     .await
-}
-
-pub(crate) async fn custodian_backup_vault(role: Role, test_data_path: Option<&Path>) -> Vault {
-    let store_path = test_data_path.map(|p| {
-        conf::Storage::File(conf::FileStorage {
-            path: p.to_path_buf(),
-        })
-    });
-    let pub_proxy_storage =
-        make_storage(store_path.clone(), StorageType::PUB, Some(role), None, None).unwrap();
-    let backup_proxy_storage =
-        make_storage(store_path, StorageType::BACKUP, Some(role), None, None).unwrap();
-    let keychain = Some(
-        make_keychain_proxy(
-            &Keychain::SecretSharing(SecretSharingKeychain {}),
-            None,
-            None,
-            Some(&pub_proxy_storage),
-        )
-        .await
-        .unwrap(),
-    );
-    Vault {
-        storage: backup_proxy_storage,
-        keychain,
-    }
-}
-
-pub(crate) async fn file_system_vault(role: Role, test_data_path: Option<&Path>) -> Vault {
-    let store_path = test_data_path.map(|p| {
-        conf::Storage::File(conf::FileStorage {
-            path: p.to_path_buf(),
-        })
-    });
-    let backup_proxy_storage =
-        make_storage(store_path, StorageType::BACKUP, Some(role), None, None).unwrap();
-    Vault {
-        storage: backup_proxy_storage,
-        keychain: None,
-    }
 }

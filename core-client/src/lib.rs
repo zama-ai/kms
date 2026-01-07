@@ -2,63 +2,68 @@
 ///
 /// This library implements most functionalities to interact with deployed KMS cores.
 /// This library also includes an associated CLI.
+mod backup;
+mod crsgen;
+mod decrypt;
+mod keygen;
+pub mod mpc_context;
+mod prss_init;
+mod reshare;
+mod s3_operations;
+
+// reexport fetch_public_elements for integration test
+pub use crate::s3_operations::fetch_public_elements;
+
+use crate::backup::{
+    do_custodian_backup_recovery, do_custodian_recovery_init, do_get_operator_pub_keys,
+    do_new_custodian_context, do_restore_from_backup,
+};
+use crate::crsgen::{do_crsgen, fetch_and_check_crsgen, get_crsgen_responses};
+use crate::decrypt::{do_public_decrypt, do_user_decrypt, get_public_decrypt_responses};
+use crate::keygen::{
+    do_keygen, do_partial_preproc, do_preproc, fetch_and_check_keygen, get_keygen_responses,
+    get_preproc_keygen_responses,
+};
+use crate::mpc_context::do_new_mpc_context;
+use crate::prss_init::do_prss_init;
+use crate::reshare::do_reshare;
 use aes_prng::AesRng;
-use alloy_primitives::Signature;
-use alloy_sol_types::{Eip712Domain, SolStruct};
-use anyhow::anyhow;
-use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
-use kms_grpc::kms::v1::{
-    CiphertextFormat, CrsGenResult, CustodianContext, CustodianRecoveryInitRequest,
-    CustodianRecoveryOutput, CustodianRecoveryRequest, Empty, FheParameter, KeyGenPreprocResult,
-    KeyGenResult, NewCustodianContextRequest, PublicDecryptionRequest, PublicDecryptionResponse,
-    TypedCiphertext, TypedPlaintext,
-};
+use kms_grpc::identifiers::EpochId;
+use kms_grpc::kms::v1::{CiphertextFormat, FheParameter, TypedCiphertext, TypedPlaintext};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain, InternalCustodianRecoveryOutput, PubDataType};
-use kms_grpc::solidity_types::{CrsgenVerification, KeygenVerification};
-use kms_grpc::{KeyId, RequestId};
-use kms_lib::backup::custodian::InternalCustodianSetupMessage;
-use kms_lib::backup::operator::InternalRecoveryRequest;
-use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
+use kms_grpc::rpc_types::PubDataType;
+use kms_grpc::{ContextId, KeyId, RequestId};
+use kms_lib::backup::custodian::{InternalCustodianRecoveryOutput, InternalCustodianSetupMessage};
+use kms_lib::client::client_wasm::Client;
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
-use kms_lib::engine::base::compute_pt_message_hash;
-use kms_lib::engine::base::{
-    hash_sol_struct, safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
-};
 use kms_lib::util::file_handling::{
     read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
 };
-use kms_lib::util::key_setup::ensure_client_keys_exist;
-use kms_lib::util::key_setup::test_tools::{
-    compute_cipher_from_stored_key, load_material_from_storage, load_pk_from_storage,
-    EncryptionConfig, TestingPlaintext,
+use kms_lib::util::key_setup::{
+    ensure_client_keys_exist,
+    test_tools::{compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext},
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use kms_lib::vault::storage::{make_storage, read_text_at_request_id};
 use kms_lib::vault::Vault;
 use kms_lib::{conf, DecryptionMode};
 use observability::conf::Settings;
-use rand::{CryptoRng, Rng, SeedableRng};
+use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Once};
 use strum_macros::{Display, EnumString};
-use tfhe::zk::CompactPkeCrs;
-use tfhe::{CompactPublicKey, ServerKey};
-use threshold_fhe::execution::runtime::party::Role;
-use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
-use threshold_fhe::hashing::{hash_element, DomainSep};
+use tfhe::FheTypes as TfheFheType;
 use tokio::sync::RwLock;
-use tokio::task::JoinSet;
-use tonic::transport::Channel;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
 use validator::{Validate, ValidationError};
 
+// time to sleep between retries of requests in milliseconds
 const SLEEP_TIME_BETWEEN_REQUESTS_MS: u64 = 500;
 
 /// Retries a function a given number of times with a given interval between retries.
@@ -103,14 +108,27 @@ pub struct CoreConf {
     /// The ID of the given KMS server (monotonically increasing positive integer starting at 1)
     #[validate(range(min = 1))]
     pub party_id: usize,
+
     /// The address of the given KMS server, including the port
     #[validate(length(min = 1))]
     pub address: String,
+
     /// The S3 endpoint where the public material of the given server can be reached
     #[validate(length(min = 1))]
     pub s3_endpoint: String,
-    /// The folder at the S3 endpoint where the data is stored
+
+    /// The folder at the S3 endpoint where the data is stored.
     pub object_folder: String,
+
+    #[cfg(feature = "testing")]
+    /// The folder at the S3 endpoint where the private data is stored.
+    /// This is only used for testing context switching.
+    pub private_object_folder: Option<String>,
+
+    #[cfg(feature = "testing")]
+    /// The path for the KMS configuration file,
+    /// this is only needed for testing context switching.
+    pub config_path: Option<PathBuf>,
 }
 
 fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationError> {
@@ -248,8 +266,6 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
         Ok(conf)
     }
 }
-
-use tfhe::FheTypes as TfheFheType;
 
 #[derive(Copy, Clone, Default, EnumString, PartialEq, Display, Debug, Serialize, Deserialize)]
 pub enum FheType {
@@ -421,6 +437,22 @@ pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
     Ok(hex::decode(hex_str)?)
 }
 
+/// Initialize the PRSS for a given context and epoch.
+///
+/// This command will be deprecated and be combined with the resharing command.
+#[derive(Debug, Parser, Clone)]
+pub struct PrssInitParameters {
+    /// Optionally specify the context ID to use for the PRSS initialization.
+    /// Defaults to the default epoch if not specified.
+    #[clap(long)]
+    pub context_id: ContextId,
+    /// Optionally specify the epoch ID to use for the PRSS initialization.
+    /// Defaults to the default epoch if not specified.
+    /// The PRSS will be stored under the epoch ID.
+    #[clap(long)]
+    pub epoch_id: EpochId,
+}
+
 #[derive(Debug, Subcommand, Clone)]
 pub enum CipherArguments {
     FromFile(CipherFile),
@@ -465,6 +497,10 @@ pub struct CipherParameters {
     /// Key identifier to use for public/user decryption.
     #[clap(long, short = 'k')]
     pub key_id: KeyId,
+    /// Optionally specify the context ID to use for the decryption.
+    /// If not specified, the default context will be used.
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
     /// Number of copies of the ciphertext to process in a request.
     /// This is ignored for the encryption command.
     #[serde(skip_serializing, skip_deserializing)]
@@ -506,34 +542,14 @@ pub struct CipherWithParams {
 pub enum KeySetType {
     #[default]
     Standard,
+    // TODO(#2799)
     // DecompressionOnly, // we'll support this in the future
-    AddSnsCompressionKey,
 }
 
 impl From<KeySetType> for kms_grpc::kms::v1::KeySetType {
     fn from(value: KeySetType) -> Self {
         match value {
             KeySetType::Standard => kms_grpc::kms::v1::KeySetType::Standard,
-            KeySetType::AddSnsCompressionKey => kms_grpc::kms::v1::KeySetType::AddSnsCompressionKey,
-        }
-    }
-}
-
-#[derive(Args, Debug, Clone)]
-pub struct KeySetAddedInfo {
-    #[clap(long)]
-    base_keyset_id_for_sns_compression_key: Option<RequestId>,
-}
-
-impl From<KeySetAddedInfo> for kms_grpc::kms::v1::KeySetAddedInfo {
-    fn from(value: KeySetAddedInfo) -> Self {
-        kms_grpc::kms::v1::KeySetAddedInfo {
-            compression_keyset_id: None,
-            from_keyset_id_decompression_only: None,
-            to_keyset_id_decompression_only: None,
-            base_keyset_id_for_sns_compression_key: value
-                .base_keyset_id_for_sns_compression_key
-                .map(|x| x.into()),
         }
     }
 }
@@ -542,8 +558,11 @@ impl From<KeySetAddedInfo> for kms_grpc::kms::v1::KeySetAddedInfo {
 pub struct SharedKeyGenParameters {
     #[clap(value_enum, long, short = 't')]
     pub keyset_type: Option<KeySetType>,
-    #[command(flatten)]
-    pub keyset_added_info: Option<KeySetAddedInfo>,
+    // TODO(#2799)
+    // #[command(flatten)]
+    // pub keyset_added_info: Option<KeySetAddedInfo>,
+    pub context_id: Option<ContextId>,
+    pub epoch_id: Option<EpochId>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -573,6 +592,31 @@ pub struct NewCustodianContextParameters {
     #[clap(long, short = 'm')]
     pub setup_msg_paths: Vec<PathBuf>,
 }
+#[derive(Debug, Args, Clone)]
+pub struct ContextPath {
+    /// Input file of the ciphertext.
+    #[clap(long)]
+    pub input_path: PathBuf,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum NewMpcContextParameters {
+    /// Safe Serialized version of the struct ContextInfo
+    /// stored in a file.
+    SerializedContextPath(ContextPath),
+    ContextToml(ContextPath),
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct NewTestingMpcContextFileParameters {
+    /// The context ID to use for the new MPC context.
+    #[clap(long)]
+    pub context_id: ContextId,
+
+    /// The path to store the context.
+    #[clap(long)]
+    pub context_path: PathBuf,
+}
 
 #[derive(Debug, Parser, Clone)]
 pub struct ResultParameters {
@@ -582,8 +626,11 @@ pub struct ResultParameters {
 
 #[derive(Debug, Parser, Clone)]
 pub struct RecoveryInitParameters {
+    /// Indicator as to whether the KMS should overwrite a possible existing ephemeral key
+    /// If false, the call will be indempotent, if true, this will not be the case
     #[clap(long, short = 'o', default_value_t = false)]
     pub overwrite_ephemeral_key: bool,
+    /// Paths to write the operator responses, the responses stored in these paths are not ordered.
     #[clap(long, short = 'r')]
     pub operator_recovery_resp_paths: Vec<PathBuf>,
 }
@@ -597,9 +644,65 @@ pub struct RecoveryParameters {
     pub custodian_recovery_outputs: Vec<PathBuf>,
 }
 
+#[derive(Debug, Parser, Clone)]
+pub struct ReshareParameters {
+    /// ID of the key to reshare
+    #[clap(long, short = 'k')]
+    pub key_id: RequestId,
+
+    /// ID of the preprocessing used to generate the key
+    #[clap(long, short = 'i')]
+    pub preproc_id: RequestId,
+
+    /// The context ID to do the resharing from.
+    /// If it's not given then the default context is used.
+    #[clap(long)]
+    pub from_context_id: Option<ContextId>,
+
+    /// The epoch ID to do the resharing from.
+    /// If it's not given then the default epoch is used.
+    #[clap(long)]
+    pub from_epoch_id: Option<EpochId>,
+
+    /// The hex-encoded server key digest to use for resharing.
+    #[clap(long)]
+    pub server_key_digest: String,
+
+    /// The hex-encoded public key digest to use for resharing.
+    #[clap(long)]
+    pub public_key_digest: String,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct KeyGenPreprocParameters {
+    /// Optionally specify the context ID to use for the preprocessing.
+    /// Defaults to the default context if not specified.
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
+    /// Optionally specify the epoch ID to use for the preprocessing.
+    /// Defaults to the default epoch if not specified.
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct PartialKeyGenPreprocParameters {
+    #[clap(long)]
+    pub context_id: Option<ContextId>,
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
+    /// Percentage of offline phase to run (0-100)
+    #[clap(long, short = 'p')]
+    pub percentage_offline: u32,
+    /// Whether to store dummy preprocessing, needed to run online DKG if percentage is not 100
+    #[clap(long, short = 's')]
+    pub store_dummy_preprocessing: bool,
+}
+
 #[derive(Debug, Subcommand, Clone)]
 pub enum CCCommand {
-    PreprocKeyGen(NoParameters),
+    PreprocKeyGen(KeyGenPreprocParameters),
+    PartialPreprocKeyGen(PartialKeyGenPreprocParameters),
     PreprocKeyGenResult(ResultParameters),
     KeyGen(KeyGenParameters),
     KeyGenResult(ResultParameters),
@@ -620,6 +723,12 @@ pub enum CCCommand {
     CustodianRecoveryInit(RecoveryInitParameters),
     CustodianBackupRecovery(RecoveryParameters),
     BackupRestore(NoParameters),
+    Reshare(ReshareParameters),
+    #[clap(subcommand)]
+    NewMpcContext(NewMpcContextParameters),
+    PrssInit(PrssInitParameters),
+    #[cfg(feature = "testing")]
+    NewTestingMpcContextFile(NewTestingMpcContextFileParameters),
     DoNothing(NoParameters),
 }
 
@@ -666,6 +775,7 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     )
 }
 
+// dummy ciphertext handle for testing
 fn dummy_handle() -> Vec<u8> {
     vec![23_u8; 32]
 }
@@ -675,6 +785,7 @@ pub struct EncryptionResult {
     pub ct_format: CiphertextFormat,
     pub plaintext: TypedPlaintext,
     pub key_id: KeyId,
+    pub context_id: Option<ContextId>,
 }
 
 impl EncryptionResult {
@@ -683,12 +794,14 @@ impl EncryptionResult {
         ct_format: CiphertextFormat,
         plaintext: TypedPlaintext,
         key_id: KeyId,
+        context_id: Option<ContextId>,
     ) -> Self {
         Self {
             cipher,
             ct_format,
             plaintext,
             key_id,
+            context_id,
         }
     }
 }
@@ -703,14 +816,16 @@ pub async fn fetch_ctxt_from_file(
     };
 
     let ct_format = CiphertextFormat::from_str_name(&cipher_with_params.ct_format)
-        .ok_or_else(|| anyhow!("Failed to recover ct_format"))?;
+        .ok_or_else(|| anyhow::anyhow!("Failed to recover ct_format"))?;
 
     let key_id = cipher_with_params.params.key_id;
+    let context_id = cipher_with_params.params.context_id;
     Ok(EncryptionResult::new(
         cipher_with_params.cipher,
         ct_format,
         ptxt,
         key_id,
+        context_id,
     ))
 }
 
@@ -720,7 +835,7 @@ pub async fn fetch_ctxt_from_file(
 /// - `party_id`: the 1-indexed ID of the KMS core whose public keys we will use (should not matter as long as the server is online)
 pub async fn encrypt(
     keys_folder: &Path,
-    party_id: usize,
+    stored_key_storage_prefix: Option<&str>,
     cipher_params: CipherParameters,
 ) -> Result<EncryptionResult, Box<dyn std::error::Error + 'static>> {
     let to_encrypt = parse_hex(cipher_params.to_encrypt.as_str())?;
@@ -750,7 +865,7 @@ pub async fn encrypt(
         Some(keys_folder),
         typed_to_encrypt,
         &cipher_params.key_id.into(),
-        party_id,
+        stored_key_storage_prefix,
         EncryptionConfig {
             compression: !cipher_params.no_compression,
             precompute_sns: !cipher_params.no_precompute_sns,
@@ -772,82 +887,8 @@ pub async fn encrypt(
         ct_format,
         ptxt,
         cipher_params.key_id,
+        cipher_params.context_id,
     ))
-}
-
-fn join_vars(args: &[&str]) -> String {
-    args.iter()
-        .filter(|&s| !s.is_empty())
-        .copied()
-        .collect::<Vec<&str>>()
-        .join("/")
-}
-
-// TODO: handle auth
-// TODO: add option to either use local key or remote key
-pub async fn fetch_element(
-    endpoint: &str,
-    folder: &str,
-    element_id: &str,
-) -> anyhow::Result<Bytes> {
-    let element_key = element_id.to_string();
-    // Construct the URL
-    let url = join_vars(&[endpoint, folder, element_key.as_str()]);
-    tracing::debug!("Fetching element: {url}");
-
-    // If URL we fetch it
-    if url.starts_with("http") {
-        // Make the request
-        let client = reqwest::Client::new();
-        let response = client.get(&url).send().await?;
-
-        if response.status().is_success() {
-            let bytes = response.bytes().await?;
-            tracing::info!("Successfully downloaded {} bytes for element {element_id} from endpoint {endpoint}/{folder}", bytes.len());
-            // Here you can process the bytes as needed
-            Ok(bytes)
-        } else {
-            let response_status = response.status();
-            let response_content = response.text().await?;
-            tracing::error!("Error: {}", response_status);
-            tracing::error!("Response: {}", response_content);
-            Err(anyhow::anyhow!(format!(
-                "Couldn't fetch element {element_id} from endpoint {endpoint}/{folder}\nStatus: {}\nResponse: {}",
-                response_status, response_content
-            ),))
-        }
-    } else {
-        // read from local file system
-        let key_path = Path::new(endpoint).join(folder).join(element_id);
-        let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
-            anyhow!(
-                "Failed to read byte file at {:?} with error: {e}",
-                &key_path
-            )
-        })?;
-        let res = Bytes::from(byte_res);
-        tracing::info!("Successfully read {} bytes for element {element_id} from local path {endpoint}/{folder}", res.len());
-        Ok(res)
-    }
-}
-
-async fn write_bytes_to_file(
-    folder_path: &Path,
-    filename: &str,
-    data: &[u8],
-) -> anyhow::Result<()> {
-    let path = folder_path.join(filename);
-    // Create the parent directories of the file path if they don't exist
-    if let Some(p) = path.parent() {
-        tokio::fs::create_dir_all(p).await?;
-    }
-    tokio::fs::write(&path, data).await.map_err(|e| {
-        anyhow!(
-            "Failed to write bytes to file at {:?} with error: {e}",
-            &path
-        )
-    })?;
-    Ok(())
 }
 
 static INIT_LOG: Once = Once::new();
@@ -875,26 +916,6 @@ pub fn setup_logging() {
     tracing::subscriber::set_global_default(subscriber).expect("Failed to set logging subscriber");
 }
 
-/// This fetches material which is global
-/// i.e. everything related to CRS and FHE public materials
-async fn fetch_global_pub_element_and_write_to_file(
-    destination_prefix: &Path,
-    s3_endpoint: &str,
-    element_id: &str,
-    element_name: &str,
-    element_folder: &str,
-) -> anyhow::Result<()> {
-    // Fetch pub-key from storage and dump it for later use
-    let folder = destination_prefix.join(element_folder).join(element_name);
-    let content = fetch_element(
-        s3_endpoint,
-        &format!("{element_folder}/{element_name}"),
-        element_id,
-    )
-    .await?;
-    write_bytes_to_file(&folder, element_id, content.as_ref()).await
-}
-
 /// This reads the kms ethereum address from local file system
 async fn read_kms_addresses_local(
     path: &Path,
@@ -903,17 +924,14 @@ async fn read_kms_addresses_local(
     let mut addr_strings = Vec::with_capacity(sim_conf.cores.len());
 
     for cur_core in &sim_conf.cores {
-        let cur_role = Role::indexed_from_one(cur_core.party_id);
+        let storage_prefix = Some(cur_core.object_folder.clone());
+
         let vault = {
             let store_path = Some(conf::Storage::File(conf::FileStorage {
                 path: path.to_path_buf(),
+                prefix: storage_prefix,
             }));
-            let party_role = match sim_conf.kms_type {
-                KmsType::Centralized => None, // in centralized mode, there is only one party, so no need to specify role to access the right storage
-                KmsType::Threshold => Some(cur_role),
-            };
-            let storage =
-                make_storage(store_path, StorageType::PUB, party_role, None, None).unwrap();
+            let storage = make_storage(store_path, StorageType::PUB, None, None)?;
             Vault {
                 storage,
                 keychain: None,
@@ -929,7 +947,7 @@ async fn read_kms_addresses_local(
         addr_strings.push(content);
     }
 
-    // turn bytes read into Address type
+    // turn the read bytes into Address type
     let kms_addrs: Vec<_> = addr_strings
         .iter()
         .map(|x| {
@@ -939,646 +957,6 @@ async fn read_kms_addresses_local(
         .collect();
 
     Ok(kms_addrs)
-}
-
-/// This fetches the KMS ethereum address from S3
-#[expect(dead_code)]
-async fn fetch_kms_addresses_remote(
-    sim_conf: &CoreClientConfig,
-) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
-    let key_id = &SIGNING_KEY_ID.to_string();
-    let mut addr_bytes = Vec::with_capacity(sim_conf.cores.len());
-
-    for cur_core in &sim_conf.cores {
-        let content = fetch_element(
-            &cur_core.s3_endpoint.clone(),
-            &format!(
-                "{}/{}",
-                cur_core.object_folder,
-                &PubDataType::VerfAddress.to_string()
-            ),
-            key_id,
-        )
-        .await?;
-        addr_bytes.push(content);
-    }
-
-    // turn bytes read into Address type
-    let kms_addrs: Vec<_> = addr_bytes
-        .iter()
-        .map(|x| {
-            alloy_primitives::Address::parse_checksummed(
-                str::from_utf8(x).unwrap_or_else(|_| {
-                    panic!("cannot convert address bytes into UTF-8 string: {x:?}")
-                }),
-                None,
-            )
-            .unwrap_or_else(|e| panic!("invalid ethereum address: {x:?} - {e}"))
-        })
-        .collect();
-
-    Ok(kms_addrs)
-}
-
-fn recover_address_from_ext_signature<S: SolStruct>(
-    data: &S,
-    domain: &Eip712Domain,
-    external_sig: &[u8],
-) -> anyhow::Result<alloy_primitives::Address> {
-    // convert received data into proper format for EIP-712 verification
-    if external_sig.len() != 65 {
-        return Err(anyhow!(
-            "Expected external signature of length 65 Bytes, but got {:?}",
-            external_sig.len()
-        ));
-    }
-    // Deserialize the Signature. It reverses the call to `signature.as_bytes()` that we use for serialization.
-    let sig = Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
-
-    tracing::debug!("ext. signature bytes: {:x?}", external_sig);
-    tracing::debug!("ext. signature: {:?}", sig);
-    tracing::debug!("EIP-712 domain: {:?}", domain);
-
-    let hash = hash_sol_struct(data, domain)?;
-
-    let addr = sig.recover_address_from_prehash(&hash)?;
-    tracing::info!("reconstructed address: {}", addr);
-
-    Ok(addr)
-}
-
-/// check that the external signature on the keygen is valid, i.e. was made by one of the supplied addresses
-fn check_standard_keyset_ext_signature(
-    public_key: &CompactPublicKey,
-    server_key: &ServerKey,
-    prep_id: &RequestId,
-    key_id: &RequestId,
-    external_sig: &[u8],
-    domain: &Eip712Domain,
-    kms_addrs: &[alloy_primitives::Address],
-) -> anyhow::Result<()> {
-    let server_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
-    let public_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
-
-    let sol_type = KeygenVerification::new(prep_id, key_id, server_key_digest, public_key_digest);
-    let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
-
-    // check that the address is in the list of known KMS addresses
-    if kms_addrs.contains(&addr) {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "External signature verification failed for keygen as it does not contain the right address!"
-        ))
-    }
-}
-
-/// check that the external signature on the CRS is valid, i.e. was made by one of the supplied addresses
-fn check_crsgen_ext_signature(
-    crs: &CompactPkeCrs,
-    crs_id: &RequestId,
-    external_sig: &[u8],
-    domain: &Eip712Domain,
-    kms_addrs: &[alloy_primitives::Address],
-) -> anyhow::Result<()> {
-    let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, crs)?;
-
-    let max_num_bits = max_num_bits_from_crs(crs);
-    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest);
-    let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
-
-    // check that the address is in the list of known KMS addresses
-    if kms_addrs.contains(&addr) {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "External signature verification failed for crsgen as it does not contain the right address!"
-        ))
-    }
-}
-
-/// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
-fn check_ext_pt_signature(
-    external_sig: &[u8],
-    plaintexts: &Vec<TypedPlaintext>,
-    external_handles: Vec<Vec<u8>>,
-    domain: Eip712Domain,
-    kms_addrs: &[alloy_primitives::Address],
-    extra_data: Vec<u8>,
-) -> anyhow::Result<()> {
-    // convert received data into proper format for EIP-712 verification
-    if external_sig.len() != 65 {
-        return Err(anyhow!(
-            "Expected external signature of length 65 Bytes, but got {:?}",
-            external_sig.len()
-        ));
-    }
-    // this reverses the call to `signature.as_bytes()` that we use for serialization
-    let sig = Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
-
-    tracing::debug!("ext. signature bytes: {:x?}", external_sig);
-    tracing::debug!("ext. signature: {:?}", sig);
-    tracing::debug!("EIP-712 domain: {:?}", domain);
-    tracing::debug!("PTs: {:?}", plaintexts);
-    tracing::debug!("ext. handles: {:?}", external_handles);
-
-    let hash = compute_pt_message_hash(external_handles, plaintexts, domain, extra_data)?;
-
-    let addr = sig.recover_address_from_prehash(&hash)?;
-    tracing::info!("recovered address: {}", addr);
-
-    // check that the address is in the list of known KMS addresses
-    if kms_addrs.contains(&addr) {
-        Ok(())
-    } else {
-        Err(anyhow!("External PT signature verification failed!"))
-    }
-}
-
-fn check_external_decryption_signature(
-    responses: &[PublicDecryptionResponse], // one response per party
-    expected_answer: TypedPlaintext,
-    external_handles: &[Vec<u8>],
-    domain: &Eip712Domain,
-    kms_addrs: &[alloy_primitives::Address],
-) -> anyhow::Result<()> {
-    let mut results = Vec::new();
-    for response in responses {
-        let payload = response.payload.as_ref().unwrap();
-        check_ext_pt_signature(
-            &response.external_signature,
-            &payload.plaintexts,
-            external_handles.to_owned(),
-            domain.clone(),
-            kms_addrs,
-            vec![],
-        )?;
-
-        for (idx, pt) in payload.plaintexts.iter().enumerate() {
-            tracing::info!(
-                "Decrypt Result #{idx}: Plaintext: {:?} (Bytes: {}).",
-                pt,
-                hex::encode(pt.bytes.as_slice()),
-            );
-            results.push(pt.clone());
-        }
-    }
-
-    let tp_expected = TestingPlaintext::try_from(expected_answer)?;
-    for result in results {
-        assert_eq!(tp_expected, TestingPlaintext::try_from(result).unwrap());
-    }
-
-    tracing::info!("Decryption response successfully processed.");
-    Ok(())
-}
-
-/// Fetch all remote elements and store them locally for the core client
-/// Return the server IDs of all servers that were successfully contacted
-/// or an error if no server could be contacted
-/// element_id: the id of the element to fetch (key id or crs id)
-/// element_types: the types of elements to fetch (e.g. public key, server key, CRS)
-/// sim_conf: the core client configuration
-/// destination_prefix: the local folder to store the fetched elements
-/// download_all: whether to download from all cores or just the first one
-/// returns: the party IDs of the cores that were successfully contacted, unsorted
-async fn fetch_elements(
-    element_id: &str,
-    element_types: &[PubDataType],
-    sim_conf: &CoreClientConfig,
-    destination_prefix: &Path,
-    download_all: bool,
-) -> anyhow::Result<Vec<usize>> {
-    tracing::info!("Fetching {:?} with id {element_id}", element_types);
-
-    // set of core ids, to track which cores we successfully contacted
-    let mut successful_core_ids: HashSet<usize> = HashSet::new();
-
-    // go over list of cores to retrieve the public elements from
-    'cores: for cur_core in &sim_conf.cores {
-        let mut all_elements = true;
-        // try to fetch all elements from this core
-        'elements: for element_name in element_types {
-            if fetch_global_pub_element_and_write_to_file(
-                destination_prefix,
-                cur_core.s3_endpoint.as_str(),
-                element_id,
-                &element_name.to_string(),
-                &cur_core.object_folder,
-            )
-            .await
-            .is_err()
-            {
-                tracing::warn!("Could not fetch element {element_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
-                all_elements = false;
-                break 'elements;
-            }
-        }
-        // if we were able to retrieve all elements, add the core id to the set of successful nodes
-        if all_elements {
-            successful_core_ids.insert(cur_core.party_id);
-            // if we only want to download from one core, break here
-            if !download_all {
-                break 'cores;
-            }
-        }
-    }
-
-    if successful_core_ids.is_empty() {
-        Err(anyhow::anyhow!(
-                "Could not fetch all of [{element_types:?}] with id {element_id} from any core. At least one core is required to proceed."
-            ))
-    } else {
-        Ok(successful_core_ids.into_iter().collect())
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn do_keygen(
-    internal_client: &mut Client,
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    rng: &mut AesRng,
-    cc_conf: &CoreClientConfig,
-    cmd_conf: &CmdConfig,
-    num_parties: usize,
-    kms_addrs: &[alloy_primitives::Address],
-    param: FheParameter,
-    preproc_id: RequestId,
-    insecure: bool,
-    shared_config: &SharedKeyGenParameters,
-    destination_prefix: &Path,
-) -> anyhow::Result<RequestId> {
-    let req_id = RequestId::new_random(rng);
-
-    let max_iter = cmd_conf.max_iter;
-    let num_expected_responses = if cmd_conf.expect_all_responses {
-        num_parties
-    } else {
-        cc_conf.num_majority
-    };
-
-    //NOTE: If we do not use dummy_domain here, then
-    //this needs changing too in the KeyGenResult command.
-    let keyset_config =
-        shared_config
-            .keyset_type
-            .clone()
-            .map(|x| kms_grpc::kms::v1::KeySetConfig {
-                keyset_type: kms_grpc::kms::v1::KeySetType::from(x) as i32,
-                standard_keyset_config: None,
-            });
-    let keyset_added_info = shared_config
-        .keyset_added_info
-        .clone()
-        .map(kms_grpc::kms::v1::KeySetAddedInfo::from);
-    let dkg_req = internal_client.key_gen_request(
-        &req_id,
-        &preproc_id,
-        Some(param),
-        keyset_config,
-        keyset_added_info,
-        dummy_domain(),
-    )?;
-
-    //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
-    //we have an issue in the (Insecure)KeyGenResult commands
-    let domain = if let Some(domain) = &dkg_req.domain {
-        protobuf_to_alloy_domain(domain)?
-    } else {
-        return Err(anyhow!("No domain provided in crsgen request"));
-    };
-
-    // make parallel requests by calling insecure keygen in a thread
-    let mut req_tasks = JoinSet::new();
-
-    for (_party_id, ce) in core_endpoints.iter() {
-        let req_cloned = dkg_req.clone();
-        let mut cur_client = ce.clone();
-        req_tasks.spawn(async move {
-            if insecure {
-                cur_client
-                    .insecure_key_gen(tonic::Request::new(req_cloned))
-                    .await
-            } else {
-                cur_client.key_gen(tonic::Request::new(req_cloned)).await
-            }
-        });
-    }
-
-    let mut req_response_vec = Vec::new();
-    while let Some(inner) = req_tasks.join_next().await {
-        req_response_vec.push(inner.unwrap().unwrap().into_inner());
-    }
-    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
-
-    // get all responses
-    let resp_response_vec = get_keygen_responses(
-        core_endpoints,
-        req_id,
-        max_iter,
-        insecure,
-        num_expected_responses,
-    )
-    .await?;
-
-    fetch_and_check_keygen(
-        num_expected_responses,
-        cc_conf,
-        kms_addrs,
-        destination_prefix,
-        req_id,
-        domain,
-        resp_response_vec,
-        cmd_conf.download_all,
-    )
-    .await?;
-
-    Ok(req_id)
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn do_crsgen(
-    internal_client: &mut Client,
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    rng: &mut AesRng,
-    cc_conf: &CoreClientConfig,
-    cmd_conf: &CmdConfig,
-    num_parties: usize,
-    kms_addrs: &[alloy_primitives::Address],
-    max_num_bits: Option<u32>,
-    param: FheParameter,
-    insecure: bool,
-    destination_prefix: &Path,
-) -> anyhow::Result<RequestId> {
-    let req_id = RequestId::new_random(rng);
-
-    let max_iter = cmd_conf.max_iter;
-    let num_expected_responses = if cmd_conf.expect_all_responses {
-        num_parties
-    } else {
-        cc_conf.num_majority
-    };
-
-    let crs_req =
-        internal_client.crs_gen_request(&req_id, max_num_bits, Some(param), &dummy_domain())?;
-
-    //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
-    //we have an issue in the (Insecure)CrsGenResult commands
-    let domain = if let Some(domain) = &crs_req.domain {
-        protobuf_to_alloy_domain(domain)?
-    } else {
-        return Err(anyhow!("No domain provided in crsgen request"));
-    };
-
-    // make parallel requests by calling insecure keygen in a thread
-    let mut req_tasks = JoinSet::new();
-
-    for (_party_id, ce) in core_endpoints.iter() {
-        let req_cloned = crs_req.clone();
-        let mut cur_client = ce.clone();
-        req_tasks.spawn(async move {
-            if insecure {
-                cur_client
-                    .insecure_crs_gen(tonic::Request::new(req_cloned))
-                    .await
-            } else {
-                cur_client.crs_gen(tonic::Request::new(req_cloned)).await
-            }
-        });
-    }
-
-    let mut req_response_vec = Vec::new();
-    while let Some(inner) = req_tasks.join_next().await {
-        req_response_vec.push(inner.unwrap().unwrap().into_inner());
-    }
-    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
-
-    // get all responses
-    let resp_response_vec = get_crsgen_responses(
-        core_endpoints,
-        req_id,
-        max_iter,
-        insecure,
-        num_expected_responses,
-    )
-    .await?;
-
-    fetch_and_check_crsgen(
-        num_expected_responses,
-        cc_conf,
-        kms_addrs,
-        destination_prefix,
-        req_id,
-        domain,
-        resp_response_vec,
-        cmd_conf.download_all,
-    )
-    .await?;
-
-    Ok(req_id)
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn do_preproc(
-    internal_client: &mut Client,
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    rng: &mut AesRng,
-    cmd_conf: &CmdConfig,
-    num_parties: usize,
-    param: FheParameter,
-) -> anyhow::Result<RequestId> {
-    let req_id = RequestId::new_random(rng);
-
-    let max_iter = cmd_conf.max_iter;
-    // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
-    // this function is only used for testing.
-    let domain = dummy_domain();
-    let pp_req = internal_client.preproc_request(&req_id, Some(param), None, &domain)?; //TODO keyset config
-
-    // make parallel requests by calling insecure keygen in a thread
-    let mut req_tasks = JoinSet::new();
-
-    for (_party_id, ce) in core_endpoints.iter() {
-        let req_cloned = pp_req.clone();
-        let mut cur_client = ce.clone();
-        req_tasks.spawn(async move {
-            cur_client
-                .key_gen_preproc(tonic::Request::new(req_cloned))
-                .await
-        });
-    }
-
-    let mut req_response_vec = Vec::new();
-    while let Some(inner) = req_tasks.join_next().await {
-        req_response_vec.push(inner.unwrap().unwrap().into_inner());
-    }
-    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
-
-    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
-    for response in responses {
-        internal_client.process_preproc_response(&req_id, &domain, &response)?;
-    }
-
-    Ok(req_id)
-}
-
-async fn do_get_operator_pub_keys(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-) -> anyhow::Result<Vec<String>> {
-    let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
-        req_tasks.spawn(async move {
-            cur_client
-                .get_operator_public_key(tonic::Request::new(kms_grpc::kms::v1::Empty {}))
-                .await
-        });
-    }
-
-    let mut backup_pks = Vec::with_capacity(core_endpoints.len());
-
-    while let Some(inner) = req_tasks.join_next().await {
-        let pk = inner??.into_inner();
-        let attestation_doc = attestation_doc_validation::validate_and_parse_attestation_doc(
-            &pk.attestation_document,
-        )?;
-        let Some(attested_pk) = attestation_doc.public_key else {
-            anyhow::bail!("Bad response: public key not present in attestation document")
-        };
-
-        if pk.public_key.as_slice() != attested_pk.as_slice() {
-            let dsep: DomainSep = *b"EQUALITY";
-            let pk_hash = hex::encode(hash_element(&dsep, pk.public_key.as_slice()));
-            let att_pk_hash = hex::encode(hash_element(&dsep, attested_pk.as_slice()));
-            anyhow::bail!("Bad response: public key with hash {} does not match attestation document public key with hash {}", pk_hash, att_pk_hash)
-        };
-
-        backup_pks.push(hex::encode(pk.public_key.as_slice()));
-    }
-
-    Ok(backup_pks)
-}
-
-async fn do_new_custodian_context(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    rng: &mut AesRng,
-    threshold: u32,
-    custodian_setup_msg: Vec<InternalCustodianSetupMessage>,
-) -> anyhow::Result<RequestId> {
-    let context_id = RequestId::new_random(rng);
-    let mut req_tasks = JoinSet::new();
-    let mut custodian_nodes = Vec::new();
-    for cur_setup in custodian_setup_msg {
-        custodian_nodes.push(cur_setup.try_into()?);
-    }
-    let new_context = CustodianContext {
-        custodian_nodes,
-        context_id: Some(context_id.into()),
-        previous_context_id: None, // TODO(#2748) not really used now, should be refactored
-        threshold,
-    };
-    for (_party_id, ce) in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
-        let new_context_cloned = new_context.clone();
-        req_tasks.spawn(async move {
-            cur_client
-                .new_custodian_context(tonic::Request::new(NewCustodianContextRequest {
-                    active_context: None, // TODO(#2748) not really used now, should be refactored
-                    new_context: Some(new_context_cloned),
-                }))
-                .await
-        });
-    }
-    while let Some(inner) = req_tasks.join_next().await {
-        let _ = inner??;
-    }
-
-    Ok(context_id)
-}
-
-async fn do_custodian_recovery_init(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    overwrite_ephemeral_key: bool,
-) -> anyhow::Result<Vec<InternalRecoveryRequest>> {
-    let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
-        req_tasks.spawn(async move {
-            cur_client
-                .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
-                    overwrite_ephemeral_key,
-                }))
-                .await
-        });
-    }
-
-    let mut res = Vec::new();
-    while let Some(inner) = req_tasks.join_next().await {
-        let cur_rec_req = inner??;
-        let cur_inner_rec = cur_rec_req.into_inner();
-        res.push(cur_inner_rec.try_into()?);
-    }
-
-    Ok(res)
-}
-
-async fn do_custodian_backup_recovery(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    custodian_context_id: RequestId,
-    custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
-) -> anyhow::Result<()> {
-    let mut req_tasks = JoinSet::new();
-    for (core_idx, ce) in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
-        let core_idx = *core_idx as usize;
-        // We assume the core client endpoints are ordered by the server identity
-        let mut cur_recoveries = Vec::new();
-        for cur_recover in custodian_recovery_outputs.iter() {
-            // Find the recoveries designated for the correct server
-            if cur_recover.operator_role == Role::indexed_from_one(core_idx) {
-                cur_recoveries.push(CustodianRecoveryOutput {
-                    signature: cur_recover.signature.clone(),
-                    ciphertext: cur_recover.ciphertext.clone(),
-                    custodian_role: cur_recover.custodian_role.one_based() as u64,
-                    operator_role: cur_recover.operator_role.one_based() as u64,
-                });
-            }
-        }
-        req_tasks.spawn(async move {
-            cur_client
-                .custodian_backup_recovery(tonic::Request::new(CustodianRecoveryRequest {
-                    custodian_context_id: Some(custodian_context_id.into()),
-                    custodian_recovery_outputs: cur_recoveries,
-                }))
-                .await
-        });
-    }
-
-    while let Some(inner) = req_tasks.join_next().await {
-        let _ = inner??;
-    }
-
-    Ok(())
-}
-
-async fn do_restore_from_backup(
-    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
-) -> anyhow::Result<()> {
-    let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter_mut() {
-        let mut cur_client = ce.clone();
-        req_tasks.spawn(async move {
-            cur_client
-                .restore_from_backup(tonic::Request::new(Empty {}))
-                .await
-        });
-    }
-
-    while let Some(inner) = req_tasks.join_next().await {
-        let _ = inner??;
-    }
-
-    Ok(())
 }
 
 /// execute a command based on the provided configuration
@@ -1616,8 +994,8 @@ pub async fn execute_cmd(
     let mut core_endpoints_resp = HashMap::with_capacity(num_parties);
 
     // use secure default params if nothing is set
-    let param = cc_conf.fhe_params.unwrap_or(FheParameter::Default);
-    let client_param = match param {
+    let fhe_params = cc_conf.fhe_params.unwrap_or(FheParameter::Default);
+    let client_param = match fhe_params {
         FheParameter::Test => TEST_PARAM,
         _ => DEFAULT_PARAM,
     };
@@ -1633,7 +1011,7 @@ pub async fn execute_cmd(
         // Otherwise always fetch the public verfication keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
         tracing::info!("Fetching verification keys. ({command:?})");
         let public_verf_types = vec![PubDataType::VerfAddress, PubDataType::VerfKey];
-        let _ = fetch_elements(
+        let _ = fetch_public_elements(
             &SIGNING_KEY_ID.to_string(),
             &public_verf_types,
             &cc_conf,
@@ -1735,7 +1113,7 @@ pub async fn execute_cmd(
                         FileStorage::new(
                             Some(destination_prefix),
                             StorageType::PUB,
-                            Some(Role::indexed_from_one(cur_core.party_id)),
+                            Some(cur_core.object_folder.as_str()),
                         )
                         .unwrap(),
                     );
@@ -1757,7 +1135,7 @@ pub async fn execute_cmd(
     tracing::info!(
         "Parties: {}. FHE Parameters: {}",
         num_parties,
-        param.as_str_name()
+        fhe_params.as_str_name()
     );
 
     let kms_addrs = Arc::new(addr_vec);
@@ -1783,6 +1161,7 @@ pub async fn execute_cmd(
                 ct_format,
                 plaintext: ptxt,
                 key_id,
+                context_id,
             } = match cipher_args {
                 CipherArguments::FromFile(cipher_file) => {
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
@@ -1790,7 +1169,7 @@ pub async fn execute_cmd(
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
                     tracing::info!("Fetching keys {key_types:?}. ({command:?})");
-                    let party_ids = fetch_elements(
+                    let party_ids = fetch_public_elements(
                         &cipher_parameters.key_id.as_str(),
                         &key_types,
                         &cc_conf,
@@ -1798,9 +1177,18 @@ pub async fn execute_cmd(
                         false,
                     )
                     .await?;
+                    let storage_prefix = Some(
+                        cc_conf
+                            .cores
+                            .iter()
+                            .find(|c| c.party_id == party_ids[0])
+                            .expect("party ID not found in config")
+                            .object_folder
+                            .as_str(),
+                    );
                     encrypt(
                         destination_prefix,
-                        *party_ids.first().expect("no party IDs found"),
+                        storage_prefix,
                         cipher_parameters.clone(),
                     )
                     .await?
@@ -1817,87 +1205,22 @@ pub async fn execute_cmd(
                 cipher_args.get_batch_size()
             ];
 
-            let mut timings_start = HashMap::new();
-            let mut durations = Vec::new();
-
-            let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
-            let start = tokio::time::Instant::now();
-            for _ in 0..cipher_args.get_num_requests() {
-                let req_id = RequestId::new_random(&mut rng);
-                let internal_client = internal_client.clone();
-                let ct_batch = ct_batch.clone();
-                let core_endpoints_req = core_endpoints_req.clone();
-                let core_endpoints_resp = core_endpoints_resp.clone();
-                let ptxt = ptxt.clone();
-                let kms_addrs = kms_addrs.clone();
-
-                // start timing measurement for this request
-                timings_start.insert(req_id, tokio::time::Instant::now()); // start timing for this request
-
-                join_set.spawn(async move {
-                    // DECRYPTION REQUEST
-                    let dec_req = internal_client.write().await.public_decryption_request(
-                        ct_batch,
-                        &dummy_domain(),
-                        &req_id,
-                        &key_id.into(),
-                    )?;
-
-                    // make parallel requests by calling [decrypt] in a thread
-                    let mut req_tasks = JoinSet::new();
-
-                    for (_party_id, ce) in core_endpoints_req.iter() {
-                        let req_cloned = dec_req.clone();
-                        let mut cur_client = ce.clone();
-                        req_tasks.spawn(async move {
-                            cur_client
-                                .public_decrypt(tonic::Request::new(req_cloned))
-                                .await
-                        });
-                    }
-
-                    let mut req_response_vec = Vec::new();
-                    while let Some(inner) = req_tasks.join_next().await {
-                        req_response_vec.push(inner.unwrap().unwrap().into_inner());
-                    }
-                    assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
-
-                    tracing::info!(
-                        "{:?} ###! Sent all public decrypt requests. Since start {:?}",
-                        req_id.as_str(),
-                        start.elapsed()
-                    );
-
-                    let resp_response_vec = get_public_decrypt_responses(
-                        &core_endpoints_resp,
-                        Some(dec_req),
-                        Some(ptxt),
-                        req_id,
-                        max_iter,
-                        num_expected_responses,
-                        &*internal_client.read().await,
-                        &kms_addrs,
-                        start,
-                    )
-                    .await?;
-
-                    let res = format!("{resp_response_vec:x?}");
-                    Ok((Some(req_id), res))
-                });
-            }
-
-            let mut result_vec = Vec::new();
-            while let Some(result) = join_set.join_next().await {
-                let res = result??;
-                let req_id = res.0.unwrap();
-                let elapsed = timings_start.remove(&req_id).unwrap().elapsed();
-                durations.push(elapsed);
-                result_vec.push(res);
-            }
-
-            print_timings("public decrypt", &mut durations, start);
-
-            result_vec
+            do_public_decrypt(
+                &mut rng,
+                cipher_args.get_num_requests(),
+                internal_client,
+                ct_batch,
+                key_id,
+                context_id,
+                &core_endpoints_req,
+                &core_endpoints_resp,
+                ptxt,
+                num_parties,
+                kms_addrs.to_vec(),
+                max_iter,
+                num_expected_responses,
+            )
+            .await?
         }
         CCCommand::UserDecrypt(cipher_args) => {
             let internal_client = Arc::new(RwLock::new(
@@ -1914,6 +1237,7 @@ pub async fn execute_cmd(
                 ct_format,
                 plaintext: ptxt,
                 key_id,
+                context_id,
             } = match cipher_args {
                 CipherArguments::FromFile(cipher_file) => {
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
@@ -1921,7 +1245,7 @@ pub async fn execute_cmd(
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
                     tracing::info!("Fetching keys {key_types:?}. ({command:?})");
-                    let party_ids = fetch_elements(
+                    let party_ids = fetch_public_elements(
                         &cipher_parameters.key_id.as_str(),
                         &key_types,
                         &cc_conf,
@@ -1929,9 +1253,19 @@ pub async fn execute_cmd(
                         false,
                     )
                     .await?;
+                    let storage_prefix = Some(
+                        cc_conf
+                            .cores
+                            .iter()
+                            .find(|c| c.party_id == party_ids[0])
+                            .expect("party ID not found in config")
+                            .object_folder
+                            .as_str(),
+                    );
+
                     encrypt(
                         destination_prefix,
-                        *party_ids.first().expect("no party IDs found"),
+                        storage_prefix,
                         cipher_parameters.clone(),
                     )
                     .await?
@@ -1954,6 +1288,7 @@ pub async fn execute_cmd(
                 internal_client,
                 ct_batch,
                 key_id,
+                context_id,
                 &core_endpoints_req,
                 &core_endpoints_resp,
                 ptxt,
@@ -1968,7 +1303,10 @@ pub async fn execute_cmd(
             shared_args,
         }) => {
             let mut internal_client = internal_client.unwrap();
-            tracing::info!("Key generation with parameter {}.", param.as_str_name());
+            tracing::info!(
+                "Key generation with parameter {}.",
+                fhe_params.as_str_name()
+            );
             let req_id = do_keygen(
                 &mut internal_client,
                 &core_endpoints_req,
@@ -1977,7 +1315,7 @@ pub async fn execute_cmd(
                 cmd_config,
                 num_parties,
                 &kms_addrs,
-                param,
+                fhe_params,
                 *preproc_id,
                 false,
                 shared_args,
@@ -1991,7 +1329,7 @@ pub async fn execute_cmd(
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
                 "Insecure key generation with parameter {}.",
-                param.as_str_name()
+                fhe_params.as_str_name()
             );
             let dummy_preproc_id = RequestId::new_random(&mut rng);
             let req_id = do_keygen(
@@ -2002,7 +1340,7 @@ pub async fn execute_cmd(
                 cmd_config,
                 num_parties,
                 &kms_addrs,
-                param,
+                fhe_params,
                 dummy_preproc_id,
                 true,
                 shared_args,
@@ -2014,29 +1352,9 @@ pub async fn execute_cmd(
         }
         CCCommand::CrsGen(CrsParameters { max_num_bits }) => {
             let mut internal_client = internal_client.unwrap();
-            tracing::info!("CRS generation with parameter {}.", param.as_str_name());
-
-            let req_id = do_crsgen(
-                &mut internal_client,
-                &core_endpoints_req,
-                &mut rng,
-                &cc_conf,
-                cmd_config,
-                num_parties,
-                &kms_addrs,
-                Some(*max_num_bits),
-                param,
-                false,
-                destination_prefix,
-            )
-            .await?;
-            vec![(Some(req_id), "crsgen done".to_string())]
-        }
-        CCCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
-            let mut internal_client = internal_client.unwrap();
             tracing::info!(
-                "Insecure CRS generation with parameter {}.",
-                param.as_str_name()
+                "CRS generation with parameter {}.",
+                fhe_params.as_str_name()
             );
 
             let req_id = do_crsgen(
@@ -2048,16 +1366,42 @@ pub async fn execute_cmd(
                 num_parties,
                 &kms_addrs,
                 Some(*max_num_bits),
-                param,
+                fhe_params,
+                false,
+                destination_prefix,
+            )
+            .await?;
+            vec![(Some(req_id), "crsgen done".to_string())]
+        }
+        CCCommand::InsecureCrsGen(CrsParameters { max_num_bits }) => {
+            let mut internal_client = internal_client.unwrap();
+            tracing::info!(
+                "Insecure CRS generation with parameter {}.",
+                fhe_params.as_str_name()
+            );
+
+            let req_id = do_crsgen(
+                &mut internal_client,
+                &core_endpoints_req,
+                &mut rng,
+                &cc_conf,
+                cmd_config,
+                num_parties,
+                &kms_addrs,
+                Some(*max_num_bits),
+                fhe_params,
                 true,
                 destination_prefix,
             )
             .await?;
             vec![(Some(req_id), "insecure crsgen done".to_string())]
         }
-        CCCommand::PreprocKeyGen(NoParameters {}) => {
+        CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
+            context_id,
+            epoch_id,
+        }) => {
             let mut internal_client = internal_client.unwrap();
-            tracing::info!("Preprocessing with parameter {}.", param.as_str_name());
+            tracing::info!("Preprocessing with parameter {}.", fhe_params.as_str_name());
 
             let req_id = do_preproc(
                 &mut internal_client,
@@ -2065,10 +1409,39 @@ pub async fn execute_cmd(
                 &mut rng,
                 cmd_config,
                 num_parties,
-                param,
+                fhe_params,
+                context_id.as_ref(),
+                epoch_id.as_ref(),
             )
             .await?;
             vec![(Some(req_id), "preproc done".to_string())]
+        }
+        CCCommand::PartialPreprocKeyGen(partial_params) => {
+            let mut internal_client = internal_client.unwrap();
+            tracing::info!(
+                "Partial Preprocessing with parameter {} (running {}% , storing dummy: {}).",
+                fhe_params.as_str_name(),
+                partial_params.percentage_offline,
+                partial_params.store_dummy_preprocessing
+            );
+
+            let req_id = do_partial_preproc(
+                &mut internal_client,
+                &core_endpoints_req,
+                &mut rng,
+                cmd_config,
+                num_parties,
+                fhe_params,
+                partial_params,
+            )
+            .await?;
+            vec![(
+                Some(req_id),
+                format!(
+                    "partial preproc done, generated {} % (dummy preproc stored: {})",
+                    partial_params.percentage_offline, partial_params.store_dummy_preprocessing
+                ),
+            )]
         }
         CCCommand::DoNothing(NoParameters {}) => {
             tracing::info!("Nothing to do.");
@@ -2076,7 +1449,7 @@ pub async fn execute_cmd(
         }
         CCCommand::Encrypt(cipher_parameters) => {
             tracing::info!("Fetching keys {key_types:?}. ({command:?})");
-            let party_ids = fetch_elements(
+            let party_ids = fetch_public_elements(
                 &cipher_parameters.key_id.as_str(),
                 &key_types,
                 &cc_conf,
@@ -2084,9 +1457,18 @@ pub async fn execute_cmd(
                 false,
             )
             .await?;
+            let storage_prefix = Some(
+                cc_conf
+                    .cores
+                    .iter()
+                    .find(|c| c.party_id == party_ids[0])
+                    .expect("party ID not found in config")
+                    .object_folder
+                    .as_str(),
+            );
             encrypt(
                 destination_prefix,
-                *party_ids.first().expect("no party IDs found"),
+                storage_prefix,
                 cipher_parameters.clone(),
             )
             .await?;
@@ -2270,18 +1652,29 @@ pub async fn execute_cmd(
             overwrite_ephemeral_key,
             operator_recovery_resp_paths,
         }) => {
+            assert_eq!(
+                operator_recovery_resp_paths.len(),
+                num_parties,
+                "Number of operator recovery response paths must match number of operators in the configuration files"
+            );
             let res =
                 do_custodian_recovery_init(&core_endpoints_req, *overwrite_ephemeral_key).await?;
             assert_eq!(res.len(), operator_recovery_resp_paths.len());
-            for (op_zero_idx, cur_path) in operator_recovery_resp_paths.iter().enumerate() {
-                let cur_res = res
-                    .iter()
-                    .find(|&x| x.operator_role() == Role::indexed_from_zero(op_zero_idx))
-                    .unwrap();
-                safe_write_element_versioned(cur_path, cur_res).await?;
+
+            let backup_id = res[0].backup_id();
+
+            // no ordering of results and paths here
+            for (cur_res, cur_path) in res.into_iter().zip(operator_recovery_resp_paths) {
+                assert_eq!(
+                    backup_id,
+                    cur_res.backup_id(),
+                    "All recovery responses must belong to the same backup ID"
+                );
+                safe_write_element_versioned(cur_path, &cur_res).await?;
             }
+
             vec![(
-                Some(res[0].backup_id()),
+                Some(backup_id),
                 "custodian recovery init queried and recovery request stored".to_string(),
             )]
         }
@@ -2289,6 +1682,7 @@ pub async fn execute_cmd(
             custodian_context_id,
             custodian_recovery_outputs,
         }) => {
+            // We assume the output files are ordered the same way as the operators in the configuration file.
             let mut custodian_outputs = Vec::new();
             for recovery_path in custodian_recovery_outputs {
                 let read_recovery: InternalCustodianRecoveryOutput =
@@ -2297,6 +1691,7 @@ pub async fn execute_cmd(
             }
             do_custodian_backup_recovery(
                 &core_endpoints_req,
+                &cc_conf,
                 *custodian_context_id,
                 custodian_outputs,
             )
@@ -2309,6 +1704,88 @@ pub async fn execute_cmd(
         CCCommand::BackupRestore(NoParameters {}) => {
             do_restore_from_backup(&mut core_endpoints_req).await?;
             vec![(None, "backup restore complete".to_string())]
+        }
+        CCCommand::Reshare(ReshareParameters {
+            key_id,
+            preproc_id,
+            from_context_id,
+            from_epoch_id,
+            server_key_digest,
+            public_key_digest,
+        }) => {
+            let request_id = do_reshare(
+                &mut internal_client.expect("Reshare requires a KMS client"),
+                &core_endpoints_req,
+                &mut rng,
+                cmd_config,
+                &cc_conf,
+                destination_prefix,
+                &kms_addrs,
+                num_parties,
+                fhe_params,
+                key_id,
+                preproc_id,
+                from_context_id.as_ref(),
+                from_epoch_id.as_ref(),
+                server_key_digest.as_ref(),
+                public_key_digest.as_ref(),
+            )
+            .await
+            .unwrap();
+            vec![
+                (Some(request_id), "Reshare complete".to_string()),
+                (Some(*key_id), "Key ready to be used".to_string()),
+            ]
+        }
+        CCCommand::NewMpcContext(context_param) => match context_param {
+            NewMpcContextParameters::SerializedContextPath(context_path) => {
+                let ctx_id =
+                    do_new_mpc_context(&core_endpoints_req, &context_path.input_path).await?;
+                vec![(
+                    Some(ctx_id.into()),
+                    "new mpc context created from serialized context".to_string(),
+                )]
+            }
+            NewMpcContextParameters::ContextToml(_context_path) => {
+                unimplemented!("Creating new MPC context from TOML is not yet implemented");
+            }
+        },
+        #[cfg(feature = "testing")]
+        CCCommand::NewTestingMpcContextFile(NewTestingMpcContextFileParameters {
+            context_id,
+            context_path,
+        }) => {
+            // import stuff here because we're in the testing feature
+            use kms_lib::consts::SAFE_SER_SIZE_LIMIT;
+            use std::io::Write;
+
+            let context = crate::mpc_context::create_test_context_info_from_core_config(
+                *context_id,
+                &cc_conf,
+            )
+            .await?;
+
+            let mut buf = Vec::new();
+            tfhe::safe_serialization::safe_serialize(&context, &mut buf, SAFE_SER_SIZE_LIMIT)
+                .unwrap();
+
+            let mut file = std::fs::File::create(context_path).unwrap();
+            file.write_all(&buf).unwrap();
+
+            vec![(
+                Some((*context_id).into()),
+                format!(
+                    "new testing mpc context created and stored to file {:?}",
+                    context_path
+                ),
+            )]
+        }
+        CCCommand::PrssInit(PrssInitParameters {
+            context_id,
+            epoch_id,
+        }) => {
+            do_prss_init(&core_endpoints_req, context_id, epoch_id).await?;
+            vec![(Some((*epoch_id).into()), "prss init done".to_string())]
         }
     };
 
@@ -2351,684 +1828,10 @@ fn print_timings(cmd: &str, durations: &mut [tokio::time::Duration], start: toki
     tracing::debug!("All durations: {:?}", durations);
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn do_user_decrypt<R: Rng + CryptoRng>(
-    rng: &mut R,
-    num_requests: usize,
-    internal_client: Arc<RwLock<Client>>,
-    ct_batch: Vec<TypedCiphertext>,
-    key_id: KeyId,
-    core_endpoints_req: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    core_endpoints_resp: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    ptxt: TypedPlaintext,
-    num_parties: usize,
-    max_iter: usize,
-    num_expected_responses: usize,
-) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
-    let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
-    let mut timings_start = HashMap::new();
-    let mut durations = Vec::new();
-    let start = tokio::time::Instant::now();
-
-    for _ in 0..num_requests {
-        let req_id = RequestId::new_random(rng);
-        let internal_client = internal_client.clone();
-        let ct_batch = ct_batch.clone();
-        let core_endpoints_req = core_endpoints_req.clone();
-        let core_endpoints_resp = core_endpoints_resp.clone();
-        let original_plaintext = ptxt.clone();
-
-        // start timing measurement for this request
-        timings_start.insert(req_id, tokio::time::Instant::now()); // start timing for this request
-
-        // USER_DECRYPTION REQUEST
-        join_set.spawn(async move {
-            let user_decrypt_req_tuple = internal_client.write().await.user_decryption_request(
-                &dummy_domain(),
-                ct_batch,
-                &req_id,
-                &key_id.into(),
-            )?;
-
-            let (user_decrypt_req, enc_pk, enc_sk) = user_decrypt_req_tuple;
-
-            // make parallel requests by calling user decryption in a thread
-            let mut req_tasks = JoinSet::new();
-
-            for ce in core_endpoints_req.values() {
-                let req_cloned = user_decrypt_req.clone();
-                let mut cur_client = ce.clone();
-                req_tasks.spawn(async move {
-                    cur_client
-                        .user_decrypt(tonic::Request::new(req_cloned))
-                        .await
-                });
-            }
-
-            // make sure all requests have been sent
-            let mut req_response_vec = Vec::new();
-            while let Some(inner) = req_tasks.join_next().await {
-                req_response_vec.push(inner.unwrap().unwrap().into_inner());
-            }
-            assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
-
-            tracing::info!(
-                "{:?} ###! Sent all user decrypt requests. Since start {:?}",
-                req_id.as_str(),
-                start.elapsed()
-            );
-
-            // get all responses
-            let mut resp_tasks = JoinSet::new();
-            for ce in core_endpoints_resp.values() {
-                let mut cur_client = ce.clone();
-                let req_id_clone = user_decrypt_req.request_id.as_ref().unwrap().clone();
-
-                resp_tasks.spawn(async move {
-                    // Sleep to give the server some time to complete decryption
-                    tokio::time::sleep(tokio::time::Duration::from_millis(
-                        SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                    ))
-                    .await;
-
-                    let mut response = cur_client
-                        .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                        .await;
-                    let mut ctr = 0_usize;
-                    while response.is_err()
-                        && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-                    {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(
-                            SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                        ))
-                        .await;
-                        // do at most max_iter retries
-                        assert!(
-                            ctr < max_iter,
-                            "timeout while waiting for user decryption after {max_iter} retries."
-                        );
-                        ctr += 1;
-                        response = cur_client
-                            .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
-                            .await;
-                    }
-                    (req_id_clone, response.unwrap().into_inner())
-                });
-            }
-
-            // collect responses (at least num_expected_responses)
-            let mut resp_response_vec = Vec::new();
-            while let Some(resp) = resp_tasks.join_next().await {
-                resp_response_vec.push(resp.unwrap().1);
-                // break this loop and continue with the rest of the processing if we have enough responses
-                if resp_response_vec.len() >= num_expected_responses {
-                    break;
-                }
-            }
-
-            tracing::info!(
-                "{:?} ###! Received {} user decrypt responses. Since start {:?}",
-                req_id.as_str(),
-                resp_response_vec.len(),
-                start.elapsed()
-            );
-
-            let client_request = ParsedUserDecryptionRequest::try_from(&user_decrypt_req).unwrap();
-            let eip712_domain =
-                protobuf_to_alloy_domain(user_decrypt_req.domain.as_ref().unwrap()).unwrap();
-            let plaintexts = internal_client
-                .read()
-                .await
-                .process_user_decryption_resp(
-                    &client_request,
-                    &eip712_domain,
-                    &resp_response_vec,
-                    &enc_pk,
-                    &enc_sk,
-                )
-                .inspect_err(|e| {
-                    tracing::error!(
-                        "Error: User decryption response is NOT valid! Reason: {}",
-                        e
-                    )
-                })?;
-
-            // test that all results are matching the original plaintext
-            for pt in &plaintexts {
-                assert_eq!(
-                    TestingPlaintext::try_from(pt.clone())?,
-                    TestingPlaintext::try_from(original_plaintext.clone())?
-                );
-            }
-
-            let decrypted_plaintext = plaintexts[0].clone();
-
-            tracing::info!(
-                "User decryption response is ok: {:?} / {:?}",
-                original_plaintext,
-                TestingPlaintext::try_from(decrypted_plaintext.clone())?,
-            );
-
-            let res = format!(
-                "User decrypted Plaintext {:?}",
-                TestingPlaintext::try_from(decrypted_plaintext)?
-            );
-
-            tracing::info!(
-                "{:?} ###! Verified user decrypt responses and reconstructed. Since start {:?}",
-                req_id.as_str(),
-                start.elapsed()
-            );
-
-            Ok((Some(req_id), res))
-        });
-    }
-    let mut result_vec = Vec::new();
-    while let Some(result) = join_set.join_next().await {
-        let res = result??;
-        let req_id = res.0.unwrap();
-        let elapsed = timings_start.remove(&req_id).unwrap().elapsed();
-        durations.push(elapsed);
-        result_vec.push(res);
-    }
-
-    print_timings("user decrypt", &mut durations, start);
-
-    Ok(result_vec)
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn get_public_decrypt_responses(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    dec_req: Option<PublicDecryptionRequest>,
-    expected_answer: Option<TypedPlaintext>,
-    request_id: RequestId,
-    max_iter: usize,
-    num_expected_responses: usize,
-    internal_client: &Client,
-    kms_addrs: &[alloy_primitives::Address],
-    start: tokio::time::Instant,
-) -> anyhow::Result<Vec<PublicDecryptionResponse>> {
-    // get all responses
-    let mut resp_tasks = JoinSet::new();
-    //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
-        let core_id = *core_id; // Copy the key so it is owned in the async block
-
-        resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete decryption
-            tokio::time::sleep(tokio::time::Duration::from_millis(
-                SLEEP_TIME_BETWEEN_REQUESTS_MS,
-            ))
-            .await;
-
-            let mut response = cur_client
-                .get_public_decryption_result(tonic::Request::new(request_id.into()))
-                .await;
-            let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(
-                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                ))
-                .await;
-                // do at most max_iter retries
-                assert!(
-                    ctr < max_iter,
-                    "timeout while waiting for public decryption after {max_iter} retries."
-                );
-                ctr += 1;
-                response = cur_client
-                    .get_public_decryption_result(tonic::Request::new(request_id.into()))
-                    .await;
-            }
-            (core_id, request_id, response.unwrap().into_inner())
-        });
-    }
-    let mut resp_response_vec = Vec::new();
-    while let Some(resp) = resp_tasks.join_next().await {
-        let (core_id, _req_id, resp) = resp?;
-        resp_response_vec.push((core_id, resp));
-        // break this loop and continue with the rest of the processing if we have enough responses
-        if resp_response_vec.len() >= num_expected_responses {
-            break;
-        }
-    }
-
-    tracing::info!(
-        "{:?} ###! Received {} public decrypt responses. Since start {:?}",
-        request_id.as_str(),
-        resp_response_vec.len(),
-        start.elapsed()
-    );
-
-    resp_response_vec.sort_by_key(|(id, _)| *id);
-    let resp_response_vec: Vec<_> = resp_response_vec
-        .into_iter()
-        .map(|(_, resp)| resp)
-        .collect();
-
-    //If an expected answer is provided, then consider it,
-    //otherwise consider the first answer
-    let ptxt = expected_answer.unwrap_or_else(|| {
-        resp_response_vec
-            .first()
-            .unwrap()
-            .payload
-            .as_ref()
-            .unwrap()
-            .plaintexts
-            .first()
-            .unwrap()
-            .clone()
-    });
-
-    let (domain, external_handles) = if let Some(decryption_request) = dec_req.as_ref() {
-        let domain_msg = decryption_request.domain.as_ref().unwrap();
-        let domain = protobuf_to_alloy_domain(domain_msg)?;
-        // retrieve external handles from request
-        let external_handles: Vec<_> = decryption_request
-            .ciphertexts
-            .iter()
-            .map(|ct| ct.external_handle.clone())
-            .collect();
-        (domain, external_handles)
-    } else {
-        //If the decryption request isn't provided we assume it was dummy domains and handles
-        let num_handles = resp_response_vec
-            .first()
-            .unwrap()
-            .payload
-            .as_ref()
-            .unwrap()
-            .plaintexts
-            .len();
-        (dummy_domain(), vec![dummy_handle(); num_handles])
-    };
-
-    // check the internal signatures
-    internal_client.process_decryption_resp(
-        dec_req,
-        &resp_response_vec,
-        num_expected_responses as u32,
-    )?;
-
-    // check the external signatures
-    check_external_decryption_signature(
-        &resp_response_vec,
-        ptxt,
-        &external_handles,
-        &domain,
-        kms_addrs,
-    )
-    .unwrap();
-
-    tracing::info!(
-        "{:?} ###! Verified public decypt responses. Since start {:?}",
-        request_id.as_str(),
-        start.elapsed()
-    );
-
-    Ok(resp_response_vec)
-}
-
-async fn get_preproc_keygen_responses(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    request_id: RequestId,
-    max_iter: usize,
-) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
-    let mut resp_tasks = JoinSet::new();
-    //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, client) in core_endpoints.iter() {
-        let mut client = client.clone();
-        let core_id = *core_id; // Copy the key so it is owned in the async block
-        resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete preprocessing
-            tokio::time::sleep(tokio::time::Duration::from_millis(
-                SLEEP_TIME_BETWEEN_REQUESTS_MS,
-            ))
-            .await;
-
-            let mut response = client
-                .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
-                .await;
-            let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(
-                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                ))
-                .await;
-                // do at most max_iter retries
-                assert!(
-                    ctr < max_iter,
-                    "timeout while waiting for preprocessing after {max_iter} retries."
-                );
-                ctr += 1;
-                response = client
-                    .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
-                    .await;
-            }
-
-            (core_id, request_id, response.unwrap().into_inner())
-        });
-    }
-    let mut resp_response_vec = Vec::new();
-    while let Some(resp) = resp_tasks.join_next().await {
-        let (core_id, resp_request_id, resp_res) = resp?;
-        assert_eq!(request_id, resp_request_id);
-        // any failures that happen will panic here
-        resp_response_vec.push((core_id, resp_res));
-    }
-    resp_response_vec.sort_by_key(|(id, _)| *id);
-    let resp_response_vec: Vec<_> = resp_response_vec
-        .into_iter()
-        .map(|(_, resp)| resp)
-        .collect();
-    assert_eq!(resp_response_vec.len(), core_endpoints.len());
-    Ok(resp_response_vec)
-}
-
-async fn get_keygen_responses(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    request_id: RequestId,
-    max_iter: usize,
-    insecure: bool,
-    num_expected_responses: usize,
-) -> anyhow::Result<Vec<KeyGenResult>> {
-    // get all responses
-    let mut resp_tasks = JoinSet::new();
-    //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
-        let core_id = *core_id; // Copy the key so it is owned in the async block
-
-        resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete decryption
-            tokio::time::sleep(tokio::time::Duration::from_millis(
-                SLEEP_TIME_BETWEEN_REQUESTS_MS,
-            ))
-            .await;
-
-            let mut response = if insecure {
-                cur_client
-                    .get_insecure_key_gen_result(tonic::Request::new(request_id.into()))
-                    .await
-            } else {
-                cur_client
-                    .get_key_gen_result(tonic::Request::new(request_id.into()))
-                    .await
-            };
-
-            let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(
-                    SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                ))
-                .await;
-                assert!(ctr < max_iter, "timeout while waiting for keygen after {max_iter} retries (insecure: {insecure})");
-                ctr += 1;
-                response = if insecure {
-                    cur_client
-                        .get_insecure_key_gen_result(tonic::Request::new(request_id.into()))
-                        .await
-                } else {
-                    cur_client
-                        .get_key_gen_result(tonic::Request::new(request_id.into()))
-                        .await
-                };
-
-                tracing::info!(
-                    "Got response for insecure keygen: {:?} (insecure: {insecure})",
-                    response
-                );
-            }
-            (core_id, request_id, response.unwrap().into_inner())
-        });
-    }
-
-    let mut resp_response_vec = Vec::new();
-    while let Some(resp) = resp_tasks.join_next().await {
-        let (core_id, _request_id, resp) = resp?;
-        resp_response_vec.push((core_id, resp));
-        // break this loop and continue with the rest of the processing if we have enough responses
-        if resp_response_vec.len() >= num_expected_responses {
-            break;
-        }
-    }
-    resp_response_vec.sort_by_key(|(id, _)| *id);
-    let resp_response_vec: Vec<_> = resp_response_vec
-        .into_iter()
-        .map(|(_, resp)| resp)
-        .collect();
-    Ok(resp_response_vec)
-}
-
-async fn get_crsgen_responses(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    request_id: RequestId,
-    max_iter: usize,
-    insecure: bool,
-    num_expected_responses: usize,
-) -> anyhow::Result<Vec<CrsGenResult>> {
-    // get all responses
-    let mut resp_tasks = JoinSet::new();
-    //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
-        let core_id = *core_id; // Copy the key so it is owned in the async block
-
-        resp_tasks.spawn(async move {
-            // Sleep to give the server some time to complete decryption
-            tokio::time::sleep(tokio::time::Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
-
-            let mut response = if insecure {
-                cur_client
-                    .get_insecure_crs_gen_result(tonic::Request::new(request_id.into()))
-                    .await
-            } else {
-                cur_client
-                    .get_crs_gen_result(tonic::Request::new(request_id.into()))
-                    .await
-            };
-
-            let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
-                tokio::time::sleep(tokio::time::Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
-                // do at most max_iter retries
-                assert!(ctr < max_iter, "timeout while waiting for crsgen after {max_iter} retries (insecure: {insecure})");
-                ctr += 1;
-                response = if insecure {
-                    cur_client
-                        .get_insecure_crs_gen_result(tonic::Request::new(request_id.into()))
-                        .await
-                } else {
-                    cur_client
-                        .get_crs_gen_result(tonic::Request::new(request_id.into()))
-                        .await
-                };
-
-                tracing::info!("Got response for crsgen: {:?} (insecure: {insecure})", response);
-            }
-            (core_id,request_id, response.unwrap().into_inner())
-        });
-    }
-
-    let mut resp_response_vec = Vec::new();
-    while let Some(resp) = resp_tasks.join_next().await {
-        let (core_id, _request_id, resp) = resp?;
-        resp_response_vec.push((core_id, resp));
-        // break this loop and continue with the rest of the processing if we have enough responses
-        if resp_response_vec.len() >= num_expected_responses {
-            break;
-        }
-    }
-    resp_response_vec.sort_by_key(|(id, _)| *id);
-    let resp_response_vec: Vec<_> = resp_response_vec
-        .into_iter()
-        .map(|(_, resp)| resp)
-        .collect();
-    Ok(resp_response_vec)
-}
-
-#[expect(clippy::too_many_arguments)]
-async fn fetch_and_check_keygen(
-    num_expected_responses: usize,
-    cc_conf: &CoreClientConfig,
-    kms_addrs: &[alloy_primitives::Address],
-    destination_prefix: &Path,
-    request_id: RequestId,
-    domain: Eip712Domain,
-    responses: Vec<KeyGenResult>,
-    download_all: bool,
-) -> anyhow::Result<()> {
-    assert!(
-        responses.len() >= num_expected_responses,
-        "Expected at least {} responses, but got only {}",
-        num_expected_responses,
-        responses.len()
-    );
-
-    // Download the generated keys.
-    let key_types = vec![
-        PubDataType::PublicKey,
-        PubDataType::PublicKeyMetadata,
-        PubDataType::ServerKey,
-    ];
-    let party_ids = fetch_elements(
-        &request_id.to_string(),
-        &key_types,
-        cc_conf,
-        destination_prefix,
-        download_all,
-    )
-    .await?;
-
-    // Even if we did not download all keys, we still check that they are identical
-    // by checking all signatures against the first downloaded keyset.
-    // If all signatures match, then all keys must be identical.
-    let public_key = load_pk_from_storage(
-        Some(destination_prefix),
-        &request_id,
-        *party_ids.first().expect("no party IDs found"),
-    )
-    .await;
-    let server_key: ServerKey = load_material_from_storage(
-        Some(destination_prefix),
-        &request_id,
-        PubDataType::ServerKey,
-        *party_ids.first().expect("no party IDs found"),
-    )
-    .await;
-
-    for response in responses {
-        let resp_req_id: RequestId = response.request_id.try_into()?;
-        tracing::info!("Received KeyGenResult with request ID {}", resp_req_id); //TODO print key digests and signatures?
-
-        assert_eq!(
-            request_id, resp_req_id,
-            "Request ID of response does not match the transaction"
-        );
-
-        let external_signature = response.external_signature;
-        let prep_id = response.preprocessing_id.ok_or(anyhow!(
-            "No preprocessing ID in keygen response, cannot verify external signature"
-        ))?;
-        check_standard_keyset_ext_signature(
-            &public_key,
-            &server_key,
-            &prep_id.try_into()?,
-            &request_id,
-            &external_signature,
-            &domain,
-            kms_addrs,
-        )
-        .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
-
-        tracing::info!("EIP712 verification of Public Key and Server Key successful.");
-    }
-    Ok(())
-}
-
-#[expect(clippy::too_many_arguments)]
-async fn fetch_and_check_crsgen(
-    num_expected_responses: usize,
-    cc_conf: &CoreClientConfig,
-    kms_addrs: &[alloy_primitives::Address],
-    destination_prefix: &Path,
-    request_id: RequestId,
-    domain: Eip712Domain,
-    responses: Vec<CrsGenResult>,
-    download_all: bool,
-) -> anyhow::Result<()> {
-    assert!(
-        responses.len() >= num_expected_responses,
-        "Expected at least {} responses, but got only {}",
-        num_expected_responses,
-        responses.len()
-    );
-
-    // Download the generated CRS.
-    let party_ids = fetch_elements(
-        &request_id.to_string(),
-        &[PubDataType::CRS],
-        cc_conf,
-        destination_prefix,
-        download_all,
-    )
-    .await?;
-
-    // Even if we did not download all CRSes, we still check that they are identical
-    // by checking all signatures against the first downloaded CRS.
-    // If all signatures match, then all CRSes must be identical.
-    let crs: CompactPkeCrs = load_material_from_storage(
-        Some(destination_prefix),
-        &request_id,
-        PubDataType::CRS,
-        *party_ids.first().expect("no party IDs found"),
-    )
-    .await;
-
-    for response in responses {
-        let resp_req_id: RequestId = response.request_id.try_into()?;
-        tracing::info!("Received CrsGenResult with request ID {}", resp_req_id); //TODO print key digests and signatures?
-
-        assert_eq!(
-            request_id, resp_req_id,
-            "Request ID of response does not match the transaction"
-        );
-        let external_signature = response.external_signature;
-
-        check_crsgen_ext_signature(&crs, &request_id, &external_signature, &domain, kms_addrs)
-            .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
-
-        tracing::info!("EIP712 verification of CRS successful.");
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_signer::k256::ecdsa::SigningKey;
-    use kms_grpc::rpc_types::PrivDataType;
-    use kms_lib::{
-        consts::{TEST_CENTRAL_CRS_ID, TEST_PARAM},
-        cryptography::internal_crypto_types::PrivateSigKey,
-        engine::base::compute_external_pubdata_signature,
-        util::key_setup::{ensure_central_crs_exists, ensure_central_server_signing_keys_exist},
-        vault::storage::{ram::RamStorage, read_versioned_at_request_id},
-    };
-    use std::{env, str::FromStr};
-    use tfhe::zk::CompactPkeCrs;
-    use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
+    use std::env;
 
     #[test]
     fn test_parse_hex() {
@@ -3078,105 +1881,5 @@ mod tests {
 
         // check that the fhe_params value from the env var ("Test") is read correctly, even if the toml contains "Default"
         assert_eq!(cc_conf_default.fhe_params, Some(FheParameter::Test));
-    }
-
-    #[tokio::test]
-    async fn test_eip712_sigs() {
-        let mut pub_storage = RamStorage::new();
-        let mut priv_storage = RamStorage::new();
-
-        // make sure signing keys exist
-        ensure_central_server_signing_keys_exist(
-            &mut pub_storage,
-            &mut priv_storage,
-            &SIGNING_KEY_ID,
-            true,
-        )
-        .await;
-
-        // compute a small CRS for testing
-        let crs_id = &TEST_CENTRAL_CRS_ID;
-        ensure_central_crs_exists(
-            &mut pub_storage,
-            &mut priv_storage,
-            TEST_PARAM,
-            crs_id,
-            true,
-        )
-        .await;
-        let crs: CompactPkeCrs = read_versioned_at_request_id(
-            &pub_storage,
-            &RequestId::from_str(&crs_id.to_string()).unwrap(),
-            &PubDataType::CRS.to_string(),
-        )
-        .await
-        .unwrap();
-
-        // read generated private signature key, derive public verifcation key and address from it
-        let sk: PrivateSigKey = read_versioned_at_request_id(
-            &priv_storage,
-            &RequestId::from_str(&SIGNING_KEY_ID.to_string()).unwrap(),
-            &PrivDataType::SigningKey.to_string(),
-        )
-        .await
-        .unwrap();
-        let pk = SigningKey::verifying_key(sk.sk());
-        let addr = alloy_signer::utils::public_key_to_address(pk);
-
-        // set up a dummy EIP 712 domain
-        let domain = alloy_sol_types::eip712_domain!(
-            name: "dummy-test",
-            version: "1",
-            chain_id: 0,
-            verifying_contract: alloy_primitives::Address::ZERO,
-            // No salt
-        );
-
-        let max_num_bits = max_num_bits_from_crs(&crs);
-        let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
-        let crs_sol_struct = CrsgenVerification::new(crs_id, max_num_bits, crs_digest);
-
-        // sign with EIP712
-        let external_sig =
-            compute_external_pubdata_signature(&sk, &crs_sol_struct, &domain).unwrap();
-
-        // check that the signature verifies and unwraps without error
-        check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, &[addr]).unwrap();
-
-        // check that verification fails for a wrong address
-        let wrong_address = alloy_primitives::address!("0EdA6bf26964aF942Eed9e03e53442D37aa960EE");
-        assert!(
-            check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, &[wrong_address])
-                .unwrap_err()
-                .to_string()
-                .contains("External signature verification failed for crsgen as it does not contain the right address")
-        );
-
-        // check that verification fails for signature that is too short
-        let short_sig = [0_u8; 37];
-        assert!(
-            check_crsgen_ext_signature(&crs, crs_id, &short_sig, &domain, &[addr])
-                .unwrap_err()
-                .to_string()
-                .contains("Expected external signature of length 65 Bytes, but got 37")
-        );
-
-        // check that verification fails for a byte string that is not a signature
-        let malformed_sig = [23_u8; 65];
-        assert!(
-            check_crsgen_ext_signature(&crs, crs_id, &malformed_sig, &domain, &[addr])
-                .unwrap_err()
-                .to_string()
-                .contains("signature error")
-        );
-
-        // check that verification fails for a signature that does not match the message
-        let wrong_sig = hex::decode("cf92fe4c0b7c72fd8571c9a6680f2cd7481ebed7a3c8c7c7a6e6eaf27f5654f36100c146e609e39950953602ed73a3c10c1672729295ed8b33009b375813e5801b").unwrap();
-        assert!(
-            check_crsgen_ext_signature(&crs, crs_id, &wrong_sig, &domain, &[addr])
-                .unwrap_err()
-                .to_string()
-                .contains("External signature verification failed for crsgen as it does not contain the right address")
-        );
     }
 }

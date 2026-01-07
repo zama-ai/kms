@@ -1,4 +1,4 @@
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 #[cfg(feature = "non-wasm")]
 use aes_prng::AesRng;
 #[cfg(feature = "non-wasm")]
@@ -89,10 +89,7 @@ impl Client {
 
     pub fn get_server_addrs(&self) -> HashMap<u32, alloy_primitives::Address> {
         match &self.server_identities {
-            ServerIdentities::Pks(pks) => pks
-                .iter()
-                .map(|(i, pk)| (*i, alloy_signer::utils::public_key_to_address(pk.pk())))
-                .collect(),
+            ServerIdentities::Pks(pks) => pks.iter().map(|(i, pk)| (*i, pk.address())).collect(),
             ServerIdentities::Addrs(inner) => inner.clone(),
         }
     }

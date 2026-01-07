@@ -18,7 +18,10 @@ use crate::{
             },
             triple::Triple,
         },
-        runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
+        runtime::sessions::{
+            base_session::BaseSessionHandles, large_session::LargeSession,
+            small_session::SmallSession,
+        },
         small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
     },
 };

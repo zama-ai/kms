@@ -3,7 +3,7 @@ use tonic::async_trait;
 use crate::{
     algebra::structure_traits::ErrorCorrect,
     execution::{
-        runtime::{party::Role, session::BaseSessionHandles},
+        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
         small_execution::{
             agree_random::{AgreeRandom, AgreeRandomFromShare},
             prf::PrfKey,
@@ -19,7 +19,7 @@ pub struct MaliciousAgreeRandomDrop {}
 
 impl ProtocolDescription for MaliciousAgreeRandomDrop {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-MaliciousAgreeRandomDrop")
     }
 }

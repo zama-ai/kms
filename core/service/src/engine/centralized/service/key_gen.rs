@@ -1,11 +1,29 @@
+use crate::consts::DEFAULT_EPOCH_ID;
+use crate::cryptography::signatures::PrivateSigKey;
+use crate::engine::base::{
+    compute_info_decompression_keygen, retrieve_parameters, KeyGenMetadata, DSEP_PUBDATA_KEY,
+};
+use crate::engine::centralized::central_kms::{
+    async_generate_decompression_keys, async_generate_fhe_keys, CentralizedKms,
+};
+use crate::engine::keyset_configuration::InternalKeySetConfig;
+use crate::engine::traits::{BackupOperator, ContextManager};
+use crate::engine::utils::MetricedError;
+use crate::engine::validation::{
+    parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+};
+use crate::ok_or_tonic_abort;
+use crate::util::meta_store::{handle_res_mapping, MetaStore};
+use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
+use crate::vault::storage::{Storage, StorageExt};
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
 use kms_grpc::rpc_types::optional_protobuf_to_alloy_domain;
-use kms_grpc::RequestId;
+use kms_grpc::{EpochId, RequestId};
 use observability::metrics::METRICS;
-use observability::metrics_names::{ERR_KEYGEN_FAILED, ERR_KEY_EXISTS, OP_KEYGEN};
+use observability::metrics_names::OP_KEYGEN_REQUEST;
 use std::sync::Arc;
 use threshold_fhe::execution::keyset_config::KeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -13,28 +31,10 @@ use tokio::sync::{OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::engine::base::{
-    compute_info_decompression_keygen, retrieve_parameters, KeyGenMetadata, DSEP_PUBDATA_KEY,
-};
-use crate::engine::centralized::central_kms::{
-    async_generate_decompression_keys, async_generate_fhe_keys,
-    async_generate_sns_compression_keys, CentralizedKms,
-};
-use crate::engine::keyset_configuration::InternalKeySetConfig;
-use crate::engine::traits::{BackupOperator, ContextManager};
-use crate::engine::validation::{
-    parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
-};
-use crate::ok_or_tonic_abort;
-use crate::util::meta_store::{handle_res_mapping, MetaStore};
-use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
-use crate::vault::storage::Storage;
-
 /// Implementation of the key_gen endpoint
 pub async fn key_gen_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
@@ -42,9 +42,8 @@ pub async fn key_gen_impl<
     request: Request<KeyGenRequest>,
     #[cfg(feature = "insecure")] check_preproc_id: bool,
 ) -> Result<Response<Empty>, Status> {
-    let _timer = METRICS.time_operation(OP_KEYGEN).start();
+    let _timer = METRICS.time_operation(OP_KEYGEN_REQUEST).start();
 
-    let permit = service.rate_limiter.start_keygen().await?;
     let inner = request.into_inner();
     tracing::info!(
         "centralized key-gen with request id: {:?}",
@@ -61,6 +60,11 @@ pub async fn key_gen_impl<
         None => None,
     };
 
+    let epoch_id: EpochId = match &inner.epoch_id {
+        Some(ctx) => parse_proto_request_id(ctx, RequestIdParsingErr::Epoch)?.into(),
+        None => *DEFAULT_EPOCH_ID,
+    };
+
     let internal_keyset_config =
         InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info).map_err(|e| {
             tonic::Status::new(
@@ -69,13 +73,20 @@ pub async fn key_gen_impl<
             )
         })?;
 
-    let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
+    let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
+        MetricedError::new(
+            OP_KEYGEN_REQUEST,
+            Some(req_id),
+            anyhow::anyhow!("EIP712 domain validation for key generation: {e}"),
+            tonic::Code::InvalidArgument,
+        )
+    })?;
 
     // Check for existance of request preprocessing ID
     // also check that the request ID is not used yet
     // If all is ok write the request ID to the meta store
     // All validation must be done before inserting the request ID
-    let params = {
+    let (params, permit) = {
         // Note that the keygen meta store should be checked first
         // because we do not want to delete the preprocessing ID
         // if the keygen request cannot proceed.
@@ -86,6 +97,8 @@ pub async fn key_gen_impl<
                 format!("Key with ID {req_id} already exists"),
             ));
         };
+
+        let permit = service.rate_limiter.start_keygen().await?;
 
         let check_meta_store = {
             #[cfg(feature = "insecure")]
@@ -125,19 +138,25 @@ pub async fn key_gen_impl<
             guarded_meta_store.insert(&req_id),
             "Could not insert key generation into meta store".to_string(),
         )?;
-        params
+        (params, permit)
     };
 
     let meta_store = Arc::clone(&service.key_meta_map);
     let crypto_storage = service.crypto_storage.clone();
-    let sk = Arc::clone(&service.base_kms.sig_key);
+    let sk = service.base_kms.sig_key().map_err(|e| {
+        tonic::Status::new(
+            tonic::Code::FailedPrecondition,
+            format!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
+        )
+    })?;
 
     let handle = service.tracker.spawn(
         async move {
             let _timer = _timer;
-            if let Err(e) = key_gen_background(
+            match key_gen_background(
                 &req_id,
                 &preproc_id,
+                &epoch_id,
                 meta_store,
                 crypto_storage,
                 sk,
@@ -148,13 +167,15 @@ pub async fn key_gen_impl<
             )
             .await
             {
-                METRICS.increment_error_counter(OP_KEYGEN, ERR_KEYGEN_FAILED);
-                tracing::error!("Key generation of request {} failed: {}", req_id, e);
-            } else {
-                tracing::info!(
-                    "Key generation of request {} completed successfully.",
-                    req_id
-                );
+                Ok(()) => {
+                    tracing::info!(
+                        "Key generation of request {} completed successfully.",
+                        req_id
+                    );
+                }
+                Err(e) => {
+                    MetricedError::handle_unreturnable_error(OP_KEYGEN_REQUEST, Some(req_id), e);
+                }
             }
         }
         .instrument(tracing::Span::current()),
@@ -167,7 +188,7 @@ pub async fn key_gen_impl<
 /// Implementation of the get_key_gen_result endpoint
 pub async fn get_key_gen_result_impl<
     PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
+    PrivS: StorageExt + Sync + Send + 'static,
     CM: ContextManager + Sync + Send + 'static,
     BO: BackupOperator + Sync + Send + 'static,
 >(
@@ -234,10 +255,11 @@ pub async fn get_key_gen_result_impl<
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn key_gen_background<
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
 >(
     req_id: &RequestId,
     preproc_id: &RequestId,
+    epoch_id: &EpochId,
     meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     sk: Arc<PrivateSigKey>,
@@ -251,12 +273,11 @@ pub(crate) async fn key_gen_background<
     {
         // Check if the key already exists
         if crypto_storage
-            .read_cloned_centralized_fhe_keys_from_cache(req_id)
+            .read_centralized_fhe_keys(req_id, epoch_id)
             .await
             .is_ok()
         {
             let mut guarded_meta_store = meta_store.write().await;
-            METRICS.increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS);
             let _ = guarded_meta_store.update(
                 req_id,
                 Err(format!(
@@ -276,6 +297,7 @@ pub(crate) async fn key_gen_background<
                 internal_keyset_config.get_compression_id()?,
                 req_id,
                 preproc_id,
+                epoch_id,
                 None,
                 eip712_domain,
             )
@@ -295,7 +317,13 @@ pub(crate) async fn key_gen_background<
             };
 
             crypto_storage
-                .write_centralized_keys_with_meta_store(req_id, key_info, fhe_key_set, meta_store)
+                .write_centralized_keys_with_meta_store(
+                    req_id,
+                    epoch_id,
+                    key_info,
+                    fhe_key_set,
+                    meta_store,
+                )
                 .await;
 
             tracing::info!("⏱️ Core Event Time for Keygen: {:?}", start.elapsed());
@@ -304,7 +332,8 @@ pub(crate) async fn key_gen_background<
         KeySetConfig::DecompressionOnly => {
             let (from, to) = internal_keyset_config.get_from_and_to()?;
             let decompression_key =
-                async_generate_decompression_keys(crypto_storage.clone(), &from, &to).await?;
+                async_generate_decompression_keys(crypto_storage.clone(), epoch_id, &from, &to)
+                    .await?;
             let info = match compute_info_decompression_keygen(
                 &sk,
                 &DSEP_PUBDATA_KEY,
@@ -335,42 +364,6 @@ pub(crate) async fn key_gen_background<
                 start.elapsed()
             );
         }
-        KeySetConfig::AddSnsCompressionKey => {
-            let existing_key_id =
-                internal_keyset_config.get_base_key_id_for_sns_compression_key()?;
-            tracing::info!("Starting key generation for SNS compression key with request ID: {}, base key ID: {}", req_id, existing_key_id);
-            let (fhe_key_set, key_info) = match async_generate_sns_compression_keys(
-                &sk,
-                crypto_storage.clone(),
-                params,
-                &existing_key_id,
-                req_id,
-                preproc_id,
-                eip712_domain,
-            )
-            .await
-            {
-                Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
-                Err(e) => {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
-                        req_id,
-                        Err(format!(
-                            "Failed key generation for key with ID {req_id}: {e}"
-                        )),
-                    );
-                    return Err(anyhow::anyhow!("Failed key generation: {}", e));
-                }
-            };
-            crypto_storage
-                .write_centralized_keys_with_meta_store(req_id, key_info, fhe_key_set, meta_store)
-                .await;
-
-            tracing::info!(
-                "⏱️ Core Event Time for SNS compression Keygen: {:?}",
-                start.elapsed()
-            );
-        }
     }
     Ok(())
 }
@@ -385,7 +378,7 @@ pub(crate) mod tests {
     use rand::SeedableRng;
 
     use crate::{
-        cryptography::internal_crypto_types::PublicSigKey,
+        cryptography::signatures::PublicSigKey,
         dummy_domain,
         engine::{
             base::derive_request_id,

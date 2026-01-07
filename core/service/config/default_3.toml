@@ -12,13 +12,16 @@ s3_endpoint = "http://dev-s3-mock:9000"
 
 [public_vault.storage.file]
 path = "./keys"
+prefix = "PUB-p3"
 
 [private_vault.storage.file]
 path = "./keys"
+prefix = "PRIV-p3"
 
 [backup_vault]
 [backup_vault.storage.file]
 path = "./backup_vault"
+prefix = "BACKUP-p3"
 
 [threshold]
 listen_address = "0.0.0.0"
@@ -99,3 +102,4 @@ user_decrypt = 1
 crsgen = 100
 preproc = 25000
 keygen = 1000
+reshare = 1

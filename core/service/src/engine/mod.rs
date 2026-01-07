@@ -1,7 +1,7 @@
 #[cfg(feature = "non-wasm")]
-mod server;
-#[cfg(feature = "non-wasm")]
 pub use server::*;
+#[cfg(feature = "non-wasm")]
+mod server;
 
 #[cfg(feature = "non-wasm")]
 pub mod backup_operator;

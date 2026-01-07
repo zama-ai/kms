@@ -12,15 +12,15 @@ COPY . .
 ARG FEATURES
 
 RUN mkdir -p /app/ddec/bin
-RUN cargo install --path core/threshold --root . --bins --no-default-features --features=${FEATURES}
+RUN cargo install --locked --path core/threshold --root . --bins --no-default-features --features=${FEATURES}
     # cargo install --path . --root . --bins --no-default-features --features=${FEATURES}
     # NOTE: if we're in a workspace then we need to set a different path
 
 
 # Go tooling stage - only for grpc-health-probe
-FROM cgr.dev/zama.ai/golang:1.25.0 AS go-builder
+FROM cgr.dev/zama.ai/golang:1.25.4 AS go-builder
 
-ARG GRPC_HEALTH_PROBE_VERSION=v0.4.37
+ARG GRPC_HEALTH_PROBE_VERSION=v0.4.42
 
 RUN git clone https://github.com/grpc-ecosystem/grpc-health-probe && \
     cd grpc-health-probe && \

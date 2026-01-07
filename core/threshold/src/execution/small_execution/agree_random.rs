@@ -8,7 +8,7 @@ use crate::{
     error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
         communication::p2p::{receive_from_parties, send_to_parties},
-        runtime::{party::Role, session::BaseSessionHandles},
+        runtime::{party::Role, sessions::base_session::BaseSessionHandles},
         sharing::open::{RobustOpen, SecureRobustOpen},
     },
     hashing::{hash_element, hash_element_w_size, DomainSep},
@@ -57,7 +57,7 @@ pub struct PassiveSecureAgreeRandom {}
 
 impl ProtocolDescription for PassiveSecureAgreeRandom {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-PassiveSecureAgreeRandom")
     }
 }
@@ -68,7 +68,7 @@ pub struct AbortSecureAgreeRandom {}
 
 impl ProtocolDescription for AbortSecureAgreeRandom {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-AbortSecureAgreeRandom")
     }
 }
@@ -82,7 +82,7 @@ pub struct RobustRealAgreeRandom<RO: RobustOpen> {
 
 impl<RO: RobustOpen> ProtocolDescription for RobustRealAgreeRandom<RO> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-RobustRealAgreeRandom:\n{}",
             indent,
@@ -115,7 +115,7 @@ pub struct DummyAgreeRandom {}
 
 impl ProtocolDescription for DummyAgreeRandom {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-DummyAgreeRandom")
     }
 }
@@ -126,7 +126,7 @@ pub struct DummyAgreeRandomFromShare {}
 
 impl ProtocolDescription for DummyAgreeRandomFromShare {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-DummyAgreeRandomFromShare")
     }
 }
@@ -637,7 +637,9 @@ mod tests {
         execution::{
             runtime::{
                 party::Role,
-                session::{ParameterHandles, SmallSession},
+                sessions::{
+                    session_parameters::GenericParameterHandles, small_session::SmallSession,
+                },
             },
             sharing::open::test::deterministically_compute_my_shares,
             small_execution::{

@@ -3,13 +3,15 @@ use crate::{
         crs_gen_tests::crs_gen_centralized, key_gen_tests::key_gen_centralized,
         public_decryption_tests::decryption_centralized,
     },
+    consts::DEFAULT_EPOCH_ID,
     cryptography::internal_crypto_types::WrappedDKGParams,
     engine::base::derive_request_id,
     util::key_setup::test_tools::{
         purge, purge_backup, purge_priv, purge_pub, EncryptionConfig, TestingPlaintext,
     },
     vault::storage::{
-        delete_all_at_request_id, file::FileStorage, make_storage, StorageReader, StorageType,
+        delete_all_at_request_id, file::FileStorage, make_storage, StorageReader, StorageReaderExt,
+        StorageType,
     },
 };
 use kms_grpc::{
@@ -26,16 +28,21 @@ async fn test_insecure_central_dkg_backup() {
     let dkg_param: WrappedDKGParams = param.into();
     let key_id_1 = derive_request_id("test_insecure_central_dkg_backup-1").unwrap();
     let key_id_2 = derive_request_id("test_insecure_central_dkg_backup-2").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
-    purge(None, None, None, &key_id_1, 1).await;
-    purge(None, None, None, &key_id_2, 1).await;
-    purge_backup(None, 1).await;
-    key_gen_centralized(&key_id_1, param, None, None).await;
-    key_gen_centralized(&key_id_2, param, None, None).await;
+    purge(None, None, &key_id_1, &[None], &[None]).await;
+    purge(None, None, &key_id_2, &[None], &[None]).await;
+    purge_backup(None, &[None]).await;
+    key_gen_centralized(&key_id_1, &epoch_id, param, None, None).await;
+    key_gen_centralized(&key_id_2, &epoch_id, param, None, None).await;
     // Generated key, delete private storage
     let mut priv_storage: FileStorage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
-    delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
-    delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
+    delete_all_at_request_id(&mut priv_storage, &key_id_1)
+        .await
+        .unwrap();
+    delete_all_at_request_id(&mut priv_storage, &key_id_2)
+        .await
+        .unwrap();
 
     // Now try to restore both keys
     let (kms_server, mut kms_client, internal_client) =
@@ -69,8 +76,8 @@ async fn test_insecure_central_dkg_backup() {
         1,
     )
     .await;
-    purge_priv(None).await;
-    purge_pub(None).await;
+    purge_priv(None, &[None]).await;
+    purge_pub(None, &[None]).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -79,40 +86,43 @@ async fn test_insecure_central_autobackup_after_deletion() {
     let param = FheParameter::Test;
     let dkg_param: WrappedDKGParams = param.into();
     let key_id = derive_request_id("test_insecure_central_autobackup_after_deletion").unwrap();
+    let epoch_id = *DEFAULT_EPOCH_ID;
     // Delete potentially old data
-    purge(None, None, None, &key_id, 1).await;
-    purge_backup(None, 1).await;
-    key_gen_centralized(&key_id, param, None, None).await;
+    purge(None, None, &key_id, &[None], &[None]).await;
+    purge_backup(None, &[None]).await;
+    key_gen_centralized(&key_id, &epoch_id, param, None, None).await;
     // Sleep to ensure the servers are properly shut down
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Start the servers again
     let (_kms_server, _kms_client, _internal_client) =
         crate::client::test_tools::centralized_handles(&dkg_param, None).await;
     // Check the storage
-    let backup_storage = make_storage(None, StorageType::BACKUP, None, None, None).unwrap();
+    let backup_storage = make_storage(None, StorageType::BACKUP, None, None).unwrap();
     // Validate that the backup is constructed again
     assert!(backup_storage
-        .data_exists(&key_id, &PrivDataType::FhePrivateKey.to_string())
+        .data_exists_at_epoch(&key_id, &epoch_id, &PrivDataType::FhePrivateKey.to_string())
         .await
         .unwrap());
-    purge_priv(None).await;
-    purge_pub(None).await;
+    purge_priv(None, &[None]).await;
+    purge_pub(None, &[None]).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn test_insecure_central_crs_backup() {
+async fn nightly_test_insecure_central_crs_backup() {
     let param = FheParameter::Test;
     let dkg_param: WrappedDKGParams = param.into();
     let req_id: RequestId =
         derive_request_id(&format!("test_insecure_central_crs_backup_{param:?}",)).unwrap();
-    purge(None, None, None, &req_id, 1).await;
-    purge_backup(None, 1).await;
+    purge(None, None, &req_id, &[None], &[None]).await;
+    purge_backup(None, &[None]).await;
     crs_gen_centralized(&req_id, param, true, None).await;
 
     // Generated crs, delete it from private storage
     let mut priv_storage: FileStorage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
-    delete_all_at_request_id(&mut priv_storage, &req_id).await;
+    delete_all_at_request_id(&mut priv_storage, &req_id)
+        .await
+        .unwrap();
     // Check that is has been removed
     assert!(!priv_storage
         .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
@@ -150,6 +160,6 @@ async fn test_insecure_central_crs_backup() {
         .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
         .await
         .unwrap());
-    purge_priv(None).await;
-    purge_pub(None).await;
+    purge_priv(None, &[None]).await;
+    purge_pub(None, &[None]).await;
 }

@@ -1,0 +1,73 @@
+kmsGenKeys:
+  enabled: true
+  keyGenArgs: "insecure-key-gen"
+  crsGenArgs: "insecure-crs-gen --max-num-bits 2048"
+  configmap:
+    name: kms-keys
+  resources:
+    requests:
+      memory: 24Gi
+      cpu: 4
+    limits:
+      memory: 24Gi
+      cpu: 4
+  tolerations:
+    - key: karpenter.sh/nodepool
+      effect: NoSchedule
+      operator: Equal
+      value: kms-vcluster-pool
+
+minio:
+  enabled: true
+  endpoint: "http://localstack:4566"
+  username: kms-access-key-id
+  password: kms-secret-access-key
+
+kubeUtils:
+  image:
+    name: ghcr.io/zama-ai/security-hub/infra/kube-utils
+    tag: v0.4.3
+    pullPolicy: Always
+
+kmsCore:
+  enabled: false
+  thresholdMode:
+    enabled: true
+    peersList:
+      - id: 1
+        host: kms-service-threshold-1-kms-test-core-1
+        port: 50001
+      - id: 2
+        host: kms-service-threshold-2-kms-test-core-2
+        port: 50001
+      - id: 3
+        host: kms-service-threshold-3-kms-test-core-3
+        port: 50001
+      - id: 4
+        host: kms-service-threshold-4-kms-test-core-4
+        port: 50001
+  tolerations:
+    - key: karpenter.sh/nodepool
+      effect: NoSchedule
+      operator: Equal
+      value: kms-vcluster-pool
+
+kmsCoreClient:
+  enabled: false
+  image:
+    name: hub.zama.org/dev-kms/core-client
+    tag:
+  num_majority: 2 # 2 when 4 parties and 5 when 13 parties
+  num_reconstruct: 3 # 3 when 4 parties and 9 when 13 parties
+  decryption_mode: NoiseFloodSmall
+  fhe_parameter: Test
+  tolerations:
+    - key: karpenter.sh/nodepool
+      effect: NoSchedule
+      operator: Equal
+      value: kms-vcluster-pool
+kmsInit:
+  enabled: false
+
+kmsGenCertAndKeys:
+  enabled: false

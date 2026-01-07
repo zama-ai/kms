@@ -8,7 +8,7 @@ use crate::{
         structure_traits::{Derive, ErrorCorrect, Invert, Ring},
     },
     error::error_handler::anyhow_error_and_log,
-    execution::runtime::{party::Role, session::LargeSessionHandles},
+    execution::runtime::{party::Role, sessions::large_session::LargeSessionHandles},
     ProtocolDescription,
 };
 use async_trait::async_trait;
@@ -52,7 +52,7 @@ pub struct RealDoubleSharing<Z, S: LocalDoubleShare> {
 
 impl<Z, S: LocalDoubleShare> ProtocolDescription for RealDoubleSharing<Z, S> {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!(
             "{}-RealDoubleSharing:\n{}",
             indent,
@@ -230,17 +230,15 @@ pub(crate) mod tests {
     use crate::algebra::structure_traits::Invert;
     use crate::execution::large_execution::constants::DISPUTE_STAT_SEC;
     use crate::execution::large_execution::double_sharing::SecureDoubleSharing;
-    use crate::execution::runtime::session::BaseSessionHandles;
+    use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
+    use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::networking::NetworkMode;
     use crate::{
         algebra::structure_traits::{Ring, Sample},
         execution::{
             large_execution::double_sharing::{DoubleShare, DoubleSharing},
-            runtime::{
-                party::Role,
-                session::{LargeSession, ParameterHandles},
-            },
+            runtime::{party::Role, sessions::large_session::LargeSession},
             sharing::{shamir::ShamirSharings, share::Share},
         },
         tests::helper::tests_and_benches::execute_protocol_large,

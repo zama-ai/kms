@@ -1,22 +1,18 @@
 use super::traits::BaseKms;
-use crate::compute_user_decrypt_message_hash;
 use crate::consts::ID_LENGTH;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::decompression;
-use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
-use crate::cryptography::signcryption::internal_verify_sig;
+use crate::cryptography::signatures::compute_eip712_signature;
+
+use crate::cryptography::signatures::internal_sign;
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
+use alloy_primitives::U256;
 use alloy_primitives::{Bytes, FixedBytes, Uint};
-use alloy_primitives::{B256, U256};
-use alloy_signer::SignerSync;
-use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::Eip712Domain;
-use alloy_sol_types::SolStruct;
-use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, TypedPlaintext, UserDecryptionResponsePayload,
 };
@@ -209,7 +205,7 @@ pub(crate) fn compute_info_crs(
     let crs_digest = safe_serialize_hash_element_versioned(domain_separator, pp)?;
 
     let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone());
-    let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
+    let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
     Ok(CrsGenMetadata::new(
         *crs_id,
@@ -225,7 +221,7 @@ pub(crate) fn compute_external_signature_preprocessing(
     domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
     let sol_type = PrepKeygenVerification::new(prep_id);
-    let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
+    let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
     Ok(external_signature)
 }
 
@@ -242,13 +238,19 @@ pub(crate) fn compute_info_standard_keygen(
     let public_key_digest =
         safe_serialize_hash_element_versioned(domain_separator, &keyset.public_key)?;
 
+    tracing::info!(
+        "Computed server key digest: {} and public key digest: {}",
+        hex::encode(&server_key_digest),
+        hex::encode(&public_key_digest)
+    );
+
     let sol_type = KeygenVerification::new(
         prep_id,
         key_id,
         server_key_digest.clone(),
         public_key_digest.clone(),
     );
-    let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
+    let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
     Ok(KeyGenMetadata::new(
         *key_id,
@@ -274,7 +276,7 @@ pub(crate) fn compute_info_decompression_keygen(
     let sol_type = FheDecompressionUpgradeKey {
         decompressionUpgradeKeyDigest: key_digest.to_vec().into(),
     };
-    let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
+    let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
     Ok(KeyGenMetadata::new(
         *key_id,
@@ -518,31 +520,6 @@ where
     }
 }
 
-pub(crate) fn compute_external_user_decrypt_signature(
-    server_sk: &PrivateSigKey,
-    payload: &UserDecryptionResponsePayload,
-    eip712_domain: &Eip712Domain,
-    user_pk: &UnifiedPublicEncKey,
-    extra_data: Vec<u8>,
-) -> anyhow::Result<Vec<u8>> {
-    let message_hash =
-        compute_user_decrypt_message_hash(payload, eip712_domain, user_pk, extra_data)?;
-
-    let signer = PrivateKeySigner::from_signing_key(server_sk.sk().clone());
-    let signer_address = signer.address();
-    tracing::info!("Signer address: {:?}", signer_address);
-
-    // Sign the hash synchronously with the wallet.
-    let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
-
-    tracing::info!(
-        "UserDecryptResponseVerification Signature: {:?} with length {}",
-        hex::encode(signature.clone()),
-        signature.len(),
-    );
-    Ok(signature)
-}
-
 /// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them using EIP-712 for external verification (e.g. in fhevm).
 pub(crate) fn compute_external_pt_signature(
     server_sk: &PrivateSigKey,
@@ -551,78 +528,67 @@ pub(crate) fn compute_external_pt_signature(
     extra_data: Vec<u8>,
     eip712_domain: Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
-    let message_hash = compute_pt_message_hash(ext_handles_bytes, pts, eip712_domain, extra_data)?;
-
-    let signer = PrivateKeySigner::from_signing_key(server_sk.sk().clone());
-    let signer_address = signer.address();
-    tracing::info!("Signer address: {:?}", signer_address);
-
-    // Sign the hash synchronously with the wallet.
-    let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
-
-    tracing::info!("PT Signature: {:?}", hex::encode(signature.clone()));
-
-    Ok(signature)
-}
-
-pub fn hash_sol_struct<D: SolStruct>(
-    data: &D,
-    eip712_domain: &Eip712Domain,
-) -> anyhow::Result<B256> {
-    let message_hash = data.eip712_signing_hash(eip712_domain);
-    tracing::info!("Public Data EIP-712 Message hash: {:?}", message_hash);
-    Ok(message_hash)
-}
-
-/// take some public data (e.g. public key or CRS) and sign it using EIP-712 for external verification (e.g. in fhevm).
-pub fn compute_external_pubdata_signature<D: SolStruct>(
-    client_sk: &PrivateSigKey,
-    data: &D,
-    eip712_domain: &Eip712Domain,
-) -> anyhow::Result<Vec<u8>> {
-    let message_hash = hash_sol_struct(data, eip712_domain)?;
-
-    let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
-    let signer_address = signer.address();
-    tracing::info!("Signer address: {:?}", signer_address);
-
-    // Sign the hash synchronously with the wallet.
-    let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
-
     tracing::info!(
-        "Public Data EIP-712 Signature: {:?}",
-        hex::encode(signature.clone())
+        "Computing external PT signature for {} plaintexts and {} external handles",
+        pts.len(),
+        ext_handles_bytes.len()
     );
-
-    Ok(signature)
+    let message = compute_public_decryption_message(ext_handles_bytes, pts, extra_data)?;
+    compute_eip712_signature(server_sk, &message, &eip712_domain)
 }
 
 pub struct BaseKmsStruct {
-    pub(crate) kms_type: KMSType,
-    pub(crate) sig_key: Arc<PrivateSigKey>,
-    pub(crate) serialized_verf_key: Arc<Vec<u8>>,
-    pub(crate) rng: Arc<Mutex<AesRng>>,
+    kms_type: KMSType,
+    sig_key: Option<Arc<PrivateSigKey>>,
+    verf_key: Arc<PublicSigKey>,
+    rng: Arc<Mutex<AesRng>>,
 }
 
 impl BaseKmsStruct {
     pub fn new(kms_type: KMSType, sig_key: PrivateSigKey) -> anyhow::Result<Self> {
-        let serialized_verf_key = Arc::new(bc2wrap::serialize(&PublicSigKey::new(
-            SigningKey::verifying_key(sig_key.sk()).to_owned(),
-        ))?);
         Ok(BaseKmsStruct {
             kms_type,
-            sig_key: Arc::new(sig_key),
-            serialized_verf_key,
+            verf_key: Arc::new(sig_key.verf_key()),
+            sig_key: Some(Arc::new(sig_key)),
             rng: Arc::new(Mutex::new(AesRng::from_entropy())),
         })
     }
 
+    pub fn new_no_signing_key(kms_type: KMSType, verf_key: PublicSigKey) -> Self {
+        tracing::warn!("Initializing KMS without a signing key. ONLY BACKUP RECOVERY OPERATIONS WILL BE POSSIBLE.");
+        BaseKmsStruct {
+            kms_type,
+            sig_key: None,
+            verf_key: Arc::new(verf_key),
+            rng: Arc::new(Mutex::new(AesRng::from_entropy())),
+        }
+    }
+
+    pub fn kms_type(&self) -> KMSType {
+        self.kms_type
+    }
+
+    pub fn sig_key(&self) -> anyhow::Result<Arc<PrivateSigKey>> {
+        match &self.sig_key {
+            Some(sk) => Ok(Arc::clone(sk)),
+            None => anyhow::bail!("No signing key available"),
+        }
+    }
+
+    pub fn verf_key(&self) -> Arc<PublicSigKey> {
+        Arc::clone(&self.verf_key)
+    }
+
     /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use.
     pub async fn new_instance(&self) -> Self {
+        let sig_key = match &self.sig_key {
+            Some(sk) => Some(Arc::clone(sk)),
+            None => None,
+        };
         Self {
             kms_type: self.kms_type,
-            sig_key: self.sig_key.clone(),
-            serialized_verf_key: self.serialized_verf_key.clone(),
+            verf_key: Arc::clone(&self.verf_key),
+            sig_key,
             rng: Arc::new(Mutex::new(self.new_rng().await)),
         }
     }
@@ -639,32 +605,15 @@ impl BaseKmsStruct {
 }
 
 impl BaseKms for BaseKmsStruct {
-    fn verify_sig<T>(
-        dsep: &DomainSep,
-        payload: &T,
-        signature: &crate::cryptography::internal_crypto_types::Signature,
-        key: &PublicSigKey,
-    ) -> anyhow::Result<()>
-    where
-        T: Serialize + AsRef<[u8]>,
-    {
-        internal_verify_sig(dsep, &payload, signature, key)
-    }
-
     /// sign `msg` using the KMS' private signing key
-    fn sign<T>(
-        &self,
-        dsep: &DomainSep,
-        msg: &T,
-    ) -> anyhow::Result<crate::cryptography::internal_crypto_types::Signature>
+    fn sign<T>(&self, dsep: &DomainSep, msg: &T) -> anyhow::Result<Signature>
     where
         T: Serialize + AsRef<[u8]>,
     {
-        crate::cryptography::signcryption::internal_sign(dsep, msg, &self.sig_key)
-    }
-
-    fn get_serialized_verf_key(&self) -> Vec<u8> {
-        self.serialized_verf_key.as_ref().clone()
+        match self.sig_key.as_ref() {
+            None => anyhow::bail!("KMS has no signing key"),
+            Some(sk) => internal_sign(dsep, msg, sk),
+        }
     }
 
     fn digest<T>(domain_separator: &DomainSep, msg: &T) -> anyhow::Result<Vec<u8>>
@@ -772,15 +721,14 @@ pub fn abi_encode_plaintexts_ebytes(ptxts: &[TypedPlaintext]) -> Bytes {
     Bytes::from(decrypted_result)
 }
 
-pub fn compute_pt_message_hash(
+pub fn compute_public_decryption_message(
     ext_handles_bytes: Vec<Vec<u8>>,
     pts: &[TypedPlaintext],
-    eip712_domain: Eip712Domain,
     extra_data: Vec<u8>,
-) -> anyhow::Result<B256> {
+) -> anyhow::Result<PublicDecryptVerification> {
     // convert external_handles back to U256 to be signed
-    let external_handles: Vec<_> = ext_handles_bytes
-        .into_iter()
+    let external_handles_bytes32: Vec<_> = ext_handles_bytes
+        .iter()
         .enumerate()
         .map(|(idx, h)| {
             if h.as_slice().len() > 32 {
@@ -795,22 +743,18 @@ pub fn compute_pt_message_hash(
 
     let pt_bytes = abi_encode_plaintexts(pts)?;
 
-    // the solidity structure to sign with EIP-712
-    let message = PublicDecryptVerification {
-        ctHandles: external_handles.clone(),
-        decryptedResult: pt_bytes.clone(),
-        extraData: extra_data.clone().into(),
-    };
-
-    let message_hash = message.eip712_signing_hash(&eip712_domain);
     tracing::info!(
-        "PT EIP-712 Message hash: {:?}. Handles: {:?}. PT Bytes: {:?}. Extra Data: {:?}",
-        message_hash,
-        external_handles,
-        pt_bytes,
-        extra_data
+        "Computed PublicDecryptVerification for handles {:?} with extra_data \"{}\".",
+        external_handles_bytes32,
+        hex::encode(&extra_data)
     );
-    Ok(message_hash)
+
+    // the solidity structure to sign with EIP-712
+    Ok(PublicDecryptVerification {
+        ctHandles: external_handles_bytes32.clone(),
+        decryptedResult: pt_bytes.clone(),
+        extraData: extra_data.into(),
+    })
 }
 
 /// Attempt to find the concrete parameters from an enum variant defined by
@@ -841,10 +785,10 @@ pub enum KeyGenMetadataInnerVersioned {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
 #[versionize(KeyGenMetadataInnerVersioned)]
 pub struct KeyGenMetadataInner {
-    pub(crate) key_id: RequestId,
-    pub(crate) preprocessing_id: RequestId,
-    pub(crate) key_digest_map: HashMap<PubDataType, Vec<u8>>,
-    pub(crate) external_signature: Vec<u8>,
+    pub key_id: RequestId,
+    pub preprocessing_id: RequestId,
+    pub key_digest_map: HashMap<PubDataType, Vec<u8>>,
+    pub external_signature: Vec<u8>,
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -900,7 +844,7 @@ pub enum CrsGenMetadataInnerVersioned {
 }
 
 #[cfg(feature = "non-wasm")]
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(CrsGenMetadataInnerVersioned)]
 pub struct CrsGenMetadataInner {
     pub(crate) crs_id: RequestId,
@@ -917,7 +861,7 @@ pub enum CrsGenMetadataVersioned {
 }
 
 #[cfg(feature = "non-wasm")]
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(CrsGenMetadataVersioned)]
 pub enum CrsGenMetadata {
     Current(CrsGenMetadataInner),
@@ -946,6 +890,13 @@ impl CrsGenMetadata {
             max_num_bits,
             external_signature,
         })
+    }
+
+    pub fn digest(&self) -> &[u8] {
+        match self {
+            CrsGenMetadata::Current(inner) => &inner.crs_digest,
+            CrsGenMetadata::LegacyV0(_inner) => &[],
+        }
     }
 
     #[cfg(test)]
@@ -979,12 +930,12 @@ pub(crate) mod tests {
     use super::{deserialize_to_low_level, TypedPlaintext};
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
-        cryptography::internal_crypto_types::gen_sig_keys,
+        cryptography::signatures::{gen_sig_keys, recover_address_from_ext_signature},
         dummy_domain,
         engine::{
             base::{
                 compute_external_signature_preprocessing, compute_info_standard_keygen,
-                compute_pt_message_hash, hash_sol_struct, safe_serialize_hash_element_versioned,
+                compute_public_decryption_message, safe_serialize_hash_element_versioned,
                 DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
             },
             centralized::central_kms::{
@@ -994,8 +945,6 @@ pub(crate) mod tests {
         util::key_setup::FhePublicKey,
     };
     use aes_prng::AesRng;
-    use alloy_dyn_abi::Eip712Domain;
-    use alloy_primitives::Address;
     use alloy_sol_types::SolStruct;
     use kms_grpc::{
         kms::v1::CiphertextFormat,
@@ -1352,31 +1301,15 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn recover_address(
-        data: impl SolStruct,
-        domain: &Eip712Domain,
-        external_sig: &[u8],
-    ) -> Address {
-        // Since the signature is 65 bytes long, the last byte is the parity bit
-        // so we extract it and use it as the parity.
-        let sig = alloy_signer::Signature::from_bytes_and_parity(
-            external_sig,
-            external_sig[64] & 0x01 == 0,
-        );
-        let hash = hash_sol_struct(&data, domain).unwrap();
-
-        sig.recover_address_from_prehash(&hash).unwrap()
-    }
-
     #[test]
     fn test_compute_info_standard_keygen() {
         let mut rng = AesRng::seed_from_u64(123);
         let (pk, sk) = gen_sig_keys(&mut rng);
-        let actual_address = alloy_signer::utils::public_key_to_address(pk.pk());
+        let actual_address = pk.address();
         let prep_id = RequestId::new_random(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
         let params = TEST_PARAM;
-        let client_key = generate_client_fhe_key(params, Some(Seed(1)));
+        let client_key = generate_client_fhe_key(params, key_id.into(), Some(Seed(1)));
         let server_key = client_key.generate_server_key();
         let public_key = FhePublicKey::new(&client_key);
 
@@ -1410,7 +1343,12 @@ pub(crate) mod tests {
             );
 
             assert_eq!(
-                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                recover_address_from_ext_signature(
+                    &sol_struct,
+                    &domain,
+                    meta_data.external_signature()
+                )
+                .unwrap(),
                 actual_address
             );
         }
@@ -1430,7 +1368,12 @@ pub(crate) mod tests {
             );
 
             assert_ne!(
-                recover_address(sol_struct, &bad_domain, meta_data.external_signature()),
+                recover_address_from_ext_signature(
+                    &sol_struct,
+                    &bad_domain,
+                    meta_data.external_signature()
+                )
+                .unwrap(),
                 actual_address
             );
         }
@@ -1444,7 +1387,12 @@ pub(crate) mod tests {
                 public_key_digest.clone(),
             );
             assert_ne!(
-                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                recover_address_from_ext_signature(
+                    &sol_struct,
+                    &domain,
+                    meta_data.external_signature()
+                )
+                .unwrap(),
                 actual_address
             );
         }
@@ -1458,7 +1406,12 @@ pub(crate) mod tests {
                 public_key_digest.clone(),
             );
             assert_ne!(
-                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                recover_address_from_ext_signature(
+                    &sol_struct,
+                    &domain,
+                    meta_data.external_signature()
+                )
+                .unwrap(),
                 actual_address
             );
         }
@@ -1473,7 +1426,12 @@ pub(crate) mod tests {
                 public_key_digest.clone(),
             );
             assert_ne!(
-                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                recover_address_from_ext_signature(
+                    &sol_struct,
+                    &domain,
+                    meta_data.external_signature()
+                )
+                .unwrap(),
                 actual_address
             );
         }
@@ -1498,7 +1456,7 @@ pub(crate) mod tests {
                 public_key_digest.clone(),
             );
             assert_ne!(
-                recover_address(sol_struct, &domain, bad_signature),
+                recover_address_from_ext_signature(&sol_struct, &domain, bad_signature).unwrap(),
                 actual_address
             );
         }
@@ -1508,7 +1466,7 @@ pub(crate) mod tests {
     fn test_compute_info_crs() {
         let mut rng = AesRng::seed_from_u64(123);
         let (pk, sk) = gen_sig_keys(&mut rng);
-        let actual_address = alloy_signer::utils::public_key_to_address(pk.pk());
+        let actual_address = pk.address();
         let crs_id = RequestId::new_random(&mut rng);
         let params = TEST_PARAM;
         let max_num_bits = 64;
@@ -1526,7 +1484,12 @@ pub(crate) mod tests {
                 CrsgenVerification::new(&crs_id, max_num_bits as usize, crs_digest.clone());
 
             assert_eq!(
-                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                recover_address_from_ext_signature(
+                    &sol_struct,
+                    &domain,
+                    meta_data.external_signature()
+                )
+                .unwrap(),
                 actual_address
             );
         }
@@ -1537,7 +1500,12 @@ pub(crate) mod tests {
                 CrsgenVerification::new(&bad_crs_id, max_num_bits as usize, crs_digest.clone());
 
             assert_ne!(
-                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                recover_address_from_ext_signature(
+                    &sol_struct,
+                    &domain,
+                    meta_data.external_signature()
+                )
+                .unwrap(),
                 actual_address
             );
         }
@@ -1552,7 +1520,12 @@ pub(crate) mod tests {
             let sol_struct =
                 CrsgenVerification::new(&crs_id, max_num_bits as usize, crs_digest.clone());
             assert_ne!(
-                recover_address(sol_struct, &bad_domain, meta_data.external_signature()),
+                recover_address_from_ext_signature(
+                    &sol_struct,
+                    &bad_domain,
+                    meta_data.external_signature()
+                )
+                .unwrap(),
                 actual_address
             );
         }
@@ -1563,7 +1536,12 @@ pub(crate) mod tests {
                 CrsgenVerification::new(&crs_id, wrong_max_num_bits as usize, crs_digest.clone());
 
             assert_ne!(
-                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                recover_address_from_ext_signature(
+                    &sol_struct,
+                    &domain,
+                    meta_data.external_signature()
+                )
+                .unwrap(),
                 actual_address
             );
         }
@@ -1574,7 +1552,12 @@ pub(crate) mod tests {
             let sol_struct = CrsgenVerification::new(&crs_id, max_num_bits as usize, wrong_digest);
 
             assert_ne!(
-                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                recover_address_from_ext_signature(
+                    &sol_struct,
+                    &domain,
+                    meta_data.external_signature()
+                )
+                .unwrap(),
                 actual_address
             );
         }
@@ -1597,7 +1580,12 @@ pub(crate) mod tests {
                 CrsgenVerification::new(&crs_id, max_num_bits as usize, crs_digest.clone());
 
             assert_ne!(
-                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                recover_address_from_ext_signature(
+                    &sol_struct,
+                    &domain,
+                    meta_data.external_signature()
+                )
+                .unwrap(),
                 actual_address
             );
         }
@@ -1620,18 +1608,21 @@ pub(crate) mod tests {
         let extra_data: Vec<u8> = vec![];
 
         // Determinism: same inputs -> same hash
-        let h1 = compute_pt_message_hash(handles.clone(), &pts, domain.clone(), extra_data.clone())
-            .expect("hash computation should succeed");
-        let h2 = compute_pt_message_hash(handles.clone(), &pts, domain.clone(), extra_data.clone())
-            .expect("hash computation should succeed");
+        let m1 = compute_public_decryption_message(handles.clone(), &pts, extra_data.clone())
+            .expect("msg computation should succeed");
+        let h1 = m1.eip712_signing_hash(&domain);
+        let m2 = compute_public_decryption_message(handles.clone(), &pts, extra_data.clone())
+            .expect("msg computation should succeed");
+        let h2 = m2.eip712_signing_hash(&domain);
         assert_eq!(h1, h2, "Hashes must be the same for identical inputs");
 
-        // Changing a handle changes the hash
+        // Changing a handle changes the message
         let mut mutated_handles = handles.clone();
         mutated_handles[1][0] ^= 0x23;
-        let h_changed_handle =
-            compute_pt_message_hash(mutated_handles, &pts, domain.clone(), extra_data.clone())
-                .expect("hash computation should succeed");
+        let m_changed_handle =
+            compute_public_decryption_message(mutated_handles, &pts, extra_data.clone())
+                .expect("msg computation should succeed");
+        let h_changed_handle = m_changed_handle.eip712_signing_hash(&domain);
         assert_ne!(
             h1, h_changed_handle,
             "Hash should change when a handle changes"
@@ -1640,13 +1631,10 @@ pub(crate) mod tests {
         // Changing a plaintext value changes the hash
         let mut pts_modified = pts.clone();
         pts_modified[0] = TypedPlaintext::from_u16(69);
-        let h_changed_pt = compute_pt_message_hash(
-            handles.clone(),
-            &pts_modified,
-            domain.clone(),
-            extra_data.clone(),
-        )
-        .expect("hash computation should succeed");
+        let m_changed_pt =
+            compute_public_decryption_message(handles.clone(), &pts_modified, extra_data.clone())
+                .expect("msg computation should succeed");
+        let h_changed_pt = m_changed_pt.eip712_signing_hash(&domain);
         assert_ne!(
             h1, h_changed_pt,
             "Hash should change when a plaintext changes"
@@ -1654,9 +1642,9 @@ pub(crate) mod tests {
 
         // Changing extra data changes the hash
         let extra_data2 = vec![1u8, 2, 3, 5, 23];
-        let h_changed_extra =
-            compute_pt_message_hash(handles.clone(), &pts, domain.clone(), extra_data2)
-                .expect("hash computation should succeed");
+        let m_changed_extra = compute_public_decryption_message(handles.clone(), &pts, extra_data2)
+            .expect("msg computation should succeed");
+        let h_changed_extra = m_changed_extra.eip712_signing_hash(&domain);
         assert_ne!(
             h1, h_changed_extra,
             "Hash should change when extra_data changes"
@@ -1664,8 +1652,11 @@ pub(crate) mod tests {
 
         // Error path: a handle longer than 32 bytes should fail
         let bad_handles = vec![vec![0u8; 33]];
-        let err = compute_pt_message_hash(bad_handles, &pts, domain, vec![])
-            .expect_err("Expected error for handle > 32 bytes");
+        let err = compute_public_decryption_message(bad_handles, &pts, vec![]).unwrap_err();
+        assert!(
+            err.to_string().contains("too long: 33 bytes (max 32"),
+            "Error message should mention 'too long: 33 bytes (max 32', got: {err}"
+        );
         assert!(
             err.to_string().contains("too long"),
             "Error message should mention 'too long', got: {err}"
@@ -1685,7 +1676,7 @@ pub(crate) mod tests {
     fn test_compute_external_signature_preproc() {
         let mut rng = AesRng::seed_from_u64(123);
         let (pk, sk) = gen_sig_keys(&mut rng);
-        let actual_address = alloy_signer::utils::public_key_to_address(pk.pk());
+        let actual_address = pk.address();
         let preproc_id = RequestId::new_random(&mut rng);
         let domain = dummy_domain();
         let sig = compute_external_signature_preprocessing(&sk, &preproc_id, &domain).unwrap();
@@ -1693,13 +1684,19 @@ pub(crate) mod tests {
         {
             // happy path
             let sol_struct = PrepKeygenVerification::new(&preproc_id);
-            assert_eq!(recover_address(sol_struct, &domain, &sig), actual_address);
+            assert_eq!(
+                recover_address_from_ext_signature(&sol_struct, &domain, &sig).unwrap(),
+                actual_address
+            );
         }
         {
             // wrong ID
             let bad_preproc_id = RequestId::new_random(&mut rng);
             let sol_struct = PrepKeygenVerification::new(&bad_preproc_id);
-            assert_ne!(recover_address(sol_struct, &domain, &sig), actual_address);
+            assert_ne!(
+                recover_address_from_ext_signature(&sol_struct, &domain, &sig).unwrap(),
+                actual_address
+            );
         }
         {
             // wrong domain
@@ -1711,7 +1708,7 @@ pub(crate) mod tests {
             );
             let sol_struct = PrepKeygenVerification::new(&preproc_id);
             assert_ne!(
-                recover_address(sol_struct, &bad_domain, &sig),
+                recover_address_from_ext_signature(&sol_struct, &bad_domain, &sig).unwrap(),
                 actual_address
             );
         }
@@ -1721,7 +1718,10 @@ pub(crate) mod tests {
             let sig =
                 compute_external_signature_preprocessing(&bad_sk, &preproc_id, &domain).unwrap();
             let sol_struct = PrepKeygenVerification::new(&preproc_id);
-            assert_ne!(recover_address(sol_struct, &domain, &sig), actual_address);
+            assert_ne!(
+                recover_address_from_ext_signature(&sol_struct, &domain, &sig).unwrap(),
+                actual_address
+            );
         }
     }
 }

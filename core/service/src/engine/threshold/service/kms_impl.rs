@@ -3,10 +3,12 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // === External Crates ===
 use kms_grpc::{
+    identifiers::EpochId,
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
-    rpc_types::{KMSType, PrivDataType, PubDataType, SignedPubDataHandleInternal},
+    rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
     RequestId,
 };
+use observability::{conf::TelemetryConfig, metrics};
 use serde::{Deserialize, Serialize};
 use tfhe::{
     core_crypto::prelude::LweKeyswitchKey, integer::compression_keys::DecompressionKey,
@@ -21,12 +23,14 @@ use threshold_fhe::{
             create_memory_factory, create_redis_factory,
             orchestration::producer_traits::SecureSmallProducerFactory, DKGPreprocessing,
         },
-        runtime::party::{Role, RoleAssignment},
         small_execution::prss::RobustSecurePrssInit,
         tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
         zk::ceremony::SecureCeremony,
     },
-    networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
+    networking::{
+        grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
+        tls::AttestedVerifier,
+    },
 };
 use tokio::{
     net::TcpListener,
@@ -41,36 +45,35 @@ use tonic_tls::rustls::TlsIncoming;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    backup::{custodian::InternalCustodianContext, operator::RecoveryValidationMaterial},
-    conf::threshold::ThresholdPartyConf,
-    consts::{DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
-    cryptography::{
-        attestation::SecurityModuleProxy,
-        internal_crypto_types::{PrivateSigKey, PublicSigKey},
-    },
+    backup::operator::RecoveryValidationMaterial,
+    conf::CoreConfig,
+    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT, MINIMUM_SESSIONS_PREPROC},
+    cryptography::{attestation::SecurityModuleProxy, signatures::PublicSigKey},
     engine::{
         backup_operator::RealBackupOperator,
-        base::{BaseKmsStruct, CrsGenMetadata, KeyGenMetadata},
-        context_manager::RealContextManager,
+        base::{
+            BaseKmsStruct, CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues,
+        },
+        context::{ContextInfo, NodeInfo, SoftwareVersion},
+        context_manager::ThresholdContextManager,
         prepare_shutdown_signals,
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
-                session::{SessionPreparer, SessionPreparerManager},
+                resharer::RealResharer,
+                session::{ImmutableSessionMaker, SessionMaker},
                 user_decryptor::SecureNoiseFloodPartialDecryptor,
             },
             threshold_kms::ThresholdKms,
         },
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
-    util::{
-        meta_store::MetaStore,
-        rate_limiter::{RateLimiter, RateLimiterConfig},
-    },
+    util::{meta_store::MetaStore, rate_limiter::RateLimiter},
     vault::{
         storage::{
-            crypto_material::ThresholdCryptoMaterialStorage, read_all_data_versioned,
-            read_pk_at_request_id, Storage,
+            crypto_material::ThresholdCryptoMaterialStorage, delete_context_at_id,
+            read_all_data_from_all_epochs_versioned, read_all_data_versioned,
+            read_pk_at_request_id, store_context_at_id, Storage, StorageExt,
         },
         Vault,
     },
@@ -184,8 +187,9 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     >,
     RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
-    RealContextManager<PubS, PrivS>,
+    ThresholdContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
+    RealResharer<PubS, PrivS>,
 >;
 
 #[cfg(feature = "insecure")]
@@ -206,23 +210,23 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
     RealInsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
-    RealContextManager<PubS, PrivS>,
+    ThresholdContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
+    RealResharer<PubS, PrivS>,
 >;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn new_real_threshold_kms<PubS, PrivS, F>(
-    config: ThresholdPartyConf,
+    config: CoreConfig,
     public_storage: PubS,
-    private_storage: PrivS,
+    mut private_storage: PrivS,
     backup_storage: Option<Vault>,
     security_module: Option<Arc<SecurityModuleProxy>>,
     mpc_listener: TcpListener,
-    sk: PrivateSigKey,
-    tls_config: Option<(ServerConfig, ClientConfig)>,
+    base_kms: BaseKmsStruct,
+    tls_config: Option<(ServerConfig, ClientConfig, Arc<AttestedVerifier>)>,
     peer_tcp_proxy: bool,
     run_prss: bool,
-    rate_limiter_conf: Option<RateLimiterConfig>,
     shutdown_signal: F,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS>,
@@ -231,28 +235,38 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
 )>
 where
     PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
+    let threshold_config = config.threshold.as_ref().ok_or_else(|| {
+        anyhow_error_and_log("Threshold party configuration is required for threshold KMS")
+    })?;
+    let rate_limiter_conf = config.rate_limiter_conf.to_owned().unwrap_or_default();
+    let telemetry_conf = config
+        .telemetry
+        .unwrap_or_else(|| TelemetryConfig::builder().build());
+
     // load keys from storage
-    let key_info_versioned: HashMap<RequestId, ThresholdFheKeys> =
-        read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
+    let key_info_versioned: HashMap<(RequestId, EpochId), ThresholdFheKeys> =
+        read_all_data_from_all_epochs_versioned(
+            &private_storage,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await?;
+
     let mut public_key_info = HashMap::new();
     let mut pk_map = HashMap::new();
     let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
-    let verf_key = PublicSigKey::from_sk(&sk);
+
+    // Validate the recovery material against the provided verification key
     for (cur_req_id, cur_rec_material) in &validation_material {
-        if !cur_rec_material.validate(&verf_key) {
+        if !cur_rec_material.validate(&base_kms.verf_key()) {
             anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
         }
     }
-    let custodian_context: HashMap<RequestId, InternalCustodianContext> = validation_material
-        .into_iter()
-        .map(|(r, com)| (r, com.custodian_context().to_owned()))
-        .collect();
-    for (id, info) in key_info_versioned.clone().into_iter() {
+    for ((id, _), info) in key_info_versioned.clone().into_iter() {
         public_key_info.insert(id, info.meta_data.clone());
 
         let pk = read_pk_at_request_id(&public_storage, &id).await?;
@@ -266,8 +280,8 @@ where
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         tls_config
             .as_ref()
-            .map(|(_, client_config)| client_config.clone()),
-        config.core_to_core_net,
+            .map(|(_, client_config, _)| client_config.clone()),
+        threshold_config.core_to_core_net,
         peer_tcp_proxy,
     )?));
 
@@ -287,11 +301,13 @@ where
         .add_service(threshold_health_service);
 
     tracing::info!(
-        "Starting core-to-core server for party {} on address {:?}.",
-        config.my_id,
-        mpc_socket_addr
+        "Starting core-to-core server on address {:?} with initial party ID {:?}.",
+        mpc_socket_addr,
+        threshold_config.my_id,
     );
 
+    // clone the verifier for later use
+    let verifier = tls_config.as_ref().map(|(_, _, verifier)| verifier.clone());
     let manager_clone = Arc::clone(&networking_manager);
     let abort_handle = tokio::spawn(async move {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -318,8 +334,12 @@ where
         // separate crate from tonic (whose maintainers don't want to make its
         // API dependent on rustls)
         let tcp_incoming = TcpIncoming::from(mpc_listener);
+        // Use the TLS_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
+        // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
+        // then this should be changed
+        let tcp_incoming = tcp_incoming.with_nodelay(Some(true));
         match tls_config {
-            Some((server_config, _)) => {
+            Some((server_config, _, _)) => {
                 router
                     .serve_with_incoming_shutdown(
                         TlsIncoming::new(tcp_incoming, server_config.into()),
@@ -346,33 +366,120 @@ where
     });
 
     // If no RedisConf is provided, we just use in-memory storage for storing preprocessing materials
-    let preproc_factory = match &config.preproc_redis {
+    let preproc_factory = match &threshold_config.preproc_redis {
         None => create_memory_factory(),
-        Some(ref conf) => create_redis_factory(format!("PARTY_{}", config.my_id), conf),
+        Some(ref conf) => {
+            create_redis_factory(format!("REDIS_{}", base_kms.verf_key().address()), conf)
+        }
     };
 
-    let num_sessions_preproc = config
+    let num_sessions_preproc = threshold_config
         .num_sessions_preproc
         .map_or(MINIMUM_SESSIONS_PREPROC, |x| {
             std::cmp::max(x, MINIMUM_SESSIONS_PREPROC)
         });
-    let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk)?;
 
-    let prss_setup_z128 = Arc::new(RwLock::new(None));
-    let prss_setup_z64 = Arc::new(RwLock::new(None));
     let preproc_buckets = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
     let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info)));
     let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info)));
     let pub_dec_meta_store = Arc::new(RwLock::new(MetaStore::new(
-        config.dec_capacity,
-        config.min_dec_cache,
+        threshold_config.dec_capacity,
+        threshold_config.min_dec_cache,
     )));
     let user_decrypt_meta_store = Arc::new(RwLock::new(MetaStore::new(
-        config.dec_capacity,
-        config.min_dec_cache,
+        threshold_config.dec_capacity,
+        threshold_config.min_dec_cache,
     )));
-    let custodian_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(custodian_context)));
+    let custodian_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(validation_material)));
+
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // If we're still using peer config, we need to manually write the default context into storage.
+    // This way we can load it into SessionMaker later when creating the ThresholdContextManager.
+    let _ = match threshold_config.peers {
+        Some(ref peers) => {
+            let context_id = *DEFAULT_MPC_CONTEXT;
+            let mpc_nodes = peers
+                .iter()
+                .map(|peer| {
+                    let (role, identity) = peer.into_role_identity();
+                    // URL format is only valid with a scheme, so we add it here
+                    let scheme = match peer.tls_cert {
+                        Some(_) => "https",
+                        None => "http",
+                    };
+                    match peer
+                        .tls_cert
+                        .as_ref()
+                        .map(|cert| cert.unchecked_cert_string())
+                        .transpose()
+                    {
+                        Ok(pem_string) => {
+                            let verification_key = if let Some(my_id) = threshold_config.my_id {
+                                if peer.party_id == my_id {
+                                    Some(PublicSigKey::clone(&base_kms.verf_key()))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                // we do not know the verification key of the other parties at startup
+                                None
+                            };
+                            Ok(NodeInfo {
+                                mpc_identity: identity.mpc_identity().to_string(),
+                                party_id: role.one_based() as u32,
+                                verification_key,
+                                external_url: format!(
+                                    "{}://{}:{}",
+                                    scheme,
+                                    identity.hostname(),
+                                    identity.port()
+                                ),
+                                ca_cert: pem_string.map(|cert_pem| cert_pem.into_bytes()),
+                                public_storage_url: "".to_string(),
+                                public_storage_prefix: None,
+                                extra_verification_keys: vec![],
+                            })
+                        }
+                        Err(e) => Err(e),
+                    }
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let pcr_values = threshold_config
+                .tls
+                .to_owned()
+                .and_then(|tls_conf| match tls_conf {
+                    crate::conf::threshold::TlsConf::Manual { cert: _, key: _ } => None,
+                    crate::conf::threshold::TlsConf::Auto {
+                        eif_signing_cert: _,
+                        trusted_releases,
+                        ignore_aws_ca_chain: _,
+                        attest_private_vault_root_key: _,
+                        renew_slack_after_expiration: _,
+                        renew_fail_retry_timeout: _,
+                    } => Some(trusted_releases),
+                });
+            let context_info = ContextInfo {
+                mpc_nodes,
+                context_id,
+                software_version: SoftwareVersion::current(),
+                threshold: threshold_config.threshold as u32,
+                pcr_values: pcr_values.unwrap_or_default(),
+            };
+
+            // Note that we have to delete the old context under DEFAULT_MPC_CONTEXT
+            // because we may have previously stored a different context there with an older peerlist.
+            // The default context must always be consistent with the latest peerlist file if present.
+            delete_context_at_id(&mut private_storage, &context_id).await?;
+
+            store_context_at_id(&mut private_storage, &context_id, &context_info).await?;
+            Some(())
+        }
+        None => None,
+    };
+
+    let private_storage_info = private_storage.info();
+
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         public_storage,
         private_storage,
@@ -380,37 +487,6 @@ where
         pk_map,
         key_info_versioned,
     );
-
-    // Note that the manager is empty, it needs to be filled with session preparers
-    // For testing this needs to be done manually.
-    let session_preparer_manager = SessionPreparerManager::empty(config.my_id.to_string());
-
-    // Optionally add a testing session preparer.
-    let _ = match config.peers {
-        Some(ref peers) => {
-            let role_assignment = RoleAssignment {
-                inner: peers
-                    .iter()
-                    .map(|peer_config| peer_config.into_role_identity())
-                    .collect(),
-            };
-            let session_preparer = SessionPreparer::new(
-                base_kms.new_instance().await,
-                config.threshold,
-                Role::indexed_from_one(config.my_id),
-                role_assignment.clone(),
-                networking_manager.clone(),
-                Arc::clone(&prss_setup_z128),
-                Arc::clone(&prss_setup_z64),
-            );
-            session_preparer_manager
-                .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
-                .await;
-            Some(())
-        }
-        None => None,
-    };
-    let session_preparer_getter = session_preparer_manager.make_getter();
 
     let metastore_status_service = MetaStoreStatusServiceImpl::new(
         Some(dkg_pubinfo_meta_store.clone()),  // key_gen_store
@@ -430,64 +506,87 @@ where
             .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
             .await;
     }
+
+    let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.new_rng().await);
+    let immutable_session_maker = session_maker.make_immutable();
+
     let initiator = RealInitiator {
-        prss_setup_z128: Arc::clone(&prss_setup_z128),
-        prss_setup_z64: Arc::clone(&prss_setup_z64),
         private_storage: crypto_storage.get_private_storage(),
-        session_preparer_manager,
-        networking_manager,
+        session_maker: session_maker.clone(),
         health_reporter: thread_core_health_reporter.clone(),
         _init: PhantomData,
-        threshold_config: config.clone(),
         base_kms: base_kms.new_instance().await,
     };
 
-    // TODO eventually this PRSS ID should come from the context request
-    // the PRSS should never be run in this function.
-    let req_id_prss = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?; // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
-    if run_prss {
-        tracing::info!(
-            "Initializing threshold KMS server and generating a new PRSS Setup for {}",
-            config.my_id
-        );
-        initiator.init_prss(&req_id_prss).await?;
-    } else {
-        tracing::info!(
-            "Trying to initializing threshold KMS server and reading PRSS from storage for {}",
-            config.my_id
-        );
-        if let Err(e) = initiator.init_prss_from_disk(&req_id_prss).await {
-            tracing::warn!(
-                "Could not read PRSS Setup from storage for {}: {}. You will need to call the init end-point later before you can use the KMS server",
-                config.my_id,
+    // NOTE: context must be loaded before attempting to automatically start the PRSS
+    // since the PRSS requires a context to be present.
+    let context_manager = ThresholdContextManager::new(
+        base_kms.new_instance().await,
+        crypto_storage.inner.clone(),
+        custodian_meta_store,
+        session_maker,
+    );
+    context_manager
+        .load_mpc_context_from_storage()
+        .await
+        .inspect_err(|e| {
+            tracing::error!(
+                "Failed to load MPC context from storage during KMS startup: {}",
                 e
-            );
-        }
+            )
+        })?;
+
+    // Load existing PRSS from storage and optionally run a new setup with default IDs.
+    if let Err(e) = initiator.init_legacy_prss_from_storage().await {
+        tracing::warn!(
+            "Could not read legacy PRSS Setup from private storage {:?}: {}.",
+            private_storage_info,
+            e
+        );
+    }
+    if let Err(e) = initiator.init_all_prss_from_storage().await {
+        tracing::warn!(
+            "Could not read all PRSS Setups from storage from private storage {:?}: {}. You may need to call the init end-point later before you can use the KMS server",
+            private_storage_info,
+            e
+        );
+    }
+
+    if run_prss {
+        let epoch_id_prss = *DEFAULT_EPOCH_ID;
+        let default_context_id = *DEFAULT_MPC_CONTEXT;
+        tracing::info!(
+            "Initializing threshold KMS server and generating a new PRSS Setup for private storage {:?}",
+            private_storage_info,
+        );
+        initiator
+            .init_prss(&default_context_id, &epoch_id_prss)
+            .await?;
     }
 
     let tracker = Arc::new(TaskTracker::new());
     let slow_events = Arc::new(Mutex::new(HashMap::new()));
-    let rate_limiter = RateLimiter::new(rate_limiter_conf.unwrap_or_default());
+    let rate_limiter = RateLimiter::new(rate_limiter_conf);
 
     let user_decryptor = RealUserDecryptor {
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
-        user_decrypt_meta_store,
-        session_preparer_getter: session_preparer_getter.clone(),
+        user_decrypt_meta_store: user_decrypt_meta_store.clone(),
+        session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
-        decryption_mode: config.decryption_mode,
+        decryption_mode: threshold_config.decryption_mode,
         _dec: PhantomData,
     };
 
     let public_decryptor = RealPublicDecryptor {
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
-        pub_dec_meta_store,
-        session_preparer_getter: session_preparer_getter.clone(),
+        pub_dec_meta_store: pub_dec_meta_store.clone(),
+        session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
-        decryption_mode: config.decryption_mode,
+        decryption_mode: threshold_config.decryption_mode,
         _dec: PhantomData,
     };
 
@@ -496,22 +595,23 @@ where
         crypto_storage: crypto_storage.clone(),
         preproc_buckets: Arc::clone(&preproc_buckets),
         dkg_pubinfo_meta_store,
-        session_preparer_getter: session_preparer_getter.clone(),
+        session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
         _kg: PhantomData,
+        serial_lock: Arc::new(Mutex::new(())),
     };
 
     #[cfg(feature = "insecure")]
     let insecure_keygenerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
 
     let keygen_preprocessor = RealPreprocessor {
-        sig_key: Arc::clone(&base_kms.sig_key),
+        base_kms: base_kms.new_instance().await,
+        session_maker: immutable_session_maker.clone(),
         preproc_buckets,
         preproc_factory,
         num_sessions_preproc,
-        session_preparer_getter: session_preparer_getter.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
@@ -522,7 +622,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         crs_meta_store,
-        session_preparer_getter: session_preparer_getter.clone(),
+        session_maker: immutable_session_maker.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
@@ -532,25 +632,39 @@ where
     #[cfg(feature = "insecure")]
     let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
 
-    let context_manager = RealContextManager {
-        base_kms: base_kms.new_instance().await,
-        crypto_storage: crypto_storage.inner.clone(),
-        custodian_meta_store,
-        my_role: Role::indexed_from_one(config.my_id),
-    };
-
     let backup_operator = RealBackupOperator::new(
-        Role::indexed_from_one(config.my_id),
         base_kms.new_instance().await,
         crypto_storage.inner.clone(),
         security_module,
     );
+
+    let resharer = RealResharer {
+        base_kms: base_kms.new_instance().await,
+        crypto_storage: crypto_storage.clone(),
+        session_maker: immutable_session_maker.clone(),
+        tracker: Arc::clone(&tracker),
+        rate_limiter: rate_limiter.clone(),
+        // Provide reshare its own meta store, not tracked by the metastore status service
+        // as this is currently a temporary fix.
+        // Also not filled with existing keys as we will use the same key_id as the DKG one
+        // for reshared key (so the meta store has to be empty for that key id)
+        reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+    };
+
     // Update backup vault if it exists
     // This ensures that all files in the private storage are also in the backup vault
     // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
     // Note however that the data in the vault is not checked for corruption.
     backup_operator.update_backup_vault().await?;
 
+    // Start updating system metrics
+    update_threshold_kms_system_metrics(
+        rate_limiter.clone(),
+        immutable_session_maker.clone(),
+        Arc::clone(&user_decrypt_meta_store),
+        Arc::clone(&pub_dec_meta_store),
+        telemetry_conf.refresh_interval(),
+    );
     let kms = ThresholdKms::new(
         initiator,
         user_decryptor,
@@ -564,13 +678,43 @@ where
         insecure_crs_generator,
         context_manager,
         backup_operator,
-        session_preparer_getter,
+        resharer,
         Arc::clone(&tracker),
+        immutable_session_maker,
         thread_core_health_reporter,
         abort_handle,
     );
 
     Ok((kms, core_service_health_service, metastore_status_service))
+}
+
+fn update_threshold_kms_system_metrics(
+    rate_limiter: RateLimiter,
+    session_maker: ImmutableSessionMaker,
+    user_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
+    public_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
+    refresh_interval: std::time::Duration,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            metrics::METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
+            metrics::METRICS.record_active_sessions(session_maker.active_sessions().await);
+            metrics::METRICS.record_inactive_sessions(session_maker.inactive_sessions().await);
+            {
+                let user_meta_store_guard = user_meta_store.read().await;
+                metrics::METRICS.record_meta_storage_user_decryptions(
+                    user_meta_store_guard.get_processing_count() as u64,
+                );
+            }
+            {
+                let public_meta_store_guard = public_meta_store.read().await;
+                metrics::METRICS.record_meta_storage_public_decryptions(
+                    public_meta_store_guard.get_processing_count() as u64,
+                );
+            }
+            tokio::time::sleep(refresh_interval).await;
+        }
+    })
 }
 
 #[cfg(test)]
@@ -585,10 +729,12 @@ mod tests {
         /// it's only used during testing with a mocked decryption protocol that does not actually load the keys.
         pub fn init_dummy<R: rand::Rng + rand::CryptoRng>(
             param: threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
+            tag: tfhe::Tag,
             rng: &mut R,
         ) -> (Self, FhePubKeySet) {
-            let keyset =
-                threshold_fhe::execution::tfhe_internals::test_feature::gen_key_set(param, rng);
+            let keyset = threshold_fhe::execution::tfhe_internals::test_feature::gen_key_set(
+                param, tag, rng,
+            );
 
             let server_key = keyset.public_keys.server_key.clone();
             let (

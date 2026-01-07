@@ -86,8 +86,10 @@ async fn test_central_close_after_drop() {
     let (tasks, req_id) = crate::client::tests::common::send_dec_reqs(
         3,
         &TEST_CENTRAL_KEY_ID,
+        None,
         &client_map,
         &mut internal_client,
+        &[None],
     )
     .await;
     // Drop server
@@ -120,12 +122,15 @@ async fn test_central_close_after_drop() {
 async fn test_largecipher() {
     use crate::{
         consts::DEFAULT_CENTRAL_KEY_ID,
+        consts::DEFAULT_EPOCH_ID,
+        cryptography::encryption::PkeSchemeType,
         engine::centralized::central_kms::tests::{
             new_priv_ram_storage_from_existing_keys, new_pub_ram_storage_from_existing_keys,
         },
     };
 
     let keys = get_default_keys().await;
+    let epoch_id = *DEFAULT_EPOCH_ID;
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100,
         pub_decrypt: 1,
@@ -133,13 +138,14 @@ async fn test_largecipher() {
         crsgen: 1,
         preproc: 1,
         keygen: 1,
+        reshare: 1,
     };
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, mut kms_client) = crate::client::test_tools::setup_centralized(
         new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
             .await
             .unwrap(),
-        new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
+        new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys, &epoch_id)
             .await
             .unwrap(),
         None,
@@ -175,6 +181,8 @@ async fn test_largecipher() {
             typed_ciphertexts,
             &request_id,
             &DEFAULT_CENTRAL_KEY_ID,
+            None,
+            PkeSchemeType::MlKem512,
         )
         .unwrap();
     let response = kms_client
@@ -199,7 +207,7 @@ async fn test_largecipher() {
         .err()
         .unwrap()
         .message()
-        .contains("finished with an error"));
+        .contains("Failed on requestID"));
     tracing::info!("aborting");
     kms_server.assert_shutdown().await;
 }

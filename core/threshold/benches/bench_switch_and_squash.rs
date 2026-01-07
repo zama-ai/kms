@@ -16,7 +16,7 @@ fn bench_switch_and_squash(c: &mut Criterion) {
     group.sample_size(10);
 
     let params: DKGParams = BC_PARAMS_SNS;
-    let keyset = gen_key_set(params, &mut get_rng());
+    let keyset = gen_key_set(params, tfhe::Tag::default(), &mut get_rng());
 
     let msg8 = 5_u8;
     let msg16 = 5_u16;

@@ -6,7 +6,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::p2p::{receive_from_parties_w_dispute, send_to_honest_parties},
-        runtime::{party::Role, session::LargeSessionHandles},
+        runtime::{party::Role, sessions::large_session::LargeSessionHandles},
     },
     networking::value::NetworkValue,
     ProtocolDescription,
@@ -64,7 +64,7 @@ pub struct RealShareDispute {}
 
 impl ProtocolDescription for RealShareDispute {
     fn protocol_desc(depth: usize) -> String {
-        let indent = "   ".repeat(depth);
+        let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-RealShareDispute")
     }
 }
@@ -410,6 +410,7 @@ where
 #[cfg(test)]
 pub(crate) mod tests {
     use super::evaluate_w_new_roots;
+    use crate::execution::runtime::sessions::base_session::GenericBaseSessionHandles;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::networking::NetworkMode;
     use crate::{
@@ -422,10 +423,7 @@ pub(crate) mod tests {
             large_execution::share_dispute::{
                 interpolate_poly_w_punctures, RealShareDispute, ShareDispute,
             },
-            runtime::{
-                party::Role,
-                session::{BaseSessionHandles, LargeSession},
-            },
+            runtime::{party::Role, sessions::large_session::LargeSession},
             sharing::{shamir::ShamirSharings, share::Share},
         },
         tests::helper::tests::{

@@ -41,7 +41,12 @@ pub async fn safe_read_element_versioned<
 >(
     file_path: P,
 ) -> anyhow::Result<T> {
-    let mut buf = std::io::Cursor::new(tokio::fs::read(file_path).await?);
+    let mut buf = std::io::Cursor::new(tokio::fs::read(file_path.as_ref()).await.map_err(|e| {
+        anyhow::anyhow!(
+            "failed to read file path at {} due to {e}",
+            file_path.as_ref().display()
+        )
+    })?);
     safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
 }
 
@@ -68,7 +73,9 @@ pub async fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
     file_path: P,
 ) -> anyhow::Result<T> {
     let read_element = tokio::fs::read(file_path).await?;
-    Ok(bc2wrap::deserialize(read_element.as_slice())?)
+    // This is gated behind a testing flag, so we can use the unsafe deserialization here
+    // (Might be useful to deserialize keys which may be huge)
+    Ok(bc2wrap::deserialize_unsafe(read_element.as_slice())?)
 }
 
 #[cfg(test)]

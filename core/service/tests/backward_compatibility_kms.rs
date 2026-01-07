@@ -12,34 +12,71 @@ use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
-    AppKeyBlobTest, CustodianSetupMessageTest, KmsFheKeyHandlesTest, OperatorBackupOutputTest,
-    PrivateSigKeyTest, PublicSigKeyTest, TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
+    AppKeyBlobTest, BackupCiphertextTest, ContextInfoTest, CrsGenMetadataTest, HybridKemCtTest,
+    InternalCustodianContextTest, InternalCustodianRecoveryOutputTest,
+    InternalCustodianSetupMessageTest, InternalRecoveryRequestTest, KeyGenMetadataTest,
+    KmsFheKeyHandlesTest, NodeInfoTest, OperatorBackupOutputTest, PrivateSigKeyTest,
+    PrssSetupCombinedTest, PublicSigKeyTest, RecoveryValidationMaterialTest,
+    SigncryptionPayloadTest, SoftwareVersionTest, TestMetadataKMS, TestType, Testcase,
+    ThresholdFheKeysTest, TypedPlaintextTest, UnifiedCipherTest, UnifiedSigncryptionKeyTest,
+    UnifiedSigncryptionTest, UnifiedUnsigncryptionKeyTest,
 };
 use kms_grpc::{
-    rpc_types::{PubDataType, SignedPubDataHandleInternal},
+    kms::v1::TypedPlaintext,
+    rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
+    solidity_types::{CrsgenVerification, KeygenVerification},
     RequestId,
 };
 use kms_lib::{
     backup::{
-        custodian::{Custodian, InternalCustodianSetupMessage},
-        operator::{InnerOperatorBackupOutput, Operator},
+        custodian::{
+            Custodian, InternalCustodianContext, InternalCustodianRecoveryOutput,
+            InternalCustodianSetupMessage,
+        },
+        operator::{
+            BackupMaterial, InnerOperatorBackupOutput, InternalRecoveryRequest, Operator,
+            RecoveryValidationMaterial, DSEP_BACKUP_COMMITMENT,
+        },
+        BackupCiphertext,
     },
     cryptography::{
-        backup_pke,
-        internal_crypto_types::{gen_sig_keys, PrivateSigKey, PublicSigKey},
+        encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedCipher, UnifiedPublicEncKey},
+        hybrid_ml_kem::HybridKemCt,
+        signatures::{
+            compute_eip712_signature, gen_sig_keys, PrivateSigKey, PublicSigKey, SigningSchemeType,
+        },
+        signcryption::{
+            Signcrypt, SigncryptionPayload, UnifiedSigncryption, UnifiedSigncryptionKeyOwned,
+            UnifiedUnsigncryptionKeyOwned,
+        },
     },
     engine::{
-        base::{KeyGenMetadata, KmsFheKeyHandles},
-        threshold::service::ThresholdFheKeys,
+        base::{
+            safe_serialize_hash_element_versioned, CrsGenMetadata, KeyGenMetadata,
+            KeyGenMetadataInner, KmsFheKeyHandles,
+        },
+        context::{ContextInfo, NodeInfo, SoftwareVersion},
+        threshold::service::{session::PRSSSetupCombined, ThresholdFheKeys},
     },
     util::key_setup::FhePublicKey,
     vault::keychain::AppKeyBlob,
 };
+use rand::RngCore;
 use rand::SeedableRng;
-use std::{collections::HashMap, env, path::Path, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    env,
+    path::Path,
+    sync::Arc,
+};
 use tfhe::integer::compression_keys::DecompressionKey;
-use threshold_fhe::execution::{
-    runtime::party::Role, tfhe_internals::public_keysets::FhePubKeySet,
+use threshold_fhe::{
+    algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
+    execution::{
+        runtime::party::Role, small_execution::prss::PRSSSetup,
+        tfhe_internals::public_keysets::FhePubKeySet,
+    },
+    networking::tls::ReleasePCRValues,
 };
 
 // This domain should match what is in the data_XX.rs file in backward compatibility.
@@ -74,6 +111,48 @@ fn test_private_sig_key(
     }
 }
 
+fn test_typed_plaintext(
+    dir: &Path,
+    test: &TypedPlaintextTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    // Load the serialized TypedPlaintext
+    // Note: TypedPlaintext doesn't use tfhe-versionable, so we deserialize directly
+    let original: TypedPlaintext = match format {
+        DataFormat::Bincode => {
+            let path = dir.join(format!("{}.bincode", test.test_filename()));
+            let bytes = std::fs::read(&path).map_err(|e| {
+                test.failure(
+                    format!("Failed to read file {}: {}", path.display(), e),
+                    format,
+                )
+            })?;
+            bc2wrap::deserialize_unsafe(&bytes).map_err(|e| {
+                test.failure(
+                    format!("Failed to deserialize TypedPlaintext: {}", e),
+                    format,
+                )
+            })?
+        }
+    };
+
+    // Create expected plaintext
+    let expected = kms_grpc::kms::v1::TypedPlaintext {
+        bytes: test.plaintext_bytes.clone(),
+        fhe_type: test.fhe_type,
+    };
+
+    // Compare
+    if original != expected {
+        Err(test.failure(
+            format!("Invalid TypedPlaintext:\n Expected :\n{expected:?}\nGot:\n{original:?}"),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 fn test_app_key_blob(
     dir: &Path,
     test: &AppKeyBlobTest,
@@ -101,6 +180,201 @@ fn test_app_key_blob(
     }
 }
 
+fn test_key_gen_metadata(
+    dir: &Path,
+    test: &KeyGenMetadataTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: KeyGenMetadataInner = load_and_unversionize(dir, test, format)?;
+
+    let original_legacy: HashMap<PubDataType, SignedPubDataHandleInternal> =
+        load_and_unversionize_auxiliary(dir, test, &test.legacy_filename, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+    // We need to serialize something that is versioned, so let us just use signing keys for the test
+    let (pretend_server_key, pretend_public_key) = gen_sig_keys(&mut rng);
+    let preprocessing_id: RequestId = RequestId::new_random(&mut rng);
+    let key_id: RequestId = RequestId::new_random(&mut rng);
+
+    let mut key_digest_map: HashMap<PubDataType, Vec<u8>> = HashMap::new();
+    let mut new_legacy: HashMap<PubDataType, SignedPubDataHandleInternal> = HashMap::new();
+    let server_key_digest =
+        safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
+    let pub_key_digest =
+        safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
+    let sol_type = KeygenVerification::new(
+        &preprocessing_id,
+        &key_id,
+        server_key_digest.clone(),
+        pub_key_digest.clone(),
+    );
+    key_digest_map.insert(PubDataType::ServerKey, server_key_digest);
+    key_digest_map.insert(PubDataType::PublicKey, pub_key_digest);
+    let external_signature =
+        compute_eip712_signature(&sig_key, &sol_type, &dummy_domain()).unwrap();
+
+    new_legacy.insert(
+        PubDataType::ServerKey,
+        SignedPubDataHandleInternal {
+            key_handle: key_id.to_string(),
+            signature: vec![1_u8; 65],
+            external_signature: external_signature.clone(),
+        },
+    );
+    new_legacy.insert(
+        PubDataType::PublicKey,
+        SignedPubDataHandleInternal {
+            key_handle: key_id.to_string(),
+            signature: vec![2_u8; 65],
+            external_signature: external_signature.clone(),
+        },
+    );
+
+    let new_versionized = KeyGenMetadataInner {
+        key_id,
+        preprocessing_id,
+        key_digest_map,
+        external_signature,
+    };
+
+    if original_legacy != new_legacy {
+        return Err(test.failure(
+            format!(
+                "Invalid legacy key gen metadata:\n Expected :\n{original_legacy:?}\nGot:\n{new_legacy:?}"
+            ),
+            format,
+        ));
+    }
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid key gen metadata:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_crs_gen_metadata(
+    dir: &Path,
+    test: &CrsGenMetadataTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_current: CrsGenMetadata = load_and_unversionize(dir, test, format)?;
+    let original_legacy: CrsGenMetadata =
+        load_and_unversionize_auxiliary(dir, test, &test.legacy_filename, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+    let crs_id: RequestId = RequestId::new_random(&mut rng);
+    let digest = [12u8; 32].to_vec();
+    let max_num_bits = test.max_num_bits;
+    let sol_type = CrsgenVerification::new(&crs_id, max_num_bits as usize, digest.clone());
+    let external_signature = compute_eip712_signature(&sig_key, &sol_type, &dummy_domain())
+        .map_err(|e| {
+            test.failure(
+                format!("Failed to compute external signature: {}", e),
+                format,
+            )
+        })?;
+    let new_current = CrsGenMetadata::new(crs_id, digest, max_num_bits, external_signature.clone());
+    match &new_current {
+        CrsGenMetadata::LegacyV0(_) => {
+            return Err(test.failure(
+                "Expected current CrsGenMetadata, got legacy".to_string(),
+                format,
+            ))
+        }
+        CrsGenMetadata::Current(_) => {
+            // Expected. Test done as match to ensure that it gets updated in case new types get added
+        }
+    }
+
+    let new_legacy = SignedPubDataHandleInternal::new(
+        crs_id.to_string(),
+        [3u8; 65].to_vec(),
+        external_signature.clone(),
+    );
+
+    let original_legacy_unwrapped = match &original_legacy {
+        CrsGenMetadata::Current(crs_gen_metadata_inner) => panic!(
+            "Expected legacy CrsGenMetadata, got current: {:?}",
+            crs_gen_metadata_inner
+        ),
+        CrsGenMetadata::LegacyV0(signed_pub_data_handle_internal) => {
+            signed_pub_data_handle_internal.clone()
+        }
+    };
+    if original_legacy_unwrapped != new_legacy {
+        return Err(test.failure(
+            format!(
+                "Invalid legacy key gen metadata:\n Expected :\n{original_legacy:?}\nGot:\n{new_legacy:?}"
+            ),
+            format,
+        ));
+    }
+
+    if original_current != new_current {
+        Err(test.failure(
+            format!(
+                "Invalid key gen metadata:\n Expected :\n{original_current:?}\nGot:\n{new_current:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_signcryption_payload(
+    dir: &Path,
+    test: &SigncryptionPayloadTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    // Load the serialized SigncryptionPayload
+    // Note: SigncryptionPayload doesn't use tfhe-versionable, so we deserialize directly
+    let original: SigncryptionPayload = match format {
+        DataFormat::Bincode => {
+            let path = dir.join(format!("{}.bincode", test.test_filename()));
+            let bytes = std::fs::read(&path).map_err(|e| {
+                test.failure(
+                    format!("Failed to read file {}: {}", path.display(), e),
+                    format,
+                )
+            })?;
+            bc2wrap::deserialize_unsafe(&bytes).map_err(|e| {
+                test.failure(
+                    format!("Failed to deserialize SigncryptionPayload: {}", e),
+                    format,
+                )
+            })?
+        }
+    };
+
+    // Create expected payload from metadata
+    let expected = SigncryptionPayload {
+        plaintext: kms_grpc::kms::v1::TypedPlaintext {
+            bytes: test.plaintext_bytes.clone(),
+            fhe_type: test.fhe_type,
+        },
+        link: test.link.clone(),
+    };
+
+    // Compare
+    if original != expected {
+        Err(test.failure(
+            format!("Invalid SigncryptionPayload:\n Expected :\n{expected:?}\nGot:\n{original:?}"),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
 fn test_public_sig_key(
     dir: &Path,
     test: &PublicSigKeyTest,
@@ -115,6 +389,493 @@ fn test_public_sig_key(
         Err(test.failure(
             format!(
                 "Invalid public sig key:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_signcryption_keys(
+    dir: &Path,
+    test: &UnifiedSigncryptionKeyTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: UnifiedSigncryptionKeyOwned =
+        load_and_unversionize(dir, test, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (_, server_sig_key) = gen_sig_keys(&mut rng);
+    let (client_verf_key, _) = gen_sig_keys(&mut rng);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+    let (_, enc_key) = encryption.keygen().unwrap();
+    let new_versionized = UnifiedSigncryptionKeyOwned::new(
+        server_sig_key.clone(),
+        enc_key,
+        client_verf_key.verf_key_id().to_vec(),
+    );
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid UnifiedSigncryptionKeyOwned:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+/// Observe that this test also indirectly tests UnifiedPublicEncKey and UnifiedPrivateEncKey
+/// Also note that while these keys are currently not stored on disc, they are generated from a seedphrase
+/// for the custodians, so we still need to ensure that they do not change format unexpectedly!
+/// Hence we keep them versioned
+fn test_unsigncryption_keys(
+    dir: &Path,
+    test: &UnifiedUnsigncryptionKeyTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: UnifiedUnsigncryptionKeyOwned =
+        load_and_unversionize(dir, test, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (server_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
+    let (client_verf_key, _client_sig_key) = gen_sig_keys(&mut rng);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+    let (dec_key, enc_key) = encryption.keygen().unwrap();
+    let new_versionized = UnifiedUnsigncryptionKeyOwned::new(
+        dec_key,
+        enc_key,
+        server_verf_key,
+        client_verf_key.verf_key_id(),
+    );
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid UnifiedUnsigncryptionKeyOwned:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_unified_signcryption(
+    dir: &Path,
+    test: &UnifiedSigncryptionTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: UnifiedSigncryption = load_and_unversionize(dir, test, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (verf_key, server_sig_key) = gen_sig_keys(&mut rng);
+    let (client_verf_key, _server_sig_key) = gen_sig_keys(&mut rng);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+    let (_dec_key, enc_key) = encryption.keygen().unwrap();
+    let signcrypt_key =
+        UnifiedSigncryptionKeyOwned::new(server_sig_key, enc_key, client_verf_key.verf_key_id());
+    let new_versionized = signcrypt_key
+        .signcrypt(&mut rng, b"TESTTEST", &verf_key)
+        .unwrap();
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid UnifiedSigncryption:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_prss_setup_combined(
+    dir: &Path,
+    test: &PrssSetupCombinedTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: PRSSSetupCombined = load_and_unversionize(dir, test, format)?;
+    let prss_setup_z64: PRSSSetup<ResiduePolyF4Z64> =
+        load_and_unversionize_auxiliary(dir, test, &test.prss_setup_64, format)?;
+    let prss_setup_z128: PRSSSetup<ResiduePolyF4Z128> =
+        load_and_unversionize_auxiliary(dir, test, &test.prss_setup_128, format)?;
+    let new_versionized = PRSSSetupCombined {
+        prss_setup_z64,
+        prss_setup_z128,
+        num_parties: test.amount,
+        threshold: test.threshold,
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid PRSS Setup Combined test:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_backup_ciphertext(
+    dir: &Path,
+    test: &BackupCiphertextTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: BackupCiphertext = load_and_unversionize(dir, test, format)?;
+    let unified_cipher: UnifiedCipher =
+        load_and_unversionize_auxiliary(dir, test, &test.unified_cipher_filename, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let backup_id: RequestId = RequestId::new_random(&mut rng);
+    let new_versionized = BackupCiphertext {
+        ciphertext: unified_cipher,
+        priv_data_type: PrivDataType::SigningKey,
+        backup_id,
+    };
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid BackupCiphertext:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_unified_cipher(
+    dir: &Path,
+    test: &UnifiedCipherTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: UnifiedCipher = load_and_unversionize(dir, test, format)?;
+    let kem: HybridKemCt =
+        load_and_unversionize_auxiliary(dir, test, &test.hybrid_kem_filename, format)?;
+    let new_versionized = UnifiedCipher {
+        cipher: kem,
+        pke_type: PkeSchemeType::MlKem512,
+    };
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid UnifiedCipher:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_hybrid_kem_ct(
+    dir: &Path,
+    test: &HybridKemCtTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    // Load the serialized HybridKemCt
+    let original_versionized: HybridKemCt = load_and_unversionize(dir, test, format)?;
+
+    let new_versionized = HybridKemCt {
+        nonce: test.nonce,
+        kem_ct: test.kem_ct.clone(),
+        payload_ct: test.payload_ct.clone(),
+    };
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid UnifiedCipher:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+#[allow(dead_code)]
+fn test_context_info(
+    dir: &Path,
+    test: &ContextInfoTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: ContextInfo = load_and_unversionize(dir, test, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let node_info = NodeInfo {
+        mpc_identity: "Staoshi Nakamoto".to_string(),
+        party_id: 42,
+        verification_key: None,
+        external_url: "https://node42.example.com".to_string(),
+        ca_cert: None,
+        public_storage_url: "https://storage.example.com/node42".to_string(),
+        public_storage_prefix: None,
+        extra_verification_keys: vec![],
+    };
+    let software_version = SoftwareVersion {
+        major: 2,
+        minor: 11,
+        patch: 12,
+        tag: None,
+    };
+    let pcr_values = ReleasePCRValues {
+        pcr0: vec![0_u8; 32],
+        pcr1: vec![1_u8; 32],
+        pcr2: vec![2_u8; 32],
+    };
+    let new_versionized = ContextInfo {
+        mpc_nodes: vec![node_info.clone(), node_info.clone()],
+        software_version,
+        context_id: RequestId::new_random(&mut rng).into(),
+        threshold: test.threshold,
+        pcr_values: vec![pcr_values.clone(), pcr_values.clone()],
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid ContextInfo:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+#[allow(dead_code)]
+fn test_node_info(
+    dir: &Path,
+    test: &NodeInfoTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: NodeInfo = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
+    let (verf_key2, _sig_key) = gen_sig_keys(&mut rng);
+    let new_versionized = NodeInfo {
+        mpc_identity: test.mpc_identity.to_string(),
+        party_id: test.party_id,
+        verification_key: Some(verf_key),
+        external_url: test.external_url.to_string(),
+        ca_cert: test.ca_cert.clone(), // We currently don't have simple code for generating certificates
+        public_storage_url: test.public_storage_url.to_string(),
+        public_storage_prefix: None,
+        extra_verification_keys: vec![verf_key2],
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid NodeInfo:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_software_version(
+    dir: &Path,
+    test: &SoftwareVersionTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: SoftwareVersion = load_and_unversionize(dir, test, format)?;
+
+    let new_versionized = SoftwareVersion {
+        major: test.major,
+        minor: test.minor,
+        patch: test.patch,
+        tag: if test.tag.is_empty() {
+            None
+        } else {
+            Some(test.tag.to_string())
+        },
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid SoftwareVersion:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_recovery_material(
+    dir: &Path,
+    test: &RecoveryValidationMaterialTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: RecoveryValidationMaterial =
+        load_and_unversionize(dir, test, format)?;
+    let icc: InternalCustodianContext =
+        load_and_unversionize_auxiliary(dir, test, &test.internal_cus_context_filename, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let backup_id: RequestId = RequestId::new_random(&mut rng);
+    let (operator_pk, operator_sk) = gen_sig_keys(&mut rng);
+    let mut commitments = BTreeMap::new();
+    let mut cts = BTreeMap::new();
+    for role_j in 1..=test.custodian_count {
+        let cus_role = Role::indexed_from_one(role_j);
+        let (custodian_pk, _) = gen_sig_keys(&mut rng);
+        let backup_material = BackupMaterial {
+            backup_id,
+            custodian_pk,
+            custodian_role: cus_role,
+            operator_pk: operator_pk.clone(),
+            shares: Vec::new(),
+        };
+        let msg_digest =
+            safe_serialize_hash_element_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
+                .unwrap();
+        commitments.insert(cus_role, msg_digest);
+        let mut payload = [0_u8; 32];
+        rng.fill_bytes(&mut payload);
+        let cts_out = InnerOperatorBackupOutput {
+            signcryption: UnifiedSigncryption {
+                payload: payload.to_vec(),
+                pke_type: PkeSchemeType::MlKem512,
+                signing_type: SigningSchemeType::Ecdsa256k1,
+            },
+        };
+        cts.insert(cus_role, cts_out.clone());
+    }
+    let new_versionized =
+        RecoveryValidationMaterial::new(cts, commitments, icc, &operator_sk).unwrap();
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid RecoveryValidationMaterial:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_internal_recovery_request(
+    dir: &Path,
+    test: &InternalRecoveryRequestTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: InternalRecoveryRequest = load_and_unversionize(dir, test, format)?;
+
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let backup_id: RequestId = RequestId::new_random(&mut rng);
+    let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+    let (_dec_key, enc_key) = encryption.keygen().unwrap();
+    let (verf_key, _) = gen_sig_keys(&mut rng);
+    let mut cts = BTreeMap::new();
+    for role_j in 1..=test.amount {
+        let cur_role = Role::indexed_from_one(role_j as usize);
+        let mut payload = [0_u8; 32];
+        rng.fill_bytes(&mut payload);
+        let signcryption = UnifiedSigncryption {
+            payload: payload.to_vec(),
+            pke_type: PkeSchemeType::MlKem512,
+            signing_type: SigningSchemeType::Ecdsa256k1,
+        };
+        cts.insert(cur_role, InnerOperatorBackupOutput { signcryption });
+    }
+    let new_versionized = InternalRecoveryRequest::new(enc_key, cts, backup_id, verf_key).unwrap();
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid InternalRecoveryRequest:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_internal_custodian_context(
+    dir: &Path,
+    test: &InternalCustodianContextTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: InternalCustodianContext = load_and_unversionize(dir, test, format)?;
+    let enc_key: UnifiedPublicEncKey =
+        load_and_unversionize_auxiliary(dir, test, &test.unified_enc_key_filename, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let context_id: RequestId = RequestId::new_random(&mut rng);
+    let mut cus_nodes = BTreeMap::new();
+    for role_j in 1..=test.custodian_count {
+        let cus_role = Role::indexed_from_one(role_j);
+        let (custodian_verf_key, _) = gen_sig_keys(&mut rng);
+        let mut encryption = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+        let (_, cus_enc_key) = encryption.keygen().unwrap();
+        let mut rnd = [0_u8; 32];
+        rng.fill_bytes(&mut rnd);
+        let setup_msg = InternalCustodianSetupMessage {
+            header: "header".to_string(),
+            custodian_role: cus_role,
+            name: format!("role{role_j}"),
+            random_value: rnd,
+            timestamp: 42,
+            public_enc_key: cus_enc_key,
+            public_verf_key: custodian_verf_key,
+        };
+        cus_nodes.insert(cus_role, setup_msg);
+    }
+    let new_versionized = InternalCustodianContext {
+        threshold: 1,
+        context_id,
+        custodian_nodes: cus_nodes,
+        backup_enc_key: enc_key,
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid InternalCustodianContext:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
+            ),
+            format,
+        ))
+    } else {
+        Ok(test.success(format))
+    }
+}
+
+fn test_internal_custodian_recovery_output(
+    dir: &Path,
+    test: &InternalCustodianRecoveryOutputTest,
+    format: DataFormat,
+) -> Result<TestSuccess, TestFailure> {
+    let original_versionized: InternalCustodianRecoveryOutput =
+        load_and_unversionize(dir, test, format)?;
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let (operator_verification_key, _sk) = gen_sig_keys(&mut rng);
+    let mut buf = [0u8; 100];
+    rng.fill_bytes(&mut buf);
+    let signcryption = UnifiedSigncryption {
+        payload: buf.to_vec(),
+        pke_type: PkeSchemeType::MlKem512,
+        signing_type: SigningSchemeType::Ecdsa256k1,
+    };
+
+    let new_versionized = InternalCustodianRecoveryOutput {
+        signcryption,
+        custodian_role: Role::indexed_from_one(2),
+        operator_verification_key,
+    };
+
+    if original_versionized != new_versionized {
+        Err(test.failure(
+            format!(
+                "Invalid InternalCustodianRecoveryOutput:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -248,27 +1009,21 @@ fn test_threshold_fhe_keys(
     }
 }
 
-#[allow(dead_code)]
-fn test_custodian_setup_message(
+fn test_internal_custodian_message(
     dir: &Path,
-    test: &CustodianSetupMessageTest,
+    test: &InternalCustodianSetupMessageTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
     let original_custodian_setup_message: InternalCustodianSetupMessage =
         load_and_unversionize(dir, test, format)?;
 
-    let mut rng = AesRng::seed_from_u64(test.seed);
-    let name = "Testname".to_string();
-    let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-    let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
-    let custodian = Custodian::new(
-        Role::indexed_from_zero(0),
-        signing_key,
-        verification_key,
-        private_key,
-        public_key,
-    )
-    .unwrap();
+    let mut rng = AesRng::seed_from_u64(test.state);
+    let name = "custodian-1".to_string();
+    let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+    let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+    let (dec_key, enc_key) = enc.keygen().unwrap();
+    let custodian =
+        Custodian::new(Role::indexed_from_zero(0), signing_key, enc_key, dec_key).unwrap();
     let mut new_custodian_setup_message = custodian.generate_setup_message(&mut rng, name).unwrap();
 
     // the timestamp will never match, so we modify it manually
@@ -287,7 +1042,6 @@ fn test_custodian_setup_message(
     }
 }
 
-#[allow(dead_code)]
 fn test_operator_backup_output(
     dir: &Path,
     test: &OperatorBackupOutputTest,
@@ -297,19 +1051,14 @@ fn test_operator_backup_output(
         load_and_unversionize(dir, test, format)?;
 
     let mut rng = AesRng::seed_from_u64(test.seed);
-    let custodians: Vec<_> = (0..test.custodian_count)
+
+    let custodians: Vec<_> = (1..=test.custodian_count)
         .map(|i| {
-            let custodian_role = Role::indexed_from_zero(i);
-            let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
-            Custodian::new(
-                custodian_role,
-                signing_key,
-                verification_key,
-                private_key,
-                public_key,
-            )
-            .unwrap()
+            let custodian_role = Role::indexed_from_one(i);
+            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let mut enc = Encryption::new(PkeSchemeType::MlKem512, &mut rng);
+            let (dec_key, enc_key) = enc.keygen().unwrap();
+            Custodian::new(custodian_role, signing_key, enc_key, dec_key).unwrap()
         })
         .collect();
     let custodian_messages: Vec<_> = custodians
@@ -323,8 +1072,7 @@ fn test_operator_backup_output(
 
     let operator = {
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-        Operator::new(
-            Role::indexed_from_zero(0),
+        Operator::new_for_sharing(
             custodian_messages.clone(),
             signing_key,
             test.custodian_threshold,
@@ -333,13 +1081,15 @@ fn test_operator_backup_output(
         .unwrap()
     };
     let (cts, _commitments) = &operator
-        .secret_share_and_encrypt(
+        .secret_share_and_signcrypt(
             &mut rng,
             &test.plaintext,
             RequestId::from_bytes(test.backup_id),
         )
         .unwrap();
-    let new_operator_backup_output = &cts[&operator.role()];
+
+    // in this test we fix the custodian role to 1
+    let new_operator_backup_output = &cts[&Role::indexed_from_one(1)];
     if original_operator_backup_output != *new_operator_backup_output {
         Err(test.failure(
             format!(
@@ -370,6 +1120,9 @@ impl TestedModule for KMS {
             Self::Metadata::PrivateSigKey(test) => {
                 test_private_sig_key(test_dir.as_ref(), test, format).into()
             }
+            Self::Metadata::TypedPlaintext(test) => {
+                test_typed_plaintext(test_dir.as_ref(), test, format).into()
+            }
             Self::Metadata::KmsFheKeyHandles(test) => {
                 test_kms_fhe_key_handles(test_dir.as_ref(), test, format).into()
             }
@@ -378,12 +1131,66 @@ impl TestedModule for KMS {
             }
             Self::Metadata::AppKeyBlob(test) => {
                 test_app_key_blob(test_dir.as_ref(), test, format).into()
-            } // Self::Metadata::CustodianSetupMessage(test) => {
-              //     test_custodian_setup_message(test_dir.as_ref(), test, format).into()
-              // }
-              // Self::Metadata::OperatorBackupOutput(test) => {
-              //     test_operator_backup_output(test_dir.as_ref(), test, format).into()
-              // }
+            }
+            Self::Metadata::KeyGenMetadata(test) => {
+                test_key_gen_metadata(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::CrsGenMetadata(test) => {
+                test_crs_gen_metadata(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::SigncryptionPayload(test) => {
+                test_signcryption_payload(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::UnifiedSigncryptionKeyOwned(test) => {
+                test_signcryption_keys(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::UnifiedUnsigncryptionKeyOwned(test) => {
+                test_unsigncryption_keys(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::UnifiedSigncryption(test) => {
+                test_unified_signcryption(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::PrssSetupCombined(test) => {
+                test_prss_setup_combined(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::BackupCiphertext(test) => {
+                test_backup_ciphertext(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::UnifiedCipher(test) => {
+                test_unified_cipher(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::HybridKemCt(test) => {
+                test_hybrid_kem_ct(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::ContextInfo(test) => {
+                // TODO (#2850) test_context_info(test_dir.as_ref(), test, format).into()
+                Ok(test.success(format)).into()
+            }
+            Self::Metadata::NodeInfo(test) => {
+                // TODO (#2850) test_node_info(test_dir.as_ref(), test, format).into()
+                Ok(test.success(format)).into()
+            }
+            Self::Metadata::SoftwareVersion(test) => {
+                test_software_version(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::RecoveryValidationMaterial(test) => {
+                test_recovery_material(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::InternalRecoveryRequest(test) => {
+                test_internal_recovery_request(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::InternalCustodianContext(test) => {
+                test_internal_custodian_context(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::InternalCustodianSetupMessage(test) => {
+                test_internal_custodian_message(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::InternalCustodianRecoveryOutput(test) => {
+                test_internal_custodian_recovery_output(test_dir.as_ref(), test, format).into()
+            }
+            Self::Metadata::OperatorBackupOutput(test) => {
+                test_operator_backup_output(test_dir.as_ref(), test, format).into()
+            }
         }
     }
 }

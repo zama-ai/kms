@@ -1,8 +1,8 @@
 use crate::client::client_wasm::Client;
 use crate::client::tests::threshold::common::threshold_handles_custodian_backup;
-use crate::consts::SIGNING_KEY_ID;
+use crate::consts::{BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, SIGNING_KEY_ID};
 use crate::util::key_setup::test_tools::backup_exists;
-use crate::util::key_setup::test_tools::read_backup_files;
+use crate::util::key_setup::test_tools::read_custodian_backup_files;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
@@ -33,6 +33,7 @@ async fn new_custodian_context(
 ) {
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = Some(temp_dir.path());
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     ensure_testing_material_exists(test_path).await;
     let req_new_cus: RequestId = derive_request_id(&format!(
         "test_new_custodian_context_threshold_{amount_parties}"
@@ -65,13 +66,13 @@ async fn new_custodian_context(
     )
     .await;
     // Check that the files are backed up
-    assert!(backup_exists(amount_parties, test_path).await);
-    let first_sig_keys = read_backup_files(
-        amount_parties,
+    assert!(backup_exists(test_path, backup_storage_prefixes).await);
+    let first_sig_keys = read_custodian_backup_files(
         test_path,
         &req_new_cus,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
+        backup_storage_prefixes,
     )
     .await;
     // Validate that each backup is different since it is supposed to be secret shared
@@ -87,12 +88,12 @@ async fn new_custodian_context(
         threshold,
     )
     .await;
-    let second_sig_keys = read_backup_files(
-        amount_parties,
+    let second_sig_keys = read_custodian_backup_files(
         test_path,
         &req_new_cus2,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
+        backup_storage_prefixes,
     )
     .await;
     // Validate that each backup is different since it is supposed to be secret shared
@@ -121,12 +122,12 @@ async fn new_custodian_context(
         test_path,
     )
     .await;
-    let reboot_sig_keys = read_backup_files(
-        amount_parties,
+    let reboot_sig_keys = read_custodian_backup_files(
         test_path,
         &req_new_cus2,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
+        backup_storage_prefixes,
     )
     .await;
     for cur_idx in 0..reboot_sig_keys.len() {

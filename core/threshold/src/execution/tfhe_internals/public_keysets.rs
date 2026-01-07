@@ -13,10 +13,15 @@ use tfhe::shortint::atomic_pattern::compressed::{
     CompressedAtomicPatternServerKey, CompressedStandardAtomicPatternServerKey,
 };
 use tfhe::shortint::atomic_pattern::{AtomicPatternServerKey, StandardAtomicPatternServerKey};
+use tfhe::shortint::key_switching_key::KeySwitchingKeyDestinationAtomicPattern;
 use tfhe::shortint::list_compression::{
     CompressedCompressionKey, CompressedDecompressionKey, CompressedNoiseSquashingCompressionKey,
     CompressionKey, DecompressionKey, NoiseSquashingCompressionKey,
 };
+use tfhe::shortint::noise_squashing::atomic_pattern::compressed::standard::CompressedStandardAtomicPatternNoiseSquashingKey;
+use tfhe::shortint::noise_squashing::atomic_pattern::compressed::CompressedAtomicPatternNoiseSquashingKey;
+use tfhe::shortint::noise_squashing::atomic_pattern::standard::StandardAtomicPatternNoiseSquashingKey;
+use tfhe::shortint::noise_squashing::atomic_pattern::AtomicPatternNoiseSquashingKey;
 use tfhe::shortint::noise_squashing::{
     CompressedShortint128BootstrappingKey, NoiseSquashingKey, Shortint128BootstrappingKey,
 };
@@ -120,7 +125,11 @@ impl RawPubKeySet {
         )
     }
 
-    pub fn compute_tfhe_hl_api_server_key(&self, params: DKGParams) -> tfhe::ServerKey {
+    pub fn compute_tfhe_hl_api_server_key(
+        &self,
+        params: DKGParams,
+        tag: tfhe::Tag,
+    ) -> tfhe::ServerKey {
         let shortint_key = self.compute_tfhe_shortint_server_key(params);
         let integer_key = tfhe::integer::ServerKey::from_raw_parts(shortint_key);
 
@@ -154,11 +163,16 @@ impl RawPubKeySet {
                     let sns_param = sns_param.sns_params;
 
                     par_convert_standard_lwe_bootstrap_key_to_fourier_128(bk_sns, &mut fourier_bk);
+
                     let key = NoiseSquashingKey::from_raw_parts(
-                        Shortint128BootstrappingKey::Classic {
-                            bsk: fourier_bk,
-                            modulus_switch_noise_reduction_key: msnrk_sns.clone(),
-                        },
+                        AtomicPatternNoiseSquashingKey::Standard(
+                            StandardAtomicPatternNoiseSquashingKey::from_raw_parts(
+                                Shortint128BootstrappingKey::Classic {
+                                    bsk: fourier_bk,
+                                    modulus_switch_noise_reduction_key: msnrk_sns.clone(),
+                                },
+                            ),
+                        ),
                         sns_param.message_modulus(),
                         sns_param.carry_modulus(),
                         sns_param.ciphertext_modulus(),
@@ -189,6 +203,7 @@ impl RawPubKeySet {
                         .get_params_basics_handle()
                         .get_pksk_destination()
                         .unwrap(),
+                    KeySwitchingKeyDestinationAtomicPattern::Standard,
                 );
 
             tfhe::integer::key_switching_key::KeySwitchingKeyMaterial::from_raw_parts(shortint_pksk)
@@ -207,6 +222,7 @@ impl RawPubKeySet {
                             dedicated_rerand_ksk.clone(),
                             0,
                             EncryptionKeyChoice::Big,
+                    KeySwitchingKeyDestinationAtomicPattern::Standard,
                         );
 
                         let rerand_ksk =
@@ -225,25 +241,26 @@ impl RawPubKeySet {
             noise_squashing_key,
             noise_squashing_compression_key,
             rerand_ksk,
-            tfhe::Tag::default(),
+            tag,
         )
     }
 
     pub fn compute_tfhe_hl_api_compact_public_key(
         &self,
         params: DKGParams,
+        tag: tfhe::Tag,
     ) -> tfhe::CompactPublicKey {
         let params = params
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
 
-        to_tfhe_hl_api_compact_public_key(self.lwe_public_key.clone(), params)
+        to_tfhe_hl_api_compact_public_key(self.lwe_public_key.clone(), params, tag)
     }
 
-    pub fn to_pubkeyset(&self, params: DKGParams) -> FhePubKeySet {
+    pub fn to_pubkeyset(&self, params: DKGParams, tag: tfhe::Tag) -> FhePubKeySet {
         FhePubKeySet {
-            public_key: self.compute_tfhe_hl_api_compact_public_key(params),
-            server_key: self.compute_tfhe_hl_api_server_key(params),
+            public_key: self.compute_tfhe_hl_api_compact_public_key(params, tag.clone()),
+            server_key: self.compute_tfhe_hl_api_server_key(params, tag),
         }
     }
 }
@@ -273,11 +290,12 @@ impl RawCompressedPubKeySet {
     pub fn compute_tfhe_hl_api_compressed_compact_public_key(
         &self,
         params: DKGParams,
+        tag: tfhe::Tag,
     ) -> tfhe::CompressedCompactPublicKey {
         let params = params
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
-        to_tfhe_hl_api_compressed_compact_public_key(self.lwe_public_key.clone(), params)
+        to_tfhe_hl_api_compressed_compact_public_key(self.lwe_public_key.clone(), params, tag)
     }
 
     pub fn compute_tfhe_shortint_compressed_server_key(
@@ -317,6 +335,7 @@ impl RawCompressedPubKeySet {
     pub fn compute_tfhe_hl_api_compressed_server_key(
         &self,
         params: DKGParams,
+        tag: tfhe::Tag,
     ) -> tfhe::CompressedServerKey {
         let shortint_key = self.compute_tfhe_shortint_compressed_server_key(params);
 
@@ -328,6 +347,7 @@ impl RawCompressedPubKeySet {
                     .get_params_basics_handle()
                     .get_pksk_destination()
                     .unwrap(),
+                    KeySwitchingKeyDestinationAtomicPattern::Standard,
             ))
         });
 
@@ -347,10 +367,10 @@ impl RawCompressedPubKeySet {
             (Some(bk_sns), Some(msnrk_sns), DKGParams::WithSnS(params_with_sns)) => {
                 let noise_squashing_key = Some(
                     tfhe::integer::noise_squashing::CompressedNoiseSquashingKey::from_raw_parts( tfhe::shortint::noise_squashing::CompressedNoiseSquashingKey::from_raw_parts(
-                        CompressedShortint128BootstrappingKey::Classic{
+CompressedAtomicPatternNoiseSquashingKey::Standard(CompressedStandardAtomicPatternNoiseSquashingKey::from_raw_parts(CompressedShortint128BootstrappingKey::Classic{
                             bsk : bk_sns.clone(),
                             modulus_switch_noise_reduction_key: msnrk_sns.clone()
-                        },
+                        })),
                         params_with_sns.sns_params.message_modulus(),
                         params_with_sns.sns_params.carry_modulus(),
                         params_with_sns.sns_params.ciphertext_modulus(),
@@ -381,6 +401,7 @@ impl RawCompressedPubKeySet {
                             dedicated_rerand_ksk.clone(),
                             0,
                             EncryptionKeyChoice::Big,
+                    KeySwitchingKeyDestinationAtomicPattern::Standard,
                         );
 
                         let rerand_ksk =
@@ -407,14 +428,19 @@ impl RawCompressedPubKeySet {
             noise_squashing_key,
             noise_squashing_compression_key,
             rerand_ksk,
-            tfhe::Tag::default(),
+            tag,
         )
     }
 
-    pub fn to_compressed_pubkeyset(&self, params: DKGParams) -> CompressedXofKeySet {
+    pub fn to_compressed_pubkeyset(
+        &self,
+        params: DKGParams,
+        tag: tfhe::Tag,
+    ) -> CompressedXofKeySet {
         let seed = XofSeed::new_u128(self.seed, DSEP_KG);
-        let public_key = self.compute_tfhe_hl_api_compressed_compact_public_key(params);
-        let server_key = self.compute_tfhe_hl_api_compressed_server_key(params);
+        let public_key =
+            self.compute_tfhe_hl_api_compressed_compact_public_key(params, tag.clone());
+        let server_key = self.compute_tfhe_hl_api_compressed_server_key(params, tag);
 
         CompressedXofKeySet::from_raw_parts(seed, public_key, server_key)
     }

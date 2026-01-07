@@ -17,13 +17,16 @@ storage_cache_size = 1000
 
 [public_vault.storage.s3]
 bucket = "kms"
+prefix = "PUB-p2"
 
-[private_vault.storage.file]
-path = "./keys"
+[private_vault.storage.s3]
+bucket = "kms"
+prefix = "PRIV-p2"
 
 [backup_vault]
 [backup_vault.storage.file]
 path = "./backup_vault"
+prefix = "BACKUP-p2"
 
 [threshold]
 listen_address = "0.0.0.0"
@@ -38,7 +41,7 @@ num_sessions_preproc = 2
 
 decryption_mode = "NoiseFloodSmall"
 
-[[threshold.tls.full_auto.trusted_releases]]
+[[threshold.tls.auto.trusted_releases]]
 pcr0 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 pcr1 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 pcr2 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
@@ -109,3 +112,4 @@ user_decrypt = 1
 crsgen = 100
 preproc = 25000
 keygen = 1000
+reshare = 1

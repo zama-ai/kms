@@ -15,7 +15,7 @@ use crate::{
     },
     execution::{
         online::preprocessing::{DKGPreprocessing, TriplePreprocessing},
-        runtime::session::BaseSessionHandles,
+        runtime::sessions::base_session::BaseSessionHandles,
         tfhe_internals::parameters::BKParams,
     },
 };
@@ -290,7 +290,9 @@ mod tests {
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
             random::{get_rng, seed_from_rng},
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::sessions::{
+                large_session::LargeSession, session_parameters::GenericParameterHandles,
+            },
             tfhe_internals::{
                 glwe_key::GlweSecretKeyShare,
                 lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof,
@@ -331,7 +333,10 @@ mod tests {
             let lwe_secret_key_share = LweSecretKeyShare::<Z128, 4>::new_from_preprocessing(
                 LweDimension(lwe_dimension),
                 &mut dummy_preproc,
+                None,
+                &mut session,
             )
+            .await
             .unwrap();
 
             //Generate the Glwe key
@@ -339,7 +344,10 @@ mod tests {
                 num_key_bits_glwe,
                 PolynomialSize(polynomial_size),
                 &mut dummy_preproc,
+                None,
+                &mut session,
             )
+            .await
             .unwrap();
 
             //Prepare enough noise for the bk

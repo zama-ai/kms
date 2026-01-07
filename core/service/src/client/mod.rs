@@ -10,6 +10,8 @@ pub mod js_api;
 #[cfg(feature = "non-wasm")]
 pub mod key_gen;
 #[cfg(feature = "non-wasm")]
+pub mod mpc_context;
+#[cfg(feature = "non-wasm")]
 pub mod public_decryption;
 #[cfg(any(test, feature = "testing"))]
 #[cfg(feature = "non-wasm")]
@@ -18,6 +20,7 @@ pub mod test_tools;
 pub mod user_decryption_non_wasm;
 pub mod user_decryption_wasm;
 
+#[allow(deprecated)]
 #[cfg(test)]
 pub(crate) mod tests {
     mod centralized;

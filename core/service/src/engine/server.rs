@@ -135,8 +135,12 @@ pub async fn run_server<
 
     tracing::info!("Starting KMS core on socket {socket_addr}");
 
+    // Use the TLS_NODELAY mode to ensure everything gets sent immediately by disabling Nagle's algorithm.
+    // Note that this decreases latency but increases network bandwidth usage. If bandwidth is a concern,
+    // then this should be changed
+    let tcp_incoming = TcpIncoming::from(listener).with_nodelay(Some(true));
     // Create graceful shutdown future
-    let graceful = server.serve_with_incoming_shutdown(TcpIncoming::from(listener), async {
+    let graceful = server.serve_with_incoming_shutdown(tcp_incoming, async {
         // await is the same as recv on a oneshot channel
         _ = rx.await;
         tracing::info!(

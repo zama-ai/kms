@@ -659,6 +659,7 @@ where
 
     //NIST: Level Zero Operation (I believe this is is "Equation 19")
     // compute the syndrome in the GR from a given sharing and threshold
+    #[allow(clippy::needless_range_loop)]
     fn syndrome_compute(
         sharing: &ShamirSharings<Self>,
         threshold: usize,

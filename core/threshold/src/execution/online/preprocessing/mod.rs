@@ -8,7 +8,8 @@ use crate::execution::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC}
 use crate::execution::keyset_config::KeySetConfig;
 use crate::execution::online::gen_bits::{BitGenEven, SecureBitGenEven};
 use crate::execution::online::preprocessing::memory::{memory_factory, InMemoryBitPreprocessing};
-use crate::execution::runtime::session::{BaseSession, ParameterHandles, SmallSession};
+use crate::execution::runtime::sessions::session_parameters::GenericParameterHandles;
+use crate::execution::runtime::sessions::{base_session::BaseSession, small_session::SmallSession};
 use crate::execution::small_execution::prss::PRSSPrimitives;
 use crate::execution::tfhe_internals::parameters::{DKGParams, NoiseBounds, TUniformBound};
 use crate::{
@@ -320,7 +321,7 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
 
     // Generate noise for sns compression key if needed
     match keyset_config {
-        KeySetConfig::Standard(_) | KeySetConfig::AddSnsCompressionKey => match params {
+        KeySetConfig::Standard(_) => match params {
             DKGParams::WithSnS(sns_params) => {
                 let noise_info = sns_params.num_needed_noise_sns_compression_key();
                 let bound = noise_info.bound;

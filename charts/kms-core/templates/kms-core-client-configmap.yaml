@@ -88,7 +88,7 @@ data:
 
     [[cores]]
     party_id = 1
-    address = "http://{{- printf "%s-%d" $kmsCoreName 1 }}:{{- $.Values.kmsCore.ports.client -}}"
+    address = "http://{{- printf "%s" $kmsCoreName }}:{{- $.Values.kmsCore.ports.client -}}"
     s3_endpoint = "${S3_ENDPOINT}"
     object_folder = "PUB"
 

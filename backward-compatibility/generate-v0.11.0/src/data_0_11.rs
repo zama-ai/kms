@@ -8,6 +8,7 @@ use kms_0_11_0::engine::base::KmsFheKeyHandles;
 use kms_0_11_0::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_11_0::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
 use kms_0_11_0::util::key_setup::FhePublicKey;
+use std::num::Wrapping;
 use std::{borrow::Cow, fs::create_dir_all, path::PathBuf};
 use tfhe_1_3::shortint::parameters::{LweCiphertextCount, NoiseSquashingCompressionParameters};
 use threshold_fhe_0_11_0::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
@@ -16,6 +17,7 @@ use threshold_fhe_0_11_0::execution::small_execution::prf::PrfKey;
 use threshold_fhe_0_11_0::{
     execution::{
         runtime::party::Role,
+        sharing::share::Share,
         tfhe_internals::{
             parameters::{DKGParams, DKGParamsRegular, DKGParamsSnS},
             test_feature::initialize_key_material,
@@ -25,7 +27,10 @@ use threshold_fhe_0_11_0::{
 };
 
 use kms_0_11_0::vault::keychain::AppKeyBlob;
-use kms_grpc_0_11_0::rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal};
+use kms_grpc_0_11_0::{
+    kms::v1::TypedPlaintext,
+    rpc_types::{PubDataType, PublicKeyType, SignedPubDataHandleInternal},
+};
 use rand::{RngCore, SeedableRng};
 use tfhe_1_3::{
     core_crypto::commons::{
@@ -46,20 +51,22 @@ use tfhe_1_3::{
 };
 use tokio::runtime::Runtime;
 
+use crate::generate::{
+    store_versioned_auxiliary_05, store_versioned_test_05, KMSCoreVersion, TEST_DKG_PARAMS_SNS,
+};
 use backward_compatibility::parameters::{
     ClassicPBSParametersTest, DKGParamsRegularTest, DKGParamsSnSTest,
     SwitchAndSquashCompressionParametersTest, SwitchAndSquashParametersTest,
 };
 use backward_compatibility::{
     AppKeyBlobTest, KmsFheKeyHandlesTest, PRSSSetupTest, PrfKeyTest, PrivateSigKeyTest,
-    PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, SignedPubDataHandleInternalTest,
-    TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc, ThresholdFheKeysTest,
-    DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
+    PubDataTypeTest, PublicKeyTypeTest, PublicSigKeyTest, ShareTest, SigncryptionPayloadTest,
+    SignedPubDataHandleInternalTest, TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
+    ThresholdFheKeysTest, TypedPlaintextTest, DISTRIBUTED_DECRYPTION_MODULE_NAME,
+    KMS_GRPC_MODULE_NAME, KMS_MODULE_NAME,
 };
 
-use crate::generate::{
-    store_versioned_auxiliary_05, store_versioned_test_05, KMSCoreVersion, TEST_DKG_PARAMS_SNS,
-};
+use kms_0_11_0::cryptography::signcryption::SigncryptionPayload;
 
 // Macro to store a versioned test
 macro_rules! store_versioned_test {
@@ -185,6 +192,22 @@ const PRF_KEY_TEST: PrfKeyTest = PrfKeyTest {
     seed: 100,
 };
 
+// Distributed Decryption test
+const SHARE_64_TEST: ShareTest = ShareTest {
+    test_filename: Cow::Borrowed("share_64"),
+    value: 34653246,
+    owner: 1,
+    residue_poly_size: 64,
+};
+
+// Distributed Decryption test
+const SHARE_128_TEST: ShareTest = ShareTest {
+    test_filename: Cow::Borrowed("share_128"),
+    value: 934565743256423875434534434,
+    owner: 1,
+    residue_poly_size: 128,
+};
+
 // KMS test
 const PRIVATE_SIG_KEY_TEST: PrivateSigKeyTest = PrivateSigKeyTest {
     test_filename: Cow::Borrowed("private_sig_key"),
@@ -257,6 +280,25 @@ const APP_KEY_BLOB_TEST: AppKeyBlobTest = AppKeyBlobTest {
 };
 
 // KMS test
+fn typed_plaintext_test() -> TypedPlaintextTest {
+    TypedPlaintextTest {
+        test_filename: Cow::Borrowed("typed_plaintext"),
+        plaintext_bytes: vec![1, 2, 3, 4, 5],
+        fhe_type: 8, // FheTypes::Uint8
+    }
+}
+
+// KMS test
+fn signcryption_payload_test() -> SigncryptionPayloadTest {
+    SigncryptionPayloadTest {
+        test_filename: Cow::Borrowed("signcryption_payload"),
+        plaintext_bytes: vec![1, 2, 3, 4, 5],
+        fhe_type: 8, // FheTypes::Uint8
+        link: vec![222, 173, 190, 239],
+    }
+}
+
+// KMS test
 // NOTE: this is not used in v0.11 yet, so we avoid doing these extra tests
 /*
 const CUSTODIAN_SETUP_MESSAGE_TEST: CustodianSetupMessageTest = CustodianSetupMessageTest {
@@ -307,6 +349,22 @@ impl KmsV0_11 {
         TestMetadataKMS::PublicSigKey(PUBLIC_SIG_KEY_TEST)
     }
 
+    fn gen_typed_plaintext(dir: &PathBuf) -> TestMetadataKMS {
+        let test = typed_plaintext_test();
+
+        let plaintext = TypedPlaintext {
+            bytes: test.plaintext_bytes.clone(),
+            fhe_type: test.fhe_type,
+        };
+
+        // TypedPlaintext doesn't use tfhe-versionable, serialize directly with bincode
+        let serialized = bc2wrap::serialize(&plaintext).unwrap();
+        let filename = format!("{}.bincode", test.test_filename);
+        std::fs::write(dir.join(&filename), serialized).unwrap();
+
+        TestMetadataKMS::TypedPlaintext(test)
+    }
+
     fn gen_app_key_blob(dir: &PathBuf) -> TestMetadataKMS {
         let app_key_blob = AppKeyBlob {
             root_key_id: APP_KEY_BLOB_TEST.root_key_id.to_string(),
@@ -317,7 +375,29 @@ impl KmsV0_11 {
         };
 
         store_versioned_test!(&app_key_blob, dir, &APP_KEY_BLOB_TEST.test_filename);
+
         TestMetadataKMS::AppKeyBlob(APP_KEY_BLOB_TEST)
+    }
+
+    #[allow(clippy::ptr_arg)]
+    fn gen_signcryption_payload(dir: &PathBuf) -> TestMetadataKMS {
+        let test = signcryption_payload_test();
+
+        let payload = SigncryptionPayload {
+            plaintext: TypedPlaintext {
+                bytes: test.plaintext_bytes.clone(),
+                fhe_type: test.fhe_type,
+            },
+            link: test.link.clone(),
+        };
+
+        // SigncryptionPayload doesn't use tfhe-versionable, serialize with bc2wrap from v0.11.0
+        // This uses the exact bc2wrap implementation and bincode version from v0.11.0
+        let serialized = bc2wrap::serialize(&payload).unwrap();
+        let filename = format!("{}.bincode", test.test_filename);
+        std::fs::write(dir.join(&filename), serialized).unwrap();
+
+        TestMetadataKMS::SigncryptionPayload(test)
     }
 
     fn gen_kms_fhe_key_handles(dir: &PathBuf) -> TestMetadataKMS {
@@ -593,6 +673,26 @@ impl DistributedDecryptionV0_11 {
         TestMetadataDD::PRSSSetup(PRSS_SETUP_RPOLY_128_TEST)
     }
 
+    fn gen_share_64(dir: &PathBuf) -> TestMetadataDD {
+        let role = Role::indexed_from_one(SHARE_64_TEST.owner);
+        let val = ResiduePolyF4Z64::from_scalar(Wrapping(SHARE_64_TEST.value as u64));
+        let share = Share::<ResiduePolyF4Z64>::new(role, val);
+
+        store_versioned_test!(&share, dir, &SHARE_64_TEST.test_filename);
+
+        TestMetadataDD::Share(SHARE_64_TEST)
+    }
+
+    fn gen_share_128(dir: &PathBuf) -> TestMetadataDD {
+        let role = Role::indexed_from_one(SHARE_128_TEST.owner);
+        let val = ResiduePolyF4Z128::from_scalar(Wrapping(SHARE_128_TEST.value));
+        let share = Share::<ResiduePolyF4Z128>::new(role, val);
+
+        store_versioned_test!(&share, dir, &SHARE_128_TEST.test_filename);
+
+        TestMetadataDD::Share(SHARE_128_TEST)
+    }
+
     fn gen_prf_key(dir: &PathBuf) -> TestMetadataDD {
         let mut buf = [0u8; 16];
         let mut rng = AesRng::from_seed(PRF_KEY_TEST.seed.to_le_bytes());
@@ -661,9 +761,11 @@ impl KMSCoreVersion for V0_11 {
         vec![
             KmsV0_11::gen_private_sig_key(&dir),
             KmsV0_11::gen_public_sig_key(&dir),
+            KmsV0_11::gen_app_key_blob(&dir),
+            KmsV0_11::gen_typed_plaintext(&dir),
+            KmsV0_11::gen_signcryption_payload(&dir),
             KmsV0_11::gen_kms_fhe_key_handles(&dir),
             KmsV0_11::gen_threshold_fhe_keys(&dir),
-            KmsV0_11::gen_app_key_blob(&dir),
             // KmsV0_11::gen_custodian_setup_message(&dir),
             // KmsV0_11::gen_operator_backup_output(&dir),
         ]
@@ -676,6 +778,8 @@ impl KMSCoreVersion for V0_11 {
         vec![
             DistributedDecryptionV0_11::gen_prss_setup_rpoly_64(&dir),
             DistributedDecryptionV0_11::gen_prss_setup_rpoly_128(&dir),
+            DistributedDecryptionV0_11::gen_share_64(&dir),
+            DistributedDecryptionV0_11::gen_share_128(&dir),
             DistributedDecryptionV0_11::gen_prf_key(&dir),
         ]
     }

@@ -1,7 +1,7 @@
 #[cfg(feature = "non-wasm")]
 use crate::engine::base::derive_request_id;
 #[cfg(feature = "non-wasm")]
-use kms_grpc::{identifiers::ContextId, RequestId};
+use kms_grpc::{identifiers::ContextId, EpochId, RequestId};
 use threshold_fhe::execution::tfhe_internals::parameters::{
     DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS,
 };
@@ -12,7 +12,6 @@ pub const KEY_PATH_PREFIX: &str = "keys";
 pub const DEFAULT_PARAM: DKGParams = BC_PARAMS_SNS;
 pub const TEST_PARAM: DKGParams = PARAMS_TEST_BK_SNS;
 
-pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 pub const RND_SIZE: usize = 128 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
 
 // TODO do we want to load this from a configuration?
@@ -86,6 +85,15 @@ cfg_if::cfg_if! {
             pub static ref DEFAULT_DEC_ID: RequestId = derive_request_id("DEFAULT_DEC_ID").unwrap();
             pub static ref OTHER_CENTRAL_DEFAULT_ID: RequestId =
                 derive_request_id("OTHER_DEFAULT_ID").unwrap();
+            pub static ref PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL: Vec<Option<String>> = (1..=13).map(|i|
+                Some(format!("PUB-p{}", i))
+            ).collect::<Vec<Option<String>>>();
+            pub static ref PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL: Vec<Option<String>> = (1..=13).map(|i|
+                Some(format!("PRIV-p{}", i))
+            ).collect::<Vec<Option<String>>>();
+            pub static ref BACKUP_STORAGE_PREFIX_THRESHOLD_ALL: Vec<Option<String>> = (1..=13).map(|i|
+                Some(format!("BACKUP-p{}", i))
+            ).collect::<Vec<Option<String>>>();
         }
     }
 }
@@ -141,22 +149,19 @@ lazy_static::lazy_static! {
     // This is a bit hackish, but it works for now.
     pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
 
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // In the future we will remove the default context.
     pub static ref DEFAULT_MPC_CONTEXT: ContextId = ContextId::from_bytes([
         1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
         4,
     ]);
-}
 
-#[test]
-fn test_context_derivation() {
-    let context_id = *DEFAULT_MPC_CONTEXT;
-    let sid = context_id.derive_session_id().unwrap();
-    assert_eq!(
-        threshold_fhe::session_id::SessionId::from(
-            threshold_fhe::tls_certs::DEFAULT_SESSION_ID_FROM_CONTEXT
-        ),
-        sid
-    );
+    // The default epoch ID used for initial PRSS setup and as fallback when no epoch is specified.
+    // This is equivalent to PRSS_INIT_REQ_ID parsed as an EpochId.
+    pub static ref DEFAULT_EPOCH_ID: EpochId = EpochId::from_bytes([
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    ]);
 }
 
 #[cfg(feature = "insecure")]
