@@ -25,9 +25,6 @@ pub const COMPRESSED: bool = true;
 
 pub const MINIMUM_SESSIONS_PREPROC: u16 = 2;
 
-pub const PRSS_INIT_REQ_ID: &str =
-    "0000000000000000000000000000000000000000000000000000000000000001";
-
 #[cfg(feature = "slow_tests")]
 pub const DEFAULT_AMOUNT_PARTIES: usize = 13;
 #[cfg(feature = "slow_tests")]
@@ -157,7 +154,6 @@ lazy_static::lazy_static! {
     ]);
 
     // The default epoch ID used for initial PRSS setup and as fallback when no epoch is specified.
-    // This is equivalent to PRSS_INIT_REQ_ID parsed as an EpochId.
     pub static ref DEFAULT_EPOCH_ID: EpochId = EpochId::from_bytes([
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,

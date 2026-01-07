@@ -1,4 +1,4 @@
-use crate::consts::PRSS_INIT_REQ_ID;
+use crate::consts::DEFAULT_EPOCH_ID;
 use crate::vault::storage::StorageExt;
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
@@ -7,7 +7,6 @@ use kms_grpc::utils::tonic_result::top_1k_chars;
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{map_tonic_code_to_metric_err_tag, ERR_ASYNC};
-use std::str::FromStr;
 use tonic::Status;
 
 /// Query key material availability from private storage
@@ -197,7 +196,7 @@ impl From<MetricedError> for Status {
 ///
 /// This function checks for FhePrivateKey (centralized) or FheKeyInfo (threshold) data
 /// stored in the legacy format and migrates them to the new epoch-aware format using
-/// `PRSS_INIT_REQ_ID` as the default epoch ID.
+/// `DEFAULT_EPOCH_ID` as the default epoch ID.
 ///
 /// # Arguments
 /// * `storage` - Storage instance supporting both legacy and epoch-aware operations
@@ -217,9 +216,7 @@ where
     let data_type_str = data_type.to_string();
 
     // Get the default epoch ID for migrated keys
-    let default_epoch_id: EpochId = RequestId::from_str(PRSS_INIT_REQ_ID)
-        .map_err(|e| anyhow::anyhow!("Failed to parse PRSS_INIT_REQ_ID: {e}"))?
-        .into();
+    let default_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
 
     // Get all key IDs stored in the legacy format (directly under data_type directory)
     let legacy_key_ids = storage.all_data_ids(&data_type_str).await?;
@@ -282,6 +279,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
     use crate::vault::storage::file::FileStorage;
     use crate::vault::storage::ram::RamStorage;
@@ -292,7 +291,7 @@ mod tests {
         storage: &mut S,
     ) {
         // Store some legacy data (directly under data_type without epoch)
-        // Note: key IDs must not collide with PRSS_INIT_REQ_ID (0...01) to avoid path conflicts
+        // Note: key IDs must not collide with DEFAULT_EPOCH_ID (0...01) to avoid path conflicts
         let key_id_1 = RequestId::from_str(
             "0x00000000000000000000000000000000000000000000000000000000000000aa",
         )
@@ -331,7 +330,7 @@ mod tests {
         assert!(!storage.data_exists(&key_id_2, &data_type).await.unwrap());
 
         // Verify data exists at the new epoch location
-        let default_epoch_id: EpochId = RequestId::from_str(PRSS_INIT_REQ_ID).unwrap().into();
+        let default_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
         assert!(storage
             .data_exists_at_epoch(&key_id_1, &default_epoch_id, &data_type)
             .await
@@ -382,7 +381,7 @@ mod tests {
         assert!(!storage.data_exists(&key_id, &data_type).await.unwrap());
 
         // Verify data exists at the new epoch location
-        let default_epoch_id: EpochId = RequestId::from_str(PRSS_INIT_REQ_ID).unwrap().into();
+        let default_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
         assert!(storage
             .data_exists_at_epoch(&key_id, &default_epoch_id, &data_type)
             .await
@@ -405,7 +404,7 @@ mod tests {
         )
         .unwrap();
         let data_type = PrivDataType::FheKeyInfo.to_string();
-        let default_epoch_id: EpochId = RequestId::from_str(PRSS_INIT_REQ_ID).unwrap().into();
+        let default_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
 
         let legacy_data = vec![1, 2, 3];
         let existing_epoch_data = vec![4, 5, 6];
@@ -483,7 +482,7 @@ mod tests {
         assert_eq!(migrated_count_2, 0);
 
         // Data should still be at the epoch location
-        let default_epoch_id: EpochId = RequestId::from_str(PRSS_INIT_REQ_ID).unwrap().into();
+        let default_epoch_id: EpochId = *DEFAULT_EPOCH_ID;
         let epoch_data = storage
             .load_bytes_at_epoch(&key_id, &default_epoch_id, &data_type)
             .await
