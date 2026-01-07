@@ -2,6 +2,7 @@
 /temp
 /keys
 /crs
+/test-material
 /tls
 /test-material
 .vscode/launch.json
