@@ -541,6 +541,7 @@ spec:
               aws_secret_access_key=${AWS_SECRET_ACCESS_KEY}
               EOF
               cat ~/.aws/credentials
+              env
               {{- end }}
               kms-server --config-file=kms-server.toml
           {{- end }}
