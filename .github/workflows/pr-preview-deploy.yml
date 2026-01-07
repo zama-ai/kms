@@ -330,6 +330,8 @@ jobs:
                 --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
                 --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
                 --set kmsCore.thresholdMode.thresholdValue="${THRESHOLD_VALUE}" \
+                --set kmsCore.publicVault.s3.prefix="PUB-p${i}" \
+                --set kmsCore.privateVault.s3.prefix="PRIV-p${i}" \
                 --set kmsCore.tolerations[0].key="karpenter.sh/nodepool" \
                 --set kmsCore.tolerations[0].effect="NoSchedule" \
                 --set kmsCore.tolerations[0].operator="Equal" \
