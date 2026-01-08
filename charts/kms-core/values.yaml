@@ -68,18 +68,18 @@ kmsCore:
       # Core TLS certificates and keys can be loaded from file paths or from PEM
       # blocks NB: only PEM blocks are can be used to provide certificates to
       # Nitro enclaves!
-      ca_certificate:
+      # ca_certificate:
         # You have to define either `path` or `pem`
         # Certificate: path to the certificate file
-        path:
+        # path:
         # Certificate: PEM block
-        pem:
+        # pem:
         #   -----BEGIN CERTIFICATE-----
         #   -----END CERTIFICATE-----
       # Nitro enclaves will ignore this value since they generate their own
       # attested ephemeral keypairs
-      privateKey:
-        path: /my/very/secret/key.pem
+      # privateKey:
+      #   path: /my/very/secret/key.pem
       # If set, the enclave-enabled core will only establish TLS connections
       # with peers that have attested PCR0,1,2 values from this list
       trustedReleases:
