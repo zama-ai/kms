@@ -317,10 +317,7 @@ mod tests {
 
     use crate::{
         client::test_tools::{self},
-        consts::{
-            PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PRSS_INIT_REQ_ID,
-            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
-        },
+        consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL},
         cryptography::signatures::gen_sig_keys,
         engine::base::BaseKmsStruct,
         util::key_setup::test_tools::purge,
@@ -377,7 +374,8 @@ mod tests {
 
             // make sure the store does not contain any PRSS info (currently stored under ID 1)
             let req_id = derive_request_id(&format!(
-                "PRSSSetup_Z128_ID_{PRSS_INIT_REQ_ID}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}"
+                "PRSSSetup_Z128_ID_{}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}",
+                *DEFAULT_EPOCH_ID
             ))
             .unwrap();
             purge(
@@ -390,7 +388,8 @@ mod tests {
             .await;
 
             let req_id = derive_request_id(&format!(
-                "PRSSSetup_Z64_ID_{PRSS_INIT_REQ_ID}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}"
+                "PRSSSetup_Z64_ID_{}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}",
+                *DEFAULT_EPOCH_ID
             ))
             .unwrap();
             purge(
