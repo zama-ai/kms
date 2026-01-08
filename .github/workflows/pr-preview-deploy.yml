@@ -470,45 +470,57 @@ jobs:
         run: |
           if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
             TEST_NAME="kubernetes_test_threshold"
-            CONFIG_FILE="client_local_threshold.toml"
+            CONFIG_FILE="client_local_kind_threshold.toml"
             # Using a temporary file to construct multiline string for port-forward
             cat <<EOF > port_forward_cmd.txt
-          kubectl port-forward svc/kms-core-1-core-1 -n "${NAMESPACE}" 50100:50100 & \\
-          kubectl port-forward svc/kms-core-2-core-2 -n "${NAMESPACE}" 50200:50100 & \\
-          kubectl port-forward svc/kms-core-3-core-3 -n "${NAMESPACE}" 50300:50100 & \\
-          kubectl port-forward svc/kms-core-4-core-4 -n "${NAMESPACE}" 50400:50100 &
+          kubectl port-forward svc/kms-core-1-core-1 -n ${NAMESPACE} 50100:50100 & \\
+          kubectl port-forward svc/kms-core-2-core-2 -n ${NAMESPACE} 50200:50100 & \\
+          kubectl port-forward svc/kms-core-3-core-3 -n ${NAMESPACE} 50300:50100 & \\
+          kubectl port-forward svc/kms-core-4-core-4 -n ${NAMESPACE} 50400:50100 &
           EOF
             PORT_FORWARD_CMD=$(cat port_forward_cmd.txt)
+            # Use regex to replace addresses: kms-core-X -> localhost:50X00 (e.g. party 1 -> 50100, party 2 -> 50200)
+            COPY_COMMAND="kubectl cp $NAMESPACE/kms-core-client-0:/app/kms-core-client/config.toml ./core-client/config/client_local_kind_threshold.toml && \\
+              sed -i '' -E 's|address = \"(http://)?kms-core-([0-9]+)-[^:]+:50100\"|address = \"http://localhost:50\200\"|' ./core-client/config/client_local_kind_threshold.toml"
           else
             TEST_NAME="kubernetes_test_centralized"
-            CONFIG_FILE="client_local_centralized.toml"
-            PORT_FORWARD_CMD="kubectl port-forward svc/kms-core-core -n \"${NAMESPACE}\" 50100:50100"
+            CONFIG_FILE="client_local_kind_centralized.toml"
+            # Use regex to replace address: kms-core-core -> localhost:50100
+            COPY_COMMAND="kubectl cp $NAMESPACE/kms-core-client-0:/app/kms-core-client/config.toml ./core-client/config/client_local_kind_centralized.toml && \\
+              sed -i '' -E 's|address = \"(http://)?kms-core-core:50100\"|address = \"http://localhost:50100\"|' ./core-client/config/client_local_kind_centralized.toml"
+            PORT_FORWARD_CMD="kubectl port-forward svc/kms-core-core -n $NAMESPACE 50100:50100"
           fi
 
           # Generate the final comment body
           cat <<EOF > pr_comment.md
-          **:rocket: PR preview environment is deployed in "${DEPLOYMENT_TYPE}" mode**
+          **:rocket: Preview deployment is deployed in "${DEPLOYMENT_TYPE}" mode**
 
-          You can now port-forward the kms-core to run your tests locally against the preview environment.
+          You can now port-forward the kms-core to run your tests locally against the preview deployment.
 
+          Connect to the Tailscale cluster zws-dev:
           \`\`\`bash
           tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
-          "${PORT_FORWARD_CMD}"
           \`\`\`
 
-          Copy config.toml from core-client to ./core-client/config/"${CONFIG_FILE}"
+          Port-forward the kms-core services to run your tests locally:
           \`\`\`bash
-          kubectl cp "${NAMESPACE}"/kms-core-client-0:/app/kms-core-client/config.toml ./core-client/config/"${CONFIG_FILE}"
+          ${PORT_FORWARD_CMD}
           \`\`\`
 
-          And launch your tests:
+          Copy config.toml from core-client to ./core-client/config/${CONFIG_FILE}
+          :warning: Make sure to not push this config.toml file to the repository!
           \`\`\`bash
-          cargo nextest run --test "${TEST_NAME}" --profile ci --no-fail-fast
+          ${COPY_COMMAND}
+          \`\`\`
+
+           :rocket: And launch your tests:
+          \`\`\`bash
+          cargo nextest run --test ${TEST_NAME} --profile ci --no-fail-fast
           \`\`\`
 
           You can connect to the core-client with:
           \`\`\`bash
-          kubectl exec kms-core-client -n "${NAMESPACE}" -it -- /bin/bash
+          kubectl exec kms-core-client-0 -n ${NAMESPACE} -it -- /bin/bash
           \`\`\`
 
           Close your port-forwarding with:
