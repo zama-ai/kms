@@ -17,13 +17,13 @@ kmsCore:
   publicVault:
     s3:
       enabled: true
-      prefix:
+      prefix: PUB
   privateVault:
     awskms:
       enabled: true
     s3:
       enabled: true
-      prefix:
+      prefix: PRIV
   storage:
     storageClassName: gp3
     capacity: 5Gi
