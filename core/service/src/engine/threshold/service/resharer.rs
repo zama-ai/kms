@@ -247,7 +247,7 @@ async fn fetch_public_materials_from_peers<
 }
 
 /// Attempt to get and verify the public materials needed for resharing.
-async fn get_verified_public_materials<
+pub(crate) async fn get_verified_public_materials<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     G: ReadOnlyS3StorageGetter<R>,
