@@ -15,33 +15,33 @@ jobs:
   # Triggered by:
   # - Label : "pr-preview-<deployment-type>" on pull request
   ############################################################################
-  docker-build:
-    name: docker-build
-    if: >-
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-threshold') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralized') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-thresholdWithEnclave') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralizedWithEnclave')
-    permissions:
-      actions: read # Required to read workflow run information
-      contents: write # Required to checkout repository code
-      id-token: write # Required for OIDC authentication
-      pull-requests: read # Required to read pull requests information
-      packages: write # Required to publish Docker images
-      attestations: write # Required to create build attestations
-    uses: ./.github/workflows/docker-build.yml
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
-      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+  # docker-build:
+  #   name: docker-build
+  #   if: >-
+  #     contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-threshold') ||
+  #     contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralized') ||
+  #     contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-thresholdWithEnclave') ||
+  #     contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralizedWithEnclave')
+  #   permissions:
+  #     actions: read # Required to read workflow run information
+  #     contents: write # Required to checkout repository code
+  #     id-token: write # Required for OIDC authentication
+  #     pull-requests: read # Required to read pull requests information
+  #     packages: write # Required to publish Docker images
+  #     attestations: write # Required to create build attestations
+  #   uses: ./.github/workflows/docker-build.yml
+  #   secrets:
+  #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+  #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+  #     TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+  #     TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+  #     AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+  #     AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+  #     SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+  #     SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+  #     JOB_SECRET: ${{ secrets.JOB_SECRET }}
+  #     CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+  #     CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
   # PR Preview Job
@@ -55,8 +55,8 @@ jobs:
       contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralizedWithEnclave')
     permissions:
       pull-requests: write # Required to update pull requests information
-    needs:
-      - docker-build
+    # needs:
+    #   - docker-build
     runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=false
     timeout-minutes: 1800
 
@@ -68,8 +68,8 @@ jobs:
       KMS_CORE_ENCLAVE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service-enclave'
       KMS_CORE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service'
       KMS_CORE_CLIENT_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-client'
-      KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
-      KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+      KMS_CORE_IMAGE_TAG: 718b3fa # ${{ needs.docker-build.outputs.image_tag }}
+      KMS_CORE_CLIENT_IMAGE_TAG: 718b3fa # ${{ needs.docker-build.outputs.image_tag }}
       IMAGE_REPO: 'ghcr.io/zama-ai/kms'
       TLS: 'true'
       FHE_PARAMS: 'Test'
