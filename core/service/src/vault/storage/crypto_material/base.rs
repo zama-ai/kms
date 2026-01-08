@@ -2,6 +2,7 @@
 //!
 //! This module provides the foundational storage implementation used by
 //! both centralized and threshold KMS variants.
+use crate::engine::threshold::service::session::PRSSSetupCombined;
 use crate::util::meta_store::update_ok_req_in_meta_store;
 use crate::{
     anyhow_error_and_warn_log,
@@ -1001,6 +1002,15 @@ where
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to read context info: {}", e))?;
         Ok(context_map.into_values().collect())
+    }
+
+    /// Read all PRSS info from storage
+    pub async fn read_all_prss_info(
+        &self,
+    ) -> anyhow::Result<HashMap<RequestId, PRSSSetupCombined>> {
+        let priv_storage = self.private_storage.lock().await;
+
+        read_all_data_versioned(&*priv_storage, &PrivDataType::PrssSetupCombined.to_string()).await
     }
 }
 
