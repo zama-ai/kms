@@ -89,10 +89,15 @@ jobs:
         run: |
           echo "PR labels: $PR_LABELS"
           DEPLOYMENT_TYPE=$(echo "$PR_LABELS" | jq -r '.[] | select(startswith("pr-preview-"))' | head -n 1 | sed 's/.*-//')
-          if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            NB_KMS_PARTIES='4'
-          elif [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-            NB_KMS_PARTIES='1'
+          if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
+            echo "NB_KMS_PARTIES=4" >> "$GITHUB_ENV"
+            echo "THRESHOLD_VALUE=1" >> "$GITHUB_ENV"
+            echo "NUM_MAJORITY=2" >> "$GITHUB_ENV"
+            echo "NUM_RECONSTRUCT=3" >> "$GITHUB_ENV"
+          elif [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
+            echo "NB_KMS_PARTIES=1" >> "$GITHUB_ENV"
+            echo "NUM_MAJORITY=1" >> "$GITHUB_ENV"
+            echo "NUM_RECONSTRUCT=1" >> "$GITHUB_ENV"
           fi
           echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}" >> "$GITHUB_ENV"
           echo "NB_KMS_PARTIES=${NB_KMS_PARTIES}" >> "$GITHUB_ENV"
@@ -176,7 +181,7 @@ jobs:
       # ======================================================================
       # CHECK IF NAMESPACE EXISTS
       # ======================================================================
-      - name: Check if namespace exists
+      - name: Check if namespace exists, delete and create
         run: |
           if kubectl get namespace "${NAMESPACE}" > /dev/null 2>&1; then
             echo "Namespace ${NAMESPACE} already exists"
@@ -231,7 +236,7 @@ jobs:
               --set kmsParties.publishConnectionDetailsTo.prefixName="${NAMESPACE}" \
               --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}"
 
-          elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+          elif [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
             echo "Deploying infrastructure with enclave support with PCR0: ${{ env.PCR0 }}"
             helm upgrade --install tkms-infra \
               oci://ghcr.io/zama-zws/crossplane/tkms-infra \
@@ -254,18 +259,18 @@ jobs:
           # Wait for TKMS infrastructure components to be ready
           ###################################################################
           echo "Waiting for KMS parties to be ready..."
-          if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+          if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
             kubectl wait --for=condition=ready Kmsparties "kms-party-${NAMESPACE}-1" \
               -n "${NAMESPACE}" --timeout=120s
 
-          elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+          elif [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
             for i in $(seq 1 "${NB_KMS_PARTIES}"); do
               kubectl wait --for=condition=ready Kmsparties "kms-party-${NAMESPACE}-${i}" \
                 -n "${NAMESPACE}" --timeout=120s
             done
           fi
 
-          if [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+          if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
             echo "Waiting for enclave nodegroups to be ready..."
             kubectl wait --for=condition=ready enclavenodegroup \
               "kms-party-${NAMESPACE}"\
@@ -296,154 +301,134 @@ jobs:
       # ======================================================================
       # KMS CORE DEPLOYMENT
       # ======================================================================
+      - name: Generate Helm Values Override
+        env:
+          DEPLOYMENT_TYPE: ${{ env.DEPLOYMENT_TYPE }}
+          NB_KMS_PARTIES: ${{ env.NB_KMS_PARTIES }}
+        run: |
+          ###################################################################
+          # Generate a single values file for all Helm upgrades
+          # This simplifies the helm command and consolidates configuration logic
+          ###################################################################
+
+          # Define common variables based on deployment type
+          if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
+             IS_ENCLAVE="true"
+             KMS_IMAGE_NAME="${KMS_CORE_ENCLAVE_IMAGE_NAME}"
+             GEN_KEYS="true"
+          else
+             IS_ENCLAVE="false"
+             KMS_IMAGE_NAME="${KMS_CORE_IMAGE_NAME}"
+             GEN_KEYS="false"
+          fi
+
+          if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+             # Threshold specific settings are handled per-party in the loop later,
+             # but we can set global defaults here.
+             TOLERATION_KEY="app"
+             TOLERATION_VALUE="${NAMESPACE}"
+          else
+             # Centralized specific settings
+             TOLERATION_KEY="karpenter.sh/nodepool"
+             TOLERATION_VALUE="kms-bench-spot-64"
+          fi
+
+          # Create the override values file
+          cat <<EOF > /tmp/kms-values-override.yaml
+          kmsCore:
+            image:
+              name: "${KMS_IMAGE_NAME}"
+              tag: "${KMS_CORE_IMAGE_TAG}"
+            serviceAccountName: "${NAMESPACE}-1"
+            envFrom:
+              configmap:
+                name: "${NAMESPACE}-1"
+            tolerations:
+              - key: "${TOLERATION_KEY}"
+                effect: "NoSchedule"
+                operator: "Equal"
+                value: "${TOLERATION_VALUE}"
+
+          kmsCoreClient:
+            image:
+              name: "${KMS_CORE_CLIENT_IMAGE_NAME}"
+              tag: "${KMS_CORE_CLIENT_IMAGE_TAG}"
+            envFrom:
+              configmap:
+                name: "${NAMESPACE}-1"
+            tolerations:
+              - key: "karpenter.sh/nodepool"
+                effect: "NoSchedule"
+                operator: "Equal"
+                value: "zws-pool"
+            num_majority: ${NUM_MAJORITY}
+            num_reconstruct: ${NUM_RECONSTRUCT}
+
+          kmsGenCertAndKeys:
+            enabled: ${GEN_KEYS}
+          EOF
+
+          # Append Enclave specific settings if needed
+          if [[ "${IS_ENCLAVE}" == "true" && "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
+            cat <<EOF >> /tmp/kms-values-override.yaml
+          kmsCore:
+            thresholdMode:
+              tls:
+                enabled: "${TLS}"
+                trustedReleases:
+                  - pcr0: "${PCR0}"
+                    pcr1: "${PCR1}"
+                    pcr2: "${PCR2}"
+          EOF
+          fi
+
+          echo "Generated Helm values:"
+          cat /tmp/kms-values-override.yaml
+
       - name: Setup kms-core
         env:
           DEPLOYMENT_TYPE: ${{ env.DEPLOYMENT_TYPE }}
           NB_KMS_PARTIES: ${{ env.NB_KMS_PARTIES }}
         run: |
           ###################################################################
-          # Deploy KMS Core in threshold mode (standard)
+          # Deploy KMS Core using the generated values file
           ###################################################################
-          if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
+
+          if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
             echo "Deploying KMS Core in threshold mode across ${NB_KMS_PARTIES} parties..."
-            THRESHOLD_VALUE=1
-            if [[ "${NB_KMS_PARTIES}" == "13" ]]; then
-              THRESHOLD_VALUE=4
-            elif [[ "${NB_KMS_PARTIES}" == "4" ]]; then
-              THRESHOLD_VALUE=1
-            else
-              echo "Invalid number of KMS parties: ${NB_KMS_PARTIES}"
-              exit 1
-            fi
+
+            # Loop for each party
             for i in $(seq 1 "${NB_KMS_PARTIES}"); do
               echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES}..."
+
+              # Customize per-party settings (some override the shared values file)
               helm upgrade --install "kms-core-${i}" \
                 "./charts/kms-core" \
                 --namespace "${NAMESPACE}" \
                 --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
                 --values /tmp/kms-peers-values.yaml \
+                --values /tmp/kms-values-override.yaml \
                 --set kmsPeers.id="${i}" \
                 --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
                 --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
-                --set kmsGenCertAndKeys.enabled=false \
-                --set kmsCore.image.name="${KMS_CORE_IMAGE_NAME}" \
-                --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
-                --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
-                --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
                 --set kmsCore.thresholdMode.thresholdValue="${THRESHOLD_VALUE}" \
                 --set kmsCore.publicVault.s3.prefix="PUB-p${i}" \
                 --set kmsCore.privateVault.s3.prefix="PRIV-p${i}" \
-                --set kmsCore.tolerations[0].key="karpenter.sh/nodepool" \
-                --set kmsCore.tolerations[0].effect="NoSchedule" \
-                --set kmsCore.tolerations[0].operator="Equal" \
-                --set kmsCore.tolerations[0].value="kms-bench-spot-64" \
-                --wait \
-                --wait-for-jobs \
-                --timeout=1200s
-            done
-
-          ###################################################################
-          # Deploy KMS Core in threshold mode with enclave
-          ###################################################################
-          elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            echo "Deploying KMS Core in threshold mode with enclave support across ${NB_KMS_PARTIES} parties..."
-            if [[ "${NB_KMS_PARTIES}" == "13" ]]; then
-              THRESHOLD_VALUE=4
-            elif [[ "${NB_KMS_PARTIES}" == "4" ]]; then
-              THRESHOLD_VALUE=1
-            else
-              echo "Invalid number of KMS parties: ${NB_KMS_PARTIES}"
-              exit 1
-            fi
-            for i in $(seq 1 "${NB_KMS_PARTIES}"); do
-              echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES} with enclave attestation..."
-              helm upgrade --install  kms-core-"${i}" \
-                "./charts/kms-core" \
-                --namespace "${NAMESPACE}" \
-                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
-                --values /tmp/kms-peers-values.yaml \
-                --set kmsPeers.id="${i}" \
-                --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
-                --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
-                --set kmsGenCertAndKeys.enabled=true \
-                --set kmsCore.image.name="${KMS_CORE_ENCLAVE_IMAGE_NAME}" \
-                --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
-                --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
-                --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-                --set kmsCore.thresholdMode.thresholdValue="${THRESHOLD_VALUE}" \
-                --set kmsCore.thresholdMode.tls.enabled="${TLS}" \
-                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
-                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
-                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}" \
-                --set kmsCore.publicVault.s3.prefix="PUB-p${i}" \
-                --set kmsCore.privateVault.s3.prefix="PRIV-p${i}" \
-                --set kmsCore.tolerations[0].key=app \
-                --set kmsCore.tolerations[0].effect="NoSchedule" \
-                --set kmsCore.tolerations[0].operator="Equal" \
-                --set kmsCore.tolerations[0].value="${NAMESPACE}" \
                 --wait \
                 --wait-for-jobs \
                 --timeout=1200s &
             done
             wait
 
-          ###################################################################
-          # Deploy KMS Core in centralized mode
-          ###################################################################
-          elif [[ "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
+          else
             echo "Deploying KMS Core in centralized mode..."
             helm upgrade --install kms-core \
               "./charts/kms-core" \
               --namespace "${NAMESPACE}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}/"kms-service/values-kms-ci.yaml \
-              --set kmsCore.image.name="${KMS_CORE_IMAGE_NAME}" \
-              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
-              --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
-              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-              --set kmsCore.serviceAccountName="${NAMESPACE}-1" \
-              --set kmsCore.envFrom.configmap.name="${NAMESPACE}-1" \
-              --set kmsCoreClient.nameOverride="kms-core-client" \
-              --set kmsCoreClient.envFrom.configmap.name="${NAMESPACE}-1" \
-              --set kmsCoreClient.num_majority=1 \
-              --set kmsCoreClient.num_reconstruct=1 \
-              --set kmsCore.tolerations[0].key=karpenter.sh/nodepool \
-              --set kmsCore.tolerations[0].effect=NoSchedule \
-              --set kmsCore.tolerations[0].operator=Equal \
-              --set kmsCore.tolerations[0].value=kms-bench-spot-64 \
-              --set kmsCoreClient.tolerations[0].key=karpenter.sh/nodepool \
-              --set kmsCoreClient.tolerations[0].effect=NoSchedule \
-              --set kmsCoreClient.tolerations[0].operator=Equal \
-              --set kmsCoreClient.tolerations[0].value=zws-pool
-
-          ###################################################################
-          # Deploy KMS Core in centralized mode with enclave
-          ###################################################################
-          elif [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-            echo "Deploying KMS Core in centralized mode with enclave..."
-            helm upgrade --install  kms-core \
-              "./charts/kms-core" \
-              --namespace "${NAMESPACE}" \
-              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
+              --values /tmp/kms-values-override.yaml \
               --set kmsPeers.id="1" \
-              --set kmsCore.image.name="${KMS_CORE_ENCLAVE_IMAGE_NAME}" \
-              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
-              --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
-              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-              --set kmsCore.serviceAccountName="${NAMESPACE}-1" \
-              --set kmsCore.envFrom.configmap.name="${NAMESPACE}-1" \
-              --set kmsGenCertAndKeys.enabled=true \
-              --set kmsCoreClient.nameOverride="kms-core-client" \
-              --set kmsCoreClient.envFrom.configmap.name="${NAMESPACE}-1" \
-              --set kmsCoreClient.num_majority=1 \
-              --set kmsCoreClient.num_reconstruct=1 \
-              --set kmsCore.tolerations[0].key=app \
-              --set kmsCore.tolerations[0].effect="NoSchedule" \
-              --set kmsCore.tolerations[0].operator="Equal" \
-              --set kmsCore.tolerations[0].value="${NAMESPACE}" \
-              --set kmsCoreClient.tolerations[0].key=karpenter.sh/nodepool \
-              --set kmsCoreClient.tolerations[0].effect=NoSchedule \
-              --set kmsCoreClient.tolerations[0].operator=Equal \
-              --set kmsCoreClient.tolerations[0].value=zws-pool
+              --set kmsCoreClient.nameOverride="kms-core-client"
           fi
 
           ###################################################################
@@ -451,44 +436,27 @@ jobs:
           ###################################################################
           echo "Waiting for KMS Core pods to be ready..."
           sleep 60
-          if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+          if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
             kubectl wait --for=condition=ready pod kms-core-core-1 \
               -n "${NAMESPACE}" --timeout=600s
-          elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+          else
             for i in $(seq 1 "${NB_KMS_PARTIES}"); do
               kubectl wait --for=condition=ready pod kms-core-"${i}"-core-"${i}" \
                 -n "${NAMESPACE}" --timeout=600s
             done
           fi
 
-          if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-          ###################################################################
-          # Deploy KMS Core initialization job
-          ###################################################################
+          if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
+            ###################################################################
+            # Deploy KMS Core initialization job
+            ###################################################################
             echo "Deploying KMS Core initialization job..."
-            if [[ "${NB_KMS_PARTIES}" == "4" ]]; then
-              NUM_MAJORITY=2
-              NUM_RECONSTRUCT=3
-            elif [[ "${NB_KMS_PARTIES}" == "13" ]]; then
-              NUM_MAJORITY=5
-              NUM_RECONSTRUCT=9
-            else
-              echo "Invalid number of KMS parties: ${NB_KMS_PARTIES}"
-              exit 1
-            fi
             helm upgrade --install kms-core-init \
               "./charts/kms-core" \
               --namespace "${NAMESPACE}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-init-kms-ci.yaml \
               --values /tmp/kms-peers-values.yaml \
-              --set kmsCore.envFrom.configmap.name="${NAMESPACE}-1" \
-              --set kmsCoreClient.envFrom.configmap.name="${NAMESPACE}-1" \
-              --set kmsCore.image.name="${KMS_CORE_IMAGE_NAME}" \
-              --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
-              --set kmsCoreClient.image.name="${KMS_CORE_CLIENT_IMAGE_NAME}" \
-              --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
-              --set kmsCoreClient.num_majority="${NUM_MAJORITY}" \
-              --set kmsCoreClient.num_reconstruct="${NUM_RECONSTRUCT}" \
+              --values /tmp/kms-values-override.yaml \
               --wait \
               --wait-for-jobs \
               --timeout=1200s
@@ -502,77 +470,62 @@ jobs:
               -n "${NAMESPACE}" --timeout=600s
           fi
 
-      - name: Update pull request threshold mode
-        if: success() && (env.DEPLOYMENT_TYPE == 'threshold' || env.DEPLOYMENT_TYPE == 'thresholdWithEnclave')
+      - name: Generate PR Comment Body
+        if: success()
+        run: |
+          if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
+            TEST_NAME="kubernetes_test_threshold"
+            CONFIG_FILE="client_local_threshold.toml"
+            # Using a temporary file to construct multiline string for port-forward
+            cat <<EOF > port_forward_cmd.txt
+          kubectl port-forward svc/kms-core-1-core-1 -n "${NAMESPACE}" 50100:50100 & \\
+          kubectl port-forward svc/kms-core-2-core-2 -n "${NAMESPACE}" 50200:50100 & \\
+          kubectl port-forward svc/kms-core-3-core-3 -n "${NAMESPACE}" 50300:50100 & \\
+          kubectl port-forward svc/kms-core-4-core-4 -n "${NAMESPACE}" 50400:50100 &
+          EOF
+            PORT_FORWARD_CMD=$(cat port_forward_cmd.txt)
+          else
+            TEST_NAME="kubernetes_test_centralized"
+            CONFIG_FILE="client_local_centralized.toml"
+            PORT_FORWARD_CMD="kubectl port-forward svc/kms-core-core -n \"${NAMESPACE}\" 50100:50100"
+          fi
+
+          # Generate the final comment body
+          cat <<EOF > pr_comment.md
+          **:rocket: PR preview environment is deployed in "${DEPLOYMENT_TYPE}" mode**
+
+          You can now port-forward the kms-core to run your tests locally against the preview environment.
+
+          \`\`\`bash
+          tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
+          "${PORT_FORWARD_CMD}"
+          \`\`\`
+
+          Copy config.toml from core-client to ./core-client/config/"${CONFIG_FILE}"
+          \`\`\`bash
+          kubectl cp "${NAMESPACE}"/kms-core-client-0:/app/kms-core-client/config.toml ./core-client/config/"${CONFIG_FILE}"
+          \`\`\`
+
+          And launch your tests:
+          \`\`\`bash
+          cargo nextest run --test "${TEST_NAME}" --profile ci --no-fail-fast
+          \`\`\`
+
+          You can connect to the core-client with:
+          \`\`\`bash
+          kubectl exec kms-core-client -n "${NAMESPACE}" -it -- /bin/bash
+          \`\`\`
+
+          Close your port-forwarding with:
+          \`\`\`bash
+          pgrep -f "kubectl port-forward" | xargs -n 1 kill
+          \`\`\`
+          EOF
+
+      - name: Update pull request
+        if: success()
         uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ github.event.pull_request.number }}
           reactions: 'rocket'
-          body: |
-            **:rocket: PR preview environment is deployed in "${{ env.DEPLOYMENT_TYPE }}" mode**
-
-            You can now port-forward the kms-core to run your tests locally against the preview environment.
-
-            ```bash
-            tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
-            kubectl port-forward svc/kms-core-1-core-1 -n "${{ env.NAMESPACE }}" 50100:50100 & \
-            kubectl port-forward svc/kms-core-2-core-2 -n "${{ env.NAMESPACE }}" 50200:50100 & \
-            kubectl port-forward svc/kms-core-3-core-3 -n "${{ env.NAMESPACE }}" 50300:50100 & \
-            kubectl port-forward svc/kms-core-4-core-4 -n "${{ env.NAMESPACE }}" 50400:50100 &
-            ```
-
-            Copy config.toml from core-client to ./core-client/config/client_local_threshold.toml
-            ```bash
-            kubectl cp "${{ env.NAMESPACE }}"/kms-core-client-0:/app/kms-core-client/config.toml ./core-client/config/client_local_threshold.toml
-            ```
-
-            And launch your tests:
-            ```bash
-            cargo nextest run --test kubernetes_test_threshold --profile ci --no-fail-fast
-            ```
-
-            You can connect to the core-client with:
-            ```bash
-            kubectl exec kms-core-client -n "${{ env.NAMESPACE }}" -it -- /bin/bash
-            ```
-
-            Close your port-forwarding with:
-            ```bash
-            pgrep -f "kubectl port-forward" | xargs -n 1 kill
-            ```
-
-      - name: Update pull request centralized mode
-        if: success() && (env.DEPLOYMENT_TYPE == 'centralized' || env.DEPLOYMENT_TYPE == 'centralizedWithEnclave')
-        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
-        with:
-          issue-number: ${{ github.event.pull_request.number }}
-          reactions: 'rocket'
-          body: |
-            **:rocket: PR preview environment is deployed in "${{ env.DEPLOYMENT_TYPE }}" mode**
-
-            You can now port-forward the kms-core to run your tests locally against the preview environment.
-
-            ```bash
-            tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
-            kubectl port-forward svc/kms-core-core -n "${{ env.NAMESPACE }}" 50100:50100
-            ```
-
-            Copy config.toml from core-client to ./core-client/config/client_local_centralized.toml
-            ```bash
-            kubectl cp "${{ env.NAMESPACE }}"/kms-core-client-0:/app/kms-core-client/config.toml ./core-client/config/client_local_centralized.toml
-            ```
-
-            And launch your tests:
-            ```bash
-            cargo nextest run --test kubernetes_test_centralized --profile ci --no-fail-fast
-            ```
-
-            You can connect to the core-client with:
-            ```bash
-            kubectl exec kms-core-client -n "${{ env.NAMESPACE }}" -it -- /bin/bash
-            ```
-
-            Close your port-forwarding with:
-            ```bash
-            pgrep -f "kubectl port-forward" | xargs -n 1 kill
-            ```
+          body-path: pr_comment.md
