@@ -219,6 +219,8 @@ jobs:
       # TKMS INFRASTRUCTURE DEPLOYMENT
       # ======================================================================
       - name: Setup tkms-infra
+        env:
+          PCR0: ${{ env.PCR0 }}
         run: |
           ###################################################################
           # Deploy TKMS infrastructure based on deployment type
@@ -238,7 +240,7 @@ jobs:
               --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}"
 
           elif [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
-            echo "Deploying infrastructure with enclave support with PCR0: ${PCR0}"
+            echo "Deploying infrastructure with enclave support with PCR0: ${PCR0"
             helm upgrade --install tkms-infra \
               oci://ghcr.io/zama-zws/crossplane/tkms-infra \
               --namespace "${NAMESPACE}" \
@@ -303,6 +305,9 @@ jobs:
       # KMS CORE DEPLOYMENT
       # ======================================================================
       - name: Generate Helm Values Override
+        env:
+          DEPLOYMENT_TYPE: ${{ env.DEPLOYMENT_TYPE }}
+          NB_KMS_PARTIES: ${{ env.NB_KMS_PARTIES }}
         run: |
           ###################################################################
           # Generate a single values file for all Helm upgrades
@@ -339,6 +344,22 @@ jobs:
                 effect: "NoSchedule"
                 operator: "Equal"
                 value: "${TOLERATION_VALUE}"
+          EOF
+
+          # Append Enclave specific settings if needed
+          if [[ "${IS_ENCLAVE}" == "true" && "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
+            cat <<EOF >> /tmp/kms-values-override.yaml
+            thresholdMode:
+              tls:
+                enabled: "${TLS}"
+                trustedReleases:
+                  - pcr0: "${PCR0}"
+                    pcr1: "${PCR1}"
+                    pcr2: "${PCR2}"
+          EOF
+          fi
+
+          cat <<EOF >> /tmp/kms-values-override.yaml
 
           kmsCoreClient:
             image:
@@ -358,20 +379,6 @@ jobs:
           kmsGenCertAndKeys:
             enabled: ${GEN_KEYS}
           EOF
-
-          # Append Enclave specific settings if needed
-          if [[ "${IS_ENCLAVE}" == "true" && "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
-            cat <<EOF >> /tmp/kms-values-override.yaml
-          kmsCore:
-            thresholdMode:
-              tls:
-                enabled: "${TLS}"
-                trustedReleases:
-                  - pcr0: "${PCR0}"
-                    pcr1: "${PCR1}"
-                    pcr2: "${PCR2}"
-          EOF
-          fi
 
           echo "Generated Helm values:"
           cat /tmp/kms-values-override.yaml
