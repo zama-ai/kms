@@ -340,7 +340,7 @@ Automatically cleans up resources when:
 | Stage | Actions | Key Features |
 |-------|---------|--------------|
 | 🔧 **Setup** | Checkout, Git LFS, Registry login | Multi-registry support (GHCR, CGR) |
-| 🌍 **Environment** | Rust toolchain, Protoc, Dependencies | Version-pinned from `toolchain.txt` |
+| 🌍 **Environment** | Rust toolchain, Protoc, Dependencies | Version-pinned from `rust-toolchain.toml` |
 | 🗄️ **Caching** | Cargo cache, Build artifacts | S3-backed caching with runs-on/cache |
 | ✨ **Quality** | Formatting, Clippy, Dylint | Multiple lint passes (default + all features) |
 | 🧪 **Testing** | Nextest execution, Artifact collection | Configurable parallelism and retries |

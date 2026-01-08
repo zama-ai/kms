@@ -32,7 +32,3 @@ kms.sublime-workspace
 
 # Local values files for Kind testing
 ci/kube-testing/kms/local-values-*.yaml
-
-
-# Ignore DevSpace cache and log folder
-.devspace/
