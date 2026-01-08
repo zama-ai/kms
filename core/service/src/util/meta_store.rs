@@ -281,7 +281,7 @@ impl<T: Clone> MetaStore<T> {
 }
 
 #[cfg(feature = "non-wasm")]
-pub(crate) async fn add_req_to_meta_store<T: Clone>(
+pub(crate) fn add_req_to_meta_store<T: Clone>(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
     req_id: &RequestId,
     request_metric: &'static str,

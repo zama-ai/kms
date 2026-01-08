@@ -516,8 +516,7 @@ impl<
             &mut meta_store.write().await,
             &req_id,
             OP_USER_DECRYPT_REQUEST,
-        )
-        .await?;
+        )?;
 
         let sk = (*self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(

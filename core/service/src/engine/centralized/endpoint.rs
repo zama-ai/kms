@@ -20,6 +20,8 @@ use crate::engine::centralized::service::{
     user_decrypt_impl,
 };
 #[cfg(feature = "insecure")]
+use crate::engine::utils::MetricedError;
+#[cfg(feature = "insecure")]
 use observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST;
 use observability::{
     metrics::METRICS,
@@ -55,7 +57,9 @@ impl<
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
-        preprocessing_impl(self, request).await
+        preprocessing_impl(self, request)
+            .await
+            .map_err(|e| e.into())
     }
 
     // In the centralized case it makes no diffrence whether it's partial or not
@@ -66,11 +70,9 @@ impl<
         &self,
         request: Request<kms_grpc::kms::v1::PartialKeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
-        //todo
-        self.key_gen_preproc(Request::new(request.into_inner().base_request.ok_or_else(
-            || tonic::Status::new(tonic::Code::Aborted, "Missing preproc base_request"),
-        )?))
-        .await
+        let base_req = request.into_inner().base_request.ok_or_else(
+            || MetricedError::new(OP_KEYGEN_PREPROC_REQUEST, None, anyhow::anyhow!("Missing preproc base_request in partial preprocessing for a centralized server"), tonic::Code::InvalidArgument))?;
+        self.key_gen_preproc(Request::new(base_req)).await
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -79,7 +81,9 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_RESULT);
-        get_preprocessing_res_impl(self, request).await
+        get_preprocessing_res_impl(self, request)
+            .await
+            .map_err(|e| e.into())
     }
 
     #[cfg(feature = "insecure")]

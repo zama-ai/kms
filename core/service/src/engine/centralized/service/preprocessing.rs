@@ -1,23 +1,23 @@
 use crate::{
     engine::{
-        base::{compute_external_signature_preprocessing, retrieve_parameters},
+        base::compute_external_signature_preprocessing,
         centralized::central_kms::{CentralizedKms, CentralizedPreprocBucket},
         traits::{BackupOperator, ContextManager},
         utils::MetricedError,
-        validation::{
-            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
-        },
+        validation::{proto_request_id, validate_preproc_request, RequestIdParsingErr},
     },
-    util::meta_store::handle_res_mapping,
+    util::meta_store::{add_req_to_meta_store, retrieve_from_meta_store, update_req_in_meta_store},
     vault::storage::{Storage, StorageExt},
 };
-use kms_grpc::{
-    kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
-    rpc_types::optional_protobuf_to_alloy_domain,
-    utils::tonic_result::ok_or_tonic_abort,
+use kms_grpc::kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult};
+use observability::{
+    metrics::METRICS,
+    metrics_names::{
+        CENTRAL_TAG, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT, TAG_CONTEXT_ID,
+        TAG_EPOCH_ID, TAG_PARTY_ID,
+    },
 };
-use observability::metrics_names::OP_KEYGEN_PREPROC_REQUEST;
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response};
 
 /// Handles preprocessing requests for centralized KMS key generation.
 ///
@@ -49,68 +49,67 @@ pub async fn preprocessing_impl<
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<KeyGenPreprocRequest>,
-) -> Result<Response<Empty>, Status> {
-    let inner = request.into_inner();
-    let request_id =
-        parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::PreprocRequest)?;
-    let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref()).map_err(|e| {
+) -> Result<Response<Empty>, MetricedError> {
+    let _permit = service.rate_limiter.start_preproc().await.map_err(|e| {
         MetricedError::new(
             OP_KEYGEN_PREPROC_REQUEST,
-            Some(request_id),
-            anyhow::anyhow!("EIP712 domain validation for key preprocessing: {e}"),
-            tonic::Code::InvalidArgument,
+            None,
+            e,
+            tonic::Code::ResourceExhausted,
         )
     })?;
-    // context_id is not used in the centralized KMS, but we validate it if present
-    let _context_id = match &inner.context_id {
-        Some(ctx) => Some(parse_proto_request_id(ctx, RequestIdParsingErr::Context)?),
-        None => None,
-    };
+    let mut timer = METRICS
+        .time_operation(OP_KEYGEN_PREPROC_REQUEST)
+        .tag(TAG_PARTY_ID, CENTRAL_TAG)
+        .start();
+    let inner = request.into_inner();
 
-    //Ensure there's no entry in preproc buckets for that request_id
-    if service
-        .preprocessing_meta_store
-        .read()
-        .await
-        .exists(&request_id)
-    {
-        return Err(tonic::Status::already_exists(format!(
-            "Preprocessing for request ID {request_id} already exists"
-        )));
-    }
+    let (req_id, context_id, epoch_id, dkg_param, _key_set_config, eip712_domain) =
+        validate_preproc_request(inner).map_err(|e| {
+            MetricedError::new(
+                OP_KEYGEN_PREPROC_REQUEST,
+                None,
+                e, // Validation error
+                tonic::Code::InvalidArgument,
+            )
+        })?;
+    let metric_tags = vec![
+        (TAG_CONTEXT_ID, context_id.as_str()),
+        (TAG_EPOCH_ID, epoch_id.as_str()),
+    ];
+    timer.tags(metric_tags.clone());
 
-    let _permit = service.rate_limiter.start_preproc().await?;
-
-    // If the entry did not exist before, start the preproc
-    // NOTE: We currently consider an existing entry is NOT an error
-    let mut preprocessing_meta_store = service.preprocessing_meta_store.write().await;
-    ok_or_tonic_abort(
-        preprocessing_meta_store.insert(&request_id),
-        "Could not insert preprocessing ID into meta store".to_string(),
+    add_req_to_meta_store(
+        &mut service.preprocessing_meta_store.write().await,
+        &req_id,
+        OP_KEYGEN_PREPROC_REQUEST,
     )?;
 
-    let params = retrieve_parameters(Some(inner.params))?;
     let sk = service.base_kms.sig_key().map_err(|e| {
-        tonic::Status::new(
+        MetricedError::new(
+            OP_KEYGEN_PREPROC_REQUEST,
+            Some(req_id),
+            e,
             tonic::Code::FailedPrecondition,
-            format!("Signing key is not present. This should only happen when server is booted in recovery mode: {}", e),
         )
     })?;
-    let external_signature = compute_external_signature_preprocessing(&sk, &request_id, &domain)
+    let external_signature = compute_external_signature_preprocessing(&sk, &req_id, &eip712_domain)
         .map_err(|e| e.to_string());
 
     let preproc_bucket = external_signature.map(|external_signature| CentralizedPreprocBucket {
         external_signature,
-        dkg_param: params,
+        dkg_param,
     });
 
-    ok_or_tonic_abort(
-        preprocessing_meta_store.update(&request_id, preproc_bucket),
-        "Could not update preprocessing ID in meta store".to_string(),
-    )?;
+    let _ = update_req_in_meta_store(
+        &mut service.preprocessing_meta_store.write().await,
+        &req_id,
+        preproc_bucket,
+        OP_KEYGEN_PREPROC_REQUEST,
+    );
     tracing::warn!(
         "Received a preprocessing request for the central server {} - No action taken",
-        request_id
+        req_id
     );
     Ok(Response::new(Empty {}))
 }
@@ -142,18 +141,27 @@ pub async fn get_preprocessing_res_impl<
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<v1::RequestId>,
-) -> Result<Response<KeyGenPreprocResult>, Status> {
+) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
     tracing::warn!(
         "Get key generation preprocessing result called on centralized KMS - no action taken"
     );
-    let request_id =
-        parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::PreprocResponse)?;
+    let request_id = proto_request_id(&request.into_inner(), RequestIdParsingErr::PreprocResponse)
+        .map_err(|e| {
+            MetricedError::new(
+                OP_KEYGEN_PREPROC_RESULT,
+                None,
+                e,
+                tonic::Code::InvalidArgument,
+            )
+        })?;
 
-    let status = {
-        let guarded_meta_store = service.preprocessing_meta_store.read().await;
-        guarded_meta_store.retrieve(&request_id)
-    };
-    let preproc_data = handle_res_mapping(status, &request_id, "Preprocessing").await?;
+    let preproc_data = retrieve_from_meta_store(
+        service.preprocessing_meta_store.read().await,
+        &request_id,
+        OP_KEYGEN_PREPROC_RESULT,
+    )
+    .await?;
+
     Ok(Response::new(KeyGenPreprocResult {
         preprocessing_id: Some(request_id.into()),
         external_signature: preproc_data.external_signature,

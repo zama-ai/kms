@@ -74,7 +74,7 @@ pub async fn crs_gen_impl<
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused
     // all validation must be done before inserting the request ID
-    add_req_to_meta_store(&mut service.crs_meta_map.write().await, &req_id, op_tag).await?;
+    add_req_to_meta_store(&mut service.crs_meta_map.write().await, &req_id, op_tag)?;
 
     let meta_store = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();

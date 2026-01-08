@@ -348,8 +348,7 @@ impl<
             &mut self.pub_dec_meta_store.write().await,
             &req_id,
             OP_PUBLIC_DECRYPT_REQUEST,
-        )
-        .await?;
+        )?;
 
         let ext_handles_bytes = ciphertexts
             .iter()

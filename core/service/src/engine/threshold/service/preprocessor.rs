@@ -139,7 +139,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                                 MetricedError::handle_unreturnable_error(
                                     OP_KEYGEN_PREPROC_REQUEST,
                                     Some(request_id),
-                                    format!("Preprocessing background task failed").to_string(),
+                                    "Preprocessing background task failed".to_string(),
                                 );
                             }
                         }
@@ -349,8 +349,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             &mut self.preproc_buckets.write().await,
             &request_id,
             OP_KEYGEN_PREPROC_REQUEST,
-        )
-        .await?;
+        )?;
 
         tracing::info!("Starting preproc generation for Request ID {}", request_id);
 

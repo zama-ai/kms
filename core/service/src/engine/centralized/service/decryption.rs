@@ -106,8 +106,7 @@ pub async fn user_decrypt_impl<
         &mut service.user_dec_meta_store.write().await,
         &request_id,
         OP_USER_DECRYPT_REQUEST,
-    )
-    .await?;
+    )?;
     let sig_key = service.base_kms.sig_key().map_err(|e| {
         MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
@@ -325,8 +324,7 @@ pub async fn public_decrypt_impl<
         &mut service.pub_dec_meta_store.write().await,
         &request_id,
         OP_PUBLIC_DECRYPT_REQUEST,
-    )
-    .await?;
+    )?;
 
     let meta_store = Arc::clone(&service.pub_dec_meta_store);
     let crypto_storage = service.crypto_storage.clone();

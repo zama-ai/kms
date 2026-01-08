@@ -424,8 +424,7 @@ impl<
             &mut self.dkg_pubinfo_meta_store.write().await,
             &req_id,
             op_tag,
-        )
-        .await?;
+        )?;
 
         tracing::info!(
             "Keygen starting with request_id={:?}, keyset_config={:?}, keyset_added_info={:?}, insecure={}",
