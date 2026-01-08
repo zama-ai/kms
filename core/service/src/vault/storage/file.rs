@@ -1,4 +1,4 @@
-use super::{Storage, StorageForBytes, StorageReader, StorageType};
+use super::{Storage, StorageReader, StorageType};
 use crate::consts::KEY_PATH_PREFIX;
 use crate::util::file_handling::{
     safe_read_element_versioned, safe_write_element_versioned, write_bytes,
@@ -174,6 +174,17 @@ impl StorageReader for FileStorage {
         Ok(res)
     }
 
+    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
+        let path = self.item_path(data_id, data_type);
+        tokio::fs::read(&path).await.map_err(|e| {
+            anyhow_error_and_log(format!(
+                "Could not read from path {}: {}",
+                path.display(),
+                e
+            ))
+        })
+    }
+
     /// Return all elements stored of a specific type as a hashmap of the `data_ptr` as key and the
     /// `url` as value.
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
@@ -238,42 +249,6 @@ impl StorageReaderExt for FileStorage {
     }
 }
 
-impl StorageForBytes for FileStorage {
-    /// Store bytes with a specific [url], giving a warning if the data already exists and exits _without_ writing
-    async fn store_bytes(
-        &mut self,
-        bytes: &[u8],
-        data_id: &RequestId,
-        data_type: &str,
-    ) -> anyhow::Result<()> {
-        let path = self.item_path(data_id, data_type);
-        self.setup_dirs(&path).await?;
-        if self.data_exists(data_id, data_type).await? {
-            tracing::warn!(
-                "The path {} already exists. Keeping the data without overwriting",
-                path.display()
-            );
-            return Ok(());
-        }
-        write_bytes(path.as_path(), bytes).await.map_err(|e| {
-            tracing::warn!("Could not write to path {}: {}", path.display(), e);
-            e
-        })?;
-        Ok(())
-    }
-
-    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
-        let path = self.item_path(data_id, data_type);
-        tokio::fs::read(&path).await.map_err(|e| {
-            anyhow_error_and_log(format!(
-                "Could not read from path {}: {}",
-                path.display(),
-                e
-            ))
-        })
-    }
-}
-
 impl Storage for FileStorage {
     /// Store data with a specific [url], giving a warning if the data already exists and exits _without_ writing
     async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
@@ -297,6 +272,29 @@ impl Storage for FileStorage {
                 tracing::warn!("Could not write to path {}: {}", path.display(), e);
                 e
             })?;
+        Ok(())
+    }
+
+    /// Store bytes with a specific [url], giving a warning if the data already exists and exits _without_ writing
+    async fn store_bytes(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        let path = self.item_path(data_id, data_type);
+        self.setup_dirs(&path).await?;
+        if self.data_exists(data_id, data_type).await? {
+            tracing::warn!(
+                "The path {} already exists. Keeping the data without overwriting",
+                path.display()
+            );
+            return Ok(());
+        }
+        write_bytes(path.as_path(), bytes).await.map_err(|e| {
+            tracing::warn!("Could not write to path {}: {}", path.display(), e);
+            e
+        })?;
         Ok(())
     }
 

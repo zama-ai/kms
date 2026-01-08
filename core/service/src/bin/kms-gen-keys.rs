@@ -24,10 +24,7 @@ use kms_lib::{
     vault::{
         aws::build_aws_sdk_config,
         keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
-        storage::{
-            delete_at_request_id, make_storage, s3::build_s3_client, Storage, StorageForBytes,
-            StorageType,
-        },
+        storage::{delete_at_request_id, make_storage, s3::build_s3_client, Storage, StorageType},
         Vault,
     },
 };
@@ -439,7 +436,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn handle_central_cmd<PubS: StorageForBytes, PrivS: StorageForBytes + StorageExt>(
+async fn handle_central_cmd<PubS: Storage, PrivS: Storage + StorageExt>(
     param_test: bool,
     args: &mut CentralCmdArgs<'_, PubS, PrivS>,
     cmd: ConstructCommand,
@@ -529,7 +526,7 @@ async fn handle_central_cmd<PubS: StorageForBytes, PrivS: StorageForBytes + Stor
     }
 }
 
-async fn handle_threshold_cmd<PubS: StorageForBytes, PrivS: StorageForBytes + StorageExt>(
+async fn handle_threshold_cmd<PubS: Storage, PrivS: Storage + StorageExt>(
     param_test: bool,
     args: &mut ThresholdCmdArgs<'_, PubS, PrivS>,
     cmd: ConstructCommand,

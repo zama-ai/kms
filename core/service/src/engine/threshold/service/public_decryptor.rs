@@ -50,7 +50,7 @@ use crate::{
     cryptography::internal_crypto_types::LegacySerialization,
     engine::{
         base::{
-            compute_external_pt_signature, deserialize_to_low_level, BaseKmsStruct, KeyGenMetadata,
+            compute_external_pt_signature, deserialize_to_low_level, BaseKmsStruct,
             PubDecCallValues,
         },
         threshold::{service::session::ImmutableSessionMaker, traits::PublicDecryptor},
@@ -135,7 +135,6 @@ pub struct RealPublicDecryptor<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
-    pub key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     pub(crate) session_maker: ImmutableSessionMaker,
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
@@ -333,22 +332,6 @@ impl<
         ];
         timer.tags(metric_tags.clone());
 
-        match self
-            .crypto_storage
-            .threshold_fhe_keys_exists(&key_id.into(), &epoch_id)
-            .await
-        {
-            Ok(true) => {}
-            e_or_false => {
-                return Err(MetricedError::new(
-                    OP_PUBLIC_DECRYPT_REQUEST,
-                    Some(req_id),
-                    anyhow::anyhow!("Key ID {} not found: exists={:?}", key_id, e_or_false),
-                    tonic::Code::NotFound,
-                ));
-            }
-        };
-
         tracing::debug!(
             request_id = ?req_id,
             key_id = ?key_id,
@@ -406,6 +389,19 @@ impl<
             // we do not need to hold the handle,
             // the result of the computation is tracked by the pub_dec_meta_store
             let session_maker = self.session_maker.clone();
+
+            let fhe_keys_rlock = crypto_storage
+                .read_guarded_threshold_fhe_keys(&key_id.into(), &epoch_id)
+                .await
+                .map_err(|e| {
+                    MetricedError::new(
+                        OP_PUBLIC_DECRYPT_INNER,
+                        Some(req_id),
+                        anyhow::anyhow!("fhe key not found due to {e:?}"),
+                        tonic::Code::NotFound,
+                    )
+                })?;
+
             let decrypt_future = || async move {
                 let fhe_type_string = typed_ciphertext.fhe_type_string();
                 let fhe_type = if let Ok(f) = typed_ciphertext.fhe_type() {
@@ -423,9 +419,6 @@ impl<
 
                 let ct_format = typed_ciphertext.ciphertext_format();
                 let ciphertext = typed_ciphertext.ciphertext;
-                let fhe_keys_rlock = crypto_storage
-                    .read_guarded_threshold_fhe_keys(&key_id.into(), &epoch_id)
-                    .await?;
 
                 let res_plaintext = match fhe_type {
                     FheTypes::Uint2048 => RealPublicDecryptor::<PubS, PrivS, Dec>::inner_decrypt::<
@@ -812,7 +805,6 @@ mod tests {
             pub_storage: PubS,
             priv_storage: PrivS,
             session_maker: ImmutableSessionMaker,
-            key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         ) -> Self {
             let crypto_storage = ThresholdCryptoMaterialStorage::new(
                 pub_storage,
@@ -829,7 +821,6 @@ mod tests {
                 base_kms,
                 crypto_storage,
                 pub_dec_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-                key_meta_store,
                 session_maker,
                 tracker,
                 rate_limiter,
@@ -851,18 +842,10 @@ mod tests {
         async fn init_test_dummy_decryptor(
             base_kms: BaseKmsStruct,
             session_maker: ImmutableSessionMaker,
-            key_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(
-                base_kms,
-                pub_storage,
-                priv_storage,
-                session_maker,
-                key_meta_store,
-            )
-            .await
+            Self::init_test(base_kms, pub_storage, priv_storage, session_maker).await
         }
     }
 
@@ -923,7 +906,6 @@ mod tests {
         let public_decryptor = RealPublicDecryptor::init_test_dummy_decryptor(
             base_kms,
             session_maker.make_immutable(),
-            Arc::clone(&key_meta_store),
         )
         .await;
 

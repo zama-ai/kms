@@ -49,6 +49,11 @@ pub trait StorageReader {
         data_type: &str,
     ) -> anyhow::Result<T>;
 
+    /// Load raw bytes from storage without deserializing.
+    /// This is useful when you need to verify a digest of the original serialized bytes
+    /// before deserializing, to avoid issues with version upgrades changing the serialized form.
+    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>>;
+
     /// Return all URLs stored of a specific data type
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>>;
 
@@ -153,6 +158,18 @@ pub trait Storage: StorageReader {
         data_type: &str,
     ) -> anyhow::Result<()>;
 
+    /// Store raw bytes directly without versioning or serialization.
+    /// This is useful for storing ASCII text (e.g., Ethereum addresses, PEM certificates)
+    /// or raw bytes like cryptographic commitments.
+    /// If the object with `data_id` and `data_type` already exists, it will not be overwritten and
+    /// instead a warning is logged, but the call will succeed.
+    async fn store_bytes(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<()>;
+
     /// Delete the given `data_id` with the given `data_type`.
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()>;
 }
@@ -181,26 +198,6 @@ pub trait StorageExt: StorageReaderExt + Storage {
         epoch_id: &EpochId,
         data_type: &str,
     ) -> anyhow::Result<()>;
-}
-
-/// Sometimes we want to store bytes directly, without the need for versioning
-/// and serialization. This trait was created initially to work with ASCII text,
-/// such as Ethereum addresses and PEM-formatted X.509 certificates but we also
-/// have to work with raw bytes, for example, cryptographic commitments.
-#[enum_dispatch]
-#[trait_variant::make(Send)]
-pub trait StorageForBytes: Storage {
-    /// Store the given `bytes` with the given `data_id` and `data_type`.
-    /// If the object with `data_id` and `data_type` already exists, it will not be overwritten and
-    /// instead a warning is logged, but the call will succeed.
-    async fn store_bytes(
-        &mut self,
-        bytes: &[u8],
-        data_id: &RequestId,
-        data_type: &str,
-    ) -> anyhow::Result<()>;
-    /// Load some bytes from the given `data_id` and `data_type`.
-    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>>;
 }
 
 /// Store some data at a location defined by `request_id` and `data_type`.
@@ -258,7 +255,7 @@ where
 
 // Helper method for storing text under a request ID.
 // An error will be returned if the data already exists.
-pub async fn store_text_at_request_id<S: StorageForBytes>(
+pub async fn store_text_at_request_id<S: Storage>(
     storage: &mut S,
     request_id: &RequestId,
     data: &str,
@@ -276,7 +273,7 @@ pub async fn store_text_at_request_id<S: StorageForBytes>(
 
 // Helper method for reading text under a request ID.
 // An error will be returned if the data already exists.
-pub async fn read_text_at_request_id<S: StorageForBytes>(
+pub async fn read_text_at_request_id<S: StorageReader>(
     storage: &S,
     request_id: &RequestId,
     data_type: &str,
@@ -613,7 +610,7 @@ impl fmt::Display for StorageType {
 /// required to enable multiple dispatch on non-dyn compatible Storage* traits.
 #[cfg(feature = "non-wasm")]
 #[allow(clippy::large_enum_variant)]
-#[enum_dispatch(StorageReader, Storage, StorageReaderExt, StorageExt, StorageForBytes)]
+#[enum_dispatch(StorageReader, Storage, StorageReaderExt, StorageExt)]
 #[derive(Debug, Clone)]
 pub enum StorageProxy {
     File(file::FileStorage),
@@ -881,9 +878,7 @@ pub mod tests {
         assert!(pks.is_empty());
     }
 
-    pub(crate) async fn test_store_bytes_does_not_overwrite_existing_bytes<
-        S: Storage + StorageForBytes,
-    >(
+    pub(crate) async fn test_store_bytes_does_not_overwrite_existing_bytes<S: Storage>(
         storage: &mut S,
     ) {
         let data_id = derive_request_id("BYTES_OVERWRITE").unwrap();
