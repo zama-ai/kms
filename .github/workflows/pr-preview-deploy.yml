@@ -99,10 +99,7 @@ jobs:
             echo "NUM_MAJORITY=1" >> "$GITHUB_ENV"
             echo "NUM_RECONSTRUCT=1" >> "$GITHUB_ENV"
           fi
-          echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}" >> "$GITHUB_ENV"
-          echo "NB_KMS_PARTIES=${NB_KMS_PARTIES}" >> "$GITHUB_ENV"
-          echo "Deployment type: $DEPLOYMENT_TYPE"
-          echo "Number of KMS parties: $NB_KMS_PARTIES"
+          echo "Deployment type: $DEPLOYMENT_TYPE with $NB_KMS_PARTIES KMS parties"
 
       # ======================================================================
       # DOCKER BUILD STATUS HANDLING
