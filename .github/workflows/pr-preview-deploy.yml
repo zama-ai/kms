@@ -240,7 +240,7 @@ jobs:
               --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}"
 
           elif [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
-            echo "Deploying infrastructure with enclave support with PCR0: ${PCR0"
+            echo "Deploying infrastructure with enclave support with PCR0: ${PCR0}"
             helm upgrade --install tkms-infra \
               oci://ghcr.io/zama-zws/crossplane/tkms-infra \
               --namespace "${NAMESPACE}" \
