@@ -317,19 +317,12 @@ jobs:
              IS_ENCLAVE="true"
              KMS_IMAGE_NAME="${KMS_CORE_ENCLAVE_IMAGE_NAME}"
              GEN_KEYS="true"
+             TOLERATION_KEY="app"
+             TOLERATION_VALUE="${NAMESPACE}"
           else
              IS_ENCLAVE="false"
              KMS_IMAGE_NAME="${KMS_CORE_IMAGE_NAME}"
              GEN_KEYS="false"
-          fi
-
-          if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-             # Threshold specific settings are handled per-party in the loop later,
-             # but we can set global defaults here.
-             TOLERATION_KEY="app"
-             TOLERATION_VALUE="${NAMESPACE}"
-          else
-             # Centralized specific settings
              TOLERATION_KEY="karpenter.sh/nodepool"
              TOLERATION_VALUE="kms-bench-spot-64"
           fi
