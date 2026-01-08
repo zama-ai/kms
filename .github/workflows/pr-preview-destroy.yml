@@ -93,9 +93,11 @@ jobs:
 
       - name: Destroy namespaces
         if: github.event_name == 'schedule'
+        env:
+          NAMESPACES: ${{ steps.find-namespaces-to-destroy.outputs.namespaces }}
         run: |
-          echo "Destroying namespaces: ${{ steps.find-namespaces-to-destroy.outputs.namespaces }}"
-          for namespace in ${{ steps.find-namespaces-to-destroy.outputs.namespaces }}; do
+          echo "Destroying namespaces: $NAMESPACES"
+          for namespace in $(echo "$NAMESPACES" | tr ',' '\n'); do
             echo "Destroying namespace: $namespace"
             helm list -n "${namespace}" --short | xargs -L1 helm uninstall -n "${namespace}"
             kubectl delete namespace "${namespace}" --grace-period=1 --timeout=5s --wait=false

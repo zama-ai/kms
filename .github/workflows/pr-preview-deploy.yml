@@ -54,7 +54,7 @@ jobs:
       contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-thresholdWithEnclave') ||
       contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralizedWithEnclave')
     permissions:
-      pull-requests: write
+      pull-requests: write # Required to update pull requests information
     needs:
       - docker-build
     runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=false
@@ -238,13 +238,13 @@ jobs:
               --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}"
 
           elif [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
-            echo "Deploying infrastructure with enclave support with PCR0: ${{ env.PCR0 }}"
+            echo "Deploying infrastructure with enclave support with PCR0: ${PCR0}"
             helm upgrade --install tkms-infra \
               oci://ghcr.io/zama-zws/crossplane/tkms-infra \
               --namespace "${NAMESPACE}" \
               --version "${TKMS_INFRA_CHART_VERSION}" \
               --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/tkms-infra/values-kms-ci.yaml \
-              --set kmsParties.awsKms.recipientAttestationImageSHA384="${{ env.PCR0 }}" \
+              --set kmsParties.awsKms.recipientAttestationImageSHA384="${PCR0}" \
               --set kmsParties.replicas="${NB_KMS_PARTIES}" \
               --set fullnameOverride="kms-party-${NAMESPACE}" \
               --set publicBucketVault.labels.environment="${NAMESPACE}" \
@@ -303,9 +303,6 @@ jobs:
       # KMS CORE DEPLOYMENT
       # ======================================================================
       - name: Generate Helm Values Override
-        env:
-          DEPLOYMENT_TYPE: ${{ env.DEPLOYMENT_TYPE }}
-          NB_KMS_PARTIES: ${{ env.NB_KMS_PARTIES }}
         run: |
           ###################################################################
           # Generate a single values file for all Helm upgrades
