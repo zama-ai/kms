@@ -17,7 +17,8 @@ use kms_lib::{
     },
     engine::{
         base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
-        migration::migrate_legacy_fhe_keys, run_server, threshold::service::new_real_threshold_kms,
+        migration::migrate_fhe_keys_v0_12_to_v0_13, run_server,
+        threshold::service::new_real_threshold_kms,
     },
     grpc::MetaStoreStatusServiceImpl,
     vault::{
@@ -519,7 +520,7 @@ async fn main_exec() -> anyhow::Result<()> {
         Some(_) => KMSType::Threshold,
         None => KMSType::Centralized,
     };
-    migrate_legacy_fhe_keys(&mut private_storage, kms_type)
+    migrate_fhe_keys_v0_12_to_v0_13(&mut private_storage, kms_type)
         .await
         .inspect_err(|e| tracing::warn!("Could not migrate legacy FHE keys: {e}"))?;
 

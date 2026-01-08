@@ -4,9 +4,12 @@ use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{KMSType, PrivDataType};
 
 /// Migrate FHE key material from legacy storage format to epoch-aware format.
+/// The migration should be applied to private storage created in v0.12.x,
+/// after the migration the private storage format should follow v0.13.x.
+/// Applying the migration on private storage format in v0.13.x will have no effect.
+/// This function should be removed in 0.14.x.
 ///
-/// Legacy format stores keys at: `<prefix>/<data_type>/<key_id>`
-///
+/// In more detail, legacy format (v0.12.x) stores keys at: `<prefix>/<data_type>/<key_id>`.
 /// This function checks for FhePrivateKey (centralized) or FheKeyInfo (threshold) data
 /// stored in the legacy format and migrates them to the new epoch-aware format using
 /// `DEFAULT_EPOCH_ID` as the default epoch ID.
@@ -18,7 +21,10 @@ use kms_grpc::rpc_types::{KMSType, PrivDataType};
 /// # Returns
 /// * `Ok(migrated_count)` - Number of keys successfully migrated
 /// * `Err(...)` - If any migration operation fails
-pub async fn migrate_legacy_fhe_keys<S>(storage: &mut S, kms_type: KMSType) -> anyhow::Result<usize>
+pub async fn migrate_fhe_keys_v0_12_to_v0_13<S>(
+    storage: &mut S,
+    kms_type: KMSType,
+) -> anyhow::Result<usize>
 where
     S: StorageExt + Sync + Send,
 {
@@ -134,7 +140,7 @@ mod tests {
         assert!(storage.data_exists(&key_id_2, &data_type).await.unwrap());
 
         // Run migration
-        let migrated_count = migrate_legacy_fhe_keys(storage, KMSType::Threshold)
+        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Threshold)
             .await
             .unwrap();
 
@@ -186,7 +192,7 @@ mod tests {
             .unwrap();
 
         // Run migration
-        let migrated_count = migrate_legacy_fhe_keys(storage, KMSType::Centralized)
+        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Centralized)
             .await
             .unwrap();
 
@@ -237,7 +243,7 @@ mod tests {
             .unwrap();
 
         // Run migration
-        let migrated_count = migrate_legacy_fhe_keys(storage, KMSType::Threshold)
+        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Threshold)
             .await
             .unwrap();
 
@@ -260,7 +266,7 @@ mod tests {
         storage: &mut S,
     ) {
         // No legacy data stored
-        let migrated_count = migrate_legacy_fhe_keys(storage, KMSType::Threshold)
+        let migrated_count = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Threshold)
             .await
             .unwrap();
 
@@ -285,13 +291,13 @@ mod tests {
             .unwrap();
 
         // First migration
-        let migrated_count_1 = migrate_legacy_fhe_keys(storage, KMSType::Threshold)
+        let migrated_count_1 = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Threshold)
             .await
             .unwrap();
         assert_eq!(migrated_count_1, 1);
 
         // Second migration should do nothing (data already migrated, legacy deleted)
-        let migrated_count_2 = migrate_legacy_fhe_keys(storage, KMSType::Threshold)
+        let migrated_count_2 = migrate_fhe_keys_v0_12_to_v0_13(storage, KMSType::Threshold)
             .await
             .unwrap();
         assert_eq!(migrated_count_2, 0);

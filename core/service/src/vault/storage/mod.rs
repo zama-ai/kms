@@ -54,7 +54,10 @@ pub trait StorageReader {
     /// before deserializing, to avoid issues with version upgrades changing the serialized form.
     async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>>;
 
-    /// Return all URLs stored of a specific data type
+    /// Return all URLs stored of a specific data type.
+    ///
+    /// This function does not consider data types that are stored under different epochs,
+    /// use [StorageReaderExt::all_data_ids_at_epoch] instead.
     async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>>;
 
     /// Output some information on the storage instance.
