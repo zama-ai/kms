@@ -90,14 +90,18 @@ jobs:
           echo "PR labels: $PR_LABELS"
           DEPLOYMENT_TYPE=$(echo "$PR_LABELS" | jq -r '.[] | select(startswith("pr-preview-"))' | head -n 1 | sed 's/.*-//')
           if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
-            echo "NB_KMS_PARTIES=4" >> "$GITHUB_ENV"
-            echo "THRESHOLD_VALUE=1" >> "$GITHUB_ENV"
-            echo "NUM_MAJORITY=2" >> "$GITHUB_ENV"
-            echo "NUM_RECONSTRUCT=3" >> "$GITHUB_ENV"
+            { echo "NB_KMS_PARTIES=4"; \
+              echo "THRESHOLD_VALUE=1"; \
+              echo "NUM_MAJORITY=2"; \
+              echo "NUM_RECONSTRUCT=3"; \
+              echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
+            } >> "$GITHUB_ENV"
           elif [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
-            echo "NB_KMS_PARTIES=1" >> "$GITHUB_ENV"
-            echo "NUM_MAJORITY=1" >> "$GITHUB_ENV"
-            echo "NUM_RECONSTRUCT=1" >> "$GITHUB_ENV"
+            { echo "NB_KMS_PARTIES=1"; \
+              echo "NUM_MAJORITY=1"; \
+              echo "NUM_RECONSTRUCT=1"; \
+              echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
+            } >> "$GITHUB_ENV"
           fi
           echo "Deployment type: $DEPLOYMENT_TYPE with $NB_KMS_PARTIES KMS parties"
 
