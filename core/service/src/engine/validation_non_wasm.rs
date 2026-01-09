@@ -130,6 +130,7 @@ impl std::fmt::Display for RequestIdParsingErr {
     }
 }
 
+// Isn't that a duplicate of [`parse_optional_proto_request_id`] below?
 pub(crate) fn optional_proto_request_id(
     request_id: &Option<kms_grpc::kms::v1::RequestId>,
     id_type: RequestIdParsingErr,
@@ -140,6 +141,7 @@ pub(crate) fn optional_proto_request_id(
     proto_request_id(&req_id, id_type)
 }
 
+// Isn't that a duplicate of [`parse_proto_request_id`] below?
 pub(crate) fn proto_request_id(
     request_id: &kms_grpc::kms::v1::RequestId,
     id_type: RequestIdParsingErr,
@@ -151,38 +153,65 @@ pub(crate) fn proto_request_id(
     })
 }
 
+// Kinda wondering whether those fn should return MetricedError instead of BoxedStatus ?
+
 /// Parse a protobuf request ID and returns an appropriate tonic error if it is invalid.
 pub(crate) fn parse_optional_proto_request_id(
     request_id: &Option<kms_grpc::kms::v1::RequestId>,
     id_type: RequestIdParsingErr,
 ) -> Result<RequestId, BoxedStatus> {
-    let req_id = request_id
-        .clone()
-        .ok_or(BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("{id_type}: {request_id:?}"),
-        )))?;
+    parse_optional_grpc_request_id(request_id, id_type)
+}
 
-    parse_proto_request_id(&req_id, id_type)
+pub(crate) fn parse_optional_proto_context_id(
+    request_id: &Option<kms_grpc::kms::v1::RequestId>,
+) -> Result<ContextId, BoxedStatus> {
+    parse_optional_grpc_request_id(request_id, RequestIdParsingErr::Context)
+}
+
+pub(crate) fn parse_optional_proto_epoch_id(
+    request_id: &Option<kms_grpc::kms::v1::RequestId>,
+) -> Result<EpochId, BoxedStatus> {
+    parse_optional_grpc_request_id(request_id, RequestIdParsingErr::Epoch)
 }
 
 pub(crate) fn parse_proto_request_id(
     request_id: &kms_grpc::kms::v1::RequestId,
     id_type: RequestIdParsingErr,
 ) -> Result<RequestId, BoxedStatus> {
-    request_id.try_into().map_err(|_| {
-        BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("{id_type}: {request_id:?}"),
-        ))
-    })
+    parse_grpc_request_id(request_id, id_type)
 }
 
-// TODO we may need to generalize this into other types of IDs
 pub(crate) fn parse_proto_context_id(
     request_id: &kms_grpc::kms::v1::RequestId,
-    id_type: RequestIdParsingErr,
 ) -> Result<ContextId, BoxedStatus> {
+    parse_grpc_request_id(request_id, RequestIdParsingErr::Context)
+}
+
+pub(crate) fn parse_proto_epoch_id(
+    request_id: &kms_grpc::kms::v1::RequestId,
+) -> Result<EpochId, BoxedStatus> {
+    parse_grpc_request_id(request_id, RequestIdParsingErr::Epoch)
+}
+
+pub(crate) fn parse_optional_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::RequestId>>(
+    request_id: &'a Option<kms_grpc::kms::v1::RequestId>,
+    id_type: RequestIdParsingErr,
+) -> anyhow::Result<O, BoxedStatus> {
+    request_id
+        .as_ref()
+        .map(|id| parse_grpc_request_id(id, id_type.clone()))
+        .transpose()?
+        .ok_or(BoxedStatus::from(tonic::Status::new(
+            tonic::Code::InvalidArgument,
+            format!("{id_type}: {request_id:?}"),
+        )))
+}
+
+pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::RequestId>>(
+    request_id: &'a kms_grpc::kms::v1::RequestId,
+    id_type: RequestIdParsingErr,
+) -> Result<O, BoxedStatus> {
     request_id.try_into().map_err(|_| {
         BoxedStatus::from(tonic::Status::new(
             tonic::Code::InvalidArgument,
@@ -576,7 +605,7 @@ pub(crate) fn validate_crs_gen_request(
 
     // context_id is not used at the moment, but we validate it if present
     let context_id = match &req.context_id {
-        Some(ctx) => parse_proto_context_id(ctx, RequestIdParsingErr::Context)?,
+        Some(ctx) => parse_proto_context_id(ctx)?,
         None => *DEFAULT_MPC_CONTEXT,
     };
 
