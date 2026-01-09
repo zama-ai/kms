@@ -17,6 +17,7 @@ use kms_lib::{
     },
     engine::{
         base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
+        context_manager::create_default_centralized_context_in_storage,
         migration::migrate_fhe_keys_v0_12_to_v0_13, run_server,
         threshold::service::new_real_threshold_kms,
     },
@@ -491,8 +492,9 @@ async fn main_exec() -> anyhow::Result<()> {
         .map(Arc::new);
 
     // public vault
+    let public_storage_conf = core_config.public_vault.as_ref().map(|v| v.storage.clone());
     let public_storage = make_storage(
-        core_config.public_vault.as_ref().map(|v| v.storage.clone()),
+        public_storage_conf,
         StorageType::PUB,
         public_storage_cache,
         s3_client.clone(),
@@ -543,7 +545,7 @@ async fn main_exec() -> anyhow::Result<()> {
     .await
     .transpose()
     .inspect_err(|e| tracing::warn!("Could not initialize private keychain: {e}"))?;
-    let private_vault = Vault {
+    let mut private_vault = Vault {
         storage: private_storage,
         keychain: private_keychain,
     };
@@ -713,12 +715,15 @@ async fn main_exec() -> anyhow::Result<()> {
                 "Starting centralized KMS server v{}...",
                 env!("CARGO_PKG_VERSION"),
             );
+            // create the default context if it does not exist
+            let sk = (*base_kms.sig_key()?).clone();
+            create_default_centralized_context_in_storage(&mut private_vault, &sk).await?;
             let (kms, health_service) = RealCentralizedKms::new(
                 public_vault,
                 private_vault,
                 backup_vault,
                 security_module,
-                (*base_kms.sig_key()?).clone(),
+                sk,
                 core_config.rate_limiter_conf,
             )
             .await?;

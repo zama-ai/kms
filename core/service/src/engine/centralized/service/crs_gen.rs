@@ -65,6 +65,19 @@ pub async fn crs_gen_impl<
                 tonic::Code::InvalidArgument,
             )
         })?;
+    if !service
+        .context_manager
+        .mpc_context_exists_in_cache(&context_id)
+        .await
+    {
+        return Err(MetricedError::new(
+            op_tag,
+            Some(req_id),
+            anyhow::anyhow!("context at ID {context_id} not found"),
+            tonic::Code::NotFound,
+        ));
+    }
+
     timer.tag(TAG_CONTEXT_ID, context_id.to_string());
 
     // check that the request ID is not used yet

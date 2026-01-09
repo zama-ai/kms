@@ -148,6 +148,7 @@ async fn test_largecipher() {
         new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys, &epoch_id)
             .await
             .unwrap(),
+        "ram://dummy",
         None,
         Some(rate_limiter_conf),
     )
