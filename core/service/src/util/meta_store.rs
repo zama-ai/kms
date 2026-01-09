@@ -225,6 +225,10 @@ impl<T: Clone> MetaStore<T> {
         self.storage.len().saturating_sub(self.complete_queue.len())
     }
 
+    pub fn get_total_count(&self) -> usize {
+        self.storage.len()
+    }
+
     /// Get all request IDs in the store
     pub fn get_all_request_ids(&self) -> Vec<RequestId> {
         self.storage.keys().cloned().collect()

@@ -275,7 +275,24 @@ impl<
         {
             // TODO should probably be called at regular intervals and setup with the KMS in kms_impl
             let meta_store = self.pub_dec_meta_store.read().await;
-            update_system_metrics(&self.rate_limiter, None, Some(&meta_store)).await;
+            let active_sessions = self
+                .session_preparer_getter
+                .active_session_count()
+                .await
+                .ok();
+            let inactive_sessions = self
+                .session_preparer_getter
+                .inactive_session_count()
+                .await
+                .ok();
+            update_system_metrics(
+                &self.rate_limiter,
+                None,
+                Some(&meta_store),
+                active_sessions,
+                inactive_sessions,
+            )
+            .await;
         }
         let inner = Arc::new(request.into_inner());
         tracing::info!(

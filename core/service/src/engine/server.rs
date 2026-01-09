@@ -191,14 +191,29 @@ pub(crate) async fn update_system_metrics<T: Clone>(
     rate_limiter: &RateLimiter,
     user_meta_store: Option<&MetaStore<T>>,
     public_meta_store: Option<&MetaStore<T>>,
+    active_session_count: Option<u64>,
+    inactive_session_count: Option<u64>,
 ) {
     metrics::METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
     if let Some(user_meta_store) = user_meta_store {
+        metrics::METRICS.record_meta_storage_user_decryptions(
+            user_meta_store.get_processing_count() as u64,
+        );
         metrics::METRICS
-            .record_meta_storage_user_decryptions(user_meta_store.get_processing_count() as u64);
+            .record_meta_storage_user_decryptions_total(user_meta_store.get_total_count() as u64);
     }
     if let Some(public_meta_store) = public_meta_store {
-        metrics::METRICS
-            .record_meta_storage_public_decryptions(public_meta_store.get_processing_count() as u64);
+        metrics::METRICS.record_meta_storage_public_decryptions(
+            public_meta_store.get_processing_count() as u64,
+        );
+        metrics::METRICS.record_meta_storage_public_decryptions_total(
+            public_meta_store.get_total_count() as u64,
+        );
+    }
+    if let Some(count) = active_session_count {
+        metrics::METRICS.record_active_sessions(count);
+    }
+    if let Some(count) = inactive_session_count {
+        metrics::METRICS.record_inactive_sessions(count);
     }
 }

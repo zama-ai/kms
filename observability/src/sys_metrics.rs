@@ -33,7 +33,12 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             METRICS.record_cpu_load(cpus_load_avg);
 
             // Update memory metrics
-            METRICS.record_memory_usage(system.used_memory());
+            let memory_usage = system.used_memory();
+            if memory_usage != 0 {
+                METRICS.record_memory_usage(memory_usage);
+            } else {
+                tracing::warn!("sysinfo is reporting 0 memory usage")
+            }
 
             // Update network metrics
             networks.refresh(true);
