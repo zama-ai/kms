@@ -149,7 +149,6 @@ export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="${KMS_CORE__PR
 export KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID="${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID:={{ .Values.kmsCore.backupVault.awskms.rootKeyId }}}"
 export KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC:={{ .Values.kmsCore.backupVault.awskms.rootKeySpec }}}"
 {{- end }}
-{{- end }}
 {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
 for i in $(seq 1 {{ len .Values.kmsCore.thresholdMode.peersList }}); do
 BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/?list-type=2&prefix=PUB-p${i}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
@@ -160,4 +159,5 @@ echo "### BEGIN - env ###"
 env
 echo "### END - env ###"
 {{- end }}
+{{- end -}}
 {{- end -}}

@@ -65,7 +65,6 @@ where
 /// MetricedError wraps an internal error with additional context for metrics and logging.
 /// The struct is used to ensure that appropriate metrics are incremented and errors are logged
 /// consistently across different operations.
-/// # Fields
 /// * `op_metric` - The operation metric name associated with the error
 /// * `request_id` - Optional RequestId associated with the error
 /// * `internal_error` - The internal error being wrapped
