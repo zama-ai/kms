@@ -16,7 +16,8 @@ use kms_lib::{
         signatures::PrivateSigKey,
     },
     engine::{
-        base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms, run_server,
+        base::BaseKmsStruct, centralized::central_kms::RealCentralizedKms,
+        migration::migrate_fhe_keys_v0_12_to_v0_13, run_server,
         threshold::service::new_real_threshold_kms,
     },
     grpc::MetaStoreStatusServiceImpl,
@@ -503,7 +504,7 @@ async fn main_exec() -> anyhow::Result<()> {
     };
 
     // private vault
-    let private_storage = make_storage(
+    let mut private_storage = make_storage(
         core_config
             .private_vault
             .as_ref()
@@ -513,6 +514,16 @@ async fn main_exec() -> anyhow::Result<()> {
         s3_client.clone(),
     )
     .inspect_err(|e| tracing::warn!("Could not private storage: {e}"))?;
+
+    // Migrate legacy FHE keys to epoch-aware format
+    let kms_type = match core_config.threshold {
+        Some(_) => KMSType::Threshold,
+        None => KMSType::Centralized,
+    };
+    migrate_fhe_keys_v0_12_to_v0_13(&mut private_storage, kms_type)
+        .await
+        .inspect_err(|e| tracing::warn!("Could not migrate legacy FHE keys: {e}"))?;
+
     let private_keychain = OptionFuture::from(
         core_config
             .private_vault
@@ -602,13 +613,9 @@ async fn main_exec() -> anyhow::Result<()> {
         .await
         .unwrap_or_else(|e| panic!("Could not bind to {service_socket_addr} \n {e:?}"));
 
-    let mode = match core_config.threshold {
-        Some(_) => KMSType::Threshold,
-        None => KMSType::Centralized,
-    };
     // load key
     let base_kms = match get_core_signing_key(&private_vault).await {
-        Ok(sk) => BaseKmsStruct::new(mode, sk)?,
+        Ok(sk) => BaseKmsStruct::new(kms_type, sk)?,
         Err(e) => {
             tracing::warn!("Error loading signing key: {e:?}");
             tracing::warn!(
@@ -618,7 +625,7 @@ async fn main_exec() -> anyhow::Result<()> {
             let verf_key = public_storage
                 .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
                 .await?;
-            BaseKmsStruct::new_no_signing_key(mode, verf_key)
+            BaseKmsStruct::new_no_signing_key(kms_type, verf_key)
         }
     };
 
