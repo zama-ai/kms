@@ -348,8 +348,7 @@ impl<
             &mut self.pub_dec_meta_store.write().await,
             &req_id,
             OP_PUBLIC_DECRYPT_REQUEST,
-        )
-        .await?;
+        )?;
 
         let ext_handles_bytes = ciphertexts
             .iter()
@@ -673,8 +672,10 @@ impl<
             return Err(MetricedError::new(
                 OP_PUBLIC_DECRYPT_RESULT,
                 Some(request_id),
-                anyhow!("Request ID mismatch: expected {request_id}, got {retrieved_req_id}"),
-                tonic::Code::NotFound,
+                anyhow::anyhow!(
+                    "Request ID mismatch: expected {request_id}, got {retrieved_req_id}"
+                ),
+                tonic::Code::Internal,
             ));
         }
 
