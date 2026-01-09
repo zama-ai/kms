@@ -53,7 +53,24 @@ generate-backward-compatibility-v0.13.0:
 	cd backward-compatibility/generate-v0.13.0 && cargo run --release
 
 generate-backward-compatibility-all: clean-backward-compatibility-data generate-backward-compatibility-v0.11.0 generate-backward-compatibility-v0.11.1 generate-backward-compatibility-v0.13.0
-	@echo "✅ Generated backward compatibility data for all versions"
+	@echo "Generated backward compatibility data for all versions"
+
+# Test material generation targets
+generate-test-material-all:
+	cargo run -p generate-test-material --features slow_tests -- --output ./test-material --verbose all
+
+generate-test-material-testing:
+	@echo "Generating testing material..."
+	cargo run -p generate-test-material -- --output ./test-material --verbose testing
+
+generate-test-material-default:
+	cargo run -p generate-test-material --features slow_tests -- --output ./test-material --verbose default
+
+validate-test-material:
+	cargo run -p generate-test-material -- --output ./test-material --verbose validate
+
+clean-test-material:
+	cargo run -p generate-test-material -- --output ./test-material --verbose clean
 
 # Check if Git LFS is installed and enabled
 check-git-lfs:
@@ -76,3 +93,73 @@ linting-package:
 		exit 1; \
 	fi
 	cargo clippy --all-targets --all-features --package $(PACKAGE) -- -D warnings
+
+# Isolated Test Targets (No Docker Required)
+.PHONY: test-isolated test-isolated-centralized test-isolated-threshold test-isolated-integration test-isolated-parallel test-isolated-nightly
+
+# Run all isolated tests (tests: library + CLI integration)
+# Skips nightly and full_gen_tests for faster feedback
+test-isolated: generate-test-material-testing
+	@echo "Running all isolated tests (skipping nightly)..."
+	@echo "Running centralized library tests..."
+	cargo test --lib --features insecure,testing centralized::misc_tests_isolated -- --test-threads=1
+	cargo test --lib --features insecure,testing centralized::restore_from_backup_tests_isolated -- --test-threads=1
+	@echo "Running threshold library tests..."
+	cargo test --lib --features insecure,testing threshold::key_gen_tests_isolated -- --test-threads=1
+	cargo test --lib --features insecure,testing threshold::misc_tests_isolated -- --test-threads=1
+	cargo test --lib --features insecure,testing threshold::restore_from_backup_tests_isolated -- --test-threads=1
+	@echo "Running CLI integration tests (centralized + threshold)..."
+	cargo test --test integration_tests --features k8s_tests,testing -- --skip nightly --skip full_gen_tests --skip k8s_ --skip isolated_test_example
+
+# Run centralized library tests only
+test-isolated-centralized: generate-test-material-testing
+	@echo "Running centralized library tests..."
+	cargo test --lib --features insecure,testing centralized::misc_tests_isolated -- --test-threads=1
+	cargo test --lib --features insecure,testing centralized::restore_from_backup_tests_isolated -- --test-threads=1
+
+# Run threshold library tests only
+test-isolated-threshold: generate-test-material-testing
+	@echo "Running threshold library tests..."
+	cargo test --lib --features insecure,testing threshold::key_gen_tests_isolated -- --test-threads=1
+	cargo test --lib --features insecure,testing threshold::misc_tests_isolated -- --test-threads=1
+	cargo test --lib --features insecure,testing threshold::restore_from_backup_tests_isolated -- --test-threads=1
+
+# Run CLI integration tests only (centralized + threshold)
+# Includes PRSS tests (with k8s_tests feature)
+# Note: #[serial] attribute handles sequential execution for PRSS tests automatically
+# Skips nightly and full_gen_tests for faster feedback
+test-isolated-integration: generate-test-material-testing
+	@echo "Running CLI integration tests (centralized + threshold)..."
+	cargo test --test integration_tests --features k8s_tests,testing -- --skip nightly --skip full_gen_tests --skip k8s_ --skip isolated_test_example
+
+# Run isolated tests with parallel execution (where safe - non-PRSS tests)
+test-isolated-parallel: generate-test-material-testing
+	@echo "Running isolated tests in parallel..."
+	cargo test --lib --features insecure,testing misc_tests_isolated -- --test-threads=4
+
+# Run nightly tests (ALL CLI integration tests including nightly_* and full_gen_tests_*)
+# These are slower, comprehensive tests that run in CI nightly
+test-isolated-nightly: generate-test-material-testing
+	@echo "Running ALL CLI integration tests..."
+	@echo "Includes nightly tests:"
+	@echo "  - nightly_tests_threshold_sequential_crs"
+	@echo "  - nightly_tests_threshold_sequential_preproc_keygen"
+	@echo "  - full_gen_tests_default_threshold_sequential_crs"
+	@echo "  - full_gen_tests_default_threshold_sequential_preproc_keygen"
+	@echo "Plus all regular tests (centralized + threshold)"
+	cargo test --test integration_tests --features k8s_tests,testing -- --skip k8s_ --skip isolated_test_example
+
+# Clean up test artifacts
+clean-test-artifacts:
+	@echo "Cleaning test artifacts..."
+	rm -rf target/debug/deps/kms_lib-*
+	rm -rf /tmp/kms-test-*
+	@echo "Test artifacts cleaned"
+
+# Full test suite
+test-full: generate-test-material-all test-isolated test-backward-compatibility
+	@echo "Full test suite completed successfully"
+
+# Quick test suite (testing material only, no backward compatibility)
+test-quick: generate-test-material-testing test-isolated
+	@echo "Quick test suite completed successfully"

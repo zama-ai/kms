@@ -28,6 +28,8 @@ use crate::mpc_context::do_new_mpc_context;
 use crate::prss_init::do_prss_init;
 use crate::reshare::do_reshare;
 use aes_prng::AesRng;
+use anyhow::anyhow;
+use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
 use kms_grpc::identifiers::EpochId;
@@ -889,6 +891,68 @@ pub async fn encrypt(
         cipher_params.key_id,
         cipher_params.context_id,
     ))
+}
+
+fn join_vars(args: &[&str]) -> String {
+    args.iter()
+        .filter(|&s| !s.is_empty())
+        .copied()
+        .collect::<Vec<&str>>()
+        .join("/")
+}
+
+// TODO: handle auth
+// TODO: add option to either use local key or remote key
+pub async fn fetch_element(
+    endpoint: &str,
+    folder: &str,
+    element_id: &str,
+) -> anyhow::Result<Bytes> {
+    let element_key = element_id.to_string();
+    // Construct the URL
+    let url = join_vars(&[endpoint, folder, element_key.as_str()]);
+    tracing::debug!("Fetching element: {url}");
+
+    // If URL we fetch it
+    if url.starts_with("http") {
+        // Make the request
+        let client = reqwest::Client::new();
+        let response = client.get(&url).send().await?;
+
+        if response.status().is_success() {
+            let bytes = response.bytes().await?;
+            tracing::info!("Successfully downloaded {} bytes for element {element_id} from endpoint {endpoint}/{folder}", bytes.len());
+            // Here you can process the bytes as needed
+            Ok(bytes)
+        } else {
+            let response_status = response.status();
+            let response_content = response.text().await?;
+            tracing::error!("Error: {}", response_status);
+            tracing::error!("Response: {}", response_content);
+            Err(anyhow::anyhow!(format!(
+                "Couldn't fetch element {element_id} from endpoint {endpoint}/{folder}\nStatus: {}\nResponse: {}",
+                response_status, response_content
+            ),))
+        }
+    } else {
+        // read from local file system
+        // Strip file:// prefix if present (for local testing)
+        let endpoint_path = if endpoint.starts_with("file://") {
+            endpoint.strip_prefix("file://").unwrap()
+        } else {
+            endpoint
+        };
+        let key_path = Path::new(endpoint_path).join(folder).join(element_id);
+        let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
+            anyhow!(
+                "Failed to read bytes from file at {:?} with error: {e}",
+                &key_path
+            )
+        })?;
+        let res = Bytes::from(byte_res);
+        tracing::info!("Successfully read {} bytes for element {element_id} from local path {endpoint_path}/{folder}", res.len());
+        Ok(res)
+    }
 }
 
 static INIT_LOG: Once = Once::new();

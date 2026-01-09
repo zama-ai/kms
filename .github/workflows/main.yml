@@ -256,6 +256,9 @@ jobs:
   # - Changes to observability/**
   # - Changes to workflow file
   ############################################################################
+  # Prepares test matrix for core-client integration tests
+  # Splits tests into two parallel jobs: threshold and centralized
+  # Features required: k8s_tests (for PRSS tests), testing (for test helpers)
   prepare-core-client-matrix:
     name: main/prepare-core-client-matrix
     needs: check-changes
@@ -274,12 +277,17 @@ jobs:
         id: set-matrix
         run: |
           MATRIX="matrix={\"include\":["
-          MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests --skip nightly --skip centralzd --skip threshld\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests --skip nightly --skip centralzd --skip threshld\"}"
+          # Threshold tests: includes PRSS tests (sequential execution via #[serial])
+          # Centralized tests: basic keygen, CRS, backup/restore workflows
+          # Both skip: full_gen_tests (nightly), nightly_* (scheduled), k8s_* (cluster tests), isolated_test_example (demo)
+          MATRIX="${MATRIX}{\"args-tests\":\"--features k8s_tests,testing -- threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip centralized --skip isolated_test_example\"},{\"args-tests\":\"--features k8s_tests,testing -- centralized --skip full_gen_tests --skip nightly --skip k8s_ --skip threshold --skip isolated_test_example\"}"
           MATRIX="${MATRIX%,}]}"
           echo "$MATRIX" >> "$GITHUB_OUTPUT"
           echo "$MATRIX"
 
-  # Core client integration tests
+  # Core client integration tests - Native execution (no Docker)
+  # Runs integration tests split across threshold and centralized jobs
+  # Uses pre-generated test material and isolated temporary directories
   test-core-client:
     name: main/test-core-client
     # job permissions
@@ -330,6 +338,42 @@ jobs:
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
+  # Core client nightly tests (runs ALL tests including nightly and full_gen_tests)
+  test-core-client-nightly:
+    name: main/test-core-client-nightly
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs: check-changes
+    # Only run on scheduled (nightly) builds
+    if: github.event_name == 'schedule'
+    uses: ./.github/workflows/common-testing-big-instance.yml
+    with:
+      working-directory: './core-client'
+      package-name: 'kms-core-client'
+      # Run ALL tests - no skips (includes nightly_* and full_gen_tests_*)
+      args-tests: '--features k8s_tests,testing -- --skip k8s_ --skip isolated_test_example'
+      app-cache-dir: 'kms-core-client'
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
   # Core client unit tests
   test-core-client-unit:
     name: main/test-core-client-unit
@@ -348,7 +392,9 @@ jobs:
       working-directory: './core-client'
       package-name: 'kms-core-client'
       # Explicitly skip integration tests since they are all named something with centralized or threshold or full_gen_tests
-      args-tests: '-- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip centralzd --skip threshld'
+      # Also skip isolated_test_example which requires pre-generated test material
+      # Must include features to compile test code that uses feature-gated functions
+      args-tests: '--features k8s_tests,testing -- --skip centralized --skip threshold --skip full_gen_tests --skip nightly --skip k8s_ --skip isolated_test_example'
       app-cache-dir: 'kms-core-client'
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
@@ -494,6 +540,8 @@ jobs:
       package-name: 'kms'
       # slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
+      runner-volume: '400gb'
+      rust-log-level: 'info'
       # Availables runners:
       #  - 1cpu-linux-x64 (m7a.medium)
       #  - 2cpu-linux-x64 (m7i.large)
@@ -504,6 +552,8 @@ jobs:
       #  - 48cpu-linux-x64 (c7i.12xlarge)
       #  - 64cpu-linux-x64 (c7a.16xlarge)
       runs-on: '64cpu-linux-x64'
+      nextest-test-threads: "1"  # Required for #[serial] tests (slow_tests with shared state)
+      enable-shared-material: true  # Use shared material mode (no copying)
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}

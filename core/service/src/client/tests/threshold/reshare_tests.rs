@@ -22,7 +22,7 @@ use crate::{
             common::TIME_TO_SLEEP_MS,
             threshold::{
                 common::threshold_handles,
-                key_gen_tests::{
+                key_gen_helpers::{
                     run_preproc, run_threshold_keygen, verify_keygen_responses, TestKeyGenResult,
                 },
                 public_decryption_tests::run_decryption_threshold,

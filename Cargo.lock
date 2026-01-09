@@ -2071,10 +2071,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cc-tests-utils"
-version = "0.13.0-rc.0"
-
-[[package]]
 name = "cexpr"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3346,6 +3342,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "312d2295c7302019c395cfb90dacd00a82a2eabd700429bba9c7a3f38dbbe11b"
 
 [[package]]
+name = "generate-test-material"
+version = "0.13.0-rc.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "kms",
+ "kms-grpc",
+ "path-absolutize",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "threshold-fhe",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "generator"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4239,6 +4253,7 @@ dependencies = [
  "rustls-webpki 0.103.4",
  "serde",
  "serde-wasm-bindgen",
+ "serde_json",
  "serial_test",
  "signature 2.2.0",
  "strum",
@@ -4282,11 +4297,10 @@ dependencies = [
  "attestation-doc-validation",
  "bc2wrap",
  "bytes",
- "cc-tests-utils",
  "clap",
+ "futures",
  "hex",
  "kms",
- "kms-core-client",
  "kms-grpc",
  "observability",
  "rand 0.8.5",
@@ -5252,6 +5266,24 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "path-absolutize"
+version = "3.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4af381fe79fa195b4909485d99f73a80792331df0625188e707854f0b3383f5"
+dependencies = [
+ "path-dedot",
+]
+
+[[package]]
+name = "path-dedot"
+version = "3.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07ba0ad7e047712414213ff67533e6dd477af0a4e1d14fb52343e53d30ea9397"
+dependencies = [
+ "once_cell",
+]
 
 [[package]]
 name = "pathdiff"

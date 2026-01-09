@@ -1,3 +1,15 @@
+//! Threshold key generation helper functions
+//!
+//! This file contains helper functions for threshold key generation used by various
+//! integration tests (nightly, custodian backup, reshare). These helpers support
+//! complex multi-step workflows with shared test material and are used by tests
+//! that require specific setup patterns.
+//!
+//! **For basic key generation tests, see `key_gen_tests_isolated.rs`**
+
+// Allow unused imports - some are only used in slow_tests feature
+#![allow(unused_imports)]
+
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
     use crate::client::tests::threshold::common::threshold_handles;
@@ -71,147 +83,6 @@ impl TestKeyGenResult {
             TestKeyGenResult::Standard(inner) => inner,
         }
     }
-}
-
-#[cfg(feature = "insecure")]
-#[rstest::rstest]
-#[case(4)]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_insecure_dkg(#[case] amount_parties: usize) {
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let key_id: RequestId = derive_request_id(&format!(
-        "test_insecure_dkg_key_{amount_parties}_{TEST_PARAM:?}"
-    ))
-    .unwrap();
-    purge(
-        None,
-        None,
-        &key_id,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
-    let (_kms_servers, kms_clients, internal_client) =
-        threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
-    let keys = run_threshold_keygen(
-        FheParameter::Test,
-        &kms_clients,
-        &internal_client,
-        &INSECURE_PREPROCESSING_ID,
-        &key_id,
-        None,
-        true,
-        None,
-        0,
-    )
-    .await
-    .0;
-    _ = keys.clone().get_standard();
-
-    let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
-    assert!(panic_res.is_err());
-}
-
-#[cfg(feature = "insecure")]
-#[rstest::rstest]
-#[case(4)]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn default_insecure_dkg(#[case] amount_parties: usize) {
-    // NOTE: amount_parties must not be too high
-    // because every party will load all the keys and each ServerKey is 1.5 GB
-    // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
-
-    let param = FheParameter::Default;
-    let dkg_param: WrappedDKGParams = param.into();
-    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
-
-    let key_id: RequestId = derive_request_id(&format!(
-        "default_insecure_dkg_key_{amount_parties}_{param:?}",
-    ))
-    .unwrap();
-    purge(
-        None,
-        None,
-        &key_id,
-        pub_storage_prefixes,
-        priv_storage_prefixes,
-    )
-    .await;
-    let (_kms_servers, kms_clients, internal_client) =
-        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
-    let keys = run_threshold_keygen(
-        param,
-        &kms_clients,
-        &internal_client,
-        &INSECURE_PREPROCESSING_ID,
-        &key_id,
-        None,
-        true,
-        None,
-        0,
-    )
-    .await
-    .0;
-
-    // check that we have the new mod switch key
-    let (client_key, _, server_key) = keys.clone().get_standard();
-    crate::client::key_gen::tests::check_conformance(server_key, client_key);
-
-    let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
-    assert!(panic_res.is_err());
-}
-
-#[cfg(all(feature = "slow_tests", feature = "insecure"))]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn test_insecure_threshold_decompression_keygen() {
-    // Note that the first 2 key gens are insecure, but the last is secure as needed to generate decompression keys
-    run_threshold_decompression_keygen(4, FheParameter::Test, true).await;
-}
-
-#[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn secure_threshold_keygen_test() {
-    preproc_and_keygen(4, FheParameter::Test, false, 1, false, None, None, None).await;
-}
-
-#[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn secure_threshold_keygen_test_crash_online() {
-    preproc_and_keygen(
-        4,
-        FheParameter::Test,
-        false,
-        1,
-        false,
-        None,
-        Some(vec![2]),
-        None,
-    )
-    .await;
-}
-
-#[cfg(feature = "slow_tests")]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn secure_threshold_keygen_test_crash_preprocessing() {
-    preproc_and_keygen(
-        4,
-        FheParameter::Test,
-        false,
-        1,
-        false,
-        Some(vec![3]),
-        None,
-        None,
-    )
-    .await;
 }
 
 #[allow(clippy::too_many_arguments)]

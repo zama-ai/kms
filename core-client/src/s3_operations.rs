@@ -118,7 +118,7 @@ pub(crate) async fn fetch_kms_signing_keys(
         use kms_grpc::rpc_types::PrivDataType;
 
         let content = generic_fetch_element(
-            &cur_core.s3_endpoint.clone(),
+            &cur_core.s3_endpoint,
             &format!(
                 "{}/{}",
                 cur_core
@@ -209,7 +209,10 @@ async fn generic_fetch_element(
         }
     } else {
         // read from local file system
-        let key_path = Path::new(endpoint).join(folder).join(element_id);
+        // Strip file:// or file:/// prefix if present
+        let clean_endpoint = endpoint.strip_prefix("file://").unwrap_or(endpoint);
+
+        let key_path = Path::new(clean_endpoint).join(folder).join(element_id);
         let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
             anyhow::anyhow!(
                 "Failed to read bytes from file at {:?} with error: {e}",
@@ -217,7 +220,7 @@ async fn generic_fetch_element(
             )
         })?;
         let res = Bytes::from(byte_res);
-        tracing::info!("Successfully read {} bytes for element {element_id} from local path {endpoint}/{folder}", res.len());
+        tracing::info!("Successfully read {} bytes for element {element_id} from local path {clean_endpoint}/{folder}", res.len());
         Ok(res)
     }
 }

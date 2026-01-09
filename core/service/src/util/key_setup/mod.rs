@@ -1,6 +1,16 @@
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
-        pub mod test_tools;
+        // Re-export from testing module (canonical location)
+        // This maintains backward compatibility for existing imports
+        pub mod test_tools {
+            pub use crate::testing::utils::*;
+        }
+        pub mod test_material_spec {
+            pub use crate::testing::material::{TestMaterialSpec, MaterialType, KeyType};
+        }
+        pub mod test_material_manager {
+            pub use crate::testing::material::{TestMaterialManager, TestMaterialHandle};
+        }
 
         use crate::dummy_domain;
         use crate::engine::base::INSECURE_PREPROCESSING_ID;
@@ -168,7 +178,7 @@ where
     PubS: Storage,
     PrivS: Storage,
 {
-    // Check if keys already exist with error handling
+    // Check if the specific signing key already exists
     let temp: HashMap<RequestId, PrivateSigKey> =
         match read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string()).await {
             Ok(keys) => keys,
@@ -178,13 +188,13 @@ where
             }
         };
 
-    if !temp.is_empty() {
-        // If signing keys already exist, then do nothing
+    if temp.contains_key(req_id) {
+        // If this specific signing key already exists, then do nothing
         log_data_exists(
             priv_storage.info(),
-            None::<String>,
+            Some(req_id.to_string()),
             "",
-            "Server signing keys",
+            "Server signing key",
         );
         return false;
     }

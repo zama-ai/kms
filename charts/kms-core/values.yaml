@@ -79,7 +79,8 @@ kmsCore:
       # Nitro enclaves will ignore this value since they generate their own
       # attested ephemeral keypairs
       privateKey:
-        path: /my/very/secret/key.pem
+        # path: /path/to/key.pem  # Set this to use file-based key
+        path:
       # If set, the enclave-enabled core will only establish TLS connections
       # with peers that have attested PCR0,1,2 values from this list
       trustedReleases:
