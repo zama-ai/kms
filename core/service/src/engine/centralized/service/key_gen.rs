@@ -1,7 +1,5 @@
 use crate::cryptography::signatures::PrivateSigKey;
-use crate::engine::base::{
-    compute_info_decompression_keygen, retrieve_parameters, KeyGenMetadata, DSEP_PUBDATA_KEY,
-};
+use crate::engine::base::{compute_info_decompression_keygen, KeyGenMetadata, DSEP_PUBDATA_KEY};
 use crate::engine::centralized::central_kms::{
     async_generate_decompression_keys, async_generate_fhe_keys, CentralizedKms,
 };
@@ -65,15 +63,22 @@ pub async fn key_gen_impl<
 
     let inner = request.into_inner();
 
-    let (req_id, preproc_id, context_id, epoch_id, internal_keyset_config, eip712_domain) =
-        validate_key_gen_request(inner.clone()).map_err(|e| {
-            MetricedError::new(
-                op_tag,
-                None,
-                e, // Validation error
-                tonic::Code::InvalidArgument,
-            )
-        })?;
+    let (
+        req_id,
+        preproc_id,
+        context_id,
+        epoch_id,
+        dkg_params,
+        internal_keyset_config,
+        eip712_domain,
+    ) = validate_key_gen_request(inner.clone()).map_err(|e| {
+        MetricedError::new(
+            op_tag,
+            None,
+            e, // Validation error
+            tonic::Code::InvalidArgument,
+        )
+    })?;
     let metric_tags = vec![
         (TAG_KEY_ID, req_id.to_string()),
         (TAG_CONTEXT_ID, context_id.to_string()),
@@ -114,14 +119,7 @@ pub async fn key_gen_impl<
             .await?;
             preproc.dkg_param
         } else {
-            retrieve_parameters(inner.params).map_err(|e| {
-                MetricedError::new(
-                    op_tag,
-                    Some(req_id),
-                    anyhow::anyhow!("Failed to retrieve DKG parameters: {}", e),
-                    tonic::Code::InvalidArgument,
-                )
-            })?
+            dkg_params
         };
 
         // check that the request ID is not used yet

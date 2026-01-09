@@ -1,7 +1,6 @@
 // === Standard Library ===
-use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
-
 use itertools::Itertools;
+use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 // === External Crates ===
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
@@ -11,10 +10,10 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_CANCELLED, OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN,
-        OP_INSECURE_KEYGEN_REQUEST, OP_INSECURE_KEYGEN_RESULT, OP_INSECURE_STANDARD_KEYGEN,
-        OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_STANDARD_KEYGEN, TAG_CONTEXT_ID, TAG_EPOCH_ID,
-        TAG_KEY_ID, TAG_PARTY_ID,
+        OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN_REQUEST,
+        OP_INSECURE_KEYGEN_RESULT, OP_INSECURE_STANDARD_KEYGEN, OP_KEYGEN_REQUEST,
+        OP_KEYGEN_RESULT, OP_STANDARD_KEYGEN, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID,
+        TAG_PARTY_ID,
     },
 };
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -39,7 +38,7 @@ use threshold_fhe::{
     },
     networking::NetworkMode,
 };
-use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockReadGuard};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response};
 use tracing::Instrument;
@@ -64,7 +63,10 @@ use crate::{
         },
     },
     util::{
-        meta_store::{add_req_to_meta_store, retrieve_from_meta_store, MetaStore},
+        meta_store::{
+            add_req_to_meta_store, delete_req_from_meta_store, retrieve_from_meta_store,
+            update_err_req_in_meta_store, MetaStore,
+        },
         rate_limiter::RateLimiter,
     },
     vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage, StorageExt},
@@ -213,7 +215,6 @@ impl<
         internal_keyset_config: InternalKeySetConfig,
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
-        preproc_id: RequestId,
         eip712_domain: &alloy_sol_types::Eip712Domain,
         context_id: ContextId,
         epoch_id: EpochId,
@@ -279,22 +280,6 @@ impl<
         let epoch_id_clone = epoch_id;
         let opt_compression_key_id = internal_keyset_config.get_compression_id()?;
 
-        // right before keygen starts, we delete the preprocessing entry from the bucket
-        // so that it cannot be used again.
-        // TODO should it actually not be invalidated st we do not allow generating again under the same id
-        tracing::info!(
-                    "Deleting preprocessing ID {} from bucket store before starting keygen for request ID {}",
-                    preproc_id,
-                    req_id_clone
-                );
-
-        {
-            let mut map = self.preproc_buckets.write().await;
-            map.delete(&preproc_id);
-        }
-        // TODO ensure proper deletion using short hand methods
-        // delete_req_from_meta_store(self.preproc_buckets.write().await, &preproc_id, op_tag).await?;
-
         let keygen_background = async move {
             match internal_keyset_config.keyset_config() {
                 ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
@@ -338,30 +323,20 @@ impl<
                 //Start the metric timer, it will end on drop
                 let _timer = timer.start();
                 tokio::select! {
-                    res = keygen_background => {
-                                                match res {
-                            Ok(()) => {
-                                tracing::info!("Key generation of request {} exiting normally.", req_id);
-                            },
-                            Err(()) => {
-                                MetricedError::handle_unreturnable_error(
-                                    OP_KEYGEN_REQUEST,
-                                    Some(req_id),
-                                    format!("Key generation background task failed for request ID {}", &req_id),
-                                );
-                            }
-                        }
+                    () = keygen_background => {
+                        tracing::info!("Key generation of request {} exiting normally.", req_id);
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&req_id);
                     },
                     () = token.cancelled() => {
-                        tracing::error!("Key generation of request {} exiting before completion because of a cancellation event.", req_id);
+                         MetricedError::handle_unreturnable_error(
+                                    OP_KEYGEN_REQUEST,
+                                    Some(req_id),
+                                    "Key generation background failed since the task got cancelled".to_string(),
+                                );
                         // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let guarded_meta_store = meta_store_cancelled.write().await;
                         crypto_storage_cancelled.purge_key_material(&req_id, &epoch_id, guarded_meta_store).await;
-                        // We use the more specific tag to increment the error counter
-                        metrics::METRICS.increment_error_counter(op_tag, ERR_CANCELLED);
-                        tracing::info!("Trying to clean up any already written material.")
                     },
                 }
             }.instrument(tracing::Span::current()));
@@ -392,15 +367,22 @@ impl<
         // Note: We increase the request counter only in launch_dkg
         // so we don't increase the error counter here either
         let inner = request.into_inner();
-        let (req_id, preproc_id, context_id, epoch_id, internal_keyset_config, eip712_domain) =
-            validate_key_gen_request(inner.clone()).map_err(|e| {
-                MetricedError::new(
-                    op_tag,
-                    None,
-                    e, // Validation error
-                    tonic::Code::InvalidArgument,
-                )
-            })?;
+        let (
+            req_id,
+            preproc_id,
+            context_id,
+            epoch_id,
+            _dkg_params,
+            internal_keyset_config,
+            eip712_domain,
+        ) = validate_key_gen_request(inner.clone()).map_err(|e| {
+            MetricedError::new(
+                op_tag,
+                None,
+                e, // Validation error
+                tonic::Code::InvalidArgument,
+            )
+        })?;
         let metric_tags = vec![
             (TAG_KEY_ID, req_id.to_string()),
             (TAG_CONTEXT_ID, context_id.to_string()),
@@ -408,17 +390,27 @@ impl<
         ];
         timer.tags(metric_tags.clone());
 
-        // This function does not modify the meta store,
-        // so if the preproc handle is consumed,
-        // we need to delete it from the meta store later on.
+        // We delete the preprocessing entry from the bucket so that it cannot be used again.
+        // TODO should it actually not be invalidated st we do not allow generating again under the same id
+        tracing::info!(
+                    "Deleting preprocessing ID {} from bucket store before starting keygen for request ID {}",
+                    preproc_id,
+                    req_id
+                );
+        let preproc_bucket = delete_req_from_meta_store(
+            self.preproc_buckets.write().await,
+            &preproc_id,
+            OP_KEYGEN_REQUEST,
+        )
+        .await?;
+        // Processes the bucket meta information. This is a slightly funky as in certain situations it may override the DKGParams sepcified in the request
         let (preproc_handle, dkg_params) = Self::retrieve_preproc_handle(
-            self.preproc_buckets.read().await,
+            preproc_bucket,
             req_id,
             preproc_id,
             inner.params,
             insecure,
-        )
-        .await?;
+        )?;
 
         add_req_to_meta_store(
             &mut self.dkg_pubinfo_meta_store.write().await,
@@ -439,7 +431,6 @@ impl<
             internal_keyset_config,
             preproc_handle,
             req_id,
-            preproc_id,
             &eip712_domain,
             context_id,
             epoch_id,
@@ -453,10 +444,8 @@ impl<
     }
 
     /// Retrieve the preprocessing handle, parameters and preprocessing ID from the request.
-    /// This function does not delete the preprocessing handle from the meta store.
-    /// The caller must make sure the handle is delete from the meta store if it is consumed.
-    async fn retrieve_preproc_handle(
-        meta_store: RwLockReadGuard<'_, MetaStore<BucketMetaStore>>,
+    fn retrieve_preproc_handle(
+        bucket_metastore: BucketMetaStore,
         key_req_id: RequestId,
         preproc_id: RequestId,
         params: Option<i32>,
@@ -476,24 +465,23 @@ impl<
         if insecure {
             Ok((PreprocHandleWithMode::Insecure, standard_dkg_params))
         } else {
-            let prep_bucket = retrieve_from_meta_store(meta_store, &preproc_id, op_tag).await?;
-            if prep_bucket.preprocessing_id != preproc_id {
+            if bucket_metastore.preprocessing_id != preproc_id {
                 return Err(MetricedError::new(
                     op_tag,
                     Some(key_req_id),
                     format!(
                         "Preprocessing ID mismatch: expected {}, found {}",
-                        preproc_id, prep_bucket.preprocessing_id
+                        preproc_id, bucket_metastore.preprocessing_id
                     ),
                     tonic::Code::Internal,
                 ));
             }
             let dkg_param = match params {
                 Some(_) => standard_dkg_params,
-                None => prep_bucket.dkg_param,
+                None => bucket_metastore.dkg_param,
             };
             Ok((
-                PreprocHandleWithMode::Secure((preproc_id, prep_bucket.preprocessing_store)),
+                PreprocHandleWithMode::Secure((preproc_id, bucket_metastore.preprocessing_store)),
                 dkg_param,
             ))
         }
@@ -823,7 +811,7 @@ impl<
         keyset_added_info: KeySetAddedInfo,
         eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
-    ) -> Result<(), ()> {
+    ) {
         let _permit = permit;
         let start = Instant::now();
         let (prep_id, dkg_res) = match preproc_handle_w_mode {
@@ -881,10 +869,13 @@ impl<
             Ok(k) => k,
             Err(e) => {
                 // If dkg errored out, update status
-                let mut guarded_meta_storage = meta_store.write().await;
-                // We cannot do much if updating the storage fails at this point...
-                let _ = guarded_meta_storage.update(req_id, Err(e.to_string()));
-                return Err(());
+                update_err_req_in_meta_store(
+                    &mut meta_store.write().await,
+                    req_id,
+                    format!("Failed to construct decompression key: {e}"),
+                    OP_DECOMPRESSION_KEYGEN,
+                );
+                return;
             }
         };
 
@@ -898,12 +889,14 @@ impl<
             &eip712_domain,
         ) {
             Ok(info) => info,
-            Err(_) => {
-                let mut guarded_meta_storage = meta_store.write().await;
-                // We cannot do much if updating the storage fails at this point...
-                let _ = guarded_meta_storage
-                    .update(req_id, Err("Failed to compute key info".to_string()));
-                return Err(());
+            Err(e) => {
+                update_err_req_in_meta_store(
+                    &mut meta_store.write().await,
+                    req_id,
+                    format!("Failed to compute key info: {e}"),
+                    OP_DECOMPRESSION_KEYGEN,
+                );
+                return;
             }
         };
 
@@ -917,7 +910,6 @@ impl<
             "Decompression DKG protocol took {} ms to complete for request {req_id}",
             start.elapsed().as_millis()
         );
-        Ok(())
     }
 
     async fn key_gen_from_existing_compression_sk<P>(
@@ -972,7 +964,7 @@ impl<
         compression_key_id: Option<RequestId>,
         eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
-    ) -> Result<(), ()> {
+    ) {
         let _permit = permit;
         let start = Instant::now();
         let (prep_id, dkg_res) = match preproc_handle_w_mode {
@@ -1001,15 +993,8 @@ impl<
                             }
                             _ => {
                                 // TODO insecure keygen from existing compression key is not supported
-                                let mut guarded_meta_storage = meta_store.write().await;
-                                let _ = guarded_meta_storage.update(
-                            req_id,
-                            Err(
-                                "insecure keygen from existing compression key is not supported"
-                                    .to_string(),
-                            ),
-                        );
-                                return Err(());
+                                update_err_req_in_meta_store(&mut meta_store.write().await, req_id,  "insecure keygen from existing compression key is not supported".to_string(),OP_STANDARD_KEYGEN);
+                                return;
                             }
                         },
                     )
@@ -1050,11 +1035,13 @@ impl<
         let (pub_key_set, private_keys) = match dkg_res {
             Ok((pk, sk)) => (pk, sk),
             Err(e) => {
-                //If dkg errored out, update status
-                let mut guarded_meta_storage = meta_store.write().await;
-                // We cannot do much if updating the storage fails at this point...
-                let _ = guarded_meta_storage.update(req_id, Err(e.to_string()));
-                return Err(());
+                update_err_req_in_meta_store(
+                    &mut meta_store.write().await,
+                    req_id,
+                    format!("Standard key generation failed: {e}"),
+                    OP_STANDARD_KEYGEN,
+                );
+                return;
             }
         };
 
@@ -1068,12 +1055,14 @@ impl<
             &eip712_domain,
         ) {
             Ok(info) => info,
-            Err(_) => {
-                let mut guarded_meta_storage = meta_store.write().await;
-                // We cannot do much if updating the storage fails at this point...
-                let _ = guarded_meta_storage
-                    .update(req_id, Err("Failed to compute key info".to_string()));
-                return Err(());
+            Err(e) => {
+                update_err_req_in_meta_store(
+                    &mut meta_store.write().await,
+                    req_id,
+                    format!("Computation of meta data in standard key generation failed: {e}"),
+                    OP_STANDARD_KEYGEN,
+                );
+                return;
             }
         };
 
@@ -1120,7 +1109,6 @@ impl<
             "DKG protocol took {} ms to complete for request {req_id}",
             start.elapsed().as_millis()
         );
-        Ok(())
     }
 }
 

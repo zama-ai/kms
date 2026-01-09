@@ -609,6 +609,7 @@ pub(crate) fn validate_key_gen_request(
     RequestId,
     ContextId,
     EpochId,
+    DKGParams,
     InternalKeySetConfig,
     Eip712Domain,
 )> {
@@ -641,6 +642,7 @@ pub(crate) fn validate_key_gen_request(
                 format!("Failed to parse KeySetConfig: {e}"),
             )
         })?;
+    let dkg_params = retrieve_parameters(req.params)?;
     let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
     Ok((
@@ -648,6 +650,7 @@ pub(crate) fn validate_key_gen_request(
         preproc_id,
         context_id,
         epoch_id,
+        dkg_params,
         internal_keyset_config,
         eip712_domain,
     ))
