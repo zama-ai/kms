@@ -86,7 +86,7 @@ jobs:
     name: docker-build/golden-image (bpr)
     # needs:
     #   - start-amd64-runner
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6c72e3dbc894744c1e228fb165f4c4d657e475b6 # v1.0.1
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3cf4c2b133947d29e7a313555638621f9ca0345c # v1.0.3
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -104,6 +104,7 @@ jobs:
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
       runs-on-amd: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
       runs-on-arm: "runs-on=${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache"
+      rust-toolchain-file-path: rust-toolchain.toml
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
@@ -119,7 +120,7 @@ jobs:
     needs:
       # - start-amd64-runner
       - golden-image
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6c72e3dbc894744c1e228fb165f4c4d657e475b6 # v1.0.1
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3cf4c2b133947d29e7a313555638621f9ca0345c # v1.0.3
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -137,6 +138,7 @@ jobs:
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
       runs-on-amd: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
       runs-on-arm: "runs-on=${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache"
+      rust-toolchain-file-path: rust-toolchain.toml
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
@@ -152,7 +154,7 @@ jobs:
     needs:
       # - start-amd64-runner
       - golden-image
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6c72e3dbc894744c1e228fb165f4c4d657e475b6 # v1.0.1
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3cf4c2b133947d29e7a313555638621f9ca0345c # v1.0.3
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -170,6 +172,7 @@ jobs:
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
       runs-on-amd: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
       runs-on-arm: "runs-on=${{ github.run_id }}/runner=64cpu-linux-arm64/spot=false/volume=200gb/extras=s3-cache"
+      rust-toolchain-file-path: rust-toolchain.toml
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}

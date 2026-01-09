@@ -486,7 +486,7 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     let expected_msg = format!(
-        "Could not find data at (FheKeyInfo, {}, {})",
+        "Could not find data at (data_type: FheKeyInfo, data_id: {}, epoch_id: {})",
         req_id, epoch_id
     );
     assert!(

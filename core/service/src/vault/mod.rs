@@ -301,6 +301,19 @@ impl StorageReaderExt for Vault {
             .all_data_ids_from_all_epochs(&backup_type)
             .await
     }
+
+    async fn load_bytes_at_epoch(
+        &self,
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<Vec<u8>> {
+        let backup_type = self.get_vault_data_type(data_type)?.to_string();
+        self.storage
+            .load_bytes_at_epoch(data_id, epoch_id, &backup_type)
+            .await
+            .map_err(|e| anyhow!("Byte load at epoch failed: {e}"))
+    }
 }
 
 #[cfg(feature = "non-wasm")]
@@ -400,6 +413,20 @@ impl StorageExt for Vault {
                 .await
                 .map_err(|e| anyhow!("Unencrypted store failed: {e}")),
         }
+    }
+
+    async fn store_bytes_at_epoch(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        epoch_id: &EpochId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        let backup_type = self.get_vault_data_type(data_type)?.to_string();
+        self.storage
+            .store_bytes_at_epoch(bytes, data_id, epoch_id, &backup_type)
+            .await
+            .map_err(|e| anyhow!("Byte store at epoch failed: {e}"))
     }
 
     async fn delete_data_at_epoch(

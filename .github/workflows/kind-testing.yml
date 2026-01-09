@@ -135,7 +135,7 @@ jobs:
         env:
           GH_WORKSPACE: ${{ github.workspace }}
         run: |
-          version="$(cat "$GH_WORKSPACE/toolchain.txt")"
+          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Setup Home
