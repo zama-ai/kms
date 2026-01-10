@@ -6,6 +6,7 @@
 #[path = "../utilities.rs"]
 mod utilities;
 
+use crate::utilities::set_plan;
 #[cfg(not(feature = "measure_memory"))]
 use criterion::measurement::WallTime;
 #[cfg(not(feature = "measure_memory"))]
@@ -15,8 +16,10 @@ use std::fmt::Write;
 #[cfg(not(feature = "measure_memory"))]
 use std::hint::black_box;
 use std::ops::*;
+
 use tfhe::prelude::*;
 use tfhe::{set_server_key, ClientKey, FheUint64, ServerKey};
+
 //use tfhe::{FheUint128, FheUint16, FheUint2, FheUint32, FheUint4,FheUint8,}
 
 #[cfg(feature = "measure_memory")]
@@ -162,6 +165,7 @@ pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
 
 #[cfg(not(feature = "measure_memory"))]
 fn main() {
+    set_plan();
     for (name, params) in ALL_PARAMS {
         let config = params.to_tfhe_config();
 
@@ -188,6 +192,8 @@ fn main() {
 
 #[cfg(feature = "measure_memory")]
 fn main() {
+    set_plan();
+
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
     for (name, params) in ALL_PARAMS {
