@@ -453,6 +453,7 @@ fn node_info_test() -> NodeInfoTest {
         party_id: 4,
         external_url: Cow::Borrowed("https://node4.example.com/mpc/something-something"),
         public_storage_url: Cow::Borrowed("https://storage.example.com/node4"),
+        public_storage_prefix: Cow::Borrowed("PUB"),
         ca_cert: Some(vec![1, 2, 3, 4, 6, 7, 8, 9]),
         state: 500,
     }
@@ -862,6 +863,7 @@ impl KmsV0_13 {
             external_url: "https://node42.example.com".to_string(),
             ca_cert: None,
             public_storage_url: "https://storage.example.com/node42".to_string(),
+            public_storage_prefix: Some("PUB".to_string()),
             extra_verification_keys: vec![],
         };
         let software_version = SoftwareVersion {
@@ -900,6 +902,7 @@ impl KmsV0_13 {
             external_url: node_info_test.external_url.to_string(),
             ca_cert: node_info_test.ca_cert.clone(), // We currently don't have simple code for generating certificates
             public_storage_url: node_info_test.public_storage_url.to_string(),
+            public_storage_prefix: Some(node_info_test.public_storage_prefix.to_string()),
             extra_verification_keys: vec![verf_key2],
         };
 
