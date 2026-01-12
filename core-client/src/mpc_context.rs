@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-
+#[cfg(feature = "testing")]
+use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{DestroyMpcContextRequest, NewMpcContextRequest},
@@ -11,6 +11,7 @@ use kms_lib::{
     engine::context::{NodeInfo, SoftwareVersion},
 };
 use kms_lib::{consts::SAFE_SER_SIZE_LIMIT, engine::context::ContextInfo};
+use std::collections::HashMap;
 use tfhe::safe_serialization::safe_deserialize;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
@@ -90,14 +91,20 @@ pub async fn create_test_context_info_from_core_config(
         let sk = signing_keys.get(&role.one_based()).ok_or_else(|| {
             anyhow::anyhow!("No signing key found for party ID {}", role.one_based())
         })?;
+        #[allow(deprecated)]
+        let sk_der = sk.sk().to_pkcs8_der()?;
+        let ca_keypair = rcgen::KeyPair::from_pkcs8_der_and_sign_algo(
+            &tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
+            &rcgen::PKCS_ECDSA_P256K1_SHA256,
+        )?;
 
         let mpc_identity = identity.mpc_identity();
-        let (_ca_cert_ki, ca_cert) = threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
-            mpc_identity.as_ref(),
-            true,
-            #[allow(deprecated)]
-            sk.sk(),
-        )?;
+        let (_ca_cert_ki, ca_cert, _ca_cert_params) =
+            threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
+                mpc_identity.as_ref(),
+                true,
+                &ca_keypair,
+            )?;
 
         // build the s3 endpoint URL
         let (s3_endpoint, prefix) =
