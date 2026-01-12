@@ -3,6 +3,7 @@ use crate::conf::{init_conf, CoreConfig, Keychain, SecretSharingKeychain};
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
 use crate::engine::base::BaseKmsStruct;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
+use crate::engine::context_manager::create_default_centralized_context_in_storage;
 use crate::engine::threshold::service::new_real_threshold_kms;
 use crate::engine::{run_server, Shutdown};
 use crate::util::key_setup::test_tools::file_backup_vault;
@@ -411,7 +412,7 @@ pub async fn setup_centralized_no_client<
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     pub_storage: PubS,
-    priv_storage: PrivS,
+    mut priv_storage: PrivS,
     backup_vault: Option<Vault>,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> ServerHandle {
@@ -425,6 +426,10 @@ pub async fn setup_centralized_no_client<
         .unwrap();
     let (tx, rx) = tokio::sync::oneshot::channel();
     let sk = get_core_signing_key(&priv_storage).await.unwrap();
+
+    create_default_centralized_context_in_storage(&mut priv_storage, &sk)
+        .await
+        .unwrap();
     let (kms, health_service) = RealCentralizedKms::new(
         pub_storage,
         priv_storage,
