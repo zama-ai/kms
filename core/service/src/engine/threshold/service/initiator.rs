@@ -2,12 +2,17 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // === External Crates ===
+use crate::engine::{utils::MetricedError, validation::validate_init_req};
 use kms_grpc::{
     identifiers::EpochId,
     kms::v1::{self, Empty},
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::PrivDataType,
     ContextId, RequestId,
+};
+use observability::{
+    metrics,
+    metrics_names::{OP_INIT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_PARTY_ID},
 };
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
@@ -18,7 +23,7 @@ use threshold_fhe::{
     networking::NetworkMode,
 };
 use tokio::sync::Mutex;
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response};
 use tonic_health::server::HealthReporter;
 
 // === Internal Crate ===
@@ -29,9 +34,6 @@ use crate::{
         threshold::{
             service::session::{PRSSSetupCombined, SessionMaker},
             traits::Initiator,
-        },
-        validation::{
-            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
     },
     vault::storage::{
@@ -260,7 +262,10 @@ impl<
             + Default,
     > Initiator for RealInitiator<PrivS, Init>
 {
-    async fn init(&self, request: Request<v1::InitRequest>) -> Result<Response<Empty>, Status> {
+    async fn init(
+        &self,
+        request: Request<v1::InitRequest>,
+    ) -> Result<Response<Empty>, MetricedError> {
         // TODO set the correct context ID here as it should be contained in the InitRequest.
         // since the connector is not giving us a context yet, we read it from file
         // eventually this piece of code will move to the context endpoint and this
@@ -273,20 +278,48 @@ impl<
         // In addition, we need to persist context on storage otherwise they'll be lost on restart
         // See zama-ai/kms-internal/#2741
 
+        let mut timer = metrics::METRICS.time_operation(OP_INIT).start();
         let inner = request.into_inner();
-        // the request ID of the init request is the epoch ID for PRSS and shares
-        let epoch_id: EpochId =
-            parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::Init)?.into();
 
-        let context_id: ContextId = match inner.context_id {
-            Some(ctx_id) => parse_proto_request_id(&ctx_id, RequestIdParsingErr::Init)?.into(),
-            None => *DEFAULT_MPC_CONTEXT,
-        };
+        let (context_id, epoch_id) = validate_init_req(&inner).map_err(|e| {
+            MetricedError::new(
+                OP_INIT,
+                None,
+                e, // Validation error
+                tonic::Code::InvalidArgument,
+            )
+        })?;
+        let my_role = self
+            .session_maker
+            .my_role(&context_id)
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_INIT,
+                    Some(epoch_id.into()),
+                    e,
+                    tonic::Code::InvalidArgument,
+                )
+            })?
+            .ok_or(MetricedError::new(
+                OP_INIT,
+                Some(epoch_id.into()),
+                anyhow::anyhow!("Role not found for context ID {context_id}"),
+                tonic::Code::InvalidArgument,
+            ))?;
+        let metric_tags = vec![
+            (TAG_PARTY_ID, my_role.to_string()),
+            (TAG_EPOCH_ID, epoch_id.as_str()),
+            (TAG_CONTEXT_ID, context_id.as_str()),
+        ];
+        timer.tags(metric_tags.clone());
 
         if self.session_maker.epoch_exists(&epoch_id).await {
-            return Err(tonic::Status::new(
+            return Err(MetricedError::new(
+                OP_INIT,
+                Some(epoch_id.into()),
+                anyhow::anyhow!("Epoch {epoch_id} already exists"),
                 tonic::Code::AlreadyExists,
-                "PRSS state already exists".to_string(),
             ));
         }
 
@@ -295,16 +328,20 @@ impl<
         // But it's also ok to use context_manager.mpc_context_exists to check,
         // but this function requires communication with the storage backend.
         if !self.session_maker.context_exists(&context_id).await {
-            return Err(tonic::Status::new(
+            return Err(MetricedError::new(
+                OP_INIT,
+                Some(epoch_id.into()),
+                anyhow::anyhow!("MPC context ID {context_id} does not exist"),
                 tonic::Code::NotFound,
-                format!("MPC context ID {context_id} does not exist"),
             ));
         }
 
         self.init_prss(&context_id, &epoch_id).await.map_err(|e| {
-            tonic::Status::new(
+            MetricedError::new(
+                OP_INIT,
+                Some(epoch_id.into()),
+                anyhow::anyhow!("PRSS initialization failed with error: {e}"),
                 tonic::Code::Internal,
-                format!("PRSS initialization failed with error: {e}"),
             )
         })?;
         Ok(Response::new(Empty {}))

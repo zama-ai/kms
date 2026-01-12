@@ -69,7 +69,7 @@ impl_endpoint! {
     impl CoreServiceEndpoint {
         async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_INIT);
-            self.initiator.init(request).await
+            self.initiator.init(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
