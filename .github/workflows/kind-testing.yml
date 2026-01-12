@@ -312,7 +312,7 @@ jobs:
           # Start KMS setup and wait for completion
           # Uses environment variables: NAMESPACE, KMS_CORE_IMAGE_TAG, KMS_CORE_CLIENT_IMAGE_TAG,
           # DEPLOYMENT_TYPE, NUM_PARTIES
-          ./ci/scripts/manage_kind_setup.sh start
+          ./ci/scripts/manage_lifecycle.sh start
 
       - name: Run Kubernetes Tests
         if: matrix.cargo-check == false
@@ -370,7 +370,7 @@ jobs:
           # This will collect logs from pods based on DEPLOYMENT_TYPE and NUM_PARTIES
           SETUP_PID=$(cat .setup_pid 2>/dev/null || echo "")
           TAIL_PID=$(cat .tail_pid 2>/dev/null || echo "")
-          ./ci/kube-testing/scripts/manage_kind_setup.sh stop "${SETUP_PID}" "${TAIL_PID}"
+          ./ci/scripts/manage_lifecycle.sh stop "${SETUP_PID}" "${TAIL_PID}"
 
       - name: Upload kms-core logs
         if: always() && matrix.cargo-check == false
