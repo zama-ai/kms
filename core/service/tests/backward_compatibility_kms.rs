@@ -596,7 +596,6 @@ fn test_hybrid_kem_ct(
     }
 }
 
-#[allow(dead_code)]
 fn test_context_info(
     dir: &Path,
     test: &ContextInfoTest,
@@ -611,7 +610,7 @@ fn test_context_info(
         external_url: "https://node42.example.com".to_string(),
         ca_cert: None,
         public_storage_url: "https://storage.example.com/node42".to_string(),
-        public_storage_prefix: None,
+        public_storage_prefix: Some("PUB".to_string()),
         extra_verification_keys: vec![],
     };
     let software_version = SoftwareVersion {
@@ -645,7 +644,6 @@ fn test_context_info(
     }
 }
 
-#[allow(dead_code)]
 fn test_node_info(
     dir: &Path,
     test: &NodeInfoTest,
@@ -663,7 +661,7 @@ fn test_node_info(
         external_url: test.external_url.to_string(),
         ca_cert: test.ca_cert.clone(), // We currently don't have simple code for generating certificates
         public_storage_url: test.public_storage_url.to_string(),
-        public_storage_prefix: None,
+        public_storage_prefix: Some(test.public_storage_prefix.to_string()),
         extra_verification_keys: vec![verf_key2],
     };
 
@@ -1163,12 +1161,10 @@ impl TestedModule for KMS {
                 test_hybrid_kem_ct(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::ContextInfo(test) => {
-                // TODO (#2850) test_context_info(test_dir.as_ref(), test, format).into()
-                Ok(test.success(format)).into()
+                test_context_info(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::NodeInfo(test) => {
-                // TODO (#2850) test_node_info(test_dir.as_ref(), test, format).into()
-                Ok(test.success(format)).into()
+                test_node_info(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::SoftwareVersion(test) => {
                 test_software_version(test_dir.as_ref(), test, format).into()
