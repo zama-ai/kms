@@ -98,16 +98,16 @@ pub async fn key_gen_impl<
         // Note that the keygen meta store should be checked first
         // because we do not want to delete the preprocessing ID
         // if the keygen request cannot proceed.
-        if retrieve_from_meta_store(service.key_meta_map.read().await, &req_id, op_tag)
-            .await
-            .is_ok()
         {
-            return Err(MetricedError::new(
-                op_tag,
-                Some(req_id),
-                anyhow::anyhow!("Key generation request ID {req_id} is already in use."),
-                tonic::Code::AlreadyExists,
-            ));
+            let guarded_meta_store = service.key_meta_map.read().await;
+            if guarded_meta_store.exists(&req_id) {
+                return Err(MetricedError::new(
+                    op_tag,
+                    Some(req_id),
+                    anyhow::anyhow!("Key generation request ID {req_id} is already in use."),
+                    tonic::Code::AlreadyExists,
+                ));
+            }
         }
         // If we're in insecure mode, we skip removing preprocessed material since it may not exist
         let params = if !insecure {
@@ -125,7 +125,7 @@ pub async fn key_gen_impl<
         // check that the request ID is not used yet
         // and then insert the request ID only if it's unused
         // all validation must be done before inserting the request ID
-        add_req_to_meta_store(&mut service.crs_meta_map.write().await, &req_id, op_tag)?;
+        add_req_to_meta_store(&mut service.key_meta_map.write().await, &req_id, op_tag)?;
 
         (params, permit)
     };
