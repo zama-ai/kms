@@ -207,10 +207,6 @@ pub fn validate_init_req(
         Some(context_id) => context_id.try_into()?,
         None => *DEFAULT_MPC_CONTEXT,
     };
-    let epoch_id: EpochId = match &req.request_id {
-        Some(epoch_id) => epoch_id.try_into()?,
-        None => *DEFAULT_EPOCH_ID,
-    };
 
     Ok((context_id, epoch_id))
 }
