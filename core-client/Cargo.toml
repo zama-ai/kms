@@ -30,6 +30,7 @@ bc2wrap.workspace = true
 bytes.workspace = true
 clap = { workspace = true, features = ["derive"] }
 hex.workspace = true
+k256.workspace = true
 kms = { workspace = true, default-features = false, features = [
     "non-wasm",
     "testing",
@@ -39,6 +40,7 @@ kms-grpc.workspace = true
 observability.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
+rcgen.workspace = true
 serde = { workspace = true, features = ["derive"] }
 strum.workspace = true
 strum_macros.workspace = true
@@ -46,6 +48,7 @@ tempfile.workspace = true
 tfhe.workspace = true
 threshold-fhe = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio-rustls.workspace = true
 tonic = { workspace = true }
 tracing = { workspace = true, features = ["log"] }
 tracing-appender.workspace = true

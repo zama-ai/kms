@@ -1,15 +1,11 @@
 use anyhow::anyhow;
 use clap::Parser;
-use k256::{ecdsa::SigningKey, pkcs8::EncodePrivateKey};
-use rcgen::BasicConstraints::Constrained;
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
-    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256K1_SHA256,
-    PKCS_ECDSA_P256_SHA256,
+    ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy)]
 enum CertFileType {
@@ -112,37 +108,20 @@ async fn write_bytes<S: AsRef<std::ffi::OsStr> + ?Sized, B: AsRef<[u8]>>(
 }
 
 /// create the keypair and self-signed certificate for the CA identified by the given name
-fn create_ca_cert(
+fn create_selfsigned_ca_cert(
     ca_name: &str,
-    is_ca: &IsCa,
     wildcard: bool,
 ) -> anyhow::Result<(KeyPair, Certificate, CertificateParams)> {
     let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
-    create_ca_cert_from_keypair(&keypair, ca_name, is_ca, wildcard)
-        .map(|(cert, params)| (keypair, cert, params))
+    create_ca_cert_from_signing_key(ca_name, wildcard, &keypair)
+        .map(|(_cert_ki, cert, params)| (keypair, cert, params))
 }
 
-pub fn create_ca_cert_from_signing_key(
+pub fn create_ca_cert_from_signing_key<S: rcgen::SigningKey>(
     ca_name: &str,
     wildcard: bool,
-    sk: &SigningKey,
-) -> anyhow::Result<(Vec<u8>, Certificate)> {
-    let is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
-    let sk_der = sk.to_pkcs8_der()?;
-    let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
-        &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
-        &PKCS_ECDSA_P256K1_SHA256,
-    )?;
-    create_ca_cert_from_keypair(&ca_keypair, ca_name, &is_ca, wildcard)
-        .map(|(cert, params)| (params.key_identifier(&ca_keypair), cert))
-}
-
-fn create_ca_cert_from_keypair(
-    keypair: &KeyPair,
-    ca_name: &str,
-    is_ca: &IsCa,
-    wildcard: bool,
-) -> anyhow::Result<(Certificate, CertificateParams)> {
+    sk: &S,
+) -> anyhow::Result<(Vec<u8>, Certificate, CertificateParams)> {
     validate_ca_name(ca_name)?;
     let sans_vec = [
         if wildcard {
@@ -162,7 +141,7 @@ fn create_ca_cert_from_keypair(
     cp.distinguished_name = distinguished_name;
 
     // set CA cert CA flag
-    cp.is_ca = *is_ca;
+    cp.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
 
     // set self-signed CA cert Key Usage Purposes
     cp.key_usages = vec![
@@ -173,16 +152,15 @@ fn create_ca_cert_from_keypair(
 
     // self-sign cert with CA key
     tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
-    let cert = cp.self_signed(keypair)?;
-    Ok((cert, cp))
+    let cert = cp.self_signed(sk)?;
+    Ok((cp.key_identifier(sk), cert, cp))
 }
 
 /// create a keypair and certificate for each of the `num_cores`, signed by the given CA
-fn create_core_certs(
+fn create_core_certs<S: rcgen::SigningKey>(
     ca_name: &str,
     num_cores: usize,
-    ca_keypair: &KeyPair,
-    ca_cert_params: &CertificateParams,
+    issuing_ca: &Issuer<S>,
     wildcard: bool,
 ) -> anyhow::Result<HashMap<usize, (KeyPair, Certificate)>> {
     let core_cert_bundle: HashMap<usize, (KeyPair, Certificate)> = (1..=num_cores)
@@ -222,9 +200,7 @@ fn create_core_certs(
             ];
 
             tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
-            let core_cert = cp
-                .signed_by(&core_keypair, ca_cert_params, ca_keypair)
-                .unwrap();
+            let core_cert = cp.signed_by(&core_keypair, issuing_ca).unwrap();
             (i, (core_keypair, core_cert))
         })
         .collect();
@@ -272,21 +248,11 @@ pub async fn entry_point() -> anyhow::Result<()> {
         HashSet::from_iter(args.group.ca_names.iter().cloned())
     };
 
-    // As default, we only use self-signed player certificates, so we must not set the CA flag.
-    // This is due to `webpki` that only exposes an `EndEntityCert` for verification, which cannot be a CA.
-    // This limitation can be worked around by using some other method for verifying a certs validity.
-    let mut is_ca = IsCa::NoCa;
-
-    // if we want to generate core certs, we need to set the CA flag to true
-    // we only allow to sign core certs directly, without intermediate CAs
-    if args.num_cores > 0 {
-        is_ca = IsCa::Ca(Constrained(1));
-    }
-
     let mut all_certs = vec![];
     for ca_name in ca_set {
         let (ca_keypair, ca_cert, ca_cert_params) =
-            create_ca_cert(&ca_name, &is_ca, args.wildcard)?;
+            create_selfsigned_ca_cert(&ca_name, args.wildcard)?;
+        let issuing_ca = Issuer::from_params(&ca_cert_params, &ca_keypair);
 
         write_certs_and_keys(
             &args.output_dir,
@@ -299,13 +265,8 @@ pub async fn entry_point() -> anyhow::Result<()> {
 
         // only generate core certs, if specifically desired (currently not the default)
         if args.num_cores > 0 {
-            let core_certs = create_core_certs(
-                &ca_name,
-                args.num_cores,
-                &ca_keypair,
-                &ca_cert_params,
-                args.wildcard,
-            )?;
+            let core_certs =
+                create_core_certs(&ca_name, args.num_cores, &issuing_ca, args.wildcard)?;
 
             // write all core keypairs and certificates to disk
             for (core_id, (core_keypair, core_cert)) in core_certs.iter() {
@@ -348,16 +309,9 @@ pub async fn entry_point() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        create_ca_cert, create_ca_cert_from_signing_key, create_core_certs, validate_ca_name,
-    };
-    use k256::{ecdsa::SigningKey, pkcs8::EncodePrivateKey};
-    use rand::rngs::OsRng;
-    use rcgen::{
-        BasicConstraints::Constrained, Certificate, CertificateParams, IsCa, KeyPair,
-        PKCS_ECDSA_P256K1_SHA256,
-    };
-    use tokio_rustls::rustls::pki_types::{PrivatePkcs8KeyDer, UnixTime};
+    use super::{create_core_certs, create_selfsigned_ca_cert, validate_ca_name};
+    use rcgen::{Certificate, Issuer};
+    use tokio_rustls::rustls::pki_types::UnixTime;
     use webpki::{anchor_from_trusted_cert, EndEntityCert, KeyUsage};
 
     fn signed_verify(leaf_cert: &Certificate, ca_cert: &Certificate) -> anyhow::Result<()> {
@@ -382,11 +336,11 @@ mod tests {
     #[test]
     fn test_cert_chain() {
         let ca_name = "party.kms.zama.ai";
-        let is_ca = IsCa::Ca(Constrained(1));
-        let (ca_keypair, ca_cert, ca_cert_params) = create_ca_cert(ca_name, &is_ca, false).unwrap();
+        let (ca_keypair, ca_cert, ca_cert_params) =
+            create_selfsigned_ca_cert(ca_name, false).unwrap();
+        let issuing_ca = Issuer::from_params(&ca_cert_params, &ca_keypair);
 
-        let core_certs =
-            create_core_certs(ca_name, 2, &ca_keypair, &ca_cert_params, false).unwrap();
+        let core_certs = create_core_certs(ca_name, 2, &issuing_ca, false).unwrap();
 
         // check that we can import the CA cert into the trust store
         let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
@@ -395,7 +349,7 @@ mod tests {
 
         // create another CA cert, that did not sign the core certs for negative testing
         let (_ca_keypair_wrong, ca_cert_wrong, _ca_cert_params_wrong) =
-            create_ca_cert(ca_name, &is_ca, false).unwrap();
+            create_selfsigned_ca_cert(ca_name, false).unwrap();
 
         // check all core certs
         for c in core_certs {
@@ -415,10 +369,9 @@ mod tests {
     #[test]
     fn test_ca_cert_selfsigned_verify() {
         let ca_name = "p1.kms.zama.ai";
-        let is_ca = IsCa::NoCa;
 
-        let (_ca_keypair, ca_cert, _ca_cert_params) =
-            create_ca_cert(ca_name, &is_ca, false).unwrap();
+        let (ca_keypair, ca_cert, ca_cert_params) =
+            create_selfsigned_ca_cert(ca_name, false).unwrap();
 
         // check that we can import the CA cert into the trust store
         let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
@@ -427,41 +380,22 @@ mod tests {
 
         // create another CA cert, that did not sign the core certs for negative testing
         let (_ca_keypair_wrong, ca_cert_wrong, _ca_cert_params_wrong) =
-            create_ca_cert(ca_name, &is_ca, false).unwrap();
+            create_selfsigned_ca_cert(ca_name, false).unwrap();
 
-        let verif = signed_verify(&ca_cert, &ca_cert);
-
-        // check that verification works for self-signed each cert
-        assert!(verif.is_ok(), "certificate validation failed!");
-
-        // check that verification does not work for wrong CA cert
-        let verif = signed_verify(&ca_cert, &ca_cert_wrong);
-        assert!(
-            verif.is_err(),
-            "certificate validation succeeded, but was expected to fail!"
-        );
-    }
-
-    #[test]
-    fn test_ca_cert_from_signing_key_verify() {
-        let ca_name = "p1.kms.zama.ai";
-        let sk = SigningKey::random(&mut OsRng);
-        let (_ca_cert_ki, ca_cert) = create_ca_cert_from_signing_key(ca_name, false, &sk).unwrap();
-
-        let sk_der = sk.to_pkcs8_der().unwrap();
-        let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
-            &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
-            &PKCS_ECDSA_P256K1_SHA256,
-        )
-        .unwrap();
-        let ca_cert_params = CertificateParams::from_ca_cert_der(ca_cert.der()).unwrap();
-
-        let core_certs =
-            create_core_certs(ca_name, 2, &ca_keypair, &ca_cert_params, false).unwrap();
-
-        for c in core_certs {
+        let issuing_ca = Issuer::from_params(&ca_cert_params, &ca_keypair);
+        let core_certs = create_core_certs(ca_name, 2, &issuing_ca, false).unwrap();
+        // check that verification works for self-signed CA
+        for c in core_certs.iter() {
             let verif = signed_verify(&c.1 .1, &ca_cert);
             assert!(verif.is_ok(), "certificate validation failed!");
+        }
+        // check that verification does not work for wrong CA cert
+        for c in core_certs {
+            let verif = signed_verify(&c.1 .1, &ca_cert_wrong);
+            assert!(
+                verif.is_err(),
+                "certificate validation succeeded, but was expected to fail!"
+            );
         }
     }
 
