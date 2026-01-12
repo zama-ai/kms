@@ -12,7 +12,10 @@ use kms_grpc::{
     RequestId,
 };
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
-use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
+use threshold_fhe::{
+    algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
+    execution::tfhe_internals::{private_keysets::PrivateKeySet, public_keysets::FhePubKeySet},
+};
 
 use crate::{
     engine::{
@@ -93,24 +96,70 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         CryptoMaterialStorage::<PubS, PrivS>::crs_exists(&self.inner, req_id).await
     }
 
+    /// Internal function to write threshold keys with memory optimization.
+    ///
+    /// Memory optimization: Serializes server_key FIRST, then consumes it
+    /// with into_raw_parts() to extract components for ThresholdFheKeys. This eliminates
+    /// the need to clone the large server_key structure (~tens of GiB with production params).
     #[allow(clippy::too_many_arguments)]
     async fn inner_write_threshold_keys(
         &self,
         reshare_id: Option<&RequestId>,
         key_id: &RequestId,
         epoch_id: &EpochId,
-        threshold_fhe_keys: ThresholdFheKeys,
+        private_keys: PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         fhe_key_set: FhePubKeySet,
         info: KeyGenMetadata,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
         // use guarded_meta_store as the synchronization point
-        // all other locks are taken as needed so that we don't lock up
-        // other function calls too much
         let mut guarded_meta_storage = meta_store.write().await;
+
+        // Step 1: Serialize server_key to public storage FIRST (before consuming it)
+        let mut pub_storage = self.inner.public_storage.lock().await;
+        let server_result = store_versioned_at_request_id(
+            &mut (*pub_storage),
+            key_id,
+            &fhe_key_set.server_key,
+            &PubDataType::ServerKey.to_string(),
+        )
+        .await;
+
+        if let Err(e) = &server_result {
+            tracing::error!("Failed to store server key for request {}: {}", key_id, e);
+        } else {
+            log_storage_success(
+                key_id,
+                pub_storage.info(),
+                &PubDataType::ServerKey.to_string(),
+                true,
+                true,
+            );
+        }
+
+        // Step 2: Consume server_key to extract components
+        let (
+            integer_server_key,
+            _raw_ksk_material,
+            _raw_compression_key,
+            decompression_key,
+            sns_key,
+            _raw_noise_squashing_compression_key,
+            _raw_rerandomization_key,
+            _raw_tag,
+        ) = fhe_key_set.server_key.into_raw_parts();
+
+        // Step 3: Construct ThresholdFheKeys with extracted components
+        let threshold_fhe_keys = ThresholdFheKeys {
+            private_keys: Arc::new(private_keys),
+            integer_server_key: Arc::new(integer_server_key),
+            sns_key: sns_key.map(Arc::new),
+            decompression_key: decompression_key.map(Arc::new),
+            meta_data: info.clone(),
+        };
+
+        // Step 4: Run remaining storage operations in parallel
         let (r1, r2, r3) = {
-            // Lock the storage components in the correct order to avoid deadlocks.
-            let mut pub_storage = self.inner.public_storage.lock().await;
             let mut priv_storage = self.inner.private_storage.lock().await;
             let back_vault = match self.inner.backup_vault {
                 Some(ref x) => Some(x.lock().await),
@@ -144,6 +193,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 }
                 store_result.is_ok()
             };
+
             let f2 = async {
                 let pk_result = store_pk_at_request_id(
                     &mut (*pub_storage),
@@ -162,27 +212,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                         true,
                     );
                 }
-                let server_result = store_versioned_at_request_id(
-                    &mut (*pub_storage),
-                    key_id,
-                    &fhe_key_set.server_key,
-                    &PubDataType::ServerKey.to_string(),
-                )
-                .await;
-
-                if let Err(e) = &server_result {
-                    tracing::error!("Failed to store server key for request {}: {}", key_id, e);
-                } else {
-                    log_storage_success(
-                        key_id,
-                        pub_storage.info(),
-                        &PubDataType::ServerKey.to_string(),
-                        true,
-                        true,
-                    );
-                }
-                pk_result.is_ok() && server_result.is_ok()
+                pk_result.is_ok()
             };
+
+            // Note: This clone is cheap - ThresholdFheKeys fields are Arc-wrapped
             let threshold_key_clone = threshold_fhe_keys.clone();
             let f3 = async move {
                 match back_vault {
@@ -217,7 +250,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             };
             tokio::join!(f1, f2, f3)
         };
-        // Try to store the new data
+
         tracing::info!("Storing Keys objects for key ID {}", key_id);
 
         let meta_update_result =
@@ -225,14 +258,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         if let Err(e) = &meta_update_result {
             tracing::error!("Error ({}) while updating meta store for {}", e, key_id);
         }
-        if r1 && r2 && r3 && meta_update_result.is_ok() {
-            // updating the cache is not critical to system functionality,
-            // so we do not consider it as an error
+        if r1 && r2 && r3 && server_result.is_ok() && meta_update_result.is_ok() {
+            // updating the cache is not critical to system functionality
             {
                 let mut guarded_pk_cache = self.inner.pk_cache.write().await;
                 let previous = guarded_pk_cache.insert(
                     *key_id,
-                    WrappedPublicKeyOwned::Compact(fhe_key_set.public_key.clone()),
+                    WrappedPublicKeyOwned::Compact(fhe_key_set.public_key),
                 );
                 if previous.is_some() {
                     tracing::warn!("PK already exists in pk_cache for {}, overwriting", key_id);
@@ -254,10 +286,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             }
             tracing::info!("Finished storing key for Key Id {key_id}.");
         } else {
-            // Try to delete stored data to avoid anything dangling
-            // Ignore any failure to delete something since it might be
-            // because the data did not get created
-            // In any case, we can't do much.
             tracing::warn!(
                 "Failed to ensure existence of threshold key material for Key with ID: {}",
                 key_id
@@ -267,13 +295,15 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         }
     }
 
+    /// Write threshold keys for reshare operations.
+    /// See [write_threshold_keys_with_dkg_meta_store] for details on memory optimization.
     #[allow(clippy::too_many_arguments)]
     pub async fn write_threshold_keys_with_reshare_meta_store(
         &self,
         reshare_id: &RequestId,
         key_id: &RequestId,
         epoch_id: &EpochId,
-        threshold_fhe_keys: ThresholdFheKeys,
+        private_keys: PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         fhe_key_set: FhePubKeySet,
         info: KeyGenMetadata,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
@@ -282,24 +312,28 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             Some(reshare_id),
             key_id,
             epoch_id,
-            threshold_fhe_keys,
+            private_keys,
             fhe_key_set,
             info,
             meta_store,
         )
         .await
     }
-    /// Write the key materials (result of a keygen) to storage and cache
-    /// for the threshold KMS.
-    /// The [meta_store] is updated to "Done" if the procedure is successful.
+
+    /// Write the key materials (result of a keygen) to storage and cache.
     ///
+    /// Memory optimization: This function serializes server_key FIRST,
+    /// then consumes it with into_raw_parts() to extract components. This eliminates
+    /// the need to clone the large server_key structure (~tens of GiB with production params).
+    ///
+    /// The [meta_store] is updated to "Done" if the procedure is successful.
     /// When calling this function more than once, the same [meta_store]
     /// must be used, otherwise the storage state may become inconsistent.
     pub async fn write_threshold_keys_with_dkg_meta_store(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,
-        threshold_fhe_keys: ThresholdFheKeys,
+        private_keys: PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         fhe_key_set: FhePubKeySet,
         info: KeyGenMetadata,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
@@ -308,7 +342,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             None,
             key_id,
             epoch_id,
-            threshold_fhe_keys,
+            private_keys,
             fhe_key_set,
             info,
             meta_store,

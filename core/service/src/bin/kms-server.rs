@@ -331,7 +331,18 @@ async fn build_tls_config(
     Ok((server_config, client_config, verifier))
 }
 
+// Memory profiling with dhat (enable with --features memory-profiling)
+// View results at: https://nnethercote.github.io/dh_view/dh_view.html
+#[cfg(feature = "memory-profiling")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 fn main() -> anyhow::Result<()> {
+    // Initialize dhat profiler when memory-profiling feature is enabled
+    // This will produce a dhat-heap.json file on program exit
+    #[cfg(feature = "memory-profiling")]
+    let _profiler = dhat::Profiler::new_heap();
+
     let args = KmsArgs::parse();
     // NOTE: this config is only needed to set up the tokio runtime
     // we read it again in [main_exec] to set up the rest of the server

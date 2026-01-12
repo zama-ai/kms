@@ -53,10 +53,7 @@ use crate::{
             BaseKmsStruct, KeyGenMetadata, DSEP_PUBDATA_KEY,
         },
         keyset_configuration::InternalKeySetConfig,
-        threshold::{
-            service::{session::ImmutableSessionMaker, ThresholdFheKeys},
-            traits::KeyGenerator,
-        },
+        threshold::{service::session::ImmutableSessionMaker, traits::KeyGenerator},
         utils::MetricedError,
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
@@ -1092,39 +1089,14 @@ impl<
             }
         };
 
-        let (integer_server_key, decompression_key, sns_key) = {
-            let (
-                raw_server_key,
-                _raw_ksk_material,
-                _raw_compression_key,
-                raw_decompression_key,
-                raw_noise_squashing_key,
-                _raw_noise_squashing_compression_key,
-                _raw_rerandomization_key,
-                _raw_tag,
-            ) = pub_key_set.server_key.clone().into_raw_parts();
-            (
-                raw_server_key,
-                raw_decompression_key,
-                raw_noise_squashing_key,
-            )
-        };
-
-        let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: Arc::new(private_keys),
-            integer_server_key: Arc::new(integer_server_key),
-            sns_key: sns_key.map(Arc::new),
-            decompression_key: decompression_key.map(Arc::new),
-            meta_data: info.clone(),
-        };
-
-        //Note: We can't easily check here whether we succeeded writing to the meta store
-        //thus we can't increment the error counter if it fails
+        // Memory optimization: Storage function now serializes server_key first,
+        // then consumes it to extract components. This eliminates the need to clone the large
+        // server_key structure (~tens of GiB with production parameters).
         crypto_storage
             .write_threshold_keys_with_dkg_meta_store(
                 req_id,
                 epoch_id,
-                threshold_fhe_keys,
+                private_keys,
                 pub_key_set,
                 info,
                 meta_store,
