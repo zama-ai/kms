@@ -312,7 +312,7 @@ jobs:
           # Start KMS setup and wait for completion
           # Uses environment variables: NAMESPACE, KMS_CORE_IMAGE_TAG, KMS_CORE_CLIENT_IMAGE_TAG,
           # DEPLOYMENT_TYPE, NUM_PARTIES
-          ./ci/kube-testing/scripts/manage_kind_setup.sh start
+          ./ci/scripts/manage_kind_setup.sh start
 
       - name: Run Kubernetes Tests
         if: matrix.cargo-check == false
@@ -330,7 +330,11 @@ jobs:
           echo "TEST_EXIT_CODE=$?" >> "${GITHUB_ENV}"
 
           # Collect logs after tests complete
-          ./ci/kube-testing/scripts/setup_kms_in_kind.sh --collect-logs
+          ./ci/scripts/deploy_unified.sh \
+            --target kind-ci \
+            --namespace "${NAMESPACE}" \
+            --deployment-type "${DEPLOYMENT_TYPE}" \
+            --collect-logs
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
