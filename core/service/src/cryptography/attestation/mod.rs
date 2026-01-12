@@ -10,7 +10,8 @@ use nsm_nitro_enclave_utils::{driver::dev::DevNitro, pcr::Pcrs};
 use rcgen::{BasicConstraints, PKCS_ECDSA_P384_SHA384};
 use rcgen::{
     CertificateParams, CustomExtension, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose, PublicKeyData, PKCS_ECDSA_P256K1_SHA256, PKCS_ECDSA_P256_SHA256,
+    Issuer, KeyPair, KeyUsagePurpose, PublicKeyData, PKCS_ECDSA_P256K1_SHA256,
+    PKCS_ECDSA_P256_SHA256,
 };
 use std::{sync::Arc, time::Duration};
 use threshold_fhe::networking::tls::extract_subject_from_cert;
@@ -191,10 +192,10 @@ pub trait SecurityModule {
                     &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
                     &PKCS_ECDSA_P256K1_SHA256,
                 )?;
-                let ca_cert_params =
-                    CertificateParams::from_ca_cert_der(&ca_cert_pem.contents.as_slice().into())?;
+                let issuing_ca =
+                    Issuer::from_ca_cert_der(&ca_cert_pem.contents.as_slice().into(), ca_keypair)?;
 
-                let tls_cert = tls_cp.signed_by(&tls_keypair, &ca_cert_params, &ca_keypair)?;
+                let tls_cert = tls_cp.signed_by(&tls_keypair, &issuing_ca)?;
                 // sanity check
                 EndEntityCert::try_from(tls_cert.der())?.verify_for_usage(
                     &[webpki::aws_lc_rs::ECDSA_P256K1_SHA256],

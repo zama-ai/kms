@@ -4,7 +4,7 @@ use k256::{ecdsa::SigningKey, pkcs8::EncodePrivateKey};
 use rcgen::BasicConstraints::Constrained;
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
-    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256K1_SHA256,
+    ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256K1_SHA256,
     PKCS_ECDSA_P256_SHA256,
 };
 use std::collections::{HashMap, HashSet};
@@ -178,11 +178,10 @@ fn create_ca_cert_from_keypair(
 }
 
 /// create a keypair and certificate for each of the `num_cores`, signed by the given CA
-fn create_core_certs(
+fn create_core_certs<S: rcgen::SigningKey>(
     ca_name: &str,
     num_cores: usize,
-    ca_keypair: &KeyPair,
-    ca_cert_params: &CertificateParams,
+    issuing_ca: &Issuer<S>,
     wildcard: bool,
 ) -> anyhow::Result<HashMap<usize, (KeyPair, Certificate)>> {
     let core_cert_bundle: HashMap<usize, (KeyPair, Certificate)> = (1..=num_cores)
@@ -222,9 +221,7 @@ fn create_core_certs(
             ];
 
             tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
-            let core_cert = cp
-                .signed_by(&core_keypair, ca_cert_params, ca_keypair)
-                .unwrap();
+            let core_cert = cp.signed_by(&core_keypair, issuing_ca).unwrap();
             (i, (core_keypair, core_cert))
         })
         .collect();
@@ -287,6 +284,7 @@ pub async fn entry_point() -> anyhow::Result<()> {
     for ca_name in ca_set {
         let (ca_keypair, ca_cert, ca_cert_params) =
             create_ca_cert(&ca_name, &is_ca, args.wildcard)?;
+        let issuing_ca = Issuer::from_params(&ca_cert_params, &ca_keypair);
 
         write_certs_and_keys(
             &args.output_dir,
@@ -299,13 +297,8 @@ pub async fn entry_point() -> anyhow::Result<()> {
 
         // only generate core certs, if specifically desired (currently not the default)
         if args.num_cores > 0 {
-            let core_certs = create_core_certs(
-                &ca_name,
-                args.num_cores,
-                &ca_keypair,
-                &ca_cert_params,
-                args.wildcard,
-            )?;
+            let core_certs =
+                create_core_certs(&ca_name, args.num_cores, &issuing_ca, args.wildcard)?;
 
             // write all core keypairs and certificates to disk
             for (core_id, (core_keypair, core_cert)) in core_certs.iter() {
