@@ -122,27 +122,15 @@ spec:
             {{- end }}
             {{- if .Values.kmsCore.backupVault.s3.enabled }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultStorageBucket }}
+              value: {{ .Values.kmsCore.backupVault.s3.bucket | quote }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultStoragePrefix }}
+              value: {{ .Values.kmsCore.backupVault.s3.prefix | quote }}
             {{- end }}
             {{- if .Values.kmsCore.backupVault.awskms.enabled }}
             - name: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultKeychainAWSKMSRootKeyID }}
+              value: {{ .Values.kmsCore.backupVault.awskms.rootKeyId | quote }}
             - name: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultKeychainAWSKMSRootKeySpec }}
+              value: {{ .Values.kmsCore.backupVault.awskms.rootKeySpec | quote }}
             {{- end }}
             {{- else }}
             - name: AWS_ACCESS_KEY_ID
@@ -426,27 +414,15 @@ spec:
             {{- end }}
             {{- if .Values.kmsCore.backupVault.s3.enabled }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultStorageBucket }}
+              value: {{ .Values.kmsCore.backupVault.s3.bucket | quote }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultStoragePrefix }}
+              value: {{ .Values.kmsCore.backupVault.s3.prefix | quote }}
             {{- end }}
             {{- if .Values.kmsCore.backupVault.awskms.enabled }}
             - name: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultKeychainAWSKMSRootKeyID }}
+              value: {{ .Values.kmsCore.backupVault.awskms.rootKeyId | quote }}
             - name: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultKeychainAWSKMSRootKeySpec }}
+              value: {{ .Values.kmsCore.backupVault.awskms.rootKeySpec | quote }}
             {{- end }}
             {{- else }}
             - name: AWS_ACCESS_KEY_ID
@@ -598,30 +574,18 @@ spec:
             {{- end }}
             {{- if .Values.kmsCore.backupVault.s3.enabled }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultStorageBucket }}
+              value: {{ .Values.kmsCore.backupVault.s3.bucket | quote }}
                   optional: true
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultStoragePrefix }}
+              value: {{ .Values.kmsCore.backupVault.s3.prefix | quote }}
                   optional: true
             {{- end }}
             {{- if .Values.kmsCore.backupVault.awskms.enabled }}
             - name: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultKeychainAWSKMSRootKeyID }}
+              value: {{ .Values.kmsCore.backupVault.awskms.rootKeyId | quote }}
                   optional: true
             - name: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
-              valueFrom:
-                configMapKeyRef:
-                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.backupVaultKeychainAWSKMSRootKeySpec }}
+              value: {{ .Values.kmsCore.backupVault.awskms.rootKeySpec | quote }}
                   optional: true
             {{- end }}
             {{- else }}
