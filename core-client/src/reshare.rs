@@ -46,7 +46,7 @@ pub(crate) async fn do_reshare(
         (PubDataType::PublicKey, hex::decode(public_key_digest)?),
     ]);
     // Create the request
-    let request = internal_client.reshare_request(
+    let request = internal_client.new_epoch_request(
         &request_id,
         key_id,
         preproc_id,

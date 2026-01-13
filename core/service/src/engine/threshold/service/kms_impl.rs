@@ -15,7 +15,6 @@ use tfhe::{
     named::Named, Versionize,
 };
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
-#[cfg(feature = "insecure")]
 use threshold_fhe::execution::endpoints::reshare_sk::SecureReshareSecretKeys;
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
@@ -44,7 +43,6 @@ use tonic::transport::{server::TcpIncoming, Server};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_tls::rustls::TlsIncoming;
 
-#[cfg(feature = "insecure")]
 use crate::engine::threshold::service::epoch_manager::RealThresholdEpochManager;
 // === Internal Crate ===
 use crate::{

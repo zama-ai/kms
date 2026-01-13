@@ -270,7 +270,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     #[allow(clippy::too_many_arguments)]
     pub async fn write_threshold_keys_with_reshare_meta_store(
         &self,
-        reshare_id: &RequestId,
         key_id: &RequestId,
         epoch_id: &EpochId,
         threshold_fhe_keys: ThresholdFheKeys,
@@ -279,7 +278,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
         self.inner_write_threshold_keys(
-            Some(reshare_id),
+            Some(&(*epoch_id).into()),
             key_id,
             epoch_id,
             threshold_fhe_keys,

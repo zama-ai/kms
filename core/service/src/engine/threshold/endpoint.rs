@@ -24,7 +24,7 @@ macro_rules! impl_endpoint {
                 CG: CrsGenerator + Sync + Send + 'static,
                 CM: ContextManager + Sync + Send + 'static,
                 BO: BackupOperator + Sync + Send + 'static,
-            > CoreServiceEndpoint for ThresholdKms<EP, UD, PD, KG, PP, CG, CM, BO, RE> $implementations
+            > CoreServiceEndpoint for ThresholdKms<EP, UD, PD, KG, PP, CG, CM, BO> $implementations
 
         #[cfg(feature="insecure")]
         #[tonic::async_trait]

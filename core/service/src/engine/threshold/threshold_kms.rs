@@ -162,7 +162,7 @@ impl<
 
 #[cfg(not(feature = "insecure"))]
 impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync>
-    ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO>
+    ThresholdKms<EP, UD, PD, KG, PP, CG, CM, BO>
 {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
