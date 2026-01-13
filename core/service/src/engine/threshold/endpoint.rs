@@ -1,11 +1,10 @@
 use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::threshold::traits::{
-    CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, Resharer,
-    UserDecryptor,
+    CrsGenerator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, UserDecryptor,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
-use crate::engine::traits::{BackupOperator, ContextManager};
+use crate::engine::traits::{BackupOperator, ContextManager, EpochManager};
 use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use observability::{metrics::METRICS, metrics_names::*};
@@ -17,7 +16,7 @@ macro_rules! impl_endpoint {
         #[cfg(not(feature="insecure"))]
         #[tonic::async_trait]
         impl<
-                IN: Initiator + Sync + Send + 'static,
+                EP: EpochManager + Sync + Send + 'static,
                 UD: UserDecryptor + Sync + Send + 'static,
                 PD: PublicDecryptor + Sync + Send + 'static,
                 KG: KeyGenerator + Sync + Send + 'static,
@@ -25,13 +24,12 @@ macro_rules! impl_endpoint {
                 CG: CrsGenerator + Sync + Send + 'static,
                 CM: ContextManager + Sync + Send + 'static,
                 BO: BackupOperator + Sync + Send + 'static,
-                RE: Resharer + Sync + Send + 'static,
-            > CoreServiceEndpoint for ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO, RE> $implementations
+            > CoreServiceEndpoint for ThresholdKms<EP, UD, PD, KG, PP, CG, CM, BO, RE> $implementations
 
         #[cfg(feature="insecure")]
         #[tonic::async_trait]
         impl<
-                IN: Initiator + Sync + Send + 'static,
+                EP: EpochManager + Sync + Send + 'static,
                 UD: UserDecryptor + Sync + Send + 'static,
                 PD: PublicDecryptor + Sync + Send + 'static,
                 KG: KeyGenerator + Sync + Send + 'static,
@@ -41,8 +39,7 @@ macro_rules! impl_endpoint {
                 ICG: InsecureCrsGenerator + Sync + Send + 'static,
                 CM: ContextManager + Sync + Send + 'static,
                 BO: BackupOperator + Sync + Send + 'static,
-                RE: Resharer + Sync + Send + 'static,
-            > CoreServiceEndpoint for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO, RE> $implementations
+            > CoreServiceEndpoint for ThresholdKms<EP, UD, PD, KG, IKG, PP, CG, ICG, CM, BO> $implementations
     }
 }
 
@@ -266,16 +263,13 @@ impl_endpoint! {
             // do the PRSS init (which also means, we want to deprecatet the init endpoint)
             let inner = request.into_inner();
             METRICS.increment_request_counter(OP_NEW_EPOCH);
-            self.initiator.init(Request::new(inner.clone())).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_NEW_EPOCH, tag);
-            })?;
-            self.resharer.initiate_resharing(Request::new(inner.clone())).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_NEW_EPOCH, tag);
-            })
+            self.epoch_manager
+                .new_mpc_epoch(Request::new(inner.clone()))
+                .await
+                .inspect_err(|err| {
+                    let tag = map_tonic_code_to_metric_err_tag(err.code());
+                    let _ = METRICS.increment_error_counter(OP_NEW_EPOCH, tag);
+                })
         }
 
         #[tracing::instrument(skip_all)]
@@ -284,7 +278,7 @@ impl_endpoint! {
             request: Request<RequestId>,
         ) -> Result<Response<EpochResultResponse>, Status> {
             METRICS.increment_request_counter(OP_GET_EPOCH_RESULT);
-            self.resharer.get_resharing_result(request).await.inspect_err(|err| {
+            self.epoch_manager.get_epoch_result(request).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_err_tag(err.code());
                 let _ = METRICS
                     .increment_error_counter(OP_GET_EPOCH_RESULT, tag);

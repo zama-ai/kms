@@ -8,7 +8,7 @@ use tokio_util::task::TaskTracker;
 use tonic_health::server::HealthReporter;
 
 pub struct ThresholdKms<
-    IN: Sync,
+    EP: Sync,
     UD: Sync,
     PD: Sync,
     KG: Sync,
@@ -18,9 +18,8 @@ pub struct ThresholdKms<
     #[cfg(feature = "insecure")] ICG: Sync,
     CM: Sync,
     BO: Sync,
-    RE: Sync,
 > {
-    pub(crate) initiator: IN,
+    pub(crate) epoch_manager: EP,
     pub(crate) user_decryptor: UD,
     pub(crate) decryptor: PD,
     pub(crate) key_generator: KG,
@@ -32,7 +31,6 @@ pub struct ThresholdKms<
     pub(crate) insecure_crs_generator: ICG,
     pub(crate) context_manager: CM,
     pub(crate) backup_operator: BO,
-    pub(crate) resharer: RE,
     pub(crate) session_maker: ImmutableSessionMaker,
     tracker: Arc<TaskTracker>,
     health_reporter: HealthReporter,
@@ -41,7 +39,7 @@ pub struct ThresholdKms<
 
 #[cfg(feature = "insecure")]
 impl<
-        IN: Sync,
+        EP: Sync,
         UD: Sync,
         PD: Sync,
         KG: Sync,
@@ -51,12 +49,11 @@ impl<
         ICG: Sync,
         CM: Sync,
         BO: Sync,
-        RE: Sync,
-    > ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO, RE>
+    > ThresholdKms<EP, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
 {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        initiator: IN,
+        epoch_manager: EP,
         user_decryptor: UD,
         decryptor: PD,
         key_generator: KG,
@@ -66,14 +63,13 @@ impl<
         insecure_crs_generator: ICG,
         context_manager: CM,
         backup_operator: BO,
-        resharer: RE,
         tracker: Arc<TaskTracker>,
         session_maker: ImmutableSessionMaker,
         health_reporter: HealthReporter,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
     ) -> Self {
         Self {
-            initiator,
+            epoch_manager,
             user_decryptor,
             decryptor,
             key_generator,
@@ -83,7 +79,6 @@ impl<
             insecure_crs_generator,
             context_manager,
             backup_operator,
-            resharer,
             tracker,
             session_maker,
             health_reporter,
@@ -95,7 +90,7 @@ impl<
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
 impl<
-        IN: Sync,
+        EP: Sync,
         UD: Sync,
         PD: Sync,
         KG: Sync,
@@ -105,8 +100,7 @@ impl<
         ICG: Sync,
         CM: Sync,
         BO: Sync,
-        RE: Sync,
-    > Shutdown for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO, RE>
+    > Shutdown for ThresholdKms<EP, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
 {
     fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
         let health_reporter = self.health_reporter.clone();
@@ -148,7 +142,7 @@ impl<
 #[cfg(feature = "insecure")]
 #[allow(clippy::let_underscore_future)]
 impl<
-        IN: Sync,
+        EP: Sync,
         UD: Sync,
         PD: Sync,
         KG: Sync,
@@ -158,8 +152,7 @@ impl<
         ICG: Sync,
         CM: Sync,
         BO: Sync,
-        RE: Sync,
-    > Drop for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO, RE>
+    > Drop for ThresholdKms<EP, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
 {
     fn drop(&mut self) {
         // Start the shutdown and let it finish in the background
@@ -168,12 +161,12 @@ impl<
 }
 
 #[cfg(not(feature = "insecure"))]
-impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync, RE: Sync>
-    ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO, RE>
+impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync>
+    ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO>
 {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        initiator: IN,
+        epoch_manager: EP,
         user_decryptor: UD,
         decryptor: PD,
         key_generator: KG,
@@ -181,14 +174,13 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
         crs_generator: CG,
         context_manager: CM,
         backup_operator: BO,
-        resharer: RE,
         tracker: Arc<TaskTracker>,
         session_maker: ImmutableSessionMaker,
         health_reporter: HealthReporter,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
     ) -> Self {
         Self {
-            initiator,
+            epoch_manager,
             user_decryptor,
             decryptor,
             key_generator,
@@ -196,7 +188,6 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
             crs_generator,
             context_manager,
             backup_operator,
-            resharer,
             tracker,
             session_maker,
             health_reporter,
@@ -207,8 +198,8 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
 
 #[tonic::async_trait]
 #[cfg(not(feature = "insecure"))]
-impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync, RE: Sync>
-    Shutdown for ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO, RE>
+impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync> Shutdown
+    for ThresholdKms<EP, UD, PD, KG, PP, CG, CM, BO>
 {
     fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
         let health_reporter = self.health_reporter.clone();
@@ -249,8 +240,8 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
 
 #[cfg(not(feature = "insecure"))]
 #[allow(clippy::let_underscore_future)]
-impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync, RE: Sync> Drop
-    for ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO, RE>
+impl<EP: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync> Drop
+    for ThresholdKms<EP, UD, PD, KG, PP, CG, CM, BO>
 {
     fn drop(&mut self) {
         let _ = self.shutdown();
