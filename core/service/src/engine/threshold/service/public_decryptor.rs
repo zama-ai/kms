@@ -40,7 +40,7 @@ use threshold_fhe::{
     session_id::SessionId,
     thread_handles::spawn_compute_bound,
 };
-use tokio::sync::{OwnedRwLockReadGuard, RwLock};
+use tokio::sync::{OwnedRwLockReadGuard, OwnedSemaphorePermit, RwLock};
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
@@ -598,11 +598,11 @@ impl<
         let party = session_preparer
             .my_role()
             .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?;
-        let dec_sig_future = move |_permit| async move {
+        let dec_sig_future = move |permit: OwnedSemaphorePermit| async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
             let _timer = timer;
-            // NOTE: _permit should be dropped at the end of this function
+            // NOTE: permit should be dropped at the end of this function
             let mut decs = HashMap::new();
 
             // Collect all results first, without holding any locks
@@ -685,8 +685,8 @@ impl<
             };
             // Log after lock is released
             tracing::info!(
-                "MetaStore SUCCESS update - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
-                req_id, key_id, party, pts_len, lock_acquired_time, total_lock_time
+                "PublicDecrypt MetaStore SUCCESS update - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}, release_n_permits={}",
+                req_id, key_id, party, pts_len, lock_acquired_time, total_lock_time, permit.num_permits()
             );
             Ok(())
         };

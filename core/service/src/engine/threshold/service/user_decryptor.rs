@@ -594,7 +594,7 @@ impl<
                 // Capture the timer, it is stopped when it's dropped
                 let _timer = timer;
                 // explicitly move the rate limiter context
-                let _permit = permit;
+                let permit = permit;
                 // Note that we'll hold a read lock for some time
                 // but this should be ok since write locks
                 // happen rarely as keygen is a rare event.
@@ -646,6 +646,11 @@ impl<
                             .update(&req_id, Err(format!("Failed decryption: {e}")));
                     }
                 }
+                // Log after lock is released
+                tracing::info!(
+                    "UserDecrypt MetaStore SUCCESS update - req_id={}, key_id={}, release_n_permits={}",
+                    req_id, key_id, permit.num_permits()
+                );
             }
             .instrument(tracing::Span::current()),
         );
