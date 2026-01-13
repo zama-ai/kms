@@ -81,7 +81,7 @@ impl ResharePreprocRequired {
 }
 
 #[async_trait::async_trait]
-pub trait ReshareSecretKeys: Send + Sync {
+pub trait ReshareSecretKeys: Send + Sync + Sized {
     /// Reshare a secret key share within the same set of parties such that if a party failed during DKG,
     ///  it can catch up.
     /// - `session` is the regular session handle for the parties involved in the resharing

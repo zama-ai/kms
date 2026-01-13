@@ -640,7 +640,7 @@ impl<
         };
 
         crypto_storage
-            .write_threshold_keys_with_dkg_meta_store(
+            .write_threshold_keys_with_reshare_meta_store(
                 &verified_previous_epoch.key_id,
                 &new_epoch_id,
                 threshold_fhe_keys,

@@ -418,6 +418,7 @@ async fn wait_for_keygen_result(
             &req_get_keygen,
             &domain,
             kms_clients.len() + expected_num_parties_crashed,
+            None,
         )
         .await
         .unwrap();
@@ -1151,6 +1152,7 @@ pub(crate) async fn verify_keygen_responses(
     req_get_keygen: &RequestId,
     domain: &Eip712Domain,
     total_num_parties: usize,
+    read_key_at_epoch: Option<kms_grpc::EpochId>,
 ) -> Option<(TestKeyGenResult, HashMap<Role, ThresholdFheKeys>)> {
     use itertools::Itertools;
 
@@ -1198,10 +1200,14 @@ pub(crate) async fn verify_keygen_responses(
         let key_id = RequestId::from_str(kg_res.request_id.unwrap().request_id.as_str()).unwrap();
         let priv_storage =
             FileStorage::new(data_root_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
-        let mut threshold_fhe_keys =
-            ThresholdFheKeys::read_from_storage_at_epoch(&priv_storage, &key_id, &DEFAULT_EPOCH_ID)
-                .await
-                .unwrap();
+        //Need to read at the correct epoch id
+        let mut threshold_fhe_keys = ThresholdFheKeys::read_from_storage_at_epoch(
+            &priv_storage,
+            &key_id,
+            &read_key_at_epoch.unwrap_or(*DEFAULT_EPOCH_ID),
+        )
+        .await
+        .unwrap();
         // we do not need the sns key to reconstruct, remove it to save memory
         threshold_fhe_keys.sns_key = None;
         all_threshold_fhe_keys.insert(role, threshold_fhe_keys);

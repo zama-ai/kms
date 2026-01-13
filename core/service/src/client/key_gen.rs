@@ -19,7 +19,6 @@ use kms_grpc::rpc_types::{
 use kms_grpc::solidity_types::{KeygenVerification, PrepKeygenVerification};
 use kms_grpc::ContextId;
 use kms_grpc::RequestId;
-use std::collections::HashMap;
 use tfhe::CompactPublicKey;
 use tfhe::ServerKey;
 use tfhe_versionable::{Unversionize, Versionize};
@@ -125,39 +124,18 @@ impl Client {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn reshare_request(
+    pub fn new_epoch_request(
         &self,
         request_id: &RequestId,
-        key_id: &RequestId,
-        preproc_id: &RequestId,
-        from_context_id: Option<&ContextId>,
-        to_context_id: Option<&ContextId>,
-        from_epoch_id: Option<&EpochId>,
-        to_epoch_id: Option<&EpochId>,
-        param: Option<FheParameter>,
-        domain: &Eip712Domain,
-        key_digests: &HashMap<PubDataType, Vec<u8>>,
+        to_context_id: &ContextId,
+        to_epoch_id: &EpochId,
+        previous_context: Option<PreviousEpochInfo>,
     ) -> anyhow::Result<NewMpcEpochRequest> {
-        let domain = alloy_to_protobuf_domain(domain)?;
         Ok(NewMpcEpochRequest {
             request_id: Some((*request_id).into()),
-            context_id: to_context_id.map(|id| (*id).into()),
-            epoch_id: to_epoch_id.map(|id| (*id).into()),
-            previous_context: Some(PreviousEpochInfo {
-                context_id: from_context_id.map(|id| (*id).into()),
-                epoch_id: from_epoch_id.map(|id| (*id).into()),
-                preproc_id: Some((*preproc_id).into()),
-                key_id: Some((*key_id).into()),
-                key_parameters: param.unwrap_or_default().into(),
-                key_digests: key_digests
-                    .iter()
-                    .map(|(k, v)| kms_grpc::kms::v1::KeyDigest {
-                        key_type: k.to_string(),
-                        digest: v.clone(),
-                    })
-                    .collect(),
-                domain: Some(domain),
-            }),
+            context_id: Some((*to_context_id).into()),
+            epoch_id: Some((*to_epoch_id).into()),
+            previous_context,
         })
     }
 

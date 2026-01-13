@@ -33,6 +33,7 @@ use std::sync::Arc;
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::networking::grpc::GrpcServer;
+use tokio::task::JoinSet;
 use tonic::server::NamedService;
 use tonic::transport::{Channel, Uri};
 use tonic_health::pb::health_client::HealthClient;
@@ -58,7 +59,7 @@ pub async fn setup_threshold_no_client<
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
-    let mut handles = Vec::new();
+    let mut handles = JoinSet::new();
     tracing::info!("Spawning servers...");
     let num_parties = priv_storage.len();
     let ip_addr = DEFAULT_URL.parse().unwrap();
@@ -139,7 +140,7 @@ pub async fn setup_threshold_no_client<
         core_config.threshold = Some(threshold_party_config);
         core_config.rate_limiter_conf = rate_limiter_conf.clone();
 
-        handles.push(tokio::spawn(async move {
+        handles.spawn(async move {
             let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
             let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
 
@@ -159,15 +160,14 @@ pub async fn setup_threshold_no_client<
             )
             .await;
             (i, server, service_config)
-        }));
+        });
     }
     assert_eq!(handles.len(), num_parties);
     // Wait for the server to start
     tracing::info!("Client waiting for server");
     let mut servers = Vec::with_capacity(num_parties);
-    for cur_handle in handles {
-        let (i, kms_server_res, service_config) =
-            cur_handle.await.expect("Server {i} failed to start");
+    while let Some(cur_handle) = handles.join_next().await {
+        let (i, kms_server_res, service_config) = cur_handle.expect("Server {i} failed to start");
         match kms_server_res {
             Ok((kms_server, health_service, _metastore_status_service)) => {
                 servers.push((i, kms_server, service_config, health_service))
@@ -176,6 +176,7 @@ pub async fn setup_threshold_no_client<
         }
     }
     tracing::info!("Servers initialized. Starting servers...");
+    servers.sort_by_key(|(idx, _, _, _)| *idx);
     let mut server_handles = HashMap::new();
     for (
         ((i, cur_server, service_config, cur_health_service), cur_mpc_shutdown),
