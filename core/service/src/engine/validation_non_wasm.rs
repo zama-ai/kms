@@ -68,7 +68,6 @@ pub(crate) enum RequestIdParsingErr {
     UserDecResponse,
     PublicDecResponse,
 
-    ReshareRequest,
     ReshareResponse,
 
     CustodianContext,
@@ -119,9 +118,6 @@ impl std::fmt::Display for RequestIdParsingErr {
             }
             RequestIdParsingErr::BackupRecovery => {
                 write!(f, "Invalid new backup recovery result response ID")
-            }
-            RequestIdParsingErr::ReshareRequest => {
-                write!(f, "Invalid reshare request ID")
             }
             RequestIdParsingErr::ReshareResponse => {
                 write!(f, "Invalid reshare response ID")
@@ -188,6 +184,7 @@ pub(crate) fn parse_proto_context_id(
     parse_grpc_request_id(request_id, RequestIdParsingErr::Context)
 }
 
+#[expect(unused)]
 pub(crate) fn parse_proto_epoch_id(
     request_id: &kms_grpc::kms::v1::RequestId,
 ) -> Result<EpochId, BoxedStatus> {

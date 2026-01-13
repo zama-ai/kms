@@ -16,9 +16,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
-        endpoints::reshare_sk::{
-            ResharePreprocRequired, ReshareSecretKeys, SecureReshareSecretKeys,
-        },
+        endpoints::reshare_sk::{ResharePreprocRequired, ReshareSecretKeys},
         online::preprocessing::BasePreprocessing,
         runtime::{
             party::TwoSetsRole,
@@ -182,9 +180,10 @@ fn verify_epoch_info(
 // The Epoch Manager takes over the role of the Initiator and Resharer
 // For now the struct is thus a union of the RealInitiator and RealResharer structs
 pub struct RealThresholdEpochManager<
-    PrivS: StorageExt + Send + Sync + 'static,
     PubS: Storage + Send + Sync + 'static,
+    PrivS: StorageExt + Send + Sync + 'static,
     Init: PRSSInit<ResiduePolyF4Z64> + PRSSInit<ResiduePolyF4Z128>,
+    Reshare: ReshareSecretKeys,
 > {
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub(crate) session_maker: SessionMaker,
@@ -197,6 +196,7 @@ pub struct RealThresholdEpochManager<
     // PRSS Init wasn't but reshare was
     pub rate_limiter: RateLimiter,
     pub(crate) _init: PhantomData<Init>,
+    pub(crate) _reshare: PhantomData<Reshare>,
 }
 
 impl<
@@ -205,7 +205,8 @@ impl<
         Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
             + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
             + Default,
-    > RealThresholdEpochManager<PrivS, PubS, Init>
+        Reshare: ReshareSecretKeys + Default,
+    > RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
 {
     /// This will load all PRSS setups from storage into session maker.
     ///
@@ -461,7 +462,7 @@ impl<
         let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
 
         let task = move |_permit| async move {
-            SecureReshareSecretKeys::reshare_sk_two_sets_as_s1(
+            Reshare::reshare_sk_two_sets_as_s1(
                 &mut two_sets_session,
                 &mut mutable_keys,
                 verified_previous_epoch.key_parameters,
@@ -712,7 +713,7 @@ impl<
                 )
                 .await?;
 
-            let new_private_keyset = SecureReshareSecretKeys::reshare_sk_two_sets_as_s2(
+            let new_private_keyset = Reshare::reshare_sk_two_sets_as_s2(
                 &mut (two_sets_session, session_online),
                 &mut correlated_randomness_z128,
                 &mut correlated_randomness_z64,
@@ -822,7 +823,7 @@ impl<
                 )
                 .await?;
 
-            let new_private_keyset = SecureReshareSecretKeys::reshare_sk_two_sets_as_both_sets(
+            let new_private_keyset = Reshare::reshare_sk_two_sets_as_both_sets(
                 &mut (two_sets_session, session_online),
                 &mut correlated_randomness_z128,
                 &mut correlated_randomness_z64,
@@ -876,7 +877,7 @@ impl<
         previous_epoch: PreviousEpochInfo,
     ) -> Result<Response<Empty>, Status> {
         tracing::info!(
-            "Received initiate resharing request in from context {:?} to context {:?} for Key ID {:?} for epoch ID {:?}",
+            "Received initiate resharing request from context {:?} to context {:?} for Key ID {:?} for epoch ID {:?}",
             previous_epoch.context_id,
             new_context_id,
             previous_epoch.key_id,
@@ -953,7 +954,8 @@ impl<
         Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
             + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
             + Default,
-    > EpochManager for RealThresholdEpochManager<PrivS, PubS, Init>
+        Reshare: ReshareSecretKeys + Default,
+    > EpochManager for RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
 {
     async fn new_mpc_epoch(
         &self,
@@ -1060,4 +1062,9 @@ impl<
             }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    // TODO: add negative/dummy protocol testing
 }
