@@ -165,6 +165,69 @@ impl Default for TestMaterialSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+    use strum::IntoEnumIterator;
+
+    /// Maps a PrivDataType to its corresponding KeyType(s).
+    /// This function must be exhaustive - the compiler will error if new variants are added.
+    fn priv_data_type_to_key_types(pdt: PrivDataType) -> Vec<KeyType> {
+        match pdt {
+            PrivDataType::SigningKey => vec![KeyType::SigningKeys, KeyType::ServerSigningKeys],
+            PrivDataType::FheKeyInfo => vec![KeyType::FheKeys], // Threshold FHE key info
+            PrivDataType::CrsInfo => vec![KeyType::CrsKeys],
+            PrivDataType::FhePrivateKey => vec![KeyType::FheKeys], // Centralized FHE private key
+            #[expect(deprecated)]
+            PrivDataType::PrssSetup => vec![KeyType::PrssSetup],
+            PrivDataType::PrssSetupCombined => vec![KeyType::PrssSetup],
+            PrivDataType::ContextInfo => vec![KeyType::PrssSetup], // MPC context stored with PRSS
+        }
+    }
+
+    /// Maps a PubDataType to its corresponding KeyType(s).
+    /// This function must be exhaustive - the compiler will error if new variants are added.
+    fn pub_data_type_to_key_types(pdt: PubDataType) -> Vec<KeyType> {
+        match pdt {
+            PubDataType::ServerKey => vec![KeyType::FheKeys],
+            PubDataType::PublicKey => vec![KeyType::PublicKeys],
+            PubDataType::PublicKeyMetadata => vec![KeyType::PublicKeys],
+            PubDataType::CRS => vec![KeyType::CrsKeys],
+            PubDataType::VerfKey => vec![KeyType::SigningKeys],
+            PubDataType::VerfAddress => vec![KeyType::SigningKeys],
+            PubDataType::DecompressionKey => vec![KeyType::DecompressionKeys],
+            PubDataType::CACert => vec![KeyType::ServerSigningKeys], // TLS certs for MPC nodes
+            PubDataType::RecoveryMaterial => vec![KeyType::ClientKeys], // Backup recovery
+        }
+    }
+
+    /// Ensures KeyType covers all PrivDataType variants.
+    /// If a new PrivDataType is added, the exhaustive match in priv_data_type_to_key_types
+    /// will cause a compile error, forcing an update to both the mapping and KeyType if needed.
+    #[test]
+    fn test_key_type_covers_all_priv_data_types() {
+        for pdt in PrivDataType::iter() {
+            let key_types = priv_data_type_to_key_types(pdt);
+            assert!(
+                !key_types.is_empty(),
+                "PrivDataType::{:?} must map to at least one KeyType",
+                pdt
+            );
+        }
+    }
+
+    /// Ensures KeyType covers all PubDataType variants.
+    /// If a new PubDataType is added, the exhaustive match in pub_data_type_to_key_types
+    /// will cause a compile error, forcing an update to both the mapping and KeyType if needed.
+    #[test]
+    fn test_key_type_covers_all_pub_data_types() {
+        for pdt in PubDataType::iter() {
+            let key_types = pub_data_type_to_key_types(pdt);
+            assert!(
+                !key_types.is_empty(),
+                "PubDataType::{:?} must map to at least one KeyType",
+                pdt
+            );
+        }
+    }
 
     #[test]
     fn test_centralized_basic_spec() {
