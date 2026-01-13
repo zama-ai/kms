@@ -116,26 +116,29 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         let mut guarded_meta_storage = meta_store.write().await;
 
         // Step 1: Serialize server_key to public storage FIRST (before consuming it)
-        let mut pub_storage = self.inner.public_storage.lock().await;
-        let server_result = store_versioned_at_request_id(
-            &mut (*pub_storage),
-            key_id,
-            &fhe_key_set.server_key,
-            &PubDataType::ServerKey.to_string(),
-        )
-        .await;
-
-        if let Err(e) = &server_result {
-            tracing::error!("Failed to store server key for request {}: {}", key_id, e);
-        } else {
-            log_storage_success(
+        let server_result = {
+            let mut pub_storage = self.inner.public_storage.lock().await;
+            let result = store_versioned_at_request_id(
+                &mut (*pub_storage),
                 key_id,
-                pub_storage.info(),
+                &fhe_key_set.server_key,
                 &PubDataType::ServerKey.to_string(),
-                true,
-                true,
-            );
-        }
+            )
+            .await;
+
+            if let Err(e) = &result {
+                tracing::error!("Failed to store server key for request {}: {}", key_id, e);
+            } else {
+                log_storage_success(
+                    key_id,
+                    pub_storage.info(),
+                    &PubDataType::ServerKey.to_string(),
+                    true,
+                    true,
+                );
+            }
+            result
+        }; // pub_storage lock released here
 
         // Step 2: Consume server_key to extract components
         let (
@@ -160,6 +163,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
         // Step 4: Run remaining storage operations in parallel
         let (r1, r2, r3) = {
+            let mut pub_storage = self.inner.public_storage.lock().await;
             let mut priv_storage = self.inner.private_storage.lock().await;
             let back_vault = match self.inner.backup_vault {
                 Some(ref x) => Some(x.lock().await),
