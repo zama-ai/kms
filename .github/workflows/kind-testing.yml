@@ -312,6 +312,7 @@ jobs:
           # Start KMS setup and wait for completion
           # Uses environment variables: NAMESPACE, KMS_CORE_IMAGE_TAG, KMS_CORE_CLIENT_IMAGE_TAG,
           # DEPLOYMENT_TYPE, NUM_PARTIES
+          chmod +x ci/scripts/manage_lifecycle.sh
           ./ci/scripts/manage_lifecycle.sh start
 
       - name: Run Kubernetes Tests
@@ -330,6 +331,7 @@ jobs:
           echo "TEST_EXIT_CODE=$?" >> "${GITHUB_ENV}"
 
           # Collect logs after tests complete
+          chmod +x ci/scripts/deploy_unified.sh
           ./ci/scripts/deploy_unified.sh \
             --target kind-ci \
             --namespace "${NAMESPACE}" \
@@ -370,6 +372,7 @@ jobs:
           # This will collect logs from pods based on DEPLOYMENT_TYPE and NUM_PARTIES
           SETUP_PID=$(cat .setup_pid 2>/dev/null || echo "")
           TAIL_PID=$(cat .tail_pid 2>/dev/null || echo "")
+          chmod +x ci/scripts/manage_lifecycle.sh
           ./ci/scripts/manage_lifecycle.sh stop "${SETUP_PID}" "${TAIL_PID}"
 
       - name: Upload kms-core logs
