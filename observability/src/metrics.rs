@@ -33,10 +33,10 @@ pub struct TaggedMetric<T> {
 }
 
 impl<T> TaggedMetric<T> {
-    fn new(metric: T, name: &'static str) -> Self {
+    fn new(metric: T) -> Self {
         Self {
             metric,
-            default_tags: vec![MetricTag::new("name", name)],
+            default_tags: vec![],
         }
     }
 
@@ -257,27 +257,21 @@ impl CoreMetrics {
         gauge.record(0, &[]);
 
         Self {
-            request_counter: TaggedMetric::new(request_counter, "operations"),
-            error_counter: TaggedMetric::new(error_counter, "errors"),
-            network_rx_counter: TaggedMetric::new(network_rx_counter, "network_rx"),
-            network_tx_counter: TaggedMetric::new(network_tx_counter, "network_tx"),
-            duration_histogram: TaggedMetric::new(duration_histogram, "duration"),
-            size_histogram: TaggedMetric::new(size_histogram, "size"),
-            cpu_load_gauge: TaggedMetric::new(cpu_gauge, "cpu_load"),
-            memory_usage_gauge: TaggedMetric::new(memory_gauge, "memory_usage"),
-            file_descriptor_gauge: TaggedMetric::new(file_descriptor_gauge, "file_descriptors"),
-            socat_processes_gauge: TaggedMetric::new(socat_processes_gauge, "socat_processes"),
-            thread_gauge: TaggedMetric::new(thread_gauge, "threads"),
-            rate_limiter_gauge: TaggedMetric::new(rate_limiter_gauge, "rate_limit_usage"),
-            meta_storage_pub_dec_gauge: TaggedMetric::new(
-                meta_storage_pub_dec_gauge,
-                "public_decryptions",
-            ),
-            meta_storage_user_dec_gauge: TaggedMetric::new(
-                meta_storage_user_dec_gauge,
-                "user_decryptions",
-            ),
-            gauge: TaggedMetric::new(gauge, "active_operations"),
+            request_counter: TaggedMetric::new(request_counter),
+            error_counter: TaggedMetric::new(error_counter),
+            network_rx_counter: TaggedMetric::new(network_rx_counter),
+            network_tx_counter: TaggedMetric::new(network_tx_counter),
+            duration_histogram: TaggedMetric::new(duration_histogram),
+            size_histogram: TaggedMetric::new(size_histogram),
+            cpu_load_gauge: TaggedMetric::new(cpu_gauge),
+            memory_usage_gauge: TaggedMetric::new(memory_gauge),
+            file_descriptor_gauge: TaggedMetric::new(file_descriptor_gauge),
+            socat_processes_gauge: TaggedMetric::new(socat_processes_gauge),
+            thread_gauge: TaggedMetric::new(thread_gauge),
+            rate_limiter_gauge: TaggedMetric::new(rate_limiter_gauge),
+            meta_storage_pub_dec_gauge: TaggedMetric::new(meta_storage_pub_dec_gauge),
+            meta_storage_user_dec_gauge: TaggedMetric::new(meta_storage_user_dec_gauge),
+            gauge: TaggedMetric::new(gauge),
             trace_guard: Arc::new(Mutex::new(None)),
         }
     }
