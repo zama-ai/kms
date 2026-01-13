@@ -196,9 +196,8 @@ pub(crate) async fn update_system_metrics<T: Clone>(
 ) {
     metrics::METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
     if let Some(user_meta_store) = user_meta_store {
-        metrics::METRICS.record_meta_storage_user_decryptions(
-            user_meta_store.get_processing_count() as u64,
-        );
+        metrics::METRICS
+            .record_meta_storage_user_decryptions(user_meta_store.get_processing_count() as u64);
         metrics::METRICS
             .record_meta_storage_user_decryptions_total(user_meta_store.get_total_count() as u64);
     }

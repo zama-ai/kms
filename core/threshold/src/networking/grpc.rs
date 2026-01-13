@@ -246,6 +246,7 @@ impl GrpcNetworkingManager {
     /// Finally it also updates the counts of inactive and active sessions.
     fn start_background_cleaning_task(
         session_store: Arc<SessionStore>,
+        opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
         inactive_session_count: Arc<AtomicU64>,
         active_session_count: Arc<AtomicU64>,
         update_interval: Duration,
@@ -261,8 +262,16 @@ impl GrpcNetworkingManager {
 
                 session_store.retain(|session_id, status| match status {
                     SessionStatus::Completed(started) =>  started.elapsed() < cleanup_interval,
-                    SessionStatus::Inactive((_, started)) => {
+                    SessionStatus::Inactive((message_queue, started)) => {
                         if started.elapsed() > discard_inactive_interval {
+                            // Decrement tracker for each sender in the discarded session
+                            for sender_id in message_queue.sender_identities() {
+                                opened_sessions_tracker
+                                    .entry(sender_id)
+                                    .and_modify(|count| {
+                                        *count = count.saturating_sub(1);
+                                    });
+                            }
                             tracing::warn!(
                                 "Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.",
                                 session_id,
@@ -323,6 +332,7 @@ impl GrpcNetworkingManager {
 
         let conf = OptionConfigWrapper { conf };
         let session_store = Arc::new(SessionStore::default());
+        let opened_sessions_tracker = Arc::new(DashMap::new());
 
         // We need to spawn background cleanup task to remove dead weak references from session_store, otherwise they accumulate and eat RAM + perf
         let cleanup_session_store = Arc::clone(&session_store);
@@ -333,6 +343,7 @@ impl GrpcNetworkingManager {
         let active_session_count = Arc::new(AtomicU64::new(0));
         Self::start_background_cleaning_task(
             cleanup_session_store,
+            Arc::clone(&opened_sessions_tracker),
             Arc::clone(&inactive_session_count),
             Arc::clone(&active_session_count),
             update_interval,
@@ -344,7 +355,7 @@ impl GrpcNetworkingManager {
             session_store,
             inactive_session_count,
             active_session_count,
-            opened_sessions_tracker: Arc::new(DashMap::new()),
+            opened_sessions_tracker,
             conf,
             sending_service: GrpcSendingService::new(tls_conf, conf, peer_tcp_proxy)?,
             #[cfg(feature = "testing")]
@@ -677,6 +688,15 @@ impl MessageQueueStore {
                 "trying to iterate keys when message queue is not initialized",
             ))),
             MessageQueueStore::Initialized(inner) => Ok(inner.rx.iter().map(|entry| *entry.key())),
+        }
+    }
+
+    /// Returns the sender identities for an uninitialized message queue.
+    /// Returns an empty vector if the message queue is already initialized.
+    pub(crate) fn sender_identities(&self) -> Vec<MpcIdentity> {
+        match self {
+            MessageQueueStore::Uninitialized(map) => map.iter().map(|e| e.key().clone()).collect(),
+            MessageQueueStore::Initialized(_) => vec![],
         }
     }
 }
