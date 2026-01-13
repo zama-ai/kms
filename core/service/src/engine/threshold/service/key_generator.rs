@@ -38,7 +38,7 @@ use threshold_fhe::{
     },
     networking::NetworkMode,
 };
-use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockWriteGuard};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response};
 use tracing::Instrument;
@@ -390,27 +390,17 @@ impl<
         ];
         timer.tags(metric_tags.clone());
 
-        // We delete the preprocessing entry from the bucket so that it cannot be used again.
-        // TODO should it actually not be invalidated st we do not allow generating again under the same id
-        tracing::info!(
-                    "Deleting preprocessing ID {} from bucket store before starting keygen for request ID {}",
-                    preproc_id,
-                    req_id
-                );
-        let preproc_bucket = delete_req_from_meta_store(
-            self.preproc_buckets.write().await,
-            &preproc_id,
-            OP_KEYGEN_REQUEST,
-        )
-        .await?;
-        // Processes the bucket meta information. This is a slightly funky as in certain situations it may override the DKGParams sepcified in the request
-        let (preproc_handle, dkg_params) = Self::retrieve_preproc_handle(
-            preproc_bucket,
-            req_id,
-            preproc_id,
-            inner.params,
-            insecure,
-        )?;
+        let (preproc_handle, dkg_params) = 
+            // Processes the bucket meta information. This is a slightly funky as in certain situations it may override the DKGParams sepcified in the request
+            // Futhermore be aware that this helper method also DELETES the preprocessing entry from the meta store
+            Self::retrieve_preproc_handle(
+                self.preproc_buckets.write().await,
+                req_id,
+                preproc_id,
+                inner.params,
+                insecure,
+            )
+            .await?;
 
         add_req_to_meta_store(
             &mut self.dkg_pubinfo_meta_store.write().await,
@@ -444,8 +434,9 @@ impl<
     }
 
     /// Retrieve the preprocessing handle, parameters and preprocessing ID from the request.
-    fn retrieve_preproc_handle(
-        bucket_metastore: BucketMetaStore,
+    /// This method also deletes the preprocessing entry from the meta store
+    async fn retrieve_preproc_handle(
+        bucket_metastore: RwLockWriteGuard<'_, MetaStore<BucketMetaStore>>,
         key_req_id: RequestId,
         preproc_id: RequestId,
         params: Option<i32>,
@@ -465,23 +456,31 @@ impl<
         if insecure {
             Ok((PreprocHandleWithMode::Insecure, standard_dkg_params))
         } else {
-            if bucket_metastore.preprocessing_id != preproc_id {
+            tracing::info!(
+                    "Deleting preprocessing ID {} from bucket store before starting keygen for request ID {}",
+                    preproc_id,
+                    key_req_id
+                );
+            let preproc_bucket =
+                delete_req_from_meta_store(bucket_metastore, &preproc_id, OP_KEYGEN_REQUEST)
+                    .await?;
+            if preproc_bucket.preprocessing_id != preproc_id {
                 return Err(MetricedError::new(
                     op_tag,
                     Some(key_req_id),
                     format!(
                         "Preprocessing ID mismatch: expected {}, found {}",
-                        preproc_id, bucket_metastore.preprocessing_id
+                        preproc_id, preproc_bucket.preprocessing_id
                     ),
                     tonic::Code::Internal,
                 ));
             }
             let dkg_param = match params {
                 Some(_) => standard_dkg_params,
-                None => bucket_metastore.dkg_param,
+                None => preproc_bucket.dkg_param,
             };
             Ok((
-                PreprocHandleWithMode::Secure((preproc_id, bucket_metastore.preprocessing_store)),
+                PreprocHandleWithMode::Secure((preproc_id, preproc_bucket.preprocessing_store)),
                 dkg_param,
             ))
         }
