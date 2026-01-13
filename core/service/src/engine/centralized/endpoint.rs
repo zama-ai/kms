@@ -6,11 +6,12 @@ use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::query_key_material_availability;
 use crate::vault::storage::{Storage, StorageExt};
 use kms_grpc::kms::v1::{
-    self, CustodianRecoveryRequest, Empty, HealthStatusResponse, InitRequest, KeyGenPreprocRequest,
+    self, CustodianRecoveryRequest, Empty, HealthStatusResponse, KeyGenPreprocRequest,
     KeyGenPreprocResult, KeyMaterialAvailabilityResponse, NodeType, OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::KMSType;
+use observability::metrics_names::OP_NEW_EPOCH;
 use tonic::{Request, Response, Status};
 
 use crate::engine::centralized::service::{crs_gen_impl, get_crs_gen_result_impl};
@@ -26,10 +27,10 @@ use observability::{
     metrics_names::{
         map_tonic_code_to_metric_err_tag, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
         OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_DESTROY_CUSTODIAN_CONTEXT,
-        OP_DESTROY_MPC_CONTEXT, OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST,
-        OP_KEYGEN_PREPROC_RESULT, OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT,
-        OP_NEW_MPC_CONTEXT, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
-        OP_RESTORE_FROM_BACKUP, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
+        OP_DESTROY_MPC_CONTEXT, OP_FETCH_PK, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT,
+        OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_MPC_CONTEXT,
+        OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_RESTORE_FROM_BACKUP,
+        OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
     },
 };
 
@@ -41,13 +42,13 @@ impl<
         BO: BackupOperator + Sync + Send + 'static,
     > CoreServiceEndpoint for CentralizedKms<PubS, PrivS, CM, BO>
 {
-    async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
-        METRICS.increment_request_counter(OP_INIT);
-        init_impl(self, request).await.inspect_err(|err| {
-            let tag = map_tonic_code_to_metric_err_tag(err.code());
-            let _ = METRICS.increment_error_counter(observability::metrics_names::OP_INIT, tag);
-        })
-    }
+    //async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+    //    METRICS.increment_request_counter(OP_INIT);
+    //    init_impl(self, request).await.inspect_err(|err| {
+    //        let tag = map_tonic_code_to_metric_err_tag(err.code());
+    //        let _ = METRICS.increment_error_counter(observability::metrics_names::OP_INIT, tag);
+    //    })
+    //}
 
     #[tracing::instrument(skip(self, request))]
     async fn key_gen_preproc(
@@ -412,19 +413,31 @@ impl<
         Ok(Response::new(response))
     }
 
-    #[tracing::instrument(skip(self, _request))]
-    async fn initiate_resharing(
+    #[tracing::instrument(skip_all)]
+    async fn new_mpc_epoch(
         &self,
-        _request: Request<kms_grpc::kms::v1::InitiateResharingRequest>,
-    ) -> Result<Response<kms_grpc::kms::v1::InitiateResharingResponse>, Status> {
-        unimplemented!("Resharing is not supported in Centralized KMS");
+        request: Request<v1::NewMpcEpochRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        METRICS.increment_request_counter(OP_NEW_EPOCH);
+        init_impl(self, request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_err_tag(err.code());
+            let _ =
+                METRICS.increment_error_counter(observability::metrics_names::OP_NEW_EPOCH, tag);
+        })
     }
 
-    #[tracing::instrument(skip(self, _request))]
-    async fn get_resharing_result(
+    #[tracing::instrument(skip_all)]
+    async fn get_epoch_result(
         &self,
         _request: Request<v1::RequestId>,
-    ) -> Result<Response<kms_grpc::kms::v1::ResharingResultResponse>, Status> {
-        unimplemented!("Resharing is not supported in Centralized KMS");
+    ) -> Result<Response<v1::EpochResultResponse>, Status> {
+        unimplemented!("MPC epochs are not supported in centralized KMS");
+    }
+
+    async fn destroy_mpc_epoch(
+        &self,
+        _request: Request<v1::DestroyMpcEpochRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        unimplemented!("MPC epochs are not supported in centralized KMS");
     }
 }
