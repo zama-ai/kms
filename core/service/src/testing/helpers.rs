@@ -30,15 +30,16 @@ pub fn create_test_material_manager() -> TestMaterialManager {
     TestMaterialManager::new(workspace_root.map(|p| p.join("test-material")))
 }
 
-/// Fix public key RequestIds for centralized tests
+/// Regenerate central server keys for tests
 ///
-/// Ensures public keys are stored with correct RequestIds that match private keys.
-/// This is necessary because pre-generated material may have mismatched RequestIds.
+/// Deletes existing public keys and regenerates all central server keys
+/// (both private and public) with correct, matching RequestIds.
+/// This ensures test material has consistent key pairs.
 ///
 /// # Arguments
-/// * `pub_storage` - Public storage to update
-/// * `priv_storage` - Private storage (used to regenerate keys)
-pub async fn fix_centralized_public_keys(
+/// * `pub_storage` - Public storage for regenerated keys
+/// * `priv_storage` - Private storage for regenerated keys
+pub async fn regenerate_central_keys(
     pub_storage: &mut FileStorage,
     priv_storage: &mut FileStorage,
 ) -> Result<()> {

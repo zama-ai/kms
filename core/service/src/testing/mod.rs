@@ -86,7 +86,7 @@ pub mod prelude {
 
     // Helper functions
     pub use super::helpers::{
-        create_test_material_manager, domain_to_msg, fix_centralized_public_keys,
+        create_test_material_manager, domain_to_msg, regenerate_central_keys,
     };
 
     // Test utilities

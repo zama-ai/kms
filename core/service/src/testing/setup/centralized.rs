@@ -2,7 +2,7 @@
 //!
 //! This module provides a builder pattern for setting up isolated centralized KMS
 //! test environments with automatic cleanup.
-use crate::testing::helpers::{create_test_material_manager, fix_centralized_public_keys};
+use crate::testing::helpers::{create_test_material_manager, regenerate_central_keys};
 use crate::testing::material::{TestMaterialManager, TestMaterialSpec};
 use crate::testing::types::ServerHandle;
 use crate::testing::utils::setup::ensure_testing_material_exists;
@@ -94,7 +94,7 @@ impl CentralizedTestEnvBuilder {
             .unwrap_or_else(TestMaterialSpec::centralized_basic);
 
         // Setup isolated material
-        let material_dir = manager.setup_test_material(&spec, &test_name).await?;
+        let material_dir = manager.setup_test_material_temp(&spec, &test_name).await?;
 
         // Generate material with correct RequestIds
         ensure_testing_material_exists(Some(material_dir.path())).await;
@@ -103,8 +103,8 @@ impl CentralizedTestEnvBuilder {
         let mut priv_storage =
             FileStorage::new(Some(material_dir.path()), StorageType::PRIV, None)?;
 
-        // Fix public key RequestIds
-        fix_centralized_public_keys(&mut pub_storage, &mut priv_storage).await?;
+        // Regenerate keys with consistent RequestIds
+        regenerate_central_keys(&mut pub_storage, &mut priv_storage).await?;
 
         // Setup KMS server with optional backup vault
         let backup_vault = if self.with_backup_vault {

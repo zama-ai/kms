@@ -100,13 +100,11 @@ impl EncryptionConfig {
 pub fn compute_cipher(
     msg: TestingPlaintext,
     pk: &FhePublicKey,
-    server_key: Option<&ServerKey>,
+    server_key: Option<ServerKey>,
     enc_config: EncryptionConfig,
 ) -> (Vec<u8>, CiphertextFormat, FheTypes) {
     if let Some(s) = server_key {
-        // TODO is there a way to do this without cloning?
-        // wait until context is ready and use that instead
-        tfhe::set_server_key(s.clone());
+        tfhe::set_server_key(s);
     }
 
     let fhe_type = msg.into();
@@ -348,7 +346,7 @@ pub async fn compute_cipher_from_stored_key(
     // compute_cipher can take a long time since it may do SnS
     let (send, recv) = tokio::sync::oneshot::channel();
     rayon::spawn_fifo(move || {
-        let _ = send.send(compute_cipher(msg, &pk, Some(&server_key), enc_config));
+        let _ = send.send(compute_cipher(msg, &pk, Some(server_key), enc_config));
     });
     recv.await.unwrap()
 }
@@ -421,8 +419,6 @@ pub async fn purge_pub(pub_path: Option<&Path>, storage_prefixes: &[Option<Strin
 
 /// Purge _all_ backed up data. Both custodian and non-custodian based backups.
 /// Note however that this method does _not_ purge anything in the private or public storage.
-/// Thus, if you want to avoid new custodian backups being constructed at boot ensure that `purge_recovery_material`
-/// is also called, as it deletes all the custodian recovery info.
 pub async fn purge_backup(backup_path: Option<&Path>, storage_prefixes: &[Option<String>]) {
     for storage_prefix in storage_prefixes.iter() {
         let storage =
@@ -521,26 +517,6 @@ pub async fn read_custodian_backup_files(
         }
     }
     files
-}
-
-/// Remove all the data needed to perform custodian backups.
-/// This then allows your to prevent the automatic backup being done at boot
-/// when the system is configured with custodian backups.
-/// TODO currently not used anywhere
-pub async fn purge_recovery_material(path: Option<&Path>, storage_prefixes: &[Option<String>]) {
-    for storage_prefix in storage_prefixes {
-        // Next purge recovery info
-        let storage = FileStorage::new(
-            path,
-            StorageType::PUB,
-            storage_prefix.as_ref().map(|x| x.as_str()),
-        )
-        .unwrap();
-        let base_dir = storage.root_dir();
-        let _ =
-            tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryMaterial.to_string()))
-                .await;
-    }
 }
 
 #[cfg(any(test, feature = "testing"))]

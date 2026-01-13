@@ -9,6 +9,9 @@ use threshold_fhe::execution::tfhe_internals::parameters::{
 // The amount of bytes in an ID (key handle, request ID etc.)
 pub const ID_LENGTH: usize = kms_grpc::rpc_types::ID_LENGTH;
 pub const KEY_PATH_PREFIX: &str = "keys";
+/// PRSS setup request ID - a fixed ID used for PRSS initialization material
+pub const PRSS_INIT_REQ_ID: &str =
+    "0000000000000000000000000000000000000000000000000000000000000001";
 pub const DEFAULT_PARAM: DKGParams = BC_PARAMS_SNS;
 pub const TEST_PARAM: DKGParams = PARAMS_TEST_BK_SNS;
 

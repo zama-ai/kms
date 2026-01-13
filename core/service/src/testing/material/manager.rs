@@ -7,8 +7,8 @@ use crate::consts::{
     DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_CRS_ID_10P,
     DEFAULT_THRESHOLD_CRS_ID_13P, DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P,
     DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, KEY_PATH_PREFIX,
-    OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
-    TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_4P,
+    OTHER_CENTRAL_DEFAULT_ID, OTHER_CENTRAL_TEST_ID, PRSS_INIT_REQ_ID, SIGNING_KEY_ID,
+    TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_4P,
     TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
 };
 use crate::vault::storage::StorageType;
@@ -79,7 +79,7 @@ impl TestMaterialManager {
 
     /// Setup test material in a temporary directory
     #[cfg(any(test, feature = "testing"))]
-    pub async fn setup_test_material(
+    pub async fn setup_test_material_temp(
         &self,
         spec: &TestMaterialSpec,
         test_name: &str,
@@ -112,10 +112,13 @@ impl TestMaterialManager {
 
     /// Setup test material using shared source directory (no copying)
     ///
-    /// This is useful in CI environments where:
-    /// - Tests run sequentially (no parallel conflicts)
-    /// - Disk space is limited
-    /// - Material is read-only
+    /// **Warning**: Only use when tests are read-only or explicitly sequential.
+    /// Rust tests run in parallel by default, which can cause conflicts.
+    ///
+    /// Safe to use when:
+    /// - Tests only read material (no writes/modifications)
+    /// - Tests are marked with `#[serial_test::serial]` for sequential execution
+    /// - Disk space is limited and parallel isolation is not needed
     ///
     /// Returns the path to the shared material directory.
     /// The directory is NOT deleted (it's the source material).
@@ -153,12 +156,11 @@ impl TestMaterialManager {
 
     /// Automatically choose between shared and isolated material based on environment
     ///
-    /// Uses shared material (no copying) if:
-    /// - KMS_TEST_SHARED_MATERIAL=1 environment variable is set (CI mode)
+    /// Uses shared material (no copying) if `KMS_TEST_SHARED_MATERIAL=1`:
     /// - Saves disk space by not copying material
-    /// - Requires sequential test execution
+    /// - Only safe for read-only tests or tests marked `#[serial]`
     ///
-    /// Uses isolated material (with copying) otherwise:
+    /// Uses isolated material (with copying) otherwise (default):
     /// - Each test gets its own temporary directory
     /// - Safe for parallel test execution
     /// - Uses more disk space
@@ -187,7 +189,7 @@ impl TestMaterialManager {
             let path = self.setup_test_material_shared(spec, test_name)?;
             Ok(TestMaterialHandle::Shared(path))
         } else {
-            let temp_dir = self.setup_test_material(spec, test_name).await?;
+            let temp_dir = self.setup_test_material_temp(spec, test_name).await?;
             Ok(TestMaterialHandle::Isolated(temp_dir))
         }
     }
@@ -361,7 +363,7 @@ impl TestMaterialManager {
                 fs::create_dir_all(&dest_priv).await?;
 
                 // Copy verification keys
-                self.copy_key_files_no_mkdir(
+                self.copy_key_files(
                     &source_pub,
                     &dest_pub,
                     &PubDataType::VerfKey.to_string(),
@@ -370,7 +372,7 @@ impl TestMaterialManager {
                 .await?;
 
                 // Copy verification addresses
-                self.copy_key_files_no_mkdir(
+                self.copy_key_files(
                     &source_pub,
                     &dest_pub,
                     &PubDataType::VerfAddress.to_string(),
@@ -379,7 +381,7 @@ impl TestMaterialManager {
                 .await?;
 
                 // Copy signing keys
-                self.copy_key_files_no_mkdir(
+                self.copy_key_files(
                     &source_priv,
                     &dest_priv,
                     &PrivDataType::SigningKey.to_string(),
@@ -398,7 +400,7 @@ impl TestMaterialManager {
             fs::create_dir_all(&dest_pub).await?;
             fs::create_dir_all(&dest_priv).await?;
 
-            self.copy_key_files_no_mkdir(
+            self.copy_key_files(
                 &source_pub,
                 &dest_pub,
                 &PubDataType::VerfKey.to_string(),
@@ -406,7 +408,7 @@ impl TestMaterialManager {
             )
             .await?;
 
-            self.copy_key_files_no_mkdir(
+            self.copy_key_files(
                 &source_pub,
                 &dest_pub,
                 &PubDataType::VerfAddress.to_string(),
@@ -414,7 +416,7 @@ impl TestMaterialManager {
             )
             .await?;
 
-            self.copy_key_files_no_mkdir(
+            self.copy_key_files(
                 &source_priv,
                 &dest_priv,
                 &PrivDataType::SigningKey.to_string(),
@@ -590,13 +592,8 @@ impl TestMaterialManager {
             let dest_priv = compute_storage_path(Some(dest_base), StorageType::PRIV, Some(role));
 
             // Copy PRSS setup files
-            self.copy_key_files(
-                &source_priv,
-                &dest_priv,
-                "PrssSetup",
-                "000000000000000000000000000000000000000000000000000000000000000000000001",
-            )
-            .await?;
+            self.copy_key_files(&source_priv, &dest_priv, "PrssSetup", PRSS_INIT_REQ_ID)
+                .await?;
         }
 
         Ok(())
@@ -614,7 +611,11 @@ impl TestMaterialManager {
         let dest_type_dir = dest_dir.join(key_type);
 
         if !source_type_dir.exists() {
-            return Ok(()); // Skip if source doesn't exist
+            tracing::warn!(
+                "Source directory does not exist, skipping copy: {}",
+                source_type_dir.display()
+            );
+            return Ok(());
         }
 
         fs::create_dir_all(&dest_type_dir).await?;
@@ -631,41 +632,11 @@ impl TestMaterialManager {
                     dest_file.display()
                 )
             })?;
-        }
-
-        Ok(())
-    }
-
-    /// Copy specific key files (assumes directories already exist)
-    async fn copy_key_files_no_mkdir(
-        &self,
-        source_dir: &Path,
-        dest_dir: &Path,
-        key_type: &str,
-        key_id: &str,
-    ) -> Result<()> {
-        let source_type_dir = source_dir.join(key_type);
-        let dest_type_dir = dest_dir.join(key_type);
-
-        if !source_type_dir.exists() {
-            return Ok(()); // Skip if source doesn't exist
-        }
-
-        // Create only the key_type subdirectory
-        fs::create_dir_all(&dest_type_dir).await?;
-
-        let source_file = source_type_dir.join(key_id);
-        let dest_file = dest_type_dir.join(key_id);
-
-        if source_file.exists() {
-            fs::copy(&source_file, &dest_file).await.with_context(|| {
-                format!(
-                    "Failed to copy {} from {} to {}",
-                    key_type,
-                    source_file.display(),
-                    dest_file.display()
-                )
-            })?;
+        } else {
+            tracing::warn!(
+                "Source file does not exist, skipping: {}",
+                source_file.display()
+            );
         }
 
         Ok(())
@@ -707,34 +678,38 @@ impl TestMaterialManager {
         match spec.material_type {
             MaterialType::Testing => KeyIds {
                 fhe_keys: match spec.party_count() {
-                    4 => vec![TEST_THRESHOLD_KEY_ID_4P.to_string()],
-                    10 => vec![TEST_THRESHOLD_KEY_ID_10P.to_string()],
-                    _ => vec![
+                    1 => vec![
                         TEST_CENTRAL_KEY_ID.to_string(),
                         OTHER_CENTRAL_TEST_ID.to_string(),
                     ],
+                    4 => vec![TEST_THRESHOLD_KEY_ID_4P.to_string()],
+                    10 => vec![TEST_THRESHOLD_KEY_ID_10P.to_string()],
+                    n => panic!("Unsupported party count for Testing material: {n}. Supported: 1 (centralized), 4, 10"),
                 },
                 crs_keys: match spec.party_count() {
+                    1 => vec![TEST_CENTRAL_CRS_ID.to_string()],
                     4 => vec![TEST_THRESHOLD_CRS_ID_4P.to_string()],
                     10 => vec![TEST_THRESHOLD_CRS_ID_10P.to_string()],
-                    _ => vec![TEST_CENTRAL_CRS_ID.to_string()],
+                    n => panic!("Unsupported party count for Testing CRS: {n}. Supported: 1 (centralized), 4, 10"),
                 },
             },
             MaterialType::Default => KeyIds {
                 fhe_keys: match spec.party_count() {
-                    4 => vec![DEFAULT_THRESHOLD_KEY_ID_4P.to_string()],
-                    10 => vec![DEFAULT_THRESHOLD_KEY_ID_10P.to_string()],
-                    13 => vec![DEFAULT_THRESHOLD_KEY_ID_13P.to_string()],
-                    _ => vec![
+                    1 => vec![
                         DEFAULT_CENTRAL_KEY_ID.to_string(),
                         OTHER_CENTRAL_DEFAULT_ID.to_string(),
                     ],
+                    4 => vec![DEFAULT_THRESHOLD_KEY_ID_4P.to_string()],
+                    10 => vec![DEFAULT_THRESHOLD_KEY_ID_10P.to_string()],
+                    13 => vec![DEFAULT_THRESHOLD_KEY_ID_13P.to_string()],
+                    n => panic!("Unsupported party count for Default material: {n}. Supported: 1 (centralized), 4, 10, 13"),
                 },
                 crs_keys: match spec.party_count() {
+                    1 => vec![DEFAULT_CENTRAL_CRS_ID.to_string()],
                     4 => vec![DEFAULT_THRESHOLD_CRS_ID_4P.to_string()],
                     10 => vec![DEFAULT_THRESHOLD_CRS_ID_10P.to_string()],
                     13 => vec![DEFAULT_THRESHOLD_CRS_ID_13P.to_string()],
-                    _ => vec![DEFAULT_CENTRAL_CRS_ID.to_string()],
+                    n => panic!("Unsupported party count for Default CRS: {n}. Supported: 1 (centralized), 4, 10, 13"),
                 },
             },
         }
@@ -757,7 +732,7 @@ mod tests {
         let spec = TestMaterialSpec::centralized_basic();
 
         let temp_dir = manager
-            .setup_test_material(&spec, "test_centralized")
+            .setup_test_material_temp(&spec, "test_centralized")
             .await
             .unwrap();
 
@@ -778,7 +753,7 @@ mod tests {
         let spec = TestMaterialSpec::threshold_basic(4);
 
         let temp_dir = manager
-            .setup_test_material(&spec, "test_threshold")
+            .setup_test_material_temp(&spec, "test_threshold")
             .await
             .unwrap();
 
