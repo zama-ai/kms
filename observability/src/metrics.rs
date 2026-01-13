@@ -65,7 +65,9 @@ pub struct CoreMetrics {
     // Gauges
     gauge: TaggedMetric<Gauge<i64>>,
     cpu_load_gauge: TaggedMetric<Gauge<f64>>,
+    process_cpu_load_gauge: TaggedMetric<Gauge<f64>>,
     memory_usage_gauge: TaggedMetric<Gauge<u64>>,
+    process_memory_gauge: TaggedMetric<Gauge<u64>>, // Process-specific memory usage (more accurate for cross-party comparison)
     file_descriptor_gauge: TaggedMetric<Gauge<u64>>,
     socat_processes_gauge: TaggedMetric<Gauge<u64>>,
     thread_gauge: TaggedMetric<Gauge<u64>>,
@@ -113,8 +115,12 @@ impl CoreMetrics {
             format!("{}_operation_duration_ms", config.prefix).into();
         let size_metric: Cow<'static, str> = format!("{}_payload_size_bytes", config.prefix).into();
         let cpu_load_metric: Cow<'static, str> = format!("{}_cpu_load", config.prefix).into();
+        let process_cpu_load_metric: Cow<'static, str> =
+            format!("{}_process_cpu_load", config.prefix).into();
         let memory_usage_metric: Cow<'static, str> =
             format!("{}_memory_usage", config.prefix).into();
+        let process_memory_metric: Cow<'static, str> =
+            format!("{}_process_memory", config.prefix).into();
         let network_rx_metric: Cow<'static, str> =
             format!("{}_network_rx_bytes", config.prefix).into();
         let network_tx_metric: Cow<'static, str> =
@@ -193,19 +199,37 @@ impl CoreMetrics {
 
         let cpu_gauge = meter
             .f64_gauge(cpu_load_metric)
-            .with_description("CPU load for KMS (averaged over all CPUs)")
+            .with_description("CPU load for the full system")
             .with_unit("percentage")
             .build();
         //Record 0 just to make sure the histogram is exported
         cpu_gauge.record(0.0, &[]);
 
+        let process_cpu_gauge = meter
+            .f64_gauge(process_cpu_load_metric)
+            .with_description("CPU load for the KMS process")
+            .with_unit("percentage")
+            .build();
+        //Record 0 just to make sure the histogram is exported
+        process_cpu_gauge.record(0.0, &[]);
+
         let memory_gauge = meter
             .u64_gauge(memory_usage_metric)
-            .with_description("Memory used for KMS")
+            .with_description("Total system memory used (may vary by instance type)")
             .with_unit("bytes")
             .build();
         //Record 0 just to make sure the histogram is exported
         memory_gauge.record(0, &[]);
+
+        let process_memory_gauge = meter
+            .u64_gauge(process_memory_metric)
+            .with_description(
+                "Memory used by the KMS process (accurate for cross-party comparison)",
+            )
+            .with_unit("bytes")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        process_memory_gauge.record(0, &[]);
 
         let file_descriptor_gauge = meter
             .u64_gauge(file_descriptors_metric)
@@ -311,7 +335,9 @@ impl CoreMetrics {
             duration_histogram: TaggedMetric::new(duration_histogram),
             size_histogram: TaggedMetric::new(size_histogram),
             cpu_load_gauge: TaggedMetric::new(cpu_gauge),
+            process_cpu_load_gauge: TaggedMetric::new(process_cpu_gauge),
             memory_usage_gauge: TaggedMetric::new(memory_gauge),
+            process_memory_gauge: TaggedMetric::new(process_memory_gauge),
             file_descriptor_gauge: TaggedMetric::new(file_descriptor_gauge),
             socat_processes_gauge: TaggedMetric::new(socat_processes_gauge),
             thread_gauge: TaggedMetric::new(thread_gauge),
@@ -428,11 +454,27 @@ impl CoreMetrics {
             .record(load, &self.cpu_load_gauge.with_tags(&[]));
     }
 
+    /// Record the current process-specific CPU load into the gauge
+    pub fn record_process_cpu_load(&self, load: f64) {
+        self.process_cpu_load_gauge
+            .metric
+            .record(load, &self.process_cpu_load_gauge.with_tags(&[]));
+    }
+
     /// Record the current memory usage into the gauge
     pub fn record_memory_usage(&self, usage: u64) {
         self.memory_usage_gauge
             .metric
             .record(usage, &self.memory_usage_gauge.with_tags(&[]));
+    }
+
+    /// Record the current process-specific memory usage into the gauge
+    /// This is more accurate for cross-party comparison as it excludes
+    /// system memory usage that varies by instance type
+    pub fn record_process_memory(&self, usage: u64) {
+        self.process_memory_gauge
+            .metric
+            .record(usage, &self.process_memory_gauge.with_tags(&[]));
     }
 
     pub fn record_threads(&self, count: u64) {

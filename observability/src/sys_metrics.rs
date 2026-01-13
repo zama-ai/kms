@@ -7,7 +7,7 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
     let specifics = RefreshKind::nothing()
         .with_cpu(CpuRefreshKind::nothing())
         .with_memory(MemoryRefreshKind::nothing().with_ram())
-        .with_processes(ProcessRefreshKind::nothing());
+        .with_processes(ProcessRefreshKind::nothing().with_memory().with_cpu());
     let mut system = sysinfo::System::new_with_specifics(specifics);
 
     let num_cpus = system.cpus().len() as f64;
@@ -19,6 +19,11 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
         num_cpus,  total_ram, free_ram);
 
     let mut networks = sysinfo::Networks::new_with_refreshed_list();
+
+    let current_pid = sysinfo::get_current_pid().ok();
+    if current_pid.is_none() {
+        tracing::warn!("Could not get current PID for process memory tracking");
+    }
 
     tokio::spawn(async move {
         let mut last_rx_bytes = 0u64;
@@ -38,6 +43,15 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
                 METRICS.record_memory_usage(memory_usage);
             } else {
                 tracing::warn!("sysinfo is reporting 0 memory usage")
+            }
+
+            // Update process-specific memory (more accurate for cross-party comparison)
+            if let Some(pid) = current_pid {
+                if let Some(process) = system.process(pid) {
+                    METRICS.record_process_memory(process.memory());
+                } else {
+                    tracing::warn!("Could not find process {:?} for memory tracking", pid);
+                }
             }
 
             // Update network metrics
