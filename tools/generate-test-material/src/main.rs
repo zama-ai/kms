@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use kms_lib::vault::storage::StorageType;
 use path_absolutize::Absolutize;
 use tracing::{info, warn};
 
@@ -17,6 +18,11 @@ use kms_lib::testing::material::{MaterialType, TestMaterialSpec};
 #[cfg(feature = "slow_tests")]
 use kms_lib::testing::utils::setup::ensure_default_material_exists_to_path;
 use kms_lib::testing::utils::setup::ensure_testing_material_exists;
+
+/// Storage types that are required for test material.
+/// Note: BACKUP is excluded as it's not used in test material generation.
+const REQUIRED_STORAGE_TYPES: [StorageType; 3] =
+    [StorageType::PUB, StorageType::PRIV, StorageType::CLIENT];
 
 #[derive(Parser)]
 #[command(name = "generate-test-material")]
@@ -345,11 +351,9 @@ async fn testing_material_exists(output_dir: &Path) -> Result<bool> {
         return Ok(false);
     }
 
-    // Check for key indicators of testing material in subdirectory
-    let indicators = ["PUB", "PRIV", "CLIENT"];
-
-    for indicator in &indicators {
-        let path = testing_dir.join(indicator);
+    // Check for key indicators of testing material in subdirectory using StorageType
+    for storage_type in &REQUIRED_STORAGE_TYPES {
+        let path = testing_dir.join(storage_type.to_string());
         if path.exists() {
             return Ok(true);
         }
@@ -367,11 +371,9 @@ async fn default_material_exists(output_dir: &Path) -> Result<bool> {
         return Ok(false);
     }
 
-    // Check for key indicators of default material in subdirectory
-    let indicators = ["PUB", "PRIV", "CLIENT"];
-
-    for indicator in &indicators {
-        let path = default_dir.join(indicator);
+    // Check for key indicators of default material in subdirectory using StorageType
+    for storage_type in &REQUIRED_STORAGE_TYPES {
+        let path = default_dir.join(storage_type.to_string());
         if path.exists() {
             return Ok(true);
         }
@@ -389,12 +391,10 @@ async fn validate_directory_structure(
     let testing_dir = output_dir.join("testing");
     let default_dir = output_dir.join("default");
 
-    let required_subdirs = ["PUB", "PRIV", "CLIENT"];
-
     // Validate testing directory if it exists
     if testing_dir.exists() {
-        for subdir in &required_subdirs {
-            let path = testing_dir.join(subdir);
+        for storage_type in &REQUIRED_STORAGE_TYPES {
+            let path = testing_dir.join(storage_type.to_string());
             if !path.exists() {
                 errors.push("Testing material missing required subdirectories");
                 break;
@@ -404,8 +404,8 @@ async fn validate_directory_structure(
 
     // Validate default directory if it exists
     if default_dir.exists() {
-        for subdir in &required_subdirs {
-            let path = default_dir.join(subdir);
+        for storage_type in &REQUIRED_STORAGE_TYPES {
+            let path = default_dir.join(storage_type.to_string());
             if !path.exists() {
                 errors.push("Default material missing required subdirectories");
                 break;
