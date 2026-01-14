@@ -114,6 +114,7 @@ impl SessionMaker {
     }
 
     #[cfg(test)]
+    #[expect(unused)]
     pub(crate) async fn epoch_count(&self) -> usize {
         self.epoch_map.read().await.len()
     }
