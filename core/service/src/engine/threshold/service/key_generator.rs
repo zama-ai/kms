@@ -390,7 +390,7 @@ impl<
         ];
         timer.tags(metric_tags.clone());
 
-        let (preproc_handle, dkg_params) = 
+        let (preproc_handle, dkg_params) =
             // Processes the bucket meta information. This is a slightly funky as in certain situations it may override the DKGParams sepcified in the request
             // Futhermore be aware that this helper method also DELETES the preprocessing entry from the meta store
             Self::retrieve_preproc_handle(
