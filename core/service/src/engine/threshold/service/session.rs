@@ -114,6 +114,7 @@ impl SessionMaker {
     }
 
     #[cfg(test)]
+    #[expect(unused)]
     pub(crate) async fn epoch_count(&self) -> usize {
         self.epoch_map.read().await.len()
     }
@@ -474,7 +475,7 @@ impl SessionMaker {
         Ok(session)
     }
 
-    pub(crate) async fn make_two_sets_session(
+    pub async fn make_two_sets_session(
         &self,
         session_id: SessionId,
         context_id_set1: ContextId,
@@ -746,7 +747,6 @@ impl ImmutableSessionMaker {
             .await
     }
 
-    #[expect(unused)]
     pub(crate) async fn make_two_sets_session(
         &self,
         session_id: SessionId,

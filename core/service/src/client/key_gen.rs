@@ -7,9 +7,11 @@ use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::identifiers::EpochId;
+use kms_grpc::kms::v1::NewMpcEpochRequest;
+use kms_grpc::kms::v1::PreviousEpochInfo;
 use kms_grpc::kms::v1::{
-    FheParameter, InitiateResharingRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
-    KeyGenRequest, KeyGenResult, KeySetAddedInfo, KeySetConfig,
+    FheParameter, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
+    KeySetAddedInfo, KeySetConfig,
 };
 use kms_grpc::rpc_types::{
     alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
@@ -17,7 +19,6 @@ use kms_grpc::rpc_types::{
 use kms_grpc::solidity_types::{KeygenVerification, PrepKeygenVerification};
 use kms_grpc::ContextId;
 use kms_grpc::RequestId;
-use std::collections::HashMap;
 use tfhe::CompactPublicKey;
 use tfhe::ServerKey;
 use tfhe_versionable::{Unversionize, Versionize};
@@ -123,33 +124,18 @@ impl Client {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn reshare_request(
+    pub fn new_epoch_request(
         &self,
         request_id: &RequestId,
-        key_id: &RequestId,
-        preproc_id: &RequestId,
-        context_id: Option<&ContextId>,
-        epoch_id: Option<&EpochId>,
-        param: Option<FheParameter>,
-        domain: &Eip712Domain,
-        key_digests: &HashMap<PubDataType, Vec<u8>>,
-    ) -> anyhow::Result<InitiateResharingRequest> {
-        let domain = alloy_to_protobuf_domain(domain)?;
-        Ok(InitiateResharingRequest {
+        to_context_id: &ContextId,
+        to_epoch_id: &EpochId,
+        previous_context: Option<PreviousEpochInfo>,
+    ) -> anyhow::Result<NewMpcEpochRequest> {
+        Ok(NewMpcEpochRequest {
             request_id: Some((*request_id).into()),
-            context_id: context_id.map(|id| (*id).into()),
-            key_id: Some((*key_id).into()),
-            key_parameters: param.unwrap_or_default().into(),
-            domain: Some(domain),
-            preproc_id: Some((*preproc_id).into()),
-            epoch_id: epoch_id.map(|id| (*id).into()),
-            key_digests: key_digests
-                .iter()
-                .map(|(k, v)| kms_grpc::kms::v1::KeyDigest {
-                    key_type: k.to_string(),
-                    digest: v.clone(),
-                })
-                .collect(),
+            context_id: Some((*to_context_id).into()),
+            epoch_id: Some((*to_epoch_id).into()),
+            previous_context,
         })
     }
 

@@ -4,7 +4,7 @@ use tonic::{Request, Response, Status};
 
 #[tonic::async_trait]
 pub trait Initiator {
-    async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status>;
+    async fn init(&self, request: Request<NewMpcEpochRequest>) -> Result<Response<Empty>, Status>;
 }
 
 #[tonic::async_trait]
@@ -102,10 +102,11 @@ pub trait InsecureCrsGenerator {
 pub trait Resharer {
     async fn initiate_resharing(
         &self,
-        request: Request<InitiateResharingRequest>,
-    ) -> Result<Response<InitiateResharingResponse>, Status>;
+        request: Request<NewMpcEpochRequest>,
+    ) -> Result<Response<Empty>, Status>;
+
     async fn get_resharing_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<ResharingResultResponse>, Status>;
+    ) -> Result<Response<EpochResultResponse>, Status>;
 }
