@@ -536,7 +536,8 @@ pub(crate) mod tests {
         let (kms, verf_key) = setup_test_kms_with_preproc(rng, &preproc_id).await;
 
         // at this point the key is generated
-        test_standard_keygen(&kms, key_id, &preproc_id).await;
+        // We execute in the secure mode, i.e. pretending that the preprocessing is done
+        test_standard_keygen(&kms, key_id, &preproc_id, false).await;
 
         let wrapped_pk = kms
             .crypto_storage

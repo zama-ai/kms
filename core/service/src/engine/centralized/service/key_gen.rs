@@ -454,6 +454,7 @@ pub(crate) mod tests {
         kms: &RealCentralizedKms<RamStorage, RamStorage>,
         req_id: &RequestId,
         preproc_id: &RequestId,
+        insecure: bool,
     ) {
         let request = KeyGenRequest {
             params: Some(FheParameter::Test.into()),
@@ -465,14 +466,9 @@ pub(crate) mod tests {
             domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
             epoch_id: None,
         };
-        let _ = key_gen_impl(
-            kms,
-            tonic::Request::new(request),
-            #[cfg(feature = "insecure")]
-            true,
-        )
-        .await
-        .unwrap();
+        let _ = key_gen_impl(kms, tonic::Request::new(request), insecure)
+            .await
+            .unwrap();
 
         // no need to wait because get result is semi-blocking
         let _res = get_key_gen_result_impl(kms, tonic::Request::new((*req_id).into()), false)
@@ -486,7 +482,7 @@ pub(crate) mod tests {
         let preproc_id = derive_request_id("test_keygen_sunshine_preproc").unwrap();
         let (kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
         let request_id = derive_request_id("test_keygen_sunshine").unwrap();
-        test_standard_keygen(&kms, &request_id, &preproc_id).await
+        test_standard_keygen(&kms, &request_id, &preproc_id, false).await
     }
 
     #[tokio::test]
@@ -728,7 +724,8 @@ pub(crate) mod tests {
         // try to generate a key twice using the same preprocessing ID
         // the second one should fail with not found because the preprocessing ID is removed after use
         {
-            test_standard_keygen(&kms, &request_id, &preproc_id).await;
+            // Execute, emulating a secure key generation, i.e. with "emulated" preprocessing
+            test_standard_keygen(&kms, &request_id, &preproc_id, false).await;
 
             let new_request_id = derive_request_id("test_keygen_already_exists_key_id_2").unwrap();
             let request = KeyGenRequest {
@@ -742,14 +739,9 @@ pub(crate) mod tests {
                 epoch_id: None,
             };
             // this time it should fail
-            let err = key_gen_impl(
-                &kms,
-                tonic::Request::new(request),
-                #[cfg(feature = "insecure")]
-                true,
-            )
-            .await
-            .unwrap_err();
+            let err = key_gen_impl(&kms, tonic::Request::new(request), false)
+                .await
+                .unwrap_err();
             assert_eq!(err.code(), tonic::Code::NotFound);
         }
 

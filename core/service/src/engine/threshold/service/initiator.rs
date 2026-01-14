@@ -289,23 +289,22 @@ impl<
                 tonic::Code::InvalidArgument,
             )
         })?;
+        // NOTE: here we're using session_maker to check if the context exists since it's quick
+        // and happens all in memory.
+        // But it's also ok to use context_manager.mpc_context_exists to check,
+        // but this function requires communication with the storage backend.
         let my_role = self
             .session_maker
             .my_role(&context_id)
             .await
             .map_err(|e| {
-                MetricedError::new(
-                    OP_INIT,
-                    Some(epoch_id.into()),
-                    e,
-                    tonic::Code::InvalidArgument,
-                )
+                MetricedError::new(OP_INIT, Some(epoch_id.into()), e, tonic::Code::NotFound)
             })?
             .ok_or(MetricedError::new(
                 OP_INIT,
                 Some(epoch_id.into()),
                 anyhow::anyhow!("Role not found for context ID {context_id}"),
-                tonic::Code::InvalidArgument,
+                tonic::Code::NotFound,
             ))?;
         let metric_tags = vec![
             (TAG_PARTY_ID, my_role.to_string()),
@@ -323,10 +322,6 @@ impl<
             ));
         }
 
-        // NOTE: here we're using session_maker to check if the context exists since it's quick
-        // and happens all in memory.
-        // But it's also ok to use context_manager.mpc_context_exists to check,
-        // but this function requires communication with the storage backend.
         if !self.session_maker.context_exists(&context_id).await {
             return Err(MetricedError::new(
                 OP_INIT,
