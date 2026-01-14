@@ -1,6 +1,3 @@
-//! This module will be deprecated and replaced
-//! by ./core/service/src/testing/utils.rs
-
 use crate::backup::BackupCiphertext;
 use crate::conf::{self, Keychain};
 use crate::util::file_handling::safe_read_element_versioned;
@@ -523,7 +520,7 @@ pub async fn read_custodian_backup_files(
 }
 
 #[cfg(any(test, feature = "testing"))]
-pub(crate) mod setup {
+pub mod setup {
     use crate::consts::DEFAULT_EPOCH_ID;
     use crate::consts::{
         PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
@@ -618,28 +615,28 @@ pub(crate) mod setup {
         .await;
     }
 
-    pub(crate) async fn ensure_testing_material_exists(path: Option<&Path>) {
+    pub async fn ensure_testing_material_exists(path: Option<&Path>) {
         testing_material(path).await;
     }
 
     #[cfg(feature = "slow_tests")]
-    async fn default_material() {
+    async fn default_material(path: Option<&Path>) {
         use crate::consts::{
             DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM,
             DEFAULT_THRESHOLD_CRS_ID_10P, DEFAULT_THRESHOLD_CRS_ID_13P,
             DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P,
             DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
         };
-        ensure_dir_exist(None).await;
         let epoch_id = *DEFAULT_EPOCH_ID;
-        ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
+        ensure_dir_exist(path).await;
+        ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
         central_material(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_DEFAULT_ID,
             &DEFAULT_CENTRAL_CRS_ID,
             &epoch_id,
-            None,
+            path,
         )
         .await;
         threshold_material(
@@ -649,7 +646,7 @@ pub(crate) mod setup {
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4],
             &epoch_id,
-            None,
+            path,
         )
         .await;
         threshold_material(
@@ -659,7 +656,7 @@ pub(crate) mod setup {
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..10],
             &epoch_id,
-            None,
+            path,
         )
         .await;
         threshold_material(
@@ -669,7 +666,7 @@ pub(crate) mod setup {
             &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
             &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..13],
             &epoch_id,
-            None,
+            path,
         )
         .await;
     }
@@ -770,8 +767,13 @@ pub(crate) mod setup {
     }
 
     #[cfg(feature = "slow_tests")]
-    pub(crate) async fn ensure_default_material_exists() {
-        default_material().await;
+    pub async fn ensure_default_material_exists() {
+        default_material(None).await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    pub async fn ensure_default_material_exists_to_path(path: Option<&Path>) {
+        default_material(path).await;
     }
 }
 
@@ -838,4 +840,35 @@ async fn test_purge() {
         .await
         .unwrap()
         .is_empty());
+}
+
+// ============================================================================
+// HEALTH CHECK UTILITIES
+// ============================================================================
+
+/// Get a health check client for a server on the given port
+pub async fn get_health_client(
+    port: u16,
+) -> anyhow::Result<tonic_health::pb::health_client::HealthClient<tonic::transport::Channel>> {
+    use crate::consts::{DEFAULT_PROTOCOL, DEFAULT_URL};
+    use tonic::transport::Channel;
+
+    let server_address = &format!("{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{port}");
+    let channel_builder = Channel::from_shared(server_address.to_string())?;
+    let channel = channel_builder.connect().await?;
+    Ok(tonic_health::pb::health_client::HealthClient::new(channel))
+}
+
+/// Get the health status of a service
+pub async fn get_status(
+    health_client: &mut tonic_health::pb::health_client::HealthClient<tonic::transport::Channel>,
+    service_name: &str,
+) -> Result<i32, tonic::Status> {
+    use tonic_health::pb::HealthCheckRequest;
+
+    let request = tonic::Request::new(HealthCheckRequest {
+        service: service_name.to_string(),
+    });
+    let response = health_client.check(request).await?;
+    Ok(response.into_inner().status)
 }
