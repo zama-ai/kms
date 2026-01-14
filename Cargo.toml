@@ -116,6 +116,7 @@ crypto-bigint = { version = "=0.6.1", features = ["serde", "rand_core", "extra-s
 ctor = "=0.4.2"  # Constructor functions - HIGH RISK: Individual maintainer (mmastrac), test-only dependency
 dashmap = "=6.1.0"  # Concurrent hashmap - HIGH RISK: Individual maintainer (xacrimon), despite 156M+ downloads
 derive_more = { version = "=2.0.1", features = ["display"] }  # Derive macros for common traits - HIGH RISK: Individual maintainer (JelteF), despite 180M+ downloads
+dhat = "=0.3.3"  # Heap profiling - MEDIUM RISK: David Tolnay adjacent (rustacean), useful for memory debugging, dev-only
 enum_dispatch = "=0.3.13"  # Enum dispatch optimization - HIGH RISK: Individual maintainer (Anton Lazarev), despite 29M+ downloads
 futures = "=0.3.31"  # Async futures - LOW RISK: rust-lang team
 futures-util = "=0.3.31"  # Futures utilities - LOW RISK: rust-lang team

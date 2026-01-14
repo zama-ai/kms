@@ -871,9 +871,9 @@ mod tests {
 
         let key_id = RequestId::new_random(rng);
 
-        // make a dummy private keyset
-        let (threshold_fhe_keys, fhe_key_set) =
-            ThresholdFheKeys::init_dummy(param, key_id.into(), rng);
+        // make a dummy private keyset for storage
+        let (private_keys, fhe_key_set) =
+            ThresholdFheKeys::init_dummy_for_storage(param, key_id.into(), rng);
 
         // Not a huge deal if we clone this server key since we only use small/test parameters
         tfhe::set_server_key(fhe_key_set.server_key.clone());
@@ -912,7 +912,7 @@ mod tests {
             .write_threshold_keys_with_dkg_meta_store(
                 &key_id,
                 &epoch_id,
-                threshold_fhe_keys,
+                private_keys,
                 fhe_key_set,
                 info,
                 Arc::clone(&key_meta_store),

@@ -770,5 +770,29 @@ mod tests {
 
             (priv_key_set, pub_key_set)
         }
+
+        /// Initializes dummy keys for storage tests.
+        /// Returns (PrivateKeySet, FhePubKeySet) for the new memory-optimized storage API.
+        pub fn init_dummy_for_storage<R: rand::Rng + rand::CryptoRng>(
+            param: threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
+            tag: tfhe::Tag,
+            rng: &mut R,
+        ) -> (
+            PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+            FhePubKeySet,
+        ) {
+            let keyset = threshold_fhe::execution::tfhe_internals::test_feature::gen_key_set(
+                param, tag, rng,
+            );
+
+            let pub_key_set = FhePubKeySet {
+                public_key: keyset.public_keys.public_key,
+                server_key: keyset.public_keys.server_key,
+            };
+
+            let priv_key_set = PrivateKeySet::init_dummy(param);
+
+            (priv_key_set, pub_key_set)
+        }
     }
 }

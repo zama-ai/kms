@@ -5,10 +5,7 @@ use crate::{
             compute_info_standard_keygen, retrieve_parameters, BaseKmsStruct, KeyGenMetadata,
             DSEP_PUBDATA_KEY,
         },
-        threshold::{
-            service::{session::ImmutableSessionMaker, ThresholdFheKeys},
-            traits::Resharer,
-        },
+        threshold::{service::session::ImmutableSessionMaker, traits::Resharer},
         utils::MetricedError,
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
@@ -570,9 +567,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             )
             .await?;
 
-            let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
-                fhe_pubkeys.server_key.clone().into_raw_parts();
-
             // Compute all the info required for storing
             // using the same IDs and domain as we should've had the
             // DKG went through successfully
@@ -594,14 +588,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 }
             };
 
-            let threshold_fhe_keys = ThresholdFheKeys {
-                private_keys: Arc::new(new_private_key_set),
-                integer_server_key: Arc::new(integer_server_key),
-                sns_key: sns_key.map(Arc::new),
-                decompression_key: decompression_key.map(Arc::new),
-                meta_data: info.clone(),
-            };
-
             // Purge before we can overwrite, use a dummy_meta_store
             // as this was meant to update the meta store of DKG upon failing
             let dummy_meta_store = RwLock::new(MetaStore::<KeyGenMetadata>::new(1, 1));
@@ -618,12 +604,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             // HOTFIX(keygen-recovery): Note that this overwrites the private storage
             // at the given key ID. It's needed as long as reshare shortcuts the
             // GW, but should be fixed long term.
+            // Memory optimization: Storage function now handles server_key
+            // component extraction internally, avoiding the need to clone server_key here.
             crypto_storage
                 .write_threshold_keys_with_reshare_meta_store(
                     &request_id,
                     &key_id_to_reshare,
                     &old_epoch_id,
-                    threshold_fhe_keys,
+                    new_private_key_set,
                     fhe_pubkeys,
                     info.clone(),
                     Arc::clone(&meta_store),

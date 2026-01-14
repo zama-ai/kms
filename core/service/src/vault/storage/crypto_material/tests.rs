@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tfhe::{shortint::ClassicPBSParameters, CompactPublicKey, ConfigBuilder, ServerKey};
 use threshold_fhe::execution::tfhe_internals::{
     parameters::DKGParams,
+    private_keysets::PrivateKeySet,
     public_keysets::FhePubKeySet,
     test_feature::{gen_key_set, keygen_all_party_shares_from_keyset},
 };
@@ -282,7 +283,7 @@ async fn write_threshold_empty_update() {
     let epoch_id = derive_request_id("write_threshold_empty_update_epoch")
         .unwrap()
         .into();
-    let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
+    let (crypto_storage, private_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
     // Check no errors happened
@@ -300,7 +301,7 @@ async fn write_threshold_empty_update() {
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             &epoch_id,
-            threshold_fhe_keys.clone(),
+            private_keys.clone(),
             fhe_key_set.clone(),
             dummy_info(),
             meta_store.clone(),
@@ -319,7 +320,7 @@ async fn write_threshold_empty_update() {
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             &epoch_id,
-            threshold_fhe_keys.clone(),
+            private_keys.clone(),
             fhe_key_set.clone(),
             dummy_info(),
             meta_store.clone(),
@@ -340,7 +341,7 @@ async fn write_threshold_keys_meta_update() {
     let epoch_id: EpochId = derive_request_id("write_threshold_keys_meta_update_epoch")
         .unwrap()
         .into();
-    let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
+    let (crypto_storage, private_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
 
     // update the meta store and the write should be ok
@@ -353,7 +354,7 @@ async fn write_threshold_keys_meta_update() {
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             &epoch_id,
-            threshold_fhe_keys.clone(),
+            private_keys.clone(),
             fhe_key_set.clone(),
             dummy_info(),
             meta_store.clone(),
@@ -381,7 +382,7 @@ async fn write_threshold_keys_meta_update() {
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             &epoch_id,
-            threshold_fhe_keys.clone(),
+            private_keys.clone(),
             fhe_key_set.clone(),
             dummy_info(),
             meta_store.clone(),
@@ -397,7 +398,7 @@ async fn write_threshold_keys_failed_storage() {
     let epoch_id: EpochId = derive_request_id("write_threshold_keys_failed_storage_epoch")
         .unwrap()
         .into();
-    let (crypto_storage, threshold_fhe_keys, fhe_key_set) = setup_threshold_store(&req_id);
+    let (crypto_storage, private_keys, fhe_key_set) = setup_threshold_store(&req_id);
     let meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
     let pub_storage = crypto_storage.inner.public_storage.clone();
 
@@ -411,7 +412,7 @@ async fn write_threshold_keys_failed_storage() {
         .write_threshold_keys_with_dkg_meta_store(
             &req_id,
             &epoch_id,
-            threshold_fhe_keys.clone(),
+            private_keys.clone(),
             fhe_key_set.clone(),
             dummy_info(),
             meta_store.clone(),
@@ -444,7 +445,7 @@ async fn write_threshold_keys_failed_storage() {
         .write_threshold_keys_with_dkg_meta_store(
             &new_req_id,
             &epoch_id,
-            threshold_fhe_keys.clone(),
+            private_keys.clone(),
             fhe_key_set.clone(),
             dummy_info(),
             meta_store.clone(),
@@ -463,9 +464,9 @@ async fn write_threshold_keys_failed_storage() {
 
 #[tokio::test]
 #[tracing_test::traced_test]
-async fn read_guarded_threshold_fhe_keys_not_found() {
-    let req_id = derive_request_id("read_guarded_threshold_fhe_keys_not_found").unwrap();
-    let epoch_id: EpochId = derive_request_id("read_guarded_threshold_fhe_keys_not_found_epoch")
+async fn read_guarded_private_keys_not_found() {
+    let req_id = derive_request_id("read_guarded_private_keys_not_found").unwrap();
+    let epoch_id: EpochId = derive_request_id("read_guarded_private_keys_not_found_epoch")
         .unwrap()
         .into();
 
@@ -534,7 +535,7 @@ fn setup_threshold_store(
     req_id: &RequestId,
 ) -> (
     ThresholdCryptoMaterialStorage<FailingRamStorage, RamStorage>,
-    ThresholdFheKeys,
+    PrivateKeySet<4>,
     FhePubKeySet,
 ) {
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
@@ -555,16 +556,7 @@ fn setup_threshold_store(
         keygen_all_party_shares_from_keyset(&keyset, pbs_params, &mut rng, 4, 1).unwrap();
 
     let fhe_key_set = keyset.public_keys.clone();
+    let private_keys = key_shares[0].to_owned();
 
-    let (integer_server_key, _, _, _, sns_key, _, _, _) =
-        keyset.public_keys.server_key.clone().into_raw_parts();
-
-    let threshold_fhe_keys = ThresholdFheKeys {
-        private_keys: Arc::new(key_shares[0].to_owned()),
-        integer_server_key: Arc::new(integer_server_key),
-        sns_key: sns_key.map(Arc::new),
-        decompression_key: None,
-        meta_data: dummy_info(),
-    };
-    (crypto_storage, threshold_fhe_keys, fhe_key_set)
+    (crypto_storage, private_keys, fhe_key_set)
 }

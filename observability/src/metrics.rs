@@ -66,10 +66,11 @@ pub struct CoreMetrics {
     gauge: TaggedMetric<Gauge<i64>>,
     cpu_load_gauge: TaggedMetric<Gauge<f64>>,
     memory_usage_gauge: TaggedMetric<Gauge<u64>>,
+    process_memory_gauge: TaggedMetric<Gauge<u64>>, // Process-specific memory usage (more accurate for cross-party comparison)
     file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of file descriptors of the KMS
     socat_file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of socat file descriptors
-    socat_task_gauge: TaggedMetric<Gauge<u64>>,      // Number of socat file descriptors
-    task_gauge: TaggedMetric<Gauge<u64>>,            // Numbers active child processes of the KMS
+    socat_task_gauge: TaggedMetric<Gauge<u64>>,     // Number of socat file descriptors
+    task_gauge: TaggedMetric<Gauge<u64>>,           // Numbers active child processes of the KMS
     // Internal system gauges
     // TODO rate limiter, session gauge and meta store should actually be counters but we need to add decorators to ensure it is always updated
     rate_limiter_gauge: TaggedMetric<Gauge<u64>>, // Number tokens used in the rate limiter
@@ -113,6 +114,8 @@ impl CoreMetrics {
         let cpu_load_metric: Cow<'static, str> = format!("{}_cpu_load", config.prefix).into();
         let memory_usage_metric: Cow<'static, str> =
             format!("{}_memory_usage", config.prefix).into();
+        let process_memory_metric: Cow<'static, str> =
+            format!("{}_process_memory", config.prefix).into();
         let network_rx_metric: Cow<'static, str> =
             format!("{}_network_rx_bytes", config.prefix).into();
         let network_tx_metric: Cow<'static, str> =
@@ -193,11 +196,21 @@ impl CoreMetrics {
 
         let memory_gauge = meter
             .u64_gauge(memory_usage_metric)
-            .with_description("Memory used for KMS")
+            .with_description("Total system memory used (may vary by instance type)")
             .with_unit("bytes")
             .build();
         //Record 0 just to make sure the gauge is exported
         memory_gauge.record(0, &[]);
+
+        let process_memory_gauge = meter
+            .u64_gauge(process_memory_metric)
+            .with_description(
+                "Memory used by the KMS process (accurate for cross-party comparison)",
+            )
+            .with_unit("bytes")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        process_memory_gauge.record(0, &[]);
 
         let file_descriptor_gauge = meter
             .u64_gauge(file_descriptors_metric)
@@ -288,6 +301,7 @@ impl CoreMetrics {
             size_histogram: TaggedMetric::new(size_histogram),
             cpu_load_gauge: TaggedMetric::new(cpu_gauge),
             memory_usage_gauge: TaggedMetric::new(memory_gauge),
+            process_memory_gauge: TaggedMetric::new(process_memory_gauge),
             file_descriptor_gauge: TaggedMetric::new(file_descriptor_gauge),
             socat_file_descriptor_gauge: TaggedMetric::new(socat_file_descriptor_gauge),
             socat_task_gauge: TaggedMetric::new(socat_task_gauge),
@@ -403,11 +417,20 @@ impl CoreMetrics {
             .record(load, &self.cpu_load_gauge.with_tags(&[]));
     }
 
-    /// Record the current memory usage into the gauge
+    /// Record the current memory usage into the gauge (total system memory)
     pub fn record_memory_usage(&self, usage: u64) {
         self.memory_usage_gauge
             .metric
             .record(usage, &self.memory_usage_gauge.with_tags(&[]));
+    }
+
+    /// Record the current process-specific memory usage into the gauge
+    /// This is more accurate for cross-party comparison as it excludes
+    /// system memory usage that varies by instance type
+    pub fn record_process_memory(&self, usage: u64) {
+        self.process_memory_gauge
+            .metric
+            .record(usage, &self.process_memory_gauge.with_tags(&[]));
     }
 
     /// Record the current number of tasks into the gauge

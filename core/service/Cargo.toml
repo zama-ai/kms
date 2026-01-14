@@ -65,6 +65,7 @@ cfg-if.workspace = true
 ciborium.workspace = true
 clap = { workspace = true, features = ["derive"] }
 console_error_panic_hook.workspace = true
+dhat = { workspace = true, optional = true }
 enum_dispatch.workspace = true
 futures-util.workspace = true
 hex.workspace = true
@@ -183,3 +184,7 @@ insecure = [
     "threshold-fhe/testing",
     "dep:nsm-nitro-enclave-utils"
 ]
+# Memory profiling feature for debugging memory consumption issues
+# Enable with: cargo build --features memory-profiling
+# Produces dhat-heap.json file that can be viewed with https://nnethercote.github.io/dh_view/dh_view.html
+memory-profiling = ["dep:dhat"]
