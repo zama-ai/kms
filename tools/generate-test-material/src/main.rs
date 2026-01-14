@@ -252,9 +252,12 @@ async fn generate_material_for_spec(output_dir: &Path, spec: &TestMaterialSpec) 
         }
     }
 
-    // TODO: Implement selective key generation based on spec.required_keys
-    // This would require extending the existing generation functions
-    // to accept parameters for which keys to generate
+    // Note: We intentionally generate ALL material for the given material_type,
+    // not just the keys specified in spec.required_keys. This is because:
+    // 1. Generation is a one-time operation (pre-generation phase)
+    // 2. TestMaterialManager::copy_material() handles selective copying based on
+    //    spec.required_keys when setting up individual test environments
+    // 3. Generating everything once is simpler and avoids partial state issues
 
     Ok(())
 }
