@@ -34,7 +34,7 @@ struct Cli {
     #[arg(short, long)]
     verbose: bool,
 
-    /// Force regeneration even if material exists
+    /// Force regeneration even if material exists, replacing any existing material
     #[arg(short, long)]
     force: bool,
 }
