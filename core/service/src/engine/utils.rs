@@ -128,7 +128,9 @@ impl MetricedError {
         let error = internal_error.into(); // converts anyhow::Error or any other error
         let error_string = format!(
             "Failure on requestID {:?} with metric {}. Error: {}",
-            request_id, op_metric, error
+            request_id.unwrap_or_default(),
+            op_metric,
+            error
         );
 
         tracing::error!(error_string);
@@ -178,8 +180,9 @@ impl From<MetricedError> for Status {
     fn from(mut metriced_error: MetricedError) -> Self {
         metriced_error.handle_error();
         let error_string = top_1k_chars(format!(
-            "Failed on requestID {:?} with metric {}",
-            metriced_error.request_id, metriced_error.op_metric,
+            "Failed on requestID {} with metric {}",
+            metriced_error.request_id.unwrap_or_default(),
+            metriced_error.op_metric,
         ));
         tonic::Status::new(metriced_error.error_code, error_string)
     }
@@ -190,6 +193,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[tracing_test::traced_test]
     fn test_metriced_error_creation() {
         let error = MetricedError::new(
             "test_op",
@@ -201,7 +205,8 @@ mod tests {
 
         let status: Status = error.into();
         assert!(status.message().contains("test_op"));
-        assert!(status.message().contains("test error"));
+        assert!(!status.message().contains("test error"));
+        logs_contain("test error");
     }
 
     #[test]
