@@ -691,6 +691,14 @@ pub(crate) struct ImmutableSessionMaker {
 }
 
 impl ImmutableSessionMaker {
+    pub(crate) async fn context_exists(&self, context_id: &ContextId) -> bool {
+        self.inner.context_exists(context_id).await
+    }
+
+    pub(crate) async fn epoch_exists(&self, epoch_id: &EpochId) -> bool {
+        self.inner.epoch_exists(epoch_id).await
+    }
+
     pub(crate) async fn make_base_session(
         &self,
         session_id: SessionId,
