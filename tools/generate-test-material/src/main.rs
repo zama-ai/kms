@@ -1,7 +1,11 @@
 //! Pre-generation tool for KMS test material
 //!
 //! This tool generates all necessary cryptographic material for KMS tests
-//! in advance, eliminating the need for Docker and shared state during test execution.
+//! in advance, eliminating the need for Docker and runtime key generation.
+//!
+//! The generated material serves as a read-only source that tests copy from
+//! into isolated temporary directories, preventing tests from interfering
+//! with each other.
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
