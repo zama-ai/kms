@@ -339,7 +339,9 @@ mod tests {
         meta_store.insert(&request_id).unwrap();
         // Data exits
         assert!(meta_store.exists(&request_id));
+        assert_eq!(meta_store.get_processing_count(), 1);
         assert!(meta_store.update(&request_id, Ok("OK".to_string())).is_ok());
+        assert_eq!(meta_store.get_processing_count(), 0);
 
         // Re-update not allowed
         assert!(meta_store
@@ -393,6 +395,8 @@ mod tests {
         meta_store.insert(&req_2).unwrap();
         // Only room for 2 elements
         assert!(meta_store.insert(&req_3).is_err());
+        assert_eq!(meta_store.get_total_count(), 2);
+        assert_eq!(meta_store.get_processing_count(), 2);
     }
 
     #[test]
