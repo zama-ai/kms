@@ -265,7 +265,7 @@ impl GrpcNetworkingManager {
                     SessionStatus::Inactive((message_queue, started)) => {
                         if started.elapsed() > discard_inactive_interval {
                             // Decrement tracker for each sender in the discarded session
-                            for sender_id in message_queue.sender_identities() {
+                            for sender_id in message_queue.uninitialized_sender_identities() {
                                 opened_sessions_tracker
                                     .entry(sender_id)
                                     .and_modify(|count| {
@@ -288,11 +288,12 @@ impl GrpcNetworkingManager {
                             tracing::info!("Session reference is dropped at id {session_id}, moving status to completed.");
                             *status = SessionStatus::Completed(Instant::now());
                         } else {
-                            // TODO: we need to check whether there's an unusually long active session?
+                            // TODO(zama-ai/kms-internal#2867):
+                            // we need to check whether there's an unusually long active session
                             // might be ok for keygen but not usual for decryption
                             //
                             // This may happen if we start a session/protocol but it does not end for some reason
-                            // this could accummulate as there is no limit for the number of active sessions (I think)?
+                            // this could accummulate as there is no limit for the number of active sessions.
                             internal_active_sessions_count += 1;
                         }
                         true
@@ -693,7 +694,7 @@ impl MessageQueueStore {
 
     /// Returns the sender identities for an uninitialized message queue.
     /// Returns an empty vector if the message queue is already initialized.
-    pub(crate) fn sender_identities(&self) -> Vec<MpcIdentity> {
+    pub(crate) fn uninitialized_sender_identities(&self) -> Vec<MpcIdentity> {
         match self {
             MessageQueueStore::Uninitialized(map) => map.iter().map(|e| e.key().clone()).collect(),
             MessageQueueStore::Initialized(_) => vec![],

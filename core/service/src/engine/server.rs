@@ -1,3 +1,4 @@
+use crate::engine::base::{PubDecCallValues, UserDecryptCallValues};
 use crate::util::meta_store::MetaStore;
 use crate::util::rate_limiter::RateLimiter;
 use crate::{anyhow_error_and_log, conf::ServiceEndpoint};
@@ -187,10 +188,10 @@ pub async fn run_server<
 
 /// Method to update the internal system metrics of the KMS.
 /// This should be done once per call, or at regular intervals.
-pub(crate) async fn update_system_metrics<T: Clone>(
+pub(crate) async fn update_kms_metrics(
     rate_limiter: &RateLimiter,
-    user_meta_store: Option<&MetaStore<T>>,
-    public_meta_store: Option<&MetaStore<T>>,
+    user_meta_store: Option<&MetaStore<UserDecryptCallValues>>,
+    public_meta_store: Option<&MetaStore<PubDecCallValues>>,
     active_session_count: Option<u64>,
     inactive_session_count: Option<u64>,
 ) {

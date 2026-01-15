@@ -66,7 +66,6 @@ use crate::{
         },
         threshold::{service::session::SessionPreparerGetter, traits::UserDecryptor},
         traits::BaseKms,
-        update_system_metrics,
         validation::{
             parse_proto_request_id, validate_user_decrypt_req, RequestIdParsingErr,
             DSEP_USER_DECRYPTION,
@@ -454,29 +453,6 @@ impl<
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        {
-            // TODO should probably be called at regular intervals and setup with the KMS in kms_impl
-            let meta_store = self.user_decrypt_meta_store.read().await;
-            let active_sessions = self
-                .session_preparer_getter
-                .active_session_count()
-                .await
-                .ok();
-            let inactive_sessions = self
-                .session_preparer_getter
-                .inactive_session_count()
-                .await
-                .ok();
-            update_system_metrics(
-                &self.rate_limiter,
-                Some(&meta_store),
-                None,
-                active_sessions,
-                inactive_sessions,
-            )
-            .await;
-        }
-
         let inner = Arc::new(request.into_inner());
         tracing::info!(
             request_id = ?inner.request_id,

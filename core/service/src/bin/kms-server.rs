@@ -600,6 +600,8 @@ async fn main_exec() -> anyhow::Result<()> {
                 tracing::warn!("KMS server will connect to peers directly");
             };
 
+            let metrics_refresh_interval =
+                core_config.telemetry.as_ref().map(|t| t.refresh_interval());
             let (kms, health_service, metastore_status_service) = new_real_threshold_kms(
                 threshold_config,
                 public_vault,
@@ -612,6 +614,7 @@ async fn main_exec() -> anyhow::Result<()> {
                 need_peer_tcp_proxy,
                 false,
                 core_config.rate_limiter_conf,
+                metrics_refresh_interval,
                 std::future::pending(),
             )
             .await?;
