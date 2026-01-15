@@ -375,7 +375,7 @@ spec:
               value: {{ .Values.runMode }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
-          {{- if and .Values.kmsCore.envFrom.configmap.name (not .Values.minio.enabled) }}
+            {{- if and .Values.kmsCore.envFrom.configmap.name (not .Values.minio.enabled) }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               valueFrom:
                 configMapKeyRef:
@@ -575,18 +575,14 @@ spec:
             {{- if .Values.kmsCore.backupVault.s3.enabled }}
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.backupVault.s3.bucket | quote }}
-                  optional: true
             - name: KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.backupVault.s3.prefix | quote }}
-                  optional: true
             {{- end }}
             {{- if .Values.kmsCore.backupVault.awskms.enabled }}
             - name: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
               value: {{ .Values.kmsCore.backupVault.awskms.rootKeyId | quote }}
-                  optional: true
             - name: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
               value: {{ .Values.kmsCore.backupVault.awskms.rootKeySpec | quote }}
-                  optional: true
             {{- end }}
             {{- else }}
             - name: AWS_ACCESS_KEY_ID
