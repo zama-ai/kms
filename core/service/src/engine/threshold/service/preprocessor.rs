@@ -728,8 +728,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aborted() {
-        // Starting a preprocessing request that will be aborted if there's no PRSS
+    #[tracing_test::traced_test]
+    async fn no_prss_error() {
+        // Starting a preprocessing request will fail if there's no PRSS
         let mut rng = AesRng::seed_from_u64(22);
         let prep = setup_prep::<DummyProducerFactory>(&mut rng, false).await;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
@@ -743,13 +744,12 @@ mod tests {
             domain: Some(domain),
             epoch_id: None,
         };
-        assert_eq!(
-            prep.key_gen_preproc(tonic::Request::new(request))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::Aborted
-        );
+        let err = prep
+            .key_gen_preproc(tonic::Request::new(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Internal);
+        logs_contain("not found in epoch map");
     }
 
     #[tokio::test]

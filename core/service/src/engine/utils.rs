@@ -5,6 +5,7 @@ use kms_grpc::utils::tonic_result::top_1k_chars;
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{map_tonic_code_to_metric_err_tag, ERR_ASYNC};
+use std::fmt::Display;
 use tonic::Status;
 
 /// Query key material availability from private storage
@@ -120,6 +121,7 @@ impl MetricedError {
     /// * `op_metric` - The operation metric name associated with the error
     /// * `request_id` - Optional RequestId associated with the error
     /// * `internal_error` - The internal error being wrapped
+    // TODO should probably only be accessible to meta store to avoid misuse
     pub fn handle_unreturnable_error<E: Into<Box<dyn std::error::Error + Send + Sync>>>(
         op_metric: &'static str,
         request_id: Option<RequestId>,
@@ -127,7 +129,7 @@ impl MetricedError {
     ) {
         let error = internal_error.into(); // converts anyhow::Error or any other error
         let error_string = format!(
-            "Failure on requestID {:?} with metric {}. Error: {}",
+            "Failure on requestID {} with metric {}. Error: {}",
             request_id.unwrap_or_default(),
             op_metric,
             error
@@ -158,6 +160,19 @@ impl MetricedError {
 
             tracing::error!(error_string);
         }
+    }
+}
+
+impl Display for MetricedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "MetricedError on requestID {} with metric {} and error code {}: {}",
+            self.request_id.unwrap_or_default(),
+            self.op_metric,
+            self.error_code,
+            self.internal_error
+        )
     }
 }
 
