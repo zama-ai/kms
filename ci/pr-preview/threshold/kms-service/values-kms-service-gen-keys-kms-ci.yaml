@@ -1,0 +1,99 @@
+kmsCore:
+  enabled: false
+  envFrom:
+    configmap:
+      name: kms-ci-1
+  thresholdMode:
+    enabled: true
+    initializationScript:
+      enabled: true
+    tls:
+      enabled: false
+    thresholdValue: 4 # 1 if 4 parties or 4 if 13 parties
+    numSessionsPreproc: 72
+    multiplier: 2.0
+    maxInterval: 60
+    initialIntervalMs: 100
+    cleanupIntervalSecs: 2
+    tokioWorkerThreads: 10
+    rayonNumThreads: 40
+    peersList:
+      - id: 1
+        host: kms-service-threshold-1-kms-ci-core-1
+        port: 50001
+      - id: 2
+        host: kms-service-threshold-2-kms-ci-core-2
+        port: 50001
+      - id: 3
+        host: kms-service-threshold-3-kms-ci-core-3
+        port: 50001
+      - id: 4
+        host: kms-service-threshold-4-kms-ci-core-4
+        port: 50001
+      - id: 5
+        host: kms-service-threshold-5-kms-ci-core-5
+        port: 50001
+      - id: 6
+        host: kms-service-threshold-6-kms-ci-core-6
+        port: 50001
+      - id: 7
+        host: kms-service-threshold-7-kms-ci-core-7
+        port: 50001
+      - id: 8
+        host: kms-service-threshold-8-kms-ci-core-8
+        port: 50001
+      - id: 9
+        host: kms-service-threshold-9-kms-ci-core-9
+        port: 50001
+      - id: 10
+        host: kms-service-threshold-10-kms-ci-core-10
+        port: 50001
+      - id: 11
+        host: kms-service-threshold-11-kms-ci-core-11
+        port: 50001
+      - id: 12
+        host: kms-service-threshold-12-kms-ci-core-12
+        port: 50001
+      - id: 13
+        host: kms-service-threshold-13-kms-ci-core-13
+        port: 50001
+
+kmsCoreClient:
+  enabled: false
+  image:
+    name: ghcr.io/zama-ai/kms/core-client
+    tag: <version>
+  num_majority: 5 # 2 when 4 parties and 5 when 13 parties
+  num_reconstruct: 9 # 3 when 4 parties and 9 when 13 parties
+  decryption_mode: NoiseFloodSmall
+  fhe_parameter: Default
+  envFrom:
+    configmap:
+      name: kms-ci-1
+
+kmsInit:
+  enabled: false
+
+kmsGenKeys:
+  enabled: true
+  keyGenArgs: "insecure-key-gen"
+  crsGenArgs: "insecure-crs-gen --max-num-bits 2048"
+  configmap:
+    name: kms-keys
+  resources:
+    requests:
+      memory: 16Gi
+      cpu: 3
+    limits:
+      memory: 16Gi
+      cpu: 3
+  nodeSelector:
+    karpenter.sh/nodepool: zws-pool
+  tolerations:
+    - key: karpenter.sh/nodepool
+      effect: NoSchedule
+      operator: Equal
+      value: zws-pool
+
+kmsGenCertAndKeys:
+  enabled: false

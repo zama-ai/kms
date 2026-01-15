@@ -17,7 +17,9 @@ set -euo pipefail
 
 COMMAND="${1:-}"
 SETUP_LOG="setup_kms.log"
-KUBE_CONFIG="${HOME}/.kube/kind_config_${DEPLOYMENT_TYPE}"
+# Need to source or infer correct namespace/config if not set
+NAMESPACE="${NAMESPACE:-kms-test}"
+KUBE_CONFIG="${HOME}/.kube/kind_config_${DEPLOYMENT_TYPE:-threshold}"
 
 #=============================================================================
 # Start Setup
@@ -25,13 +27,17 @@ KUBE_CONFIG="${HOME}/.kube/kind_config_${DEPLOYMENT_TYPE}"
 start_setup() {
     echo "Starting KMS setup in background..."
 
-    # Run setup script in background and capture its PID
-    ./ci/kube-testing/scripts/setup_kms_in_kind.sh \
+    # Use the new Unified Deploy Script
+    # Note: We use --block to ensure it keeps running (for port forwards)
+    # We map old args to new args
+    ./ci/scripts/deploy_unified.sh \
+        --target "kind-ci" \
         --namespace "${NAMESPACE}" \
-        --kms-core-tag "${KMS_CORE_IMAGE_TAG}" \
-        --kms-core-client-tag "${KMS_CORE_CLIENT_IMAGE_TAG}" \
-        --deployment-type "${DEPLOYMENT_TYPE}" \
-        --num-parties "${NUM_PARTIES}" > "${SETUP_LOG}" 2>&1 &
+        --tag "${KMS_CORE_IMAGE_TAG:-latest-dev}" \
+        --deployment-type "${DEPLOYMENT_TYPE:-threshold}" \
+        --num-parties "${NUM_PARTIES:-4}" \
+        --block > "${SETUP_LOG}" 2>&1 &
+
     SETUP_PID=$!
 
     # Tail the log file in background for real-time output
@@ -51,6 +57,7 @@ start_setup() {
     ELAPSED=0
 
     while [ $ELAPSED -lt $TIMEOUT ]; do
+        # deploy_unified.sh prints this when ready in block mode
         if grep -q "Press Ctrl+C to stop port forwarding and exit" "${SETUP_LOG}" 2>/dev/null; then
             echo "KMS setup completed successfully!"
             return 0
@@ -107,9 +114,14 @@ stop_setup() {
     echo "Terminating any remaining port-forward processes..."
     pkill -9 -f "kubectl port-forward" || true
     sleep 2
-    # Delete cluster and kubeconfig
-    kind delete cluster --name ${NAMESPACE} --kubeconfig ${KUBE_CONFIG}
-    rm -f "${KUBE_CONFIG}"
+
+    # Delete cluster (if it was Kind)
+    # The config name depends on how deploy_unified sets it up.
+    # deploy_unified uses: kind-${NAMESPACE} as context name, and ${NAMESPACE} as cluster name.
+    if kind get clusters | grep -q "^${NAMESPACE}$"; then
+        echo "Deleting Kind cluster ${NAMESPACE}..."
+        kind delete cluster --name "${NAMESPACE}"
+    fi
 
     echo "Setup process terminated"
 

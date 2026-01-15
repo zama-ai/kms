@@ -79,7 +79,7 @@ kmsCore:
       # Nitro enclaves will ignore this value since they generate their own
       # attested ephemeral keypairs
       # privateKey:
-        # path: /my/very/secret/key.pem
+      #   path: /my/very/secret/key.pem
       # If set, the enclave-enabled core will only establish TLS connections
       # with peers that have attested PCR0,1,2 values from this list
       trustedReleases:
@@ -309,9 +309,9 @@ rustLog: info
 
 podSecurityContext:
   # To set when the image will support non root user
-  runAsUser: 1000
-  runAsGroup: 1000
-  fsGroup: 1000
+  runAsUser: 10002
+  runAsGroup: 10003
+  fsGroup: 10003
   runAsNonRoot: true
 containerSecurityContext:
   allowPrivilegeEscalation: false
