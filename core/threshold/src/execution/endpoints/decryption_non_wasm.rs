@@ -493,7 +493,6 @@ where
 /// * `secret_key_share` - The secret key share of the party_keyshare
 /// * `ksk` - The public keyswitch key
 /// * `_mode` - The decryption mode. This is used only for tracing purposes
-/// * `_my_role` - The role of the party_keyshare. This is used only for tracing purposes
 ///
 /// # Returns
 /// * A tuple containing the results of the decryption and the time it took to execute the decryption
@@ -507,13 +506,12 @@ where
 /// 3. The results are returned
 ///
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.session_id(), my_role = %_my_role))]
+#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn secure_decrypt_using_bitdec<const EXTENSION_DEGREE: usize, T>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     ct: &RadixOrBoolCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     ksk: &LweKeyswitchKey<Vec<u64>>,
-    _my_role: Role,
 ) -> anyhow::Result<(HashMap<String, T>, Duration)>
 where
     T: tfhe::integer::block_decomposition::Recomposable

@@ -116,9 +116,12 @@ impl<
                     tonic::Code::InvalidArgument,
                 )
             })?;
-        let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
-            MetricedError::new(op_tag, Some(req_id), e, tonic::Code::InvalidArgument)
-        })?;
+        // Find the role of the current server and validate the context exists
+        let my_role = self
+            .session_maker
+            .my_role(&context_id)
+            .await
+            .map_err(|e| MetricedError::new(op_tag, Some(req_id), e, tonic::Code::NotFound))?;
         let metric_tags = vec![
             (TAG_PARTY_ID, my_role.to_string()),
             (TAG_CRS_ID, req_id.as_str()),

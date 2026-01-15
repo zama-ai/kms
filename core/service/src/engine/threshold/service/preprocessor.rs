@@ -329,12 +329,13 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                     tonic::Code::InvalidArgument,
                 )
             })?;
+        // Find the role of the current server and validate the context exists
         let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
             MetricedError::new(
                 OP_KEYGEN_PREPROC_REQUEST,
                 Some(request_id),
                 e,
-                tonic::Code::InvalidArgument,
+                tonic::Code::NotFound,
             )
         })?;
         let metric_tags = vec![
