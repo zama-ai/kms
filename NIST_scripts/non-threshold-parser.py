@@ -7,7 +7,8 @@ PARAMS_MAP = {
     "NIST_PARAMS_P32_SNS_FGLWE":"TFHE_Clear_P32_FGLWE.csv",
     "NIST_PARAMS_P32_SNS_LWE":"TFHE_Clear_P32_LWE.csv",
     "NIST_PARAMS_P8_SNS_FGLWE":"TFHE_Clear_P8_FGLWE.csv",
-    "NIST_PARAMS_P8_SNS_LWE":"TFHE_Clear_P8_LWE.csv"
+    "NIST_PARAMS_P8_SNS_LWE":"TFHE_Clear_P8_LWE.csv",
+    "BC_PARAMS_SNS":"TFHE_Clear_BC_FGLWE.csv"
 }
 
 # Maps the experiment name to the corresponding row in the csv file
@@ -54,7 +55,8 @@ RESULT_MAP = {
     "NIST_PARAMS_P32_SNS_FGLWE":ResultEntry(),
     "NIST_PARAMS_P32_SNS_LWE":ResultEntry(),
     "NIST_PARAMS_P8_SNS_FGLWE":ResultEntry(),
-    "NIST_PARAMS_P8_SNS_LWE":ResultEntry()
+    "NIST_PARAMS_P8_SNS_LWE":ResultEntry(),
+    "BC_PARAMS_SNS":ResultEntry()
     }
 
 def find_parameters_from_json(data):
