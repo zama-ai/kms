@@ -117,12 +117,14 @@ impl MetricedError {
     /// Handles an error that cannot be returned through gRPC by logging the error and incrementing metrics.
     /// This is _not_ indempotent and should only be called once per error.
     ///
+    /// **RESTRICTED USAGE**: This function should only be used by `crate::util::meta_store` module.
+    /// It is made crate-private to prevent misuse in other parts of the codebase.
+    ///
     /// # Arguments
     /// * `op_metric` - The operation metric name associated with the error
     /// * `request_id` - Optional RequestId associated with the error
     /// * `internal_error` - The internal error being wrapped
-    // TODO should probably only be accessible to meta store to avoid misuse
-    pub fn handle_unreturnable_error<E: Into<Box<dyn std::error::Error + Send + Sync>>>(
+    pub(crate) fn handle_unreturnable_error<E: Into<Box<dyn std::error::Error + Send + Sync>>>(
         op_metric: &'static str,
         request_id: Option<RequestId>,
         internal_error: E,
