@@ -133,7 +133,7 @@ impl std::fmt::Display for RequestIdParsingErr {
     }
 }
 
-// TODO Are all these helper methods needed? should some be for metriced error?
+// TODO(#2868) Are all these helper methods needed? should some be for metriced error?
 pub(crate) fn optional_proto_request_id(
     request_id: &Option<kms_grpc::kms::v1::RequestId>,
     id_type: RequestIdParsingErr,

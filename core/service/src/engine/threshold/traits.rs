@@ -103,6 +103,7 @@ pub trait InsecureCrsGenerator {
 
 #[tonic::async_trait]
 pub trait Resharer {
+    // TODO(#2868)
     async fn initiate_resharing(
         &self,
         request: Request<InitiateResharingRequest>,
