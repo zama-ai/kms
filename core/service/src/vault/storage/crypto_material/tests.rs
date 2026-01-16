@@ -20,8 +20,9 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{
     consts::TEST_PARAM,
     engine::{
-        base::KmsFheKeyHandles, centralized::central_kms::async_generate_crs,
-        threshold::service::ThresholdFheKeys,
+        base::KmsFheKeyHandles,
+        centralized::central_kms::async_generate_crs,
+        threshold::service::{PublicKeyMaterial, ThresholdFheKeys},
     },
     util::meta_store::MetaStore,
     vault::storage::{
@@ -561,9 +562,11 @@ fn setup_threshold_store(
 
     let threshold_fhe_keys = ThresholdFheKeys {
         private_keys: Arc::new(key_shares[0].to_owned()),
-        integer_server_key: Arc::new(integer_server_key),
-        sns_key: sns_key.map(Arc::new),
-        decompression_key: None,
+        public_material: PublicKeyMaterial::Uncompressed {
+            integer_server_key: Arc::new(integer_server_key),
+            sns_key: sns_key.map(Arc::new),
+            decompression_key: None,
+        },
         meta_data: dummy_info(),
     };
     (crypto_storage, threshold_fhe_keys, fhe_key_set)

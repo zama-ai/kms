@@ -6,7 +6,7 @@ use crate::{
             DSEP_PUBDATA_KEY,
         },
         threshold::{
-            service::{session::ImmutableSessionMaker, ThresholdFheKeys},
+            service::{session::ImmutableSessionMaker, PublicKeyMaterial, ThresholdFheKeys},
             traits::Resharer,
         },
         utils::MetricedError,
@@ -596,9 +596,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
             let threshold_fhe_keys = ThresholdFheKeys {
                 private_keys: Arc::new(new_private_key_set),
-                integer_server_key: Arc::new(integer_server_key),
-                sns_key: sns_key.map(Arc::new),
-                decompression_key: decompression_key.map(Arc::new),
+                public_material: PublicKeyMaterial::Uncompressed {
+                    integer_server_key: Arc::new(integer_server_key),
+                    sns_key: sns_key.map(Arc::new),
+                    decompression_key: decompression_key.map(Arc::new),
+                },
                 meta_data: info.clone(),
             };
 

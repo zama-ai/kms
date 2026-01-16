@@ -17,6 +17,7 @@ use observability::{
     },
 };
 use tfhe::integer::compression_keys::DecompressionKey;
+use tfhe::xof_key_set::CompressedXofKeySet;
 use threshold_fhe::{
     algebra::{
         base_ring::Z128,
@@ -49,12 +50,13 @@ use crate::{
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{
-            compute_info_decompression_keygen, compute_info_standard_keygen, retrieve_parameters,
-            BaseKmsStruct, KeyGenMetadata, DSEP_PUBDATA_KEY,
+            compute_info_compressed_keygen, compute_info_decompression_keygen,
+            compute_info_standard_keygen, retrieve_parameters, BaseKmsStruct, KeyGenMetadata,
+            DSEP_PUBDATA_KEY,
         },
         keyset_configuration::InternalKeySetConfig,
         threshold::{
-            service::{session::ImmutableSessionMaker, ThresholdFheKeys},
+            service::{session::ImmutableSessionMaker, PublicKeyMaterial, ThresholdFheKeys},
             traits::KeyGenerator,
         },
         utils::MetricedError,
@@ -72,6 +74,21 @@ use crate::{
 
 // === Current Module Imports ===
 use super::BucketMetaStore;
+
+/// Enum to handle both compressed and uncompressed DKG results.
+/// This allows the same code path to handle both keygen and compressed_keygen outputs.
+enum KeyGenDkgResult {
+    /// Standard keygen result with full public key set
+    Uncompressed(
+        FhePubKeySet,
+        PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+    ),
+    /// Compressed keygen result with XOF-seeded compressed keys
+    Compressed(
+        CompressedXofKeySet,
+        PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+    ),
+}
 
 // === Insecure Feature-Specific Imports ===
 #[cfg(feature = "insecure")]
@@ -1006,24 +1023,25 @@ impl<
                         match (
                             keyset_config.compression_config,
                             keyset_config.computation_key_type,
+                            keyset_config.compressed_key_config,
                         ) {
                             (
                                 ddec_keyset_config::KeySetCompressionConfig::Generate,
                                 ddec_keyset_config::ComputeKeyType::Cpu,
-                            ) => {
-                                initialize_key_material(&mut base_session, params, req_id.into())
-                                    .await
-                            }
+                                ddec_keyset_config::CompressedKeyConfig::None,
+                            ) => initialize_key_material(&mut base_session, params, req_id.into())
+                                .await
+                                .map(|(pk, sk)| KeyGenDkgResult::Uncompressed(pk, sk)),
                             _ => {
-                                // TODO insecure keygen from existing compression key is not supported
+                                // TODO insecure keygen from existing compression key and compressed keygen is not supported
                                 let mut guarded_meta_storage = meta_store.write().await;
                                 let _ = guarded_meta_storage.update(
-                            req_id,
-                            Err(
-                                "insecure keygen from existing compression key is not supported"
-                                    .to_string(),
-                            ),
-                        );
+                                    req_id,
+                                    Err(
+                                        "insecure keygen only supports standard keygen with Generate compression config"
+                                            .to_string(),
+                                    ),
+                                );
                                 return Err(());
                             }
                         },
@@ -1035,16 +1053,23 @@ impl<
                 (prep_id, match (
                     keyset_config.compression_config,
                     keyset_config.computation_key_type,
+                    keyset_config.compressed_key_config,
                 ) {
+                    // Standard keygen with new compression keys
                     (
                         ddec_keyset_config::KeySetCompressionConfig::Generate,
                         ddec_keyset_config::ComputeKeyType::Cpu,
+                        ddec_keyset_config::CompressedKeyConfig::None,
                     ) => {
-                        KG::keygen(&mut base_session, preproc_handle.as_mut(), params, req_id.into(), None).await
+                        KG::keygen(&mut base_session, preproc_handle.as_mut(), params, req_id.into(), None)
+                            .await
+                            .map(|(pk, sk)| KeyGenDkgResult::Uncompressed(pk, sk))
                     }
+                    // Standard keygen with existing compression keys
                     (
                         ddec_keyset_config::KeySetCompressionConfig::UseExisting,
                         ddec_keyset_config::ComputeKeyType::Cpu,
+                        ddec_keyset_config::CompressedKeyConfig::None,
                     ) => {
                         Self::key_gen_from_existing_compression_sk(
                             req_id,
@@ -1056,14 +1081,33 @@ impl<
                             preproc_handle.as_mut(),
                         )
                         .await
+                        .map(|(pk, sk)| KeyGenDkgResult::Uncompressed(pk, sk))
+                    }
+                    // Compressed keygen (only supported with Generate compression config)
+                    (
+                        ddec_keyset_config::KeySetCompressionConfig::Generate,
+                        ddec_keyset_config::ComputeKeyType::Cpu,
+                        ddec_keyset_config::CompressedKeyConfig::All,
+                    ) => {
+                        KG::compressed_keygen(&mut base_session, preproc_handle.as_mut(), params, req_id.into(), None)
+                            .await
+                            .map(|(compressed_keyset, sk)| KeyGenDkgResult::Compressed(compressed_keyset, sk))
+                    }
+                    // Compressed keygen with UseExisting is not supported
+                    (
+                        ddec_keyset_config::KeySetCompressionConfig::UseExisting,
+                        _,
+                        ddec_keyset_config::CompressedKeyConfig::All,
+                    ) => {
+                        Err(anyhow::anyhow!("Compressed keygen with UseExisting compression keys is not supported"))
                     }
                 })
             }
         };
 
         //Make sure the dkg ended nicely
-        let (pub_key_set, private_keys) = match dkg_res {
-            Ok((pk, sk)) => (pk, sk),
+        let dkg_result = match dkg_res {
+            Ok(result) => result,
             Err(e) => {
                 //If dkg errored out, update status
                 let mut guarded_meta_storage = meta_store.write().await;
@@ -1073,63 +1117,110 @@ impl<
             }
         };
 
-        //Compute all the info required for storing
-        let info = match compute_info_standard_keygen(
-            &sk,
-            &DSEP_PUBDATA_KEY,
-            &prep_id,
-            req_id,
-            &pub_key_set,
-            &eip712_domain,
-        ) {
-            Ok(info) => info,
-            Err(_) => {
-                let mut guarded_meta_storage = meta_store.write().await;
-                // We cannot do much if updating the storage fails at this point...
-                let _ = guarded_meta_storage
-                    .update(req_id, Err("Failed to compute key info".to_string()));
-                return Err(());
+        // Handle both compressed and uncompressed keygen results
+        match dkg_result {
+            KeyGenDkgResult::Uncompressed(pub_key_set, private_keys) => {
+                //Compute all the info required for storing
+                let info = match compute_info_standard_keygen(
+                    &sk,
+                    &DSEP_PUBDATA_KEY,
+                    &prep_id,
+                    req_id,
+                    &pub_key_set,
+                    &eip712_domain,
+                ) {
+                    Ok(info) => info,
+                    Err(_) => {
+                        let mut guarded_meta_storage = meta_store.write().await;
+                        // We cannot do much if updating the storage fails at this point...
+                        let _ = guarded_meta_storage
+                            .update(req_id, Err("Failed to compute key info".to_string()));
+                        return Err(());
+                    }
+                };
+
+                let (integer_server_key, decompression_key, sns_key) = {
+                    let (
+                        raw_server_key,
+                        _raw_ksk_material,
+                        _raw_compression_key,
+                        raw_decompression_key,
+                        raw_noise_squashing_key,
+                        _raw_noise_squashing_compression_key,
+                        _raw_rerandomization_key,
+                        _raw_tag,
+                    ) = pub_key_set.server_key.clone().into_raw_parts();
+                    (
+                        raw_server_key,
+                        raw_decompression_key,
+                        raw_noise_squashing_key,
+                    )
+                };
+
+                let threshold_fhe_keys = ThresholdFheKeys {
+                    private_keys: Arc::new(private_keys),
+                    public_material: PublicKeyMaterial::Uncompressed {
+                        integer_server_key: Arc::new(integer_server_key),
+                        sns_key: sns_key.map(Arc::new),
+                        decompression_key: decompression_key.map(Arc::new),
+                    },
+                    meta_data: info.clone(),
+                };
+
+                //Note: We can't easily check here whether we succeeded writing to the meta store
+                //thus we can't increment the error counter if it fails
+                crypto_storage
+                    .write_threshold_keys_with_dkg_meta_store(
+                        req_id,
+                        epoch_id,
+                        threshold_fhe_keys,
+                        pub_key_set,
+                        info,
+                        meta_store,
+                    )
+                    .await;
             }
-        };
+            KeyGenDkgResult::Compressed(compressed_keyset, private_keys) => {
+                //Compute info for compressed keygen
+                let info = match compute_info_compressed_keygen(
+                    &sk,
+                    &DSEP_PUBDATA_KEY,
+                    &prep_id,
+                    req_id,
+                    &compressed_keyset,
+                    &eip712_domain,
+                ) {
+                    Ok(info) => info,
+                    Err(_) => {
+                        let mut guarded_meta_storage = meta_store.write().await;
+                        let _ = guarded_meta_storage.update(
+                            req_id,
+                            Err("Failed to compute compressed key info".to_string()),
+                        );
+                        return Err(());
+                    }
+                };
 
-        let (integer_server_key, decompression_key, sns_key) = {
-            let (
-                raw_server_key,
-                _raw_ksk_material,
-                _raw_compression_key,
-                raw_decompression_key,
-                raw_noise_squashing_key,
-                _raw_noise_squashing_compression_key,
-                _raw_rerandomization_key,
-                _raw_tag,
-            ) = pub_key_set.server_key.clone().into_raw_parts();
-            (
-                raw_server_key,
-                raw_decompression_key,
-                raw_noise_squashing_key,
-            )
-        };
+                let threshold_fhe_keys = ThresholdFheKeys {
+                    private_keys: Arc::new(private_keys),
+                    public_material: PublicKeyMaterial::Compressed {
+                        compressed_keyset: Arc::new(compressed_keyset.clone()),
+                    },
+                    meta_data: info.clone(),
+                };
 
-        let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: Arc::new(private_keys),
-            integer_server_key: Arc::new(integer_server_key),
-            sns_key: sns_key.map(Arc::new),
-            decompression_key: decompression_key.map(Arc::new),
-            meta_data: info.clone(),
-        };
-
-        //Note: We can't easily check here whether we succeeded writing to the meta store
-        //thus we can't increment the error counter if it fails
-        crypto_storage
-            .write_threshold_keys_with_dkg_meta_store(
-                req_id,
-                epoch_id,
-                threshold_fhe_keys,
-                pub_key_set,
-                info,
-                meta_store,
-            )
-            .await;
+                crypto_storage
+                    .write_threshold_keys_with_dkg_meta_store_compressed(
+                        req_id,
+                        epoch_id,
+                        threshold_fhe_keys,
+                        compressed_keyset,
+                        info,
+                        meta_store,
+                    )
+                    .await;
+            }
+        }
 
         tracing::info!(
             "DKG protocol took {} ms to complete for request {req_id}",

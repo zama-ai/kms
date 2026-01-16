@@ -56,7 +56,7 @@ use kms_lib::{
             KeyGenMetadataInner, KmsFheKeyHandles,
         },
         context::{ContextInfo, NodeInfo, SoftwareVersion},
-        threshold::service::{session::PRSSSetupCombined, ThresholdFheKeys},
+        threshold::service::{session::PRSSSetupCombined, PublicKeyMaterial, ThresholdFheKeys},
     },
     util::key_setup::FhePublicKey,
     vault::keychain::AppKeyBlob,
@@ -974,9 +974,11 @@ fn test_threshold_fhe_keys(
 
     let new_versionized = ThresholdFheKeys {
         private_keys: Arc::new(private_keys),
-        integer_server_key: Arc::new(integer_server_key),
-        sns_key: sns_key.map(Arc::new),
-        decompression_key: decompression_key.map(Arc::new),
+        public_material: PublicKeyMaterial::Uncompressed {
+            integer_server_key: Arc::new(integer_server_key),
+            sns_key: sns_key.map(Arc::new),
+            decompression_key: decompression_key.map(Arc::new),
+        },
         meta_data: KeyGenMetadata::LegacyV0(pk_meta_data),
     };
 

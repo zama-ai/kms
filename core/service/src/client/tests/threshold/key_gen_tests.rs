@@ -12,7 +12,7 @@ cfg_if::cfg_if! {
     use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::crypto_material::PrivateCryptoMaterialReader;
     use crate::vault::storage::{file::FileStorage, StorageType};
-    use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};
+    use kms_grpc::kms::v1::{CompressedKeyConfig, Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType, StandardKeySetConfig};
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::rpc_types::PubDataType;
     use kms_grpc::RequestId;
@@ -105,6 +105,7 @@ async fn test_insecure_dkg(#[case] amount_parties: usize) {
         true,
         None,
         0,
+        false,
     )
     .await
     .0;
@@ -153,6 +154,7 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
         true,
         None,
         0,
+        false,
     )
     .await
     .0;
@@ -177,7 +179,18 @@ async fn test_insecure_threshold_decompression_keygen() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn secure_threshold_keygen_test() {
-    preproc_and_keygen(4, FheParameter::Test, false, 1, false, None, None, None).await;
+    preproc_and_keygen(
+        4,
+        FheParameter::Test,
+        false,
+        1,
+        false,
+        None,
+        None,
+        None,
+        false,
+    )
+    .await;
 }
 
 #[cfg(feature = "slow_tests")]
@@ -193,6 +206,7 @@ async fn secure_threshold_keygen_test_crash_online() {
         None,
         Some(vec![2]),
         None,
+        false,
     )
     .await;
 }
@@ -210,6 +224,29 @@ async fn secure_threshold_keygen_test_crash_preprocessing() {
         Some(vec![3]),
         None,
         None,
+        false,
+    )
+    .await;
+}
+
+/// Test compressed keygen with test parameters and 4 parties.
+/// This tests the `compressed_keygen` code path where keys are generated
+/// using XOF-seeded compression instead of the standard keygen.
+#[cfg(feature = "slow_tests")]
+#[tokio::test(flavor = "multi_thread")]
+#[tracing_test::traced_test]
+#[serial]
+async fn secure_threshold_compressed_keygen_test() {
+    preproc_and_keygen(
+        4,
+        FheParameter::Test,
+        false,
+        1,
+        false,
+        None,
+        None,
+        None,
+        true, // compressed = true
     )
     .await;
 }
@@ -226,11 +263,21 @@ pub(crate) async fn run_threshold_keygen(
     insecure: bool,
     data_root_path: Option<&Path>,
     expected_num_parties_crashed: usize,
+    compressed: bool,
 ) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
     let keyset_config = if let Some((_from, _to)) = decompression_keygen {
         Some(KeySetConfig {
             keyset_type: KeySetType::DecompressionOnly.into(),
             standard_keyset_config: None,
+        })
+    } else if compressed {
+        Some(KeySetConfig {
+            keyset_type: KeySetType::Standard.into(),
+            standard_keyset_config: Some(StandardKeySetConfig {
+                compute_key_type: 0,          // CPU
+                keyset_compression_config: 0, // Generate
+                compressed_key_config: CompressedKeyConfig::CompressedAll.into(),
+            }),
         })
     } else {
         None
@@ -543,6 +590,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         insecure,
         None,
         0,
+        false,
     )
     .await
     .0;
@@ -572,6 +620,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         insecure,
         None,
         0,
+        false,
     )
     .await
     .0;
@@ -601,6 +650,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         insecure,
         None,
         0,
+        false,
     )
     .await
     .0
@@ -630,7 +680,15 @@ pub(crate) async fn preproc_and_keygen(
     party_ids_to_crash_preproc: Option<Vec<usize>>,
     party_ids_to_crash_keygen: Option<Vec<usize>>,
     partial_preproc: Option<kms_grpc::kms::v1::PartialKeyGenPreprocParams>,
+    compressed: bool,
 ) {
+    // Compressed keygen doesn't support concurrent mode or iteration count > 1 for now
+    // because it requires special handling for get_standard() and DDec tests
+    assert!(
+        !compressed || (!concurrent && iterations == 1),
+        "Compressed keygen only supports non-concurrent mode with 1 iteration"
+    );
+
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     for i in 0..iterations {
@@ -769,6 +827,7 @@ pub(crate) async fn preproc_and_keygen(
                             insecure_key_gen,
                             None,
                             expected_num_parties_crashed,
+                            false,
                         )
                         .await
                         .0,
@@ -825,11 +884,6 @@ pub(crate) async fn preproc_and_keygen(
             expected_num_parties_crashed += 1;
         }
         for i in 0..iterations {
-            use crate::{
-                client::tests::threshold::public_decryption_tests::run_decryption_threshold,
-                util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
-            };
-
             let key_id: RequestId =
                 derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameter:?}_{i}"))
                     .unwrap();
@@ -843,35 +897,48 @@ pub(crate) async fn preproc_and_keygen(
                 insecure_key_gen,
                 None,
                 expected_num_parties_crashed,
+                compressed,
             )
             .await
             .0;
-            // blockchain parameters always have mod switch noise reduction key
-            let (client_key, public_key, server_key) = keyset.get_standard();
-            let tag: tfhe::Tag = key_id.into();
-            assert_eq!(&tag, client_key.tag());
-            assert_eq!(&tag, public_key.tag());
-            assert_eq!(&tag, server_key.tag());
-            crate::client::key_gen::tests::check_conformance(server_key, client_key);
 
-            // Run a DDec
-            run_decryption_threshold(
-                amount_parties,
-                &mut kms_servers,
-                &mut kms_clients,
-                &mut internal_client,
-                &key_id,
-                None,
-                vec![TestingPlaintext::U8(u8::MAX)],
-                EncryptionConfig {
-                    compression: true,
-                    precompute_sns: true,
-                },
-                None,
-                1,
-                None,
-            )
-            .await;
+            if compressed {
+                // For compressed keygen, we just verify that keygen completed.
+                // Verification tests (get_standard, DDec) are not yet supported for compressed keys.
+                tracing::info!("Compressed keygen completed for key_id={}", key_id);
+            } else {
+                use crate::{
+                    client::tests::threshold::public_decryption_tests::run_decryption_threshold,
+                    util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
+                };
+
+                // blockchain parameters always have mod switch noise reduction key
+                let (client_key, public_key, server_key) = keyset.get_standard();
+                let tag: tfhe::Tag = key_id.into();
+                assert_eq!(&tag, client_key.tag());
+                assert_eq!(&tag, public_key.tag());
+                assert_eq!(&tag, server_key.tag());
+                crate::client::key_gen::tests::check_conformance(server_key, client_key);
+
+                // Run a DDec
+                run_decryption_threshold(
+                    amount_parties,
+                    &mut kms_servers,
+                    &mut kms_clients,
+                    &mut internal_client,
+                    &key_id,
+                    None,
+                    vec![TestingPlaintext::U8(u8::MAX)],
+                    EncryptionConfig {
+                        compression: true,
+                        precompute_sns: true,
+                    },
+                    None,
+                    1,
+                    None,
+                )
+                .await;
+            }
         }
         tracing::info!("Finished sequential preproc and keygen");
     }
@@ -1198,12 +1265,12 @@ pub(crate) async fn verify_keygen_responses(
         let key_id = RequestId::from_str(kg_res.request_id.unwrap().request_id.as_str()).unwrap();
         let priv_storage =
             FileStorage::new(data_root_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
-        let mut threshold_fhe_keys =
+        let threshold_fhe_keys =
             ThresholdFheKeys::read_from_storage_at_epoch(&priv_storage, &key_id, &DEFAULT_EPOCH_ID)
                 .await
                 .unwrap();
-        // we do not need the sns key to reconstruct, remove it to save memory
-        threshold_fhe_keys.sns_key = None;
+        // Note: The sns_key is now part of PublicKeyMaterial enum and cannot be easily cleared.
+        // This optimization is skipped, but the test should still work (with more memory usage).
         all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
         if final_public_key.is_none() {
             final_public_key = Some(public_key);

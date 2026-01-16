@@ -78,6 +78,7 @@ async fn nightly_test_insecure_threshold_dkg_backup() {
         true,
         test_path,
         0,
+        false,
     )
     .await;
 
@@ -91,6 +92,7 @@ async fn nightly_test_insecure_threshold_dkg_backup() {
         true,
         test_path,
         0,
+        false,
     )
     .await;
 
@@ -200,6 +202,7 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
         true,
         test_path,
         0,
+        false,
     )
     .await;
 

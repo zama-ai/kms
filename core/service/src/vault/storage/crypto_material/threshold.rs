@@ -11,7 +11,10 @@ use kms_grpc::{
     rpc_types::{KMSType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
     RequestId,
 };
-use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
+use tfhe::{
+    integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet,
+    zk::CompactPkeCrs,
+};
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
@@ -314,6 +317,183 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             meta_store,
         )
         .await
+    }
+
+    /// Write the key materials (result of a compressed keygen) to storage and cache
+    /// for the threshold KMS.
+    /// The [meta_store] is updated to "Done" if the procedure is successful.
+    ///
+    /// This is similar to [write_threshold_keys_with_dkg_meta_store] but for compressed keys.
+    pub async fn write_threshold_keys_with_dkg_meta_store_compressed(
+        &self,
+        key_id: &RequestId,
+        epoch_id: &EpochId,
+        threshold_fhe_keys: ThresholdFheKeys,
+        compressed_keyset: CompressedXofKeySet,
+        info: KeyGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+    ) {
+        let mut guarded_meta_storage = meta_store.write().await;
+        let (r1, r2, r3) = {
+            let mut pub_storage = self.inner.public_storage.lock().await;
+            let mut priv_storage = self.inner.private_storage.lock().await;
+            let back_vault = match self.inner.backup_vault {
+                Some(ref x) => Some(x.lock().await),
+                None => None,
+            };
+
+            // Extract compressed keys from the keyset
+            let (_, compressed_public_key, compressed_server_key) =
+                compressed_keyset.into_raw_parts();
+
+            let f1 = async {
+                let store_result = store_versioned_at_request_and_epoch_id(
+                    &mut (*priv_storage),
+                    key_id,
+                    epoch_id,
+                    &threshold_fhe_keys,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await;
+
+                if let Err(e) = &store_result {
+                    tracing::error!(
+                        "Failed to store threshold FHE keys to private storage for request {}: {}",
+                        key_id,
+                        e
+                    );
+                } else {
+                    log_storage_success(
+                        key_id,
+                        priv_storage.info(),
+                        &PrivDataType::FheKeyInfo.to_string(),
+                        false,
+                        true,
+                    );
+                }
+                store_result.is_ok()
+            };
+
+            let f2 = async {
+                // Store compressed public key
+                let pk_result = store_versioned_at_request_id(
+                    &mut (*pub_storage),
+                    key_id,
+                    &compressed_public_key,
+                    &PubDataType::CompressedCompactPublicKey.to_string(),
+                )
+                .await;
+                if let Err(e) = &pk_result {
+                    tracing::error!(
+                        "Failed to store compressed public key for request {}: {}",
+                        key_id,
+                        e
+                    );
+                } else {
+                    log_storage_success(
+                        key_id,
+                        pub_storage.info(),
+                        &PubDataType::CompressedCompactPublicKey.to_string(),
+                        true,
+                        true,
+                    );
+                }
+
+                // Store compressed server key
+                let server_result = store_versioned_at_request_id(
+                    &mut (*pub_storage),
+                    key_id,
+                    &compressed_server_key,
+                    &PubDataType::CompressedServerKey.to_string(),
+                )
+                .await;
+
+                if let Err(e) = &server_result {
+                    tracing::error!(
+                        "Failed to store compressed server key for request {}: {}",
+                        key_id,
+                        e
+                    );
+                } else {
+                    log_storage_success(
+                        key_id,
+                        pub_storage.info(),
+                        &PubDataType::CompressedServerKey.to_string(),
+                        true,
+                        true,
+                    );
+                }
+                pk_result.is_ok() && server_result.is_ok()
+            };
+
+            let threshold_key_clone = threshold_fhe_keys.clone();
+            let f3 = async move {
+                match back_vault {
+                    Some(mut guarded_backup_vault) => {
+                        let backup_result = store_versioned_at_request_and_epoch_id(
+                            &mut (*guarded_backup_vault),
+                            key_id,
+                            epoch_id,
+                            &threshold_key_clone,
+                            &PrivDataType::FheKeyInfo.to_string(),
+                        )
+                        .await;
+
+                        if let Err(e) = &backup_result {
+                            tracing::error!("Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}");
+                        } else {
+                            log_storage_success(
+                                key_id,
+                                guarded_backup_vault.info(),
+                                &PrivDataType::FheKeyInfo.to_string(),
+                                false,
+                                true,
+                            );
+                        }
+                        backup_result.is_ok()
+                    }
+                    None => {
+                        tracing::warn!("No backup vault configured. Skipping backup of key material for request {key_id}");
+                        true
+                    }
+                }
+            };
+            tokio::join!(f1, f2, f3)
+        };
+
+        tracing::info!("Storing compressed keys objects for key ID {}", key_id);
+
+        let meta_update_result = guarded_meta_storage.update(key_id, Ok(info));
+        if let Err(e) = &meta_update_result {
+            tracing::error!("Error ({}) while updating meta store for {}", e, key_id);
+        }
+
+        if r1 && r2 && r3 && meta_update_result.is_ok() {
+            // Update fhe_keys cache (no pk_cache update for compressed keys)
+            {
+                let mut guarded_fhe_keys = self.fhe_keys.write().await;
+                let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);
+                if previous.is_some() {
+                    tracing::warn!(
+                        "Threshold FHE keys already exist in cache for {}, overwriting",
+                        key_id
+                    );
+                } else {
+                    tracing::debug!(
+                        "Added new compressed threshold FHE keys to cache for {}",
+                        key_id
+                    );
+                }
+            }
+            tracing::info!("Finished storing compressed key for Key Id {key_id}.");
+        } else {
+            tracing::warn!(
+                "Failed to ensure existence of compressed threshold key material for Key with ID: {}",
+                key_id
+            );
+            self.purge_key_material(key_id, epoch_id, guarded_meta_storage)
+                .await;
+        }
     }
 
     /// Read the key materials for decryption in the threshold case.

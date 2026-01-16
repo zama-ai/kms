@@ -182,7 +182,7 @@ impl<
         );
 
         let keys = fhe_keys;
-        let decomp_key = keys.decompression_key.clone();
+        let decomp_key = keys.get_decompression_key()?.cloned();
         let low_level_ct = spawn_compute_bound(move || {
             deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
         })
@@ -203,9 +203,8 @@ impl<
 
                 Dec::decrypt(
                     &mut noiseflood_session,
-                    Arc::clone(&keys.integer_server_key),
-                    keys.sns_key
-                        .as_ref()
+                    Arc::clone(keys.get_integer_server_key()?),
+                    keys.get_sns_key()?
                         .ok_or_else(|| anyhow::anyhow!("missing sns key"))?
                         .clone(),
                     low_level_ct,

@@ -218,7 +218,7 @@ impl<
                 hex::encode(&typed_ciphertext.external_handle)
             );
 
-            let decomp_key = keys.decompression_key.clone();
+            let decomp_key = keys.get_decompression_key()?.cloned();
             let low_level_ct = spawn_compute_bound(move || {
                 deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
             })
@@ -238,9 +238,9 @@ impl<
 
                     let pdec = Dec::partial_decrypt(
                         &mut noiseflood_session,
-                        keys.integer_server_key.clone(),
-                        keys.sns_key
-                            .clone()
+                        keys.get_integer_server_key()?.clone(),
+                        keys.get_sns_key()?
+                            .cloned()
                             .ok_or_else(|| anyhow::anyhow!("missing sns key"))?,
                         low_level_ct,
                         &keys.private_keys,

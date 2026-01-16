@@ -7,7 +7,7 @@ cfg_if::cfg_if! {
         use crate::engine::base::{compute_info_crs, CrsGenMetadata};
         use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
-        use crate::engine::threshold::service::ThresholdFheKeys;
+        use crate::engine::threshold::service::{PublicKeyMaterial, ThresholdFheKeys};
         use crate::vault::storage::crypto_material::{
             calculate_max_num_bits, check_data_exists, check_data_exists_at_epoch, get_core_signing_key,
         };
@@ -955,9 +955,11 @@ where
         };
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: Arc::new(key_shares[i - 1].to_owned()),
-            integer_server_key: Arc::new(integer_server_key.clone()),
-            sns_key: sns_key.clone().map(Arc::new),
-            decompression_key: decompression_key.clone().map(Arc::new),
+            public_material: PublicKeyMaterial::Uncompressed {
+                integer_server_key: Arc::new(integer_server_key.clone()),
+                sns_key: sns_key.clone().map(Arc::new),
+                decompression_key: decompression_key.clone().map(Arc::new),
+            },
             meta_data: info,
         };
 

@@ -128,6 +128,7 @@ pub(crate) async fn reshare(
         false,
         None,
         expected_num_parties_crashed,
+        false,
     )
     .await;
 
