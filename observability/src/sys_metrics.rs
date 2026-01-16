@@ -48,7 +48,12 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             // Update process-specific memory (more accurate for cross-party comparison)
             if let Some(pid) = current_pid {
                 if let Some(process) = system.process(pid) {
-                    METRICS.record_process_memory(process.memory());
+                    let memory_usage = process.memory();
+                    if memory_usage != 0 {
+                        METRICS.record_process_memory_usage(memory_usage);
+                    } else {
+                        tracing::warn!("sysinfo is reporting 0 process memory usage")
+                    }
                 } else {
                     tracing::warn!("Could not find process {:?} for memory tracking", pid);
                 }

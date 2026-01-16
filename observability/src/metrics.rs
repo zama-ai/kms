@@ -471,7 +471,7 @@ impl CoreMetrics {
     /// Record the current process-specific memory usage into the gauge
     /// This is more accurate for cross-party comparison as it excludes
     /// system memory usage that varies by instance type
-    pub fn record_process_memory(&self, usage: u64) {
+    pub fn record_process_memory_usage(&self, usage: u64) {
         self.process_memory_gauge
             .metric
             .record(usage, &self.process_memory_gauge.with_tags(&[]));
