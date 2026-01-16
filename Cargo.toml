@@ -9,6 +9,7 @@ members = [
     "core-client",
     "observability",
     "tools/kms-health-check",
+    "tools/generate-test-material",
 ]
 
 # The backward-compatibility modules are excluded from the workspace to avoid dependency conflicts.
