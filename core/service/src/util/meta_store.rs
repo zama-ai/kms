@@ -281,7 +281,7 @@ impl<T: Clone> MetaStore<T> {
 }
 
 #[cfg(feature = "non-wasm")]
-pub(crate) async fn add_req_to_meta_store<T: Clone>(
+pub(crate) fn add_req_to_meta_store<T: Clone>(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
     req_id: &RequestId,
     request_metric: &'static str,
@@ -331,7 +331,6 @@ pub(crate) fn update_ok_req_in_meta_store<T: Clone>(
         Err(e) => {
             // Update error counter for meta-store update failure
             MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), e);
-
             false
         }
     }
@@ -350,7 +349,6 @@ pub(crate) fn update_err_req_in_meta_store<T: Clone>(
     error: String,
     request_metric: &'static str,
 ) -> bool {
-    // Log and increment relevant metrics according to error
     MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), error.clone());
 
     match meta_store.update(req_id, Err(error.clone())) {
@@ -361,6 +359,18 @@ pub(crate) fn update_err_req_in_meta_store<T: Clone>(
             false
         }
     }
+}
+
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn delete_req_from_meta_store<T: Clone>(
+    mut meta_store: RwLockWriteGuard<'_, MetaStore<T>>,
+    req_id: &RequestId,
+    request_metric: &'static str,
+) -> Result<T, MetricedError> {
+    tracing::info!("Deleting request ID {req_id} from meta store");
+    let handle = meta_store.delete(req_id);
+    drop(meta_store); // Release the lock early as we otherwise risk holding it for up to DURATION_WAITING_ON_RESULT_SECONDS!
+    handle_res(handle, req_id, request_metric).await
 }
 
 /// Helper method for retrieving the result of a request from an appropriate meta store
@@ -374,6 +384,14 @@ pub(crate) async fn retrieve_from_meta_store<T: Clone>(
 ) -> Result<T, MetricedError> {
     let handle = meta_store.retrieve(req_id);
     drop(meta_store); // Release the read lock early as we otherwise risk holding it for up to DURATION_WAITING_ON_RESULT_SECONDS!
+    handle_res(handle, req_id, metric_scope).await
+}
+
+async fn handle_res<T: Clone>(
+    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
+    req_id: &RequestId,
+    metric_scope: &'static str,
+) -> Result<T, MetricedError> {
     match handle {
         None => {
             let msg = format!(

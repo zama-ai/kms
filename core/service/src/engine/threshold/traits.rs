@@ -4,7 +4,7 @@ use tonic::{Request, Response, Status};
 
 #[tonic::async_trait]
 pub trait Initiator {
-    async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status>;
+    async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, MetricedError>;
 }
 
 #[tonic::async_trait]
@@ -33,11 +33,14 @@ pub trait PublicDecryptor {
 
 #[tonic::async_trait]
 pub trait KeyGenerator {
-    async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status>;
+    async fn key_gen(
+        &self,
+        request: Request<KeyGenRequest>,
+    ) -> Result<Response<Empty>, MetricedError>;
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<KeyGenResult>, Status>;
+    ) -> Result<Response<KeyGenResult>, MetricedError>;
 }
 
 #[cfg(feature = "insecure")]
@@ -46,11 +49,11 @@ pub trait InsecureKeyGenerator {
     async fn insecure_key_gen(
         &self,
         request: Request<KeyGenRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<KeyGenResult>, Status>;
+    ) -> Result<Response<KeyGenResult>, MetricedError>;
 }
 
 #[tonic::async_trait]
@@ -58,19 +61,19 @@ pub trait KeyGenPreprocessor {
     async fn key_gen_preproc(
         &self,
         request: Request<KeyGenPreprocRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
 
     #[cfg(feature = "insecure")]
     async fn partial_key_gen_preproc(
         &self,
         request: Request<PartialKeyGenPreprocRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
 
     async fn get_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<KeyGenPreprocResult>, Status>;
-    async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, Status>;
+    ) -> Result<Response<KeyGenPreprocResult>, MetricedError>;
+    async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, MetricedError>;
 }
 
 #[tonic::async_trait]
@@ -100,6 +103,7 @@ pub trait InsecureCrsGenerator {
 
 #[tonic::async_trait]
 pub trait Resharer {
+    // TODO(#2868)
     async fn initiate_resharing(
         &self,
         request: Request<InitiateResharingRequest>,

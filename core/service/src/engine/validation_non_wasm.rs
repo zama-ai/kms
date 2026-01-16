@@ -1,5 +1,6 @@
 use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
 use crate::engine::base::retrieve_parameters;
+use crate::engine::keyset_configuration::{preproc_proto_to_keyset_config, InternalKeySetConfig};
 use crate::{
     anyhow_error_and_log,
     cryptography::{
@@ -11,7 +12,7 @@ use crate::{
 use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
-use kms_grpc::kms::v1::CrsGenRequest;
+use kms_grpc::kms::v1::{CrsGenRequest, InitRequest, KeyGenPreprocRequest, KeyGenRequest};
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::{
     kms::v1::{
@@ -22,6 +23,7 @@ use kms_grpc::{
 };
 use kms_grpc::{KeyId, RequestId};
 use std::collections::{HashMap, HashSet};
+use threshold_fhe::execution::keyset_config::KeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::execution::zk::ceremony::compute_witness_dim;
 use threshold_fhe::hashing::DomainSep;
@@ -51,6 +53,7 @@ const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user dec
 pub(crate) enum RequestIdParsingErr {
     Other(String),
     Context,
+    #[allow(unused)]
     Epoch,
     Init,
 
@@ -130,6 +133,7 @@ impl std::fmt::Display for RequestIdParsingErr {
     }
 }
 
+// TODO(#2868) Are all these helper methods needed? should some be for metriced error?
 pub(crate) fn optional_proto_request_id(
     request_id: &Option<kms_grpc::kms::v1::RequestId>,
     id_type: RequestIdParsingErr,
@@ -189,6 +193,22 @@ pub(crate) fn parse_proto_context_id(
             format!("{id_type}: {request_id:?}"),
         ))
     })
+}
+
+#[allow(clippy::type_complexity)]
+pub fn validate_init_req(
+    req: &InitRequest,
+) -> Result<(ContextId, EpochId), Box<dyn std::error::Error + Send + Sync>> {
+    let epoch_id: EpochId =
+        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::Init)?.into();
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // remove the default context when all of context is ready
+    let context_id: ContextId = match &req.context_id {
+        Some(context_id) => context_id.try_into()?,
+        None => *DEFAULT_MPC_CONTEXT,
+    };
+
+    Ok((context_id, epoch_id))
 }
 
 /// Validates a user decryption request and returns ciphertext, FheType, request digest, client
@@ -554,11 +574,114 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
     }
 }
 
+pub(crate) fn validate_preproc_request(
+    req: KeyGenPreprocRequest,
+) -> anyhow::Result<(
+    RequestId,
+    ContextId,
+    EpochId,
+    DKGParams,
+    KeySetConfig,
+    Eip712Domain,
+)> {
+    let req_id =
+        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
+    tracing::info!(
+        request_id = ?req_id,
+        "Received new preprocessing request"
+    );
+
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // remove the default context when all of context is ready
+    // context_id is not used at the moment, but we validate it if present
+    let context_id: ContextId = match &req.context_id {
+        Some(context_id) => context_id.try_into()?,
+        None => *DEFAULT_MPC_CONTEXT,
+    };
+    let epoch_id: EpochId = match &req.epoch_id {
+        Some(epoch_id) => epoch_id.try_into()?,
+        None => *DEFAULT_EPOCH_ID,
+    };
+
+    let dkg_params = retrieve_parameters(Some(req.params))?;
+    let keyset_config = preproc_proto_to_keyset_config(&req.keyset_config)?;
+
+    let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+
+    Ok((
+        req_id,
+        context_id,
+        epoch_id,
+        dkg_params,
+        keyset_config,
+        eip712_domain,
+    ))
+}
+
+pub(crate) fn validate_key_gen_request(
+    req: KeyGenRequest,
+) -> anyhow::Result<(
+    RequestId,
+    RequestId,
+    ContextId,
+    EpochId,
+    DKGParams,
+    InternalKeySetConfig,
+    Eip712Domain,
+)> {
+    let req_id =
+        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::KeyGenRequest)?;
+    let preproc_id =
+        parse_optional_proto_request_id(&req.preproc_id, RequestIdParsingErr::PreprocRequest)?;
+
+    tracing::info!(
+        request_id = ?req_id,
+        "Received new key generation request"
+    );
+
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // remove the default context when all of context is ready
+    // context_id is not used at the moment, but we validate it if present
+    let context_id: ContextId = match &req.context_id {
+        Some(context_id) => context_id.try_into()?,
+        None => *DEFAULT_MPC_CONTEXT,
+    };
+    let epoch_id: EpochId = match &req.epoch_id {
+        Some(epoch_id) => epoch_id.try_into()?,
+        None => *DEFAULT_EPOCH_ID,
+    };
+
+    let internal_keyset_config =
+        InternalKeySetConfig::new(req.keyset_config, req.keyset_added_info).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("Failed to parse KeySetConfig: {e}"),
+            )
+        })?;
+    let dkg_params = retrieve_parameters(req.params)?;
+    let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+
+    Ok((
+        req_id,
+        preproc_id,
+        context_id,
+        epoch_id,
+        dkg_params,
+        internal_keyset_config,
+        eip712_domain,
+    ))
+}
+
 pub(crate) fn validate_crs_gen_request(
     req: CrsGenRequest,
 ) -> anyhow::Result<(RequestId, ContextId, usize, DKGParams, Eip712Domain)> {
     let req_id =
         parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
+
+    tracing::info!(
+        request_id = ?req_id,
+        "Received new crs generation request"
+    );
 
     // This verification is more strict than the checks in [compute_witness_dim] below
     // because it only allows powers of 2. But there are no strong reasons
@@ -574,9 +697,11 @@ pub(crate) fn validate_crs_gen_request(
 
     let witness_dim = compute_witness_dim(&crs_params, req.max_num_bits.map(|x| x as usize))?;
 
+    // TODO(zama-ai/kms-internal/issues/2758)
+    // remove the default context when all of context is ready
     // context_id is not used at the moment, but we validate it if present
-    let context_id = match &req.context_id {
-        Some(ctx) => parse_proto_context_id(ctx, RequestIdParsingErr::Context)?,
+    let context_id: ContextId = match &req.context_id {
+        Some(context_id) => context_id.try_into()?,
         None => *DEFAULT_MPC_CONTEXT,
     };
 
