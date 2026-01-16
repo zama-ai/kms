@@ -66,7 +66,6 @@ use crate::{
         },
         threshold::{service::session::SessionPreparerGetter, traits::UserDecryptor},
         traits::BaseKms,
-        update_system_metrics,
         validation::{
             parse_proto_request_id, validate_user_decrypt_req, RequestIdParsingErr,
             DSEP_USER_DECRYPTION,
@@ -454,12 +453,6 @@ impl<
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        {
-            // TODO should probably be called at regular intervals and setup with the KMS in kms_impl
-            let meta_store = self.user_decrypt_meta_store.read().await;
-            update_system_metrics(&self.rate_limiter, Some(&meta_store), None).await;
-        }
-
         let inner = Arc::new(request.into_inner());
         tracing::info!(
             request_id = ?inner.request_id,
@@ -577,7 +570,7 @@ impl<
                 // Capture the timer, it is stopped when it's dropped
                 let _timer = timer;
                 // explicitly move the rate limiter context
-                let _permit = permit;
+                let permit = permit;
                 // Note that we'll hold a read lock for some time
                 // but this should be ok since write locks
                 // happen rarely as keygen is a rare event.
@@ -629,6 +622,11 @@ impl<
                             .update(&req_id, Err(format!("Failed decryption: {e}")));
                     }
                 }
+                // Log after lock is released
+                tracing::info!(
+                    "UserDecrypt MetaStore SUCCESS update - req_id={}, key_id={}, release_n_permits={}",
+                    req_id, key_id, permit.num_permits()
+                );
             }
             .instrument(tracing::Span::current()),
         );

@@ -1,3 +1,4 @@
+use crate::engine::base::{PubDecCallValues, UserDecryptCallValues};
 use crate::util::meta_store::MetaStore;
 use crate::util::rate_limiter::RateLimiter;
 use crate::{anyhow_error_and_log, conf::ServiceEndpoint};
@@ -187,18 +188,32 @@ pub async fn run_server<
 
 /// Method to update the internal system metrics of the KMS.
 /// This should be done once per call, or at regular intervals.
-pub(crate) async fn update_system_metrics<T: Clone>(
+pub(crate) async fn update_kms_metrics(
     rate_limiter: &RateLimiter,
-    user_meta_store: Option<&MetaStore<T>>,
-    public_meta_store: Option<&MetaStore<T>>,
+    user_meta_store: Option<&MetaStore<UserDecryptCallValues>>,
+    public_meta_store: Option<&MetaStore<PubDecCallValues>>,
+    active_session_count: Option<u64>,
+    inactive_session_count: Option<u64>,
 ) {
     metrics::METRICS.record_rate_limiter_usage(rate_limiter.tokens_used());
     if let Some(user_meta_store) = user_meta_store {
         metrics::METRICS
             .record_meta_storage_user_decryptions(user_meta_store.get_processing_count() as u64);
+        metrics::METRICS
+            .record_meta_storage_user_decryptions_total(user_meta_store.get_total_count() as u64);
     }
     if let Some(public_meta_store) = public_meta_store {
-        metrics::METRICS
-            .record_meta_storage_public_decryptions(public_meta_store.get_processing_count() as u64);
+        metrics::METRICS.record_meta_storage_public_decryptions(
+            public_meta_store.get_processing_count() as u64,
+        );
+        metrics::METRICS.record_meta_storage_public_decryptions_total(
+            public_meta_store.get_total_count() as u64,
+        );
+    }
+    if let Some(count) = active_session_count {
+        metrics::METRICS.record_active_sessions(count);
+    }
+    if let Some(count) = inactive_session_count {
+        metrics::METRICS.record_inactive_sessions(count);
     }
 }

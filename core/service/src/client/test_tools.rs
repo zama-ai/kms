@@ -146,6 +146,7 @@ pub async fn setup_threshold_no_client<
                 false,
                 run_prss,
                 rl_conf,
+                None, // No periodic metrics in tests
                 mpc_core_rx.map(drop),
             )
             .await;
