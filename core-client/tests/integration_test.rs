@@ -242,7 +242,7 @@ impl AsyncTestContext for DockerComposeThresholdCustodianTest {
 async fn insecure_key_gen<T: DockerComposeManager>(ctx: &T, test_path: &Path) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
     let config = CmdConfig {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
         command: CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
             shared_args: SharedKeyGenParameters::default(),
         }),
@@ -276,7 +276,7 @@ async fn crs_gen<T: DockerComposeManager>(
         false => CCCommand::CrsGen(CrsParameters { max_num_bits: 2048 }),
     };
     let config = CmdConfig {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
         command,
         logs: true,
         max_iter: 200,
@@ -303,7 +303,7 @@ async fn real_preproc(
     epoch_id: Option<EpochId>,
 ) -> anyhow::Result<Option<RequestId>> {
     let config = CmdConfig {
-        file_conf: Some(config_path.to_string()),
+        file_conf: Some(vec![config_path.to_string()]),
         command: CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
             context_id,
             epoch_id,
@@ -335,7 +335,7 @@ async fn real_preproc_and_keygen(
         .unwrap();
     println!("Preprocessing done with ID {preproc_id:?}");
     let config = CmdConfig {
-        file_conf: Some(config_path.to_string()),
+        file_conf: Some(vec![config_path.to_string()]),
         command: CCCommand::KeyGen(KeyGenParameters {
             preproc_id: preproc_id.unwrap(),
             shared_args: SharedKeyGenParameters {
@@ -367,7 +367,7 @@ async fn restore_from_backup<T: DockerComposeManager>(ctx: &T, test_path: &Path)
 
     let init_command = CCCommand::BackupRestore(NoParameters {});
     let init_config = CmdConfig {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
         command: init_command,
         logs: true,
         max_iter: 200,
@@ -392,7 +392,7 @@ async fn test_template<T: DockerComposeManager>(
     let path_to_config = ctx.root_path().join(ctx.config_path());
     for command in commands {
         let config = CmdConfig {
-            file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+            file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
             command: command.clone(),
             logs: true,
             max_iter: 500,
@@ -449,7 +449,7 @@ async fn test_template<T: DockerComposeManager>(
 
         if expect_result {
             let config = CmdConfig {
-                file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+                file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
                 command: get_res_command,
                 logs: true,
                 max_iter: 500,
@@ -485,7 +485,7 @@ async fn new_custodian_context<T: DockerComposeManager>(
         setup_msg_paths,
     });
     let init_config = CmdConfig {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
         command,
         logs: true,
         max_iter: 200,
@@ -536,7 +536,34 @@ async fn new_mpc_context(context_path: &Path, config_path: &Path, test_path: &Pa
         },
     ));
     let init_config = CmdConfig {
-        file_conf: Some(String::from(config_path.to_str().unwrap())),
+        file_conf: Some(vec![String::from(config_path.to_str().unwrap())]),
+        command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    let context_switch_result = execute_cmd(&init_config, test_path).await.unwrap();
+    assert_eq!(context_switch_result.len(), 1);
+}
+
+async fn new_mpc_context_with_two_sets(
+    context_path: &Path,
+    config_path_set_1: &Path,
+    config_path_set_2: &Path,
+    test_path: &Path,
+) {
+    let command = CCCommand::NewMpcContext(NewMpcContextParameters::SerializedContextPath(
+        ContextPath {
+            input_path: context_path.to_path_buf(),
+        },
+    ));
+    let init_config = CmdConfig {
+        file_conf: Some(vec![
+            String::from(config_path_set_1.to_str().unwrap()),
+            String::from(config_path_set_2.to_str().unwrap()),
+        ]),
         command,
         logs: true,
         max_iter: 200,
@@ -572,7 +599,7 @@ async fn new_prss(context_id: ContextId, epoch_id: EpochId, config_path: &Path, 
         epoch_id,
     });
     let init_config = CmdConfig {
-        file_conf: Some(String::from(config_path.to_str().unwrap())),
+        file_conf: Some(vec![String::from(config_path.to_str().unwrap())]),
         command,
         logs: true,
         max_iter: 200,
@@ -687,7 +714,7 @@ async fn custodian_backup_init<T: DockerComposeManager>(
         overwrite_ephemeral_key: false,
     });
     let init_config = CmdConfig {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
         command: init_command,
         logs: true,
         max_iter: 200,
@@ -858,7 +885,7 @@ async fn custodian_backup_recovery<T: DockerComposeManager>(
         custodian_recovery_outputs,
     });
     let init_config = CmdConfig {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
         command,
         logs: true,
         max_iter: 200,
@@ -1466,43 +1493,71 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
     }
 }
 
-#[test_context(DockerComposeThresholdTestNoInit)]
+#[test_context(DockerComposeThresholdTestNoInitSixParty)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInit) {
+async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = temp_dir.path();
-    let context_path = temp_dir.path().join("mpc_context.bin");
-    let config_path = ctx.root_path().join(ctx.config_path());
+    let context_path_set_1 = temp_dir.path().join("mpc_context_set_1.bin");
+    let config_path_set_1 = ctx.root_path().join(ctx.config_path());
+
+    let context_path_set_2 = temp_dir.path().join("mpc_context_set_2.bin");
+    let config_path_set_2 = ctx.root_path().join(ctx.alternative_config_path());
 
     // create and store mpc context
-    let context_id =
+    let context_id_set_1 =
         ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222225555")
             .unwrap();
-    store_mpc_context_in_file(&context_path, &config_path, context_id).await;
+    store_mpc_context_in_file(&context_path_set_1, &config_path_set_1, context_id_set_1).await;
 
     // create the new context
-    new_mpc_context(&context_path, &config_path, test_path).await;
+    // NOTE WE NEED TO CREATE THE CONTEXT OF S1 TO PARTIES IN S2 EVEN
+    // THOUGH THEY ARE NOT IN THE CONTEXT, BECAUSE THEY STILL NEED TO KNOW THEM
+    // FOR RESHARING DURING EPOCH CREATION. (VICE VERSA FOR THE OTHER SET)
+    println!("Creating first MPC context");
+    new_mpc_context_with_two_sets(
+        &context_path_set_1,
+        &config_path_set_1,
+        &config_path_set_2,
+        test_path,
+    )
+    .await;
+    println!("Created first MPC context");
 
-    // create PRSS
-    let epoch_id =
+    // Create the first epoch (i.e. Init the PRSS)
+    println!("Creating first epoch");
+    let epoch_id_set_1 =
         EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222226666")
             .unwrap();
-    new_prss(context_id, epoch_id, &config_path, test_path).await;
+    let command = CCCommand::NewEpoch(NewEpochType::Fresh(NewEpochParameters {
+        new_epoch_id: epoch_id_set_1,
+        context_id: context_id_set_1,
+    }));
+    let epoch_config = CmdConfig {
+        file_conf: Some(vec![String::from(config_path_set_1.to_str().unwrap())]),
+        command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+    execute_cmd(&epoch_config, test_path).await.unwrap();
+    println!("Created first epoch");
 
     // do preproc and keygen (which should use the prss)
     let (key_id, preproc_id) = real_preproc_and_keygen(
-        config_path.to_str().unwrap(),
+        config_path_set_1.to_str().unwrap(),
         test_path,
-        Some(context_id),
-        Some(epoch_id),
+        Some(context_id_set_1),
+        Some(epoch_id_set_1),
     )
     .await;
 
     // download the key materials
     let cc_conf: CoreClientConfig = observability::conf::Settings::builder()
-        .path(config_path.to_str().unwrap())
+        .path(config_path_set_1.to_str().unwrap())
         .env_prefix("CORE_CLIENT")
         .build()
         .init_conf()
@@ -1536,31 +1591,84 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInit) {
     let public_key_digest =
         hex::encode(safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap());
 
-    // create the resharing request
-    let config = CmdConfig {
-        file_conf: Some(String::from(config_path.to_str().unwrap())),
-        command: CCCommand::Reshare(ReshareParameters {
-            key_id,
+    // create and store second mpc context
+    // create and store mpc context
+    println!("Creating second MPC context");
+    let context_id_set_2 =
+        ContextId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1333335555")
+            .unwrap();
+    store_mpc_context_in_file(&context_path_set_2, &config_path_set_2, context_id_set_2).await;
+
+    // create the new context
+    new_mpc_context_with_two_sets(
+        &context_path_set_2,
+        &config_path_set_1,
+        &config_path_set_2,
+        test_path,
+    )
+    .await;
+    println!("Created second MPC context");
+
+    // Create a new epoch for this context, with resharing from the first context and epoch
+    println!("Creating reshared epoch");
+    let epoch_id_set_2 =
+        EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1333336666")
+            .unwrap();
+    let command = CCCommand::NewEpoch(NewEpochType::Reshare(NewEpochParametersWithPrevEpoch {
+        new_epoch_params: NewEpochParameters {
+            new_epoch_id: epoch_id_set_2,
+            context_id: context_id_set_2,
+        },
+        prev_epoch_params: PreviousEpochParameters {
+            context_id: context_id_set_1,
+            epoch_id: epoch_id_set_1,
+            key_id: key_id.into(),
             preproc_id: RequestId::from_str(&preproc_id).unwrap(),
-            from_context_id: Some(context_id),
-            from_epoch_id: Some(epoch_id),
             server_key_digest,
             public_key_digest,
-        }),
+        },
+    }));
+
+    let epoch_config = CmdConfig {
+        // Init the core client from both config files so we can talk to all the parties
+        file_conf: Some(vec![
+            String::from(config_path_set_1.to_str().unwrap()),
+            String::from(config_path_set_2.to_str().unwrap()),
+        ]),
+        command,
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
         download_all: false,
     };
+    let _result = execute_cmd(&epoch_config, test_path).await.unwrap();
+    println!("Resharing completed successfully {:?}", _result);
 
-    println!("Doing resharing");
-    let resharing_result = execute_cmd(&config, test_path).await.unwrap();
+    // create the resharing request
+    //let config = CmdConfig {
+    //    file_conf: Some(String::from(config_path_set_1.to_str().unwrap())),
+    //    command: CCCommand::NewEpoch(NewEpochParameters {
+    //        key_id,
+    //        preproc_id: RequestId::from_str(&preproc_id).unwrap(),
+    //        from_context_id: Some(context_id_set_1),
+    //        from_epoch_id: Some(epoch_id),
+    //        server_key_digest,
+    //        public_key_digest,
+    //    }),
+    //    logs: true,
+    //    max_iter: 200,
+    //    expect_all_responses: true,
+    //    download_all: false,
+    //};
 
-    println!("Resharing result: {:?}", resharing_result);
-    assert_eq!(resharing_result.len(), 2);
+    //println!("Doing resharing");
+    //let resharing_result = execute_cmd(&config, test_path).await.unwrap();
+
+    //println!("Resharing result: {:?}", resharing_result);
+    //assert_eq!(resharing_result.len(), 2);
 
     // the second element should be the key id
-    assert_eq!(resharing_result[1].0.unwrap(), key_id);
+    //assert_eq!(resharing_result[1].0.unwrap(), key_id);
 }
 
 ///////// FULL GEN TESTS//////////

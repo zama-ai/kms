@@ -586,6 +586,7 @@ impl Intercept for HostHeaderInterceptor {
 // This builds an anonymous S3 client, useful for accessing public S3 buckets.
 pub async fn build_anonymous_s3_client(aws_s3_endpoint: Option<Url>) -> anyhow::Result<S3Client> {
     let sdk_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .region("us-east-1")
         .no_credentials()
         .load()
         .await;

@@ -1,4 +1,4 @@
-use crate::{dummy_domain, dummy_handle, print_timings, SLEEP_TIME_BETWEEN_REQUESTS_MS};
+use crate::{dummy_domain, dummy_handle, print_timings, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::{
     kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext, TypedPlaintext},
@@ -94,8 +94,8 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     ct_batch: Vec<TypedCiphertext>,
     key_id: KeyId,
     context_id: Option<ContextId>,
-    core_endpoints_req: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    core_endpoints_resp: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints_req: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    core_endpoints_resp: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     ptxt: TypedPlaintext,
     num_parties: usize,
     kms_addrs: Vec<alloy_primitives::Address>,
@@ -194,8 +194,8 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     ct_batch: Vec<TypedCiphertext>,
     key_id: KeyId,
     context_id: Option<ContextId>,
-    core_endpoints_req: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    core_endpoints_resp: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints_req: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
+    core_endpoints_resp: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     ptxt: TypedPlaintext,
     num_parties: usize,
     max_iter: usize,
@@ -377,7 +377,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn get_public_decrypt_responses(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     dec_req: Option<PublicDecryptionRequest>,
     expected_answer: Option<TypedPlaintext>,
     request_id: RequestId,
@@ -390,9 +390,9 @@ pub(crate) async fn get_public_decrypt_responses(
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter() {
+    for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
-        let core_id = *core_id; // Copy the key so it is owned in the async block
+        let core_conf = core_conf.clone();
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
@@ -422,13 +422,13 @@ pub(crate) async fn get_public_decrypt_responses(
                     .get_public_decryption_result(tonic::Request::new(request_id.into()))
                     .await;
             }
-            (core_id, request_id, response.unwrap().into_inner())
+            (core_conf, request_id, response.unwrap().into_inner())
         });
     }
     let mut resp_response_vec = Vec::new();
     while let Some(resp) = resp_tasks.join_next().await {
-        let (core_id, _req_id, resp) = resp?;
-        resp_response_vec.push((core_id, resp));
+        let (core_conf, _req_id, resp) = resp?;
+        resp_response_vec.push((core_conf, resp));
         // break this loop and continue with the rest of the processing if we have enough responses
         if resp_response_vec.len() >= num_expected_responses {
             break;
@@ -442,7 +442,7 @@ pub(crate) async fn get_public_decrypt_responses(
         start.elapsed()
     );
 
-    resp_response_vec.sort_by_key(|(id, _)| *id);
+    resp_response_vec.sort_by_key(|(conf, _)| conf.party_id);
     let resp_response_vec: Vec<_> = resp_response_vec
         .into_iter()
         .map(|(_, resp)| resp)

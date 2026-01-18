@@ -4,14 +4,16 @@ use kms_grpc::{identifiers::EpochId, ContextId};
 use std::collections::HashMap;
 use tonic::transport::Channel;
 
+use crate::CoreConf;
+
 /// Send the PRSS init request to the core endpoints for a given context and epoch.
 pub(crate) async fn do_prss_init(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     context_id: &ContextId,
     epoch_id: &EpochId,
 ) -> anyhow::Result<()> {
     let mut join_set = tokio::task::JoinSet::new();
-    for (_party_id, client) in core_endpoints.iter() {
+    for (_core_conf, client) in core_endpoints.iter() {
         let mut client = client.clone();
         let request = NewMpcEpochRequest {
             context_id: Some((*context_id).into()),

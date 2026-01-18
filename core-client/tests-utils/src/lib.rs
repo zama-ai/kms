@@ -227,6 +227,6 @@ impl DockerCompose {
 
 impl Drop for DockerCompose {
     fn drop(&mut self) {
-        self.cmd.down();
+        //self.cmd.down();
     }
 }

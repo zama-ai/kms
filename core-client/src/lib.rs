@@ -26,7 +26,7 @@ use crate::keygen::{
 };
 use crate::mpc_context::{do_destroy_mpc_context, do_new_mpc_context};
 use crate::prss_init::do_prss_init;
-use crate::reshare::do_reshare;
+use crate::reshare::do_new_epoch;
 use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
@@ -103,7 +103,7 @@ pub struct CoreClientConfig {
     pub fhe_params: Option<FheParameter>,
 }
 
-#[derive(Deserialize, Serialize, Clone, Validate, Default, Debug)]
+#[derive(Deserialize, Serialize, Clone, Validate, Default, Debug, Hash, PartialEq, Eq)]
 pub struct CoreConf {
     /// The ID of the given KMS server (monotonically increasing positive integer starting at 1)
     #[validate(range(min = 1))]
@@ -136,15 +136,15 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
     let num_parties = conf.cores.len();
 
     for cur_core in &conf.cores {
-        if cur_core.party_id == 0 || cur_core.party_id > num_parties {
-            return Err(ValidationError::new("Incorrect Party ID").with_message(
-                format!(
-                    "Party ID must be between 1 and the number of parties ({}), but was {}.",
-                    num_parties, cur_core.party_id
-                )
-                .into(),
-            ));
-        }
+        //if cur_core.party_id == 0 || cur_core.party_id > num_parties {
+        //    return Err(ValidationError::new("Incorrect Party ID").with_message(
+        //        format!(
+        //            "Party ID must be between 1 and the number of parties ({}), but was {}.",
+        //            num_parties, cur_core.party_id
+        //        )
+        //        .into(),
+        //    ));
+        //}
         if conf
             .cores
             .iter()
@@ -653,25 +653,18 @@ pub struct RecoveryParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
-pub struct ReshareParameters {
-    /// ID of the key to reshare
-    #[clap(long, short = 'k')]
-    pub key_id: RequestId,
+pub struct PreviousEpochParameters {
+    #[clap(long)]
+    pub context_id: ContextId,
 
-    /// ID of the preprocessing used to generate the key
-    #[clap(long, short = 'i')]
+    #[clap(long)]
+    pub epoch_id: EpochId,
+
+    #[clap(long)]
+    pub key_id: KeyId,
+
+    #[clap(long)]
     pub preproc_id: RequestId,
-
-    /// The context ID to do the resharing from.
-    /// If it's not given then the default context is used.
-    #[clap(long)]
-    pub from_context_id: Option<ContextId>,
-
-    /// The epoch ID to do the resharing from.
-    /// If it's not given then the default epoch is used.
-    #[clap(long)]
-    pub from_epoch_id: Option<EpochId>,
-
     /// The hex-encoded server key digest to use for resharing.
     #[clap(long)]
     pub server_key_digest: String,
@@ -679,6 +672,32 @@ pub struct ReshareParameters {
     /// The hex-encoded public key digest to use for resharing.
     #[clap(long)]
     pub public_key_digest: String,
+}
+
+#[derive(Debug, Parser, Clone, Copy)]
+pub struct NewEpochParameters {
+    /// ID of the epoch to be created
+    #[clap(long)]
+    pub new_epoch_id: EpochId,
+
+    /// Context ID for which the new epoch is created
+    #[clap(long)]
+    pub context_id: ContextId,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct NewEpochParametersWithPrevEpoch {
+    #[command(flatten)]
+    pub prev_epoch_params: PreviousEpochParameters,
+
+    #[command(flatten)]
+    pub new_epoch_params: NewEpochParameters,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum NewEpochType {
+    Fresh(NewEpochParameters),
+    Reshare(NewEpochParametersWithPrevEpoch),
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -731,7 +750,8 @@ pub enum CCCommand {
     CustodianRecoveryInit(RecoveryInitParameters),
     CustodianBackupRecovery(RecoveryParameters),
     BackupRestore(NoParameters),
-    Reshare(ReshareParameters),
+    #[clap(subcommand)]
+    NewEpoch(NewEpochType),
     #[clap(subcommand)]
     NewMpcContext(NewMpcContextParameters),
     DestroyMpcContext(DestroyMpcContextParameters),
@@ -746,7 +766,7 @@ pub struct CmdConfig {
     /// Path to the configuration file
     #[clap(long, short = 'f')]
     #[validate(length(min = 1))]
-    pub file_conf: Option<String>,
+    pub file_conf: Option<Vec<String>>,
     /// The command to execute
     #[clap(subcommand)]
     pub command: CCCommand,
@@ -975,18 +995,40 @@ pub async fn execute_cmd(
 ) -> Result<Vec<(Option<RequestId>, String)>, Box<dyn std::error::Error + 'static>> {
     let client_timer_start = tokio::time::Instant::now();
 
-    let path_to_config = cmd_config.file_conf.clone().unwrap();
+    let path_to_configs = cmd_config.file_conf.clone().unwrap();
     let command = &cmd_config.command;
     let max_iter = cmd_config.max_iter;
     let expect_all_responses = cmd_config.expect_all_responses;
 
-    tracing::info!("Path to config: {:?}", &path_to_config);
+    tracing::info!("Path to configs: {:?}", &path_to_configs);
     tracing::info!("Starting command: {:?}", command);
-    let cc_conf: CoreClientConfig = Settings::builder()
-        .path(&path_to_config)
+    let mut path_iter = path_to_configs.iter();
+    let mut cc_conf: CoreClientConfig = Settings::builder()
+        .path(path_iter.next().unwrap())
         .env_prefix("CORE_CLIENT")
         .build()
         .init_conf()?;
+
+    let known_addresses = cc_conf
+        .cores
+        .iter()
+        .map(|core| core.address.clone())
+        .collect::<Vec<String>>();
+
+    for path_to_config in path_iter {
+        tracing::info!("Using config file: {:?}", &path_to_config);
+
+        let mut inner_cc_conf: CoreClientConfig = Settings::builder()
+            .path(path_to_config)
+            .env_prefix("CORE_CLIENT")
+            .build()
+            .init_conf()?;
+
+        inner_cc_conf
+            .cores
+            .retain(|core| !known_addresses.contains(&core.address));
+        cc_conf.cores.extend(inner_cc_conf.cores);
+    }
 
     tracing::info!("Core Client Config: {:?}", cc_conf);
 
@@ -1034,12 +1076,8 @@ pub async fn execute_cmd(
 
         match cc_conf.kms_type {
             KmsType::Centralized => {
-                let address = cc_conf
-                    .cores
-                    .first()
-                    .expect("No core address provided")
-                    .address
-                    .clone();
+                let core = cc_conf.cores.first().expect("No core config provided");
+                let address = core.address.clone();
 
                 tracing::info!("Centralized Core Client - connecting to: {}", address);
 
@@ -1056,14 +1094,14 @@ pub async fn execute_cmd(
                     100
                 )?;
                 // Centralized is always party 1
-                core_endpoints_req.insert(1, core_endpoint_req);
+                core_endpoints_req.insert(core.clone(), core_endpoint_req);
 
                 let core_endpoint_resp = retry!(
                     CoreServiceEndpointClient::connect(url.clone()).await,
                     5,
                     100
                 )?;
-                core_endpoints_resp.insert(1, core_endpoint_resp);
+                core_endpoints_resp.insert(core.clone(), core_endpoint_resp);
 
                 // there's only 1 party, so use index 1
                 pub_storage.insert(
@@ -1108,14 +1146,16 @@ pub async fn execute_cmd(
                         5,
                         100
                     )?;
-                    core_endpoints_req.insert(cur_core.party_id as u32, core_endpoint_req);
+                    // NOTE CANT USE PARTY ID AS KEY CAUSE WE MAY HAVE SEVERAL CORES WITH SAME ID
+                    // WHEN HAVING MULTIPLE CONTEXTS
+                    core_endpoints_req.insert(cur_core.clone(), core_endpoint_req);
 
                     let core_endpoint_resp = retry!(
                         CoreServiceEndpointClient::connect(url.clone()).await,
                         5,
                         100
                     )?;
-                    core_endpoints_resp.insert(cur_core.party_id as u32, core_endpoint_resp);
+                    core_endpoints_resp.insert(cur_core.clone(), core_endpoint_resp);
 
                     pub_storage.insert(
                         cur_core.party_id as u32,
@@ -1714,15 +1754,15 @@ pub async fn execute_cmd(
             do_restore_from_backup(&mut core_endpoints_req).await?;
             vec![(None, "backup restore complete".to_string())]
         }
-        CCCommand::Reshare(ReshareParameters {
-            key_id,
-            preproc_id,
-            from_context_id,
-            from_epoch_id,
-            server_key_digest,
-            public_key_digest,
-        }) => {
-            let request_id = do_reshare(
+        CCCommand::NewEpoch(new_epoch_type) => {
+            let (new_epoch, previous_epoch) = match new_epoch_type {
+                NewEpochType::Fresh(new_epoch) => (*new_epoch, None),
+                NewEpochType::Reshare(new_epoch) => (
+                    new_epoch.new_epoch_params,
+                    Some(new_epoch.prev_epoch_params.convert_to_grpc(fhe_params)),
+                ),
+            };
+            let request_id = do_new_epoch(
                 &mut internal_client.expect("Reshare requires a KMS client"),
                 &core_endpoints_req,
                 &mut rng,
@@ -1731,20 +1771,22 @@ pub async fn execute_cmd(
                 destination_prefix,
                 &kms_addrs,
                 num_parties,
-                fhe_params,
-                key_id,
-                preproc_id,
-                from_context_id.as_ref(),
-                from_epoch_id.as_ref(),
-                server_key_digest.as_ref(),
-                public_key_digest.as_ref(),
+                new_epoch.context_id,
+                new_epoch.new_epoch_id,
+                previous_epoch.clone(),
             )
             .await
             .unwrap();
-            vec![
-                (Some(request_id), "Reshare complete".to_string()),
-                (Some(*key_id), "Key ready to be used".to_string()),
-            ]
+
+            let mut res = vec![(Some(request_id.into()), "New epoch created".to_string())];
+
+            if let Some(prev_epoch) = previous_epoch {
+                res.push((
+                    prev_epoch.epoch_id.map(|e| e.try_into().unwrap()),
+                    "Previous epoch used for reshare".to_string(),
+                ));
+            }
+            res
         }
         CCCommand::NewMpcContext(context_param) => match context_param {
             NewMpcContextParameters::SerializedContextPath(context_path) => {

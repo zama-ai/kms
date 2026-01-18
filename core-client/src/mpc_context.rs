@@ -15,6 +15,7 @@ use tfhe::safe_serialization::safe_deserialize;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
+use crate::CoreConf;
 #[cfg(feature = "testing")]
 use crate::{
     s3_operations::{fetch_kms_signing_keys, fetch_kms_verification_keys},
@@ -197,7 +198,7 @@ pub async fn create_test_context_info_from_core_config(
 }
 
 pub(crate) async fn do_new_mpc_context(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     context_path: &std::path::Path,
 ) -> anyhow::Result<ContextId> {
     // note that we use the BufReader from std instead of tokio

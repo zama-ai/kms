@@ -1,5 +1,5 @@
 use crate::s3_operations::fetch_public_elements;
-use crate::{dummy_domain, CmdConfig, CoreClientConfig, SLEEP_TIME_BETWEEN_REQUESTS_MS};
+use crate::{dummy_domain, CmdConfig, CoreClientConfig, CoreConf, SLEEP_TIME_BETWEEN_REQUESTS_MS};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::kms::v1::{CrsGenResult, FheParameter};
@@ -21,7 +21,7 @@ use tonic::transport::Channel;
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn do_crsgen(
     internal_client: &mut Client,
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cc_conf: &CoreClientConfig,
     cmd_conf: &CmdConfig,
@@ -164,7 +164,7 @@ pub(crate) async fn fetch_and_check_crsgen(
 }
 
 pub(crate) async fn get_crsgen_responses(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
     insecure: bool,
@@ -173,9 +173,9 @@ pub(crate) async fn get_crsgen_responses(
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter() {
+    for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
-        let core_id = *core_id; // Copy the key so it is owned in the async block
+        let core_conf = core_conf.clone();
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
@@ -211,20 +211,20 @@ pub(crate) async fn get_crsgen_responses(
 
                 tracing::info!("Got response for crsgen: {:?} (insecure: {insecure})", response);
             }
-            (core_id,request_id, response.unwrap().into_inner())
+            (core_conf,request_id, response.unwrap().into_inner())
         });
     }
 
     let mut resp_response_vec = Vec::new();
     while let Some(resp) = resp_tasks.join_next().await {
-        let (core_id, _request_id, resp) = resp?;
-        resp_response_vec.push((core_id, resp));
+        let (core_conf, _request_id, resp) = resp?;
+        resp_response_vec.push((core_conf, resp));
         // break this loop and continue with the rest of the processing if we have enough responses
         if resp_response_vec.len() >= num_expected_responses {
             break;
         }
     }
-    resp_response_vec.sort_by_key(|(id, _)| *id);
+    resp_response_vec.sort_by_key(|(conf, _)| conf.party_id);
     let resp_response_vec: Vec<_> = resp_response_vec
         .into_iter()
         .map(|(_, resp)| resp)

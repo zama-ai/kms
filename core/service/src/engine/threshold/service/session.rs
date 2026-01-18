@@ -336,6 +336,18 @@ impl SessionMaker {
         context_map.contains_key(context_id)
     }
 
+    pub(crate) async fn get_my_role_in_context(
+        &self,
+        context_id: &ContextId,
+    ) -> anyhow::Result<Option<Role>> {
+        let context_map_guard = self.context_map.read().await;
+        let context_info = context_map_guard
+            .get(context_id)
+            .ok_or_else(|| anyhow::anyhow!("Context {} not found in context map", context_id))?;
+
+        Ok(context_info.my_role)
+    }
+
     async fn new_rng(&self) -> AesRng {
         let mut seed = [0u8; crate::consts::RND_SIZE];
         // Make a seperate scope for the rng so that it is dropped before the lock is released

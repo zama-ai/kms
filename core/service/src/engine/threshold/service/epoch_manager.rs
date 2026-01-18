@@ -301,6 +301,8 @@ impl<
     }
 
     // NOTE: this function will overwrite the existing PRSS state
+    // Also, this function doesn't store success in meta store
+    // which is OK because it's blocking (only the reshare if any spawns its own task)
     pub async fn init_prss(
         &self,
         context_id: &ContextId,
@@ -417,12 +419,12 @@ impl<
 
     /// Read the old keys, need ownership because
     /// reshare zeroize it (although, probably a bit useless cause we don't want to delete it just now)
-    async fn fetch_existing_secret_keys(
+    async fn fetch_existing_keys(
         &self,
         epoch_id_as_request_id: kms_grpc::RequestId,
         verified_previous_epoch: &VerifiedPreviousEpochInfo,
-    ) -> Result<PrivateKeySet<4>, MetricedError> {
-        Ok(self
+    ) -> Result<(PrivateKeySet<4>, KeyGenMetadata), MetricedError> {
+        let keys = self
             .crypto_storage
             .read_guarded_threshold_fhe_keys(
                 &verified_previous_epoch.key_id,
@@ -436,10 +438,11 @@ impl<
                     e,
                     tonic::Code::InvalidArgument,
                 )
-            })?
-            .private_keys
-            .as_ref()
-            .clone())
+            })?;
+        let private_keyset = keys.private_keys.as_ref().clone();
+        let meta_data = keys.meta_data.clone();
+
+        Ok((private_keyset, meta_data))
     }
 
     async fn reshare_as_set_1(
@@ -451,8 +454,8 @@ impl<
     ) -> Result<Response<Empty>, Status> {
         let epoch_id_as_request_id = new_epoch_id.into();
 
-        let mut mutable_keys = self
-            .fetch_existing_secret_keys(epoch_id_as_request_id, &verified_previous_epoch)
+        let (mut private_keys, key_metadata) = self
+            .fetch_existing_keys(epoch_id_as_request_id, &verified_previous_epoch)
             .await?;
 
         // Update status
@@ -464,17 +467,16 @@ impl<
         let task = move |_permit| async move {
             Reshare::reshare_sk_two_sets_as_s1(
                 &mut two_sets_session,
-                &mut mutable_keys,
+                &mut private_keys,
                 verified_previous_epoch.key_parameters,
             )
             .await?;
 
-            // We update with an error to indicate success without any key info
-            // not sure it's the best idea tho
-            meta_store.write().await.update(
-                &epoch_id_as_request_id,
-                Err("Resharing as set 1 completed successfully".to_string()),
-            )?;
+            // We update the meta store with the same metadata as in the epoch we reshare from
+            meta_store
+                .write()
+                .await
+                .update(&epoch_id_as_request_id, Ok(key_metadata))?;
 
             Ok::<_, anyhow::Error>(())
         };
@@ -780,8 +782,8 @@ impl<
         )
         .await?;
 
-        let mut mutable_keys = self
-            .fetch_existing_secret_keys(epoch_id_as_request_id, &verified_previous_epoch)
+        let (mut mutable_keys, _) = self
+            .fetch_existing_keys(epoch_id_as_request_id, &verified_previous_epoch)
             .await?;
 
         let (mut session_z128, mut session_z64, session_online) = self
@@ -978,23 +980,27 @@ impl<
             ));
         }
 
-        // NOTE: here we're using session_maker to check if the context exists since it's quick
-        // and happens all in memory.
-        // But it's also ok to use context_manager.mpc_context_exists to check,
-        // but this function requires communication with the storage backend.
-        if !self.session_maker.context_exists(&context_id).await {
-            return Err(tonic::Status::new(
-                tonic::Code::NotFound,
-                format!("MPC context ID {context_id} does not exist"),
-            ));
+        // Only run PRSS initialization if this party is involved in the new MPC context
+        // note we also error out if the context does not exist
+        if self
+            .session_maker
+            .get_my_role_in_context(&context_id)
+            .await
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::NotFound,
+                    format!("MPC context ID {context_id} does not exist: {e}"),
+                )
+            })?
+            .is_some()
+        {
+            self.init_prss(&context_id, &epoch_id).await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!("PRSS initialization failed with error: {e}"),
+                )
+            })?;
         }
-
-        self.init_prss(&context_id, &epoch_id).await.map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                format!("PRSS initialization failed with error: {e}"),
-            )
-        })?;
 
         if let Some(previous_context) = inner.previous_context {
             // If previous epoch info is provided, we initiate resharing from previous epoch to this new one

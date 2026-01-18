@@ -1,13 +1,15 @@
 use crate::{
     dummy_domain, keygen::check_standard_keyset_ext_signature,
-    s3_operations::fetch_public_elements, CmdConfig, CoreClientConfig,
-    SLEEP_TIME_BETWEEN_REQUESTS_MS,
+    s3_operations::fetch_public_elements, CmdConfig, CoreClientConfig, CoreConf,
+    PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
 };
 use aes_prng::AesRng;
 use kms_grpc::{
-    identifiers::EpochId, kms::v1::FheParameter,
+    identifiers::EpochId,
+    kms::v1::{FheParameter, KeyDigest, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
-    rpc_types::PubDataType, ContextId, RequestId,
+    rpc_types::{alloy_to_protobuf_domain, PubDataType},
+    ContextId, RequestId,
 };
 use kms_lib::{
     client::client_wasm::Client,
@@ -18,56 +20,67 @@ use tfhe::ServerKey;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
-//TODO: Expected to fail for now as Resharing is WiP
-// this test was for the "emergence" resharing that we are deprecating
+impl PreviousEpochParameters {
+    pub(crate) fn convert_to_grpc(&self, fhe_params: FheParameter) -> PreviousEpochInfo {
+        let key_digests = vec![
+            (KeyDigest {
+                key_type: PubDataType::ServerKey.to_string(),
+                digest: hex::decode(&self.server_key_digest).unwrap(),
+            }),
+            (KeyDigest {
+                key_type: PubDataType::PublicKey.to_string(),
+                digest: hex::decode(&self.public_key_digest).unwrap(),
+            }),
+        ];
+
+        PreviousEpochInfo {
+            key_id: Some(self.key_id.into()),
+            preproc_id: Some(self.preproc_id.into()),
+            context_id: Some(self.context_id.into()),
+            epoch_id: Some(self.epoch_id.into()),
+            key_parameters: fhe_params.into(),
+            key_digests,
+            domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn do_reshare(
+// NOTE: The new context must already exist !
+pub(crate) async fn do_new_epoch(
     internal_client: &mut Client,
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cmd_conf: &CmdConfig,
     cc_conf: &CoreClientConfig,
     destination_prefix: &Path,
     kms_addrs: &[alloy_primitives::Address],
     num_parties: usize,
-    param: FheParameter,
-    key_id: &RequestId,
-    preproc_id: &RequestId,
-    context_id: Option<&ContextId>,
-    epoch_id: Option<&EpochId>,
-    server_key_digest: &str,
-    public_key_digest: &str,
-) -> anyhow::Result<RequestId> {
+    new_context_id: ContextId,
+    new_epoch_id: EpochId,
+    previous_epoch: Option<PreviousEpochInfo>,
+) -> anyhow::Result<EpochId> {
+    println!("Starting new epoch creation...");
+    println!("CONFIG IS : {:?}", cc_conf.cores);
     let max_iter = cmd_conf.max_iter;
     let request_id = RequestId::new_random(rng);
 
-    let key_digests = HashMap::from_iter([
-        (PubDataType::ServerKey, hex::decode(server_key_digest)?),
-        (PubDataType::PublicKey, hex::decode(public_key_digest)?),
-    ]);
-    // Create the request
     let request = internal_client.new_epoch_request(
         &request_id,
-        key_id,
-        preproc_id,
-        context_id,
-        context_id,
-        epoch_id,
-        epoch_id,
-        Some(param),
-        &dummy_domain(),
-        &key_digests,
+        &new_context_id,
+        &new_epoch_id,
+        previous_epoch.clone(),
     )?;
 
     // Send the request
     let mut req_tasks = JoinSet::new();
-    for (party_id, ce) in core_endpoints.iter() {
+    for (core_conf, ce) in core_endpoints.iter() {
         let req_cloned = request.clone();
         let mut cur_client = ce.clone();
-        let party_id = *party_id;
+        let core_conf = core_conf.clone();
         req_tasks.spawn(async move {
             (
-                party_id,
+                core_conf,
                 cur_client
                     .new_mpc_epoch(tonic::Request::new(req_cloned))
                     .await,
@@ -77,114 +90,116 @@ pub(crate) async fn do_reshare(
 
     let mut results = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
-        let (party_id, result) = inner?;
+        let (core_conf, result) = inner?;
         let result = result?.into_inner();
-        results.push((party_id, result));
+        results.push((core_conf, result));
     }
 
-    // We need to wait for all responses since a resharing is only successful if _all_ parties respond.
+    // We need to wait for all responses since an epoch creation  is only successful if _all_ parties respond.
     assert_eq!(results.len(), num_parties);
 
-    // Poll the result endpoint
+    if let Some(previous_epoch) = previous_epoch {
+        // Poll the result endpoint
+        let mut response_tasks = JoinSet::new();
+        for (core_conf, ce) in core_endpoints.iter() {
+            let mut cur_client = ce.clone();
 
-    let mut response_tasks = JoinSet::new();
-    for (party_id, ce) in core_endpoints.iter() {
-        let mut cur_client = ce.clone();
-
-        let party_id = *party_id;
-        response_tasks.spawn(async move {
-            let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
-                tonic::Request::new(request_id.into());
-            tokio::time::sleep(tokio::time::Duration::from_millis(
-                SLEEP_TIME_BETWEEN_REQUESTS_MS,
-            ))
-            .await;
-            let mut response = cur_client.get_epoch_result(response_request).await;
-
-            let mut ctr = 0_usize;
-            while response.is_err()
-                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-            {
+            let core_conf = core_conf.clone();
+            response_tasks.spawn(async move {
+                let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
+                    tonic::Request::new(request_id.into());
                 tokio::time::sleep(tokio::time::Duration::from_millis(
                     SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
                 .await;
-                let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
-                    tonic::Request::new(request_id.into());
-                response = cur_client.get_epoch_result(response_request).await;
-                ctr += 1;
-                if ctr >= max_iter {
-                    break;
+                let mut response = cur_client.get_epoch_result(response_request).await;
+
+                let mut ctr = 0_usize;
+                while response.is_err()
+                    && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+                {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(
+                        SLEEP_TIME_BETWEEN_REQUESTS_MS,
+                    ))
+                    .await;
+                    let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
+                        tonic::Request::new(request_id.into());
+                    response = cur_client.get_epoch_result(response_request).await;
+                    ctr += 1;
+                    if ctr >= max_iter {
+                        break;
+                    }
                 }
-            }
 
-            (party_id, response)
-        });
-    }
+                (core_conf, response)
+            });
+        }
 
-    let mut response_vec = Vec::new();
-    while let Some(response) = response_tasks.join_next().await {
-        let (party_id, resp) = response?;
-        let resp = resp?.into_inner();
-        assert_eq!(resp.request_id, Some(request_id.into()));
-        assert_eq!(resp.key_id, Some((*key_id).into()));
-        assert_eq!(resp.preprocessing_id, Some((*preproc_id).into()));
-        response_vec.push((party_id, resp));
-    }
+        let mut response_vec = Vec::new();
+        while let Some(response) = response_tasks.join_next().await {
+            let (core_conf, response) = response?;
+            let response = response?;
+            let resp = response.into_inner();
+            assert_eq!(resp.request_id, Some(request_id.into()));
+            assert_eq!(resp.key_id, previous_epoch.key_id);
+            assert_eq!(resp.preprocessing_id, previous_epoch.preproc_id);
+            response_vec.push((core_conf, resp));
+        }
 
-    // Process and verify the responses
-    assert_eq!(response_vec.len(), num_parties); // check that we have responses from all parties
+        let key_types = vec![
+            PubDataType::PublicKey,
+            PubDataType::PublicKeyMetadata,
+            PubDataType::ServerKey,
+        ];
+        // We try to download all because all parties needed to respond for a successful resharing
+        let party_ids = fetch_public_elements(
+            &previous_epoch.key_id.clone().unwrap().to_string(),
+            &key_types,
+            cc_conf,
+            destination_prefix,
+            true,
+        )
+        .await?;
 
-    let key_types = vec![
-        PubDataType::PublicKey,
-        PubDataType::PublicKeyMetadata,
-        PubDataType::ServerKey,
-    ];
-    // We try to download all because all parties needed to respond for a successful resharing
-    let party_ids = fetch_public_elements(
-        &key_id.to_string(),
-        &key_types,
-        cc_conf,
-        destination_prefix,
-        true,
-    )
-    .await?;
+        assert_eq!(
+            party_ids.len(),
+            num_parties,
+            "Did not fetch keys from all parties after resharing!"
+        );
 
-    assert_eq!(
-        party_ids.len(),
-        num_parties,
-        "Did not fetch keys from all parties after resharing!"
-    );
+        let storage_prefix = Some(
+            cc_conf
+                .cores
+                .iter()
+                .find(|c| c.party_id == party_ids[0])
+                .expect("party ID not found in config")
+                .object_folder
+                .as_str(),
+        );
 
-    let storage_prefix = Some(
-        cc_conf
-            .cores
-            .iter()
-            .find(|c| c.party_id == party_ids[0])
-            .expect("party ID not found in config")
-            .object_folder
-            .as_str(),
-    );
-    let public_key =
-        load_pk_from_pub_storage(Some(destination_prefix), key_id, storage_prefix).await;
-    let server_key: ServerKey = load_material_from_pub_storage(
-        Some(destination_prefix),
-        key_id,
-        PubDataType::ServerKey,
-        storage_prefix,
-    )
-    .await;
+        let key_id = previous_epoch.key_id.unwrap().try_into().unwrap();
+        let preproc_id = previous_epoch.preproc_id.unwrap().try_into().unwrap();
+        let public_key =
+            load_pk_from_pub_storage(Some(destination_prefix), &key_id, storage_prefix).await;
+        let server_key: ServerKey = load_material_from_pub_storage(
+            Some(destination_prefix),
+            &key_id,
+            PubDataType::ServerKey,
+            storage_prefix,
+        )
+        .await;
 
-    for response in response_vec {
-        check_standard_keyset_ext_signature(
-            &public_key,
-            &server_key,
-            preproc_id,
-            key_id,
-            &response.1.external_signature,
-            &dummy_domain(),
-            kms_addrs,
-        )?;
-    }
-    Ok(request_id)
+        for response in response_vec {
+            check_standard_keyset_ext_signature(
+                &public_key,
+                &server_key,
+                &preproc_id,
+                &key_id,
+                &response.1.external_signature,
+                &dummy_domain(),
+                kms_addrs,
+            )?;
+        }
+    };
+    Ok(new_epoch_id)
 }
