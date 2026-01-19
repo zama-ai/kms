@@ -362,6 +362,63 @@ impl ServerHandle {
     }
 }
 
+/// Configuration for threshold test setup
+///
+/// Used by `setup_threshold_isolated` to configure the threshold test environment.
+pub struct ThresholdTestConfig<'a> {
+    pub run_prss: bool,
+    pub rate_limiter_conf: Option<RateLimiterConfig>,
+    pub decryption_mode: Option<DecryptionMode>,
+    pub test_material_path: Option<&'a std::path::Path>,
+}
+
+/// Setup_threshold that supports isolated test material
+/// Note: The test_material_path in config is kept for API compatibility but not used.
+/// Tests should set up their own isolated material using TestMaterialManager before calling this.
+#[cfg(any(test, feature = "testing"))]
+pub async fn setup_threshold_isolated<
+    PubS: Storage + Clone + Sync + Send + 'static,
+    PrivS: StorageExt + Clone + Sync + Send + 'static,
+>(
+    threshold: u8,
+    pub_storage: Vec<PubS>,
+    priv_storage: Vec<PrivS>,
+    vaults: Vec<Option<Vault>>,
+    config: ThresholdTestConfig<'_>,
+) -> (
+    HashMap<u32, ServerHandle>,
+    HashMap<u32, CoreServiceEndpointClient<Channel>>,
+) {
+    let num_parties = priv_storage.len();
+
+    // Setup the threshold scheme
+    let server_handles = setup_threshold_no_client::<PubS, PrivS>(
+        threshold,
+        pub_storage,
+        priv_storage,
+        vaults,
+        config.run_prss,
+        config.rate_limiter_conf,
+        config.decryption_mode,
+    )
+    .await;
+
+    assert_eq!(server_handles.len(), num_parties);
+    let mut client_handles = HashMap::new();
+
+    for (i, server_handle) in &server_handles {
+        let url = format!(
+            "{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{}",
+            server_handle.service_port()
+        );
+        let uri = Uri::from_str(&url).unwrap();
+        let channel = connect_with_retry(uri).await;
+        client_handles.insert(*i, CoreServiceEndpointClient::new(channel));
+    }
+
+    (server_handles, client_handles)
+}
+
 pub async fn setup_threshold<
     PubS: Storage + Clone + Sync + Send + 'static,
     PrivS: StorageExt + Clone + Sync + Send + 'static,
