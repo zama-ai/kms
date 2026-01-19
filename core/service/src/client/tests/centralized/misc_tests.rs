@@ -183,6 +183,7 @@ async fn test_largecipher() {
             &request_id,
             &DEFAULT_CENTRAL_KEY_ID,
             None,
+            None,
             PkeSchemeType::MlKem512,
         )
         .unwrap();

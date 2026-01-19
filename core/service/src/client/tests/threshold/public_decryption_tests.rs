@@ -337,6 +337,7 @@ pub async fn run_decryption_threshold_optionally_fail(
                     &request_id,
                     context_id,
                     key_id,
+                    None,
                 )
                 .unwrap()
         })
