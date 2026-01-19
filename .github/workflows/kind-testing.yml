@@ -7,6 +7,13 @@ on:
 
 permissions: {}
 
+# Controls concurrent workflow runs:
+# - Groups runs by git ref
+# - Cancels in-progress runs for non-main/release branches
+concurrency:
+  group: kind-testing-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   ############################################################################
   # Docker Build Job (Commented Out)
@@ -20,7 +27,7 @@ jobs:
       actions: read # Read workflow run information
       contents: write # Checkout repository code
       id-token: write # OIDC authentication
-      pull-requests: read # Access pull request information
+      pull-requests: read # read pull requests information
       packages: write # Publish Docker images
       attestations: write # Create build attestations
     uses: ./.github/workflows/docker-build.yml

@@ -281,6 +281,43 @@ Our CI uses intelligent change detection to only run tests for modified componen
 
 ---
 
+## ☸️ Kubernetes Integration Testing
+[`.github/workflows/kind-testing.yml`](kind-testing.yml)
+
+| Trigger | Timing | Purpose |
+|---------|--------|---------|
+| 🔍 **Pull Requests** | On PR update | Runs integration tests in Kind cluster |
+| 🌙 **Scheduled** | Mon-Fri 00:00 UTC | Nightly integration checks |
+
+### Matrix Configuration
+- **Check**: Code linting and formatting
+- **Threshold**: 4-party deployment tests
+- **Centralized**: Single-party deployment tests
+
+---
+
+## 👁️ PR Preview Environments
+The system allows deploying ephemeral Kubernetes environments for PRs.
+
+### 🚀 Deploy Preview
+[`.github/workflows/pr-preview-deploy.yml`](pr-preview-deploy.yml)
+
+Triggered by adding **both** `docker` label (to build images) and a preview label:
+- `pr-preview-threshold`: Deploys 4-party threshold mode
+- `pr-preview-centralized`: Deploys single-party centralized mode
+- `pr-preview-thresholdWithEnclave`: Threshold mode with Nitro Enclave support
+- `pr-preview-centralizedWithEnclave`: Centralized mode with Nitro Enclave support
+
+### 🗑️ Destroy Preview
+[`.github/workflows/pr-preview-destroy.yml`](pr-preview-destroy.yml)
+
+Automatically cleans up resources when:
+1. PR is closed
+2. Preview label is removed
+3. 🌙 Nightly schedule (cleanup of stale namespaces)
+
+---
+
 ## 🛠️ Reusable Workflow Infrastructure
 
 ### 1. 🖥️ Big Instance Testing

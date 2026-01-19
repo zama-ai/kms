@@ -1,0 +1,59 @@
+kmsPeers:
+  # Number of replicas managed by each statefulset
+  count: 1
+
+kmsCore:
+  thresholdMode:
+    enabled: true
+    peersList: []
+    tls:
+      enabled: true
+  nitroEnclave:
+    enabled: true
+  resources:
+    requests:
+      memory: 12Gi
+      cpu: 4
+    limits:
+      memory: 24Gi
+      ephemeralStorage: 10Gi
+      grpcTimeout: 360
+      grpcMaxMessageSize: 104857600
+  publicVault:
+    s3:
+      enabled: true
+      prefix:
+  privateVault:
+    awskms:
+      enabled: true
+    s3:
+      enabled: true
+      prefix:
+  storage:
+    storageClassName: gp3
+    capacity: 15Gi
+  serviceMonitor:
+    enabled: false
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: aws-nitro-enclaves-k8s-dp
+                operator: In
+                values:
+                  - enabled
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - kms-core
+          topologyKey: kubernetes.io/hostname
+  tolerations:
+    - key: app
+      effect: NoSchedule
+      operator: Equal
+      value:

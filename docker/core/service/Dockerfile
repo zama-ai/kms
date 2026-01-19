@@ -11,7 +11,16 @@ ARG APP_CACHE_DIR=kms
 
 # Fetch dependencies and build binaries
 WORKDIR /app/kms
-COPY . .
+# Copy only what is needed to build kms binaries
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY backward-compatibility ./backward-compatibility
+COPY bc2wrap ./bc2wrap
+COPY core ./core
+COPY core-client ./core-client
+COPY observability ./observability
+COPY tools ./tools
+COPY docker ./docker
+
 RUN mkdir -p /app/kms/core/service/bin
 
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \

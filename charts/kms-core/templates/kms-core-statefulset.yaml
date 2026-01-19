@@ -522,6 +522,7 @@ spec:
               EOF
               cat ~/.aws/credentials
               {{- end }}
+              env
               kms-server --config-file=kms-server.toml
           {{- end }}
           env:
