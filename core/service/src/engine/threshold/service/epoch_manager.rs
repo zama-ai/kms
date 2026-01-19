@@ -73,6 +73,9 @@ use crate::{
     },
 };
 
+// All sessions are dervied from the epoch ID,
+// we thus define a set of counters to make sure
+// the derived sessions are unique.
 const PRSS_SESSION_COUNTER: u64 = 0;
 const RESHARE_Z64_SESSION_COUNTER: u64 = 1;
 const RESHARE_Z128_SESSION_COUNTER: u64 = 2;

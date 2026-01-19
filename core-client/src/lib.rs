@@ -1218,7 +1218,7 @@ pub async fn execute_cmd(
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
                     tracing::info!("Fetching keys {key_types:?}. ({command:?})");
-                    let party_ids = fetch_public_elements(
+                    let party_confs = fetch_public_elements(
                         &cipher_parameters.key_id.as_str(),
                         &key_types,
                         &cc_conf,
@@ -1230,7 +1230,7 @@ pub async fn execute_cmd(
                         cc_conf
                             .cores
                             .iter()
-                            .find(|c| c.party_id == party_ids[0])
+                            .find(|c| c == &&party_confs[0])
                             .expect("party ID not found in config")
                             .object_folder
                             .as_str(),
@@ -1294,7 +1294,7 @@ pub async fn execute_cmd(
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
                     tracing::info!("Fetching keys {key_types:?}. ({command:?})");
-                    let party_ids = fetch_public_elements(
+                    let party_confs = fetch_public_elements(
                         &cipher_parameters.key_id.as_str(),
                         &key_types,
                         &cc_conf,
@@ -1306,7 +1306,7 @@ pub async fn execute_cmd(
                         cc_conf
                             .cores
                             .iter()
-                            .find(|c| c.party_id == party_ids[0])
+                            .find(|c| c == &&party_confs[0])
                             .expect("party ID not found in config")
                             .object_folder
                             .as_str(),
@@ -1498,7 +1498,7 @@ pub async fn execute_cmd(
         }
         CCCommand::Encrypt(cipher_parameters) => {
             tracing::info!("Fetching keys {key_types:?}. ({command:?})");
-            let party_ids = fetch_public_elements(
+            let party_confs = fetch_public_elements(
                 &cipher_parameters.key_id.as_str(),
                 &key_types,
                 &cc_conf,
@@ -1510,7 +1510,7 @@ pub async fn execute_cmd(
                 cc_conf
                     .cores
                     .iter()
-                    .find(|c| c.party_id == party_ids[0])
+                    .find(|c| c == &&party_confs[0])
                     .expect("party ID not found in config")
                     .object_folder
                     .as_str(),

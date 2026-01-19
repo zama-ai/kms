@@ -107,7 +107,7 @@ pub(crate) async fn do_new_epoch(
             let core_conf = core_conf.clone();
             response_tasks.spawn(async move {
                 let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
-                    tonic::Request::new(request_id.into());
+                    tonic::Request::new(new_epoch_id.into());
                 tokio::time::sleep(tokio::time::Duration::from_millis(
                     SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
@@ -123,7 +123,7 @@ pub(crate) async fn do_new_epoch(
                     ))
                     .await;
                     let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
-                        tonic::Request::new(request_id.into());
+                        tonic::Request::new(new_epoch_id.into());
                     response = cur_client.get_epoch_result(response_request).await;
                     ctr += 1;
                     if ctr >= max_iter {
@@ -140,7 +140,7 @@ pub(crate) async fn do_new_epoch(
             let (core_conf, response) = response?;
             let response = response?;
             let resp = response.into_inner();
-            assert_eq!(resp.request_id, Some(request_id.into()));
+            assert_eq!(resp.request_id, Some(new_epoch_id.into()));
             assert_eq!(resp.key_id, previous_epoch.key_id);
             assert_eq!(resp.preprocessing_id, previous_epoch.preproc_id);
             response_vec.push((core_conf, resp));
@@ -151,18 +151,22 @@ pub(crate) async fn do_new_epoch(
             PubDataType::PublicKeyMetadata,
             PubDataType::ServerKey,
         ];
+
         // We try to download all because all parties needed to respond for a successful resharing
-        let party_ids = fetch_public_elements(
-            &previous_epoch.key_id.clone().unwrap().to_string(),
+        let element_id: RequestId = previous_epoch.key_id.clone().unwrap().try_into().unwrap();
+
+        let party_confs = fetch_public_elements(
+            &element_id.to_string(),
             &key_types,
             cc_conf,
             destination_prefix,
             true,
         )
-        .await?;
+        .await
+        .unwrap();
 
         assert_eq!(
-            party_ids.len(),
+            party_confs.len(),
             num_parties,
             "Did not fetch keys from all parties after resharing!"
         );
@@ -171,7 +175,7 @@ pub(crate) async fn do_new_epoch(
             cc_conf
                 .cores
                 .iter()
-                .find(|c| c.party_id == party_ids[0])
+                .find(|c| c == &&party_confs[0])
                 .expect("party ID not found in config")
                 .object_folder
                 .as_str(),

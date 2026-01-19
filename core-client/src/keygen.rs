@@ -149,7 +149,7 @@ pub(crate) async fn fetch_and_check_keygen(
         PubDataType::ServerKey,
     ];
 
-    let party_ids = fetch_public_elements(
+    let party_confs = fetch_public_elements(
         &request_id.to_string(),
         &key_types,
         cc_conf,
@@ -157,7 +157,7 @@ pub(crate) async fn fetch_and_check_keygen(
         download_all,
     )
     .await?;
-    let first_party_id = *party_ids.first().unwrap() as usize;
+    let first_party_id = party_confs.first().unwrap().party_id as usize;
     let pub_storage_prefix = Some(cc_conf.cores[first_party_id - 1].object_folder.as_str());
 
     // Even if we did not download all keys, we still check that they are identical

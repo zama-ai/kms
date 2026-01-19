@@ -119,7 +119,7 @@ pub(crate) async fn fetch_and_check_crsgen(
     );
 
     // Download the generated CRS.
-    let party_ids = fetch_public_elements(
+    let party_confs = fetch_public_elements(
         &request_id.to_string(),
         &[PubDataType::CRS],
         cc_conf,
@@ -131,7 +131,7 @@ pub(crate) async fn fetch_and_check_crsgen(
     let core_config = cc_conf
         .cores
         .iter()
-        .find(|c| c.party_id == party_ids[0])
+        .find(|c| c == &&party_confs[0])
         .unwrap();
 
     // Even if we did not download all CRSes, we still check that they are identical

@@ -127,6 +127,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
                 &req_id,
                 context_id.as_ref(),
                 &key_id.into(),
+                None,
             )?;
 
             // make parallel requests by calling [decrypt] in a thread
@@ -225,6 +226,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 &req_id,
                 &key_id.into(),
                 context_id.as_ref(),
+                None,
                 PkeSchemeType::MlKem512,
             )?;
 

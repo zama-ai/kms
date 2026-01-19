@@ -1563,7 +1563,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
         .init_conf()
         .unwrap();
 
-    let ids = fetch_public_elements(
+    let party_confs = fetch_public_elements(
         &key_id,
         &[PubDataType::ServerKey, PubDataType::PublicKey],
         &cc_conf,
@@ -1575,7 +1575,7 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
 
     // read the key materials from file
     let key_id = RequestId::from_str(&key_id).unwrap();
-    let object_folder = &cc_conf.cores[ids[0] - 1].object_folder;
+    let object_folder = &cc_conf.cores[party_confs[0].party_id - 1].object_folder;
     let public_key = load_pk_from_pub_storage(Some(test_path), &key_id, Some(object_folder)).await;
     let server_key: tfhe::ServerKey = load_material_from_pub_storage(
         Some(test_path),
@@ -1643,6 +1643,18 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     };
     let _result = execute_cmd(&epoch_config, test_path).await.unwrap();
     println!("Resharing completed successfully {:?}", _result);
+
+    let _ddec_command = CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+        to_encrypt: "0x123456".to_string(),
+        data_type: FheType::Euint64,
+        no_compression: false,
+        no_precompute_sns: true,
+        key_id: KeyId::from_str(&key_id.to_string()).unwrap(),
+        context_id: Some(context_id_set_2),
+        batch_size: 1,
+        num_requests: 1,
+        ciphertext_output_path: None,
+    }));
 
     // create the resharing request
     //let config = CmdConfig {
