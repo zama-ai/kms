@@ -8,12 +8,12 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 use kms_grpc::{
     identifiers::EpochId,
-    rpc_types::{KMSType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
+    rpc_types::{KMSType, PrivDataType, PubDataType},
     RequestId,
 };
 use tfhe::{
     integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet,
-    zk::CompactPkeCrs,
+    zk::CompactPkeCrs, CompactPublicKey,
 };
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
@@ -25,9 +25,8 @@ use crate::{
     util::meta_store::MetaStore,
     vault::{
         storage::{
-            crypto_material::log_storage_success, store_pk_at_request_id,
-            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id, Storage,
-            StorageExt, StorageReader,
+            crypto_material::log_storage_success, store_versioned_at_request_and_epoch_id,
+            store_versioned_at_request_id, Storage, StorageExt, StorageReader,
         },
         Vault,
     },
@@ -54,7 +53,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         public_storage: PubS,
         private_storage: PrivS,
         backup_vault: Option<Vault>,
-        pk_cache: HashMap<RequestId, WrappedPublicKeyOwned>,
+        pk_cache: HashMap<RequestId, CompactPublicKey>,
         fhe_keys: HashMap<(RequestId, EpochId), ThresholdFheKeys>,
     ) -> Self {
         Self {
@@ -148,10 +147,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 store_result.is_ok()
             };
             let f2 = async {
-                let pk_result = store_pk_at_request_id(
+                tracing::info!("Storing public key");
+                let pk_result = store_versioned_at_request_id(
                     &mut (*pub_storage),
                     key_id,
-                    WrappedPublicKey::Compact(&fhe_key_set.public_key),
+                    &fhe_key_set.public_key,
+                    &PubDataType::PublicKey.to_string(),
                 )
                 .await;
                 if let Err(e) = &pk_result {
@@ -233,10 +234,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             // so we do not consider it as an error
             {
                 let mut guarded_pk_cache = self.inner.pk_cache.write().await;
-                let previous = guarded_pk_cache.insert(
-                    *key_id,
-                    WrappedPublicKeyOwned::Compact(fhe_key_set.public_key.clone()),
-                );
+                let previous = guarded_pk_cache.insert(*key_id, fhe_key_set.public_key.clone());
                 if previous.is_some() {
                     tracing::warn!("PK already exists in pk_cache for {}, overwriting", key_id);
                 } else {
@@ -598,7 +596,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     pub async fn read_cloned_pk(
         &self,
         req_id: &RequestId,
-    ) -> anyhow::Result<WrappedPublicKeyOwned> {
+    ) -> anyhow::Result<CompactPublicKey> {
         self.inner.read_cloned_pk(req_id).await
     }
 

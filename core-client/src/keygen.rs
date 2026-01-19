@@ -143,11 +143,8 @@ pub(crate) async fn fetch_and_check_keygen(
     );
 
     // Download the generated keys.
-    let key_types = vec![
-        PubDataType::PublicKey,
-        PubDataType::PublicKeyMetadata,
-        PubDataType::ServerKey,
-    ];
+    // TODO: handle compressed keys
+    let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
 
     let party_ids = fetch_public_elements(
         &request_id.to_string(),

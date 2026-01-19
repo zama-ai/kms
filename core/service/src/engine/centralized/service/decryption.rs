@@ -534,11 +534,7 @@ pub async fn get_public_decryption_result_impl<
 #[cfg(test)]
 pub(crate) mod tests {
     use aes_prng::AesRng;
-    use kms_grpc::{
-        kms::v1::TypedCiphertext,
-        rpc_types::{PubDataType, WrappedPublicKeyOwned},
-        RequestId,
-    };
+    use kms_grpc::{kms::v1::TypedCiphertext, rpc_types::PubDataType, RequestId};
 
     use crate::{
         cryptography::signatures::PublicSigKey,
@@ -566,7 +562,7 @@ pub(crate) mod tests {
         // at this point the key is generated
         test_standard_keygen(&kms, key_id, &preproc_id).await;
 
-        let wrapped_pk = kms
+        let pk = kms
             .crypto_storage
             .inner
             .read_cloned_pk(key_id)
@@ -580,7 +576,6 @@ pub(crate) mod tests {
                 .unwrap()
         };
         tfhe::set_server_key(key);
-        let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
 
         (kms, pk, verf_key)
     }

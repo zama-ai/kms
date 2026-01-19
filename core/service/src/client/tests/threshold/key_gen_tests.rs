@@ -53,6 +53,13 @@ use tonic::{Response, Status};
 pub(crate) enum TestKeyGenResult {
     DecompressionOnly(DecompressionKey),
     Standard((tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey)),
+    Compressed(
+        (
+            tfhe::ClientKey,
+            tfhe::CompressedCompactPublicKey,
+            tfhe::CompressedServerKey,
+        ),
+    ),
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -61,14 +68,27 @@ impl TestKeyGenResult {
     fn get_decompression_only(self) -> tfhe::integer::compression_keys::DecompressionKey {
         match self {
             TestKeyGenResult::DecompressionOnly(inner) => inner,
-            TestKeyGenResult::Standard(_) => panic!("expecting to match decompression only"),
+            _ => panic!("expecting to match decompression only"),
         }
     }
 
     pub(crate) fn get_standard(self) -> (tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey) {
         match self {
-            TestKeyGenResult::DecompressionOnly(_) => panic!("expected to find standard"),
             TestKeyGenResult::Standard(inner) => inner,
+            _ => panic!("expected to find standard"),
+        }
+    }
+
+    pub(crate) fn get_compressed(
+        self,
+    ) -> (
+        tfhe::ClientKey,
+        tfhe::CompressedCompactPublicKey,
+        tfhe::CompressedServerKey,
+    ) {
+        match self {
+            TestKeyGenResult::Compressed(inner) => inner,
+            _ => panic!("expected to find compressed"),
         }
     }
 }
@@ -903,15 +923,14 @@ pub(crate) async fn preproc_and_keygen(
             .0;
 
             if compressed {
-                // For compressed keygen, we just verify that keygen completed.
-                // Verification tests (get_standard, DDec) are not yet supported for compressed keys.
-                tracing::info!("Compressed keygen completed for key_id={}", key_id);
+                // blockchain parameters always have mod switch noise reduction key
+                let (client_key, public_key, server_key) = keyset.get_compressed();
+                let tag: tfhe::Tag = key_id.into();
+                assert_eq!(&tag, client_key.tag());
+                assert_eq!(&tag, public_key.tag());
+                assert_eq!(&tag, server_key.tag());
+                crate::client::key_gen::tests::check_conformance_compressed(server_key, client_key);
             } else {
-                use crate::{
-                    client::tests::threshold::public_decryption_tests::run_decryption_threshold,
-                    util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
-                };
-
                 // blockchain parameters always have mod switch noise reduction key
                 let (client_key, public_key, server_key) = keyset.get_standard();
                 let tag: tfhe::Tag = key_id.into();
@@ -919,26 +938,29 @@ pub(crate) async fn preproc_and_keygen(
                 assert_eq!(&tag, public_key.tag());
                 assert_eq!(&tag, server_key.tag());
                 crate::client::key_gen::tests::check_conformance(server_key, client_key);
-
-                // Run a DDec
-                run_decryption_threshold(
-                    amount_parties,
-                    &mut kms_servers,
-                    &mut kms_clients,
-                    &mut internal_client,
-                    &key_id,
-                    None,
-                    vec![TestingPlaintext::U8(u8::MAX)],
-                    EncryptionConfig {
-                        compression: true,
-                        precompute_sns: true,
-                    },
-                    None,
-                    1,
-                    None,
-                )
-                .await;
             }
+            use crate::{
+                client::tests::threshold::public_decryption_tests::run_decryption_threshold,
+                util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
+            };
+            // Run a DDec
+            run_decryption_threshold(
+                amount_parties,
+                &mut kms_servers,
+                &mut kms_clients,
+                &mut internal_client,
+                &key_id,
+                None,
+                vec![TestingPlaintext::U8(u8::MAX)],
+                EncryptionConfig {
+                    compression: true,
+                    precompute_sns: true,
+                },
+                None,
+                1,
+                None,
+            )
+            .await;
         }
         tracing::info!("Finished sequential preproc and keygen");
     }

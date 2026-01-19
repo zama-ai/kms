@@ -11,12 +11,9 @@ cfg_if::cfg_if! {
         use crate::vault::storage::crypto_material::{
             calculate_max_num_bits, check_data_exists, check_data_exists_at_epoch, get_core_signing_key,
         };
-        use crate::vault::storage::{
-            store_pk_at_request_id, store_versioned_at_request_and_epoch_id, StorageExt,
-        };
+        use crate::vault::storage::{store_versioned_at_request_and_epoch_id, StorageExt};
         use futures_util::future;
         use kms_grpc::identifiers::EpochId;
-        use kms_grpc::rpc_types::WrappedPublicKey;
         use std::sync::Arc;
         use tfhe::Seed;
         use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
@@ -522,10 +519,12 @@ where
     // Store public key data with proper error handling
     for (req_id, cur_keys) in pub_fhe_map {
         // Store public key
-        if let Err(e) = store_pk_at_request_id(
+        tracing::info!("Storing public key");
+        if let Err(e) = store_versioned_at_request_id(
             pub_storage,
             &req_id,
-            WrappedPublicKey::Compact(&cur_keys.public_key),
+            &cur_keys.public_key,
+            &PubDataType::PublicKey.to_string(),
         )
         .await
         {
@@ -964,10 +963,12 @@ where
         };
 
         // Store public key
-        if let Err(store_err) = store_pk_at_request_id(
+        tracing::info!("Storing public key");
+        if let Err(store_err) = store_versioned_at_request_id(
             &mut pub_storages[i - 1],
             key_id,
-            WrappedPublicKey::Compact(&keyset.public_keys.public_key),
+            &keyset.public_keys.public_key,
+            &PubDataType::PublicKey.to_string(),
         )
         .await
         {

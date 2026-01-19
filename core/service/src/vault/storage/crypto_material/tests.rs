@@ -4,7 +4,7 @@ use crate::{
     engine::base::{derive_request_id, KeyGenMetadata},
 };
 use aes_prng::AesRng;
-use kms_grpc::{rpc_types::WrappedPublicKey, EpochId, RequestId};
+use kms_grpc::{rpc_types::PubDataType, EpochId, RequestId};
 use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use rand::SeedableRng;
 use std::collections::HashMap;
@@ -30,7 +30,7 @@ use crate::{
             CentralizedCryptoMaterialStorage, CryptoMaterialStorage, ThresholdCryptoMaterialStorage,
         },
         ram::{FailingRamStorage, RamStorage},
-        store_pk_at_request_id,
+        store_versioned_at_request_id,
     },
 };
 
@@ -153,9 +153,14 @@ async fn read_public_key() {
     {
         let pub_storage = pub_storage.clone();
         let mut s = pub_storage.lock().await;
-        store_pk_at_request_id(&mut (*s), &req_id, WrappedPublicKey::Compact(&public_key))
-            .await
-            .unwrap();
+        store_versioned_at_request_id(
+            &mut (*s),
+            &req_id,
+            &public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .unwrap();
     }
 
     // reading the public key without cache should succeed

@@ -723,11 +723,9 @@ mod tests {
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;
     use crate::vault::storage::s3::DummyReadOnlyS3StorageGetter;
-    use crate::vault::storage::store_pk_at_request_id;
     use crate::vault::storage::store_versioned_at_request_id;
     use aes_prng::AesRng;
     use kms_grpc::rpc_types::PubDataType;
-    use kms_grpc::rpc_types::WrappedPublicKey;
     use kms_grpc::ContextId;
     use kms_grpc::RequestId;
     use rand::SeedableRng;
@@ -785,10 +783,11 @@ mod tests {
         ]);
 
         // store the keys in ram storage
-        store_pk_at_request_id(
+        store_versioned_at_request_id(
             &mut ram_storage,
             &key_id,
-            WrappedPublicKey::Compact(&public_key),
+            &public_key,
+            &PubDataType::PublicKey.to_string(),
         )
         .await
         .unwrap();
@@ -991,10 +990,11 @@ mod tests {
             let public_storage = crypto_storage.inner.get_public_storage();
             {
                 let mut guard_storage = public_storage.lock().await;
-                store_pk_at_request_id(
+                store_versioned_at_request_id(
                     &mut (*guard_storage),
                     &key_id,
-                    WrappedPublicKey::Compact(&public_key),
+                    &public_key,
+                    &PubDataType::PublicKey.to_string(),
                 )
                 .await
                 .unwrap();
@@ -1046,10 +1046,11 @@ mod tests {
             let public_storage = crypto_storage.inner.get_public_storage();
             {
                 let mut guard_storage = public_storage.lock().await;
-                store_pk_at_request_id(
+                store_versioned_at_request_id(
                     &mut (*guard_storage),
                     &key_id,
-                    WrappedPublicKey::Compact(&public_key),
+                    &public_key,
+                    &PubDataType::PublicKey.to_string(),
                 )
                 .await
                 .unwrap();

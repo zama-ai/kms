@@ -11,9 +11,7 @@ use kms_grpc::kms::v1::{
     FheParameter, InitiateResharingRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
     KeyGenRequest, KeyGenResult, KeySetAddedInfo, KeySetConfig,
 };
-use kms_grpc::rpc_types::{
-    alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
-};
+use kms_grpc::rpc_types::{alloy_to_protobuf_domain, PubDataType};
 use kms_grpc::solidity_types::{KeygenVerification, PrepKeygenVerification};
 use kms_grpc::ContextId;
 use kms_grpc::RequestId;
@@ -217,8 +215,6 @@ impl Client {
             }
         };
 
-        let WrappedPublicKeyOwned::Compact(public_key) = public_key;
-
         let server_key_digest =
             safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key)?;
         let public_key_digest =
@@ -302,36 +298,19 @@ impl Client {
         &self,
         key_gen_result: &KeyGenResult,
         storage: &R,
-    ) -> anyhow::Result<Option<WrappedPublicKeyOwned>> {
-        // first we need to read the key type
+    ) -> anyhow::Result<Option<CompactPublicKey>> {
         let request_id = parse_optional_proto_request_id(
             &key_gen_result.request_id,
             RequestIdParsingErr::Other("invalid ID while retrieving public key".to_string()),
         )
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         tracing::debug!(
-            "getting public key metadata using storage {} with request id {}",
+            "getting compact public key using storage {} with request id {}",
             storage.info(),
             &request_id
         );
-        let pk_type: PublicKeyType = crate::vault::storage::read_versioned_at_request_id(
-            storage,
-            &request_id,
-            &PubDataType::PublicKeyMetadata.to_string(),
-        )
-        .await?;
-        tracing::debug!(
-            "getting wrapped public key using storage {} with request id {}",
-            storage.info(),
-            &request_id
-        );
-        let wrapped_pk = match pk_type {
-            PublicKeyType::Compact => self
-                .retrieve_key_no_verification(key_gen_result, PubDataType::PublicKey, storage)
-                .await?
-                .map(WrappedPublicKeyOwned::Compact),
-        };
-        Ok(wrapped_pk)
+        self.retrieve_key_no_verification(key_gen_result, PubDataType::PublicKey, storage)
+            .await
     }
 
     /// Retrieve and validate a decompression key based on the result from storage.
@@ -418,6 +397,13 @@ pub(crate) mod tests {
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
     use tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey;
     use tfhe::shortint::server_key::ModulusSwitchConfiguration;
+
+    pub(crate) fn check_conformance_compressed(
+        server_key: tfhe::CompressedServerKey,
+        client_key: tfhe::ClientKey,
+    ) {
+        check_conformance(server_key.decompress(), client_key)
+    }
 
     pub(crate) fn check_conformance(server_key: tfhe::ServerKey, client_key: tfhe::ClientKey) {
         let pbs_params = client_key.computation_parameters();

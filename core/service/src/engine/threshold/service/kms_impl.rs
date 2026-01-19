@@ -72,7 +72,7 @@ use crate::{
         storage::{
             crypto_material::ThresholdCryptoMaterialStorage,
             read_all_data_from_all_epochs_versioned, read_all_data_versioned,
-            read_pk_at_request_id, Storage, StorageExt,
+            read_versioned_at_request_id, Storage, StorageExt,
         },
         Vault,
     },
@@ -369,7 +369,9 @@ where
     for ((id, _), info) in key_info_versioned.clone().into_iter() {
         public_key_info.insert(id, info.meta_data.clone());
 
-        let pk = read_pk_at_request_id(&public_storage, &id).await?;
+        let pk =
+            read_versioned_at_request_id(&public_storage, &id, &PubDataType::PublicKey.to_string())
+                .await?;
         pk_map.insert(id, pk);
     }
 

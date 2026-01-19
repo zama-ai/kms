@@ -24,19 +24,19 @@ use crate::{
             },
             delete_all_at_request_id, delete_at_request_and_epoch_id, delete_at_request_id,
             delete_pk_at_request_id, read_all_data_versioned, read_context_at_id,
-            store_context_at_id, store_pk_at_request_id, store_versioned_at_request_id, Storage,
-            StorageExt, StorageReaderExt,
+            store_context_at_id, store_versioned_at_request_id, Storage, StorageExt,
+            StorageReaderExt,
         },
         Vault,
     },
 };
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
-    rpc_types::{KMSType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
+    rpc_types::{KMSType, PrivDataType, PubDataType},
     RequestId,
 };
 use std::{collections::HashMap, sync::Arc};
-use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
+use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs, CompactPublicKey};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 /// Marker trait for private FHE materials.
@@ -70,7 +70,7 @@ pub struct CryptoMaterialStorage<
 
     /// Cache for already generated public keys
     /// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
-    pub(crate) pk_cache: Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>,
+    pub(crate) pk_cache: Arc<RwLock<HashMap<RequestId, CompactPublicKey>>>,
     // Cache for current backup key (if it is set)
     // Observe that the `Option` is inside the lock since it may be added during runtime through a new custodian context.
     // pub(crate) current_backup_key: Arc<RwLock<Option<BackupPublicKey>>>,
@@ -92,7 +92,7 @@ where
         public_storage: Arc<Mutex<PubS>>,
         private_storage: Arc<Mutex<PrivS>>,
         backup_vault: Option<Arc<Mutex<Vault>>>,
-        pk_cache: Option<Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>>,
+        pk_cache: Option<Arc<RwLock<HashMap<RequestId, CompactPublicKey>>>>,
     ) -> Self {
         Self {
             public_storage,
@@ -107,7 +107,7 @@ where
         public_storage: PubS,
         private_storage: PrivS,
         backup_vault: Option<Vault>,
-        pk_cache: Option<Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>>,
+        pk_cache: Option<Arc<RwLock<HashMap<RequestId, CompactPublicKey>>>>,
     ) -> Self {
         Self::new(
             Arc::new(Mutex::new(public_storage)),
@@ -234,10 +234,17 @@ where
     pub async fn store_threshold_public_key(
         &self,
         key_id: &RequestId,
-        public_key: WrappedPublicKey<'_>,
+        public_key: &CompactPublicKey,
     ) -> anyhow::Result<()> {
+        tracing::info!("Storing public key");
         let mut pub_storage = self.public_storage.lock().await;
-        store_pk_at_request_id(&mut *pub_storage, key_id, public_key).await
+        store_versioned_at_request_id(
+            &mut *pub_storage,
+            key_id,
+            public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
     }
 
     /// Store threshold public server key
@@ -836,8 +843,8 @@ where
     pub(crate) async fn read_cloned_pk(
         &self,
         req_id: &RequestId,
-    ) -> anyhow::Result<WrappedPublicKeyOwned> {
-        Self::read_cloned_crypto_material::<WrappedPublicKeyOwned, _>(
+    ) -> anyhow::Result<CompactPublicKey> {
+        Self::read_cloned_crypto_material::<CompactPublicKey, _>(
             self.pk_cache.clone(),
             req_id,
             self.public_storage.clone(),
