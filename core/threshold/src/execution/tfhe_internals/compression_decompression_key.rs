@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tfhe::{
     boolean::prelude::{GlweDimension, PolynomialSize},
-    shortint::parameters::CompressionParameters,
+    shortint::parameters::{list_compression::ClassicCompressionParameters, CompressionParameters},
     Versionize,
 };
 use tfhe_versionable::VersionsDispatch;
@@ -30,6 +30,7 @@ pub enum CompressionPrivateKeySharesVersioned<Z: Clone, const EXTENSION_DEGREE: 
 #[versionize(CompressionPrivateKeySharesVersioned)]
 pub struct CompressionPrivateKeyShares<Z: Clone, const EXTENSION_DEGREE: usize> {
     pub post_packing_ks_key: GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    //TODO: Probably need to deal with versioning
     pub params: CompressionParameters,
 }
 
@@ -41,7 +42,7 @@ where
         P: BitPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
         S: BaseSessionHandles,
     >(
-        params: CompressionParameters,
+        params: ClassicCompressionParameters,
         preprocessing: &mut P,
         pmax: Option<f64>,
         session: &mut S,
@@ -56,7 +57,7 @@ where
                 session,
             )
             .await?,
-            params,
+            params: CompressionParameters::Classic(params),
         })
     }
 

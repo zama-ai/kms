@@ -182,10 +182,10 @@ syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - MEDIUM RIS
 sysinfo = "0.36.1"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
 tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency
 test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual maintainers (markhildreth, JasperV), test-only dependency
-tfhe = "=1.4.2"  # Fully Homomorphic Encryption library - LOW RISK: Zama
-tfhe-csprng = "=0.7.0"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
-tfhe-versionable = "=0.6.2"  # TFHE versioning support - LOW RISK: Zama
-tfhe-zk-pok = "=0.7.3"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
+tfhe = "=1.5.1"  # Fully Homomorphic Encryption library - LOW RISK: Zama
+tfhe-csprng = "=0.8.0"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
+tfhe-versionable = "=0.7.0"  # TFHE versioning support - LOW RISK: Zama
+tfhe-zk-pok = "=0.8.0"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
 thiserror = "=2.0.12"  # Error derive macro - MEDIUM RISK: Reputable individual maintainer (dtolnay), 545M downloads
 tokio = { version = "=1.46.1", features = ["full"] }  # Async runtime - LOW RISK: tokio team, industry standard
 tokio-rustls = { version = "=0.26.2", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation
@@ -253,3 +253,8 @@ rustls = { git = 'https://github.com/mkmks/rustls.git', branch = 'k256' }
 rustls-pki-types = { git = 'https://github.com/mkmks/pki-types.git', branch = 'k256' }
 rustls-webpki = { git = 'https://github.com/mkmks/webpki.git', branch = 'k256' }
 tokio-rustls = { git = 'https://github.com/mkmks/tokio-rustls.git', branch = 'k256' }
+tfhe = {git = 'https://github.com/zama-ai/tfhe-rs.git', branch = 'am/chore/missing-raw-parts-api-1-5'}  # Fully Homomorphic Encryption library - LOW RISK: Zama
+tfhe-csprng = {git = 'https://github.com/zama-ai/tfhe-rs.git', branch = 'am/chore/missing-raw-parts-api-1-5'}  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
+tfhe-versionable = {git = 'https://github.com/zama-ai/tfhe-rs.git', branch = 'am/chore/missing-raw-parts-api-1-5'}  # TFHE versioning support - LOW RISK: Zama
+tfhe-zk-pok = {git = 'https://github.com/zama-ai/tfhe-rs.git', branch = 'am/chore/missing-raw-parts-api-1-5'}  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
+

@@ -1999,9 +1999,9 @@ checksum = "7575182f7272186991736b70173b0ea045398f984bf5ebbb3804736ce1330c9d"
 
 [[package]]
 name = "bytemuck"
-version = "1.23.2"
+version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3995eaeebcdf32f91f980d360f78732ddc061097ab4e39991ae7a6ace9194677"
+checksum = "1fbdf580320f38b612e485521afda1ee26d10cc9884efaaa750d383e13e3c5f4"
 
 [[package]]
 name = "byteorder"
@@ -2847,12 +2847,19 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "dyn-stack"
-version = "0.11.0"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf6fa63092e3ca9f602f6500fddd05502412b748c4c4682938565b44eb9e0066"
+checksum = "1c4713e43e2886ba72b8271aa66c93d722116acf7a75555cce11dcde84388fe8"
 dependencies = [
  "bytemuck",
+ "dyn-stack-macros",
 ]
+
+[[package]]
+name = "dyn-stack-macros"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1d926b4d407d372f141f93bb444696142c29d32962ccbd3531117cf3aa0bfa9"
 
 [[package]]
 name = "ecdsa"
@@ -5806,17 +5813,26 @@ dependencies = [
 
 [[package]]
 name = "pulp"
-version = "0.21.5"
+version = "0.22.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96b86df24f0a7ddd5e4b95c94fc9ed8a98f1ca94d3b01bdce2824097e7835907"
+checksum = "2e205bb30d5b916c55e584c22201771bcf2bad9aabd5d4127f38387140c38632"
 dependencies = [
  "bytemuck",
  "cfg-if",
  "libm",
  "num-complex",
+ "paste",
+ "pulp-wasm-simd-flag",
+ "raw-cpuid",
  "reborrow",
  "version_check",
 ]
+
+[[package]]
+name = "pulp-wasm-simd-flag"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40e24eee682d89fb193496edf918a7f407d30175b2e785fe057e4392dfd182e0"
 
 [[package]]
 name = "quick-error"
@@ -6046,6 +6062,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8497305b8eaf88c93968ad7ebb404d8dba6c8980b89ca536d3567ffec604a61b"
 dependencies = [
  "rasn",
+]
+
+[[package]]
+name = "raw-cpuid"
+version = "11.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "498cd0dc59d73224351ee52a95fee0f1a617a2eae0e7d9d720cc622c73a54186"
+dependencies = [
+ "bitflags 2.10.0",
 ]
 
 [[package]]
@@ -7411,9 +7436,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe"
-version = "1.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8f1f17ffd53e90d2492bdbb1b283af3be75fb55e94ba4c7bf0f175fb9ccf6f8"
+version = "1.5.1"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=am%2Fchore%2Fmissing-raw-parts-api-1-5#4529967dc533a17dee2df0899c3fff8b7fcb2d86"
 dependencies = [
  "aligned-vec",
  "bincode 1.3.3",
@@ -7437,9 +7461,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe-csprng"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58dbda4dff1373da441b7d1f131873c0229a09294327288acdbade48b38d128d"
+version = "0.8.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=am%2Fchore%2Fmissing-raw-parts-api-1-5#4529967dc533a17dee2df0899c3fff8b7fcb2d86"
 dependencies = [
  "aes",
  "getrandom 0.2.15",
@@ -7451,9 +7474,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe-fft"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8621277f2fcbcf56e4cd0e19476854bd9ac195f17f6906476826dceff4063fc"
+version = "0.10.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=am%2Fchore%2Fmissing-raw-parts-api-1-5#4529967dc533a17dee2df0899c3fff8b7fcb2d86"
 dependencies = [
  "aligned-vec",
  "bytemuck",
@@ -7466,9 +7488,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe-ntt"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27e21dbb266f4472337dec6a608ffca2cf911d680b52873db8027c572f22d0fc"
+version = "0.7.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=am%2Fchore%2Fmissing-raw-parts-api-1-5#4529967dc533a17dee2df0899c3fff8b7fcb2d86"
 dependencies = [
  "aligned-vec",
  "bytemuck",
@@ -7477,9 +7498,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe-versionable"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f59040e53a3581e1270a18eec2f1798e7bfd1c724b0f5d9db3f2a6f6cff89195"
+version = "0.7.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=am%2Fchore%2Fmissing-raw-parts-api-1-5#4529967dc533a17dee2df0899c3fff8b7fcb2d86"
 dependencies = [
  "aligned-vec",
  "num-complex",
@@ -7489,9 +7509,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe-versionable-derive"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9a5d55a09b8aff152dee2fa3d28af8999c3af3f69a8bce728855de21638727e"
+version = "0.7.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=am%2Fchore%2Fmissing-raw-parts-api-1-5#4529967dc533a17dee2df0899c3fff8b7fcb2d86"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7500,9 +7519,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe-zk-pok"
-version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f7b4fa4d6b7d0bd2b5d37e237e2628dc464fc09d40ad4b95fcd3c5d2461cf98"
+version = "0.8.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=am%2Fchore%2Fmissing-raw-parts-api-1-5#4529967dc533a17dee2df0899c3fff8b7fcb2d86"
 dependencies = [
  "ark-bls12-381",
  "ark-ec",
