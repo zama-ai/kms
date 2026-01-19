@@ -111,6 +111,30 @@ impl SessionPreparerGetter {
         &self.name
     }
 
+    /// Returns the number of active sessions.
+    /// Returns 0 if there are no session preparers.
+    pub async fn active_session_count(&self) -> anyhow::Result<u64> {
+        let guarded = self.session_preparer.read().await;
+        if let Some(session_preparer) = guarded.values().next() {
+            session_preparer.active_session_count().await
+        } else {
+            tracing::warn!("No session_preparer available");
+            Ok(0)
+        }
+    }
+
+    /// Returns the number of inactive sessions.
+    /// Returns 0 if there are no session preparers.
+    pub async fn inactive_session_count(&self) -> anyhow::Result<u64> {
+        let guarded = self.session_preparer.read().await;
+        if let Some(session_preparer) = guarded.values().next() {
+            session_preparer.inactive_session_count().await
+        } else {
+            tracing::warn!("No session_preparer available");
+            Ok(0)
+        }
+    }
+
     /// Inserts a new session preparer into the manager.
     /// This function should be private and only used by the `SessionPreparerManager`.
     async fn insert(&self, context_id: ContextId, session_preparer: SessionPreparer) {
@@ -247,6 +271,32 @@ impl SessionPreparer {
             .await
             .delete_session(session_id);
         Ok(())
+    }
+
+    /// Returns the number of active sessions.
+    pub async fn active_session_count(&self) -> anyhow::Result<u64> {
+        Ok(self
+            .inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .networking_manager
+            .read()
+            .await
+            .active_session_count()
+            .await)
+    }
+
+    /// Returns the number of inactive sessions.
+    pub async fn inactive_session_count(&self) -> anyhow::Result<u64> {
+        Ok(self
+            .inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .networking_manager
+            .read()
+            .await
+            .inactive_session_count()
+            .await)
     }
 
     /// Make a small session with Z128 PRSS for the Async network mode.

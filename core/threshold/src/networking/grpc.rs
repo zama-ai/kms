@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 
 use tokio::sync::{
@@ -200,6 +201,8 @@ impl OptionConfigWrapper {
 pub struct GrpcNetworkingManager {
     // Session reference storage to prevent premature cleanup under high concurrency
     pub(crate) session_store: Arc<SessionStore>,
+    inactive_session_count: Arc<AtomicU64>,
+    active_session_count: Arc<AtomicU64>,
     // Keeps tracks of how many sessions were opened by each party
     // NOTE: Always lock session_store before opened_sessions_tracker to prevent deadlocks
     pub opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
@@ -239,8 +242,13 @@ impl GrpcNetworkingManager {
     ///
     /// It also updates the status of active sessions by checking if their weak references are still valid,
     /// and if not, marks them as completed.
+    ///
+    /// Finally it also updates the counts of inactive and active sessions.
     fn start_background_cleaning_task(
         session_store: Arc<SessionStore>,
+        opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
+        inactive_session_count: Arc<AtomicU64>,
+        active_session_count: Arc<AtomicU64>,
         update_interval: Duration,
         cleanup_interval: Duration,
         discard_inactive_interval: Duration,
@@ -249,11 +257,21 @@ impl GrpcNetworkingManager {
             let mut interval = tokio::time::interval(update_interval);
             loop {
                 interval.tick().await;
+                let mut internal_inactive_sessions_count = 0;
+                let mut internal_active_sessions_count = 0;
 
                 session_store.retain(|session_id, status| match status {
-                    SessionStatus::Completed(started) => started.elapsed() < cleanup_interval,
-                    SessionStatus::Inactive((_, started)) => {
+                    SessionStatus::Completed(started) =>  started.elapsed() < cleanup_interval,
+                    SessionStatus::Inactive((message_queue, started)) => {
                         if started.elapsed() > discard_inactive_interval {
+                            // Decrement tracker for each sender in the discarded session
+                            for sender_id in message_queue.uninitialized_sender_identities() {
+                                opened_sessions_tracker
+                                    .entry(sender_id)
+                                    .and_modify(|count| {
+                                        *count = count.saturating_sub(1);
+                                    });
+                            }
                             tracing::warn!(
                                 "Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.",
                                 session_id,
@@ -261,16 +279,29 @@ impl GrpcNetworkingManager {
                             );
                             false
                         } else {
+                            internal_inactive_sessions_count += 1;
                             true
                         }
                     }
                     SessionStatus::Active(session) => {
                         if session.upgrade().is_none() {
+                            tracing::info!("Session reference is dropped at id {session_id}, moving status to completed.");
                             *status = SessionStatus::Completed(Instant::now());
+                        } else {
+                            // TODO(zama-ai/kms-internal#2867):
+                            // we need to check whether there's an unusually long active session
+                            // might be ok for keygen but not usual for decryption
+                            //
+                            // This may happen if we start a session/protocol but it does not end for some reason
+                            // this could accummulate as there is no limit for the number of active sessions.
+                            internal_active_sessions_count += 1;
                         }
                         true
                     }
                 });
+                tracing::info!("Session cleaning task: internal_inactive_sessions_count={internal_inactive_sessions_count}, internal_active_sessions_count={internal_active_sessions_count}");
+                inactive_session_count.store(internal_inactive_sessions_count, Ordering::Relaxed);
+                active_session_count.store(internal_active_sessions_count, Ordering::Relaxed);
             }
         });
     }
@@ -302,14 +333,20 @@ impl GrpcNetworkingManager {
 
         let conf = OptionConfigWrapper { conf };
         let session_store = Arc::new(SessionStore::default());
+        let opened_sessions_tracker = Arc::new(DashMap::new());
 
         // We need to spawn background cleanup task to remove dead weak references from session_store, otherwise they accumulate and eat RAM + perf
         let cleanup_session_store = Arc::clone(&session_store);
         let update_interval = conf.get_session_update_interval();
         let cleanup_interval = conf.get_session_cleanup_interval();
         let discard_inactive_interval = conf.get_discard_inactive_sessions_interval();
+        let inactive_session_count = Arc::new(AtomicU64::new(0));
+        let active_session_count = Arc::new(AtomicU64::new(0));
         Self::start_background_cleaning_task(
             cleanup_session_store,
+            Arc::clone(&opened_sessions_tracker),
+            Arc::clone(&inactive_session_count),
+            Arc::clone(&active_session_count),
             update_interval,
             cleanup_interval,
             discard_inactive_interval,
@@ -317,7 +354,9 @@ impl GrpcNetworkingManager {
 
         Ok(GrpcNetworkingManager {
             session_store,
-            opened_sessions_tracker: Arc::new(DashMap::new()),
+            inactive_session_count,
+            active_session_count,
+            opened_sessions_tracker,
             conf,
             sending_service: GrpcSendingService::new(tls_conf, conf, peer_tcp_proxy)?,
             #[cfg(feature = "testing")]
@@ -484,6 +523,14 @@ impl GrpcNetworkingManager {
 
         Ok(session)
     }
+
+    pub async fn active_session_count(&self) -> u64 {
+        self.active_session_count.load(Ordering::Relaxed)
+    }
+
+    pub async fn inactive_session_count(&self) -> u64 {
+        self.inactive_session_count.load(Ordering::Relaxed)
+    }
 }
 
 // we need a counter for each value sent over the local queues
@@ -644,6 +691,15 @@ impl MessageQueueStore {
             MessageQueueStore::Initialized(inner) => Ok(inner.rx.iter().map(|entry| *entry.key())),
         }
     }
+
+    /// Returns the sender identities for an uninitialized message queue.
+    /// Returns an empty vector if the message queue is already initialized.
+    pub(crate) fn uninitialized_sender_identities(&self) -> Vec<MpcIdentity> {
+        match self {
+            MessageQueueStore::Uninitialized(map) => map.iter().map(|e| e.key().clone()).collect(),
+            MessageQueueStore::Initialized(_) => vec![],
+        }
+    }
 }
 
 pub(crate) type SessionStore = DashMap<SessionId, SessionStatus>;
@@ -654,6 +710,7 @@ pub(crate) type SessionStore = DashMap<SessionId, SessionStatus>;
 /// - Completed: The session has been completed and the timestamp of completion is stored.
 /// - Inactive: The session is inactive (I haven't yet heard about the request) and has a message queue store for senders.
 /// - Active: The session is active (I know about the request) and holds a weak reference to the `NetworkSession`.
+///   The reference is dropped when the session (mpc protocol) is completed.
 pub(crate) enum SessionStatus {
     Completed(Instant),
     Inactive((MessageQueueStore, Instant)),

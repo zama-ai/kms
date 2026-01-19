@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::{collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
 
 // === External Crates ===
 use kms_grpc::{
@@ -57,7 +57,7 @@ use crate::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
                 resharer::RealResharer,
-                session::{SessionPreparer, SessionPreparerManager},
+                session::{SessionPreparer, SessionPreparerGetter, SessionPreparerManager},
                 user_decryptor::SecureNoiseFloodPartialDecryptor,
             },
             threshold_kms::ThresholdKms,
@@ -226,6 +226,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     peer_tcp_proxy: bool,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
+    metrics_refresh_interval: Option<Duration>,
     shutdown_signal: F,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS>,
@@ -498,6 +499,18 @@ where
         _dec: PhantomData,
     };
 
+    // Start periodic metrics update for decryptors
+    // No need to put this into tracker because it will never terminate
+    const DEFAULT_METRICS_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
+    let interval = metrics_refresh_interval.unwrap_or(DEFAULT_METRICS_REFRESH_INTERVAL);
+    start_periodic_metrics_update(
+        rate_limiter.clone(),
+        public_decryptor.pub_dec_meta_store.clone(),
+        user_decryptor.user_decrypt_meta_store.clone(),
+        session_preparer_getter.clone(),
+        interval,
+    );
+
     let keygenerator = RealKeyGenerator {
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
@@ -593,6 +606,37 @@ where
     );
 
     Ok((kms, core_service_health_service, metastore_status_service))
+}
+
+/// Starts a background task that periodically updates system metrics.
+fn start_periodic_metrics_update(
+    rate_limiter: RateLimiter,
+    public_decrypt_meta_store: Arc<RwLock<MetaStore<crate::engine::base::PubDecCallValues>>>,
+    user_decrypt_meta_store: Arc<RwLock<MetaStore<crate::engine::base::UserDecryptCallValues>>>,
+    session_preparer_getter: SessionPreparerGetter,
+    refresh_interval: std::time::Duration,
+) {
+    // we do not use the tracker as this task does not finish
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(refresh_interval);
+        loop {
+            interval.tick().await;
+
+            let user_meta_store_guard = user_decrypt_meta_store.read().await;
+            let public_meta_store_guard = public_decrypt_meta_store.read().await;
+            let active_sessions = session_preparer_getter.active_session_count().await.ok();
+            let inactive_sessions = session_preparer_getter.inactive_session_count().await.ok();
+
+            crate::engine::update_kms_metrics(
+                &rate_limiter,
+                Some(&user_meta_store_guard),
+                Some(&public_meta_store_guard),
+                active_sessions,
+                inactive_sessions,
+            )
+            .await;
+        }
+    });
 }
 
 #[cfg(test)]
