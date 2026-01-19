@@ -501,7 +501,7 @@ where
 
     // Start periodic metrics update for decryptors
     // No need to put this into tracker because it will never terminate
-    const DEFAULT_METRICS_REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
+    const DEFAULT_METRICS_REFRESH_INTERVAL: Duration = Duration::from_secs(10);
     let interval = metrics_refresh_interval.unwrap_or(DEFAULT_METRICS_REFRESH_INTERVAL);
     start_periodic_metrics_update(
         rate_limiter.clone(),
