@@ -12,6 +12,7 @@ use crate::execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFl
 use crate::execution::online::preprocessing::BitDecPreprocessing;
 use crate::execution::online::preprocessing::InMemoryBitDecPreprocessing;
 use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
+#[cfg(any(test, feature = "testing"))]
 use crate::execution::runtime::party::Role;
 use crate::execution::runtime::sessions::base_session::BaseSession;
 use crate::execution::runtime::sessions::base_session::ToBaseSession;
