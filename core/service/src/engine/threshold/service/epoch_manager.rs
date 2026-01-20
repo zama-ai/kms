@@ -50,7 +50,7 @@ use crate::{
             DSEP_PUBDATA_KEY,
         },
         threshold::service::{
-            resharer::get_verified_public_materials,
+            reshare_utils::get_verified_public_materials,
             session::{PRSSSetupCombined, SessionMaker},
             RealThresholdKms, ThresholdFheKeys,
         },
@@ -916,6 +916,7 @@ impl<
             )
         })?;
 
+        // QU: Do we want to rate limit the resharing now that it's part of epoch creations ?
         let permit = self.rate_limiter.start_reshare().await?;
 
         Ok(match two_sets_session.my_role() {
@@ -1026,14 +1027,14 @@ impl<
         request: Request<RequestId>,
     ) -> Result<Response<EpochResultResponse>, Status> {
         let request_id =
-            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::ReshareResponse)?;
+            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::EpochResponse)?;
 
         let status = {
             let guarded_meta_store = self.reshare_pubinfo_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
         };
 
-        let res = handle_res_mapping(status, &request_id, "Reshare").await?;
+        let res = handle_res_mapping(status, &request_id, "Epoch").await?;
 
         match res {
             KeyGenMetadata::Current(res) => {
@@ -1073,7 +1074,402 @@ impl<
     }
 }
 
+// TODO: add negative/dummy protocol testing
 #[cfg(test)]
 mod tests {
-    // TODO: add negative/dummy protocol testing
+    use super::*;
+
+    use crate::{
+        client::test_tools::{self},
+        consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL},
+        cryptography::signatures::gen_sig_keys,
+        engine::base::BaseKmsStruct,
+        util::{key_setup::test_tools::purge, rate_limiter::RateLimiterConfig},
+        vault::storage::{
+            file::FileStorage,
+            ram::{self, RamStorage},
+            StorageType,
+        },
+    };
+    use aes_prng::AesRng;
+    use kms_grpc::{kms::v1::NewMpcEpochRequest, rpc_types::KMSType};
+    use rand::SeedableRng;
+    use threshold_fhe::{
+        execution::endpoints::reshare_sk::SecureReshareSecretKeys,
+        malicious_execution::small_execution::malicious_prss::{EmptyPrss, FailingPrss},
+    };
+
+    impl<
+            Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
+                + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>,
+            Reshare: ReshareSecretKeys,
+        > RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, Init, Reshare>
+    {
+        fn init_test(base_kms: BaseKmsStruct, session_maker: SessionMaker) -> Self {
+            Self {
+                session_maker,
+                health_reporter: HealthReporter::new(),
+                _init: PhantomData,
+                base_kms,
+                crypto_storage: ThresholdCryptoMaterialStorage::new(
+                    RamStorage::new(),
+                    RamStorage::new(),
+                    None,
+                    HashMap::new(),
+                    HashMap::new(),
+                ),
+                reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new(10, 10))),
+                tracker: Arc::new(TaskTracker::new()),
+                rate_limiter: RateLimiter::new(RateLimiterConfig::default()),
+                _reshare: PhantomData,
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    #[tracing_test::traced_test]
+    async fn prss_from_storage_test() {
+        // We're starting two sets of servers in this test, both sets of servers will load all the keys
+        // but it seems that the when shutting down the first set of servers, the keys are not immediately removed from memory
+        // and this leads to OOM. So we reduce the amount of parties to 4 for this test.
+        const PRSS_AMOUNT_PARTIES: usize = 4;
+        const PRSS_THRESHOLD: usize = 1;
+
+        let mut pub_storage = Vec::new();
+        let mut priv_storage = Vec::new();
+        let mut vaults = Vec::new();
+        let mut vaults2 = Vec::new();
+        let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[..PRSS_AMOUNT_PARTIES];
+        let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[..PRSS_AMOUNT_PARTIES];
+
+        for (priv_prefix, pub_prefix) in priv_storage_prefixes
+            .iter()
+            .zip(pub_storage_prefixes.iter())
+        {
+            let cur_pub = FileStorage::new(None, StorageType::PUB, pub_prefix.as_deref()).unwrap();
+            pub_storage.push(cur_pub);
+            let cur_priv =
+                FileStorage::new(None, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
+
+            // make sure the store does not contain any PRSS info (currently stored under ID 1)
+            let req_id = derive_request_id(&format!(
+                "PRSSSetup_Z128_ID_{}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}",
+                *DEFAULT_EPOCH_ID
+            ))
+            .unwrap();
+            purge(
+                None,
+                None,
+                &req_id,
+                pub_storage_prefixes,
+                priv_storage_prefixes,
+            )
+            .await;
+
+            let req_id = derive_request_id(&format!(
+                "PRSSSetup_Z64_ID_{}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}",
+                *DEFAULT_EPOCH_ID
+            ))
+            .unwrap();
+            purge(
+                None,
+                None,
+                &req_id,
+                pub_storage_prefixes,
+                priv_storage_prefixes,
+            )
+            .await;
+
+            priv_storage.push(cur_priv);
+            vaults.push(None);
+            vaults2.push(None);
+        }
+
+        // create parties and run PrssSetup
+        let server_handles = test_tools::setup_threshold_no_client(
+            PRSS_THRESHOLD as u8,
+            pub_storage.clone(),
+            priv_storage.clone(),
+            vaults,
+            true,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(server_handles.len(), PRSS_AMOUNT_PARTIES);
+
+        // shut parties down
+        for server_handle in server_handles.into_values() {
+            server_handle.assert_shutdown().await;
+        }
+
+        // check that PRSS setups were created
+        assert!(logs_contain(
+            "Initializing threshold KMS server and generating a new PRSS Setup for"
+        ));
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+        // create parties again without running PrssSetup this time (it should now be read from storage)
+        let server_handles = test_tools::setup_threshold_no_client(
+            PRSS_THRESHOLD as u8,
+            pub_storage,
+            priv_storage,
+            vaults2,
+            false,
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(server_handles.len(), PRSS_AMOUNT_PARTIES);
+
+        // check that PRSS setups were not created, but instead read from storage now
+        assert!(logs_contain("Loaded PRSS Setup from storage"));
+    }
+
+    // write prss to storage using the legacy method
+    async fn write_legacy_empty_prss_to_storage(private_storage: &mut ram::RamStorage) {
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let num_parties = 4;
+        let threshold = 1u8;
+
+        let prss_setup_obj_z128 = PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]);
+        let prss_setup_obj_z64 = PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]);
+
+        // serialize and write PRSS Setup to storage into private storage
+        store_versioned_at_request_id(
+            private_storage,
+            &derive_request_id(&format!(
+                "PRSSSetup_Z128_ID_{}_{}_{}",
+                epoch_id, num_parties, threshold,
+            ))
+            .unwrap(),
+            &prss_setup_obj_z128,
+            #[expect(deprecated)]
+            &PrivDataType::PrssSetup.to_string(),
+        )
+        .await
+        .unwrap();
+
+        store_versioned_at_request_id(
+            private_storage,
+            &derive_request_id(&format!(
+                "PRSSSetup_Z64_ID_{}_{}_{}",
+                epoch_id, num_parties, threshold,
+            ))
+            .unwrap(),
+            &prss_setup_obj_z64,
+            #[expect(deprecated)]
+            &PrivDataType::PrssSetup.to_string(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn legacy_prss() {
+        let mut rng = AesRng::seed_from_u64(42);
+
+        // initially the storage should be empty
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        {
+            let private_storage = epoch_manager.crypto_storage.get_private_storage();
+            let mut guarded_private_storage = private_storage.lock().await;
+            write_legacy_empty_prss_to_storage(&mut guarded_private_storage).await;
+        }
+
+        epoch_manager.init_legacy_prss_from_storage().await.unwrap();
+
+        let default_epoch_id = *DEFAULT_EPOCH_ID;
+        assert!(
+            epoch_manager
+                .session_maker
+                .epoch_exists(&default_epoch_id)
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn load_all_prss() {
+        let mut rng = AesRng::seed_from_u64(42);
+
+        // initially the storage should be empty
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let epoch_ids: Vec<EpochId> = (0..3).map(|_| EpochId::new_random(&mut rng)).collect();
+        for epoch_id in epoch_ids.iter() {
+            let private_storage = epoch_manager.crypto_storage.get_private_storage();
+            let mut guarded_private_storage = private_storage.lock().await;
+            let prss_setup_z128 = PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]);
+            let prss_setup_z64 = PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]);
+
+            let prss = PRSSSetupCombined {
+                prss_setup_z128,
+                prss_setup_z64,
+                num_parties: 4,
+                threshold: 1,
+            };
+
+            store_versioned_at_request_id(
+                &mut (*guarded_private_storage),
+                &(*epoch_id).into(),
+                &prss,
+                &PrivDataType::PrssSetupCombined.to_string(),
+            )
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(0, epoch_manager.session_maker.epoch_count().await);
+        epoch_manager.init_all_prss_from_storage().await.unwrap();
+        assert_eq!(
+            epoch_ids.len(),
+            epoch_manager.session_maker.epoch_count().await
+        );
+
+        for epoch_id in epoch_ids {
+            assert!(epoch_manager.session_maker.epoch_exists(&epoch_id).await);
+        }
+    }
+
+    async fn make_epoch_manager<
+        I: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
+            + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>,
+    >(
+        rng: &mut AesRng,
+    ) -> RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>
+    {
+        let (_pk, sk) = gen_sig_keys(rng);
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let session_maker =
+            SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
+
+        RealThresholdEpochManager::<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>::init_test(
+            base_kms,
+            session_maker,
+        )
+    }
+
+    #[tokio::test]
+    async fn sunshine() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let epoch_id = EpochId::new_random(&mut rng);
+        epoch_manager
+            .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                epoch_id: Some(epoch_id.into()),
+                context_id: None,
+                previous_context: None,
+            }))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_argument() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+
+        {
+            // bad epoch ID
+            let bad_epoch_id = kms_grpc::kms::v1::RequestId {
+                request_id: "bad epoch id".to_string(),
+            };
+            assert_eq!(
+                epoch_manager
+                    .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                        epoch_id: Some(bad_epoch_id),
+                        context_id: None,
+                        previous_context: None,
+                    }))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            assert_eq!(
+                epoch_manager
+                    .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                        epoch_id: None,
+                        context_id: None,
+                        previous_context: None,
+                    }))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn not_found() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+
+        let epoch_id = EpochId::new_random(&mut rng);
+        let context_id = ContextId::new_random(&mut rng); // should not exist
+        let err = epoch_manager
+            .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                epoch_id: Some(epoch_id.into()),
+                context_id: Some(context_id.into()),
+                previous_context: None,
+            }))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn already_exists() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+
+        let epoch_id = EpochId::new_random(&mut rng);
+        epoch_manager
+            .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                epoch_id: Some(epoch_id.into()),
+                context_id: None,
+                previous_context: None,
+            }))
+            .await
+            .unwrap();
+
+        // try the same again and we should see an AlreadyExists error
+        assert_eq!(
+            epoch_manager
+                .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                    epoch_id: Some(epoch_id.into()),
+                    context_id: None,
+                    previous_context: None,
+                }))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
+    }
+
+    #[tokio::test]
+    async fn internal() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let epoch_manager = make_epoch_manager::<FailingPrss>(&mut rng).await;
+
+        let epoch_id = EpochId::new_random(&mut rng);
+        assert_eq!(
+            epoch_manager
+                .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                    epoch_id: Some(epoch_id.into()),
+                    context_id: None,
+                    previous_context: None,
+                }))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Internal
+        );
+    }
 }

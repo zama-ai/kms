@@ -3,11 +3,6 @@ use kms_grpc::kms::v1::*;
 use tonic::{Request, Response, Status};
 
 #[tonic::async_trait]
-pub trait Initiator {
-    async fn init(&self, request: Request<NewMpcEpochRequest>) -> Result<Response<Empty>, Status>;
-}
-
-#[tonic::async_trait]
 pub trait UserDecryptor {
     async fn user_decrypt(
         &self,
@@ -96,17 +91,4 @@ pub trait InsecureCrsGenerator {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, MetricedError>;
-}
-
-#[tonic::async_trait]
-pub trait Resharer {
-    async fn initiate_resharing(
-        &self,
-        request: Request<NewMpcEpochRequest>,
-    ) -> Result<Response<Empty>, Status>;
-
-    async fn get_resharing_result(
-        &self,
-        request: Request<RequestId>,
-    ) -> Result<Response<EpochResultResponse>, Status>;
 }

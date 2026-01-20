@@ -76,8 +76,6 @@ pub trait ContextManager {
     async fn mpc_context_exists_in_cache(&self, context_id: &ContextId) -> bool;
 }
 
-//NOTE: The struct implementing this will be a
-//merge (refactored) of the current Initiator and Resharer
 #[tonic::async_trait]
 pub trait EpochManager {
     async fn new_mpc_epoch(

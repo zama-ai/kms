@@ -67,8 +67,7 @@ pub(crate) enum RequestIdParsingErr {
     KeyGenResponse,
     UserDecResponse,
     PublicDecResponse,
-
-    ReshareResponse,
+    EpochResponse,
 
     CustodianContext,
     CustodianContextDestruction,
@@ -119,8 +118,8 @@ impl std::fmt::Display for RequestIdParsingErr {
             RequestIdParsingErr::BackupRecovery => {
                 write!(f, "Invalid new backup recovery result response ID")
             }
-            RequestIdParsingErr::ReshareResponse => {
-                write!(f, "Invalid reshare response ID")
+            RequestIdParsingErr::EpochResponse => {
+                write!(f, "Invalid epoch response ID")
             }
         }
     }

@@ -21,6 +21,6 @@ mod epoch_manager;
 mod key_generator;
 mod preprocessor;
 mod public_decryptor;
-mod resharer;
+mod reshare_utils;
 pub mod session;
 mod user_decryptor;

@@ -48,11 +48,11 @@ use crate::{
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 #[traced_test]
-async fn test_reshare() {
-    reshare(4, FheParameter::Test, None).await;
+async fn test_new_epoch_with_reshare() {
+    new_epoch_with_reshare(4, FheParameter::Test, None).await;
 }
 
-pub(crate) async fn reshare(
+pub(crate) async fn new_epoch_with_reshare(
     amount_parties: usize,
     parameters: FheParameter,
     party_ids_to_crash: Option<Vec<usize>>,
