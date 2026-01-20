@@ -13,7 +13,7 @@ use kms_grpc::{
 };
 use tfhe::{
     integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet,
-    zk::CompactPkeCrs, CompactPublicKey,
+    zk::CompactPkeCrs, CompactPublicKey, CompressedCompactPublicKey,
 };
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
@@ -54,6 +54,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         private_storage: PrivS,
         backup_vault: Option<Vault>,
         pk_cache: HashMap<RequestId, CompactPublicKey>,
+        compressed_pk_cache: HashMap<RequestId, CompressedCompactPublicKey>,
         fhe_keys: HashMap<(RequestId, EpochId), ThresholdFheKeys>,
     ) -> Self {
         Self {
@@ -62,6 +63,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 private_storage: Arc::new(Mutex::new(private_storage)),
                 backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
                 pk_cache: Arc::new(RwLock::new(pk_cache)),
+                compressed_pk_cache: Arc::new(RwLock::new(compressed_pk_cache)),
             },
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }
@@ -595,6 +597,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
     pub async fn read_cloned_pk(&self, req_id: &RequestId) -> anyhow::Result<CompactPublicKey> {
         self.inner.read_cloned_pk(req_id).await
+    }
+
+    pub async fn read_cloned_compressed_pk(
+        &self,
+        req_id: &RequestId,
+    ) -> anyhow::Result<CompressedCompactPublicKey> {
+        self.inner.read_cloned_compressed_pk(req_id).await
     }
 
     pub async fn read_cloned_server_key(

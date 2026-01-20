@@ -36,6 +36,7 @@ use kms_grpc::{
     RequestId,
 };
 use std::{collections::HashMap, sync::Arc};
+use tfhe::CompressedCompactPublicKey;
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs, CompactPublicKey};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
@@ -71,6 +72,10 @@ pub struct CryptoMaterialStorage<
     /// Cache for already generated public keys
     /// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
     pub(crate) pk_cache: Arc<RwLock<HashMap<RequestId, CompactPublicKey>>>,
+
+    /// Cache for already generated compressed public keys
+    /// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
+    pub(crate) compressed_pk_cache: Arc<RwLock<HashMap<RequestId, CompressedCompactPublicKey>>>,
     // Cache for current backup key (if it is set)
     // Observe that the `Option` is inside the lock since it may be added during runtime through a new custodian context.
     // pub(crate) current_backup_key: Arc<RwLock<Option<BackupPublicKey>>>,
@@ -93,12 +98,15 @@ where
         private_storage: Arc<Mutex<PrivS>>,
         backup_vault: Option<Arc<Mutex<Vault>>>,
         pk_cache: Option<Arc<RwLock<HashMap<RequestId, CompactPublicKey>>>>,
+        compressed_pk_cache: Option<Arc<RwLock<HashMap<RequestId, CompressedCompactPublicKey>>>>,
     ) -> Self {
         Self {
             public_storage,
             private_storage,
             backup_vault,
             pk_cache: pk_cache.unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new()))),
+            compressed_pk_cache: compressed_pk_cache
+                .unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new()))),
         }
     }
 
@@ -108,12 +116,14 @@ where
         private_storage: PrivS,
         backup_vault: Option<Vault>,
         pk_cache: Option<Arc<RwLock<HashMap<RequestId, CompactPublicKey>>>>,
+        compressed_pk_cache: Option<Arc<RwLock<HashMap<RequestId, CompressedCompactPublicKey>>>>,
     ) -> Self {
         Self::new(
             Arc::new(Mutex::new(public_storage)),
             Arc::new(Mutex::new(private_storage)),
             backup_vault.map(|s| Arc::new(Mutex::new(s))),
             pk_cache,
+            compressed_pk_cache,
         )
     }
 
@@ -852,6 +862,20 @@ where
         .await
     }
 
+    /// Read the compressed public key from a cache, if it does not exist,
+    /// attempt to read it from the public storage backend.
+    pub(crate) async fn read_cloned_compressed_pk(
+        &self,
+        req_id: &RequestId,
+    ) -> anyhow::Result<CompressedCompactPublicKey> {
+        Self::read_cloned_crypto_material::<CompressedCompactPublicKey, _>(
+            self.compressed_pk_cache.clone(),
+            req_id,
+            self.public_storage.clone(),
+        )
+        .await
+    }
+
     /// Read the server key
     /// from the public storage backend.
     pub(crate) async fn read_cloned_server_key(
@@ -1021,6 +1045,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             private_storage: Arc::clone(&self.private_storage),
             backup_vault: self.backup_vault.as_ref().map(Arc::clone),
             pk_cache: Arc::clone(&self.pk_cache),
+            compressed_pk_cache: Arc::clone(&self.compressed_pk_cache),
         }
     }
 }

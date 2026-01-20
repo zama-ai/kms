@@ -808,6 +808,7 @@ mod tests {
             None,
             HashMap::new(),
             HashMap::new(),
+            HashMap::new(),
         );
 
         let context_info = ContextInfo {

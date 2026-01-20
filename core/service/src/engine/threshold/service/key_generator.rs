@@ -1205,9 +1205,7 @@ impl<
 
                 let threshold_fhe_keys = ThresholdFheKeys {
                     private_keys: Arc::new(private_keys),
-                    public_material: PublicKeyMaterial::Compressed {
-                        compressed_keyset: Arc::new(compressed_keyset.clone()),
-                    },
+                    public_material: PublicKeyMaterial::new_compressed(compressed_keyset.clone()),
                     meta_data: info.clone(),
                 };
 
@@ -1288,6 +1286,7 @@ mod tests {
                 pub_storage,
                 priv_storage,
                 None,
+                HashMap::new(),
                 HashMap::new(),
                 HashMap::new(),
             );

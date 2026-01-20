@@ -1096,6 +1096,84 @@ pub fn decompress_compressed_standalone_decompression_key_from_xof(
     (decompressed_key, count)
 }
 
+#[cfg(feature = "testing")]
+pub mod conformance {
+    use tfhe::core_crypto::prelude::{
+        decrypt_lwe_ciphertext, divide_round, ContiguousEntityContainer, LweCiphertextOwned,
+    };
+    use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
+    use tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey;
+    use tfhe::shortint::server_key::ModulusSwitchConfiguration;
+    use tfhe::shortint::ClassicPBSParameters;
+
+    pub fn check_drift_technique_key(
+        pbs_params: ClassicPBSParameters,
+        server_key: &tfhe::ServerKey,
+        client_key: &tfhe::shortint::ClientKey,
+    ) {
+        let int_server_key: &tfhe::integer::ServerKey = server_key.as_ref();
+        let shortint_server_key: &tfhe::shortint::ServerKey = int_server_key.as_ref();
+
+        match &shortint_server_key.atomic_pattern {
+            AtomicPatternServerKey::Standard(atomic_pattern) => {
+                match &atomic_pattern.bootstrapping_key {
+                    tfhe::shortint::server_key::ShortintBootstrappingKey::Classic {
+                        bsk: _bsk,
+                        modulus_switch_noise_reduction_key,
+                    } => {
+                        match modulus_switch_noise_reduction_key {
+                            // Check that we can decrypt this key to 0
+                            ModulusSwitchConfiguration::DriftTechniqueNoiseReduction(key) => {
+                                let zeros_ct = &key.modulus_switch_zeros;
+                                let client_key = client_key.clone().atomic_pattern;
+
+                                //NOTE: Small workaround to cope with tfhe-rs change to the ClientKey decryption
+                                //to fetch the key based on the ctxt's PBSOrder and not the key's EncryptionKeyChoice
+                                let lwe_secret_key = if let AtomicPatternClientKey::Standard(
+                                    client_key,
+                                ) = client_key
+                                {
+                                    let (_, lwe_sk, _, _) = client_key.into_raw_parts();
+                                    lwe_sk
+                                } else {
+                                    panic!("Expected Standard AtomicPatternClientKey");
+                                };
+
+                                let message_space_size =
+                                    pbs_params.message_modulus.0 * pbs_params.carry_modulus.0 * 2;
+                                let delta = 1u64 << (u64::BITS - (message_space_size).ilog2());
+                                // We need to make a reference ciphertext to convert
+                                // the zero ciphertexts into a Ciphertext Type
+                                for ct in zeros_ct.iter() {
+                                    let ctt = LweCiphertextOwned::from_container(
+                                        ct.into_container().to_vec(),
+                                        ct.ciphertext_modulus(),
+                                    );
+
+                                    let pt = decrypt_lwe_ciphertext(&lwe_secret_key, &ctt);
+                                    // This is enough as this is expected to be a fresh encryption of 0
+                                    let pt = divide_round(pt.0, delta) % message_space_size;
+                                    assert_eq!(pt, 0);
+                                }
+                            }
+                            //In case of Standard or CenteredMeanNoiseReduction, we don't have a modulus switch key so do nothing
+                            ModulusSwitchConfiguration::Standard => {}
+                            ModulusSwitchConfiguration::CenteredMeanNoiseReduction => {}
+                        }
+                    }
+                    _ => panic!("expected classic bsk"),
+                }
+            }
+            AtomicPatternServerKey::KeySwitch32(_) => {
+                panic!("Unsuported AtomicPatternServerKey::KeySwitch32")
+            }
+            AtomicPatternServerKey::Dynamic(_) => {
+                panic!("Unsuported AtomicPatternServerKey::Dynamic")
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::OnlineDistributedKeyGen;
@@ -1106,6 +1184,7 @@ pub mod tests {
             structure_traits::{ErrorCorrect, Invert, Solve},
         },
         execution::{
+            endpoints::keygen::conformance::check_drift_technique_key,
             online::preprocessing::dummy::DummyPreprocessing,
             runtime::sessions::{
                 large_session::LargeSession, session_parameters::GenericParameterHandles,
@@ -2000,7 +2079,7 @@ pub mod tests {
         threshold: usize,
         prefix_path: &Path,
         keyset_config: KeySetConfig,
-        run_compressed: bool,
+        compressed_keygen: bool,
     ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
@@ -2057,7 +2136,7 @@ pub mod tests {
             assert_ne!(0, dkg_preproc.randoms_len());
 
             let my_role = session.my_role();
-            let (pk, sk) = if run_compressed {
+            let (pk, sk) = if compressed_keygen {
                 let (compressed_pk, sk) =
                     super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::compressed_keygen(
                         &mut session,
@@ -2532,6 +2611,7 @@ pub mod tests {
             atomic_pattern: AtomicPatternClientKey::Standard(sck),
         };
 
+        check_drift_technique_key(params_tfhe_rs, &pk.server_key, &shortint_client_key);
         (shortint_client_key, pk)
     }
 

@@ -10,10 +10,7 @@ use kms_grpc::{
 };
 use observability::{conf::TelemetryConfig, metrics};
 use serde::{Deserialize, Serialize};
-use tfhe::{
-    core_crypto::prelude::LweKeyswitchKey, integer::compression_keys::DecompressionKey,
-    named::Named, Versionize,
-};
+use tfhe::{core_crypto::prelude::LweKeyswitchKey, named::Named, Versionize};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
@@ -103,12 +100,33 @@ pub enum PublicKeyMaterial {
     Uncompressed {
         integer_server_key: Arc<tfhe::integer::ServerKey>,
         sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
-        decompression_key: Option<Arc<DecompressionKey>>,
+        decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
     },
     /// Compressed keys - need decompression before use via XOF seed
     Compressed {
         compressed_keyset: Arc<tfhe::xof_key_set::CompressedXofKeySet>,
+        // TODO can we only store standard keyset with the xofseed?
+        // we need the standard keyset for decryptions
+        integer_server_key: Arc<tfhe::integer::ServerKey>,
+        sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
+        decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
     },
+}
+
+impl PublicKeyMaterial {
+    pub fn new_compressed(compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet) -> Self {
+        let compressed_keyset_cloned = compressed_keyset.clone();
+        let (_, _, compressed_server_key) = compressed_keyset_cloned.into_raw_parts();
+        let server_key = compressed_server_key.decompress();
+        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
+            server_key.into_raw_parts();
+        Self::Compressed {
+            compressed_keyset: Arc::new(compressed_keyset),
+            integer_server_key: Arc::new(integer_server_key),
+            sns_key: sns_key.map(Arc::new),
+            decompression_key: decompression_key.map(Arc::new),
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -135,7 +153,7 @@ pub struct ThresholdFheKeysV1 {
     pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     pub integer_server_key: Arc<tfhe::integer::ServerKey>,
     pub sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
-    pub decompression_key: Option<Arc<DecompressionKey>>,
+    pub decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
     pub meta_data: KeyGenMetadata,
 }
 
@@ -145,7 +163,7 @@ pub struct ThresholdFheKeysV0 {
     pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     pub integer_server_key: Arc<tfhe::integer::ServerKey>,
     pub sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
-    pub decompression_key: Option<Arc<DecompressionKey>>,
+    pub decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
     pub pk_meta_data: HashMap<PubDataType, SignedPubDataHandleInternal>,
 }
 
@@ -184,55 +202,47 @@ impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV1 {
 impl ThresholdFheKeys {
     /// Get the integer server key from the public material.
     /// Returns an error if the keys are compressed (need decompression first).
-    pub fn get_integer_server_key(&self) -> anyhow::Result<&Arc<tfhe::integer::ServerKey>> {
+    pub fn get_integer_server_key(&self) -> Arc<tfhe::integer::ServerKey> {
         match &self.public_material {
             PublicKeyMaterial::Uncompressed {
                 integer_server_key, ..
-            } => Ok(integer_server_key),
-            PublicKeyMaterial::Compressed { .. } => {
-                anyhow::bail!(
-                    "Cannot get integer server key from compressed keys - decompression required"
-                )
-            }
+            } => integer_server_key.clone(),
+            PublicKeyMaterial::Compressed {
+                integer_server_key, ..
+            } => integer_server_key.clone(),
         }
     }
 
     /// Get the SNS key from the public material.
     /// Returns an error if the keys are compressed (need decompression first).
-    pub fn get_sns_key(
-        &self,
-    ) -> anyhow::Result<Option<&Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>> {
+    pub fn get_sns_key(&self) -> Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>> {
         match &self.public_material {
-            PublicKeyMaterial::Uncompressed { sns_key, .. } => Ok(sns_key.as_ref()),
-            PublicKeyMaterial::Compressed { .. } => {
-                // TODO
-                anyhow::bail!("Cannot get SNS key from compressed keys - decompression required")
-            }
+            PublicKeyMaterial::Uncompressed { sns_key, .. } => sns_key.clone(),
+            PublicKeyMaterial::Compressed { sns_key, .. } => sns_key.clone(),
         }
     }
 
     /// Get the decompression key from the public material.
     /// Returns an error if the keys are compressed (need decompression first).
-    pub fn get_decompression_key(&self) -> anyhow::Result<Option<&Arc<DecompressionKey>>> {
+    pub fn get_decompression_key(
+        &self,
+    ) -> Option<Arc<tfhe::integer::compression_keys::DecompressionKey>> {
         match &self.public_material {
             PublicKeyMaterial::Uncompressed {
                 decompression_key, ..
-            } => Ok(decompression_key.as_ref()),
-            PublicKeyMaterial::Compressed { .. } => {
-                // TODO
-                anyhow::bail!(
-                    "Cannot get decompression key from compressed keys - decompression required"
-                )
-            }
+            } => decompression_key.clone(),
+            PublicKeyMaterial::Compressed {
+                decompression_key, ..
+            } => decompression_key.clone(),
         }
     }
 
-    pub fn get_key_switching_key(&self) -> anyhow::Result<&LweKeyswitchKey<Vec<u64>>> {
-        let integer_server_key = self.get_integer_server_key()?;
+    pub fn get_key_switching_key(&self) -> anyhow::Result<LweKeyswitchKey<Vec<u64>>> {
+        let integer_server_key = self.get_integer_server_key();
         match &integer_server_key.as_ref().as_ref().atomic_pattern {
             tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Standard(
                 standard_atomic_pattern_server_key,
-            ) => Ok(&standard_atomic_pattern_server_key.key_switching_key),
+            ) => Ok(standard_atomic_pattern_server_key.key_switching_key.clone()),
             tfhe::shortint::atomic_pattern::AtomicPatternServerKey::KeySwitch32(_) => {
                 anyhow::bail!("No support for KeySwitch32 server key")
             }
@@ -358,6 +368,7 @@ where
 
     let mut public_key_info = HashMap::new();
     let mut pk_map = HashMap::new();
+    let mut compressed_pk_map = HashMap::new();
     let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
@@ -371,10 +382,43 @@ where
     for ((id, _), info) in key_info_versioned.clone().into_iter() {
         public_key_info.insert(id, info.meta_data.clone());
 
-        let pk =
-            read_versioned_at_request_id(&public_storage, &id, &PubDataType::PublicKey.to_string())
-                .await?;
-        pk_map.insert(id, pk);
+        // there should be at least one that succeeds
+        let pk_ok = match read_versioned_at_request_id(
+            &public_storage,
+            &id,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        {
+            Ok(pk) => {
+                pk_map.insert(id, pk);
+                true
+            }
+            Err(e) => {
+                tracing::warn!("Failed to find CompactPublicKey for id={id}: {e}");
+                false
+            }
+        };
+        let compressed_pk_ok = match read_versioned_at_request_id(
+            &public_storage,
+            &id,
+            &PubDataType::CompressedCompactPublicKey.to_string(),
+        )
+        .await
+        {
+            Ok(pk) => {
+                compressed_pk_map.insert(id, pk);
+                true
+            }
+            Err(e) => {
+                tracing::warn!("Failed to find CompressedCompactPublicKey for id={id}: {e}");
+                false
+            }
+        };
+
+        if !compressed_pk_ok && !pk_ok {
+            anyhow::bail!("Could not find a public key for id={id}")
+        }
     }
 
     // load crs_info (roughly hashes of CRS) from storage
@@ -514,6 +558,7 @@ where
         private_storage,
         backup_storage,
         pk_map,
+        compressed_pk_map,
         key_info_versioned,
     );
 

@@ -11,7 +11,10 @@ use kms_grpc::{
     rpc_types::{KMSType, PrivDataType, PubDataType},
     RequestId,
 };
-use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs, CompactPublicKey};
+use tfhe::{
+    integer::compression_keys::DecompressionKey, zk::CompactPkeCrs, CompactPublicKey,
+    CompressedCompactPublicKey,
+};
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
@@ -47,6 +50,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         private_storage: PrivS,
         backup_vault: Option<Vault>,
         pk_cache: HashMap<RequestId, CompactPublicKey>,
+        compressed_pk_cache: HashMap<RequestId, CompressedCompactPublicKey>,
         fhe_keys: HashMap<(RequestId, EpochId), KmsFheKeyHandles>,
     ) -> Self {
         Self {
@@ -55,6 +59,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 private_storage: Arc::new(Mutex::new(private_storage)),
                 backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
                 pk_cache: Arc::new(RwLock::new(pk_cache)),
+                compressed_pk_cache: Arc::new(RwLock::new(compressed_pk_cache)),
             },
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }

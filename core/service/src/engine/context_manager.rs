@@ -980,8 +980,13 @@ mod tests {
         }));
         drop(guarded_pub_storage);
 
-        let crypto_storage =
-            CryptoMaterialStorage::<_, _>::new(priv_storage, pub_storage, Some(backup_vault), None);
+        let crypto_storage = CryptoMaterialStorage::<_, _>::new(
+            priv_storage,
+            pub_storage,
+            Some(backup_vault),
+            None,
+            None,
+        );
 
         // store private signing key
         let (pk, sk) = gen_sig_keys(&mut OsRng);
