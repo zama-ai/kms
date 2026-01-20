@@ -34,3 +34,5 @@ ci/
 .config/
 NIST_scripts/
 docs/
+devspace.yaml
+.devspace/

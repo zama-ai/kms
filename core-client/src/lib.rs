@@ -24,7 +24,7 @@ use crate::keygen::{
     do_keygen, do_partial_preproc, do_preproc, fetch_and_check_keygen, get_keygen_responses,
     get_preproc_keygen_responses,
 };
-use crate::mpc_context::do_new_mpc_context;
+use crate::mpc_context::{do_destroy_mpc_context, do_new_mpc_context};
 use crate::prss_init::do_prss_init;
 use crate::reshare::do_reshare;
 use aes_prng::AesRng;
@@ -592,6 +592,7 @@ pub struct NewCustodianContextParameters {
     #[clap(long, short = 'm')]
     pub setup_msg_paths: Vec<PathBuf>,
 }
+
 #[derive(Debug, Args, Clone)]
 pub struct ContextPath {
     /// Input file of the ciphertext.
@@ -605,6 +606,13 @@ pub enum NewMpcContextParameters {
     /// stored in a file.
     SerializedContextPath(ContextPath),
     ContextToml(ContextPath),
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct DestroyMpcContextParameters {
+    /// The context ID to use for the MPC context to destroy.
+    #[clap(long)]
+    pub context_id: ContextId,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -726,6 +734,7 @@ pub enum CCCommand {
     Reshare(ReshareParameters),
     #[clap(subcommand)]
     NewMpcContext(NewMpcContextParameters),
+    DestroyMpcContext(DestroyMpcContextParameters),
     PrssInit(PrssInitParameters),
     #[cfg(feature = "testing")]
     NewTestingMpcContextFile(NewTestingMpcContextFileParameters),
@@ -1778,6 +1787,13 @@ pub async fn execute_cmd(
                     "new testing mpc context created and stored to file {:?}",
                     context_path
                 ),
+            )]
+        }
+        CCCommand::DestroyMpcContext(DestroyMpcContextParameters { context_id }) => {
+            do_destroy_mpc_context(&core_endpoints_req, context_id).await?;
+            vec![(
+                Some((*context_id).into()),
+                "context destruction done".to_string(),
             )]
         }
         CCCommand::PrssInit(PrssInitParameters {

@@ -329,7 +329,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                     tonic::Code::InvalidArgument,
                 )
             })?;
-        // Find the role of the current server and validate the context exists
+        // Find the role of the current server for the given context and implicitely validate the context exists
         let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
             MetricedError::new(
                 OP_KEYGEN_PREPROC_REQUEST,
@@ -343,7 +343,16 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             (TAG_CONTEXT_ID, context_id.as_str()),
             (TAG_EPOCH_ID, epoch_id.as_str()),
         ];
-        timer.tags(metric_tags.clone());
+        timer.tags(metric_tags);
+
+        if !self.session_maker.epoch_exists(&epoch_id).await {
+            return Err(MetricedError::new(
+                OP_KEYGEN_PREPROC_REQUEST,
+                Some(request_id),
+                format!("Epoch {epoch_id} not found"),
+                tonic::Code::NotFound,
+            ));
+        }
 
         // Add preprocessing to metastore and fail in case it is already present
         add_req_to_meta_store(
@@ -685,18 +694,43 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         // `NotFound` - If the preprocessing does not exist for `request`.
-        let mut rng = AesRng::seed_from_u64(22);
-        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
-        let req_id = RequestId::new_random(&mut rng);
+        {
+            let mut rng = AesRng::seed_from_u64(22);
+            let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+            let req_id = RequestId::new_random(&mut rng);
 
-        // no need to wait because [get_result] is semi-blocking
-        assert_eq!(
-            prep.get_result(tonic::Request::new(req_id.into()))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::NotFound
-        );
+            // no need to wait because [get_result] is semi-blocking
+            assert_eq!(
+                prep.get_result(tonic::Request::new(req_id.into()))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::NotFound
+            );
+        }
+        // `NotFound` - If the PRSS/epoch does not exist
+        {
+            let mut rng = AesRng::seed_from_u64(23);
+            let prep = setup_prep::<DummyProducerFactory>(&mut rng, false).await;
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+            let req_id = RequestId::new_random(&mut rng);
+            let request = KeyGenPreprocRequest {
+                request_id: Some(req_id.into()),
+                params: FheParameter::Test as i32,
+                keyset_config: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                domain: Some(domain),
+                epoch_id: None,
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::NotFound
+            );
+        }
     }
 
     #[tokio::test]
@@ -726,31 +760,6 @@ mod tests {
                 .code(),
             tonic::Code::AlreadyExists
         );
-    }
-
-    #[tokio::test]
-    #[tracing_test::traced_test]
-    async fn no_prss_error() {
-        // Starting a preprocessing request will fail if there's no PRSS
-        let mut rng = AesRng::seed_from_u64(22);
-        let prep = setup_prep::<DummyProducerFactory>(&mut rng, false).await;
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-
-        let req_id = RequestId::new_random(&mut rng);
-        let request = KeyGenPreprocRequest {
-            request_id: Some(req_id.into()),
-            params: FheParameter::Test as i32,
-            keyset_config: None,
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            domain: Some(domain),
-            epoch_id: None,
-        };
-        let err = prep
-            .key_gen_preproc(tonic::Request::new(request))
-            .await
-            .unwrap_err();
-        assert_eq!(err.code(), tonic::Code::Internal);
-        logs_contain("not found in epoch map");
     }
 
     #[tokio::test]
