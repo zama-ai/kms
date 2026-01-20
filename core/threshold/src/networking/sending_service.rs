@@ -470,8 +470,10 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
 
         tracing::debug!("Waiting to receive from {:?}", sender);
 
-        let mut log_interval =
-            tokio::time::interval(Duration::from_secs(NETWORKING_INTERVAL_LOGS_WAITING_SENDER));
+        let mut log_interval = tokio::time::interval_at(
+            Instant::now() + Duration::from_secs(NETWORKING_INTERVAL_LOGS_WAITING_SENDER),
+            Duration::from_secs(NETWORKING_INTERVAL_LOGS_WAITING_SENDER),
+        );
         let mut local_packet = loop {
             let packet = tokio::select! {
                     _ = log_interval.tick() => {
