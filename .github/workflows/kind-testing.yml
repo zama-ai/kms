@@ -20,26 +20,26 @@ jobs:
   # This job is currently disabled but can be used to build and publish Docker images
   # for testing purposes when needed.
   ############################################################################
-  docker-build:
-    if: github.event_name == 'pull_request'
-    name: kind-testing/docker-build
-    permissions:
-      actions: read # Read workflow run information
-      contents: write # Checkout repository code
-      id-token: write # OIDC authentication
-      pull-requests: read # read pull requests information
-      packages: write # Publish Docker images
-      attestations: write # Create build attestations
-    uses: ./.github/workflows/docker-build.yml
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+  # docker-build:
+  #   if: github.event_name == 'pull_request'
+  #   name: kind-testing/docker-build
+  #   permissions:
+  #     actions: read # Read workflow run information
+  #     contents: write # Checkout repository code
+  #     id-token: write # OIDC authentication
+  #     pull-requests: read # read pull requests information
+  #     packages: write # Publish Docker images
+  #     attestations: write # Create build attestations
+  #   uses: ./.github/workflows/docker-build.yml
+  #   secrets:
+  #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+  #     AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+  #     AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+  #     SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+  #     SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+  #     JOB_SECRET: ${{ secrets.JOB_SECRET }}
+  #     CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+  #     CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
   # Start EC2 Runner Jobs
@@ -48,8 +48,8 @@ jobs:
   start-runner-cargo:
     name: kind-testing/start-runner (cargo)
     runs-on: ubuntu-latest
-    needs:
-      - docker-build
+    # needs:
+    #   - docker-build
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
     steps:
@@ -67,8 +67,8 @@ jobs:
   start-runner-threshold:
     name: kind-testing/start-runner (threshold)
     runs-on: ubuntu-latest
-    needs:
-      - docker-build
+    # needs:
+    #   - docker-build
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
     steps:
@@ -86,8 +86,8 @@ jobs:
   start-runner-centralized:
     name: kind-testing/start-runner (centralized)
     runs-on: ubuntu-latest
-    needs:
-      - docker-build
+    # needs:
+    #   - docker-build
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
     steps:
@@ -127,7 +127,7 @@ jobs:
       - start-runner-cargo
       - start-runner-threshold
       - start-runner-centralized
-      - docker-build
+      # - docker-build
     runs-on: ${{ matrix.runner-label }}
 
     steps:
@@ -304,8 +304,8 @@ jobs:
         env:
           DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
           GITHUB_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
-          KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
-          KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          KMS_CORE_IMAGE_TAG: "f85855c" # ${{ needs.docker-build.outputs.image_tag }}
+          KMS_CORE_CLIENT_IMAGE_TAG: "f85855c" # ${{ needs.docker-build.outputs.image_tag }}
           NAMESPACE: kms-test-${{ matrix.deployment-type }}
           NUM_PARTIES: ${{ matrix.num-parties }} # Number of parties
         run: |
@@ -383,7 +383,7 @@ jobs:
         with:
           name: kms-core-${{ matrix.deployment-type }}-logs
           path: |
-            /tmp/kms-service-threshold-*.log
+            /tmp/kms-service-*.log
             /tmp/kms-core-*.log
           retention-days: 7 # Keep logs for 7 days
           if-no-files-found: warn # Only warn if no log files are found

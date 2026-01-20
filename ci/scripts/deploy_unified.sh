@@ -357,6 +357,7 @@ generate_helm_overrides() {
     local GEN_KEYS="false"
     local TOLERATION_KEY="karpenter.sh/nodepool"
     local TOLERATION_VALUE="kms-bench-spot-64" # Default for Standard
+    local INCLUDE_TOLERATIONS="false"
     local TLS_ENABLED="false"
     local NUM_MAJORITY="1"
     local NUM_RECONSTRUCT="1"
@@ -371,6 +372,10 @@ generate_helm_overrides() {
          TLS_ENABLED="true"
     fi
 
+    if [[ "${TARGET}" == "aws-ci" ]]; then
+        INCLUDE_TOLERATIONS="true"
+    fi
+
     # Set Threshold params
     if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
         # Default for 4 parties as per original workflow
@@ -383,12 +388,17 @@ kmsCore:
   image:
     name: "${KMS_IMAGE_NAME}"
     tag: "${KMS_CORE_TAG}"
+EOF
+
+    if [[ "${INCLUDE_TOLERATIONS}" == "true" ]]; then
+        cat <<EOF >> "${output_file}"
   tolerations:
     - key: "${TOLERATION_KEY}"
       effect: "NoSchedule"
       operator: "Equal"
       value: "${TOLERATION_VALUE}"
 EOF
+    fi
 
     # Append Enclave specific settings
     if [[ "${IS_ENCLAVE}" == "true" && "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
@@ -407,11 +417,19 @@ EOF
     cat <<EOF >> "${output_file}"
 
 kmsCoreClient:
+EOF
+
+    if [[ "${INCLUDE_TOLERATIONS}" == "true" ]]; then
+        cat <<EOF >> "${output_file}"
   tolerations:
     - key: "karpenter.sh/nodepool"
       effect: "NoSchedule"
       operator: "Equal"
       value: "zws-pool"
+EOF
+    fi
+
+    cat <<EOF >> "${output_file}"
   num_majority: ${NUM_MAJORITY}
   num_reconstruct: ${NUM_RECONSTRUCT}
 
