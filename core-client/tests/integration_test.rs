@@ -593,11 +593,17 @@ async fn destroy_mpc_context(context_id: &ContextId, config_path: &Path, test_pa
 }
 
 // expect the context to already exist in the KMS servers
-async fn new_prss(context_id: ContextId, epoch_id: EpochId, config_path: &Path, test_path: &Path) {
-    let command = CCCommand::PrssInit(PrssInitParameters {
+async fn new_genesis_epoch(
+    context_id: ContextId,
+    epoch_id: EpochId,
+    config_path: &Path,
+    test_path: &Path,
+) {
+    let command = CCCommand::NewEpoch(NewEpochType::Fresh(NewEpochParameters {
+        new_epoch_id: epoch_id,
         context_id,
-        epoch_id,
-    });
+    }));
+
     let init_config = CmdConfig {
         file_conf: Some(vec![String::from(config_path.to_str().unwrap())]),
         command,
@@ -1402,7 +1408,7 @@ async fn test_threshold_mpc_context_init(ctx: &DockerComposeThresholdTestNoInit)
     let epoch_id =
         EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222224444")
             .unwrap();
-    new_prss(context_id, epoch_id, &config_path, test_path).await;
+    new_genesis_epoch(context_id, epoch_id, &config_path, test_path).await;
 
     // do preproc and keygen (which should use the prss)
     let _ = real_preproc_and_keygen(
@@ -1442,7 +1448,7 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
         let epoch_id =
             EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222224444")
                 .unwrap();
-        new_prss(context_id, epoch_id, &config_path, test_path).await;
+        new_genesis_epoch(context_id, epoch_id, &config_path, test_path).await;
     }
 
     // second mpc context with parties 5, 6, 3, 4
@@ -1464,7 +1470,7 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
         let epoch_id =
             EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222226666")
                 .unwrap();
-        new_prss(context_id, epoch_id, &alternative_config_path, test_path).await;
+        new_genesis_epoch(context_id, epoch_id, &alternative_config_path, test_path).await;
 
         // do preproc and keygen (which should use the prss)
         let _ = real_preproc_and_keygen(

@@ -57,7 +57,7 @@ pub async fn key_gen_impl<
 
     // context_id is not used in the centralized KMS, but we validate it if present
     let context_id = match &inner.context_id {
-        Some(ctx) => parse_proto_context_id(ctx, RequestIdParsingErr::Context)?,
+        Some(ctx) => parse_proto_context_id(ctx)?,
         None => *DEFAULT_MPC_CONTEXT,
     };
 

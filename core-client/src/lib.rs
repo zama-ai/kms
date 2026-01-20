@@ -7,8 +7,7 @@ mod crsgen;
 mod decrypt;
 mod keygen;
 pub mod mpc_context;
-mod prss_init;
-mod reshare;
+mod mpc_epoch;
 mod s3_operations;
 
 // reexport fetch_public_elements for integration test
@@ -25,8 +24,7 @@ use crate::keygen::{
     get_preproc_keygen_responses,
 };
 use crate::mpc_context::{do_destroy_mpc_context, do_new_mpc_context};
-use crate::prss_init::do_prss_init;
-use crate::reshare::do_new_epoch;
+use crate::mpc_epoch::do_new_epoch;
 use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
@@ -437,22 +435,6 @@ pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
     Ok(hex::decode(hex_str)?)
 }
 
-/// Initialize the PRSS for a given context and epoch.
-///
-/// This command will be deprecated and be combined with the resharing command.
-#[derive(Debug, Parser, Clone)]
-pub struct PrssInitParameters {
-    /// Optionally specify the context ID to use for the PRSS initialization.
-    /// Defaults to the default epoch if not specified.
-    #[clap(long)]
-    pub context_id: ContextId,
-    /// Optionally specify the epoch ID to use for the PRSS initialization.
-    /// Defaults to the default epoch if not specified.
-    /// The PRSS will be stored under the epoch ID.
-    #[clap(long)]
-    pub epoch_id: EpochId,
-}
-
 #[derive(Debug, Subcommand, Clone)]
 pub enum CipherArguments {
     FromFile(CipherFile),
@@ -755,7 +737,6 @@ pub enum CCCommand {
     #[clap(subcommand)]
     NewMpcContext(NewMpcContextParameters),
     DestroyMpcContext(DestroyMpcContextParameters),
-    PrssInit(PrssInitParameters),
     #[cfg(feature = "testing")]
     NewTestingMpcContextFile(NewTestingMpcContextFileParameters),
     DoNothing(NoParameters),
@@ -1836,13 +1817,6 @@ pub async fn execute_cmd(
                 Some((*context_id).into()),
                 "context destruction done".to_string(),
             )]
-        }
-        CCCommand::PrssInit(PrssInitParameters {
-            context_id,
-            epoch_id,
-        }) => {
-            do_prss_init(&core_endpoints_req, context_id, epoch_id).await?;
-            vec![(Some((*epoch_id).into()), "prss init done".to_string())]
         }
     };
 
