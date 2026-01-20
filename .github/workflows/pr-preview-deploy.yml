@@ -170,6 +170,26 @@ jobs:
           echo "Configuring kubeconfig for Tailscale cluster..."
           tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
 
+      # ======================================================================
+      # CHECK IF NAMESPACE EXISTS
+      # ======================================================================
+      - name: Check if namespace exists, delete and create
+        run: |
+          if kubectl get namespace "${NAMESPACE}" > /dev/null 2>&1; then
+            echo "Namespace ${NAMESPACE} already exists"
+            echo "Destroying namespace ${NAMESPACE}..."
+            helm list -n "${NAMESPACE}" --short | xargs -L1 helm uninstall -n "${NAMESPACE}"
+            kubectl delete namespace "${NAMESPACE}" --grace-period=1 --timeout=5s --wait=false
+            echo "Waiting for namespace to be destroyed..."
+            kubectl wait --for=delete namespace/"${NAMESPACE}" --timeout=120s
+            echo "Namespace ${NAMESPACE} destroyed"
+            kubectl get namespace
+            kubectl create namespace "${NAMESPACE}"
+          else
+            echo "Namespace ${NAMESPACE} does not exist"
+            kubectl create namespace "${NAMESPACE}"
+          fi
+
       - name: Checkout Project KMS
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
