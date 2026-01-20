@@ -191,6 +191,7 @@ mod tests {
         match pdt {
             PubDataType::ServerKey => vec![KeyType::FheKeys],
             PubDataType::PublicKey => vec![KeyType::CompactPublicKeys],
+            #[allow(deprecated)]
             PubDataType::PublicKeyMetadata => vec![KeyType::CompactPublicKeys],
             PubDataType::CRS => vec![KeyType::CrsKeys],
             PubDataType::VerfKey => vec![KeyType::SigningKeys],

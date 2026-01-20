@@ -486,6 +486,7 @@ pub(crate) async fn user_decryption_threshold(
         key_id,
         PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
         enc_config,
+        false, // compressed_keys
     )
     .await;
 

@@ -205,6 +205,7 @@ impl ThresholdFheKeys {
         match &self.public_material {
             PublicKeyMaterial::Uncompressed { sns_key, .. } => Ok(sns_key.as_ref()),
             PublicKeyMaterial::Compressed { .. } => {
+                // TODO
                 anyhow::bail!("Cannot get SNS key from compressed keys - decompression required")
             }
         }
@@ -218,6 +219,7 @@ impl ThresholdFheKeys {
                 decompression_key, ..
             } => Ok(decompression_key.as_ref()),
             PublicKeyMaterial::Compressed { .. } => {
+                // TODO
                 anyhow::bail!(
                     "Cannot get decompression key from compressed keys - decompression required"
                 )

@@ -398,6 +398,7 @@ pub(crate) mod tests {
     use tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey;
     use tfhe::shortint::server_key::ModulusSwitchConfiguration;
 
+    #[cfg(feature = "slow_tests")]
     pub(crate) fn check_conformance_compressed(
         server_key: tfhe::CompressedServerKey,
         client_key: tfhe::ClientKey,

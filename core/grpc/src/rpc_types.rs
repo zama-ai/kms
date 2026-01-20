@@ -1037,7 +1037,6 @@ impl FheTypeResponse for UserDecryptionResponsePayload {
     }
 }
 
-
 impl TryFrom<(String, String)> for TypedPlaintext {
     type Error = anyhow::Error;
     fn try_from(value: (String, String)) -> Result<Self, Self::Error> {

@@ -336,12 +336,39 @@ pub async fn compute_cipher_from_stored_key(
     key_id: &RequestId,
     storage_prefix: Option<&str>,
     enc_config: EncryptionConfig,
+    compressed_keys: bool,
 ) -> (Vec<u8>, CiphertextFormat, FheTypes) {
-    let pk = load_pk_from_pub_storage(pub_path, key_id, storage_prefix).await;
-    //Setting the server key as we may need id to expand the ciphertext during compute_cipher
-    let server_key: ServerKey =
-        load_material_from_pub_storage(pub_path, key_id, PubDataType::ServerKey, storage_prefix)
-            .await;
+    let (pk, server_key) = if compressed_keys {
+        // Load compressed keys and decompress them
+        let compressed_pk: tfhe::CompressedCompactPublicKey = load_material_from_pub_storage(
+            pub_path,
+            key_id,
+            PubDataType::CompressedCompactPublicKey,
+            storage_prefix,
+        )
+        .await;
+        let compressed_server_key: tfhe::CompressedServerKey = load_material_from_pub_storage(
+            pub_path,
+            key_id,
+            PubDataType::CompressedServerKey,
+            storage_prefix,
+        )
+        .await;
+        (
+            compressed_pk.decompress(),
+            compressed_server_key.decompress(),
+        )
+    } else {
+        let pk = load_pk_from_pub_storage(pub_path, key_id, storage_prefix).await;
+        let server_key: ServerKey = load_material_from_pub_storage(
+            pub_path,
+            key_id,
+            PubDataType::ServerKey,
+            storage_prefix,
+        )
+        .await;
+        (pk, server_key)
+    };
 
     // compute_cipher can take a long time since it may do SnS
     let (send, recv) = tokio::sync::oneshot::channel();

@@ -593,10 +593,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             .await
     }
 
-    pub async fn read_cloned_pk(
-        &self,
-        req_id: &RequestId,
-    ) -> anyhow::Result<CompactPublicKey> {
+    pub async fn read_cloned_pk(&self, req_id: &RequestId) -> anyhow::Result<CompactPublicKey> {
         self.inner.read_cloned_pk(req_id).await
     }
 

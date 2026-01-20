@@ -77,6 +77,8 @@ use super::BucketMetaStore;
 
 /// Enum to handle both compressed and uncompressed DKG results.
 /// This allows the same code path to handle both keygen and compressed_keygen outputs.
+// It's ok to have a big enum here since the way this type is used is only temporary.
+#[allow(clippy::large_enum_variant)]
 enum KeyGenDkgResult {
     /// Standard keygen result with full public key set
     Uncompressed(

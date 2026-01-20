@@ -3,7 +3,7 @@ cfg_if::cfg_if! {
         use crate::backup::custodian::Custodian;
         use crate::backup::seed_phrase::custodian_from_seed_phrase;
         use crate::client::tests::threshold::crs_gen_tests::run_crs;
-        use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
+        use crate::client::tests::threshold::key_gen_tests::{run_threshold_keygen, standard_keygen_config};
         use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
         use crate::consts::SAFE_SER_SIZE_LIMIT;
         use crate::cryptography::signatures::PrivateSigKey;
@@ -252,6 +252,8 @@ async fn test_decrypt_after_recovery_threshold(#[case] custodians: usize, #[case
 
 #[cfg(feature = "insecure")]
 async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
+    use crate::client::tests::threshold::key_gen_tests::KeySetConfigExt;
+
     let amount_parties = 4;
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
@@ -286,17 +288,18 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .await;
 
     // Generate a key
+    let (keyset_config, keyset_added_info) = standard_keygen_config();
     let _keys = run_threshold_keygen(
         FheParameter::Test,
         &kms_clients,
         &internal_client,
         &INSECURE_PREPROCESSING_ID,
         &req_key_id,
-        None,
+        keyset_config,
+        keyset_added_info,
         true,
         test_path,
         0,
-        false,
     )
     .await;
 
@@ -395,6 +398,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         None,
         1,
         test_path,
+        keyset_config.is_compressed(),
     )
     .await;
 }

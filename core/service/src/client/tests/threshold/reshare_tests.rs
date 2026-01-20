@@ -23,7 +23,8 @@ use crate::{
             threshold::{
                 common::threshold_handles,
                 key_gen_tests::{
-                    run_preproc, run_threshold_keygen, verify_keygen_responses, TestKeyGenResult,
+                    run_preproc, run_threshold_keygen, standard_keygen_config,
+                    verify_keygen_responses, TestKeyGenResult,
                 },
                 public_decryption_tests::run_decryption_threshold,
             },
@@ -118,17 +119,18 @@ pub(crate) async fn reshare(
     )
     .await;
 
+    let (keyset_config, keyset_added_info) = standard_keygen_config();
     let (keyset, all_private_keys) = run_threshold_keygen(
         parameters,
         &kms_clients,
         &internal_client,
         &req_preproc,
         &req_key,
-        None,
+        keyset_config,
+        keyset_added_info,
         false,
         None,
         expected_num_parties_crashed,
-        false,
     )
     .await;
 
@@ -255,6 +257,7 @@ pub(crate) async fn reshare(
         None,
         1,
         None,
+        false, // compressed_keys
     )
     .await;
 }
@@ -330,6 +333,7 @@ async fn run_reshare(
         keygen_req_id,
         &domain,
         amount_parties,
+        false, // compressed
     )
     .await
     .expect("Failed to verify reshare responses");
