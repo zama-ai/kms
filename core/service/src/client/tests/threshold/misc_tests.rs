@@ -63,6 +63,7 @@ async fn test_threshold_health_endpoint_availability() {
         &kms_clients,
         &mut internal_client,
         pub_storage_prefixes,
+        None,
     )
     .await;
     let dec_res = dec_tasks.join_all().await;
@@ -271,6 +272,7 @@ async fn test_threshold_shutdown() {
         &kms_clients,
         &mut internal_client,
         storage_prefixes,
+        None,
     )
     .await;
     let dec_res = tasks.join_all().await;
