@@ -30,7 +30,6 @@ pub enum CompressionPrivateKeySharesVersioned<Z: Clone, const EXTENSION_DEGREE: 
 #[versionize(CompressionPrivateKeySharesVersioned)]
 pub struct CompressionPrivateKeyShares<Z: Clone, const EXTENSION_DEGREE: usize> {
     pub post_packing_ks_key: GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    //TODO: Probably need to deal with versioning
     pub params: CompressionParameters,
 }
 
