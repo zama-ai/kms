@@ -586,8 +586,8 @@ message NewMpcContextRequest {
   MpcContext new_context = 2;
 }
 
-// Response to destroy the key materials associated with a KMS context.
-// Note that the context information itself is not removed, only the key materials.
+// Request to destroy the MPC context.
+// Context information is removed and cannot be used anymore.
 message DestroyMpcContextRequest {
   RequestId context_id = 1;
 }

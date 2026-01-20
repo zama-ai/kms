@@ -346,7 +346,7 @@ pub(crate) async fn do_preproc(
 
     let mut req_response_vec = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
-        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+        req_response_vec.push(inner??.into_inner());
     }
     assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
@@ -402,7 +402,7 @@ pub(crate) async fn do_partial_preproc(
 
     let mut req_response_vec = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
-        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+        req_response_vec.push(inner??.into_inner());
     }
     assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 

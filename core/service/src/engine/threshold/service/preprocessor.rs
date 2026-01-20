@@ -76,18 +76,14 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         dkg_params: DKGParams,
         keyset_config: ddec_keyset_config::KeySetConfig,
         request_id: RequestId,
-        context_id: Option<ContextId>,
-        epoch_id: Option<EpochId>,
+        context_id: ContextId,
+        epoch_id: EpochId,
         domain: &alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
         #[cfg(feature = "insecure")] percentage_offline: Option<
             kms_grpc::kms::v1::PartialKeyGenPreprocParams,
         >,
     ) -> anyhow::Result<()> {
-        // TODO(zama-ai/kms-internal/issues/2758)
-        // remove the default context when all of context is ready
-        let context_id = context_id.unwrap_or(*DEFAULT_MPC_CONTEXT);
-        let epoch_id = epoch_id.unwrap_or(*DEFAULT_EPOCH_ID);
         let my_role = self.session_maker.my_role(&context_id).await?;
         let my_identity = self.session_maker.my_identity(&context_id).await?;
 
@@ -356,7 +352,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         // NOTE: We currently consider an existing entry is NOT an error
         //
         // We don't increment the error counter here but rather in launch_dkg_preproc
-        let ctx_id = request
+        let context_id = request
             .context_id
             .map(|x| x.try_into())
             .transpose()
@@ -373,13 +369,32 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         // but the errors above cannot be tried again.
         let permit = self.rate_limiter.start_preproc().await?;
 
+        // TODO(zama-ai/kms-internal/issues/2758)
+        // remove the default context when all of context is ready
+        let context_id = context_id.unwrap_or(*DEFAULT_MPC_CONTEXT);
+        let epoch_id = epoch_id.unwrap_or(*DEFAULT_EPOCH_ID);
+
+        // check that context ID and epoch ID exist
+        if !self.session_maker.context_exists(&context_id).await {
+            return Err(tonic::Status::new(
+                tonic::Code::NotFound,
+                format!("context {context_id} not found"),
+            ));
+        }
+        if !self.session_maker.epoch_exists(&epoch_id).await {
+            return Err(tonic::Status::new(
+                tonic::Code::NotFound,
+                format!("epoch {epoch_id} not found"),
+            ));
+        }
+
         tracing::info!("Starting preproc generation for Request ID {}", request_id);
         ok_or_tonic_abort(
             self.launch_dkg_preproc(
                 dkg_params,
                 keyset_config,
                 request_id,
-                ctx_id,
+                context_id,
                 epoch_id,
                 &domain,
                 permit,
@@ -686,18 +701,43 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         // `NotFound` - If the preprocessing does not exist for `request`.
-        let mut rng = AesRng::seed_from_u64(22);
-        let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
-        let req_id = RequestId::new_random(&mut rng);
+        {
+            let mut rng = AesRng::seed_from_u64(22);
+            let prep = setup_prep::<DummyProducerFactory>(&mut rng, true).await;
+            let req_id = RequestId::new_random(&mut rng);
 
-        // no need to wait because [get_result] is semi-blocking
-        assert_eq!(
-            prep.get_result(tonic::Request::new(req_id.into()))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::NotFound
-        );
+            // no need to wait because [get_result] is semi-blocking
+            assert_eq!(
+                prep.get_result(tonic::Request::new(req_id.into()))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::NotFound
+            );
+        }
+        // `NotFound` - If the PRSS/epoch does not exist
+        {
+            let mut rng = AesRng::seed_from_u64(23);
+            let prep = setup_prep::<DummyProducerFactory>(&mut rng, false).await;
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+            let req_id = RequestId::new_random(&mut rng);
+            let request = KeyGenPreprocRequest {
+                request_id: Some(req_id.into()),
+                params: FheParameter::Test as i32,
+                keyset_config: None,
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                domain: Some(domain),
+                epoch_id: None,
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::NotFound
+            );
+        }
     }
 
     #[tokio::test]
@@ -726,31 +766,6 @@ mod tests {
                 .unwrap_err()
                 .code(),
             tonic::Code::AlreadyExists
-        );
-    }
-
-    #[tokio::test]
-    async fn aborted() {
-        // Starting a preprocessing request that will be aborted if there's no PRSS
-        let mut rng = AesRng::seed_from_u64(22);
-        let prep = setup_prep::<DummyProducerFactory>(&mut rng, false).await;
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-
-        let req_id = RequestId::new_random(&mut rng);
-        let request = KeyGenPreprocRequest {
-            request_id: Some(req_id.into()),
-            params: FheParameter::Test as i32,
-            keyset_config: None,
-            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
-            domain: Some(domain),
-            epoch_id: None,
-        };
-        assert_eq!(
-            prep.key_gen_preproc(tonic::Request::new(request))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::Aborted
         );
     }
 
