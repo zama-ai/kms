@@ -325,6 +325,11 @@ impl SessionMaker {
         epoch_map.insert(epoch_id, prss);
     }
 
+    pub(crate) async fn remove_epoch(&self, epoch_id: &EpochId) {
+        let mut epoch_map = self.epoch_map.write().await;
+        epoch_map.remove(epoch_id);
+    }
+
     pub(crate) async fn epoch_exists(&self, epoch_id: &EpochId) -> bool {
         let epoch_map = self.epoch_map.read().await;
         epoch_map.contains_key(epoch_id)

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use kms_grpc::{
     identifiers::EpochId,
-    kms::v1::{FheParameter, KeyGenResult, ResharingResultResponse},
+    kms::v1::{EpochResultResponse, FheParameter, KeyGenResult},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::PubDataType,
     ContextId, RequestId,
@@ -273,12 +273,17 @@ async fn run_reshare(
 ) -> (TestKeyGenResult, HashMap<Role, ThresholdFheKeys>) {
     let domain = dummy_domain();
 
+    //TODO: Expected to fail for now as Resharing is WiP
+    // this test was for the "emergency" resharing that we are deprecating
+    // but now it will fail trying to init the PRSS (as long as we don't support epochs)
     let reshare_request = internal_client
         .reshare_request(
             reshare_request_id,
             keygen_req_id,
             preproc_req_id,
             context_id,
+            context_id,
+            epoch_id,
             epoch_id,
             Some(parameters),
             &domain,
@@ -291,11 +296,11 @@ async fn run_reshare(
     for (_, cur_client) in kms_clients.iter() {
         let req = reshare_request.clone();
         let mut client = cur_client.clone();
-        tasks_reshare.spawn(async move { client.initiate_resharing(req).await });
+        tasks_reshare.spawn(async move { client.new_mpc_epoch(req).await });
     }
 
     tasks_reshare.join_all().await.into_iter().for_each(|res| {
-        assert!(res.is_ok());
+        assert!(res.is_ok(), "Reshare party failed: {:?}", res.err());
     });
 
     let responses = poll_reshare_result(reshare_request_id, kms_clients, 50).await;
@@ -345,7 +350,7 @@ async fn poll_reshare_result(
 ) -> Vec<(
     u32,
     RequestId,
-    Result<Response<ResharingResultResponse>, Status>,
+    Result<Response<EpochResultResponse>, Status>,
 )> {
     let mut resp_tasks = JoinSet::new();
 
@@ -358,7 +363,7 @@ async fn poll_reshare_result(
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
             let mut response = client
-                .get_resharing_result(tonic::Request::new(reshare_request_id.into()))
+                .get_epoch_result(tonic::Request::new(reshare_request_id.into()))
                 .await;
 
             let mut ctr = 0_usize;
@@ -371,7 +376,7 @@ async fn poll_reshare_result(
                 }
                 ctr += 1;
                 response = client
-                    .get_resharing_result(tonic::Request::new(reshare_request_id.into()))
+                    .get_epoch_result(tonic::Request::new(reshare_request_id.into()))
                     .await;
             }
             (idx, reshare_request_id, response)

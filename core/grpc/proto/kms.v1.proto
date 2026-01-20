@@ -5,12 +5,12 @@ package kms.v1;
 // This request will be removed in favor of NewMpcContextRequest.
 //
 // In the future this endpoint will be combined with resharing.
-message InitRequest {
-    // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
-    RequestId request_id = 1; // this is the epoch ID, keeping the name for backward compatibility reasons
-    RequestId context_id = 2;
-
-}
+//message InitRequest {
+//    // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
+//    RequestId request_id = 1; // this is the epoch ID, keeping the name for backward compatibility reasons
+//    RequestId context_id = 2;
+//
+//}
 
 // Placeholder response, when no content is needed
 message Empty {}
@@ -728,48 +728,52 @@ message HealthStatusResponse {
 
 }
 
-message InitiateResharingRequest {
-  // The request id of this resharing request (use to derive the session IDs and get the status)
-  RequestId request_id = 1;
-  // The active KMS context (default to DEFAULT_MPC_CONTEXT if empty)
-  // Note: currently unused but reserved for future use.
-  RequestId context_id = 2;
-  // The Key ID of the key to be reshared
+message PreviousEpochInfo {
+  // The KMS context of the parties that will reshare
+  // the shares of the private key
+  RequestId context_id = 1;
+  // epochId we reshare the shares from.
+  RequestId epoch_id = 2;
+  // keyID of the key to be reshared.
   RequestId key_id = 3;
-  // The parameters of the key to be reshared, must match the parameters of the original key
-  FheParameter key_parameters = 4;
-  // The EIP712 domain (same as for DKG).
-  Eip712DomainMsg domain = 5;
-  // The preprocessing ID that was used for DKG (needed for Metadata).
-  // We trust the caller to give the correct proproc_id.
-  // If the given preproc_id does not match the perproc_id used in the initial DKG,
-  // then the EIP-712 signature verification will fail.
-  // Note: This is a temporary parameter for same-set resharing and will not be required in the future when Context is implemented.
-  RequestId preproc_id = 6;
-  // The epoch number placeholder (zama-ai/kms-internal#2743).
-  // This is the epoch ID for the new set of parties.
-  // Note: currently unused but reserved for future use.
-  RequestId epoch_id = 7;
-
+  // Preprocessing ID that was used to generate the key initially
+  // required for the EIP struct
+  RequestId preproc_id = 4;
+  // Parameters of the key to be reshard
+  FheParameter key_parameters = 5;
+  // Digest of the key to be reshared
   // Mapping of key type string to digest
   // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5]).
   // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
-  //
   // If there are no key_digests, the digest verification is skipped.
-  repeated KeyDigest key_digests = 8;
+  repeated KeyDigest key_digests = 6;
+  Eip712DomainMsg domain = 7;
+
 }
 
-message InitiateResharingResponse {
-  // The resharing operation ID
+message NewMpcEpochRequest {
+  // The request id of this resharing request (use to derive the session IDs and get the status)
+  // TODO: NEEDS TO BE DELETED, WE WILL DERIVE EVERY ID FROM THE NEW EPOCH ID
   RequestId request_id = 1;
+  // The KMS context of the parties that will receive
+  // the shares of the private key at the end of the reshare execution
+  RequestId context_id = 3;
+  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  // This is the epochId we reshare the shares from.
+  // Note: currently unused but reserved for future use.
+  RequestId epoch_id = 4;
+  // Information about the previous epoch, used to perform resharing.
+  // If not set, no keys will exist for the new epoch. (e.g. during init)
+  PreviousEpochInfo previous_context = 5;
 }
 
-message ResharingResultResponse {
+message EpochResultResponse {
   // The 32 Byte / 256 Bit ID of the resharing request, without `0x` prefix.
   RequestId request_id = 1;
 
   // Key ID of the reshared key
   RequestId key_id = 2;
+
   // Preprocessing ID used for keygen the resharing refers to
   RequestId preprocessing_id = 3;
 
@@ -799,4 +803,8 @@ message ResharingResultResponse {
   //     bytes digest;
   // }
   bytes external_signature = 5;
+}
+
+message DestroyMpcEpochRequest {
+  RequestId epoch_id = 1;
 }

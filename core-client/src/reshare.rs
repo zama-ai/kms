@@ -18,6 +18,8 @@ use tfhe::ServerKey;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
+//TODO: Expected to fail for now as Resharing is WiP
+// this test was for the "emergence" resharing that we are deprecating
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn do_reshare(
     internal_client: &mut Client,
@@ -49,6 +51,8 @@ pub(crate) async fn do_reshare(
         key_id,
         preproc_id,
         context_id,
+        context_id,
+        epoch_id,
         epoch_id,
         Some(param),
         &dummy_domain(),
@@ -65,7 +69,7 @@ pub(crate) async fn do_reshare(
             (
                 party_id,
                 cur_client
-                    .initiate_resharing(tonic::Request::new(req_cloned))
+                    .new_mpc_epoch(tonic::Request::new(req_cloned))
                     .await,
             )
         });
@@ -75,7 +79,6 @@ pub(crate) async fn do_reshare(
     while let Some(inner) = req_tasks.join_next().await {
         let (party_id, result) = inner?;
         let result = result?.into_inner();
-        assert_eq!(result.request_id, Some(request_id.into()));
         results.push((party_id, result));
     }
 
@@ -96,7 +99,7 @@ pub(crate) async fn do_reshare(
                 SLEEP_TIME_BETWEEN_REQUESTS_MS,
             ))
             .await;
-            let mut response = cur_client.get_resharing_result(response_request).await;
+            let mut response = cur_client.get_epoch_result(response_request).await;
 
             let mut ctr = 0_usize;
             while response.is_err()
@@ -108,7 +111,7 @@ pub(crate) async fn do_reshare(
                 .await;
                 let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
                     tonic::Request::new(request_id.into());
-                response = cur_client.get_resharing_result(response_request).await;
+                response = cur_client.get_epoch_result(response_request).await;
                 ctr += 1;
                 if ctr >= max_iter {
                     break;
