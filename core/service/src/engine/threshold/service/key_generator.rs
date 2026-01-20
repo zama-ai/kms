@@ -397,6 +397,20 @@ impl<
         ];
         timer.tags(metric_tags.clone());
 
+        // Note that the keygen meta store should be checked first
+        // because we do not want to delete the preprocessing ID
+        // if the keygen request cannot proceed.
+        {
+            let guarded_meta_store = self.dkg_pubinfo_meta_store.read().await;
+            if guarded_meta_store.exists(&req_id) {
+                return Err(MetricedError::new(
+                    op_tag,
+                    Some(req_id),
+                    anyhow::anyhow!("Key generation request ID {req_id} is already in use."),
+                    tonic::Code::AlreadyExists,
+                ));
+            }
+        }
         let (preproc_handle, dkg_params) =
             // Processes the bucket meta information. This is a slightly funky as in certain situations it may override the DKGParams sepcified in the request
             // Futhermore be aware that this helper method also DELETES the preprocessing entry from the meta store

@@ -322,15 +322,6 @@ impl<
             ));
         }
 
-        if !self.session_maker.context_exists(&context_id).await {
-            return Err(MetricedError::new(
-                OP_INIT,
-                Some(epoch_id.into()),
-                anyhow::anyhow!("MPC context ID {context_id} does not exist"),
-                tonic::Code::NotFound,
-            ));
-        }
-
         self.init_prss(&context_id, &epoch_id).await.map_err(|e| {
             MetricedError::new(
                 OP_INIT,
