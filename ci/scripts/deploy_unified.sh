@@ -202,6 +202,8 @@ fetch_pcrs_from_image() {
 
 deploy_localstack() {
     log_info "Deploying Localstack (S3 Mock)..."
+    helm repo add localstack-charts https://localstack.github.io/helm-charts || true
+    helm repo update
     helm upgrade --install localstack localstack-charts/localstack \
         --namespace "${NAMESPACE}" \
         --create-namespace \
