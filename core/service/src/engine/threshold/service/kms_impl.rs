@@ -54,7 +54,7 @@ use crate::{
         base::{
             BaseKmsStruct, CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues,
         },
-        context_manager::{create_default_threshold_context_in_storage, ThresholdContextManager},
+        context_manager::{ensure_default_threshold_context_in_storage, ThresholdContextManager},
         prepare_shutdown_signals,
         threshold::{
             service::{
@@ -395,7 +395,7 @@ where
     // TODO(zama-ai/kms-internal/issues/2758)
     // If we're still using peer config, we need to manually write the default context into storage.
     // This way we can load it into SessionMaker later when creating the ThresholdContextManager.
-    create_default_threshold_context_in_storage(
+    ensure_default_threshold_context_in_storage(
         &mut private_storage,
         threshold_config,
         &base_kms.verf_key(),

@@ -38,6 +38,10 @@ use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::RwLock;
 use tonic::{Response, Status};
 
+const CENTRALIZED_MPC_IDENTITY: &str = "centralized-zama-kms";
+const CENTRALIZED_PARTY_ID: u32 = 1;
+const CENTRALIZED_EXTERNAL_URL: &str = "https://doesnotexist.zama.ai";
+
 /// This is a shared data structure for both centralized and threshold context managers.
 struct SharedContextManager<
     PubS: Storage + Sync + Send + 'static,
@@ -318,13 +322,13 @@ pub async fn create_default_centralized_context_in_storage<
     let verification_key = PublicSigKey::from_sk(sk);
     let context_info = ContextInfo {
         mpc_nodes: vec![NodeInfo {
-            mpc_identity: "centralized-zama-kms".to_string(), // identity is not used in centralized KMS
-            party_id: 1,                                      // always 1
+            mpc_identity: CENTRALIZED_MPC_IDENTITY.to_string(), // identity is not used in centralized KMS
+            party_id: CENTRALIZED_PARTY_ID,                     // always 1
             verification_key: Some(verification_key),
-            external_url: "https://doesnotexist.com".to_string(), // no external URL since there are no peers
+            external_url: CENTRALIZED_EXTERNAL_URL.to_string(), // no external URL since there are no peers
             ca_cert: None, // there's no peer network, so no certificate is needed
             public_storage_url: "".to_string(),
-            public_storage_prefix: None, // None will default to Pub
+            public_storage_prefix: None, // None will default to "PUB"
             extra_verification_keys: vec![],
         }],
         context_id: *DEFAULT_MPC_CONTEXT,
@@ -351,7 +355,7 @@ pub async fn create_default_centralized_context_in_storage<
 /// * `priv_storage` - The private storage to write the context to
 /// * `threshold_config` - The threshold party configuration containing peers, threshold, etc.
 /// * `verf_key` - The verification key of this party
-pub async fn create_default_threshold_context_in_storage<
+pub async fn ensure_default_threshold_context_in_storage<
     PrivS: StorageExt + Sync + Send + 'static,
 >(
     priv_storage: &mut PrivS,
@@ -389,7 +393,9 @@ pub async fn create_default_threshold_context_in_storage<
                             None
                         }
                     } else {
-                        // we do not know the verification key of the other parties at startup
+                        // If the MPC parties are started for the first time, they do not know about any context.
+                        // Consequently, if we must use a default context, the default context cannot hold the
+                        // verification key of other parties since they don't know about it at start up.
                         None
                     };
                     Ok(NodeInfo {
@@ -403,7 +409,9 @@ pub async fn create_default_threshold_context_in_storage<
                             identity.port()
                         ),
                         ca_cert: pem_string.map(|cert_pem| cert_pem.into_bytes()),
-                        public_storage_url: "".to_string(), // we do not know the storage URLs in the default config
+                        // We do not know the storage URLs in the default context
+                        // since it does not have access to the configuration of other parties.
+                        public_storage_url: "".to_string(),
                         public_storage_prefix: None,
                         extra_verification_keys: vec![],
                     })
@@ -1465,7 +1473,7 @@ mod tests {
             assert_eq!(*stored_context.context_id(), context_id);
         }
 
-        // Try to create the same context again (should fail)
+        // Try to create the same context with the same context ID which is not allowed (should fail)
         let request = Request::new(NewMpcContextRequest {
             new_context: Some(new_context.try_into().unwrap()),
         });
