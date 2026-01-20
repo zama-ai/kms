@@ -47,6 +47,183 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 
+sed_inplace() {
+    local pattern="$1"
+    local file="$2"
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        sed -i '' "${pattern}" "${file}"
+    else
+        sed -i "${pattern}" "${file}"
+    fi
+}
+
+remove_local_values_files() {
+    local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
+    local files_to_remove=(
+        "${base_dir}/local-values-kms-test.yaml"
+        "${base_dir}/local-values-kms-service-init-kms-test.yaml"
+    )
+
+    local any_exist="false"
+    for file in "${files_to_remove[@]}"; do
+        if [[ -f "${file}" ]]; then
+            any_exist="true"
+            break
+        fi
+    done
+
+    if [[ "${any_exist}" == "true" ]]; then
+        log_info "Removing existing local values files..."
+        for file in "${files_to_remove[@]}"; do
+            rm -f "${file}"
+        done
+    fi
+}
+
+copy_to_local_values_files() {
+    local core_base="$1"
+    local client_init_base="$2"
+    local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
+
+    log_info "Creating local values files..."
+    cp "${core_base}" "${base_dir}/local-values-kms-test.yaml"
+    cp "${client_init_base}" "${base_dir}/local-values-kms-service-init-kms-test.yaml"
+}
+
+replace_namespace_in_files() {
+    local core_file="$1"
+    local client_init_file="$2"
+
+    if [[ -f "${core_file}" ]] && grep -q "<namespace>" "${core_file}" 2>/dev/null; then
+        sed_inplace "s|<namespace>|${NAMESPACE}|g" "${core_file}"
+        log_info "Replaced <namespace> with ${NAMESPACE} in ${core_file}"
+    fi
+    if [[ -f "${client_init_file}" ]] && grep -q "<namespace>" "${client_init_file}" 2>/dev/null; then
+        sed_inplace "s|<namespace>|${NAMESPACE}|g" "${client_init_file}"
+        log_info "Replaced <namespace> with ${NAMESPACE} in ${client_init_file}"
+    fi
+}
+
+check_local_resources() {
+    local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
+    local core_base="${base_dir}/values-kms-test.yaml"
+    local init_base="${base_dir}/values-kms-service-init-kms-test.yaml"
+    local core_local="${base_dir}/local-values-kms-test.yaml"
+    local init_local="${base_dir}/local-values-kms-service-init-kms-test.yaml"
+
+    local core_values="${core_base}"
+    local init_values="${init_base}"
+    if [[ -s "${core_local}" && -s "${init_local}" ]]; then
+        core_values="${core_local}"
+        init_values="${init_local}"
+        log_info "Using existing local values files for resource adjustment"
+    fi
+
+    local kms_core_memory
+    local kms_core_cpu
+    local kms_core_client_memory
+    local kms_core_client_cpu
+    local num_sessions_preproc
+    local fhe_params
+
+    kms_core_memory=$(grep -A 10 "resources:" "${core_values}" | grep "memory:" | head -1 | awk '{print $2}' | sed 's/Gi//')
+    kms_core_cpu=$(grep -A 10 "resources:" "${core_values}" | grep "cpu:" | head -1 | awk '{print $2}')
+    kms_core_client_memory=$(grep -A 10 "resources:" "${init_values}" | grep "memory:" | head -1 | awk '{print $2}' | sed 's/Gi//')
+    kms_core_client_cpu=$(grep -A 10 "resources:" "${init_values}" | grep "cpu:" | head -1 | awk '{print $2}')
+    num_sessions_preproc=$(grep "numSessionsPreproc:" "${core_values}" | head -1 | awk '{print $2}')
+    fhe_params=$(grep "fhe_parameter:" "${init_values}" | head -1 | awk '{print $2}')
+
+    local total_core_memory
+    local total_core_cpu
+    local total_memory
+    local total_cpu
+    total_core_memory=$(echo "${kms_core_memory} * ${NUM_PARTIES}" | bc)
+    total_core_cpu=$((kms_core_cpu * NUM_PARTIES))
+    total_memory=$(echo "${total_core_memory} + ${kms_core_client_memory}" | bc)
+    total_cpu=$((total_core_cpu + kms_core_client_cpu))
+
+    log_warn "========================================="
+    log_warn "Running in kind-local mode"
+    log_warn "========================================="
+    log_warn "KMS Core (${NUM_PARTIES} parties):"
+    log_warn "  - Memory per core: ${kms_core_memory}Gi"
+    log_warn "  - CPU per core: ${kms_core_cpu} cores"
+    log_warn "  - Total: ${total_core_memory}Gi RAM, ${total_core_cpu} CPU cores"
+    log_warn ""
+    log_warn "KMS Core num_sessions_preproc: ${num_sessions_preproc}"
+    log_warn ""
+    log_warn "KMS Core Client (1 instance):"
+    log_warn "  - Memory: ${kms_core_client_memory}Gi"
+    log_warn "  - CPU: ${kms_core_client_cpu} cores"
+    log_warn "  - fhe_parameter: ${fhe_params}"
+    log_warn ""
+    log_warn "TOTAL RESOURCES REQUIRED:"
+    log_warn "  - Memory: ${total_memory}Gi"
+    log_warn "  - CPU: ${total_cpu} cores"
+    log_warn "========================================="
+    echo ""
+
+    echo "Choose an option:"
+    echo "  1) Continue with current values"
+    echo "  2) Adjust resources interactively"
+    echo "  3) Cancel and edit files manually"
+    read -r -p "Enter your choice (1/2/3): " choice
+    echo ""
+
+    case "${choice}" in
+        1)
+            log_info "Continuing with current resource values..."
+            ;;
+        2)
+            log_info "Interactive resource adjustment..."
+            remove_local_values_files
+            copy_to_local_values_files "${core_base}" "${init_base}"
+
+            core_values="${core_local}"
+            init_values="${init_local}"
+            replace_namespace_in_files "${core_values}" "${init_values}"
+
+            echo ""
+            echo "Adjusting KMS Core resources..."
+            read -r -p "KMS Core Memory per party (current: ${kms_core_memory}Gi, recommended: 4Gi): " new_core_mem
+            new_core_mem="${new_core_mem:-${kms_core_memory}}"
+            read -r -p "KMS Core CPU per party (current: ${kms_core_cpu}, recommended: 2): " new_core_cpu
+            new_core_cpu="${new_core_cpu:-${kms_core_cpu}}"
+            read -r -p "KMS Core num_sessions_preproc (current: ${num_sessions_preproc}, recommended: ${new_core_cpu}): " new_num_sessions_preproc
+            new_num_sessions_preproc="${new_num_sessions_preproc:-${num_sessions_preproc}}"
+
+            echo ""
+            echo "Adjusting KMS Core Client resources..."
+            read -r -p "KMS Core Client Memory (current: ${kms_core_client_memory}Gi, recommended: 4Gi): " new_client_mem
+            new_client_mem="${new_client_mem:-${kms_core_client_memory}}"
+            read -r -p "KMS Core Client CPU (current: ${kms_core_client_cpu}, recommended: 2): " new_client_cpu
+            new_client_cpu="${new_client_cpu:-${kms_core_client_cpu}}"
+            read -r -p "KMS Core Client fhe_parameter (current: ${fhe_params}, recommended: Test): " new_fhe_params
+            new_fhe_params="${new_fhe_params:-${fhe_params}}"
+
+            log_info "Updating values files..."
+            sed_inplace "s/memory: ${kms_core_memory}Gi/memory: ${new_core_mem}Gi/g" "${core_values}"
+            sed_inplace "s/cpu: ${kms_core_cpu}/cpu: ${new_core_cpu}/g" "${core_values}"
+            sed_inplace "s/numSessionsPreproc: ${num_sessions_preproc}/numSessionsPreproc: ${new_num_sessions_preproc}/g" "${core_values}"
+            sed_inplace "s/memory: ${kms_core_client_memory}Gi/memory: ${new_client_mem}Gi/g" "${init_values}"
+            sed_inplace "s/cpu: ${kms_core_client_cpu}/cpu: ${new_client_cpu}/g" "${init_values}"
+            sed_inplace "s/fhe_parameter: ${fhe_params}/fhe_parameter: ${new_fhe_params}/g" "${init_values}"
+
+            log_info "New local values files created:"
+            log_info "- ${core_local}"
+            log_info "- ${init_local}"
+            ;;
+        3)
+            log_info "Setup cancelled. Please edit the values files manually and run again."
+            exit 0
+            ;;
+        *)
+            log_error "Invalid choice. Setup cancelled."
+            exit 1
+            ;;
+    esac
+}
+
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -166,6 +343,7 @@ setup_infrastructure() {
 
     if [[ "${TARGET}" == *"kind"* ]]; then
         deploy_localstack
+        deploy_registry_credentials
     elif [[ "${TARGET}" == "aws-ci" ]]; then
         # Check if we need to fetch PCRs from image if not provided
         if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]] && [[ -z "${PCR0:-}" ]]; then
@@ -243,6 +421,63 @@ deploy_tkms_infra() {
 }
 
 deploy_registry_credentials() {
+    log_info "Setting up registry credentials..."
+
+    if [[ "${TARGET}" == *"kind"* ]]; then
+        if [[ "${TARGET}" == "kind-local" ]]; then
+            log_info "Skipping registry credentials setup for local deployment"
+            if [[ -f "${HOME}/dockerconfig.yaml" ]]; then
+                kubectl apply -f "${HOME}/dockerconfig.yaml" -n "${NAMESPACE}"
+            else
+                log_warn "Missing ${HOME}/dockerconfig.yaml; skipping local registry credentials"
+            fi
+            return 0
+        fi
+
+        # kind-ci: build a dockerconfigjson secret for ghcr.io
+        if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+            log_warn "GITHUB_TOKEN not set, skipping registry credentials setup"
+            log_warn "Set GITHUB_TOKEN to enable private image pulls"
+            return 0
+        fi
+
+        local base64_cmd="base64"
+        if base64 --help 2>&1 | grep -q '\-w'; then
+            base64_cmd="base64 -w 0"
+        fi
+
+        local docker_config_json
+        docker_config_json=$(cat <<JSON | ${base64_cmd}
+{
+  "auths": {
+    "ghcr.io": {
+      "auth": "$(echo -n "zws-bot:${GITHUB_TOKEN}" | ${base64_cmd})"
+    }
+  }
+}
+JSON
+)
+
+        cat <<EOF | kubectl apply -f - --namespace "${NAMESPACE}"
+apiVersion: v1
+data:
+  .dockerconfigjson: ${docker_config_json}
+kind: Secret
+metadata:
+  name: registry-credentials
+type: kubernetes.io/dockerconfigjson
+EOF
+
+        if kubectl get secret registry-credentials -n "${NAMESPACE}" &> /dev/null; then
+            log_info "Registry credentials configured successfully"
+        else
+            log_error "Failed to create registry credentials"
+            return 1
+        fi
+
+        return 0
+    fi
+
     log_info "Deploying Sync Secrets..."
     helm upgrade --install sync-secrets \
         oci://ghcr.io/zama-zws/helm-charts/sync-secrets \
@@ -261,8 +496,17 @@ deploy_kms() {
 
     # 1. Determine base values file
     local BASE_VALUES=""
+    local LOCAL_VALUES_USED="false"
     if [[ "${TARGET}" == *"kind"* ]]; then
-        BASE_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-test.yaml"
+        local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
+        local kind_values="${base_dir}/values-kms-test.yaml"
+        local kind_local_values="${base_dir}/local-values-kms-test.yaml"
+        if [[ "${TARGET}" == "kind-local" && -f "${kind_local_values}" ]]; then
+            BASE_VALUES="${kind_local_values}"
+            LOCAL_VALUES_USED="true"
+        else
+            BASE_VALUES="${kind_values}"
+        fi
     else
         # For AWS/CI, we use the values from pr-preview
         BASE_VALUES="${REPO_ROOT}/ci/pr-preview/${DEPLOYMENT_TYPE}/kms-service/values-kms-ci.yaml"
@@ -315,7 +559,9 @@ deploy_kms() {
 
             # Local Dev Overrides (Low Resources)
             if [[ "${TARGET}" == "kind-local" ]]; then
-                HELM_ARGS+=("--values" "${REPO_ROOT}/ci/values/overrides/dev-minimal.yaml")
+                if [[ "${LOCAL_VALUES_USED}" != "true" ]]; then
+                    HELM_ARGS+=("--values" "${REPO_ROOT}/ci/values/overrides/dev-minimal.yaml")
+                fi
 
                 # Check for user-specific overrides (gitignored)
                 if [[ -f "${REPO_ROOT}/ci/values/overrides/user.yaml" ]]; then
@@ -478,8 +724,17 @@ deploy_init_job() {
 
     # Determine init values file
     local INIT_VALUES=""
+    local LOCAL_VALUES_USED="false"
     if [[ "${TARGET}" == *"kind"* ]]; then
-        INIT_VALUES="${REPO_ROOT}/ci/kube-testing/kms/values-kms-service-init-kms-test.yaml"
+        local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
+        local init_values="${base_dir}/values-kms-service-init-kms-test.yaml"
+        local init_local_values="${base_dir}/local-values-kms-service-init-kms-test.yaml"
+        if [[ "${TARGET}" == "kind-local" && -f "${init_local_values}" ]]; then
+            INIT_VALUES="${init_local_values}"
+            LOCAL_VALUES_USED="true"
+        else
+            INIT_VALUES="${init_values}"
+        fi
     else
         INIT_VALUES="${REPO_ROOT}/ci/pr-preview/${DEPLOYMENT_TYPE}/kms-service/values-kms-service-init-kms-ci.yaml"
     fi
@@ -497,7 +752,9 @@ deploy_init_job() {
     )
 
     if [[ "${TARGET}" == "kind-local" ]]; then
-        HELM_ARGS+=("--values" "${REPO_ROOT}/ci/values/overrides/dev-minimal.yaml")
+        if [[ "${LOCAL_VALUES_USED}" != "true" ]]; then
+            HELM_ARGS+=("--values" "${REPO_ROOT}/ci/values/overrides/dev-minimal.yaml")
+        fi
         if [[ -f "${REPO_ROOT}/ci/values/overrides/user.yaml" ]]; then
              HELM_ARGS+=("--values" "${REPO_ROOT}/ci/values/overrides/user.yaml")
         fi
@@ -575,6 +832,10 @@ main() {
         fi
         collect_logs
         exit 0
+    fi
+
+    if [[ "${TARGET}" == "kind-local" ]]; then
+        check_local_resources
     fi
 
     log_info "Starting Deployment"
