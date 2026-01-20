@@ -17,7 +17,6 @@ pub(crate) async fn do_prss_init(
         let mut client = client.clone();
         let request = NewMpcEpochRequest {
             context_id: Some((*context_id).into()),
-            request_id: Some((*epoch_id).into()),
             epoch_id: Some((*epoch_id).into()),
             previous_context: None,
         };

@@ -1765,7 +1765,6 @@ pub async fn execute_cmd(
             let request_id = do_new_epoch(
                 &mut internal_client.expect("Reshare requires a KMS client"),
                 &core_endpoints_req,
-                &mut rng,
                 cmd_config,
                 &cc_conf,
                 destination_prefix,

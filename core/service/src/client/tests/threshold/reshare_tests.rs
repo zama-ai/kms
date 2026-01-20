@@ -148,8 +148,6 @@ pub(crate) async fn reshare(
         derive_request_id(&format!("new_epoch_id__{amount_parties}_{parameters:?}"))
             .unwrap()
             .into();
-    let new_request_id: RequestId =
-        derive_request_id(&format!("new_request_{amount_parties}_{parameters:?}")).unwrap();
 
     let domain = dummy_domain();
     let previous_context = Some(PreviousEpochInfo {
@@ -181,7 +179,6 @@ pub(crate) async fn reshare(
         &internal_client,
         new_context_id,
         new_epoch_id,
-        new_request_id,
         previous_context,
     )
     .await
@@ -295,19 +292,13 @@ async fn run_new_epoch(
     internal_client: &Client,
     new_context_id: ContextId,
     new_epoch_id: EpochId,
-    new_request_id: RequestId,
     previous_context: Option<PreviousEpochInfo>,
 ) -> Option<(TestKeyGenResult, HashMap<Role, ThresholdFheKeys>)> {
     //TODO: Expected to fail for now as Resharing is WiP
     // this test was for the "emergency" resharing that we are deprecating
     // but now it will fail trying to init the PRSS (as long as we don't support epochs)
     let reshare_request = internal_client
-        .new_epoch_request(
-            &new_request_id,
-            &new_context_id,
-            &new_epoch_id,
-            previous_context.clone(),
-        )
+        .new_epoch_request(&new_context_id, &new_epoch_id, previous_context.clone())
         .unwrap();
 
     // Execute reshare

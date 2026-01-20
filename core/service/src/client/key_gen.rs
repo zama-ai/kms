@@ -126,13 +126,11 @@ impl Client {
     #[allow(clippy::too_many_arguments)]
     pub fn new_epoch_request(
         &self,
-        request_id: &RequestId,
         to_context_id: &ContextId,
         to_epoch_id: &EpochId,
         previous_context: Option<PreviousEpochInfo>,
     ) -> anyhow::Result<NewMpcEpochRequest> {
         Ok(NewMpcEpochRequest {
-            request_id: Some((*request_id).into()),
             context_id: Some((*to_context_id).into()),
             epoch_id: Some((*to_epoch_id).into()),
             previous_context,

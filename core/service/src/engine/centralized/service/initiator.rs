@@ -47,7 +47,7 @@ pub async fn init_impl<
     request: Request<NewMpcEpochRequest>,
 ) -> Result<Response<Empty>, Status> {
     let inner = request.into_inner();
-    let epoch_id = parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::Init)?;
+    let epoch_id = parse_optional_proto_request_id(&inner.epoch_id, RequestIdParsingErr::Init)?;
     let context_id: ContextId = match inner.context_id {
         Some(ctx_id) => parse_proto_request_id(&ctx_id, RequestIdParsingErr::Init)?.into(),
         None => *DEFAULT_MPC_CONTEXT,
@@ -104,9 +104,8 @@ mod tests {
         let req_id = derive_request_id("test_init_sunshine").unwrap();
 
         let preproc_req = NewMpcEpochRequest {
-            request_id: Some((req_id).into()),
             context_id: None,
-            epoch_id: None,
+            epoch_id: Some(req_id.into()),
             previous_context: None,
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
@@ -117,14 +116,12 @@ mod tests {
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
-        let req_id1 = derive_request_id("test_init_already_exists_1").unwrap();
-        let req_id2 = derive_request_id("test_init_already_exists_2").unwrap();
+        let req_id1 = derive_request_id("test_init_already_exists").unwrap();
 
         // First initialization should succeed
         let preproc_req1 = NewMpcEpochRequest {
-            request_id: Some(req_id1.into()),
             context_id: None,
-            epoch_id: None,
+            epoch_id: Some(req_id1.into()),
             previous_context: None,
         };
         let result1 = init_impl(&kms, Request::new(preproc_req1)).await;
@@ -132,9 +129,8 @@ mod tests {
 
         // Second initialization should fail with AlreadyExists
         let preproc_req2 = NewMpcEpochRequest {
-            request_id: Some(req_id2.into()),
             context_id: None,
-            epoch_id: None,
+            epoch_id: Some(req_id1.into()),
             previous_context: None,
         };
         let result2 = init_impl(&kms, Request::new(preproc_req2)).await;
@@ -147,7 +143,6 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let preproc_req = NewMpcEpochRequest {
-            request_id: None,
             context_id: None,
             epoch_id: None,
             previous_context: None,

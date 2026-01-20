@@ -752,19 +752,16 @@ message PreviousEpochInfo {
 }
 
 message NewMpcEpochRequest {
-  // The request id of this resharing request (use to derive the session IDs and get the status)
-  // TODO: NEEDS TO BE DELETED, WE WILL DERIVE EVERY ID FROM THE NEW EPOCH ID
-  RequestId request_id = 1;
   // The KMS context of the parties that will receive
   // the shares of the private key at the end of the reshare execution
-  RequestId context_id = 3;
+  RequestId context_id = 1;
   // The epoch number placeholder (zama-ai/kms-internal#2743).
   // This is the epochId we reshare the shares from.
   // Note: currently unused but reserved for future use.
-  RequestId epoch_id = 4;
+  RequestId epoch_id = 2;
   // Information about the previous epoch, used to perform resharing.
   // If not set, no keys will exist for the new epoch. (e.g. during init)
-  PreviousEpochInfo previous_context = 5;
+  PreviousEpochInfo previous_context = 3;
 }
 
 message EpochResultResponse {

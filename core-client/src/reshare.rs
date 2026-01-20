@@ -3,7 +3,6 @@ use crate::{
     s3_operations::fetch_public_elements, CmdConfig, CoreClientConfig, CoreConf,
     PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
 };
-use aes_prng::AesRng;
 use kms_grpc::{
     identifiers::EpochId,
     kms::v1::{FheParameter, KeyDigest, PreviousEpochInfo},
@@ -50,7 +49,6 @@ impl PreviousEpochParameters {
 pub(crate) async fn do_new_epoch(
     internal_client: &mut Client,
     core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
-    rng: &mut AesRng,
     cmd_conf: &CmdConfig,
     cc_conf: &CoreClientConfig,
     destination_prefix: &Path,
@@ -63,10 +61,8 @@ pub(crate) async fn do_new_epoch(
     println!("Starting new epoch creation...");
     println!("CONFIG IS : {:?}", cc_conf.cores);
     let max_iter = cmd_conf.max_iter;
-    let request_id = RequestId::new_random(rng);
 
     let request = internal_client.new_epoch_request(
-        &request_id,
         &new_context_id,
         &new_epoch_id,
         previous_epoch.clone(),

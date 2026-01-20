@@ -46,7 +46,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let request = NewMpcEpochRequest {
-                request_id: Some(req_id.clone()),
                 epoch_id: Some(req_id),
                 context_id: None,
                 previous_context: None,

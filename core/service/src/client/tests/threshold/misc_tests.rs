@@ -115,7 +115,6 @@ async fn test_threshold_health_endpoint_availability() {
             let req_id: RequestId = (*DEFAULT_EPOCH_ID).into();
             cur_client
                 .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
-                    request_id: Some(req_id.into()),
                     epoch_id: Some(req_id.into()),
                     context_id: None,
                     previous_context: None,
