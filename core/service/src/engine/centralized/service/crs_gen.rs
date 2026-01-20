@@ -71,6 +71,19 @@ pub async fn crs_gen_impl<
     ];
     timer.tags(metric_tags.clone());
 
+    if !service
+        .context_manager
+        .mpc_context_exists_in_cache(&context_id)
+        .await
+    {
+        return Err(MetricedError::new(
+            op_tag,
+            Some(req_id),
+            anyhow::anyhow!("context at ID {context_id} not found"),
+            tonic::Code::NotFound,
+        ));
+    }
+
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused
     // all validation must be done before inserting the request ID

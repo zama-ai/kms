@@ -90,6 +90,19 @@ pub async fn key_gen_impl<
         inner.request_id
     );
 
+    if !service
+        .context_manager
+        .mpc_context_exists_in_cache(&context_id)
+        .await
+    {
+        return Err(MetricedError::new(
+            op_tag,
+            Some(req_id),
+            anyhow::anyhow!("Context ID {context_id} not found"),
+            tonic::Code::NotFound,
+        ));
+    }
+
     // Check for existance of request preprocessing ID
     // also check that the request ID is not used yet
     // If all is ok write the request ID to the meta store
