@@ -580,7 +580,7 @@ async fn destroy_mpc_context(context_id: &ContextId, config_path: &Path, test_pa
         context_id: *context_id,
     });
     let init_config = CmdConfig {
-        file_conf: Some(String::from(config_path.to_str().unwrap())),
+        file_conf: Some(vec![String::from(config_path.to_str().unwrap())]),
         command,
         logs: true,
         max_iter: 200,

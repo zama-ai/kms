@@ -230,7 +230,7 @@ pub(crate) async fn do_new_mpc_context(
 }
 
 pub(crate) async fn do_destroy_mpc_context(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     context_id: &ContextId,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
