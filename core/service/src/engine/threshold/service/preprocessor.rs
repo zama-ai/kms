@@ -444,7 +444,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
                             request_id,
                             preproc_data.preprocessing_id
                         ),
-                        tonic::Code::NotFound,
+                        tonic::Code::Internal,
                     ));
         }
 

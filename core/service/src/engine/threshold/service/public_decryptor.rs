@@ -270,7 +270,7 @@ impl<
             > + 'static,
     > PublicDecryptor for RealPublicDecryptor<PubS, PrivS, Dec>
 {
-    #[tracing::instrument(skip(self, request), fields(
+    #[tracing::instrument(skip_all, fields(
         request_id = ?request.get_ref().request_id,
         operation = "decrypt"
     ))]

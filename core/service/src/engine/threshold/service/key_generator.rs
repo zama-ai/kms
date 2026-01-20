@@ -470,7 +470,16 @@ impl<
                 );
             let preproc_bucket =
                 delete_req_from_meta_store(bucket_metastore, &preproc_id, OP_KEYGEN_REQUEST)
-                    .await?;
+                    .await
+                    .map_err(|e| {
+                        // Remap the error to include the correct request ID
+                        MetricedError::new(
+                            OP_KEYGEN_REQUEST,
+                            Some(key_req_id),
+                            anyhow::anyhow!(e.internal_err().to_string()),
+                            e.code(),
+                        )
+                    })?;
             if preproc_bucket.preprocessing_id != preproc_id {
                 return Err(MetricedError::new(
                     op_tag,

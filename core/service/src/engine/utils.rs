@@ -80,7 +80,7 @@ where
 pub struct MetricedError {
     op_metric: &'static str,
     request_id: Option<RequestId>,
-    internal_error: Box<dyn std::error::Error + Send + Sync>,
+    internal_error: Box<dyn std::error::Error + Send + Sync + 'static>,
     error_code: tonic::Code,
     returned: bool,
 }
@@ -93,7 +93,7 @@ impl MetricedError {
     /// * `request_id` - Optional RequestId associated with the error
     /// * `internal_error` - The internal error being handled
     /// * `error_code` - The tonic::Code representing the gRPC error code
-    pub fn new<E: Into<Box<dyn std::error::Error + Send + Sync>>>(
+    pub fn new<E: Into<Box<dyn std::error::Error + Send + Sync + 'static>>>(
         op_metric: &'static str,
         request_id: Option<RequestId>,
         internal_error: E,
@@ -109,9 +109,12 @@ impl MetricedError {
     }
 
     /// Return the gRPC error code associated with this MetricedError without incrementing the metrics.
-    #[cfg(feature = "testing")]
     pub fn code(&self) -> tonic::Code {
         self.error_code
+    }
+
+    pub fn internal_err(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+        &*self.internal_error
     }
 
     /// Handles an error that cannot be returned through gRPC by logging the error and incrementing metrics.

@@ -116,7 +116,16 @@ pub async fn key_gen_impl<
                 &preproc_id,
                 op_tag,
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                // Remap the error to include the correct request ID
+                MetricedError::new(
+                    op_tag,
+                    Some(req_id),
+                    anyhow::anyhow!(e.internal_err().to_string()),
+                    e.code(),
+                )
+            })?;
             preproc.dkg_param
         } else {
             dkg_params

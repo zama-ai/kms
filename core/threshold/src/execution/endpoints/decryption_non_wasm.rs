@@ -507,7 +507,7 @@ where
 /// 3. The results are returned
 ///
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.session_id(), my_role = ?session.my_role()))]
+#[instrument(skip_all, fields(session_id = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn secure_decrypt_using_bitdec<const EXTENSION_DEGREE: usize, T>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     ct: &RadixOrBoolCiphertext,
@@ -571,7 +571,7 @@ where
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.session_id(), my_role = ?session.my_role()))]
+#[instrument(skip_all, fields(session_id = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn secure_partial_decrypt_using_bitdec<const EXTENSION_DEGREE: usize>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     ct: &RadixOrBoolCiphertext,
