@@ -1,0 +1,21 @@
+kmsPeers:
+  id: 4
+
+kmsCore:
+  serviceAccountName: kms-enclave-ci-4
+  envFrom:
+    configmap:
+      name: kms-enclave-ci-4
+  publicVault:
+    s3:
+      enabled: true
+      prefix: PUB-p4
+  privateVault:
+    awskms:
+      enabled: true
+    s3:
+      enabled: true
+      prefix: PRIV-p4
+
+kmsGenCertAndKeys:
+  enabled: true

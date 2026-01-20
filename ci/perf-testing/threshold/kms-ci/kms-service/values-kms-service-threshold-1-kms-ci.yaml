@@ -1,0 +1,21 @@
+kmsPeers:
+  id: 1
+
+kmsCore:
+  serviceAccountName: kms-ci-1
+  envFrom:
+    configmap:
+      name: kms-ci-1
+  publicVault:
+    s3:
+      enabled: true
+      prefix: PUB-p1
+  privateVault:
+    awskms:
+      enabled: true
+    s3:
+      enabled: true
+      prefix: PRIV-p1
+
+kmsGenCertAndKeys:
+  enabled: false
