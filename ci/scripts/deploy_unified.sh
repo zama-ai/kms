@@ -415,6 +415,32 @@ set_path_suffix() {
     fi
 }
 
+wait_tkms_infra_ready() {
+    local party_prefix="kms-party-${NAMESPACE}"
+    if [[ "${TARGET}" == "aws-perf" ]]; then
+        set_path_suffix
+        party_prefix="kms-party-${PATH_SUFFIX}"
+    fi
+
+    log_info "Waiting for KMS parties to be ready..."
+    if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
+        kubectl wait --for=condition=ready Kmsparties "${party_prefix}-1" \
+            -n "${NAMESPACE}" --timeout=120s
+    elif [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
+        for i in $(seq 1 "${NUM_PARTIES}"); do
+            kubectl wait --for=condition=ready Kmsparties "${party_prefix}-${i}" \
+                -n "${NAMESPACE}" --timeout=120s
+        done
+    fi
+
+    if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
+        log_info "Waiting for enclave nodegroups to be ready..."
+        kubectl wait --for=condition=ready enclavenodegroup \
+            "${party_prefix}" \
+            -n "${NAMESPACE}" --timeout=1200s
+    fi
+}
+
 deploy_tkms_infra() {
     if [[ "${TARGET}" == "aws-perf" ]]; then
         log_info "Deploying TKMS Infra (Performance Testing)..."
@@ -432,6 +458,7 @@ deploy_tkms_infra() {
             --values "${VALUES_FILE}" \
             ${EXTRA_ARGS} \
             --wait
+        wait_tkms_infra_ready
         return 0
     fi
 
@@ -463,6 +490,7 @@ deploy_tkms_infra() {
         --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}" \
         ${EXTRA_ARGS} \
         --wait
+    wait_tkms_infra_ready
 }
 
 deploy_registry_credentials() {
@@ -902,10 +930,9 @@ deploy_init_job() {
         --values "${INIT_VALUES}"
         --values "${peers_values}"
         --values "${override_values}"
-        --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}" \
-        --set kmsCore.thresholdMode.thresholdValue="${threshold_value}" \
         --wait \
-        --wait-for-jobs
+        --wait-for-jobs \
+        --timeout=1200s
     )
 
     if [[ "${TARGET}" == "kind-local" ]]; then
@@ -920,6 +947,15 @@ deploy_init_job() {
     helm upgrade --install kms-core-init \
         "${REPO_ROOT}/charts/kms-core" \
         "${HELM_ARGS[@]}"
+
+    log_info "Waiting for KMS Core initialization to complete..."
+    sleep 30
+    kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
+        -n "${NAMESPACE}" --timeout=600s || {
+            log_error "KMS init job did not complete in time"
+            kubectl get jobs -n "${NAMESPACE}" -l app=kms-threshold-init-job || true
+            exit 1
+        }
 }
 
 #=============================================================================
