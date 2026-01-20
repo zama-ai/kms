@@ -224,6 +224,26 @@ check_local_resources() {
     esac
 }
 
+usage() {
+    cat <<EOF
+Usage: $0 --target [kind-local|kind-ci|aws-ci] [OPTIONS]
+
+Options:
+  --namespace <name>       K8s namespace (default: kms-test)
+  --deployment-type <type> threshold|centralized|thresholdWithEnclave... (default: threshold)
+  --tag <tag>              Image tag (default: latest-dev)
+  --num-parties <n>        Number of parties (default: 4 for threshold)
+  --cleanup                Cleanup before deploy
+  --build                  Build images locally (kind targets only)
+  --block                  Keep script running (for port-forwarding)
+  --pcr0 <val>             PCR0 value for Enclave (optional)
+  --pcr1 <val>             PCR1 value for Enclave (optional)
+  --pcr2 <val>             PCR2 value for Enclave (optional)
+  --collect-logs           Only collect logs from pods and exit
+  --help                   Show this help
+EOF
+}
+
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -239,8 +259,8 @@ parse_args() {
             --pcr1) PCR1="$2"; shift 2 ;;
             --pcr2) PCR2="$2"; shift 2 ;;
             --collect-logs) COLLECT_LOGS="true"; shift ;;
-            --help) show_help; exit 0 ;;
-            *) log_error "Unknown argument: $1"; exit 1 ;;
+            --help) usage; exit 0 ;;
+            *) log_error "Unknown argument: $1"; usage; exit 1 ;;
         esac
     done
 
@@ -248,20 +268,6 @@ parse_args() {
     if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
         NUM_PARTIES=1
     fi
-}
-
-show_help() {
-    echo "Usage: $0 --target [kind-local|kind-ci|aws-ci] [OPTIONS]"
-    echo "Options:"
-    echo "  --namespace <name>       K8s namespace (default: kms-test)"
-    echo "  --deployment-type <type> threshold|centralized|thresholdWithEnclave... (default: threshold)"
-    echo "  --tag <tag>              Image tag (default: latest-dev)"
-    echo "  --num-parties <n>        Number of parties (default: 4 for threshold)"
-    echo "  --cleanup                Cleanup before deploy"
-    echo "  --build                  Build images locally (kind targets only)"
-    echo "  --block                  Keep script running (for port-forwarding)"
-    echo "  --pcr0 <val>             PCR0 value for Enclave (optional)"
-    echo "  --collect-logs           Only collect logs from pods and exit"
 }
 
 #=============================================================================
@@ -589,6 +595,7 @@ deploy_kms() {
             --values "${BASE_VALUES}" \
             --values "${PEERS_VALUES}" \
             --values "${OVERRIDE_VALUES}" \
+            --set kmsCore.thresholdMode.enabled=false \
             --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}" \
             --wait
     fi
