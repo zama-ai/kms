@@ -25,13 +25,17 @@ KMS_CORE_TAG="latest-dev"
 KMS_CLIENT_TAG="latest-dev"
 CLEANUP="false"
 BUILD_IMAGES="false"
+# Perf-testing defaults (can be overridden by env/args)
+KMS_CHART_VERSION="${KMS_CHART_VERSION:-repository}"
+TKMS_INFRA_VERSION="${TKMS_INFRA_CHART_VERSION:-0.3.2}"
+PATH_SUFFIX="${PATH_SUFFIX:-kms-ci}"
+TLS="${TLS:-false}"
 # Default Repo Root (assuming script is in ci/scripts/)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # AWS/Tailscale Defaults
 TAILSCALE_HOSTNAME="tailscale-operator-zws-dev.diplodocus-boa.ts.net"
-TKMS_INFRA_VERSION="0.3.2"
 SYNC_SECRETS_VERSION="0.2.1"
 
 # Colors
@@ -226,13 +230,17 @@ check_local_resources() {
 
 usage() {
     cat <<EOF
-Usage: $0 --target [kind-local|kind-ci|aws-ci] [OPTIONS]
+Usage: $0 --target [kind-local|kind-ci|aws-ci|aws-perf] [OPTIONS]
 
 Options:
   --namespace <name>       K8s namespace (default: kms-test)
   --deployment-type <type> threshold|centralized|thresholdWithEnclave... (default: threshold)
   --tag <tag>              Image tag (default: latest-dev)
+  --core-tag <tag>         KMS core image tag (overrides --tag)
+  --client-tag <tag>       KMS client image tag (overrides --tag)
   --num-parties <n>        Number of parties (default: 4 for threshold)
+  --kms-chart-version <v>  KMS chart version (perf testing)
+  --tkms-infra-version <v> TKMS infra chart version (perf testing)
   --cleanup                Cleanup before deploy
   --build                  Build images locally (kind targets only)
   --block                  Keep script running (for port-forwarding)
@@ -251,7 +259,11 @@ parse_args() {
             --namespace) NAMESPACE="$2"; shift 2 ;;
             --deployment-type) DEPLOYMENT_TYPE="$2"; shift 2 ;;
             --tag) KMS_CORE_TAG="$2"; KMS_CLIENT_TAG="$2"; shift 2 ;; # Simplified for now
+            --core-tag) KMS_CORE_TAG="$2"; shift 2 ;;
+            --client-tag) KMS_CLIENT_TAG="$2"; shift 2 ;;
             --num-parties) NUM_PARTIES="$2"; shift 2 ;;
+            --kms-chart-version) KMS_CHART_VERSION="$2"; shift 2 ;;
+            --tkms-infra-version) TKMS_INFRA_VERSION="$2"; shift 2 ;;
             --cleanup) CLEANUP="true"; shift ;;
             --build) BUILD_IMAGES="true"; shift ;;
             --block) BLOCK="true"; shift ;;
@@ -280,7 +292,7 @@ setup_context() {
         kind-local|kind-ci)
             setup_kind_cluster
             ;;
-        aws-ci)
+        aws-ci|aws-perf)
             setup_aws_context
             ;;
         *)
@@ -350,7 +362,7 @@ setup_infrastructure() {
     if [[ "${TARGET}" == *"kind"* ]]; then
         deploy_localstack
         deploy_registry_credentials
-    elif [[ "${TARGET}" == "aws-ci" ]]; then
+    elif [[ "${TARGET}" == "aws-ci" || "${TARGET}" == "aws-perf" ]]; then
         # Check if we need to fetch PCRs from image if not provided
         if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]] && [[ -z "${PCR0:-}" ]]; then
              fetch_pcrs_from_image
@@ -395,7 +407,34 @@ deploy_localstack() {
         --wait
 }
 
+set_path_suffix() {
+    if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
+        PATH_SUFFIX="kms-enclave-ci"
+    else
+        PATH_SUFFIX="kms-ci"
+    fi
+}
+
 deploy_tkms_infra() {
+    if [[ "${TARGET}" == "aws-perf" ]]; then
+        log_info "Deploying TKMS Infra (Performance Testing)..."
+        set_path_suffix
+        local VALUES_FILE="${REPO_ROOT}/ci/perf-testing/${DEPLOYMENT_TYPE}/kms-ci/tkms-infra/values-${PATH_SUFFIX}.yaml"
+        local EXTRA_ARGS=""
+        if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
+            EXTRA_ARGS="--set kmsParties.awsKms.recipientAttestationImageSHA384=${PCR0:-}"
+        fi
+
+        helm upgrade --install tkms-infra \
+            oci://ghcr.io/zama-zws/crossplane/tkms-infra \
+            --namespace "${NAMESPACE}" \
+            --version "${TKMS_INFRA_VERSION}" \
+            --values "${VALUES_FILE}" \
+            ${EXTRA_ARGS} \
+            --wait
+        return 0
+    fi
+
     log_info "Deploying TKMS Infra (AWS Resources)..."
     # Logic adapted from pr-preview-deploy.yml
 
@@ -485,11 +524,16 @@ EOF
     fi
 
     log_info "Deploying Sync Secrets..."
+    local registry_values_path="${REPO_ROOT}/ci/pr-preview/registry-credential/values-kms-ci.yaml"
+    if [[ "${TARGET}" == "aws-perf" ]]; then
+        registry_values_path="${REPO_ROOT}/ci/perf-testing/registry-credential/values-kms-ci.yaml"
+    fi
+
     helm upgrade --install sync-secrets \
         oci://ghcr.io/zama-zws/helm-charts/sync-secrets \
         --namespace "${NAMESPACE}" \
         --version "${SYNC_SECRETS_VERSION}" \
-        --values "${REPO_ROOT}/ci/pr-preview/registry-credential/values-kms-ci.yaml" \
+        --values "${registry_values_path}" \
         --create-namespace \
         --wait
 }
@@ -497,8 +541,99 @@ EOF
 #=============================================================================
 # KMS Deployment
 #=============================================================================
+deploy_kms_perf_testing() {
+    log_info "Deploying KMS Core (Performance Testing)..."
+    set_path_suffix
+
+    local kms_values_dir="${REPO_ROOT}/ci/perf-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service"
+    local helm_chart_location=""
+    local helm_version_args=()
+
+    if [[ "${KMS_CHART_VERSION}" == "repository" ]]; then
+        log_info "Set helm chart location to local repository"
+        helm_chart_location="${REPO_ROOT}/charts/kms-core"
+    else
+        log_info "Set helm chart location to OCI registry with version ${KMS_CHART_VERSION}"
+        helm_chart_location="oci://ghcr.io/zama-ai/kms/charts/kms-core"
+        helm_version_args=(--version "${KMS_CHART_VERSION}")
+    fi
+
+    if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
+        for i in $(seq 1 "${NUM_PARTIES}"); do
+            helm upgrade --install "kms-service-threshold-${i}-${PATH_SUFFIX}" \
+                "${helm_chart_location}" \
+                "${helm_version_args[@]}" \
+                --namespace "${NAMESPACE}" \
+                --values "${kms_values_dir}/values-${PATH_SUFFIX}.yaml" \
+                --values "${kms_values_dir}/values-kms-service-threshold-${i}-${PATH_SUFFIX}.yaml" \
+                --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}" \
+                --set kmsCore.image.tag="${KMS_CORE_TAG}"
+        done
+
+    elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+        for i in $(seq 1 "${NUM_PARTIES}"); do
+            helm upgrade --install "kms-service-threshold-${i}-${PATH_SUFFIX}" \
+                "${helm_chart_location}" \
+                "${helm_version_args[@]}" \
+                --namespace "${NAMESPACE}" \
+                --values "${kms_values_dir}/values-${PATH_SUFFIX}.yaml" \
+                --values "${kms_values_dir}/values-kms-service-threshold-${i}-${PATH_SUFFIX}.yaml" \
+                --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}" \
+                --set kmsCore.image.tag="${KMS_CORE_TAG}" \
+                --set kmsCore.thresholdMode.tls.enabled="${TLS}" \
+                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0:-}" \
+                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1:-}" \
+                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2:-}" \
+                --wait \
+                --wait-for-jobs \
+                --timeout=1200s &
+        done
+        wait
+
+    elif [[ "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
+        helm upgrade --install "kms-service-centralized-${PATH_SUFFIX}" \
+            "${helm_chart_location}" \
+            "${helm_version_args[@]}" \
+            --namespace "${NAMESPACE}" \
+            --values "${kms_values_dir}/values-${PATH_SUFFIX}.yaml" \
+            --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}" \
+            --set kmsCore.image.tag="${KMS_CORE_TAG}"
+
+    elif [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
+        helm upgrade --install "kms-service-centralized-${PATH_SUFFIX}" \
+            "${helm_chart_location}" \
+            "${helm_version_args[@]}" \
+            --namespace "${NAMESPACE}" \
+            --values "${kms_values_dir}/values-${PATH_SUFFIX}.yaml" \
+            --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}" \
+            --set kmsCore.image.tag="${KMS_CORE_TAG}" \
+            --wait \
+            --wait-for-jobs \
+            --timeout=1200s
+    fi
+
+    if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+        log_info "Deploying KMS Core initialization job..."
+        helm upgrade --install kms-core-init \
+            "${helm_chart_location}" \
+            "${helm_version_args[@]}" \
+            --namespace "${NAMESPACE}" \
+            --values "${kms_values_dir}/values-kms-service-init-${PATH_SUFFIX}.yaml" \
+            --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}" \
+            --set kmsCore.image.tag="${KMS_CORE_TAG}" \
+            --wait \
+            --wait-for-jobs \
+            --timeout=1200s
+    fi
+}
+
 deploy_kms() {
     log_info "Deploying KMS Core..."
+
+    if [[ "${TARGET}" == "aws-perf" ]]; then
+        deploy_kms_perf_testing
+        return 0
+    fi
 
     # 1. Determine base values file
     local BASE_VALUES=""
@@ -532,6 +667,11 @@ deploy_kms() {
 
     # 4. Deploy
     if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
+        local threshold_value="1"
+        if [[ "${NUM_PARTIES}" -ge 13 ]]; then
+            threshold_value="4"
+        fi
+
         for i in $(seq 1 "${NUM_PARTIES}"); do
             log_info "Deploying Party ${i}..."
 
@@ -557,7 +697,7 @@ deploy_kms() {
                 HELM_ARGS+=(
                     --set kmsCore.serviceAccountName="${NAMESPACE}-${i}"
                     --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}"
-                    --set kmsCore.thresholdMode.thresholdValue="1" # TODO: Make variable
+                    --set kmsCore.thresholdMode.thresholdValue="${threshold_value}"
                     --set kmsCore.publicVault.s3.prefix="PUB-p${i}"
                     --set kmsCore.privateVault.s3.prefix="PRIV-p${i}"
                 )
@@ -632,8 +772,13 @@ generate_helm_overrides() {
     # Set Threshold params
     if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
         # Default for 4 parties as per original workflow
-        NUM_MAJORITY="2"
-        NUM_RECONSTRUCT="3"
+        if [[ "${NUM_PARTIES}" -ge 13 ]]; then
+            NUM_MAJORITY="5"
+            NUM_RECONSTRUCT="9"
+        else
+            NUM_MAJORITY="2"
+            NUM_RECONSTRUCT="3"
+        fi
     fi
 
     cat <<EOF > "${output_file}"
@@ -728,6 +873,10 @@ deploy_init_job() {
     local base_values="$1"
     local peers_values="$2"
     local override_values="$3"
+    local threshold_value="1"
+    if [[ "${NUM_PARTIES}" -ge 13 ]]; then
+        threshold_value="4"
+    fi
 
     # Determine init values file
     local INIT_VALUES=""
@@ -754,6 +903,7 @@ deploy_init_job() {
         --values "${peers_values}"
         --values "${override_values}"
         --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}" \
+        --set kmsCore.thresholdMode.thresholdValue="${threshold_value}" \
         --wait \
         --wait-for-jobs
     )
