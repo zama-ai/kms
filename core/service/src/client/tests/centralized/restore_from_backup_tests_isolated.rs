@@ -98,12 +98,16 @@ async fn key_gen_isolated(
     Ok(())
 }
 
-/// Helper to decrypt using isolated storage
-async fn decrypt_and_verify_isolated(
+/// Helper to verify key restoration by encrypting a test message.
+///
+/// This function verifies that the key material exists and is usable by
+/// successfully encrypting a message. If the key was not properly restored,
+/// `compute_cipher_from_stored_key` will fail.
+async fn verify_key_usable_isolated(
     material_dir: &Path,
     key_id: &RequestId,
     msg: TestingPlaintext,
-) -> Result<()> {
+) -> Result<TypedCiphertext> {
     use crate::testing::utils::compute_cipher_from_stored_key;
 
     let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
@@ -118,15 +122,13 @@ async fn decrypt_and_verify_isolated(
     )
     .await;
 
-    // Verify key restoration via decryption
-    let _typed_ct = TypedCiphertext {
+    // Return the ciphertext to prove key material is usable
+    Ok(TypedCiphertext {
         ciphertext: ct,
         fhe_type: fhe_type as i32,
         ciphertext_format: ct_format.into(),
         external_handle: vec![],
-    };
-
-    Ok(())
+    })
 }
 
 /// Test centralized DKG backup and restore flow.
@@ -142,7 +144,8 @@ async fn decrypt_and_verify_isolated(
 /// 4. Restore from backup
 /// 5. Verify restoration via decryption test
 ///
-/// **Run with:** `cargo test --lib --features testing test_insecure_central_dkg_backup_isolated`
+/// **Run with:** `cargo test --lib --features testing,insecure test_insecure_central_dkg_backup_isolated`
+#[cfg(feature = "insecure")]
 #[tokio::test]
 async fn test_insecure_central_dkg_backup_isolated() -> Result<()> {
     // Setup using builder pattern with backup vault
@@ -176,7 +179,8 @@ async fn test_insecure_central_dkg_backup_isolated() -> Result<()> {
     let resp = client.restore_from_backup(tonic::Request::new(req)).await?;
     tracing::info!("Backup restore response: {:?}", resp);
 
-    decrypt_and_verify_isolated(
+    // Verify key restoration by encrypting a test message
+    let _ct = verify_key_usable_isolated(
         material_dir.path(),
         &key_id_1,
         TestingPlaintext::U8(u8::MAX),
@@ -200,7 +204,8 @@ async fn test_insecure_central_dkg_backup_isolated() -> Result<()> {
 /// 2. Shutdown server
 /// 3. Verify backup was auto-created (checks FhePrivateKey in backup storage)
 ///
-/// **Run with:** `cargo test --lib --features testing test_insecure_central_autobackup_after_deletion_isolated`
+/// **Run with:** `cargo test --lib --features testing,insecure test_insecure_central_autobackup_after_deletion_isolated`
+#[cfg(feature = "insecure")]
 #[tokio::test]
 async fn test_insecure_central_autobackup_after_deletion_isolated() -> Result<()> {
     // Setup using builder pattern with backup vault
@@ -237,6 +242,13 @@ async fn test_insecure_central_autobackup_after_deletion_isolated() -> Result<()
     Ok(())
 }
 
+/// Test centralized CRS backup and restore flow.
+///
+/// Generates a CRS, deletes it from private storage, restores from backup,
+/// and verifies restoration. This is a slow test that runs in nightly CI.
+///
+/// **Run with:** `cargo test --lib --features testing,insecure,slow_tests nightly_test_insecure_central_crs_backup_isolated`
+#[cfg(all(feature = "insecure", feature = "slow_tests"))]
 #[tokio::test]
 async fn nightly_test_insecure_central_crs_backup_isolated() -> Result<()> {
     use kms_grpc::kms::v1::CrsGenRequest;

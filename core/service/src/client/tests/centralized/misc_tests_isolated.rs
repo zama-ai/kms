@@ -70,8 +70,6 @@ async fn test_central_health_endpoint_availability_isolated() -> Result<()> {
 async fn test_central_close_after_drop_isolated() -> Result<()> {
     use crate::consts::TEST_PARAM;
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-
     let env = CentralizedTestEnv::builder()
         .with_test_name("close_after_drop")
         .build()
@@ -152,7 +150,10 @@ async fn test_central_close_after_drop_isolated() -> Result<()> {
     Ok(())
 }
 
-// ISOLATED VERSION: Validate bug-fix to ensure that the server fails gracefully when the ciphertext is too large
+/// Validate bug-fix to ensure that the server fails gracefully when the ciphertext is too large.
+///
+/// This test uses RAM storage with custom rate limiter config (not the builder pattern)
+/// because it needs fine-grained control over the rate limiter settings.
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_largecipher_isolated() -> Result<()> {
@@ -166,9 +167,8 @@ async fn test_largecipher_isolated() -> Result<()> {
         keygen: 1,
         reshare: 1,
     };
-    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
 
-    // Use isolated setup with rate limiter
+    // Setup with RAM storage and custom rate limiter
     let (kms_server, mut kms_client) = crate::client::test_tools::setup_centralized(
         new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
             .await
