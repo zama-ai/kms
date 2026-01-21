@@ -944,6 +944,7 @@ deploy_init_job() {
         fi
     fi
 
+    log_info "Helm init command: helm upgrade --install kms-core-init \"${REPO_ROOT}/charts/kms-core\" ${HELM_ARGS[*]}"
     helm upgrade --install kms-core-init \
         "${REPO_ROOT}/charts/kms-core" \
         "${HELM_ARGS[@]}"
