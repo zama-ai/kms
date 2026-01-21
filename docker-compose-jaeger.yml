@@ -1,7 +1,7 @@
 services:
   prometheus:
     container_name: prometheus
-    image: prom/prometheus:v2.53.5
+    image: prom/prometheus:v3.5.0
     ports:
       - "9090:9090"
     volumes:
@@ -12,8 +12,7 @@ services:
 
   jaeger:
     container_name: jaeger
-    image: cr.jaegertracing.io/jaegertracing/jaeger:2.8.0
-    # image: jaegertracing/all-in-one:latest
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.14.1
     environment:
       - COLLECTOR_ZIPKIN_HOST_PORT=:9411
       - COLLECTOR_OTLP_ENABLED=true
