@@ -971,6 +971,22 @@ deploy_init_job() {
         "${REPO_ROOT}/charts/kms-core" \
         "${HELM_ARGS[@]}"
 
+    log_info "Helm init hooks:"
+    hooks_output="$(helm get hooks kms-core-init -n "${NAMESPACE}" 2>/dev/null || true)"
+    if [[ -n "${hooks_output}" ]]; then
+        echo "${hooks_output}"
+    else
+        log_warn "No hooks returned by helm"
+    fi
+
+    log_info "Checking for init job resources..."
+    if ! kubectl get job -n "${NAMESPACE}" -l app=kms-threshold-init-job >/dev/null 2>&1; then
+        log_error "No init job found after helm install"
+        kubectl get jobs -n "${NAMESPACE}" || true
+        kubectl get pods -n "${NAMESPACE}" || true
+        return 1
+    fi
+
     log_info "Waiting for KMS Core initialization to complete..."
     sleep 30
     kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
