@@ -58,7 +58,7 @@ jobs:
           - name: threshold
             deployment-type: threshold
             num-parties: 4
-            runner-label: "runs-on=${{ github.run_id }}/runner=96cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
+            runner-label: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
           - name: centralized
             deployment-type: centralized
             num-parties: 1
@@ -116,10 +116,10 @@ jobs:
             echo "kubectl checksum does not match"
             exit 1
           fi
-          install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-          chmod +x kubectl
+          sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+          sudo chmod +x kubectl
           mkdir -p ~/.local/bin
-          mv ./kubectl ~/.local/bin/kubectl
+          sudo mv ./kubectl ~/.local/bin/kubectl
           export PATH=$PATH:~/.local/bin
           kubectl version --client
 
@@ -130,14 +130,14 @@ jobs:
           [ "$(uname -m)" = "x86_64" ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-amd64
           # For ARM64
           [ "$(uname -m)" = "aarch64" ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-arm64
-          chmod +x ./kind
+          sudo chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
 
       - name: Install Helm
         if: matrix.cargo-check == false
         run: |
           curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
-          chmod 700 get_helm.sh
+          sudo chmod 700 get_helm.sh
           ./get_helm.sh
 
       - name: Configure AWS credentials
