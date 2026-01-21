@@ -849,10 +849,15 @@ kmsCoreClient:
   image:
     name: "${KMS_CLIENT_IMAGE_NAME_LOCAL}"
     tag: "${KMS_CLIENT_TAG}"
+EOF
+
+    if [[ "${TARGET}" == "aws-ci" ]]; then
+        cat <<EOF >> "${output_file}"
   envFrom:
     configmap:
       name: "${NAMESPACE}-1"
 EOF
+    fi
 
     if [[ "${INCLUDE_TOLERATIONS}" == "true" ]]; then
         cat <<EOF >> "${output_file}"
