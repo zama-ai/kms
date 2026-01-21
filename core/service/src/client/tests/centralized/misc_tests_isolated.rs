@@ -142,7 +142,7 @@ async fn test_central_close_after_drop_isolated() -> Result<()> {
     // And wait for public decryption to also be done
     let dec_resp_tasks = crate::client::tests::common::get_pub_dec_resp(&req_id, &client_map).await;
     let dec_resp_res = dec_resp_tasks.join_all().await;
-    // TODO the response for the server that were not dropped should actually be ok since we only drop one <=t server
+    // In centralized mode, dropping the single server means all responses should fail
     assert!(dec_resp_res.iter().all(|res| res.is_err()));
     // Check the server is no longer there
     assert!(get_status(&mut health_client, service_name).await.is_err());
