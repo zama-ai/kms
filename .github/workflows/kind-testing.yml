@@ -301,12 +301,21 @@ jobs:
           NAMESPACE: kms-test-${{ matrix.deployment-type }}
           NUM_PARTIES: ${{ matrix.num-parties }}
         run: |
+          ###################################################################
+          # Collect logs before teardown (especially on failures)
+          ###################################################################
+          chmod +x ci/scripts/deploy_unified.sh
+          ./ci/scripts/deploy_unified.sh \
+            --target kind-ci \
+            --namespace "${NAMESPACE}" \
+            --deployment-type "${DEPLOYMENT_TYPE}" \
+            --collect-logs
+
           # Stop setup script and cleanup resources
           # This will collect logs from pods based on DEPLOYMENT_TYPE and NUM_PARTIES
           SETUP_PID=$(cat .setup_pid 2>/dev/null || echo "")
           TAIL_PID=$(cat .tail_pid 2>/dev/null || echo "")
           chmod +x ci/scripts/manage_lifecycle.sh
-          chmod +x ci/scripts/deploy_unified.sh
           ./ci/scripts/manage_lifecycle.sh stop "${SETUP_PID}" "${TAIL_PID}"
 
       - name: Upload kms-core logs
