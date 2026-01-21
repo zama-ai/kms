@@ -172,7 +172,14 @@ async fn test_insecure_central_dkg_backup_isolated() -> Result<()> {
     assert!(
         !priv_storage
             .data_exists(&key_id_1, &PrivDataType::FhePrivateKey.to_string())
-            .await?
+            .await?,
+        "key_id_1 should be deleted"
+    );
+    assert!(
+        !priv_storage
+            .data_exists(&key_id_2, &PrivDataType::FhePrivateKey.to_string())
+            .await?,
+        "key_id_2 should be deleted"
     );
 
     let req = Empty {};
@@ -180,9 +187,15 @@ async fn test_insecure_central_dkg_backup_isolated() -> Result<()> {
     tracing::info!("Backup restore response: {:?}", resp);
 
     // Verify key restoration by encrypting a test message
-    let _ct = verify_key_usable_isolated(
+    let _ct1 = verify_key_usable_isolated(
         material_dir.path(),
         &key_id_1,
+        TestingPlaintext::U8(u8::MAX),
+    )
+    .await?;
+    let _ct2 = verify_key_usable_isolated(
+        material_dir.path(),
+        &key_id_2,
         TestingPlaintext::U8(u8::MAX),
     )
     .await?;
