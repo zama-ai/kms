@@ -222,6 +222,11 @@ impl<T: Clone> MetaStore<T> {
         self.storage.len()
     }
 
+    /// Get the total number of items in the store (alias for get_current_count)
+    pub fn get_total_count(&self) -> usize {
+        self.storage.len()
+    }
+
     /// Get the number of completed items
     pub fn get_completed_count(&self) -> usize {
         self.complete_queue.len()
