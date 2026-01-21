@@ -33,7 +33,7 @@ authors = ["Zama"]
 publish = true
 edition = "2021"
 license = "BSD-3-Clause-Clear"
-version = "0.13.0-rc.0"
+version = "0.13.0-rc.2"
 repository = "https://github.com/zama-ai/kms"
 description = "Key Management System for the Zama Protocol."
 
