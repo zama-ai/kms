@@ -486,11 +486,6 @@ impl<
         if insecure {
             Ok((PreprocHandleWithMode::Insecure, standard_dkg_params))
         } else {
-            tracing::info!(
-                    "Deleting preprocessing ID {} from bucket store before starting keygen for request ID {}",
-                    preproc_id,
-                    key_req_id
-                );
             let preproc_bucket =
                 retrieve_from_meta_store(bucket_metastore, &preproc_id, OP_KEYGEN_REQUEST)
                     .await
