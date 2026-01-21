@@ -515,6 +515,10 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long)]
     pub ciphertext_output_path: Option<PathBuf>,
+    /// Delay (in ms) between consecutive requests for decrypt operations
+    #[serde(skip_serializing, skip_deserializing)]
+    #[clap(long, default_value_t = 0)]
+    pub inter_request_delay_ms: u64,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -529,6 +533,9 @@ pub struct CipherFile {
     /// Each request uses a copy of the same batch.
     #[clap(long, short = 'n', default_value_t = 1)]
     pub num_requests: usize,
+    /// Delay (in ms) between consecutive requests for decrypt operations
+    #[clap(long, default_value_t = 0)]
+    pub inter_request_delay_ms: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1214,6 +1221,15 @@ pub async fn execute_cmd(
                 cipher_args.get_batch_size()
             ];
 
+            let inter_request_delay = match &cipher_args {
+                CipherArguments::FromFile(cf) => {
+                    tokio::time::Duration::from_millis(cf.inter_request_delay_ms)
+                }
+                CipherArguments::FromArgs(cp) => {
+                    tokio::time::Duration::from_millis(cp.inter_request_delay_ms)
+                }
+            };
+
             do_public_decrypt(
                 &mut rng,
                 cipher_args.get_num_requests(),
@@ -1228,6 +1244,7 @@ pub async fn execute_cmd(
                 kms_addrs.to_vec(),
                 max_iter,
                 num_expected_responses,
+                inter_request_delay,
             )
             .await?
         }
@@ -1291,6 +1308,15 @@ pub async fn execute_cmd(
                 cipher_args.get_batch_size()
             ];
 
+            let inter_request_delay = match &cipher_args {
+                CipherArguments::FromFile(cf) => {
+                    tokio::time::Duration::from_millis(cf.inter_request_delay_ms)
+                }
+                CipherArguments::FromArgs(cp) => {
+                    tokio::time::Duration::from_millis(cp.inter_request_delay_ms)
+                }
+            };
+
             do_user_decrypt(
                 &mut rng,
                 cipher_args.get_num_requests(),
@@ -1304,6 +1330,7 @@ pub async fn execute_cmd(
                 num_parties,
                 max_iter,
                 num_expected_responses,
+                inter_request_delay,
             )
             .await?
         }

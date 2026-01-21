@@ -101,13 +101,18 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     kms_addrs: Vec<alloy_primitives::Address>,
     max_iter: usize,
     num_expected_responses: usize,
+    inter_request_delay: tokio::time::Duration,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let mut timings_start = HashMap::new();
     let mut durations = Vec::new();
 
     let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
     let start = tokio::time::Instant::now();
-    for _ in 0..num_requests {
+    for i in 0..num_requests {
+        // Sleep between requests if a non-zero delay is provided (skip before first)
+        if i > 0 && !inter_request_delay.is_zero() {
+            tokio::time::sleep(inter_request_delay).await;
+        }
         let req_id = RequestId::new_random(rng);
         let internal_client = internal_client.clone();
         let ct_batch = ct_batch.clone();
@@ -200,13 +205,18 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     num_parties: usize,
     max_iter: usize,
     num_expected_responses: usize,
+    inter_request_delay: tokio::time::Duration,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
     let mut timings_start = HashMap::new();
     let mut durations = Vec::new();
     let start = tokio::time::Instant::now();
 
-    for _ in 0..num_requests {
+    for i in 0..num_requests {
+        // Sleep between requests if a non-zero delay is provided (skip before first)
+        if i > 0 && !inter_request_delay.is_zero() {
+            tokio::time::sleep(inter_request_delay).await;
+        }
         let req_id = RequestId::new_random(rng);
         let internal_client = internal_client.clone();
         let ct_batch = ct_batch.clone();
