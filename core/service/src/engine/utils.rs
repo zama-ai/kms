@@ -226,7 +226,7 @@ mod tests {
         let status: Status = error.into();
         assert!(status.message().contains("test_op"));
         assert!(!status.message().contains("test error"));
-        logs_contain("test error");
+        assert!(logs_contain("test error"));
     }
 
     #[test]
