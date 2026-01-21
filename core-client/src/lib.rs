@@ -479,6 +479,10 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long)]
     pub ciphertext_output_path: Option<PathBuf>,
+    /// Delay (in ms) between consecutive requests for decrypt operations
+    #[serde(skip_serializing, skip_deserializing)]
+    #[clap(long, default_value_t = 0)]
+    pub inter_request_delay_ms: u64,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -493,6 +497,9 @@ pub struct CipherFile {
     /// Each request uses a copy of the same batch.
     #[clap(long, short = 'n', default_value_t = 1)]
     pub num_requests: usize,
+    /// Delay (in ms) between consecutive requests for decrypt operations
+    #[clap(long, default_value_t = 0)]
+    pub inter_request_delay_ms: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1969,6 +1976,15 @@ pub async fn execute_cmd(
                 }
             };
 
+            let inter_request_delay = match &cipher_args {
+                CipherArguments::FromFile(cf) => {
+                    tokio::time::Duration::from_millis(cf.inter_request_delay_ms)
+                }
+                CipherArguments::FromArgs(cp) => {
+                    tokio::time::Duration::from_millis(cp.inter_request_delay_ms)
+                }
+            };
+
             let ct_batch = vec![
                 TypedCiphertext {
                     ciphertext,
@@ -1984,7 +2000,11 @@ pub async fn execute_cmd(
 
             let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
             let start = tokio::time::Instant::now();
-            for _ in 0..cipher_args.get_num_requests() {
+            for i in 0..cipher_args.get_num_requests() {
+                // Sleep between requests if a non-zero delay is provided (skip before first)
+                if i > 0 && !inter_request_delay.is_zero() {
+                    tokio::time::sleep(inter_request_delay).await;
+                }
                 let req_id = RequestId::new_random(&mut rng);
                 let internal_client = internal_client.clone();
                 let ct_batch = ct_batch.clone();
@@ -2100,6 +2120,15 @@ pub async fn execute_cmd(
                 }
             };
 
+            let inter_request_delay = match &cipher_args {
+                CipherArguments::FromFile(cf) => {
+                    tokio::time::Duration::from_millis(cf.inter_request_delay_ms)
+                }
+                CipherArguments::FromArgs(cp) => {
+                    tokio::time::Duration::from_millis(cp.inter_request_delay_ms)
+                }
+            };
+
             let ct_batch = vec![
                 TypedCiphertext {
                     ciphertext,
@@ -2122,6 +2151,7 @@ pub async fn execute_cmd(
                 num_parties,
                 max_iter,
                 num_expected_responses,
+                inter_request_delay,
             )
             .await?
         }
@@ -2547,13 +2577,18 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
     num_parties: usize,
     max_iter: usize,
     num_expected_responses: usize,
+    inter_request_delay: tokio::time::Duration,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
     let mut timings_start = HashMap::new();
     let mut durations = Vec::new();
     let start = tokio::time::Instant::now();
 
-    for _ in 0..num_requests {
+    for i in 0..num_requests {
+        // Sleep between requests if a non-zero delay is provided (skip before first)
+        if i > 0 && !inter_request_delay.is_zero() {
+            tokio::time::sleep(inter_request_delay).await;
+        }
         let req_id = RequestId::new_random(rng);
         let internal_client = internal_client.clone();
         let ct_batch = ct_batch.clone();
