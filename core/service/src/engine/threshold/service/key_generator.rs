@@ -38,7 +38,7 @@ use threshold_fhe::{
     },
     networking::NetworkMode,
 };
-use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockWriteGuard};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, RwLockReadGuard};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tonic::{Request, Response};
 use tracing::Instrument;
@@ -64,7 +64,7 @@ use crate::{
     },
     util::{
         meta_store::{
-            add_req_to_meta_store, delete_req_from_meta_store, retrieve_from_meta_store,
+            add_req_to_meta_store, handle_res, retrieve_from_meta_store,
             update_err_req_in_meta_store, MetaStore,
         },
         rate_limiter::RateLimiter,
@@ -179,6 +179,7 @@ impl<
 // more clear to label the variants as `Secure`
 // and `Insecure`.
 #[allow(clippy::type_complexity)]
+#[derive(Clone)]
 pub enum PreprocHandleWithMode {
     Secure(
         (
@@ -268,6 +269,7 @@ impl<
         let crypto_storage = self.crypto_storage.clone();
         let crypto_storage_cancelled = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.clone();
+        let preproc_handle_w_mode_copy = preproc_handle_w_mode.clone();
 
         let token = CancellationToken::new();
         {
@@ -289,7 +291,7 @@ impl<
                         base_session,
                         meta_store,
                         crypto_storage,
-                        preproc_handle_w_mode,
+                        preproc_handle_w_mode_copy,
                         sk,
                         dkg_params,
                         inner_config.to_owned(),
@@ -306,7 +308,7 @@ impl<
                         base_session,
                         meta_store,
                         crypto_storage,
-                        preproc_handle_w_mode,
+                        preproc_handle_w_mode_copy,
                         sk,
                         dkg_params,
                         internal_keyset_config
@@ -318,6 +320,7 @@ impl<
                 }
             }
         };
+        let preproc_bucket = self.preproc_buckets.clone();
         self.tracker
             .spawn(async move {
                 //Start the metric timer, it will end on drop
@@ -337,6 +340,27 @@ impl<
                         // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let guarded_meta_store = meta_store_cancelled.write().await;
                         crypto_storage_cancelled.purge_key_material(&req_id, &epoch_id, guarded_meta_store).await;
+                    },
+                }
+                // Remove the preprocessing material, even if the request was cancelled we cannot reuse the preprocessing
+                match &preproc_handle_w_mode {
+                    PreprocHandleWithMode::Secure((preproc_id, _)) => {
+                        tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
+                        let handle = {
+                            let mut meta_store_guard = preproc_bucket.write().await;
+                            meta_store_guard.delete(preproc_id)
+                        };
+                        match handle_res(handle, preproc_id).await {
+                            Ok(_) => {
+                                tracing::info!("Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}");
+                            },
+                            Err(e) => {
+                                MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
+                            }
+                        }
+                    },
+                    PreprocHandleWithMode::Insecure => {
+                        // Nothing to remove
                     },
                 }
             }.instrument(tracing::Span::current()));
@@ -397,25 +421,10 @@ impl<
         ];
         timer.tags(metric_tags.clone());
 
-        // Note that the keygen meta store should be checked first
-        // because we do not want to delete the preprocessing ID
-        // if the keygen request cannot proceed.
-        {
-            let guarded_meta_store = self.dkg_pubinfo_meta_store.read().await;
-            if guarded_meta_store.exists(&req_id) {
-                return Err(MetricedError::new(
-                    op_tag,
-                    Some(req_id),
-                    anyhow::anyhow!("Key generation request ID {req_id} is already in use."),
-                    tonic::Code::AlreadyExists,
-                ));
-            }
-        }
         let (preproc_handle, dkg_params) =
             // Processes the bucket meta information. This is a slightly funky as in certain situations it may override the DKGParams sepcified in the request
-            // Futhermore be aware that this helper method also DELETES the preprocessing entry from the meta store
             Self::retrieve_preproc_handle(
-                self.preproc_buckets.write().await,
+                self.preproc_buckets.read().await,
                 req_id,
                 preproc_id,
                 inner.params,
@@ -455,9 +464,9 @@ impl<
     }
 
     /// Retrieve the preprocessing handle, parameters and preprocessing ID from the request.
-    /// This method also deletes the preprocessing entry from the meta store
+    /// This method also does NOT delete the preprocessing entry from the meta store
     async fn retrieve_preproc_handle(
-        bucket_metastore: RwLockWriteGuard<'_, MetaStore<BucketMetaStore>>,
+        bucket_metastore: RwLockReadGuard<'_, MetaStore<BucketMetaStore>>,
         key_req_id: RequestId,
         preproc_id: RequestId,
         params: Option<i32>,
@@ -483,7 +492,7 @@ impl<
                     key_req_id
                 );
             let preproc_bucket =
-                delete_req_from_meta_store(bucket_metastore, &preproc_id, OP_KEYGEN_REQUEST)
+                retrieve_from_meta_store(bucket_metastore, &preproc_id, OP_KEYGEN_REQUEST)
                     .await
                     .map_err(|e| {
                         // Remap the error to include the correct request ID

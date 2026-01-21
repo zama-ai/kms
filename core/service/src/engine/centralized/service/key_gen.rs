@@ -8,8 +8,8 @@ use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{proto_request_id, validate_key_gen_request, RequestIdParsingErr};
 use crate::util::meta_store::{
-    add_req_to_meta_store, delete_req_from_meta_store, retrieve_from_meta_store,
-    update_err_req_in_meta_store, MetaStore,
+    add_req_to_meta_store, handle_res, retrieve_from_meta_store, update_err_req_in_meta_store,
+    MetaStore,
 };
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::{Storage, StorageExt};
@@ -108,24 +108,10 @@ pub async fn key_gen_impl<
     // If all is ok write the request ID to the meta store
     // All validation must be done before inserting the request ID
     let (params, permit) = {
-        // Note that the keygen meta store should be checked first
-        // because we do not want to delete the preprocessing ID
-        // if the keygen request cannot proceed.
-        {
-            let guarded_meta_store = service.key_meta_map.read().await;
-            if guarded_meta_store.exists(&req_id) {
-                return Err(MetricedError::new(
-                    op_tag,
-                    Some(req_id),
-                    anyhow::anyhow!("Key generation request ID {req_id} is already in use."),
-                    tonic::Code::AlreadyExists,
-                ));
-            }
-        }
         // If we're in insecure mode, we skip removing preprocessed material since it may not exist
         let params = if !insecure {
-            let preproc = delete_req_from_meta_store(
-                service.preprocessing_meta_store.write().await,
+            let preproc = retrieve_from_meta_store(
+                service.preprocessing_meta_store.read().await,
                 &preproc_id,
                 op_tag,
             )
@@ -166,6 +152,7 @@ pub async fn key_gen_impl<
         )
     })?;
 
+    let preproc_meta_store = Arc::clone(&service.preprocessing_meta_store);
     let handle = service.tracker.spawn(
         async move {
             let _timer = timer;
@@ -183,6 +170,20 @@ pub async fn key_gen_impl<
                 op_tag,
             )
             .await;
+            // "Remove" the preprocessing material by deleting its entry from the meta store
+            tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
+            let handle = {
+                let mut meta_store_guard = preproc_meta_store.write().await;
+                meta_store_guard.delete(&preproc_id)
+            };
+            match handle_res(handle, &preproc_id).await {
+                Ok(_) => {
+                    tracing::info!("Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}");
+                },
+                Err(e) => {
+                    MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
+                }
+            }
         }
         .instrument(tracing::Span::current()),
     );
