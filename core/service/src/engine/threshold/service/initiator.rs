@@ -165,15 +165,6 @@ impl<
         context_id: &ContextId,
         epoch_id: &EpochId,
     ) -> anyhow::Result<()> {
-        // TODO(zama-ai/kms-internal/issues/2721),
-        // we never try to store the PRSS in meta_store, so the ID is not guaranteed to be unique
-
-        let own_identity = self
-            .session_maker
-            .my_identity(context_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("own identity not found in context {}", context_id))?;
-
         let session_id = epoch_id.derive_session_id()?;
 
         // PRSS robust init requires broadcast, which is implemented with Sync network assumption
@@ -182,11 +173,11 @@ impl<
             .make_base_session(session_id, *context_id, NetworkMode::Sync)
             .await?;
 
-        tracing::info!("Starting PRSS for identity {}.", own_identity);
         tracing::info!(
-            "Session has {} parties with threshold {}",
+            "Session has {} parties with threshold {} for role {}",
             base_session.parameters.num_parties(),
-            base_session.parameters.threshold()
+            base_session.parameters.threshold(),
+            base_session.my_role()
         );
         tracing::info!("Role assignments: {:?}", base_session.parameters.roles());
 
@@ -246,9 +237,9 @@ impl<
                 .await;
         }
         tracing::info!(
-            "PRSS on epoch ID {} completed successfully for identity {}.",
+            "PRSS on epoch ID {} completed successfully for party {}.",
             epoch_id,
-            own_identity
+            base_session.my_role()
         );
         Ok(())
     }
