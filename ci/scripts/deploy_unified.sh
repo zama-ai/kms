@@ -700,6 +700,8 @@ deploy_kms() {
             threshold_value="4"
         fi
 
+        local wait_args=(--wait --wait-for-jobs --timeout=1200s)
+
         for i in $(seq 1 "${NUM_PARTIES}"); do
             log_info "Deploying Party ${i}..."
 
@@ -711,23 +713,22 @@ deploy_kms() {
                 --values "${OVERRIDE_VALUES}"
                 --set kmsPeers.id="${i}"
                 --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}"
+                --set kmsCore.publicVault.s3.prefix="PUB-p${i}"
+                --set kmsCore.privateVault.s3.prefix="PRIV-p${i}"
+                --set kmsCore.backupVault.s3.prefix="BACKUP-p${i}"
             )
 
-            if [[ "${TARGET}" == *"kind"* ]]; then
-                # Kind specific overrides (Localstack S3)
+            if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
                 HELM_ARGS+=(
-                    --set kmsCore.publicVault.s3.prefix="PUB-p${i}"
-                    --set kmsCore.privateVault.s3.prefix="PRIV-p${i}"
-                    --set kmsCore.backupVault.s3.prefix="BACKUP-p${i}"
+                    --set kmsCore.thresholdMode.thresholdValue="${threshold_value}"
                 )
-            else
-                # AWS Specific overrides (Service Accounts, etc.)
+            fi
+
+            if [[ "${TARGET}" == "aws-ci" ]]; then
+                # Kind specific overrides (Localstack S3)
                 HELM_ARGS+=(
                     --set kmsCore.serviceAccountName="${NAMESPACE}-${i}"
                     --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}"
-                    --set kmsCore.thresholdMode.thresholdValue="${threshold_value}"
-                    --set kmsCore.publicVault.s3.prefix="PUB-p${i}"
-                    --set kmsCore.privateVault.s3.prefix="PRIV-p${i}"
                 )
             fi
 
@@ -747,9 +748,18 @@ deploy_kms() {
             helm upgrade --install "kms-core-${i}" \
                 "${REPO_ROOT}/charts/kms-core" \
                 "${HELM_ARGS[@]}" \
-                --wait &
+                "${wait_args[@]}" &
         done
         wait
+
+        if [[ "${TARGET}" == "aws-ci" ]]; then
+            log_info "Waiting for KMS Core pods to be ready..."
+            sleep 60
+            for i in $(seq 1 "${NUM_PARTIES}"); do
+                kubectl wait --for=condition=ready pod "kms-core-${i}-core-${i}" \
+                    -n "${NAMESPACE}" --timeout=600s
+            done
+        fi
 
         # Init Job
         deploy_init_job "${BASE_VALUES}" "${PEERS_VALUES}" "${OVERRIDE_VALUES}"
@@ -757,6 +767,11 @@ deploy_kms() {
     else
         # Centralized
         log_info "Deploying Centralized..."
+        local wait_args=()
+        if [[ "${TARGET}" != "aws-ci" ]]; then
+            wait_args=(--wait)
+        fi
+
         helm upgrade --install kms-core \
             "${REPO_ROOT}/charts/kms-core" \
             --namespace "${NAMESPACE}" \
@@ -765,7 +780,14 @@ deploy_kms() {
             --values "${OVERRIDE_VALUES}" \
             --set kmsCore.thresholdMode.enabled=false \
             --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}" \
-            --wait
+            "${wait_args[@]}"
+
+        if [[ "${TARGET}" == "aws-ci" ]]; then
+            log_info "Waiting for KMS Core pods to be ready..."
+            sleep 60
+            kubectl wait --for=condition=ready pod kms-core-core-1 \
+                -n "${NAMESPACE}" --timeout=600s
+        fi
     fi
 }
 
