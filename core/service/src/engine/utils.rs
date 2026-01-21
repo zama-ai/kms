@@ -118,7 +118,7 @@ impl MetricedError {
     }
 
     /// Handles an error that cannot be returned through gRPC by logging the error and incrementing metrics.
-    /// This is _not_ indempotent and should only be called once per error.
+    /// This is _not_ idempotent and should only be called once per error.
     ///
     /// **RESTRICTED USAGE**: This function should only be used by `crate::util::meta_store` module.
     /// It is made crate-private to prevent misuse in other parts of the codebase.
