@@ -23,6 +23,8 @@ DEPLOYMENT_TYPE="threshold"
 NUM_PARTIES="4"
 KMS_CORE_TAG="latest-dev"
 KMS_CLIENT_TAG="latest-dev"
+KMS_CORE_IMAGE_NAME="${KMS_CORE_IMAGE_NAME:-ghcr.io/zama-ai/kms/core-service}"
+KMS_CORE_CLIENT_IMAGE_NAME="${KMS_CORE_CLIENT_IMAGE_NAME:-ghcr.io/zama-ai/kms/core-client}"
 CLEANUP="false"
 BUILD_IMAGES="false"
 # Perf-testing defaults (can be overridden by env/args)
@@ -796,7 +798,8 @@ generate_helm_overrides() {
     log_info "Generating Helm overrides to ${output_file}"
 
     local IS_ENCLAVE="false"
-    local KMS_IMAGE_NAME="ghcr.io/zama-ai/kms/core-service"
+    local KMS_IMAGE_NAME="${KMS_CORE_IMAGE_NAME}"
+    local KMS_CLIENT_IMAGE_NAME_LOCAL="${KMS_CORE_CLIENT_IMAGE_NAME}"
     local GEN_KEYS="false"
     local TOLERATION_KEY="karpenter.sh/nodepool"
     local TOLERATION_VALUE="kms-bench-spot-64" # Default for Standard
@@ -838,6 +841,15 @@ kmsCore:
     tag: "${KMS_CORE_TAG}"
 EOF
 
+    if [[ "${TARGET}" == "aws-ci" ]]; then
+        cat <<EOF >> "${output_file}"
+  serviceAccountName: "${NAMESPACE}-1"
+  envFrom:
+    configmap:
+      name: "${NAMESPACE}-1"
+EOF
+    fi
+
     if [[ "${INCLUDE_TOLERATIONS}" == "true" ]]; then
         cat <<EOF >> "${output_file}"
   tolerations:
@@ -865,6 +877,12 @@ EOF
     cat <<EOF >> "${output_file}"
 
 kmsCoreClient:
+  image:
+    name: "${KMS_CLIENT_IMAGE_NAME_LOCAL}"
+    tag: "${KMS_CLIENT_TAG}"
+  envFrom:
+    configmap:
+      name: "${NAMESPACE}-1"
 EOF
 
     if [[ "${INCLUDE_TOLERATIONS}" == "true" ]]; then
@@ -967,6 +985,7 @@ deploy_init_job() {
     fi
 
     log_info "Helm init command: helm upgrade --install kms-core-init \"${REPO_ROOT}/charts/kms-core\" ${HELM_ARGS[*]}"
+    cat "${override_values}"
     helm upgrade --install kms-core-init \
         "${REPO_ROOT}/charts/kms-core" \
         "${HELM_ARGS[@]}"
