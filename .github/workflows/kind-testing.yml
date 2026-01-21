@@ -20,87 +20,27 @@ jobs:
   # This job is currently disabled but can be used to build and publish Docker images
   # for testing purposes when needed.
   ############################################################################
-  # docker-build:
-  #   if: github.event_name == 'pull_request'
-  #   name: kind-testing/docker-build
-  #   permissions:
-  #     actions: read # Read workflow run information
-  #     contents: write # Checkout repository code
-  #     id-token: write # OIDC authentication
-  #     pull-requests: read # read pull requests information
-  #     packages: write # Publish Docker images
-  #     attestations: write # Create build attestations
-  #   uses: ./.github/workflows/docker-build.yml
-  #   secrets:
-  #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-  #     AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-  #     AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-  #     SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #     SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-  #     JOB_SECRET: ${{ secrets.JOB_SECRET }}
-  #     CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-  #     CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+  docker-build:
+    if: github.event_name == 'pull_request'
+    name: kind-testing/docker-build
+    permissions:
+      actions: read # Read workflow run information
+      contents: write # Checkout repository code
+      id-token: write # OIDC authentication
+      pull-requests: read # read pull requests information
+      packages: write # Publish Docker images
+      attestations: write # Create build attestations
+    uses: ./.github/workflows/docker-build.yml
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
-  ############################################################################
-  # Start EC2 Runner Jobs
-  # Initializes self-hosted runners for running tests in parallel
-  ############################################################################
-  start-runner-cargo:
-    name: kind-testing/start-runner (cargo)
-    runs-on: ubuntu-latest
-    # needs:
-    #   - docker-build
-    outputs:
-      label: ${{ steps.start-ec2-runner.outputs.label }}
-    steps:
-      - name: Start EC2 runner
-        id: start-ec2-runner
-        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
-        with:
-          mode: start
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          backend: aws
-          profile: 'big-instance'
-
-  start-runner-threshold:
-    name: kind-testing/start-runner (threshold)
-    runs-on: ubuntu-latest
-    # needs:
-    #   - docker-build
-    outputs:
-      label: ${{ steps.start-ec2-runner.outputs.label }}
-    steps:
-      - name: Start EC2 runner
-        id: start-ec2-runner
-        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
-        with:
-          mode: start
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          backend: aws
-          profile: 'big-instance-kind'
-
-  start-runner-centralized:
-    name: kind-testing/start-runner (centralized)
-    runs-on: ubuntu-latest
-    # needs:
-    #   - docker-build
-    outputs:
-      label: ${{ steps.start-ec2-runner.outputs.label }}
-    steps:
-      - name: Start EC2 runner
-        id: start-ec2-runner
-        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
-        with:
-          mode: start
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          backend: aws
-          profile: 'big-instance-service'
 
   ############################################################################
   # Kind Testing Job
@@ -114,20 +54,17 @@ jobs:
         include:
           - name: cargo-check
             cargo-check: true
-            runner-label: ${{ needs.start-runner-cargo.outputs.label }}
+            runner-label: "runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
           - name: threshold
             deployment-type: threshold
             num-parties: 4
-            runner-label: ${{ needs.start-runner-threshold.outputs.label }}
+            runner-label: "runs-on=${{ github.run_id }}/runner=96cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
           - name: centralized
             deployment-type: centralized
             num-parties: 1
-            runner-label: ${{ needs.start-runner-centralized.outputs.label }}
+            runner-label: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
     needs:
-      - start-runner-cargo
-      - start-runner-threshold
-      - start-runner-centralized
-      # - docker-build
+      - docker-build
     runs-on: ${{ matrix.runner-label }}
 
     steps:
@@ -417,56 +354,3 @@ jobs:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
   ############################################################################
-  # Stop EC2 Runner Jobs
-  # Cleans up the EC2 runners after tests complete or fail
-  ############################################################################
-  stop-runner-cargo:
-    name: kind-testing/stop-runner (cargo)
-    needs:
-      - start-runner-cargo
-      - kind-testing
-    runs-on: ubuntu-latest
-    if: ${{ always() && needs.start-runner-cargo.result == 'success' }}
-    steps:
-      - name: Stop EC2 runner
-        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
-        with:
-          mode: stop
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          label: ${{ needs.start-runner-cargo.outputs.label }}
-
-  stop-runner-threshold:
-    name: kind-testing/stop-runner (threshold)
-    needs:
-      - start-runner-threshold
-      - kind-testing
-    runs-on: ubuntu-latest
-    if: ${{ always() && needs.start-runner-threshold.result == 'success' }}
-    steps:
-      - name: Stop EC2 runner
-        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
-        with:
-          mode: stop
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          label: ${{ needs.start-runner-threshold.outputs.label }}
-
-  stop-runner-centralized:
-    name: kind-testing/stop-runner (centralized)
-    needs:
-      - start-runner-centralized
-      - kind-testing
-    runs-on: ubuntu-latest
-    if: ${{ always() && needs.start-runner-centralized.result == 'success' }}
-    steps:
-      - name: Stop EC2 runner
-        uses: zama-ai/slab-github-runner@79939325c3c429837c10d6041e4fd8589d328bac # v1.4.1
-        with:
-          mode: stop
-          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          slab-url: ${{ secrets.SLAB_BASE_URL }}
-          job-secret: ${{ secrets.JOB_SECRET }}
-          label: ${{ needs.start-runner-centralized.outputs.label }}
