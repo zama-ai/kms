@@ -17,6 +17,7 @@ use tfhe::{
             CompressionPrivateKeys, NoiseSquashingCompressionKey,
             NoiseSquashingCompressionPrivateKey,
         },
+        parameters::CompressionParameters,
         ClassicPBSParameters, PBSParameters,
     },
     zk::CompactPkeCrs,
@@ -467,7 +468,7 @@ where
                     data: glwe_compression_key_shares128,
                     polynomial_size: params.packing_ks_polynomial_size,
                 },
-                params,
+                params: CompressionParameters::Classic(params),
             })
         });
 
@@ -678,7 +679,7 @@ pub fn to_hl_client_key(
                         compression_private_key.into_container(),
                         polynomial_size,
                     ),
-                    params: params.raw_compression_parameters,
+                    params: CompressionParameters::Classic(params.raw_compression_parameters),
                 },
             ),
         )
@@ -919,21 +920,36 @@ pub fn run_decompression_test(
     };
     let (_, _, _, decompression_key1, _, _, _, _) = server_key1.clone().into_raw_parts();
     let decompression_key1 = decompression_key1.unwrap().into_raw_parts();
+
     assert_eq!(
-        decompression_key1.blind_rotate_key.glwe_size(),
-        decompression_key.blind_rotate_key.glwe_size()
+        decompression_key1.out_glwe_size(),
+        decompression_key.out_glwe_size()
+    );
+
+    // Deconstruct to get access to blind_rotate_key
+    let (bsk_dec_1, ctxt_count_dec_1) = decompression_key1.into_raw_parts();
+    let (bsk_dec, ctxt_count_dec) = decompression_key.into_raw_parts();
+
+    assert_eq!(
+        bsk_dec_1.input_lwe_dimension(),
+        bsk_dec.input_lwe_dimension(),
+    );
+
+    //Reconstruct
+    let decompression_key1 = tfhe::shortint::list_compression::DecompressionKey::from_raw_parts(
+        bsk_dec_1,
+        ctxt_count_dec_1,
+    );
+    let decompression_key =
+        tfhe::shortint::list_compression::DecompressionKey::from_raw_parts(bsk_dec, ctxt_count_dec);
+
+    assert_eq!(
+        decompression_key1.output_lwe_dimension(),
+        decompression_key.output_lwe_dimension(),
     );
     assert_eq!(
-        decompression_key1.blind_rotate_key.input_lwe_dimension(),
-        decompression_key.blind_rotate_key.input_lwe_dimension(),
-    );
-    assert_eq!(
-        decompression_key1.blind_rotate_key.output_lwe_dimension(),
-        decompression_key.blind_rotate_key.output_lwe_dimension(),
-    );
-    assert_eq!(
-        decompression_key1.blind_rotate_key.polynomial_size(),
-        decompression_key.blind_rotate_key.polynomial_size(),
+        decompression_key1.out_polynomial_size(),
+        decompression_key.out_polynomial_size(),
     );
 
     let decompression_key =
