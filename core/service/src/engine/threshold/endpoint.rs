@@ -174,7 +174,8 @@ impl_endpoint! {
         #[tracing::instrument(skip(self, request))]
         async fn insecure_key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST);
-            self.insecure_key_generator.insecure_key_gen(request).await.map_err(|e| e.into())        }
+            self.insecure_key_generator.insecure_key_gen(request).await.map_err(|e| e.into())
+        }
 
         #[cfg(feature = "insecure")]
         #[tracing::instrument(skip(self, request))]

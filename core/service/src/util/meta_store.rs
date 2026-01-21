@@ -376,6 +376,7 @@ pub(crate) async fn retrieve_from_meta_store<T: Clone>(
     handle_res_metriced(handle, req_id, metric_scope).await
 }
 
+#[cfg(feature = "non-wasm")]
 pub async fn handle_res<T: Clone>(
     handle: Option<Arc<AsyncCell<Result<T, String>>>>,
     req_id: &RequestId,
@@ -414,6 +415,7 @@ pub async fn handle_res<T: Clone>(
     }
 }
 
+#[cfg(feature = "non-wasm")]
 async fn handle_res_metriced<T: Clone>(
     handle: Option<Arc<AsyncCell<Result<T, String>>>>,
     req_id: &RequestId,

@@ -20,8 +20,8 @@ use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
 use kms_grpc::{EpochId, RequestId};
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    CENTRAL_TAG, OP_INSECURE_KEYGEN_REQUEST, OP_KEYGEN_REQUEST, TAG_CONTEXT_ID, TAG_EPOCH_ID,
-    TAG_KEY_ID, TAG_PARTY_ID,
+    CENTRAL_TAG, OP_INSECURE_KEYGEN_REQUEST, OP_INSECURE_KEYGEN_RESULT, OP_KEYGEN_REQUEST,
+    OP_KEYGEN_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
 };
 use std::sync::Arc;
 use threshold_fhe::execution::keyset_config::KeySetConfig;
@@ -205,9 +205,9 @@ pub async fn get_key_gen_result_impl<
 ) -> Result<Response<KeyGenResult>, MetricedError> {
     // Retrieve the correct tag
     let op_tag = if insecure {
-        OP_INSECURE_KEYGEN_REQUEST
+        OP_INSECURE_KEYGEN_RESULT
     } else {
-        OP_KEYGEN_REQUEST
+        OP_KEYGEN_RESULT
     };
     let request_id =
         proto_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)
