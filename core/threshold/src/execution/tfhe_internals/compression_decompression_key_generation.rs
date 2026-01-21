@@ -27,8 +27,14 @@ use tfhe::{
         par_convert_standard_lwe_bootstrap_key_to_fourier, FourierLweBootstrapKey, LweBootstrapKey,
         ParallelByteRandomGenerator, SeededLweBootstrapKey,
     },
-    shortint::list_compression::{
-        CompressedCompressionKey, CompressedDecompressionKey, CompressionKey, DecompressionKey,
+    shortint::{
+        list_compression::{
+            CompressedCompressionKey, CompressedDecompressionKey, CompressionKey, DecompressionKey,
+        },
+        server_key::{
+            CompressedModulusSwitchConfiguration, ModulusSwitchConfiguration,
+            ShortintBootstrappingKey, ShortintCompressedBootstrappingKey,
+        },
     },
 };
 use tfhe_csprng::generators::SoftwareRandomGenerator;
@@ -74,10 +80,16 @@ where
     // Conversion to fourier domain
     par_convert_standard_lwe_bootstrap_key_to_fourier(&blind_rotate_key, &mut fourier_bsk);
 
-    Ok(DecompressionKey {
-        blind_rotate_key: fourier_bsk,
-        lwe_per_glwe: params.raw_compression_parameters.lwe_per_glwe,
-    })
+    let bsk = ShortintBootstrappingKey::Classic {
+        bsk: fourier_bsk,
+        // As is done in tfhe-rs
+        modulus_switch_noise_reduction_key: ModulusSwitchConfiguration::Standard,
+    };
+
+    Ok(DecompressionKey::from_raw_parts(
+        bsk,
+        params.raw_compression_parameters.lwe_per_glwe,
+    ))
 }
 
 #[instrument(name="Gen compressed Decompression Key", skip(private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
@@ -110,10 +122,16 @@ where
     )
     .await?;
 
-    Ok(CompressedDecompressionKey {
-        blind_rotate_key,
-        lwe_per_glwe: params.raw_compression_parameters.lwe_per_glwe,
-    })
+    let bsk = ShortintCompressedBootstrappingKey::Classic {
+        bsk: blind_rotate_key,
+        // As is done in tfhe-rs
+        modulus_switch_noise_reduction_key: CompressedModulusSwitchConfiguration::Standard,
+    };
+
+    Ok(CompressedDecompressionKey::from_raw_parts(
+        bsk,
+        params.raw_compression_parameters.lwe_per_glwe,
+    ))
 }
 
 /// helper function to generate packing key switching key shares
