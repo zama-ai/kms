@@ -648,7 +648,8 @@ deploy_kms() {
             if [[ "${is_perf}" == "true" ]]; then
                 HELM_ARGS+=(
                     --values "${perf_values_dir}/values-${PATH_SUFFIX}.yaml"
-                    --values "${perf_values_dir}/values-kms-service-threshold-${i}-${PATH_SUFFIX}.yaml"
+                    --set kmsCore.serviceAccountName="${NAMESPACE}-${i}"
+                    --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}"
                     --set kmsCore.image.tag="${KMS_CORE_TAG}"
                 )
                 if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then

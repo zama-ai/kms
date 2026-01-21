@@ -82,22 +82,17 @@ jobs:
           version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
 
-      - name: Setup Home
-        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
-
       # ==========================================================================
-      # Git LFS Setup
-      # Required for handling large files in tests, especially for backward compatibility
-      # ==========================================================================
-      - name: Setup Git LFS
+      # LFS files are needed for backward compatibility tests
+      # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
+      # need to do it right after and then manually pull LFS files
+      - name: setup gitlfs from binary
         env:
-          GIT_LFS_VERSION: '3.6.1' # Pinned version for reproducibility
+          GIT_LFS_VERSION: '3.6.1'
         run: |
-          # Download and install Git LFS
           wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
           tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
-          "./git-lfs-${GIT_LFS_VERSION}/install.sh"
-          # Pull LFS files after installation
+          sudo ./git-lfs-"${GIT_LFS_VERSION}"/install.sh
           git lfs pull
 
       # ==========================================================================
