@@ -306,8 +306,8 @@ jobs:
         env:
           DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
           GITHUB_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
-          KMS_CORE_IMAGE_TAG: "f85855c" # ${{ needs.docker-build.outputs.image_tag }}
-          KMS_CORE_CLIENT_IMAGE_TAG: "f85855c" # ${{ needs.docker-build.outputs.image_tag }}
+          KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
           NAMESPACE: kms-test-${{ matrix.deployment-type }}
           NUM_PARTIES: ${{ matrix.num-parties }} # Number of parties
         run: |
