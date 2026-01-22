@@ -13,3 +13,22 @@ mod reshare_tests;
 #[cfg(feature = "slow_tests")]
 mod restore_from_backup_tests;
 mod user_decryption_tests;
+
+// =============================================================================
+// ISOLATED TESTS (Docker-free, use pre-generated material)
+// =============================================================================
+// These tests use the consolidated testing module (kms_lib::testing) and run
+// in isolated temporary directories with pre-generated cryptographic material.
+// They are intended to eventually replace the Docker-based tests above.
+//
+// Run isolated tests with: cargo test --lib --features insecure,testing <test_name>
+// Generate test material first: make generate-test-material-testing
+
+#[cfg(any(feature = "testing", feature = "insecure"))]
+mod key_gen_tests_isolated;
+
+#[cfg(any(feature = "testing", feature = "insecure"))]
+mod misc_tests_isolated;
+
+#[cfg(any(feature = "testing", feature = "insecure"))]
+mod restore_from_backup_tests_isolated;
