@@ -313,10 +313,20 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
             .with_span_processor(batch_processor)
             .with_resource(
                 Resource::builder()
-                    .with_attributes(vec![KeyValue::new(
-                        opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-                        service_name,
-                    )])
+                    .with_attributes(vec![
+                        KeyValue::new(
+                            opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
+                            service_name,
+                        ),
+                        KeyValue::new(
+                            "service.version".to_string(),
+                            env!("CARGO_PKG_VERSION").to_string(),
+                        ),
+                        KeyValue::new(
+                            "deployment.environment".to_string(),
+                            ENVIRONMENT.to_string(),
+                        ),
+                    ])
                     .build(),
             )
             .build()
@@ -338,10 +348,20 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
             .with_simple_exporter(opentelemetry_stdout::SpanExporter::default())
             .with_resource(
                 Resource::builder()
-                    .with_attributes(vec![KeyValue::new(
-                        opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-                        service_name,
-                    )])
+                    .with_attributes(vec![
+                        KeyValue::new(
+                            opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
+                            service_name,
+                        ),
+                        KeyValue::new(
+                            "service.version".to_string(),
+                            env!("CARGO_PKG_VERSION").to_string(),
+                        ),
+                        KeyValue::new(
+                            "deployment.environment".to_string(),
+                            ENVIRONMENT.to_string(),
+                        ),
+                    ])
                     .build(),
             )
             .build()
