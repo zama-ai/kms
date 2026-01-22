@@ -227,7 +227,6 @@ impl<
         Ok(())
     }
 
-    // Question: When can we completely remove this depreacted function ?
     /// This assumes the default context exists.
     /// It will overwrite the PRSS in session maker if it already exists,
     /// so make sure this is called before the normal (non-legacy) initialization.

@@ -313,7 +313,7 @@ service CoreServiceEndpoint {
   rpc GetEpochResult(kms.v1.RequestId) returns (kms.v1.EpochResultResponse);
 
   // Destroys an MPC epoch, by first erasing the PRSS
-  // and if the sahres of the secret key.
+  // and if the shares of the secret key.
   //
   // # Parameters
   // # Conditions
