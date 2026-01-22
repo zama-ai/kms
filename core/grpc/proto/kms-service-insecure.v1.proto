@@ -10,7 +10,6 @@ import "kms.v1.proto";
 // All insecure RPCs (i.e., the ones that have `Insecure` in the prefix)
 // have the same semantics as the secure ones.
 service CoreServiceEndpoint {
-  //rpc Init(kms.v1.InitRequest) returns (kms.v1.Empty);
 
   rpc KeyGenPreproc(kms.v1.KeyGenPreprocRequest) returns (kms.v1.Empty);
 

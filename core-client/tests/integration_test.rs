@@ -599,10 +599,11 @@ async fn new_genesis_epoch(
     config_path: &Path,
     test_path: &Path,
 ) {
-    let command = CCCommand::NewEpoch(NewEpochType::Fresh(NewEpochParameters {
+    let command = CCCommand::NewEpoch(NewEpochParameters {
         new_epoch_id: epoch_id,
-        context_id,
-    }));
+        new_context_id: context_id,
+        previous_epoch_params: None,
+    });
 
     let init_config = CmdConfig {
         file_conf: Some(vec![String::from(config_path.to_str().unwrap())]),
@@ -1021,6 +1022,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: true,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -1032,6 +1034,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: true,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -1043,6 +1046,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: true,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 3,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -1054,6 +1058,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: true,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 3,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -1065,6 +1070,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: true,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -1077,6 +1083,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: true,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -1089,6 +1096,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: true,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -1101,6 +1109,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: true,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: Some(ctxt_path.to_path_buf()),
@@ -1125,6 +1134,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: false,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 2,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -1136,6 +1146,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: false,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 2,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -1147,6 +1158,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: false,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -1158,6 +1170,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: false,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -1170,6 +1183,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: false,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -1182,6 +1196,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: false,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: None,
@@ -1194,6 +1209,7 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             no_precompute_sns: false,
             key_id,
             context_id: None,
+            epoch_id: None,
             batch_size: 1,
             num_requests: 1,
             ciphertext_output_path: Some(ctxt_with_sns_path.to_path_buf()),
@@ -1377,6 +1393,7 @@ async fn test_threshold_mpc_context_switch(ctx: &DockerComposeThresholdTest) {
         no_precompute_sns: true,
         key_id: KeyId::from_str(&key_id).unwrap(),
         context_id: Some(context_id),
+        epoch_id: None,
         batch_size: 1,
         num_requests: 1,
         ciphertext_output_path: None,
@@ -1537,10 +1554,12 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     let epoch_id_set_1 =
         EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1222226666")
             .unwrap();
-    let command = CCCommand::NewEpoch(NewEpochType::Fresh(NewEpochParameters {
+    let command = CCCommand::NewEpoch(NewEpochParameters {
         new_epoch_id: epoch_id_set_1,
-        context_id: context_id_set_1,
-    }));
+        new_context_id: context_id_set_1,
+        previous_epoch_params: None,
+    });
+
     let epoch_config = CmdConfig {
         file_conf: Some(vec![String::from(config_path_set_1.to_str().unwrap())]),
         command,
@@ -1620,20 +1639,18 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
     let epoch_id_set_2 =
         EpochId::from_str("0102030405060708090a0b0c0d0e0f101112131415161718191a1b1333336666")
             .unwrap();
-    let command = CCCommand::NewEpoch(NewEpochType::Reshare(NewEpochParametersWithPrevEpoch {
-        new_epoch_params: NewEpochParameters {
-            new_epoch_id: epoch_id_set_2,
-            context_id: context_id_set_2,
-        },
-        prev_epoch_params: PreviousEpochParameters {
+    let command = CCCommand::NewEpoch(NewEpochParameters {
+        new_epoch_id: epoch_id_set_2,
+        new_context_id: context_id_set_2,
+        previous_epoch_params: Some(PreviousEpochParameters {
             context_id: context_id_set_1,
             epoch_id: epoch_id_set_1,
             key_id: key_id.into(),
             preproc_id: RequestId::from_str(&preproc_id).unwrap(),
             server_key_digest,
             public_key_digest,
-        },
-    }));
+        }),
+    });
 
     let epoch_config = CmdConfig {
         // Init the core client from both config files so we can talk to all the parties
@@ -1647,46 +1664,34 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
         expect_all_responses: true,
         download_all: false,
     };
-    let _result = execute_cmd(&epoch_config, test_path).await.unwrap();
-    println!("Resharing completed successfully {:?}", _result);
+    let result = execute_cmd(&epoch_config, test_path).await.unwrap();
+    println!("Resharing completed successfully {:?}", result);
 
-    let _ddec_command = CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
+    // Try and do a decrypt with the new set and new epoch
+    let ddec_command = CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
         to_encrypt: "0x123456".to_string(),
         data_type: FheType::Euint64,
         no_compression: false,
         no_precompute_sns: true,
         key_id: KeyId::from_str(&key_id.to_string()).unwrap(),
         context_id: Some(context_id_set_2),
+        epoch_id: Some(epoch_id_set_2),
         batch_size: 1,
         num_requests: 1,
         ciphertext_output_path: None,
     }));
 
-    // create the resharing request
-    //let config = CmdConfig {
-    //    file_conf: Some(String::from(config_path_set_1.to_str().unwrap())),
-    //    command: CCCommand::NewEpoch(NewEpochParameters {
-    //        key_id,
-    //        preproc_id: RequestId::from_str(&preproc_id).unwrap(),
-    //        from_context_id: Some(context_id_set_1),
-    //        from_epoch_id: Some(epoch_id),
-    //        server_key_digest,
-    //        public_key_digest,
-    //    }),
-    //    logs: true,
-    //    max_iter: 200,
-    //    expect_all_responses: true,
-    //    download_all: false,
-    //};
+    let ddec_config = CmdConfig {
+        file_conf: Some(vec![String::from(config_path_set_2.to_str().unwrap())]),
+        command: ddec_command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
 
-    //println!("Doing resharing");
-    //let resharing_result = execute_cmd(&config, test_path).await.unwrap();
-
-    //println!("Resharing result: {:?}", resharing_result);
-    //assert_eq!(resharing_result.len(), 2);
-
-    // the second element should be the key id
-    //assert_eq!(resharing_result[1].0.unwrap(), key_id);
+    let result = execute_cmd(&ddec_config, test_path).await.unwrap();
+    println!("Decrypt in reshared context succeeded : {:?}", result);
 }
 
 ///////// FULL GEN TESTS//////////

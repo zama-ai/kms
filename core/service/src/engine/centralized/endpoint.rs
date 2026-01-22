@@ -42,14 +42,6 @@ impl<
         BO: BackupOperator + Sync + Send + 'static,
     > CoreServiceEndpoint for CentralizedKms<PubS, PrivS, CM, BO>
 {
-    //async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
-    //    METRICS.increment_request_counter(OP_INIT);
-    //    init_impl(self, request).await.inspect_err(|err| {
-    //        let tag = map_tonic_code_to_metric_err_tag(err.code());
-    //        let _ = METRICS.increment_error_counter(observability::metrics_names::OP_INIT, tag);
-    //    })
-    //}
-
     #[tracing::instrument(skip(self, request))]
     async fn key_gen_preproc(
         &self,

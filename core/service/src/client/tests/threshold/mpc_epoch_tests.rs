@@ -150,7 +150,7 @@ pub(crate) async fn new_epoch_with_reshare(
             .into();
 
     let domain = dummy_domain();
-    let previous_context = Some(PreviousEpochInfo {
+    let previous_epoch = Some(PreviousEpochInfo {
         context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         epoch_id: Some((*DEFAULT_EPOCH_ID).into()),
         key_id: Some(key_req_id.into()),
@@ -179,7 +179,7 @@ pub(crate) async fn new_epoch_with_reshare(
         &internal_client,
         new_context_id,
         new_epoch_id,
-        previous_context,
+        previous_epoch,
     )
     .await
     .unwrap();
@@ -292,13 +292,10 @@ async fn run_new_epoch(
     internal_client: &Client,
     new_context_id: ContextId,
     new_epoch_id: EpochId,
-    previous_context: Option<PreviousEpochInfo>,
+    previous_epoch: Option<PreviousEpochInfo>,
 ) -> Option<(TestKeyGenResult, HashMap<Role, ThresholdFheKeys>)> {
-    //TODO: Expected to fail for now as Resharing is WiP
-    // this test was for the "emergency" resharing that we are deprecating
-    // but now it will fail trying to init the PRSS (as long as we don't support epochs)
     let reshare_request = internal_client
-        .new_epoch_request(&new_context_id, &new_epoch_id, previous_context.clone())
+        .new_epoch_request(&new_context_id, &new_epoch_id, previous_epoch.clone())
         .unwrap();
 
     // Execute reshare
@@ -309,7 +306,7 @@ async fn run_new_epoch(
         tasks_reshare.spawn(async move { client.new_mpc_epoch(req).await });
     }
 
-    if let Some(previous_context) = previous_context {
+    if let Some(previous_epoch) = previous_epoch {
         tasks_reshare.join_all().await.into_iter().for_each(|res| {
             assert!(res.is_ok(), "Reshare party failed: {:?}", res.err());
         });
@@ -346,7 +343,7 @@ async fn run_new_epoch(
             key_parameters: _,
             key_digests: _,
             domain: _,
-        } = previous_context;
+        } = previous_epoch;
 
         let preproc_id = preproc_id.as_ref().unwrap().try_into().unwrap();
         let key_id = key_id.as_ref().unwrap().try_into().unwrap();

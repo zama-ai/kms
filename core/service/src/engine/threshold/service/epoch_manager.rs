@@ -129,8 +129,6 @@ fn verify_epoch_info(
     )
     .map_err(make_metriced_err)?;
 
-    // TODO: Wondering what the PreprocId for the MetaData should be
-    // when we reshare ?
     // Using the old PreprocId of the key request for now.
     let preproc_id = parse_optional_proto_request_id(
         &previous_epoch.preproc_id,
@@ -1006,9 +1004,9 @@ impl<
             })?;
         }
 
-        if let Some(previous_context) = inner.previous_context {
+        if let Some(previous_epoch) = inner.previous_epoch {
             // If previous epoch info is provided, we initiate resharing from previous epoch to this new one
-            self.initiate_resharing(&context_id, &epoch_id, previous_context)
+            self.initiate_resharing(&context_id, &epoch_id, previous_epoch)
                 .await
         } else {
             Ok(Response::new(Empty {}))
@@ -1359,7 +1357,7 @@ mod tests {
             .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                 epoch_id: Some(epoch_id.into()),
                 context_id: None,
-                previous_context: None,
+                previous_epoch: None,
             }))
             .await
             .unwrap();
@@ -1380,7 +1378,7 @@ mod tests {
                     .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                         epoch_id: Some(bad_epoch_id),
                         context_id: None,
-                        previous_context: None,
+                        previous_epoch: None,
                     }))
                     .await
                     .unwrap_err()
@@ -1394,7 +1392,7 @@ mod tests {
                     .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                         epoch_id: None,
                         context_id: None,
-                        previous_context: None,
+                        previous_epoch: None,
                     }))
                     .await
                     .unwrap_err()
@@ -1415,7 +1413,7 @@ mod tests {
             .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                 epoch_id: Some(epoch_id.into()),
                 context_id: Some(context_id.into()),
-                previous_context: None,
+                previous_epoch: None,
             }))
             .await
             .unwrap_err();
@@ -1433,7 +1431,7 @@ mod tests {
             .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                 epoch_id: Some(epoch_id.into()),
                 context_id: None,
-                previous_context: None,
+                previous_epoch: None,
             }))
             .await
             .unwrap();
@@ -1444,7 +1442,7 @@ mod tests {
                 .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                     epoch_id: Some(epoch_id.into()),
                     context_id: None,
-                    previous_context: None,
+                    previous_epoch: None,
                 }))
                 .await
                 .unwrap_err()
@@ -1464,7 +1462,7 @@ mod tests {
                 .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                     epoch_id: Some(epoch_id.into()),
                     context_id: None,
-                    previous_context: None,
+                    previous_epoch: None,
                 }))
                 .await
                 .unwrap_err()

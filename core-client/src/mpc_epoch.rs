@@ -1,14 +1,14 @@
 use crate::{
     dummy_domain, keygen::check_standard_keyset_ext_signature,
     s3_operations::fetch_public_elements, CmdConfig, CoreClientConfig, CoreConf,
-    PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
+    NewEpochParameters, PreviousEpochParameters, SLEEP_TIME_BETWEEN_REQUESTS_MS,
 };
 use kms_grpc::{
     identifiers::EpochId,
     kms::v1::{FheParameter, KeyDigest, PreviousEpochInfo},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::{alloy_to_protobuf_domain, PubDataType},
-    ContextId, RequestId,
+    RequestId,
 };
 use kms_lib::{
     client::client_wasm::Client,
@@ -54,18 +54,24 @@ pub(crate) async fn do_new_epoch(
     destination_prefix: &Path,
     kms_addrs: &[alloy_primitives::Address],
     num_parties: usize,
-    new_context_id: ContextId,
-    new_epoch_id: EpochId,
-    previous_epoch: Option<PreviousEpochInfo>,
+    fhe_params: FheParameter,
+    new_epoch_params: NewEpochParameters,
 ) -> anyhow::Result<EpochId> {
-    println!("Starting new epoch creation...");
-    println!("CONFIG IS : {:?}", cc_conf.cores);
+    tracing::info!("Starting new epoch creation...");
+    tracing::info!("CONFIG IS : {:?}", cc_conf.cores);
     let max_iter = cmd_conf.max_iter;
 
+    let (new_epoch_id, new_context_id) = (
+        new_epoch_params.new_epoch_id,
+        new_epoch_params.new_context_id,
+    );
     let request = internal_client.new_epoch_request(
         &new_context_id,
         &new_epoch_id,
-        previous_epoch.clone(),
+        new_epoch_params
+            .previous_epoch_params
+            .as_ref()
+            .map(|previous_epoch| previous_epoch.convert_to_grpc(fhe_params)),
     )?;
 
     // Send the request
@@ -94,7 +100,7 @@ pub(crate) async fn do_new_epoch(
     // We need to wait for all responses since an epoch creation  is only successful if _all_ parties respond.
     assert_eq!(results.len(), num_parties);
 
-    if let Some(previous_epoch) = previous_epoch {
+    if let Some(previous_epoch) = new_epoch_params.previous_epoch_params {
         // Poll the result endpoint
         let mut response_tasks = JoinSet::new();
         for (core_conf, ce) in core_endpoints.iter() {
@@ -137,8 +143,11 @@ pub(crate) async fn do_new_epoch(
             let response = response?;
             let resp = response.into_inner();
             assert_eq!(resp.request_id, Some(new_epoch_id.into()));
-            assert_eq!(resp.key_id, previous_epoch.key_id);
-            assert_eq!(resp.preprocessing_id, previous_epoch.preproc_id);
+            assert_eq!(resp.key_id, Some(previous_epoch.key_id.into()));
+            assert_eq!(
+                resp.preprocessing_id,
+                Some(previous_epoch.preproc_id.into())
+            );
             response_vec.push((core_conf, resp));
         }
 
@@ -149,7 +158,7 @@ pub(crate) async fn do_new_epoch(
         ];
 
         // We try to download all because all parties needed to respond for a successful resharing
-        let element_id: RequestId = previous_epoch.key_id.clone().unwrap().try_into().unwrap();
+        let element_id: RequestId = previous_epoch.key_id.into();
 
         let party_confs = fetch_public_elements(
             &element_id.to_string(),
@@ -177,8 +186,7 @@ pub(crate) async fn do_new_epoch(
                 .as_str(),
         );
 
-        let key_id = previous_epoch.key_id.unwrap().try_into().unwrap();
-        let preproc_id = previous_epoch.preproc_id.unwrap().try_into().unwrap();
+        let key_id = previous_epoch.key_id.into();
         let public_key =
             load_pk_from_pub_storage(Some(destination_prefix), &key_id, storage_prefix).await;
         let server_key: ServerKey = load_material_from_pub_storage(
@@ -193,7 +201,7 @@ pub(crate) async fn do_new_epoch(
             check_standard_keyset_ext_signature(
                 &public_key,
                 &server_key,
-                &preproc_id,
+                &previous_epoch.preproc_id,
                 &key_id,
                 &response.1.external_signature,
                 &dummy_domain(),

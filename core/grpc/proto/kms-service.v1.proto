@@ -42,25 +42,6 @@ import "kms.v1.proto";
 // store issues (e.g., failing to insert), session creation issues, missing PRSS
 // and (de)serialization issues. The caller should not retry in this case.
 service CoreServiceEndpoint {
-  // Initializes the threshold KMS service.
-  //
-  // This call returns an error (Abort) on the centralized KMS as it's not applicable.
-  //
-  // This involves executing the PRSS protocol to generate secret shared correlated randomness.
-  // This is a synchronous call and an successful response suggests the initialization completed.
-  // TODO(zama-ai/kms-internal/issues/2724) consider adding an option to regenerate the PRSS.
-  //
-  // # Parameters
-  // * `request` - Struct containing the request ID, which must be 32 bytes lower-case hex encoding without `0x` prefix.
-  //
-  // # Returns a successful response with an empty body.
-  //
-  // # Conditions
-  // ## Pre-condition:
-  // * `request_id` in `request` must be present, valid, fresh and unique [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
-  // ## Post-condition:
-  // * The `request_id` in `request` has been consumed and the PRSS has been executed successfully.
-  // rpc Init(kms.v1.InitRequest) returns (kms.v1.Empty);
 
   // Start computing the preprocessed material needed for a single key generation.
   //
@@ -304,16 +285,32 @@ service CoreServiceEndpoint {
   // * The `context_id` in `request` can no longer be used. Any MPC context data associated with it, that may have existed, has been purged from both memory and disc.
   rpc DestroyMpcContext(kms.v1.DestroyMpcContextRequest) returns (kms.v1.Empty);
 
-  // Creates a new MPC epoch, by first initiating the PRSS
-  // and if possible reshare the key from a previous epoch.
+  // Creates a new MPC epoch.
+  // This involves executing the PRSS protocol to generate secret shared correlated randomness.
+  // This is a synchronous call and an successful response suggests the initialization completed.
+  // TODO(zama-ai/kms-internal/issues/2724) consider adding an option to regenerate the PRSS.
+  // and if a previous epoch is given, it reshares the key from a previous epoch.
   //
   // # Parameters
+  // * `NewMpcEpochRequest` - Struct containing all the data of the request
+  //
   // #Conditions
+  // * `context_id` in `request` must be present, valid, and unique [`RequestId`] of an MPC context that has been constructed with `NewMpcContext`.
+  // * `epoch_id` in `request` must be present, valid, and unique. It represents the ID of the new epoch that is created.
+  // * `previous_epoch` is optional, if set we perform a resharing from the previous epoch to the new one.
+  // If set, we need all the parties to know about both the old and the new context (because parties talk to each other accross those 2 contexts)
+  //
+  // NOTE: This call is blocking for the PRSS Init part but async for the resharing if any.
   rpc NewMpcEpoch(kms.v1.NewMpcEpochRequest) returns (kms.v1.Empty);
 
   // Retrieves the result of an epoch creation (i.e. the reshared key if any)
   //
   // # Parameters
+  // * The [`RequestId`] that corresponds to the `epoch_id` of the context we want to check up on.
+  //
+  // # Returns
+  // * If a resharing happened during the epoch creation, this returns the exact same struct as
+  // a GetKeyGenResult request.
   // #Conditions
   rpc GetEpochResult(kms.v1.RequestId) returns (kms.v1.EpochResultResponse);
 

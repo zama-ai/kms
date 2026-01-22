@@ -128,12 +128,12 @@ impl Client {
         &self,
         to_context_id: &ContextId,
         to_epoch_id: &EpochId,
-        previous_context: Option<PreviousEpochInfo>,
+        previous_epoch: Option<PreviousEpochInfo>,
     ) -> anyhow::Result<NewMpcEpochRequest> {
         Ok(NewMpcEpochRequest {
             context_id: Some((*to_context_id).into()),
             epoch_id: Some((*to_epoch_id).into()),
-            previous_context,
+            previous_epoch,
         })
     }
 

@@ -46,15 +46,6 @@ macro_rules! impl_endpoint {
 impl_endpoint! {
     // See the proto file for the documentation of each method.
     impl CoreServiceEndpoint {
-        //async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
-        //    METRICS.increment_request_counter(OP_INIT);
-        //    self.initiator.init(request).await.inspect_err(|err| {
-        //        let tag = map_tonic_code_to_metric_err_tag(err.code());
-        //        let _ = METRICS
-        //            .increment_error_counter(OP_INIT, tag);
-        //    })
-
-        //}
 
         #[tracing::instrument(skip(self, request))]
         async fn key_gen_preproc(
@@ -250,17 +241,11 @@ impl_endpoint! {
 
         }
 
-        // TODO: Should this be called "new_mpc_epoch" instead of
-        // initiate_resharing ?
-        // Do we then also wnat a "destroy_mpc_epoch" endpoint, to let KMS core
-        // know it's time to delete the shares of the sks?
         #[tracing::instrument(skip_all)]
         async fn new_mpc_epoch(
             &self,
             request: Request<NewMpcEpochRequest>,
         ) -> Result<Response<Empty>, Status> {
-            //TODO: First thing to do in resharing is to
-            // do the PRSS init (which also means, we want to deprecatet the init endpoint)
             let inner = request.into_inner();
             METRICS.increment_request_counter(OP_NEW_EPOCH);
             self.epoch_manager

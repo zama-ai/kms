@@ -117,7 +117,7 @@ async fn test_threshold_health_endpoint_availability() {
                 .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
                     epoch_id: Some(req_id.into()),
                     context_id: None,
-                    previous_context: None,
+                    previous_epoch: None,
                 }))
                 .await
         });

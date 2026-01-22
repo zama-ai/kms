@@ -4,7 +4,7 @@ use kms_grpc::{
     kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext, TypedPlaintext},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
     rpc_types::protobuf_to_alloy_domain,
-    ContextId, KeyId, RequestId,
+    ContextId, EpochId, KeyId, RequestId,
 };
 use kms_lib::cryptography::encryption::PkeSchemeType;
 use kms_lib::{
@@ -94,6 +94,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     ct_batch: Vec<TypedCiphertext>,
     key_id: KeyId,
     context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
     core_endpoints_req: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     core_endpoints_resp: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     ptxt: TypedPlaintext,
@@ -127,7 +128,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
                 &req_id,
                 context_id.as_ref(),
                 &key_id.into(),
-                None,
+                epoch_id.as_ref(),
             )?;
 
             // make parallel requests by calling [decrypt] in a thread
@@ -195,6 +196,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     ct_batch: Vec<TypedCiphertext>,
     key_id: KeyId,
     context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
     core_endpoints_req: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     core_endpoints_resp: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     ptxt: TypedPlaintext,
@@ -226,7 +228,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
                 &req_id,
                 &key_id.into(),
                 context_id.as_ref(),
-                None,
+                epoch_id.as_ref(),
                 PkeSchemeType::MlKem512,
             )?;
 

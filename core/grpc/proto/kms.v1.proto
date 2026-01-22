@@ -1,16 +1,6 @@
 syntax = "proto3";
 package kms.v1;
 
-// Initialization request for bootstrapping the threshold KMS.
-// This request will be removed in favor of NewMpcContextRequest.
-//
-// In the future this endpoint will be combined with resharing.
-//message InitRequest {
-//    // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
-//    RequestId request_id = 1; // this is the epoch ID, keeping the name for backward compatibility reasons
-//    RequestId context_id = 2;
-//
-//}
 
 // Placeholder response, when no content is needed
 message Empty {}
@@ -761,7 +751,7 @@ message NewMpcEpochRequest {
   RequestId epoch_id = 2;
   // Information about the previous epoch, used to perform resharing.
   // If not set, no keys will exist for the new epoch. (e.g. during init)
-  PreviousEpochInfo previous_context = 3;
+  PreviousEpochInfo previous_epoch = 3;
 }
 
 message EpochResultResponse {

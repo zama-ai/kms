@@ -79,18 +79,13 @@ fn verify_key_digest_from_bytes(
 }
 
 fn bucket_from_domain(url: &url::Url) -> anyhow::Result<String> {
-    tracing::warn!(
-        "Attempting to deduce bucket name from url domain: {:?}",
-        url
-    );
     let Some(domain) = url.domain() else {
         anyhow::bail!("Cannot deduce the bucket name from url {:?}", url);
     };
     let domain_parts = domain.split('.').collect::<Vec<&str>>();
-    tracing::warn!("Domain parts: {:?}", domain_parts);
     if domain_parts.len() < 2 {
         tracing::warn!(
-            "Cannot deduce the bucket name from url {:?}. Returning empty bucket",
+            "Cannot deduce the bucket name from url {:?}. Returning default bucket used in testing",
             url
         );
         Ok("kms".to_owned())
@@ -109,7 +104,7 @@ fn bucket_from_domain(url: &url::Url) -> anyhow::Result<String> {
 /// https://github.com/zama-ai/fhevm/blob/dac153662361758c9a563e766473692f8acf1074/coprocessor/fhevm-engine/gw-listener/src/aws_s3.rs#L140C1-L174C1
 fn split_url(s3_bucket_url: &String) -> anyhow::Result<(String, String)> {
     // e.g BBBBBB.s3.bla.bli.amazonaws.blu, the bucket is part of the domain
-    tracing::warn!("Splitting S3 url: {}", s3_bucket_url);
+    tracing::info!("Splitting S3 url: {}", s3_bucket_url);
     let parsed_url_and_bucket = url::Url::parse(s3_bucket_url.as_str())?;
     let mut bucket = parsed_url_and_bucket
         .path()

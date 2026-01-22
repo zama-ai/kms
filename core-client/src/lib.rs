@@ -134,15 +134,15 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
     let num_parties = conf.cores.len();
 
     for cur_core in &conf.cores {
-        //if cur_core.party_id == 0 || cur_core.party_id > num_parties {
-        //    return Err(ValidationError::new("Incorrect Party ID").with_message(
-        //        format!(
-        //            "Party ID must be between 1 and the number of parties ({}), but was {}.",
-        //            num_parties, cur_core.party_id
-        //        )
-        //        .into(),
-        //    ));
-        //}
+        if cur_core.party_id == 0 || cur_core.party_id > num_parties {
+            return Err(ValidationError::new("Incorrect Party ID").with_message(
+                format!(
+                    "Party ID must be between 1 and the number of parties ({}), but was {}.",
+                    num_parties, cur_core.party_id
+                )
+                .into(),
+            ));
+        }
         if conf
             .cores
             .iter()
@@ -483,6 +483,10 @@ pub struct CipherParameters {
     /// If not specified, the default context will be used.
     #[clap(long)]
     pub context_id: Option<ContextId>,
+    /// Optionally specify the epoch ID to use for the decryption.
+    /// If not specified, the default epoch will be used.
+    #[clap(long)]
+    pub epoch_id: Option<EpochId>,
     /// Number of copies of the ciphertext to process in a request.
     /// This is ignored for the encryption command.
     #[serde(skip_serializing, skip_deserializing)]
@@ -656,7 +660,7 @@ pub struct PreviousEpochParameters {
     pub public_key_digest: String,
 }
 
-#[derive(Debug, Parser, Clone, Copy)]
+#[derive(Debug, Parser, Clone)]
 pub struct NewEpochParameters {
     /// ID of the epoch to be created
     #[clap(long)]
@@ -664,22 +668,10 @@ pub struct NewEpochParameters {
 
     /// Context ID for which the new epoch is created
     #[clap(long)]
-    pub context_id: ContextId,
-}
-
-#[derive(Debug, Parser, Clone)]
-pub struct NewEpochParametersWithPrevEpoch {
-    #[command(flatten)]
-    pub prev_epoch_params: PreviousEpochParameters,
+    pub new_context_id: ContextId,
 
     #[command(flatten)]
-    pub new_epoch_params: NewEpochParameters,
-}
-
-#[derive(Debug, Subcommand, Clone)]
-pub enum NewEpochType {
-    Fresh(NewEpochParameters),
-    Reshare(NewEpochParametersWithPrevEpoch),
+    pub previous_epoch_params: Option<PreviousEpochParameters>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -732,8 +724,7 @@ pub enum CCCommand {
     CustodianRecoveryInit(RecoveryInitParameters),
     CustodianBackupRecovery(RecoveryParameters),
     BackupRestore(NoParameters),
-    #[clap(subcommand)]
-    NewEpoch(NewEpochType),
+    NewEpoch(NewEpochParameters),
     #[clap(subcommand)]
     NewMpcContext(NewMpcContextParameters),
     DestroyMpcContext(DestroyMpcContextParameters),
@@ -796,6 +787,7 @@ pub struct EncryptionResult {
     pub plaintext: TypedPlaintext,
     pub key_id: KeyId,
     pub context_id: Option<ContextId>,
+    pub epoch_id: Option<EpochId>,
 }
 
 impl EncryptionResult {
@@ -805,6 +797,7 @@ impl EncryptionResult {
         plaintext: TypedPlaintext,
         key_id: KeyId,
         context_id: Option<ContextId>,
+        epoch_id: Option<EpochId>,
     ) -> Self {
         Self {
             cipher,
@@ -812,6 +805,7 @@ impl EncryptionResult {
             plaintext,
             key_id,
             context_id,
+            epoch_id,
         }
     }
 }
@@ -830,12 +824,14 @@ pub async fn fetch_ctxt_from_file(
 
     let key_id = cipher_with_params.params.key_id;
     let context_id = cipher_with_params.params.context_id;
+    let epoch_id = cipher_with_params.params.epoch_id;
     Ok(EncryptionResult::new(
         cipher_with_params.cipher,
         ct_format,
         ptxt,
         key_id,
         context_id,
+        epoch_id,
     ))
 }
 
@@ -898,6 +894,7 @@ pub async fn encrypt(
         ptxt,
         cipher_params.key_id,
         cipher_params.context_id,
+        cipher_params.epoch_id,
     ))
 }
 
@@ -1192,6 +1189,7 @@ pub async fn execute_cmd(
                 plaintext: ptxt,
                 key_id,
                 context_id,
+                epoch_id,
             } = match cipher_args {
                 CipherArguments::FromFile(cipher_file) => {
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
@@ -1242,6 +1240,7 @@ pub async fn execute_cmd(
                 ct_batch,
                 key_id,
                 context_id,
+                epoch_id,
                 &core_endpoints_req,
                 &core_endpoints_resp,
                 ptxt,
@@ -1268,6 +1267,7 @@ pub async fn execute_cmd(
                 plaintext: ptxt,
                 key_id,
                 context_id,
+                epoch_id,
             } = match cipher_args {
                 CipherArguments::FromFile(cipher_file) => {
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
@@ -1319,6 +1319,7 @@ pub async fn execute_cmd(
                 ct_batch,
                 key_id,
                 context_id,
+                epoch_id,
                 &core_endpoints_req,
                 &core_endpoints_resp,
                 ptxt,
@@ -1735,15 +1736,8 @@ pub async fn execute_cmd(
             do_restore_from_backup(&mut core_endpoints_req).await?;
             vec![(None, "backup restore complete".to_string())]
         }
-        CCCommand::NewEpoch(new_epoch_type) => {
-            let (new_epoch, previous_epoch) = match new_epoch_type {
-                NewEpochType::Fresh(new_epoch) => (*new_epoch, None),
-                NewEpochType::Reshare(new_epoch) => (
-                    new_epoch.new_epoch_params,
-                    Some(new_epoch.prev_epoch_params.convert_to_grpc(fhe_params)),
-                ),
-            };
-            let request_id = do_new_epoch(
+        CCCommand::NewEpoch(new_epoch_params) => {
+            let epoch_id = do_new_epoch(
                 &mut internal_client.expect("Reshare requires a KMS client"),
                 &core_endpoints_req,
                 cmd_config,
@@ -1751,18 +1745,17 @@ pub async fn execute_cmd(
                 destination_prefix,
                 &kms_addrs,
                 num_parties,
-                new_epoch.context_id,
-                new_epoch.new_epoch_id,
-                previous_epoch.clone(),
+                fhe_params,
+                new_epoch_params.clone(),
             )
             .await
             .unwrap();
 
-            let mut res = vec![(Some(request_id.into()), "New epoch created".to_string())];
+            let mut res = vec![(Some(epoch_id.into()), "New epoch created".to_string())];
 
-            if let Some(prev_epoch) = previous_epoch {
+            if let Some(prev_epoch) = &new_epoch_params.previous_epoch_params {
                 res.push((
-                    prev_epoch.epoch_id.map(|e| e.try_into().unwrap()),
+                    Some(prev_epoch.epoch_id.into()),
                     "Previous epoch used for reshare".to_string(),
                 ));
             }

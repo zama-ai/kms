@@ -106,7 +106,7 @@ mod tests {
         let preproc_req = NewMpcEpochRequest {
             context_id: None,
             epoch_id: Some(req_id.into()),
-            previous_context: None,
+            previous_epoch: None,
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         let _ = result.unwrap();
@@ -122,7 +122,7 @@ mod tests {
         let preproc_req1 = NewMpcEpochRequest {
             context_id: None,
             epoch_id: Some(req_id1.into()),
-            previous_context: None,
+            previous_epoch: None,
         };
         let result1 = init_impl(&kms, Request::new(preproc_req1)).await;
         let _ = result1.unwrap();
@@ -131,7 +131,7 @@ mod tests {
         let preproc_req2 = NewMpcEpochRequest {
             context_id: None,
             epoch_id: Some(req_id1.into()),
-            previous_context: None,
+            previous_epoch: None,
         };
         let result2 = init_impl(&kms, Request::new(preproc_req2)).await;
         let status = result2.unwrap_err();
@@ -145,7 +145,7 @@ mod tests {
         let preproc_req = NewMpcEpochRequest {
             context_id: None,
             epoch_id: None,
-            previous_context: None,
+            previous_epoch: None,
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         let status = result.unwrap_err();
