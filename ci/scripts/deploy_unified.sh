@@ -417,6 +417,39 @@ set_path_suffix() {
     fi
 }
 
+wait_crossplane_resources_ready() {
+    local party_prefix="kms-party-${NAMESPACE}"
+    if [[ "${TARGET}" == "aws-perf" ]]; then
+        set_path_suffix
+        party_prefix="kms-party-${PATH_SUFFIX}"
+    fi
+
+    log_info "Waiting for Crossplane resources (S3 buckets, IAM roles) to be ready..."
+
+    # Wait for S3 buckets to be ready (these are created by crossplane)
+    local max_wait=300  # 5 minutes
+    local elapsed=0
+    local check_interval=10
+
+    while [[ $elapsed -lt $max_wait ]]; do
+        # Check if S3 bucket resources exist and are ready
+        if kubectl get s3 -n "${NAMESPACE}" -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q "True"; then
+            log_info "S3 bucket resources are ready"
+            break
+        fi
+
+        log_info "Waiting for S3 bucket resources... ($elapsed/$max_wait seconds)"
+        sleep $check_interval
+        elapsed=$((elapsed + check_interval))
+    done
+
+    if [[ $elapsed -ge $max_wait ]]; then
+        log_warn "Timeout waiting for S3 resources. Checking current state..."
+        kubectl get s3 -n "${NAMESPACE}" -o wide || true
+        kubectl get composite -n "${NAMESPACE}" -o wide || true
+    fi
+}
+
 wait_tkms_infra_ready() {
     local party_prefix="kms-party-${NAMESPACE}"
     if [[ "${TARGET}" == "aws-perf" ]]; then
@@ -424,7 +457,26 @@ wait_tkms_infra_ready() {
         party_prefix="kms-party-${PATH_SUFFIX}"
     fi
 
+    # First wait for crossplane resources to be provisioned
+    wait_crossplane_resources_ready
+
     log_info "Waiting for KMS parties to be ready..."
+
+    # Wait for Kmsparties resources to exist (they're created after S3 is ready)
+    local max_wait=120
+    local elapsed=0
+    local check_interval=5
+
+    while [[ $elapsed -lt $max_wait ]]; do
+        if kubectl get Kmsparties -n "${NAMESPACE}" 2>/dev/null | grep -q "${party_prefix}"; then
+            log_info "Kmsparties resources found"
+            break
+        fi
+        log_info "Waiting for Kmsparties to be created... ($elapsed/$max_wait seconds)"
+        sleep $check_interval
+        elapsed=$((elapsed + check_interval))
+    done
+
     if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
         if kubectl get Kmsparties "${party_prefix}-1" -n "${NAMESPACE}" >/dev/null 2>&1; then
             kubectl wait --for=condition=ready Kmsparties "${party_prefix}-1" \
@@ -500,12 +552,7 @@ deploy_tkms_infra() {
         --set kmsParties.publishConnectionDetailsTo.prefixName="${NAMESPACE}" \
         --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}" \
         ${EXTRA_ARGS}
-    if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
-        log_info "Debugging tkms-infra (centralized): helm status and KMS parties"
-        helm status tkms-infra -n "${NAMESPACE}" || true
-        kubectl get Kmsparties -n "${NAMESPACE}" -o wide || true
-        kubectl get events -n "${NAMESPACE}" --sort-by=.metadata.creationTimestamp | tail -n 50 || true
-    fi
+
     wait_tkms_infra_ready
 }
 
