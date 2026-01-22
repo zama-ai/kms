@@ -20,6 +20,14 @@ on:
         required: true
       ZWS_BOT_TOKEN:
         required: true
+      AWS_ACCESS_KEY_S3_USER:
+        required: true
+      AWS_SECRET_KEY_S3_USER:
+        required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
+        required: true
 
 permissions: {}
 
@@ -59,12 +67,14 @@ jobs:
   ############################################################################
   # Start EC2 Runner Jobs
   # Initializes self-hosted runners for running tests in parallel
+  # Only starts if we have images available (from input or docker-build)
   ############################################################################
   start-runner-cargo:
     name: kind-testing/start-runner (cargo)
     runs-on: ubuntu-latest
     needs:
       - docker-build
+    if: always() && !cancelled() && (inputs.image_tag != '' || needs.docker-build.result == 'success')
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
     steps:
@@ -84,6 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - docker-build
+    if: always() && !cancelled() && (inputs.image_tag != '' || needs.docker-build.result == 'success')
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
     steps:
@@ -103,6 +114,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - docker-build
+    if: always() && !cancelled() && (inputs.image_tag != '' || needs.docker-build.result == 'success')
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
     steps:
@@ -146,6 +158,12 @@ jobs:
       - start-runner-threshold
       - start-runner-centralized
       - docker-build
+    if: |
+      always() && !cancelled() &&
+      needs.start-runner-cargo.result == 'success' &&
+      needs.start-runner-threshold.result == 'success' &&
+      needs.start-runner-centralized.result == 'success' &&
+      (inputs.image_tag != '' || needs.docker-build.result == 'success')
     runs-on: ${{ matrix.runner-label }}
 
     steps:
@@ -428,7 +446,7 @@ jobs:
   # Only runs on pull requests to generate test reports
   test-reporter:
     name: kms-testing/test-reporter
-    if: ${{ always() && github.event_name == 'pull_request' }}
+    if: always() && !cancelled()
     needs:
       - kind-testing
     uses: ./.github/workflows/test-reporter.yml

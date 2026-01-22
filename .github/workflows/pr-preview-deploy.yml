@@ -108,6 +108,7 @@ jobs:
           INPUT_PCR1: ${{ inputs.enclave_pcr1 }}
           INPUT_PCR2: ${{ inputs.enclave_pcr2 }}
         run: |
+          # shellcheck disable=SC2153
           ###################################################################
           # Use PCR values from inputs if provided, otherwise extract from image
           ###################################################################

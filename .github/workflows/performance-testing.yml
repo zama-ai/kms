@@ -286,6 +286,7 @@ jobs:
           DOCKER_BUILD_PCR1: ${{ needs.docker-build.outputs.enclave_pcr1 }}
           DOCKER_BUILD_PCR2: ${{ needs.docker-build.outputs.enclave_pcr2 }}
         run: |
+          # shellcheck disable=SC2153
           ###################################################################
           # Use PCR values from docker-build if available, otherwise extract from image
           ###################################################################

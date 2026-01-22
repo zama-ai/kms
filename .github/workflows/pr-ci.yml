@@ -73,6 +73,10 @@ jobs:
       SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
       ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
   # Determine deployment type from PR labels
@@ -93,14 +97,14 @@ jobs:
 
           # Check if any pr-preview label exists
           if echo "$PR_LABELS" | jq -e '.[] | select(startswith("pr-preview-"))' > /dev/null; then
-            echo "should_deploy=true" >> $GITHUB_OUTPUT
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
 
             # Extract deployment type from label (e.g., pr-preview-threshold -> threshold)
             DEPLOYMENT_TYPE=$(echo "$PR_LABELS" | jq -r '.[] | select(startswith("pr-preview-"))' | head -n 1 | sed 's/pr-preview-//')
-            echo "deployment_type=${DEPLOYMENT_TYPE}" >> $GITHUB_OUTPUT
+            echo "deployment_type=${DEPLOYMENT_TYPE}" >> "$GITHUB_OUTPUT"
             echo "Found deployment type: ${DEPLOYMENT_TYPE}"
           else
-            echo "should_deploy=false" >> $GITHUB_OUTPUT
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
             echo "No pr-preview label found"
           fi
 
