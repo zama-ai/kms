@@ -55,7 +55,7 @@ pub async fn init_impl<
 
     if !service
         .context_manager
-        .mpc_context_exists(&context_id)
+        .mpc_context_exists_and_consistent(&context_id)
         .await?
     {
         return Err(tonic::Status::new(

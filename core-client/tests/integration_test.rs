@@ -296,12 +296,12 @@ async fn crs_gen<T: DockerComposeManager>(
     crs_id.to_string()
 }
 
-async fn real_preproc_and_keygen(
+async fn real_preproc(
     config_path: &str,
     test_path: &Path,
     context_id: Option<ContextId>,
     epoch_id: Option<EpochId>,
-) -> (String, String) {
+) -> anyhow::Result<Option<RequestId>> {
     let config = CmdConfig {
         file_conf: Some(config_path.to_string()),
         command: CCCommand::PreprocKeyGen(KeyGenPreprocParameters {
@@ -314,11 +314,26 @@ async fn real_preproc_and_keygen(
         download_all: false,
     };
     println!("Doing preprocessing");
-    let mut preproc_result = execute_cmd(&config, test_path).await.unwrap();
+    let mut preproc_result = execute_cmd(&config, test_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
     assert_eq!(preproc_result.len(), 1);
-    let (preproc_id, _) = preproc_result.pop().unwrap();
-    println!("Preprocessing done with ID {preproc_id:?}");
+    preproc_result
+        .pop()
+        .map(|(preproc_id, _)| preproc_id)
+        .ok_or(anyhow::anyhow!("missing preproc result"))
+}
 
+async fn real_preproc_and_keygen(
+    config_path: &str,
+    test_path: &Path,
+    context_id: Option<ContextId>,
+    epoch_id: Option<EpochId>,
+) -> (String, String) {
+    let preproc_id = real_preproc(config_path, test_path, context_id, epoch_id)
+        .await
+        .unwrap();
+    println!("Preprocessing done with ID {preproc_id:?}");
     let config = CmdConfig {
         file_conf: Some(config_path.to_string()),
         command: CCCommand::KeyGen(KeyGenParameters {
@@ -531,6 +546,23 @@ async fn new_mpc_context(context_path: &Path, config_path: &Path, test_path: &Pa
 
     let context_switch_result = execute_cmd(&init_config, test_path).await.unwrap();
     assert_eq!(context_switch_result.len(), 1);
+}
+
+async fn destroy_mpc_context(context_id: &ContextId, config_path: &Path, test_path: &Path) {
+    let command = CCCommand::DestroyMpcContext(DestroyMpcContextParameters {
+        context_id: *context_id,
+    });
+    let init_config = CmdConfig {
+        file_conf: Some(String::from(config_path.to_str().unwrap())),
+        command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    let context_destroy_result = execute_cmd(&init_config, test_path).await.unwrap();
+    assert_eq!(context_destroy_result.len(), 1);
 }
 
 // expect the context to already exist in the KMS servers
@@ -1415,6 +1447,22 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
             Some(epoch_id),
         )
         .await;
+
+        // delete context
+        destroy_mpc_context(&context_id, &alternative_config_path, test_path).await;
+
+        // check whether the context is deleted by running keygen, which should fail
+        let err = real_preproc(
+            alternative_config_path.to_str().unwrap(),
+            test_path,
+            Some(context_id),
+            Some(epoch_id),
+        )
+        .await
+        .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains(&format!("context {context_id} not found")));
     }
 }
 

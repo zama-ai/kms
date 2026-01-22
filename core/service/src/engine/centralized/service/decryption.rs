@@ -74,6 +74,19 @@ pub async fn user_decrypt_impl<
         )
     })?;
 
+    if !service
+        .context_manager
+        .mpc_context_exists_in_cache(&context_id)
+        .await
+    {
+        return Err(MetricedError::new(
+            OP_USER_DECRYPT_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("context at ID {context_id} not found"),
+            tonic::Code::NotFound,
+        ));
+    }
+
     // Use a constant party ID since this is the central KMS
     let metric_tags = vec![
         (TAG_KEY_ID, key_id.to_string()),
@@ -277,6 +290,19 @@ pub async fn public_decrypt_impl<
                 tonic::Code::InvalidArgument,
             )
         })?;
+
+    if !service
+        .context_manager
+        .mpc_context_exists_in_cache(&context_id)
+        .await
+    {
+        return Err(MetricedError::new(
+            OP_PUBLIC_DECRYPT_REQUEST,
+            Some(request_id),
+            anyhow::anyhow!("context at ID {context_id} not found"),
+            tonic::Code::NotFound,
+        ));
+    }
 
     let metric_tags = vec![
         (TAG_KEY_ID, key_id.to_string()),
