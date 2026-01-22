@@ -297,8 +297,7 @@ service CoreServiceEndpoint {
   // #Conditions
   // * `context_id` in `request` must be present, valid, and unique [`RequestId`] of an MPC context that has been constructed with `NewMpcContext`.
   // * `epoch_id` in `request` must be present, valid, and unique. It represents the ID of the new epoch that is created.
-  // * `previous_epoch` is optional, if set we perform a resharing from the previous epoch to the new one.
-  // If set, we need all the parties to know about both the old and the new context (because parties talk to each other accross those 2 contexts)
+  // * `previous_epoch` is optional, if set we perform a resharing from the previous epoch to the new one. If set, we need all the parties to know about both the old and the new context (because parties talk to each other accross those 2 contexts)
   //
   // NOTE: This call is blocking for the PRSS Init part but async for the resharing if any.
   rpc NewMpcEpoch(kms.v1.NewMpcEpochRequest) returns (kms.v1.Empty);
@@ -309,16 +308,15 @@ service CoreServiceEndpoint {
   // * The [`RequestId`] that corresponds to the `epoch_id` of the context we want to check up on.
   //
   // # Returns
-  // * If a resharing happened during the epoch creation, this returns the exact same struct as
-  // a GetKeyGenResult request.
-  // #Conditions
+  // * If a resharing happened during the epoch creation, this returns the exact same struct as a GetKeyGenResult request.
+  // # Conditions
   rpc GetEpochResult(kms.v1.RequestId) returns (kms.v1.EpochResultResponse);
 
   // Destroys an MPC epoch, by first erasing the PRSS
   // and if the sahres of the secret key.
   //
   // # Parameters
-  // #Conditions
+  // # Conditions
   rpc DestroyMpcEpoch(kms.v1.DestroyMpcEpochRequest) returns (kms.v1.Empty);
 
   // Constructs a new custodian context.
