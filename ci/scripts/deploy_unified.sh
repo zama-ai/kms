@@ -798,16 +798,25 @@ deploy_kms() {
         local HELM_ARGS=(
             --namespace "${NAMESPACE}"
             --values "${BASE_VALUES}"
-            --values "${PEERS_VALUES}"
             --values "${OVERRIDE_VALUES}"
+            --set kmsPeers.id="1"
             --set kmsCore.thresholdMode.enabled=false
             --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}"
+            --set kmsCoreClient.nameOverride="kms-core-client"
         )
 
         if [[ "${is_perf}" == "true" ]]; then
             HELM_ARGS+=(
                 --values "${perf_values_dir}/values-${PATH_SUFFIX}.yaml"
                 --set kmsCore.image.tag="${KMS_CORE_TAG}"
+            )
+        fi
+
+        # For aws-ci, set service account and configmap names
+        if [[ "${TARGET}" == "aws-ci" ]]; then
+            HELM_ARGS+=(
+                --set kmsCore.serviceAccountName="${NAMESPACE}-1"
+                --set kmsCore.envFrom.configmap.name="${NAMESPACE}-1"
             )
         fi
 
