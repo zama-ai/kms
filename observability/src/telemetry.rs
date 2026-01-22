@@ -81,6 +81,10 @@ async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
 
+async fn version_handler() -> impl IntoResponse {
+    (StatusCode::OK, env!("CARGO_PKG_VERSION").to_string())
+}
+
 async fn readiness_handler(State(state): State<MetricsState>) -> impl IntoResponse {
     let uptime = state.start_time.elapsed().unwrap_or_default();
     if uptime > Duration::from_secs(10) {
@@ -158,6 +162,7 @@ pub fn init_metrics(settings: &TelemetryConfig) -> Result<SdkMeterProvider, anyh
             .route("/metrics", get(metrics_handler))
             .route("/health", get(health_handler))
             .route("/ready", get(readiness_handler))
+            .route("/version", get(version_handler))
             .route("/live", get(liveness_handler))
             .with_state(state);
 
