@@ -57,11 +57,13 @@ jobs:
     if: github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened')
     permissions:
       actions: read # Required to read workflow run information
-      contents: read # Required to checkout repository code
+      contents: write # Required for nested docker-build job (even if it doesn't run)
       checks: write # Required to create GitHub checks for test results
-      packages: read # Required to read GitHub packages/container registry
+      packages: write # Required for nested docker-build job (even if it doesn't run)
       issues: write # Required to create comments on issues
       pull-requests: write # Required to create comments on pull requests
+      id-token: write # Required for nested docker-build job (even if it doesn't run)
+      attestations: write # Required for nested docker-build job (even if it doesn't run)
     uses: ./.github/workflows/kind-testing.yml
     with:
       image_tag: ${{ needs.docker-build.outputs.image_tag }}

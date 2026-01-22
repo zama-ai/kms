@@ -234,16 +234,16 @@ jobs:
             CORE_TAG="${INPUT_CORE_TAG}"
             CLIENT_TAG="${INPUT_CLIENT_TAG}"
           fi
-          
+
           # Validate that we have image tags
           if [[ -z "${CORE_TAG}" ]]; then
             echo "ERROR: No image tag available. Either build images or provide kms_core_image_tag"
             exit 1
           fi
-          
+
           echo "Core image tag: ${CORE_TAG}"
           echo "Client image tag: ${CLIENT_TAG}"
-          
+
           {
             echo "KMS_CORE_IMAGE_TAG=${CORE_TAG}"
             echo "KMS_CORE_CLIENT_IMAGE_TAG=${CLIENT_TAG}"
