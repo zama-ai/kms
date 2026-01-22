@@ -1462,7 +1462,7 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
         .unwrap_err();
         assert!(err
             .to_string()
-            .contains(&format!("context {context_id} not found")));
+            .contains(&format!("Context {context_id} not found")));
     }
 }
 
