@@ -2032,11 +2032,7 @@ pub mod tests {
             {
                 // we use dummy preprocessing to generate the existing compression sk
                 // because it won't consume our preprocessing materials
-                let mut dummy_preproc =
-                    DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
-                        DUMMY_PREPROC_SEED,
-                        &session,
-                    );
+                let mut dummy_preproc = DummyPreprocessing::new(DUMMY_PREPROC_SEED, &session);
                 let params_basics_handles = params.get_params_basics_handle();
                 Some(
                     CompressionPrivateKeyShares::new_from_preprocessing(

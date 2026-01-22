@@ -10,10 +10,10 @@ use crate::{
 };
 
 pub type DummySmallSessionTripleProducer<Z> =
-    GenericTripleProducer<Z, SmallSession<Z>, DummyPreprocessing<Z>>;
+    GenericTripleProducer<Z, SmallSession<Z>, DummyPreprocessing>;
 
 pub type DummyLargeSessionTripleProducer<Z> =
-    GenericTripleProducer<Z, LargeSession, DummyPreprocessing<Z>>;
+    GenericTripleProducer<Z, LargeSession, DummyPreprocessing>;
 
 pub type FailingSmallSessionTripleProducer<Z> =
-    GenericTripleProducer<Z, SmallSession<Z>, FailingPreprocessing<Z>>;
+    GenericTripleProducer<Z, SmallSession<Z>, FailingPreprocessing>;

@@ -38,6 +38,7 @@ pub mod runtime {
 pub mod endpoints {
     pub mod decryption;
     pub mod keygen;
+    pub mod reshare;
 }
 pub mod zk {
     pub mod ceremony;

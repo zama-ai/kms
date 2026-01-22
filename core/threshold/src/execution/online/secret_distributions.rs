@@ -148,9 +148,11 @@ mod tests {
         let batch = 100;
 
         let mut task = |session: SmallSession<ResiduePolyF4Z64>, _bot: Option<String>| async move {
-            let mut preproc = DummyPreprocessing::<ResiduePolyF4Z64>::new(0, &session);
+            let mut preproc = DummyPreprocessing::new(0, &session);
 
-            let res_vec = RealSecretDistributions::newhope(batch, bound, &mut preproc).unwrap();
+            let res_vec =
+                RealSecretDistributions::newhope::<ResiduePolyF4Z64, _>(batch, bound, &mut preproc)
+                    .unwrap();
 
             open_list(&res_vec, &session).await.unwrap()
         };
@@ -197,10 +199,14 @@ mod tests {
         let batch = 100_usize;
 
         let mut task = |session: LargeSession| async move {
-            let mut large_preproc = DummyPreprocessing::<ResiduePolyF4Z128>::new(0, &session);
+            let mut large_preproc = DummyPreprocessing::new(0, &session);
 
-            let res_vec =
-                RealSecretDistributions::t_uniform(batch, bound, &mut large_preproc).unwrap();
+            let res_vec = RealSecretDistributions::t_uniform::<ResiduePolyF4Z128, _>(
+                batch,
+                bound,
+                &mut large_preproc,
+            )
+            .unwrap();
 
             let opened_res = open_list(&res_vec, &session).await.unwrap();
 
@@ -267,10 +273,14 @@ mod tests {
         let batch = 100_usize;
 
         let mut task = |session: LargeSession| async move {
-            let mut large_preproc = DummyPreprocessing::<ResiduePolyF4Z64>::new(0, &session);
+            let mut large_preproc = DummyPreprocessing::new(0, &session);
 
-            let res_vec =
-                RealSecretDistributions::t_uniform(batch, bound, &mut large_preproc).unwrap();
+            let res_vec = RealSecretDistributions::t_uniform::<ResiduePolyF4Z64, _>(
+                batch,
+                bound,
+                &mut large_preproc,
+            )
+            .unwrap();
 
             let opened_res = open_list(&res_vec, &session).await.unwrap();
 

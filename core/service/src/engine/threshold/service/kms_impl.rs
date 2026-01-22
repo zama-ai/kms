@@ -16,6 +16,7 @@ use tfhe::{
 };
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use threshold_fhe::execution::endpoints::reshare_sk::SecureReshareSecretKeys;
+use threshold_fhe::execution::small_execution::offline::SecureSmallPreprocessing;
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
     execution::{
@@ -177,7 +178,13 @@ pub struct BucketMetaStore {
 
 #[cfg(not(feature = "insecure"))]
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
-    RealThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
+    RealThresholdEpochManager<
+        PubS,
+        PrivS,
+        RobustSecurePrssInit,
+        SecureSmallPreprocessing,
+        SecureReshareSecretKeys,
+    >,
     RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
     RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     RealKeyGenerator<
@@ -193,7 +200,13 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
 
 #[cfg(feature = "insecure")]
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
-    RealThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
+    RealThresholdEpochManager<
+        PubS,
+        PrivS,
+        RobustSecurePrssInit,
+        SecureSmallPreprocessing,
+        SecureReshareSecretKeys,
+    >,
     RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
     RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     RealKeyGenerator<
@@ -446,6 +459,7 @@ where
         rate_limiter: rate_limiter.clone(),
         _init: PhantomData,
         _reshare: PhantomData,
+        _preproc: PhantomData,
     };
 
     // NOTE: context must be loaded before attempting to automatically start the PRSS

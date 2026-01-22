@@ -5,7 +5,9 @@ use std::num::Wrapping;
 use threshold_fhe::algebra::base_ring::{Z128, Z64};
 use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4;
 use threshold_fhe::execution::online::preprocessing::redis::RedisConf;
-use threshold_fhe::execution::online::preprocessing::{create_redis_factory, PreprocessorFactory};
+use threshold_fhe::execution::online::preprocessing::{
+    create_redis_factory, InMemoryBitDecPreprocessing, PreprocessorFactory,
+};
 use threshold_fhe::execution::online::triple::Triple;
 use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::sharing::share::Share;
@@ -373,7 +375,6 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
 #[tokio::test]
 async fn test_cast_fail_memory_bit_dec_preprocessing() {
     use threshold_fhe::{
-        algebra::galois_rings::degree_4::ResiduePolyF4Z64,
         execution::online::preprocessing::{
             dummy::DummyPreprocessing, BitDecPreprocessing, BitPreprocessing, TriplePreprocessing,
         },
@@ -387,9 +388,10 @@ async fn test_cast_fail_memory_bit_dec_preprocessing() {
     );
     let parameters = get_dummy_parameters_for_parties(1, 0, Role::indexed_from_one(1));
 
-    let mut dummy_preprocessing = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &parameters);
+    let mut dummy_preprocessing = DummyPreprocessing::new(42, &parameters);
 
-    let mut casted_from_dummy = dummy_preprocessing.cast_to_in_memory_impl(1).unwrap();
+    let mut casted_from_dummy: InMemoryBitDecPreprocessing<4> =
+        dummy_preprocessing.cast_to_in_memory_impl(1).unwrap();
 
     let mut redis_bit_dec_preprocessing = redis_factory.create_bit_decryption_preprocessing();
 

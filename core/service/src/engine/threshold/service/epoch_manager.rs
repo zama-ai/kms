@@ -27,7 +27,7 @@ use threshold_fhe::{
             },
         },
         small_execution::{
-            offline::{Preprocessing, SecureSmallPreprocessing},
+            offline::Preprocessing,
             prss::{PRSSInit, PRSSSetup},
         },
         tfhe_internals::{
@@ -82,6 +82,7 @@ const RESHARE_Z128_SESSION_COUNTER: u64 = 2;
 const RESHARE_SESSION_ONLINE_SET_2_COUNTER: u64 = 3;
 const RESHARE_COMMON_SESSION_ONLINE_COUNTER: u64 = 4;
 
+#[derive(Debug)]
 struct VerifiedPreviousEpochInfo {
     /// The KMS context of the parties that will reshare
     /// the shares of the private key
@@ -184,6 +185,8 @@ pub struct RealThresholdEpochManager<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
     Init: PRSSInit<ResiduePolyF4Z64> + PRSSInit<ResiduePolyF4Z128>,
+    Preproc: Preprocessing<ResiduePolyF4Z64, SmallSession<ResiduePolyF4Z64>>
+        + Preprocessing<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>,
     Reshare: ReshareSecretKeys,
 > {
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -198,6 +201,7 @@ pub struct RealThresholdEpochManager<
     pub rate_limiter: RateLimiter,
     pub(crate) _init: PhantomData<Init>,
     pub(crate) _reshare: PhantomData<Reshare>,
+    pub(crate) _preproc: PhantomData<Preproc>,
 }
 
 impl<
@@ -206,8 +210,11 @@ impl<
         Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
             + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
             + Default,
+        Preproc: Preprocessing<ResiduePolyF4Z64, SmallSession<ResiduePolyF4Z64>>
+            + Preprocessing<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>
+            + Default,
         Reshare: ReshareSecretKeys + Default,
-    > RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
+    > RealThresholdEpochManager<PubS, PrivS, Init, Preproc, Reshare>
 {
     /// This will load all PRSS setups from storage into session maker.
     ///
@@ -573,7 +580,7 @@ impl<
         Box<dyn std::error::Error + Send + Sync>,
     > {
         Ok((
-            SecureSmallPreprocessing::default()
+            Preproc::default()
                 .execute(session_z64, num_needed_preproc.batch_params_64)
                 .await
                 .map_err(|e| {
@@ -583,7 +590,7 @@ impl<
                         e,
                     )
                 })?,
-            SecureSmallPreprocessing::default()
+            Preproc::default()
                 .execute(session_z128, num_needed_preproc.batch_params_128)
                 .await
                 .map_err(|e| {
@@ -958,8 +965,11 @@ impl<
         Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
             + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
             + Default,
+        Preproc: Preprocessing<ResiduePolyF4Z64, SmallSession<ResiduePolyF4Z64>>
+            + Preprocessing<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>
+            + Default,
         Reshare: ReshareSecretKeys + Default,
-    > EpochManager for RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
+    > EpochManager for RealThresholdEpochManager<PubS, PrivS, Init, Preproc, Reshare>
 {
     async fn new_mpc_epoch(
         &self,
@@ -1090,24 +1100,31 @@ mod tests {
         },
     };
     use aes_prng::AesRng;
-    use kms_grpc::{kms::v1::NewMpcEpochRequest, rpc_types::KMSType};
+    use kms_grpc::{
+        kms::v1::{FheParameter, NewMpcEpochRequest},
+        rpc_types::{alloy_to_protobuf_domain, KMSType},
+    };
     use rand::SeedableRng;
     use threshold_fhe::{
-        execution::endpoints::reshare_sk::SecureReshareSecretKeys,
+        execution::{
+            endpoints::reshare_sk::SecureReshareSecretKeys,
+            small_execution::offline::SecureSmallPreprocessing,
+        },
         malicious_execution::small_execution::malicious_prss::{EmptyPrss, FailingPrss},
     };
 
     impl<
             Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
                 + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>,
+            Preproc: Preprocessing<ResiduePolyF4Z64, SmallSession<ResiduePolyF4Z64>>
+                + Preprocessing<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>,
             Reshare: ReshareSecretKeys,
-        > RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, Init, Reshare>
+        > RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, Init, Preproc, Reshare>
     {
         fn init_test(base_kms: BaseKmsStruct, session_maker: SessionMaker) -> Self {
             Self {
                 session_maker,
                 health_reporter: HealthReporter::new(),
-                _init: PhantomData,
                 base_kms,
                 crypto_storage: ThresholdCryptoMaterialStorage::new(
                     RamStorage::new(),
@@ -1119,7 +1136,9 @@ mod tests {
                 reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new(10, 10))),
                 tracker: Arc::new(TaskTracker::new()),
                 rate_limiter: RateLimiter::new(RateLimiterConfig::default()),
+                _init: PhantomData,
                 _reshare: PhantomData,
+                _preproc: PhantomData,
             }
         }
     }
@@ -1269,7 +1288,11 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
 
         // initially the storage should be empty
-        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let epoch_manager =
+            make_epoch_manager::<EmptyPrss, SecureSmallPreprocessing, SecureReshareSecretKeys>(
+                &mut rng,
+            )
+            .await;
         {
             let private_storage = epoch_manager.crypto_storage.get_private_storage();
             let mut guarded_private_storage = private_storage.lock().await;
@@ -1292,7 +1315,11 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
 
         // initially the storage should be empty
-        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let epoch_manager =
+            make_epoch_manager::<EmptyPrss, SecureSmallPreprocessing, SecureReshareSecretKeys>(
+                &mut rng,
+            )
+            .await;
         let epoch_ids: Vec<EpochId> = (0..3).map(|_| EpochId::new_random(&mut rng)).collect();
         for epoch_id in epoch_ids.iter() {
             let private_storage = epoch_manager.crypto_storage.get_private_storage();
@@ -1332,17 +1359,19 @@ mod tests {
     async fn make_epoch_manager<
         I: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
             + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>,
+        Preproc: Preprocessing<ResiduePolyF4Z64, SmallSession<ResiduePolyF4Z64>>
+            + Preprocessing<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>,
+        Reshare: ReshareSecretKeys,
     >(
         rng: &mut AesRng,
-    ) -> RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>
-    {
+    ) -> RealThresholdEpochManager<ram::RamStorage, ram::RamStorage, I, Preproc, Reshare> {
         let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let epoch_id = *DEFAULT_EPOCH_ID;
         let session_maker =
             SessionMaker::four_party_dummy_session(None, None, &epoch_id, base_kms.new_rng().await);
 
-        RealThresholdEpochManager::<ram::RamStorage, ram::RamStorage, I, SecureReshareSecretKeys>::init_test(
+        RealThresholdEpochManager::<ram::RamStorage, ram::RamStorage, I, Preproc, Reshare>::init_test(
             base_kms,
             session_maker,
         )
@@ -1351,7 +1380,11 @@ mod tests {
     #[tokio::test]
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(42);
-        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let epoch_manager =
+            make_epoch_manager::<EmptyPrss, SecureSmallPreprocessing, SecureReshareSecretKeys>(
+                &mut rng,
+            )
+            .await;
         let epoch_id = EpochId::new_random(&mut rng);
         epoch_manager
             .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
@@ -1366,7 +1399,11 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(42);
-        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let epoch_manager =
+            make_epoch_manager::<EmptyPrss, SecureSmallPreprocessing, SecureReshareSecretKeys>(
+                &mut rng,
+            )
+            .await;
 
         {
             // bad epoch ID
@@ -1405,7 +1442,11 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         let mut rng = AesRng::seed_from_u64(42);
-        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let epoch_manager =
+            make_epoch_manager::<EmptyPrss, SecureSmallPreprocessing, SecureReshareSecretKeys>(
+                &mut rng,
+            )
+            .await;
 
         let epoch_id = EpochId::new_random(&mut rng);
         let context_id = ContextId::new_random(&mut rng); // should not exist
@@ -1424,7 +1465,11 @@ mod tests {
     #[tokio::test]
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(42);
-        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        let epoch_manager =
+            make_epoch_manager::<EmptyPrss, SecureSmallPreprocessing, SecureReshareSecretKeys>(
+                &mut rng,
+            )
+            .await;
 
         let epoch_id = EpochId::new_random(&mut rng);
         epoch_manager
@@ -1454,7 +1499,11 @@ mod tests {
     #[tokio::test]
     async fn internal() {
         let mut rng = AesRng::seed_from_u64(42);
-        let epoch_manager = make_epoch_manager::<FailingPrss>(&mut rng).await;
+        let epoch_manager =
+            make_epoch_manager::<FailingPrss, SecureSmallPreprocessing, SecureReshareSecretKeys>(
+                &mut rng,
+            )
+            .await;
 
         let epoch_id = EpochId::new_random(&mut rng);
         assert_eq!(
@@ -1469,5 +1518,134 @@ mod tests {
                 .code(),
             tonic::Code::Internal
         );
+    }
+
+    #[test]
+    fn test_verify_epoch_info() {
+        let new_epoch_id = derive_request_id("new_epoch_id").unwrap();
+        let old_epoch_id = derive_request_id("old_epoch_id").unwrap();
+        let context_id = derive_request_id("context_id").unwrap();
+        let key_id = derive_request_id("key_id").unwrap();
+        let preproc_id = derive_request_id("preproc_id").unwrap();
+
+        let alloy_domain = alloy_sol_types::eip712_domain!(
+            name: "Authorization token",
+            version: "1",
+            chain_id: 8006,
+            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        );
+        let domain = alloy_to_protobuf_domain(&alloy_domain).unwrap();
+
+        let valid_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            key_id: Some(key_id.into()),
+            preproc_id: Some(preproc_id.into()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, valid_previous_epoch).unwrap();
+
+        // Define a bad request ID
+        let bad_req_id = kms_grpc::kms::v1::RequestId {
+            request_id: ['x'; crate::consts::ID_LENGTH].iter().collect(),
+        };
+
+        // Test with invalid context id
+        let invalid_previous_epoch = PreviousEpochInfo {
+            context_id: Some(bad_req_id.clone()),
+            epoch_id: Some(old_epoch_id.into()),
+            key_id: Some(key_id.into()),
+            preproc_id: Some(preproc_id.into()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
+
+        // Test with missing context id
+        let missing_field_previous_epoch = PreviousEpochInfo {
+            context_id: None,
+            epoch_id: Some(old_epoch_id.into()),
+            key_id: Some(key_id.into()),
+            preproc_id: Some(preproc_id.into()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
+
+        // Test with invalid epoch id
+        let invalid_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(bad_req_id.clone()),
+            key_id: Some(key_id.into()),
+            preproc_id: Some(preproc_id.into()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
+
+        // Test with missing epoch id
+        let missing_field_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: None,
+            key_id: Some(key_id.into()),
+            preproc_id: Some(preproc_id.into()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
+
+        // Test with invalid key id
+        let invalid_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            key_id: Some(bad_req_id.clone()),
+            preproc_id: Some(preproc_id.into()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
+
+        // Test with missing key id
+        let missing_field_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            key_id: None,
+            preproc_id: Some(preproc_id.into()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
+
+        // Test with invalid preproc id
+        let invalid_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            key_id: Some(key_id.into()),
+            preproc_id: Some(bad_req_id.clone()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
+
+        // Test with missing preproc id
+        let missing_field_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            key_id: Some(key_id.into()),
+            preproc_id: None,
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain),
+        };
+        verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
     }
 }

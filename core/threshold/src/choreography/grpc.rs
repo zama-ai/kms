@@ -66,6 +66,7 @@ use crate::execution::runtime::sessions::session_parameters::{
 use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::execution::small_execution::prf::PRSSConversions;
 use crate::execution::small_execution::prss::{DerivePRSSState, PRSSPrimitives};
+use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
 use crate::execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
 use crate::execution::tfhe_internals::private_keysets::PrivateKeySet;
 use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
@@ -994,17 +995,14 @@ where
             }
             (DKGParams::WithoutSnS(_), None) => {
                 let sid_u128: u128 = session_id.into();
-                let mut preproc = DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
-                    sid_u128 as u64,
-                    &base_session,
-                );
+                let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
                     let keys = SecureOnlineDistributedKeyGen::keygen(
                         &mut base_session,
                         &mut preproc,
                         dkg_params,
                         tag,
-                        None,
+                        None::<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
                     )
                     .await
                     .unwrap();
@@ -1051,17 +1049,14 @@ where
             }
             (DKGParams::WithSnS(_), None) => {
                 let sid_u128: u128 = session_id.into();
-                let mut preproc = DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
-                    sid_u128 as u64,
-                    &base_session,
-                );
+                let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
                     let keys = SecureOnlineDistributedKeyGen::keygen(
                         &mut base_session,
                         &mut preproc,
                         dkg_params,
                         tag,
-                        None,
+                        None::<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
                     )
                     .await
                     .unwrap();

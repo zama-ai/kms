@@ -91,15 +91,10 @@ impl<Z: ErrorCorrect, Bcast: Broadcast, Ses: SmallSessionHandles<Z>> Preprocessi
     }
 }
 
-pub struct FailingPreprocessing<Z>(std::marker::PhantomData<Z>);
+#[derive(Default)]
+pub struct FailingPreprocessing {}
 
-impl<Z> Default for FailingPreprocessing<Z> {
-    fn default() -> Self {
-        Self(std::marker::PhantomData)
-    }
-}
-
-impl<Z> ProtocolDescription for FailingPreprocessing<Z> {
+impl ProtocolDescription for FailingPreprocessing {
     fn protocol_desc(depth: usize) -> String {
         let indent = Self::INDENT_STRING.repeat(depth);
         format!("{indent}-FailingPreprocessing")
@@ -107,7 +102,7 @@ impl<Z> ProtocolDescription for FailingPreprocessing<Z> {
 }
 
 #[async_trait]
-impl<Z, S> Preprocessing<Z, S> for FailingPreprocessing<Z>
+impl<Z, S> Preprocessing<Z, S> for FailingPreprocessing
 where
     Z: Ring,
     S: BaseSessionHandles + 'static,
