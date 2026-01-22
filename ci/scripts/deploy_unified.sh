@@ -499,8 +499,13 @@ deploy_tkms_infra() {
         --set kmsParties.serviceAccountPrefixName="${NAMESPACE}" \
         --set kmsParties.publishConnectionDetailsTo.prefixName="${NAMESPACE}" \
         --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}" \
-        ${EXTRA_ARGS} \
-        --wait
+        ${EXTRA_ARGS}
+    if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
+        log_info "Debugging tkms-infra (centralized): helm status and KMS parties"
+        helm status tkms-infra -n "${NAMESPACE}" || true
+        kubectl get Kmsparties -n "${NAMESPACE}" -o wide || true
+        kubectl get events -n "${NAMESPACE}" --sort-by=.metadata.creationTimestamp | tail -n 50 || true
+    fi
     wait_tkms_infra_ready
 }
 
