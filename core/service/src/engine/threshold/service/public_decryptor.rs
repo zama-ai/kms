@@ -57,7 +57,7 @@ use crate::{
         traits::BaseKms,
         utils::MetricedError,
         validation::{
-            proto_request_id, validate_public_decrypt_req, RequestIdParsingErr,
+            parse_proto_request_id, validate_public_decrypt_req, RequestIdParsingErr,
             DSEP_PUBLIC_DECRYPTION,
         },
     },
@@ -648,7 +648,7 @@ impl<
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
-        let request_id = proto_request_id(
+        let request_id = parse_proto_request_id(
             &request.into_inner(),
             RequestIdParsingErr::PublicDecResponse,
         )

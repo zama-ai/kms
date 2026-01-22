@@ -6,8 +6,8 @@ use crate::engine::centralized::central_kms::{
 use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
-    proto_request_id, validate_public_decrypt_req, validate_user_decrypt_req, RequestIdParsingErr,
-    DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
+    parse_proto_request_id, validate_public_decrypt_req, validate_user_decrypt_req,
+    RequestIdParsingErr, DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
 };
 use crate::util::meta_store::{
     add_req_to_meta_store, retrieve_from_meta_store, update_err_req_in_meta_store,
@@ -207,15 +207,16 @@ pub async fn get_user_decryption_result_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
-    let request_id = proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecRequest)
-        .map_err(|e| {
-        MetricedError::new(
-            OP_USER_DECRYPT_RESULT,
-            None,
-            e,
-            tonic::Code::InvalidArgument,
-        )
-    })?;
+    let request_id =
+        parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecRequest)
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_USER_DECRYPT_RESULT,
+                    None,
+                    e,
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
 
     let (payload, external_signature, extra_data) = retrieve_from_meta_store(
         service.user_dec_meta_store.read().await,
@@ -449,7 +450,7 @@ pub async fn get_public_decryption_result_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<PublicDecryptionResponse>, MetricedError> {
-    let request_id = proto_request_id(
+    let request_id = parse_proto_request_id(
         &request.into_inner(),
         RequestIdParsingErr::PublicDecResponse,
     )

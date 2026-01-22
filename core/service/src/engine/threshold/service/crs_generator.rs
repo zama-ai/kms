@@ -40,7 +40,7 @@ use crate::{
         base::{compute_info_crs, BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS},
         threshold::{service::session::ImmutableSessionMaker, traits::CrsGenerator},
         utils::MetricedError,
-        validation::{proto_request_id, validate_crs_gen_request, RequestIdParsingErr},
+        validation::{parse_proto_request_id, validate_crs_gen_request, RequestIdParsingErr},
     },
     util::{
         meta_store::{add_req_to_meta_store, retrieve_from_meta_store, MetaStore},
@@ -241,7 +241,7 @@ impl<
             OP_CRS_GEN_RESULT
         };
         let request_id =
-            proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)
+            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)
                 .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
 
         let crs_data =

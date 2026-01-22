@@ -125,31 +125,6 @@ impl std::fmt::Display for RequestIdParsingErr {
     }
 }
 
-// Isn't that a duplicate of [`parse_optional_proto_request_id`] below?
-pub(crate) fn optional_proto_request_id(
-    request_id: &Option<kms_grpc::kms::v1::RequestId>,
-    id_type: RequestIdParsingErr,
-) -> anyhow::Result<RequestId> {
-    let req_id = request_id.clone().ok_or(anyhow::anyhow!(
-        "Request ID not present: {id_type}: {request_id:?}"
-    ))?;
-    proto_request_id(&req_id, id_type)
-}
-
-// Isn't that a duplicate of [`parse_proto_request_id`] below?
-pub(crate) fn proto_request_id(
-    request_id: &kms_grpc::kms::v1::RequestId,
-    id_type: RequestIdParsingErr,
-) -> anyhow::Result<RequestId> {
-    request_id.try_into().map_err(|e| {
-        anyhow::anyhow!(format!(
-            "Invalid request ID: {id_type}: {request_id:?}: {e}"
-        ))
-    })
-}
-
-// Kinda wondering whether those fn should return MetricedError instead of BoxedStatus ?
-
 /// Parse a protobuf request ID and returns an appropriate tonic error if it is invalid.
 pub(crate) fn parse_optional_proto_request_id(
     request_id: &Option<kms_grpc::kms::v1::RequestId>,
@@ -315,7 +290,7 @@ pub fn validate_public_decrypt_req(
     Box<dyn std::error::Error + Send + Sync>,
 > {
     let req_id: RequestId =
-        optional_proto_request_id(&req.request_id, RequestIdParsingErr::PublicDecRequest)?;
+        parse_optional_grpc_request_id(&req.request_id, RequestIdParsingErr::PublicDecRequest)?;
 
     tracing::info!(
         request_id = ?req_id,
@@ -333,8 +308,7 @@ pub fn validate_public_decrypt_req(
         None => *DEFAULT_EPOCH_ID,
     };
     let key_id: KeyId =
-        optional_proto_request_id(&req.key_id, RequestIdParsingErr::PublicDecRequestBadKeyId)?
-            .into();
+        parse_optional_grpc_request_id(&req.key_id, RequestIdParsingErr::PublicDecRequestBadKeyId)?;
 
     if req.ciphertexts.is_empty() {
         return Err(anyhow::anyhow!(ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS).into());
