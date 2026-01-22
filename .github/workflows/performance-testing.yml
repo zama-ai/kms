@@ -253,21 +253,32 @@ jobs:
       # CONFIGURE DEPLOYMENT PARAMETERS
       # ======================================================================
       - name: Configure deployment parameters
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'threshold' }}
+          INPUT_TLS: ${{ inputs.tls || false }}
+          INPUT_FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
+          INPUT_KMS_BRANCH: ${{ inputs.kms_branch }}
+          PAYLOAD_DEPLOYMENT_TYPE: ${{ github.event.client_payload.deployment_type }}
+          PAYLOAD_TLS: ${{ github.event.client_payload.tls || false }}
+          PAYLOAD_FHE_PARAMS: ${{ github.event.client_payload.fhe_params || 'Test' }}
+          PAYLOAD_KMS_CHART_VERSION: ${{ github.event.client_payload.kms_chart_version }}
+          PAYLOAD_KMS_BRANCH: ${{ github.event.client_payload.kms_branch }}
         run: |
-          if [[ ${{ github.event_name }} == "workflow_dispatch" || ${{ github.event_name }} == "workflow_call" ]]; then
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" || "${EVENT_NAME}" == "workflow_call" ]]; then
             {
-              echo "DEPLOYMENT_TYPE=${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.deployment_type || 'threshold' }}"
-              echo "TLS=${{ inputs.tls || false }}"
-              echo "FHE_PARAMS=${{ inputs.fhe_params || 'Test' }}"
-              echo "KMS_BRANCH=${{ inputs.kms_branch }}"
+              echo "DEPLOYMENT_TYPE=${INPUT_DEPLOYMENT_TYPE}"
+              echo "TLS=${INPUT_TLS}"
+              echo "FHE_PARAMS=${INPUT_FHE_PARAMS}"
+              echo "KMS_BRANCH=${INPUT_KMS_BRANCH}"
             } >> "$GITHUB_ENV"
           else
             {
-              echo "DEPLOYMENT_TYPE=${{ github.event.client_payload.deployment_type }}"
-              echo "TLS=${{ github.event.client_payload.tls || false }}"
-              echo "FHE_PARAMS=${{ github.event.client_payload.fhe_params || 'Test' }}"
-              echo "KMS_CHART_VERSION=${{ github.event.client_payload.kms_chart_version }}"
-              echo "KMS_BRANCH=${{ github.event.client_payload.kms_branch }}"
+              echo "DEPLOYMENT_TYPE=${PAYLOAD_DEPLOYMENT_TYPE}"
+              echo "TLS=${PAYLOAD_TLS}"
+              echo "FHE_PARAMS=${PAYLOAD_FHE_PARAMS}"
+              echo "KMS_CHART_VERSION=${PAYLOAD_KMS_CHART_VERSION}"
+              echo "KMS_BRANCH=${PAYLOAD_KMS_BRANCH}"
             } >> "$GITHUB_ENV"
           fi
 

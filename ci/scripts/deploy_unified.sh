@@ -753,11 +753,18 @@ deploy_kms() {
                 fi
             fi
 
-            helm upgrade --install "kms-core-${i}" \
-                "${helm_chart_location}" \
-                "${helm_version_args[@]}" \
-                "${HELM_ARGS[@]}" \
-                "${wait_args[@]}" &
+            if [[ "${#helm_version_args[@]}" -gt 0 ]]; then
+                helm upgrade --install "kms-core-${i}" \
+                    "${helm_chart_location}" \
+                    "${helm_version_args[@]}" \
+                    "${HELM_ARGS[@]}" \
+                    "${wait_args[@]}" &
+            else
+                helm upgrade --install "kms-core-${i}" \
+                    "${helm_chart_location}" \
+                    "${HELM_ARGS[@]}" \
+                    "${wait_args[@]}" &
+            fi
         done
         wait
 
@@ -773,16 +780,28 @@ deploy_kms() {
         # Init Job
         if [[ "${is_perf}" == "true" ]]; then
             log_info "Deploying KMS Core initialization job..."
-            helm upgrade --install kms-core-init \
-                "${helm_chart_location}" \
-                "${helm_version_args[@]}" \
-                --namespace "${NAMESPACE}" \
-                --values "${perf_values_dir}/values-kms-service-init-${PATH_SUFFIX}.yaml" \
-                --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}" \
-                --set kmsCore.image.tag="${KMS_CORE_TAG}" \
-                --wait \
-                --wait-for-jobs \
-                --timeout=1200s
+            if [[ "${#helm_version_args[@]}" -gt 0 ]]; then
+                helm upgrade --install kms-core-init \
+                    "${helm_chart_location}" \
+                    "${helm_version_args[@]}" \
+                    --namespace "${NAMESPACE}" \
+                    --values "${perf_values_dir}/values-kms-service-init-${PATH_SUFFIX}.yaml" \
+                    --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}" \
+                    --set kmsCore.image.tag="${KMS_CORE_TAG}" \
+                    --wait \
+                    --wait-for-jobs \
+                    --timeout=1200s
+            else
+                helm upgrade --install kms-core-init \
+                    "${helm_chart_location}" \
+                    --namespace "${NAMESPACE}" \
+                    --values "${perf_values_dir}/values-kms-service-init-${PATH_SUFFIX}.yaml" \
+                    --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}" \
+                    --set kmsCore.image.tag="${KMS_CORE_TAG}" \
+                    --wait \
+                    --wait-for-jobs \
+                    --timeout=1200s
+            fi
         else
             deploy_init_job "${BASE_VALUES}" "${PEERS_VALUES}" "${OVERRIDE_VALUES}"
         fi
@@ -820,11 +839,18 @@ deploy_kms() {
             )
         fi
 
-        helm upgrade --install kms-core \
-            "${helm_chart_location}" \
-            "${helm_version_args[@]}" \
-            "${HELM_ARGS[@]}" \
-            "${wait_args[@]}"
+        if [[ "${#helm_version_args[@]}" -gt 0 ]]; then
+            helm upgrade --install kms-core \
+                "${helm_chart_location}" \
+                "${helm_version_args[@]}" \
+                "${HELM_ARGS[@]}" \
+                "${wait_args[@]}"
+        else
+            helm upgrade --install kms-core \
+                "${helm_chart_location}" \
+                "${HELM_ARGS[@]}" \
+                "${wait_args[@]}"
+        fi
 
         if [[ "${TARGET}" == "aws-ci" ]]; then
             log_info "Waiting for KMS Core pods to be ready..."
