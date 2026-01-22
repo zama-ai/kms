@@ -134,22 +134,22 @@ No changes! Scheduled runs still work:
 ## Performance Testing Integration
 
 The `performance-testing.yml` workflow already accepts pre-built image tags:
-- Called by `docker-build.yml` with `build=true` 
+- Called by `docker-build.yml` with `build=true`
 - Can be called manually with existing image tags
 - No changes needed for this refactoring
 
 ## Troubleshooting
 
 ### Issue: "image_tag is empty"
-**Cause**: `docker-build` job didn't run or failed  
+**Cause**: `docker-build` job didn't run or failed
 **Solution**: Check docker-build job logs in pr-ci workflow
 
 ### Issue: "No KMS party found"
-**Cause**: Crossplane resources not ready (separate issue, being fixed)  
-**Solution**: The `deploy_unified.sh` script now waits for crossplane resources
+**Cause**: Crossplane resources not ready (separate issue, being fixed)
+**Solution**: The `deploy.sh` script now waits for crossplane resources
 
 ### Issue: "PR preview not deploying"
-**Cause**: Missing or incorrect label  
+**Cause**: Missing or incorrect label
 **Solution**: Ensure PR has exactly one `pr-preview-*` label
 
 ## Future Improvements

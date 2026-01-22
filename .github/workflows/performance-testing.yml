@@ -421,12 +421,12 @@ jobs:
       # ======================================================================
       - name: Deploy KMS using unified script
         run: |
-          chmod +x ci/scripts/deploy_unified.sh
+          chmod +x ci/scripts/deploy.sh
           EXTRA_PCR_ARGS=()
           if [[ -n "${PCR0:-}" ]]; then
             EXTRA_PCR_ARGS+=(--pcr0 "${PCR0}" --pcr1 "${PCR1}" --pcr2 "${PCR2}")
           fi
-          ./ci/scripts/deploy_unified.sh \
+          ./ci/scripts/deploy.sh \
             --target aws-perf \
             --namespace "${NAMESPACE}" \
             --deployment-type "${DEPLOYMENT_TYPE}" \

@@ -348,7 +348,7 @@ jobs:
           # Uses environment variables: NAMESPACE, KMS_CORE_IMAGE_TAG, KMS_CORE_CLIENT_IMAGE_TAG,
           # DEPLOYMENT_TYPE, NUM_PARTIES
           chmod +x ci/scripts/manage_lifecycle.sh
-          chmod +x ci/scripts/deploy_unified.sh
+          chmod +x ci/scripts/deploy.sh
           ./ci/scripts/manage_lifecycle.sh start
 
       - name: Run Kubernetes Tests
@@ -367,8 +367,8 @@ jobs:
           echo "TEST_EXIT_CODE=$?" >> "${GITHUB_ENV}"
 
           # Collect logs after tests complete
-          chmod +x ci/scripts/deploy_unified.sh
-          ./ci/scripts/deploy_unified.sh \
+          chmod +x ci/scripts/deploy.sh
+          ./ci/scripts/deploy.sh \
             --target kind-ci \
             --namespace "${NAMESPACE}" \
             --deployment-type "${DEPLOYMENT_TYPE}" \
@@ -407,8 +407,8 @@ jobs:
           ###################################################################
           # Collect logs before teardown (especially on failures)
           ###################################################################
-          chmod +x ci/scripts/deploy_unified.sh
-          ./ci/scripts/deploy_unified.sh \
+          chmod +x ci/scripts/deploy.sh
+          ./ci/scripts/deploy.sh \
             --target kind-ci \
             --namespace "${NAMESPACE}" \
             --deployment-type "${DEPLOYMENT_TYPE}" \

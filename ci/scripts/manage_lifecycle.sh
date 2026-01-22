@@ -30,7 +30,7 @@ start_setup() {
     # Use the new Unified Deploy Script
     # Note: We use --block to ensure it keeps running (for port forwards)
     # We map old args to new args
-    ./ci/scripts/deploy_unified.sh \
+    ./ci/scripts/deploy.sh \
         --target "kind-ci" \
         --namespace "${NAMESPACE}" \
         --tag "${KMS_CORE_IMAGE_TAG:-latest-dev}" \
@@ -57,7 +57,7 @@ start_setup() {
     ELAPSED=0
 
     while [ $ELAPSED -lt $TIMEOUT ]; do
-        # deploy_unified.sh prints this when ready in block mode
+        # deploy.sh prints this when ready in block mode
         if grep -q "Press Ctrl+C to stop port forwarding and exit" "${SETUP_LOG}" 2>/dev/null; then
             echo "KMS setup completed successfully!"
             return 0
@@ -116,8 +116,8 @@ stop_setup() {
     sleep 2
 
     # Delete cluster (if it was Kind)
-    # The config name depends on how deploy_unified sets it up.
-    # deploy_unified uses: kind-${NAMESPACE} as context name, and ${NAMESPACE} as cluster name.
+    # The config name depends on how deploy sets it up.
+    # deploy uses: kind-${NAMESPACE} as context name, and ${NAMESPACE} as cluster name.
     if kind get clusters | grep -q "^${NAMESPACE}$"; then
         echo "Deleting Kind cluster ${NAMESPACE}..."
         kind delete cluster --name "${NAMESPACE}"

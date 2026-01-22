@@ -200,8 +200,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # For registry creds if needed
         run: |
-          chmod +x ci/scripts/deploy_unified.sh
-          ./ci/scripts/deploy_unified.sh \
+          chmod +x ci/scripts/deploy.sh
+          ./ci/scripts/deploy.sh \
             --target aws-ci \
             --namespace "${NAMESPACE}" \
             --deployment-type "${DEPLOYMENT_TYPE}" \
