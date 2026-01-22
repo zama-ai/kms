@@ -1,11 +1,12 @@
 use crate::anyhow_error_and_log;
 use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{Operator, RecoveryValidationMaterial};
-use crate::consts::SAFE_SER_SIZE_LIMIT;
+use crate::conf::threshold::{ThresholdPartyConf, TlsConf};
+use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT};
 use crate::cryptography::encryption::{Encryption, PkeScheme, PkeSchemeType, UnifiedPrivateEncKey};
-use crate::cryptography::signatures::PrivateSigKey;
+use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey};
 use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
-use crate::engine::context::ContextInfo;
+use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
@@ -16,7 +17,7 @@ use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::{
     delete_at_request_id, delete_context_at_id, delete_custodian_context_at_id,
-    store_versioned_at_request_id, StorageExt,
+    store_context_at_id, store_versioned_at_request_id, StorageExt,
 };
 use crate::vault::Vault;
 use crate::{
@@ -29,12 +30,17 @@ use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::CustodianContext;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::{kms::v1::Empty, utils::tonic_result::ok_or_tonic_abort};
+use std::collections::HashSet;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use tfhe::safe_serialization::safe_serialize;
 use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::RwLock;
 use tonic::{Response, Status};
+
+const CENTRALIZED_MPC_IDENTITY: &str = "centralized-zama-kms";
+const CENTRALIZED_PARTY_ID: u32 = 1;
+const CENTRALIZED_EXTERNAL_URL: &str = "https://doesnotexist.zama.ai";
 
 /// This is a shared data structure for both centralized and threshold context managers.
 struct SharedContextManager<
@@ -80,7 +86,7 @@ where
             .map_err(|e| Status::invalid_argument(format!("Failed to verify new context: {e}")))
     }
 
-    async fn mpc_context_exists(&self, context_id: &ContextId) -> anyhow::Result<bool> {
+    async fn mpc_context_exists_in_storage(&self, context_id: &ContextId) -> anyhow::Result<bool> {
         let contexts = self
             .crypto_storage
             .read_all_context_info()
@@ -306,11 +312,152 @@ where
     }
 }
 
+pub async fn create_default_centralized_context_in_storage<
+    PrivS: StorageExt + Sync + Send + 'static,
+>(
+    priv_storage: &mut PrivS,
+    sk: &PrivateSigKey,
+) -> anyhow::Result<()> {
+    // Create and store the default context for centralized mode testing
+    let verification_key = PublicSigKey::from_sk(sk);
+    let context_info = ContextInfo {
+        mpc_nodes: vec![NodeInfo {
+            mpc_identity: CENTRALIZED_MPC_IDENTITY.to_string(), // identity is not used in centralized KMS
+            party_id: CENTRALIZED_PARTY_ID,                     // always 1
+            verification_key: Some(verification_key),
+            external_url: CENTRALIZED_EXTERNAL_URL.to_string(), // no external URL since there are no peers
+            ca_cert: None, // there's no peer network, so no certificate is needed
+            public_storage_url: "".to_string(),
+            public_storage_prefix: None, // None will default to "PUB"
+            extra_verification_keys: vec![],
+        }],
+        context_id: *DEFAULT_MPC_CONTEXT,
+        software_version: SoftwareVersion::current(),
+        threshold: 0,
+        pcr_values: vec![],
+    };
+    store_context_at_id(priv_storage, &DEFAULT_MPC_CONTEXT, &context_info)
+        .await
+        .expect("Could not store default context");
+
+    Ok(())
+}
+
+/// Create and store the default MPC context for threshold mode from peer configuration.
+///
+/// This function builds a `ContextInfo` from the peer list in `threshold_config` and stores it
+/// in private storage under `DEFAULT_MPC_CONTEXT`. If a context already exists at that ID,
+/// it is deleted first to ensure consistency with the latest peer list.
+///
+/// Returns `Ok(())` if peers are present and context was created, or if no peers are configured.
+///
+/// # Arguments
+/// * `priv_storage` - The private storage to write the context to
+/// * `threshold_config` - The threshold party configuration containing peers, threshold, etc.
+/// * `verf_key` - The verification key of this party
+pub async fn ensure_default_threshold_context_in_storage<
+    PrivS: StorageExt + Sync + Send + 'static,
+>(
+    priv_storage: &mut PrivS,
+    threshold_config: &ThresholdPartyConf,
+    verf_key: &PublicSigKey,
+) -> anyhow::Result<()> {
+    let peers = match &threshold_config.peers {
+        Some(peers) => peers,
+        None => return Ok(()), // No peers configured, nothing to do
+    };
+
+    let context_id = *DEFAULT_MPC_CONTEXT;
+
+    // Build NodeInfo for each peer
+    let mpc_nodes = peers
+        .iter()
+        .map(|peer| {
+            let (role, identity) = peer.into_role_identity();
+            // URL format is only valid with a scheme, so we add it here
+            let scheme = match peer.tls_cert {
+                Some(_) => "https",
+                None => "http",
+            };
+            match peer
+                .tls_cert
+                .as_ref()
+                .map(|cert| cert.unchecked_cert_string())
+                .transpose()
+            {
+                Ok(pem_string) => {
+                    let verification_key = if let Some(my_id) = threshold_config.my_id {
+                        if peer.party_id == my_id {
+                            Some(PublicSigKey::clone(verf_key))
+                        } else {
+                            None
+                        }
+                    } else {
+                        // If the MPC parties are started for the first time, they do not know about any context.
+                        // Consequently, if we must use a default context, the default context cannot hold the
+                        // verification key of other parties since they don't know about it at start up.
+                        None
+                    };
+                    Ok(NodeInfo {
+                        mpc_identity: identity.mpc_identity().to_string(),
+                        party_id: role.one_based() as u32,
+                        verification_key,
+                        external_url: format!(
+                            "{}://{}:{}",
+                            scheme,
+                            identity.hostname(),
+                            identity.port()
+                        ),
+                        ca_cert: pem_string.map(|cert_pem| cert_pem.into_bytes()),
+                        // We do not know the storage URLs in the default context
+                        // since it does not have access to the configuration of other parties.
+                        public_storage_url: "".to_string(),
+                        public_storage_prefix: None,
+                        extra_verification_keys: vec![],
+                    })
+                }
+                Err(e) => Err(e),
+            }
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    // Extract PCR values from TLS config if available
+    let pcr_values = threshold_config.tls.as_ref().and_then(|tls| match tls {
+        TlsConf::Manual { cert: _, key: _ } => None,
+        TlsConf::Auto {
+            eif_signing_cert: _,
+            trusted_releases,
+            ignore_aws_ca_chain: _,
+            attest_private_vault_root_key: _,
+            renew_slack_after_expiration: _,
+            renew_fail_retry_timeout: _,
+        } => Some(trusted_releases.clone()),
+    });
+
+    let context_info = ContextInfo {
+        mpc_nodes,
+        context_id,
+        software_version: SoftwareVersion::current(),
+        threshold: threshold_config.threshold as u32,
+        pcr_values: pcr_values.unwrap_or_default(),
+    };
+
+    // Delete any existing context at DEFAULT_MPC_CONTEXT to ensure consistency
+    // with the latest peer list. This is important because the peer list may have
+    // changed since the last time the context was stored.
+    delete_context_at_id(priv_storage, &context_id).await?;
+
+    store_context_at_id(priv_storage, &context_id, &context_info).await?;
+
+    Ok(())
+}
+
 pub struct CentralizedContextManager<
     PubS: Storage + Sync + Send + 'static,
     PrivS: StorageExt + Sync + Send + 'static,
 > {
     inner: SharedContextManager<PubS, PrivS>,
+    cache: Arc<RwLock<HashSet<ContextId>>>,
 }
 
 impl<PubS, PrivS> CentralizedContextManager<PubS, PrivS>
@@ -329,7 +476,35 @@ where
                 crypto_storage,
                 custodian_meta_store,
             },
+            cache: Arc::new(RwLock::new(HashSet::new())),
         }
+    }
+
+    /// Load all MPC contexts from storage into the cache.
+    /// This should be called once during initialization to populate the cache.
+    pub(crate) async fn load_mpc_context_from_storage(&self) -> anyhow::Result<()> {
+        let contexts = self
+            .inner
+            .crypto_storage
+            .read_all_context_info()
+            .await
+            .inspect_err(|e| tracing::error!("Failed to load all contexts from storage: {}", e))?;
+
+        let mut write_guard = self.cache.write().await;
+        for context in contexts {
+            let is_new_insert = (*write_guard).insert(*context.context_id());
+            if !is_new_insert {
+                tracing::warn!(
+                    "loaded a centralized context with ID {} that was already present in cache",
+                    context.context_id()
+                )
+            }
+        }
+        tracing::info!(
+            "Loaded {} MPC contexts into centralized context cache",
+            write_guard.len()
+        );
+        Ok(())
     }
 }
 
@@ -368,10 +543,16 @@ where
             .write_context_info(new_context.context_id(), &new_context)
             .await;
 
-        // TODO(zama-ai/kms-internal/issues/2814)
-        // in addition to storing the context in storage
-        // we need to make sure it's also loaded in memory so that the centralized KMS
-        // can check whether context changes are valid
+        {
+            let mut write_guard = self.cache.write().await;
+            let is_new_insert = (*write_guard).insert(*new_context.context_id());
+            if !is_new_insert {
+                tracing::warn!(
+                    "inserted a centralized context with ID {} that was already present",
+                    new_context.context_id()
+                )
+            }
+        }
 
         ok_or_tonic_abort(
             res,
@@ -400,10 +581,16 @@ where
             .await
             .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
 
-        // TODO(zama-ai/kms-internal/issues/2814)
-        // in addition to deleting the context from storage
-        // we need to make sure it's also deleted from memory so that the centralized KMS
-        // can check whether context changes are valid
+        {
+            let mut write_guard = self.cache.write().await;
+            let was_present = (*write_guard).remove(&context_id);
+            if !was_present {
+                tracing::warn!(
+                    "deleted a centralized context with ID {} that was not present",
+                    context_id,
+                )
+            }
+        }
 
         Ok(Response::new(Empty {}))
     }
@@ -422,11 +609,31 @@ where
         self.inner.destroy_custodian_context(request).await
     }
 
-    async fn mpc_context_exists(&self, context_id: &ContextId) -> Result<bool, Status> {
-        Ok(ok_or_tonic_abort(
-            self.inner.mpc_context_exists(context_id).await,
+    async fn mpc_context_exists_and_consistent(
+        &self,
+        context_id: &ContextId,
+    ) -> Result<bool, Status> {
+        let exists_in_cache = {
+            let guard = self.cache.read().await;
+            (*guard).contains(context_id)
+        };
+        let exists_in_storage = ok_or_tonic_abort(
+            self.inner.mpc_context_exists_in_storage(context_id).await,
             "Failed to check if context exists".to_string(),
-        )?)
+        )?;
+        if exists_in_storage != exists_in_cache {
+            Err(Status::internal(format!(
+                "inconsistent context state for ID {context_id} while checking existance,
+                exists_in_storage={exists_in_storage}, eexsits_in_cache={exists_in_cache}"
+            )))
+        } else {
+            Ok(exists_in_cache && exists_in_storage)
+        }
+    }
+
+    async fn mpc_context_exists_in_cache(&self, context_id: &ContextId) -> bool {
+        let guard = self.cache.read().await;
+        (*guard).contains(context_id)
     }
 }
 
@@ -607,11 +814,27 @@ where
         self.inner.destroy_custodian_context(request).await
     }
 
-    async fn mpc_context_exists(&self, context_id: &ContextId) -> Result<bool, Status> {
-        Ok(ok_or_tonic_abort(
-            self.inner.mpc_context_exists(context_id).await,
+    async fn mpc_context_exists_and_consistent(
+        &self,
+        context_id: &ContextId,
+    ) -> Result<bool, Status> {
+        let exsits_in_session_maker = self.session_maker.context_exists(context_id).await;
+        let exists_in_storage = ok_or_tonic_abort(
+            self.inner.mpc_context_exists_in_storage(context_id).await,
             "Failed to check if context exists".to_string(),
-        )?)
+        )?;
+        if exists_in_storage != exsits_in_session_maker {
+            Err(Status::internal(format!(
+                "inconsistent context state for ID {context_id} while checking existance,
+                exists_in_storage={exists_in_storage}, exsits_in_session_maker={exsits_in_session_maker}"
+            )))
+        } else {
+            Ok(exsits_in_session_maker && exists_in_storage)
+        }
+    }
+
+    async fn mpc_context_exists_in_cache(&self, context_id: &ContextId) -> bool {
+        self.session_maker.context_exists(context_id).await
     }
 }
 
@@ -1184,5 +1407,249 @@ mod tests {
         assert!(internal_rec_req
             .is_valid(Role::indexed_from_one(1), &unsign_key)
             .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_centralized_context_cache() {
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let base_kms = BaseKmsStruct::new(KMSType::Centralized, sig_key).unwrap();
+        let context_id = ContextId::from_bytes([5u8; 32]);
+        let new_context = ContextInfo {
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: "Node1".to_string(),
+                party_id: 1,
+                verification_key: Some(verification_key.clone()),
+                external_url: "http://localhost:12345".to_string(),
+                ca_cert: None,
+                public_storage_url: "http://storage".to_string(),
+                public_storage_prefix: None,
+                extra_verification_keys: vec![],
+            }],
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values: vec![],
+        };
+
+        let context_manager = CentralizedContextManager::new(
+            base_kms,
+            crypto_storage.clone(),
+            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+        );
+
+        // Initially, the cache should be empty
+        assert!(
+            !context_manager
+                .mpc_context_exists_in_cache(&context_id)
+                .await
+        );
+
+        // Create a new context
+        let request = Request::new(NewMpcContextRequest {
+            new_context: Some(new_context.clone().try_into().unwrap()),
+        });
+        let response = context_manager.new_mpc_context(request).await;
+        response.unwrap();
+
+        // Now the context should exist in cache
+        assert!(
+            context_manager
+                .mpc_context_exists_in_cache(&context_id)
+                .await
+        );
+
+        // Verify context is stored in storage
+        {
+            let storage_ref = Arc::clone(&crypto_storage.private_storage);
+            let guarded_priv_storage = storage_ref.lock().await;
+            let stored_context = read_context_at_id(&*guarded_priv_storage, &context_id)
+                .await
+                .unwrap();
+            assert_eq!(*stored_context.context_id(), context_id);
+        }
+
+        // Try to create the same context with the same context ID which is not allowed (should fail)
+        let request = Request::new(NewMpcContextRequest {
+            new_context: Some(new_context.try_into().unwrap()),
+        });
+        let response = context_manager.new_mpc_context(request).await;
+        assert!(response.is_err());
+
+        // Destroy the context
+        let request = Request::new(DestroyMpcContextRequest {
+            context_id: Some(context_id.into()),
+        });
+        let response = context_manager.destroy_mpc_context(request).await;
+        response.unwrap();
+
+        // Cache should no longer have the context
+        assert!(
+            !context_manager
+                .mpc_context_exists_in_cache(&context_id)
+                .await
+        );
+
+        // Storage should no longer have the context
+        {
+            let storage_ref = Arc::clone(&crypto_storage.private_storage);
+            let guarded_priv_storage = storage_ref.lock().await;
+            let result = read_context_at_id(&*guarded_priv_storage, &context_id).await;
+            assert!(result.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_centralized_context_exists_and_consistent() {
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let base_kms = BaseKmsStruct::new(KMSType::Centralized, sig_key).unwrap();
+        let context_id = ContextId::from_bytes([6u8; 32]);
+        let new_context = ContextInfo {
+            mpc_nodes: vec![NodeInfo {
+                mpc_identity: "Node1".to_string(),
+                party_id: 1,
+                verification_key: Some(verification_key.clone()),
+                external_url: "http://localhost:12345".to_string(),
+                ca_cert: None,
+                public_storage_url: "http://storage".to_string(),
+                public_storage_prefix: None,
+                extra_verification_keys: vec![],
+            }],
+            context_id,
+            software_version: SoftwareVersion {
+                major: 0,
+                minor: 1,
+                patch: 0,
+                tag: None,
+            },
+            threshold: 0,
+            pcr_values: vec![],
+        };
+
+        let context_manager = CentralizedContextManager::new(
+            base_kms,
+            crypto_storage.clone(),
+            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+        );
+
+        // Initially, context should not exist
+        let non_existent_id = ContextId::from_bytes([99u8; 32]);
+        let result = context_manager
+            .mpc_context_exists_and_consistent(&non_existent_id)
+            .await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+
+        // Create a new context
+        let request = Request::new(NewMpcContextRequest {
+            new_context: Some(new_context.try_into().unwrap()),
+        });
+        context_manager.new_mpc_context(request).await.unwrap();
+
+        // Now mpc_context_exists_and_consistent should return true
+        let result = context_manager
+            .mpc_context_exists_and_consistent(&context_id)
+            .await;
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+
+        // Destroy the context
+        let request = Request::new(DestroyMpcContextRequest {
+            context_id: Some(context_id.into()),
+        });
+        context_manager.destroy_mpc_context(request).await.unwrap();
+
+        // After destruction, context should not exist
+        let result = context_manager
+            .mpc_context_exists_and_consistent(&context_id)
+            .await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_centralized_multiple_contexts() {
+        let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
+        let base_kms = BaseKmsStruct::new(KMSType::Centralized, sig_key).unwrap();
+
+        let context_manager = CentralizedContextManager::new(
+            base_kms,
+            crypto_storage.clone(),
+            Arc::new(RwLock::new(MetaStore::new(100, 10))),
+        );
+
+        // Create multiple contexts
+        let context_ids: Vec<ContextId> = (0..3)
+            .map(|i| ContextId::from_bytes([i + 10; 32]))
+            .collect();
+
+        for context_id in &context_ids {
+            let new_context = ContextInfo {
+                mpc_nodes: vec![NodeInfo {
+                    mpc_identity: "Node1".to_string(),
+                    party_id: 1,
+                    verification_key: Some(verification_key.clone()),
+                    external_url: "http://localhost:12345".to_string(),
+                    ca_cert: None,
+                    public_storage_url: "http://storage".to_string(),
+                    public_storage_prefix: None,
+                    extra_verification_keys: vec![],
+                }],
+                context_id: *context_id,
+                software_version: SoftwareVersion {
+                    major: 0,
+                    minor: 1,
+                    patch: 0,
+                    tag: None,
+                },
+                threshold: 0,
+                pcr_values: vec![],
+            };
+
+            let request = Request::new(NewMpcContextRequest {
+                new_context: Some(new_context.try_into().unwrap()),
+            });
+            context_manager.new_mpc_context(request).await.unwrap();
+        }
+
+        // All contexts should exist in cache
+        for context_id in &context_ids {
+            assert!(
+                context_manager
+                    .mpc_context_exists_in_cache(context_id)
+                    .await
+            );
+            assert!(context_manager
+                .mpc_context_exists_and_consistent(context_id)
+                .await
+                .unwrap());
+        }
+
+        // Destroy the middle context
+        let request = Request::new(DestroyMpcContextRequest {
+            context_id: Some(context_ids[1].into()),
+        });
+        context_manager.destroy_mpc_context(request).await.unwrap();
+
+        // First and third should still exist, second should not
+        assert!(
+            context_manager
+                .mpc_context_exists_in_cache(&context_ids[0])
+                .await
+        );
+        assert!(
+            !context_manager
+                .mpc_context_exists_in_cache(&context_ids[1])
+                .await
+        );
+        assert!(
+            context_manager
+                .mpc_context_exists_in_cache(&context_ids[2])
+                .await
+        );
     }
 }

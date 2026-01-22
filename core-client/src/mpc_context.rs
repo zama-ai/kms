@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use kms_grpc::{
-    identifiers::ContextId, kms::v1::NewMpcContextRequest,
+    identifiers::ContextId,
+    kms::v1::{DestroyMpcContextRequest, NewMpcContextRequest},
     kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient,
 };
 #[cfg(feature = "testing")]
@@ -225,4 +226,27 @@ pub(crate) async fn do_new_mpc_context(
     }
 
     Ok(context_id)
+}
+
+pub(crate) async fn do_destroy_mpc_context(
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    context_id: &ContextId,
+) -> anyhow::Result<()> {
+    let mut req_tasks = JoinSet::new();
+    for (_party_id, ce) in core_endpoints.iter() {
+        let mut cur_client = ce.clone();
+        let context_cloned = (*context_id).into();
+        req_tasks.spawn(async move {
+            cur_client
+                .destroy_mpc_context(DestroyMpcContextRequest {
+                    context_id: Some(context_cloned),
+                })
+                .await
+        });
+    }
+    while let Some(inner) = req_tasks.join_next().await {
+        let _ = inner??;
+    }
+
+    Ok(())
 }
