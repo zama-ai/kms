@@ -7,16 +7,16 @@ deploymentType: centralized
 
 region: eu-west-1
 environment: zws-dev
-fullnameOverride: kms-party-kms-ci
+fullnameOverride: kms-party-kms-enclave-ci
 
 publicBucketVault:
   enabled: true
   irsa:
     enabled: true
-    serviceAccountName: kms-ci
+    serviceAccountName: kms-enclave-ci
   deletionPolicy: Delete
   labels:
-    environment: kms-ci
+    environment: kms-enclave-ci
   configMapTargetRef:
     enabled: true
     name: kms-bucket-vault
@@ -26,10 +26,10 @@ publicBucketVault:
 
 kmsParties:
   enabled: true
-  serviceAccountPrefixName: kms-ci
+  serviceAccountPrefixName: kms-enclave-ci
   publishConnectionDetailsTo:
     # This is the prefix name of the ConfigMap that will be created : <prefixName>-<index>
-    prefixName: kms-ci
+    prefixName: kms-enclave-ci
   tags:
     Environment: zws-dev
     ManagedBy: zama
@@ -40,7 +40,7 @@ kmsParties:
     # matchExistingName: kms-bucket-vault-with-enclave
     # This is the k8s label of the public bucket vault that will be used to reference
     matchLabels:
-      environment: kms-ci
+      environment: kms-enclave-ci
 
   # RDS Connector database configuration
   connectorDatabase:
