@@ -191,22 +191,3 @@ jobs:
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
-  # Launch performance testing with enclave nightly or manual dispatch
-  ############################################################################
-  performance-testing:
-    name: docker-build/performance-testing
-    needs:
-      - core-client
-      - core-service
-      - enclave
-    if: github.event_name == 'schedule' || inputs.testing
-    uses: ./.github/workflows/performance-testing.yml
-    with:
-      deployment_type: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
-      tls: true
-      kms_branch: ${{ github.ref }}
-      kms_chart_version: repository
-      kms_core_image_tag: ${{ needs.core-service.outputs.image_tag }}
-      kms_core_client_image_tag: ${{ needs.core-client.outputs.image_tag }}
-    secrets: inherit
-
