@@ -49,6 +49,7 @@ pub(crate) async fn send_dec_reqs(
                 compression: true,
                 precompute_sns: false,
             },
+            false, // compressed_keys
         )
         .await;
         let ctt = TypedCiphertext {

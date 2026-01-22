@@ -41,6 +41,10 @@ message StandardKeySetConfig {
 
   // The compression configuration.
   KeySetCompressionConfig keyset_compression_config = 2;
+
+  // Configuration for generating compressed vs uncompressed keys.
+  // Compressed keys use XOF-seeded compression and are smaller.
+  CompressedKeyConfig compressed_key_config = 3;
 }
 
 enum ComputeKeyType {
@@ -115,6 +119,16 @@ enum KeySetCompressionConfig {
   // The default must be represented by 0.
   Generate = 0;
   UseExisting = 1;
+}
+
+// Configuration for whether to generate compressed or uncompressed keys.
+// Compressed keys use XOF-seeded compression and are smaller but need
+// decompression before use.
+enum CompressedKeyConfig {
+  // Do not generate compressed keys (default).
+  CompressedNone = 0;
+  // Generate compressed keys for the full keyset.
+  CompressedAll = 1;
 }
 
 // This message is returned if keygen has completed.

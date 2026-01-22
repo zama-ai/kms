@@ -879,6 +879,7 @@ pub async fn encrypt(
             compression: !cipher_params.no_compression,
             precompute_sns: !cipher_params.no_precompute_sns,
         },
+        false,
     )
     .await;
 
@@ -1149,11 +1150,8 @@ pub async fn execute_cmd(
 
     let kms_addrs = Arc::new(addr_vec);
 
-    let key_types = vec![
-        PubDataType::PublicKey,
-        PubDataType::PublicKeyMetadata,
-        PubDataType::ServerKey,
-    ];
+    // TODO: handle compressed keys
+    let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
 
     let command_timer_start = tokio::time::Instant::now();
     // Execute the command

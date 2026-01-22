@@ -4,7 +4,7 @@ use crate::{
     engine::base::{derive_request_id, KeyGenMetadata},
 };
 use aes_prng::AesRng;
-use kms_grpc::{rpc_types::WrappedPublicKey, EpochId, RequestId};
+use kms_grpc::{rpc_types::PubDataType, EpochId, RequestId};
 use observability::metrics_names::OP_CRS_GEN_REQUEST;
 use rand::SeedableRng;
 use std::collections::HashMap;
@@ -20,8 +20,9 @@ use tokio::sync::{Mutex, RwLock};
 use crate::{
     consts::TEST_PARAM,
     engine::{
-        base::KmsFheKeyHandles, centralized::central_kms::async_generate_crs,
-        threshold::service::ThresholdFheKeys,
+        base::KmsFheKeyHandles,
+        centralized::central_kms::async_generate_crs,
+        threshold::service::{PublicKeyMaterial, ThresholdFheKeys},
     },
     util::meta_store::MetaStore,
     vault::storage::{
@@ -29,7 +30,7 @@ use crate::{
             CentralizedCryptoMaterialStorage, CryptoMaterialStorage, ThresholdCryptoMaterialStorage,
         },
         ram::{FailingRamStorage, RamStorage},
-        store_pk_at_request_id,
+        store_versioned_at_request_id,
     },
 };
 
@@ -49,6 +50,7 @@ async fn write_crs() {
         private_storage: Arc::new(Mutex::new(RamStorage::new())),
         backup_vault: None,
         pk_cache: Arc::new(RwLock::new(HashMap::new())),
+        compressed_pk_cache: Arc::new(RwLock::new(HashMap::new())),
     };
 
     let mut rng = AesRng::seed_from_u64(100);
@@ -136,6 +138,7 @@ async fn read_public_key() {
         None,
         HashMap::new(),
         HashMap::new(),
+        HashMap::new(),
     );
 
     let pub_storage = crypto_storage.inner.public_storage.clone();
@@ -152,9 +155,14 @@ async fn read_public_key() {
     {
         let pub_storage = pub_storage.clone();
         let mut s = pub_storage.lock().await;
-        store_pk_at_request_id(&mut (*s), &req_id, WrappedPublicKey::Compact(&public_key))
-            .await
-            .unwrap();
+        store_versioned_at_request_id(
+            &mut (*s),
+            &req_id,
+            &public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .unwrap();
     }
 
     // reading the public key without cache should succeed
@@ -173,6 +181,7 @@ async fn write_central_keys() {
         FailingRamStorage::new(100),
         RamStorage::new(),
         None,
+        HashMap::new(),
         HashMap::new(),
         HashMap::new(),
     );
@@ -476,6 +485,7 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
         None,
         HashMap::new(),
         HashMap::new(),
+        HashMap::new(),
     );
 
     // Try to read a non-existent key - should return an error
@@ -543,6 +553,7 @@ fn setup_threshold_store(
         None,
         HashMap::new(),
         HashMap::new(),
+        HashMap::new(),
     );
 
     let pbs_params: ClassicPBSParameters = TEST_PARAM
@@ -561,9 +572,11 @@ fn setup_threshold_store(
 
     let threshold_fhe_keys = ThresholdFheKeys {
         private_keys: Arc::new(key_shares[0].to_owned()),
-        integer_server_key: Arc::new(integer_server_key),
-        sns_key: sns_key.map(Arc::new),
-        decompression_key: None,
+        public_material: PublicKeyMaterial::Uncompressed {
+            integer_server_key: Arc::new(integer_server_key),
+            sns_key: sns_key.map(Arc::new),
+            decompression_key: None,
+        },
         meta_data: dummy_info(),
     };
     (crypto_storage, threshold_fhe_keys, fhe_key_set)

@@ -12,7 +12,7 @@ cfg_if::cfg_if! {
     use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::crypto_material::PrivateCryptoMaterialReader;
     use crate::vault::storage::{file::FileStorage, StorageType};
-    use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};
+    use kms_grpc::kms::v1::{CompressedKeyConfig, Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::rpc_types::PubDataType;
     use kms_grpc::RequestId;
@@ -38,6 +38,8 @@ use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_
 use crate::util::rate_limiter::RateLimiterConfig;
 use alloy_dyn_abi::Eip712Domain;
 use kms_grpc::kms::v1::KeyGenResult;
+#[cfg(feature = "slow_tests")]
+use kms_grpc::kms::v1::StandardKeySetConfig;
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use std::path::Path;
 #[cfg(feature = "slow_tests")]
@@ -53,6 +55,13 @@ use tonic::{Response, Status};
 pub(crate) enum TestKeyGenResult {
     DecompressionOnly(DecompressionKey),
     Standard((tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey)),
+    Compressed(
+        (
+            tfhe::ClientKey,
+            tfhe::CompressedCompactPublicKey,
+            tfhe::CompressedServerKey,
+        ),
+    ),
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -61,15 +70,112 @@ impl TestKeyGenResult {
     fn get_decompression_only(self) -> tfhe::integer::compression_keys::DecompressionKey {
         match self {
             TestKeyGenResult::DecompressionOnly(inner) => inner,
-            TestKeyGenResult::Standard(_) => panic!("expecting to match decompression only"),
+            _ => panic!("expecting to match decompression only"),
         }
     }
 
     pub(crate) fn get_standard(self) -> (tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey) {
         match self {
-            TestKeyGenResult::DecompressionOnly(_) => panic!("expected to find standard"),
             TestKeyGenResult::Standard(inner) => inner,
+            _ => panic!("expected to find standard"),
         }
+    }
+
+    pub(crate) fn get_compressed(
+        self,
+    ) -> (
+        tfhe::ClientKey,
+        tfhe::CompressedCompactPublicKey,
+        tfhe::CompressedServerKey,
+    ) {
+        match self {
+            TestKeyGenResult::Compressed(inner) => inner,
+            _ => panic!("expected to find compressed"),
+        }
+    }
+
+    fn sanity_check(&self) {
+        // encrypt some value, and then decrypt to sanity check the client key
+        let expected = 27u8;
+
+        use tfhe::prelude::FheDecrypt;
+        use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
+        match &self {
+            TestKeyGenResult::DecompressionOnly(_) => { /* cannot sanity check */ }
+            TestKeyGenResult::Standard((client_key, public_key, server_key)) => {
+                tfhe::set_server_key(server_key.clone());
+                let ct: tfhe::FheUint8 = expanded_encrypt(public_key, expected, 8).unwrap();
+                let pt: u8 = ct.decrypt(client_key);
+                assert_eq!(pt, expected);
+            }
+            TestKeyGenResult::Compressed((client_key, public_key, server_key)) => {
+                tfhe::set_server_key(server_key.clone().decompress());
+                let ct: tfhe::FheUint8 =
+                    expanded_encrypt(&public_key.decompress(), expected, 8).unwrap();
+                let actual: u8 = ct.decrypt(client_key);
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+}
+
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+pub(crate) fn standard_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
+    (None, None)
+}
+
+#[cfg(feature = "slow_tests")]
+pub(crate) fn compressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
+    (
+        Some(KeySetConfig {
+            keyset_type: KeySetType::Standard.into(),
+            standard_keyset_config: Some(StandardKeySetConfig {
+                compute_key_type: 0,
+                keyset_compression_config: 0,
+                compressed_key_config: CompressedKeyConfig::CompressedAll.into(),
+            }),
+        }),
+        None,
+    )
+}
+
+#[cfg(feature = "slow_tests")]
+pub(crate) fn decompression_keygen_config(
+    from_keyset_id: &RequestId,
+    to_keyset_id: &RequestId,
+) -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
+    (
+        Some(KeySetConfig {
+            keyset_type: KeySetType::DecompressionOnly.into(),
+            standard_keyset_config: None,
+        }),
+        Some(KeySetAddedInfo {
+            compression_keyset_id: None,
+            from_keyset_id_decompression_only: Some((*from_keyset_id).into()),
+            to_keyset_id_decompression_only: Some((*to_keyset_id).into()),
+        }),
+    )
+}
+
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+pub(crate) trait KeySetConfigExt {
+    fn is_compressed(&self) -> bool;
+    fn is_decompression_only(&self) -> bool;
+}
+
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+impl KeySetConfigExt for Option<KeySetConfig> {
+    fn is_compressed(&self) -> bool {
+        self.as_ref().is_some_and(|c| {
+            c.standard_keyset_config.as_ref().is_some_and(|sc| {
+                sc.compressed_key_config == CompressedKeyConfig::CompressedAll as i32
+            })
+        })
+    }
+
+    fn is_decompression_only(&self) -> bool {
+        self.as_ref()
+            .is_some_and(|c| c.keyset_type == KeySetType::DecompressionOnly as i32)
     }
 }
 
@@ -95,13 +201,15 @@ async fn test_insecure_dkg(#[case] amount_parties: usize) {
     .await;
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
+    let (keyset_config, keyset_added_info) = standard_keygen_config();
     let keys = run_threshold_keygen(
         FheParameter::Test,
         &kms_clients,
         &internal_client,
         &INSECURE_PREPROCESSING_ID,
         &key_id,
-        None,
+        keyset_config,
+        keyset_added_info,
         true,
         None,
         0,
@@ -143,13 +251,15 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
     .await;
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+    let (keyset_config, keyset_added_info) = standard_keygen_config();
     let keys = run_threshold_keygen(
         param,
         &kms_clients,
         &internal_client,
         &INSECURE_PREPROCESSING_ID,
         &key_id,
-        None,
+        keyset_config,
+        keyset_added_info,
         true,
         None,
         0,
@@ -177,7 +287,18 @@ async fn test_insecure_threshold_decompression_keygen() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn secure_threshold_keygen_test() {
-    preproc_and_keygen(4, FheParameter::Test, false, 1, false, None, None, None).await;
+    preproc_and_keygen(
+        4,
+        FheParameter::Test,
+        false,
+        1,
+        false,
+        None,
+        None,
+        None,
+        false,
+    )
+    .await;
 }
 
 #[cfg(feature = "slow_tests")]
@@ -193,6 +314,7 @@ async fn secure_threshold_keygen_test_crash_online() {
         None,
         Some(vec![2]),
         None,
+        false,
     )
     .await;
 }
@@ -210,6 +332,29 @@ async fn secure_threshold_keygen_test_crash_preprocessing() {
         Some(vec![3]),
         None,
         None,
+        false,
+    )
+    .await;
+}
+
+/// Test compressed keygen with test parameters and 4 parties.
+/// This tests the `compressed_keygen` code path where keys are generated
+/// using XOF-seeded compression instead of the standard keygen.
+#[cfg(feature = "slow_tests")]
+#[tokio::test(flavor = "multi_thread")]
+#[tracing_test::traced_test]
+#[serial]
+async fn secure_threshold_compressed_keygen_test() {
+    preproc_and_keygen(
+        4,
+        FheParameter::Test,
+        false,
+        1,
+        false,
+        None,
+        None,
+        None,
+        true, // compressed = true
     )
     .await;
 }
@@ -222,25 +367,12 @@ pub(crate) async fn run_threshold_keygen(
     internal_client: &Client,
     preproc_req_id: &RequestId,
     keygen_req_id: &RequestId,
-    decompression_keygen: Option<(RequestId, RequestId)>,
+    keyset_config: Option<KeySetConfig>,
+    keyset_added_info: Option<KeySetAddedInfo>,
     insecure: bool,
     data_root_path: Option<&Path>,
     expected_num_parties_crashed: usize,
 ) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
-    let keyset_config = if let Some((_from, _to)) = decompression_keygen {
-        Some(KeySetConfig {
-            keyset_type: KeySetType::DecompressionOnly.into(),
-            standard_keyset_config: None,
-        })
-    } else {
-        None
-    };
-    let keyset_added_info = decompression_keygen.map(|(from, to)| KeySetAddedInfo {
-        compression_keyset_id: None,
-        from_keyset_id_decompression_only: Some(from.into()),
-        to_keyset_id_decompression_only: Some(to.into()),
-    });
-
     let domain = dummy_domain();
     let req_keygen = internal_client
         .key_gen_request(
@@ -266,7 +398,7 @@ pub(crate) async fn run_threshold_keygen(
         kms_clients,
         internal_client,
         insecure,
-        decompression_keygen.is_some(),
+        &keyset_config,
         data_root_path,
         expected_num_parties_crashed,
     )
@@ -318,7 +450,7 @@ async fn wait_for_keygen_result(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &Client,
     insecure: bool,
-    decompression_keygen: bool,
+    keyset_config: &Option<KeySetConfig>,
     data_root_path: Option<&Path>,
     expected_num_parties_crashed: usize,
 ) -> (TestKeyGenResult, Option<HashMap<Role, ThresholdFheKeys>>) {
@@ -380,7 +512,7 @@ async fn wait_for_keygen_result(
 
     let mut out = None;
     let mut all_private_keys = None;
-    if decompression_keygen {
+    if keyset_config.is_decompression_only() {
         let mut serialized_ref_decompression_key = Vec::new();
         for (idx, kg_res) in finished.into_iter() {
             let role = Role::indexed_from_one(idx as usize);
@@ -410,6 +542,7 @@ async fn wait_for_keygen_result(
             }
         }
     } else {
+        let compressed = keyset_config.is_compressed();
         let res = verify_keygen_responses(
             finished,
             data_root_path,
@@ -418,6 +551,7 @@ async fn wait_for_keygen_result(
             &req_get_keygen,
             &domain,
             kms_clients.len() + expected_num_parties_crashed,
+            compressed,
         )
         .await
         .unwrap();
@@ -533,13 +667,15 @@ pub(crate) async fn run_threshold_decompression_keygen(
         .await;
     }
 
+    let (keyset_config, keyset_added_info) = standard_keygen_config();
     let keys1 = run_threshold_keygen(
         parameter,
         &kms_clients,
         &internal_client,
         &preproc_id_1,
         &key_id_1,
-        None,
+        keyset_config,
+        keyset_added_info,
         insecure,
         None,
         0,
@@ -562,13 +698,15 @@ pub(crate) async fn run_threshold_decompression_keygen(
         .await;
     }
 
+    let (keyset_config, keyset_added_info) = standard_keygen_config();
     let keys2 = run_threshold_keygen(
         parameter,
         &kms_clients,
         &internal_client,
         &preproc_id_2,
         &key_id_2,
-        None,
+        keyset_config,
+        keyset_added_info,
         insecure,
         None,
         0,
@@ -591,13 +729,15 @@ pub(crate) async fn run_threshold_decompression_keygen(
     .await;
 
     // finally do the decompression keygen between the first and second keysets
+    let (keyset_config, keyset_added_info) = decompression_keygen_config(&key_id_1, &key_id_2);
     let decompression_key = run_threshold_keygen(
         parameter,
         &kms_clients,
         &internal_client,
         &preproc_id_3,
         &key_id_3,
-        Some((key_id_1, key_id_2)),
+        keyset_config,
+        keyset_added_info,
         insecure,
         None,
         0,
@@ -630,12 +770,15 @@ pub(crate) async fn preproc_and_keygen(
     party_ids_to_crash_preproc: Option<Vec<usize>>,
     party_ids_to_crash_keygen: Option<Vec<usize>>,
     partial_preproc: Option<kms_grpc::kms::v1::PartialKeyGenPreprocParams>,
+    compressed: bool,
 ) {
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let mut preproc_ids = vec![];
+    let mut key_ids = vec![];
     for i in 0..iterations {
         let req_preproc: RequestId = derive_request_id(&format!(
-            "full_dkg_preproc_{amount_parties}_{parameter:?}_{i}"
+            "full_dkg_preproc_{amount_parties}_{parameter:?}_{compressed}_{i}"
         ))
         .unwrap();
         purge(
@@ -646,8 +789,12 @@ pub(crate) async fn preproc_and_keygen(
             priv_storage_prefixes,
         )
         .await;
-        let req_key: RequestId =
-            derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameter:?}_{i}")).unwrap();
+        preproc_ids.push(req_preproc);
+
+        let req_key: RequestId = derive_request_id(&format!(
+            "full_dkg_key_{amount_parties}_{parameter:?}_{compressed}_{i}"
+        ))
+        .unwrap();
         purge(
             None,
             None,
@@ -656,6 +803,7 @@ pub(crate) async fn preproc_and_keygen(
             priv_storage_prefixes,
         )
         .await;
+        key_ids.push(req_key);
     }
 
     let dkg_param: WrappedDKGParams = parameter.into();
@@ -695,16 +843,13 @@ pub(crate) async fn preproc_and_keygen(
     }
 
     if concurrent {
+        use tfhe::core_crypto::commons::utils::ZipChecked;
+
         let arc_clients = Arc::new(kms_clients);
         let arc_internalclient = Arc::new(internal_client);
         let mut preprocset = JoinSet::new();
-        let mut preproc_ids = HashMap::new();
-        for i in 0..iterations {
-            let cur_id: RequestId = derive_request_id(&format!(
-                "full_dkg_preproc_{amount_parties}_{parameter:?}_{i}"
-            ))
-            .unwrap();
-            preproc_ids.insert(i, cur_id);
+        for preproc_id in preproc_ids.iter() {
+            let preproc_id = *preproc_id;
             preprocset.spawn({
                 let clients_clone = Arc::clone(&arc_clients);
                 let internalclient_clone = Arc::clone(&arc_internalclient);
@@ -714,7 +859,7 @@ pub(crate) async fn preproc_and_keygen(
                         parameter,
                         &clients_clone,
                         &internalclient_clone,
-                        &cur_id,
+                        &preproc_id,
                         None,
                         expected_num_parties_crashed,
                         partial_preproc,
@@ -747,11 +892,10 @@ pub(crate) async fn preproc_and_keygen(
 
         let arc_clients = Arc::new(kms_clients);
         let mut keyset = JoinSet::new();
-        for i in 0..iterations {
-            let key_id: RequestId =
-                derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameter:?}_{i}"))
-                    .unwrap();
-            let preproc_ids_clone = preproc_ids.get(&i).unwrap().to_owned();
+        for (key_id, preproc_id) in key_ids.iter().zip_checked(&preproc_ids) {
+            let key_id = *key_id;
+            let preproc_id = *preproc_id;
+            let (keyset_config, keyset_added_info) = standard_keygen_config();
             keyset.spawn({
                 let clients_clone = Arc::clone(&arc_clients);
                 let internalclient_clone = Arc::clone(&arc_internalclient);
@@ -763,9 +907,10 @@ pub(crate) async fn preproc_and_keygen(
                             parameter,
                             &clients_clone,
                             &internalclient_clone,
-                            &preproc_ids_clone,
+                            &preproc_id,
                             &key_id,
-                            None,
+                            keyset_config,
+                            keyset_added_info,
                             insecure_key_gen,
                             None,
                             expected_num_parties_crashed,
@@ -789,24 +934,20 @@ pub(crate) async fn preproc_and_keygen(
         }
         tracing::info!("Finished concurrent preproc and keygen");
     } else {
-        let mut preproc_ids = HashMap::new();
-        for i in 0..iterations {
-            let cur_id: RequestId = derive_request_id(&format!(
-                "full_dkg_preproc_{amount_parties}_{parameter:?}_{i}"
-            ))
-            .unwrap();
+        use tfhe::core_crypto::commons::utils::ZipChecked;
+
+        for preproc_id in preproc_ids.iter() {
             run_preproc(
                 amount_parties,
                 parameter,
                 &kms_clients,
                 &internal_client,
-                &cur_id,
+                preproc_id,
                 None,
                 expected_num_parties_crashed,
                 partial_preproc,
             )
             .await;
-            preproc_ids.insert(i, cur_id);
         }
         // Now crash the parties that should be crashed during keygen
         for party_id in party_ids_to_crash_keygen.unwrap_or_default() {
@@ -824,43 +965,56 @@ pub(crate) async fn preproc_and_keygen(
             let _kms_client = kms_clients.remove(&(party_id as u32)).unwrap();
             expected_num_parties_crashed += 1;
         }
-        for i in 0..iterations {
-            use crate::{
-                client::tests::threshold::public_decryption_tests::run_decryption_threshold,
-                util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
+        for (key_id, preproc_id) in key_ids.iter().zip_checked(&preproc_ids) {
+            let (keyset_config, keyset_added_info) = if compressed {
+                compressed_keygen_config()
+            } else {
+                standard_keygen_config()
             };
-
-            let key_id: RequestId =
-                derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameter:?}_{i}"))
-                    .unwrap();
             let keyset = run_threshold_keygen(
                 parameter,
                 &kms_clients,
                 &internal_client,
-                preproc_ids.get(&i).unwrap(),
-                &key_id,
-                None,
+                preproc_id,
+                key_id,
+                keyset_config,
+                keyset_added_info,
                 insecure_key_gen,
                 None,
                 expected_num_parties_crashed,
             )
             .await
             .0;
-            // blockchain parameters always have mod switch noise reduction key
-            let (client_key, public_key, server_key) = keyset.get_standard();
-            let tag: tfhe::Tag = key_id.into();
-            assert_eq!(&tag, client_key.tag());
-            assert_eq!(&tag, public_key.tag());
-            assert_eq!(&tag, server_key.tag());
-            crate::client::key_gen::tests::check_conformance(server_key, client_key);
 
+            if compressed {
+                // blockchain parameters always have mod switch noise reduction key
+                let (client_key, public_key, server_key) = keyset.get_compressed();
+                let tag: tfhe::Tag = (*key_id).into();
+                assert_eq!(&tag, client_key.tag());
+                assert_eq!(&tag, public_key.tag());
+                assert_eq!(&tag, server_key.tag());
+                crate::client::key_gen::tests::check_conformance_compressed(server_key, client_key);
+            } else {
+                // blockchain parameters always have mod switch noise reduction key
+                let (client_key, public_key, server_key) = keyset.get_standard();
+                let tag: tfhe::Tag = (*key_id).into();
+                assert_eq!(&tag, client_key.tag());
+                assert_eq!(&tag, public_key.tag());
+                assert_eq!(&tag, server_key.tag());
+                crate::client::key_gen::tests::check_conformance(server_key, client_key);
+            }
+
+            use crate::{
+                client::tests::threshold::public_decryption_tests::run_decryption_threshold,
+                util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
+            };
             // Run a DDec
             run_decryption_threshold(
                 amount_parties,
                 &mut kms_servers,
                 &mut kms_clients,
                 &mut internal_client,
-                &key_id,
+                key_id,
                 None,
                 vec![TestingPlaintext::U8(u8::MAX)],
                 EncryptionConfig {
@@ -870,6 +1024,7 @@ pub(crate) async fn preproc_and_keygen(
                 None,
                 1,
                 None,
+                compressed,
             )
             .await;
         }
@@ -1142,7 +1297,33 @@ fn try_reconstruct_shares(
     )
 }
 
+/// Enum to hold either standard or compressed public keys during verification
+// allow large enum variant for testing
+#[allow(clippy::large_enum_variant)]
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
+enum RetrievedKeysForVerification {
+    Standard(tfhe::ServerKey, tfhe::CompactPublicKey),
+    Compressed(tfhe::CompressedServerKey, tfhe::CompressedCompactPublicKey),
+}
+
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+impl RetrievedKeysForVerification {
+    fn serialize(&self) -> (Vec<u8>, Vec<u8>) {
+        match self {
+            RetrievedKeysForVerification::Standard(sk, pk) => (
+                bc2wrap::serialize(sk).unwrap(),
+                bc2wrap::serialize(pk).unwrap(),
+            ),
+            RetrievedKeysForVerification::Compressed(sk, pk) => (
+                bc2wrap::serialize(sk).unwrap(),
+                bc2wrap::serialize(pk).unwrap(),
+            ),
+        }
+    }
+}
+
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn verify_keygen_responses(
     finished: Vec<(u32, Result<Response<KeyGenResult>, Status>)>,
     data_root_path: Option<&Path>,
@@ -1151,14 +1332,14 @@ pub(crate) async fn verify_keygen_responses(
     req_get_keygen: &RequestId,
     domain: &Eip712Domain,
     total_num_parties: usize,
+    compressed: bool,
 ) -> Option<(TestKeyGenResult, HashMap<Role, ThresholdFheKeys>)> {
     use itertools::Itertools;
 
     let mut serialized_ref_pk = Vec::new();
     let mut serialized_ref_server_key = Vec::new();
     let mut all_threshold_fhe_keys = HashMap::new();
-    let mut final_public_key = None;
-    let mut final_server_key = None;
+    let mut final_keys: Option<RetrievedKeysForVerification> = None;
 
     for (idx, kg_res) in finished.into_iter().sorted_by_key(|(idx, _)| *idx) {
         let pub_prefix = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[idx as usize - 1];
@@ -1168,48 +1349,70 @@ pub(crate) async fn verify_keygen_responses(
         let storage =
             FileStorage::new(data_root_path, StorageType::PUB, pub_prefix.as_deref()).unwrap();
 
-        let (server_key, public_key) = internal_client
-            .retrieve_server_key_and_public_key(
-                req_preproc,
-                req_get_keygen,
-                &kg_res,
-                domain,
-                &storage,
-            )
-            .await
-            .inspect_err(|e| tracing::error!("error retrieving server and public key: {e}"))
-            .unwrap()
-            .unwrap();
+        let keys = if compressed {
+            let server_key: tfhe::CompressedServerKey = internal_client
+                .retrieve_key_no_verification(&kg_res, PubDataType::CompressedServerKey, &storage)
+                .await
+                .unwrap()
+                .unwrap();
 
-        assert_eq!(&tfhe::Tag::from(req_get_keygen), server_key.tag());
-        assert_eq!(&tfhe::Tag::from(req_get_keygen), public_key.tag());
+            let public_key: tfhe::CompressedCompactPublicKey = internal_client
+                .retrieve_key_no_verification(
+                    &kg_res,
+                    PubDataType::CompressedCompactPublicKey,
+                    &storage,
+                )
+                .await
+                .unwrap()
+                .unwrap();
 
-        if role.one_based() == 1 {
-            serialized_ref_pk = bc2wrap::serialize(&public_key).unwrap();
-            serialized_ref_server_key = bc2wrap::serialize(&server_key).unwrap();
+            assert_eq!(&tfhe::Tag::from(req_get_keygen), server_key.tag());
+            assert_eq!(&tfhe::Tag::from(req_get_keygen), public_key.tag());
+
+            RetrievedKeysForVerification::Compressed(server_key, public_key)
         } else {
-            assert_eq!(serialized_ref_pk, bc2wrap::serialize(&public_key).unwrap());
-            assert_eq!(
-                serialized_ref_server_key,
-                bc2wrap::serialize(&server_key).unwrap()
-            );
-        }
+            let (server_key, public_key) = internal_client
+                .retrieve_server_key_and_public_key(
+                    req_preproc,
+                    req_get_keygen,
+                    &kg_res,
+                    domain,
+                    &storage,
+                )
+                .await
+                .inspect_err(|e| tracing::error!("error retrieving server and public key: {e}"))
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(&tfhe::Tag::from(req_get_keygen), server_key.tag());
+            assert_eq!(&tfhe::Tag::from(req_get_keygen), public_key.tag());
+
+            RetrievedKeysForVerification::Standard(server_key, public_key)
+        };
 
         let key_id = RequestId::from_str(kg_res.request_id.unwrap().request_id.as_str()).unwrap();
         let priv_storage =
             FileStorage::new(data_root_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
-        let mut threshold_fhe_keys =
+        let threshold_fhe_keys =
             ThresholdFheKeys::read_from_storage_at_epoch(&priv_storage, &key_id, &DEFAULT_EPOCH_ID)
                 .await
                 .unwrap();
-        // we do not need the sns key to reconstruct, remove it to save memory
-        threshold_fhe_keys.sns_key = None;
+        // Note: The sns_key is now part of PublicKeyMaterial enum and cannot be easily cleared.
+        // This optimization is skipped, but the test should still work (with more memory usage).
         all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
-        if final_public_key.is_none() {
-            final_public_key = Some(public_key);
+
+        // Compare serialized keys across parties
+        let (serialized_server_key, serialized_pk) = keys.serialize();
+        if role.one_based() == 1 {
+            serialized_ref_pk = serialized_pk;
+            serialized_ref_server_key = serialized_server_key;
+        } else {
+            assert_eq!(serialized_ref_pk, serialized_pk);
+            assert_eq!(serialized_ref_server_key, serialized_server_key);
         }
-        if final_server_key.is_none() {
-            final_server_key = Some(server_key);
+
+        if final_keys.is_none() {
+            final_keys = Some(keys);
         }
     }
 
@@ -1219,22 +1422,28 @@ pub(crate) async fn verify_keygen_responses(
         threshold,
         all_threshold_fhe_keys.clone(),
     );
-    Some((
-        TestKeyGenResult::Standard((
-            to_hl_client_key(
-                &internal_client.params,
-                req_get_keygen.into(),
-                lwe_sk,
-                glwe_sk,
-                None,
-                None,
-                Some(sns_glwe_sk),
-                sns_compression_sk,
-            )
-            .unwrap(),
-            final_public_key.unwrap(),
-            final_server_key.unwrap(),
-        )),
-        all_threshold_fhe_keys,
-    ))
+
+    let client_key = to_hl_client_key(
+        &internal_client.params,
+        req_get_keygen.into(),
+        lwe_sk,
+        glwe_sk,
+        None,
+        None,
+        Some(sns_glwe_sk),
+        sns_compression_sk,
+    )
+    .unwrap();
+
+    let result = match final_keys.unwrap() {
+        RetrievedKeysForVerification::Standard(server_key, public_key) => {
+            TestKeyGenResult::Standard((client_key, public_key, server_key))
+        }
+        RetrievedKeysForVerification::Compressed(server_key, public_key) => {
+            TestKeyGenResult::Compressed((client_key, public_key, server_key))
+        }
+    };
+
+    result.sanity_check();
+    Some((result, all_threshold_fhe_keys))
 }

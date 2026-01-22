@@ -37,7 +37,7 @@ use crate::vault::storage::{read_all_data_from_all_epochs_versioned, StorageExt}
 use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
 use crate::vault::storage::{
     crypto_material::CentralizedCryptoMaterialStorage, read_all_data_versioned,
-    read_pk_at_request_id,
+    read_versioned_at_request_id,
 };
 #[cfg(feature = "non-wasm")]
 use crate::vault::{storage::Storage, Vault};
@@ -841,9 +841,45 @@ impl<
             )
             .await?;
         let mut pk_map = HashMap::new();
+        let mut compressed_pk_map = HashMap::new();
         for (id, _) in key_info.keys() {
-            let public_key = read_pk_at_request_id(&public_storage, id).await?;
-            pk_map.insert(*id, public_key);
+            // there should be at least one that succeeds
+            let pk_ok = match read_versioned_at_request_id(
+                &public_storage,
+                id,
+                &PubDataType::PublicKey.to_string(),
+            )
+            .await
+            {
+                Ok(pk) => {
+                    pk_map.insert(*id, pk);
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to find CompactPublicKey for id={id}: {e}");
+                    false
+                }
+            };
+            let compressed_pk_ok = match read_versioned_at_request_id(
+                &public_storage,
+                id,
+                &PubDataType::CompressedCompactPublicKey.to_string(),
+            )
+            .await
+            {
+                Ok(pk) => {
+                    compressed_pk_map.insert(*id, pk);
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to find CompressedCompactPublicKey for id={id}: {e}");
+                    false
+                }
+            };
+
+            if !compressed_pk_ok && !pk_ok {
+                anyhow::bail!("Could not find a public key for id={id}")
+            }
         }
         tracing::info!(
             "loaded key_info with key_ids: {:?}",
@@ -873,6 +909,7 @@ impl<
             private_storage,
             backup_vault,
             pk_map,
+            compressed_pk_map,
             key_info,
         );
         let base_kms = BaseKmsStruct::new(KMSType::Centralized, sk)?;
@@ -1034,13 +1071,13 @@ pub(crate) mod tests {
     use crate::util::key_setup::test_tools::{compute_cipher, EncryptionConfig};
     use crate::util::rate_limiter::RateLimiter;
     use crate::vault::storage::{
-        delete_at_request_and_epoch_id, store_pk_at_request_id,
-        store_versioned_at_request_and_epoch_id, StorageExt,
+        delete_at_request_and_epoch_id, store_versioned_at_request_and_epoch_id,
+        store_versioned_at_request_id, StorageExt,
     };
     use crate::vault::storage::{file::FileStorage, ram::RamStorage};
     use aes_prng::AesRng;
     use kms_grpc::identifiers::EpochId;
-    use kms_grpc::rpc_types::{PrivDataType, WrappedPublicKey};
+    use kms_grpc::rpc_types::{PrivDataType, PubDataType};
     use kms_grpc::RequestId;
     use rand::SeedableRng;
     use serial_test::serial;
@@ -1116,8 +1153,13 @@ pub(crate) mod tests {
     ) -> anyhow::Result<RamStorage> {
         let mut ram_storage = RamStorage::new();
         for (cur_req_id, cur_keys) in keys {
-            let wrapped_pk = WrappedPublicKey::Compact(&cur_keys.public_key);
-            store_pk_at_request_id(&mut ram_storage, cur_req_id, wrapped_pk).await?;
+            store_versioned_at_request_id(
+                &mut ram_storage,
+                cur_req_id,
+                &cur_keys.public_key,
+                &PubDataType::PublicKey.to_string(),
+            )
+            .await?;
         }
         Ok(ram_storage)
     }

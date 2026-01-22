@@ -167,25 +167,6 @@ impl TestType for SignedPubDataHandleInternalTest {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct PublicKeyTypeTest {
-    pub test_filename: Cow<'static, str>,
-}
-
-impl TestType for PublicKeyTypeTest {
-    fn module(&self) -> String {
-        KMS_GRPC_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "PublicKeyType".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PubDataTypeTest {
     pub test_filename: Cow<'static, str>,
 }
@@ -890,7 +871,6 @@ pub enum TestMetadataKMS {
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum TestMetadataKmsGrpc {
     SignedPubDataHandleInternal(SignedPubDataHandleInternalTest),
-    PublicKeyType(PublicKeyTypeTest),
     PubDataType(PubDataTypeTest),
     PrivDataType(PrivDataTypeTest),
 }

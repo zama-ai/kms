@@ -147,6 +147,7 @@ async fn do_context_switch(
         None,
         1,
         None,
+        false, // compressed_keys
     )
     .await;
 
@@ -185,6 +186,7 @@ async fn do_context_switch(
         1,
         None,
         true,
+        false, // compressed_keys
     )
     .await;
 
@@ -201,6 +203,7 @@ async fn do_context_switch(
         None,
         1,
         None,
+        false, // compressed_keys
     )
     .await;
 

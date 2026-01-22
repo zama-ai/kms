@@ -38,6 +38,7 @@ use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::integer::BooleanBlock;
 use tfhe::named::Named;
 use tfhe::safe_serialization::safe_deserialize;
+use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::zk::CompactPkeCrs;
 use tfhe::FheUint80;
 use tfhe::{
@@ -282,6 +283,50 @@ pub(crate) fn compute_info_decompression_keygen(
         *key_id,
         *prep_id,
         HashMap::from([(PubDataType::DecompressionKey, key_digest)]),
+        external_signature,
+    ))
+}
+
+/// Computes key generation metadata for compressed keygen.
+/// This is similar to compute_info_standard_keygen but for CompressedXofKeySet.
+pub(crate) fn compute_info_compressed_keygen(
+    sk: &PrivateSigKey,
+    domain_separator: &DomainSep,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    compressed_keyset: &CompressedXofKeySet,
+    domain: &alloy_sol_types::Eip712Domain,
+) -> anyhow::Result<KeyGenMetadata> {
+    // Extract the compressed server key and public key from the keyset
+    let (_, compressed_public_key, compressed_server_key) =
+        compressed_keyset.clone().into_raw_parts();
+
+    let server_key_digest =
+        safe_serialize_hash_element_versioned(domain_separator, &compressed_server_key)?;
+    let public_key_digest =
+        safe_serialize_hash_element_versioned(domain_separator, &compressed_public_key)?;
+
+    tracing::info!(
+        "Computed compressed server key digest: {} and compressed public key digest: {}",
+        hex::encode(&server_key_digest),
+        hex::encode(&public_key_digest)
+    );
+
+    let sol_type = KeygenVerification::new(
+        prep_id,
+        key_id,
+        server_key_digest.clone(),
+        public_key_digest.clone(),
+    );
+    let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
+
+    Ok(KeyGenMetadata::new(
+        *key_id,
+        *prep_id,
+        HashMap::from([
+            (PubDataType::CompressedServerKey, server_key_digest),
+            (PubDataType::CompressedCompactPublicKey, public_key_digest),
+        ]),
         external_signature,
     ))
 }

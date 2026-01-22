@@ -15,6 +15,18 @@ pub enum KeySetCompressionConfig {
     UseExisting,
 }
 
+/// Whether to generate compressed keys.
+/// This is independent of KeySetCompressionConfig which is related to
+/// generating keys for compressing ciphertexts.
+#[derive(Copy, Clone, PartialEq, Default)]
+pub enum CompressedKeyConfig {
+    /// Do not use compressed keys.
+    #[default]
+    None,
+    /// Use compression keys for the full keyset.
+    All,
+}
+
 /// Configure the contents of a keyset.
 ///
 /// The contents of a keyset changes the preprocessing material.
@@ -22,6 +34,8 @@ pub enum KeySetCompressionConfig {
 /// is needed.
 #[derive(Copy, Clone)]
 pub enum KeySetConfig {
+    /// The standard configuration is the one that generates the full keyset.
+    /// Which includes the public key, server key, compression keys, private key shares and so on.
     Standard(StandardKeySetConfig),
     DecompressionOnly,
 }
@@ -68,7 +82,7 @@ pub struct StandardKeySetConfig {
     pub computation_key_type: ComputeKeyType,
     /// The compression configuration.
     pub compression_config: KeySetCompressionConfig,
-    // more will come later
+    pub compressed_key_config: CompressedKeyConfig,
 }
 
 impl StandardKeySetConfig {
@@ -78,6 +92,7 @@ impl StandardKeySetConfig {
         Self {
             computation_key_type: ComputeKeyType::default(),
             compression_config: KeySetCompressionConfig::UseExisting,
+            compressed_key_config: CompressedKeyConfig::default(),
         }
     }
 
