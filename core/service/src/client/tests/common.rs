@@ -11,6 +11,7 @@ use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpoint
 use kms_grpc::rpc_types::fhe_types_to_num_blocks;
 use kms_grpc::RequestId;
 use std::collections::HashMap;
+use std::path::Path;
 use tfhe::FheTypes;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
@@ -19,6 +20,10 @@ use tonic::transport::Channel;
 // Time to sleep to ensure that previous servers and tests have shut down properly.
 pub(crate) const TIME_TO_SLEEP_MS: u64 = 500;
 
+/// Send decryption requests to KMS clients
+///
+/// # Arguments
+/// * `pub_path` - Optional path to isolated test material directory
 pub(crate) async fn send_dec_reqs(
     amount_cts: usize,
     key_id: &RequestId,
@@ -26,6 +31,7 @@ pub(crate) async fn send_dec_reqs(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &mut Client,
     storage_prefixes: &[Option<String>],
+    pub_path: Option<&Path>,
 ) -> (
     JoinSet<Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status>>,
     RequestId,
@@ -35,7 +41,7 @@ pub(crate) async fn send_dec_reqs(
     for i in 0..amount_cts {
         let msg = TestingPlaintext::U32(i as u32);
         let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
-            None,
+            pub_path,
             msg,
             key_id,
             storage_prefix,

@@ -29,7 +29,7 @@ pub enum MaterialType {
 }
 
 /// Types of cryptographic keys and material
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter)]
 pub enum KeyType {
     /// Client keys for encryption/decryption
     ClientKeys,
@@ -41,10 +41,6 @@ pub enum KeyType {
     FheKeys,
     /// Common Reference String for zero-knowledge proofs
     CrsKeys,
-    /// Fhe public keys
-    CompactPublicKeys,
-    /// Compact compressed public keys
-    CompressedCompactPublicKeys,
     /// Decompression keys for compressed ciphertexts
     DecompressionKeys,
     /// PRSS setup for threshold protocols
@@ -91,7 +87,6 @@ impl TestMaterialSpec {
         required_keys.insert(KeyType::SigningKeys);
         required_keys.insert(KeyType::FheKeys);
         required_keys.insert(KeyType::CrsKeys);
-        required_keys.insert(KeyType::CompactPublicKeys);
         required_keys.insert(KeyType::DecompressionKeys);
 
         if party_count.is_some() {
@@ -190,9 +185,9 @@ mod tests {
     fn pub_data_type_to_key_types(pdt: PubDataType) -> Vec<KeyType> {
         match pdt {
             PubDataType::ServerKey => vec![KeyType::FheKeys],
-            PubDataType::PublicKey => vec![KeyType::CompactPublicKeys],
+            PubDataType::PublicKey => vec![KeyType::FheKeys],
             #[allow(deprecated)]
-            PubDataType::PublicKeyMetadata => vec![KeyType::CompactPublicKeys],
+            PubDataType::PublicKeyMetadata => vec![KeyType::FheKeys],
             PubDataType::CRS => vec![KeyType::CrsKeys],
             PubDataType::VerfKey => vec![KeyType::SigningKeys],
             PubDataType::VerfAddress => vec![KeyType::SigningKeys],
@@ -200,7 +195,7 @@ mod tests {
             PubDataType::CACert => vec![KeyType::ServerSigningKeys], // TLS certs for MPC nodes
             PubDataType::RecoveryMaterial => vec![KeyType::ClientKeys], // Backup recovery
             PubDataType::CompressedServerKey => vec![KeyType::FheKeys], // Compressed server key
-            PubDataType::CompressedCompactPublicKey => vec![KeyType::CompactPublicKeys], // Compressed public key
+            PubDataType::CompressedCompactPublicKey => vec![KeyType::FheKeys], // Compressed public key
         }
     }
 

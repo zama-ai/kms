@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tfhe::{
     boolean::prelude::{GlweDimension, PolynomialSize},
-    shortint::parameters::CompressionParameters,
+    shortint::parameters::{list_compression::ClassicCompressionParameters, CompressionParameters},
     Versionize,
 };
 use tfhe_versionable::VersionsDispatch;
@@ -41,7 +41,7 @@ where
         P: BitPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
         S: BaseSessionHandles,
     >(
-        params: CompressionParameters,
+        params: ClassicCompressionParameters,
         preprocessing: &mut P,
         pmax: Option<f64>,
         session: &mut S,
@@ -56,7 +56,7 @@ where
                 session,
             )
             .await?,
-            params,
+            params: CompressionParameters::Classic(params),
         })
     }
 

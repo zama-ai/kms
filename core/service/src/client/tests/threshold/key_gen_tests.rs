@@ -93,6 +93,30 @@ impl TestKeyGenResult {
             _ => panic!("expected to find compressed"),
         }
     }
+
+    fn sanity_check(&self) {
+        // encrypt some value, and then decrypt to sanity check the client key
+        let expected = 27u8;
+
+        use tfhe::prelude::FheDecrypt;
+        use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
+        match &self {
+            TestKeyGenResult::DecompressionOnly(_) => { /* cannot sanity check */ }
+            TestKeyGenResult::Standard((client_key, public_key, server_key)) => {
+                tfhe::set_server_key(server_key.clone());
+                let ct: tfhe::FheUint8 = expanded_encrypt(public_key, expected, 8).unwrap();
+                let pt: u8 = ct.decrypt(client_key);
+                assert_eq!(pt, expected);
+            }
+            TestKeyGenResult::Compressed((client_key, public_key, server_key)) => {
+                tfhe::set_server_key(server_key.clone().decompress());
+                let ct: tfhe::FheUint8 =
+                    expanded_encrypt(&public_key.decompress(), expected, 8).unwrap();
+                let actual: u8 = ct.decrypt(client_key);
+                assert_eq!(actual, expected);
+            }
+        }
+    }
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -1420,5 +1444,6 @@ pub(crate) async fn verify_keygen_responses(
         }
     };
 
+    result.sanity_check();
     Some((result, all_threshold_fhe_keys))
 }

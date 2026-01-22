@@ -1084,15 +1084,22 @@ where
 pub fn decompress_compressed_standalone_decompression_key_from_xof(
     compressed_decompression_key: CompressedDecompressionKey,
 ) -> (LweBootstrapKey<Vec<u64>>, LweCiphertextCount) {
-    let CompressedDecompressionKey {
-        blind_rotate_key: key,
-        lwe_per_glwe: count,
-    } = compressed_decompression_key;
+    let (key, count) = compressed_decompression_key.into_raw_parts();
 
+    let bsk = match key {
+        tfhe::shortint::server_key::ShortintCompressedBootstrappingKey::Classic {
+            bsk,
+            modulus_switch_noise_reduction_key: _,
+        } => bsk,
+        tfhe::shortint::server_key::ShortintCompressedBootstrappingKey::MultiBit {
+            seeded_bsk: _,
+            deterministic_execution: _,
+        } => panic!("MultiBit compressed decompression keys are not supported yet"),
+    };
     let decompressed_key = par_decompress_into_lwe_bootstrap_key_generated_from_xof::<
         _,
         SoftwareRandomGenerator,
-    >(key, DSEP_KG);
+    >(bsk, DSEP_KG);
     (decompressed_key, count)
 }
 
@@ -2008,11 +2015,13 @@ pub mod tests {
                     data: compression_key_shares_1.to_vec(),
                     polynomial_size: compression_key_1_poly_size,
                 },
-                params: params
-                    .get_params_basics_handle()
-                    .get_compression_decompression_params()
-                    .unwrap()
-                    .raw_compression_parameters,
+                params: CompressionParameters::Classic(
+                    params
+                        .get_params_basics_handle()
+                        .get_compression_decompression_params()
+                        .unwrap()
+                        .raw_compression_parameters,
+                ),
             };
             let decompression_key = distributed_decompression_keygen_z128(
                 &mut session,
@@ -2030,6 +2039,7 @@ pub mod tests {
             assert_eq!(0, dkg_preproc.randoms_len());
 
             use strum::IntoEnumIterator;
+            use tfhe::shortint::parameters::CompressionParameters;
 
             use crate::execution::runtime::sessions::{
                 base_session::GenericBaseSessionHandles,

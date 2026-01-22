@@ -789,7 +789,9 @@ impl<
                                 convert_to_bit(compression_secret_key)?,
                                 compression_params.packing_ks_polynomial_size,
                             ),
-                            params: compression_params,
+                            params: tfhe::shortint::parameters::CompressionParameters::Classic(
+                                compression_params,
+                            ),
                         },
                     );
 
