@@ -11,6 +11,7 @@ use tfhe::{
     integer::parameters::DynamicDistribution,
     shortint::{
         parameters::{
+            list_compression::ClassicCompressionParameters,
             noise_squashing::NoiseSquashingClassicParameters, CompactCiphertextListExpansionKind,
             CompactPublicKeyEncryptionParameters, CompressionParameters, DecompositionBaseLog,
             DecompositionLevelCount, GlweDimension, LweCiphertextCount, LweDimension,
@@ -101,7 +102,9 @@ pub enum MSNRKConfiguration {
 
 #[derive(Debug)]
 pub struct DistributedCompressionParameters {
-    pub raw_compression_parameters: CompressionParameters,
+    // For now we only support Classic compression parameters
+    // so force the type here
+    pub raw_compression_parameters: ClassicCompressionParameters,
     pub ksk_num_noise: usize,
     pub ksk_noisebound: NoiseBounds,
     pub bk_params: BKParams,
@@ -239,7 +242,9 @@ impl DKGParams {
             config
         };
         let config = if let Some(params) = compression_params {
-            config.enable_compression(params.raw_compression_parameters)
+            config.enable_compression(CompressionParameters::Classic(
+                params.raw_compression_parameters,
+            ))
         } else {
             config
         };
@@ -567,16 +572,16 @@ impl DKGParamsBasics for DKGParamsRegular {
                 //Required for the compression BK
                 if let Some(comp_params) = self.compression_decompression_parameters {
                     num_triples_needed += self.glwe_sk_num_bits()
-                        * (comp_params.packing_ks_glwe_dimension.0
-                            * comp_params.packing_ks_polynomial_size.0)
+                        * (comp_params.packing_ks_glwe_dimension().0
+                            * comp_params.packing_ks_polynomial_size().0)
                 }
             }
             KeySetConfig::DecompressionOnly => {
                 //Required for the compression BK
                 if let Some(comp_params) = self.compression_decompression_parameters {
                     num_triples_needed += self.glwe_sk_num_bits()
-                        * (comp_params.packing_ks_glwe_dimension.0
-                            * comp_params.packing_ks_polynomial_size.0)
+                        * (comp_params.packing_ks_glwe_dimension().0
+                            * comp_params.packing_ks_polynomial_size().0)
                 }
             }
         }
@@ -871,7 +876,7 @@ impl DKGParamsBasics for DKGParamsRegular {
 
     fn compression_sk_num_bits(&self) -> usize {
         if let Some(comp_params) = self.compression_decompression_parameters {
-            comp_params.packing_ks_glwe_dimension.0 * comp_params.packing_ks_polynomial_size.0
+            comp_params.packing_ks_glwe_dimension().0 * comp_params.packing_ks_polynomial_size().0
         } else {
             0
         }
@@ -886,8 +891,8 @@ impl DKGParamsBasics for DKGParamsRegular {
             (Some(comp_params), Some(compression_key_tuniform_bound)) => {
                 let amount = self.glwe_dimension().0
                     * self.polynomial_size().0
-                    * comp_params.packing_ks_level.0
-                    * comp_params.packing_ks_polynomial_size.0;
+                    * comp_params.packing_ks_level().0
+                    * comp_params.packing_ks_polynomial_size().0;
                 NoiseInfo {
                     amount,
                     bound: NoiseBounds::CompressionKSKNoise(compression_key_tuniform_bound),
@@ -909,11 +914,11 @@ impl DKGParamsBasics for DKGParamsRegular {
             self.compression_key_tuniform_bound(),
         ) {
             (Some(comp_params), Some(_compression_key_tuniform_bound)) => {
-                let amount = comp_params.packing_ks_polynomial_size.0
-                    * comp_params.packing_ks_glwe_dimension.0
+                let amount = comp_params.packing_ks_polynomial_size().0
+                    * comp_params.packing_ks_glwe_dimension().0
                     * (self.glwe_dimension().0 + 1)
                     * self.polynomial_size().0
-                    * comp_params.br_level.0;
+                    * comp_params.br_level().0;
                 NoiseInfo {
                     amount,
                     bound: NoiseBounds::GlweNoise(self.glwe_tuniform_bound()),
@@ -1040,7 +1045,7 @@ impl DKGParamsBasics for DKGParamsRegular {
     fn compression_key_tuniform_bound(&self) -> Option<TUniformBound> {
         if let Some(comp_params) = self.compression_decompression_parameters {
             if let DynamicDistribution::TUniform(bound) =
-                comp_params.packing_ks_key_noise_distribution
+                comp_params.packing_ks_key_noise_distribution()
             {
                 Some(TUniformBound(bound.bound_log2() as usize))
             } else {
@@ -1053,31 +1058,35 @@ impl DKGParamsBasics for DKGParamsRegular {
 
     fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters> {
         if let Some(comp_params) = self.compression_decompression_parameters {
-            let NoiseInfo {
-                amount: ksk_num_noise,
-                bound: ksk_noisebound,
-            } = self.num_needed_noise_compression_key();
+            if let CompressionParameters::Classic(classic_comp_params) = comp_params {
+                let NoiseInfo {
+                    amount: ksk_num_noise,
+                    bound: ksk_noisebound,
+                } = self.num_needed_noise_compression_key();
 
-            let NoiseInfo {
-                amount: bk_num_noise,
-                bound: bk_noisebound,
-            } = self.num_needed_noise_decompression_key();
+                let NoiseInfo {
+                    amount: bk_num_noise,
+                    bound: bk_noisebound,
+                } = self.num_needed_noise_decompression_key();
 
-            let bk_params = BKParams {
-                num_needed_noise: bk_num_noise,
-                noise_bound: bk_noisebound,
-                decomposition_base_log: comp_params.br_base_log,
-                decomposition_level_count: comp_params.br_level,
-                enc_type: EncryptionType::Bits64,
-            };
+                let bk_params = BKParams {
+                    num_needed_noise: bk_num_noise,
+                    noise_bound: bk_noisebound,
+                    decomposition_base_log: classic_comp_params.br_base_log,
+                    decomposition_level_count: classic_comp_params.br_level,
+                    enc_type: EncryptionType::Bits64,
+                };
 
-            Some(DistributedCompressionParameters {
-                raw_compression_parameters: comp_params,
-                ksk_num_noise,
-                ksk_noisebound,
-                bk_params,
-                pmax: self.get_sk_deviations().map(|d| d.pmax),
-            })
+                Some(DistributedCompressionParameters {
+                    raw_compression_parameters: classic_comp_params,
+                    ksk_num_noise,
+                    ksk_noisebound,
+                    bk_params,
+                    pmax: self.get_sk_deviations().map(|d| d.pmax),
+                })
+            } else {
+                panic!("We only support classic compression parameters!")
+            }
         } else {
             None
         }
@@ -1167,8 +1176,8 @@ impl DKGParamsBasics for DKGParamsRegular {
             self.compression_decompression_parameters,
         ) {
             let (indiviual_key_size, log_glwe_dim) = (
-                comp_params.packing_ks_polynomial_size.0,
-                (comp_params.packing_ks_glwe_dimension.0.ilog2() + 1) as i64,
+                comp_params.packing_ks_polynomial_size().0,
+                (comp_params.packing_ks_glwe_dimension().0.ilog2() + 1) as i64,
             );
             let prob_within_range =
                 compute_prob_hw_within_range(deviations.pmax, indiviual_key_size as u64);
@@ -1263,8 +1272,8 @@ impl DKGParamsBasics for DKGParamsSnS {
                 if let Some(comp_params) = self.regular_params.compression_decompression_parameters
                 {
                     num_triples_needed += self.glwe_sk_num_bits()
-                        * (comp_params.packing_ks_glwe_dimension.0
-                            * comp_params.packing_ks_polynomial_size.0)
+                        * (comp_params.packing_ks_glwe_dimension().0
+                            * comp_params.packing_ks_polynomial_size().0)
                 }
             }
             KeySetConfig::DecompressionOnly => {
@@ -1272,8 +1281,8 @@ impl DKGParamsBasics for DKGParamsSnS {
                 if let Some(comp_params) = self.regular_params.compression_decompression_parameters
                 {
                     num_triples_needed += self.glwe_sk_num_bits()
-                        * (comp_params.packing_ks_glwe_dimension.0
-                            * comp_params.packing_ks_polynomial_size.0)
+                        * (comp_params.packing_ks_glwe_dimension().0
+                            * comp_params.packing_ks_polynomial_size().0)
                 }
             }
         }
@@ -1807,16 +1816,16 @@ pub const BC_PARAMS: DKGParamsRegular = DKGParamsRegular {
     dkg_mode: DkgMode::Z128,
     sec: 128,
     ciphertext_parameters:
-        tfhe::shortint::parameters::current_params::V1_4_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
+        tfhe::shortint::parameters::current_params::V1_5_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
     dedicated_compact_public_key_parameters: Some((
-        tfhe::shortint::parameters::current_params::V1_4_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
-        tfhe::shortint::parameters::current_params::V1_4_PARAM_KEYSWITCH_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
+        tfhe::shortint::parameters::current_params::V1_5_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
+        tfhe::shortint::parameters::current_params::V1_5_PARAM_KEYSWITCH_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
     )),
     compression_decompression_parameters: Some(
-        tfhe::shortint::parameters::current_params::V1_4_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128
+        tfhe::shortint::parameters::current_params::V1_5_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128
     ),
     secret_key_deviations: None,
-    cpk_re_randomization_ksk_params: Some(tfhe::shortint::parameters::current_params::V1_4_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128),
+    cpk_re_randomization_ksk_params: Some(tfhe::shortint::parameters::current_params::V1_5_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128),
 };
 
 /// Blockchain Parameters without SnS (with pfail `2^-128`), using parameters in tfhe-rs codebase
@@ -1826,8 +1835,8 @@ pub const BC_PARAMS_NO_SNS: DKGParams = DKGParams::WithoutSnS(BC_PARAMS);
 /// and SnS params taken from tfhe-rs as well.
 pub const BC_PARAMS_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: BC_PARAMS,
-    sns_params: tfhe::shortint::parameters::current_params::V1_4_NOISE_SQUASHING_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
-    sns_compression_params: Some(tfhe::shortint::parameters::current_params::V1_4_NOISE_SQUASHING_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128),
+    sns_params: tfhe::shortint::parameters::current_params::V1_5_NOISE_SQUASHING_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
+    sns_compression_params: Some(tfhe::shortint::parameters::current_params::V1_5_NOISE_SQUASHING_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128),
 });
 
 /// Blockchain Parameters (with pfail `2^-64`), using parameters generated by Nigel's script
@@ -1938,17 +1947,19 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
                 },
             ),
         },
-        compression_decompression_parameters: Some(CompressionParameters {
-            br_level: DecompositionLevelCount(1),
-            br_base_log: DecompositionBaseLog(24),
-            packing_ks_level: DecompositionLevelCount(1),
-            packing_ks_base_log: DecompositionBaseLog(27),
-            packing_ks_polynomial_size: PolynomialSize(256),
-            packing_ks_glwe_dimension: GlweDimension(1),
-            lwe_per_glwe: LweCiphertextCount(256),
-            storage_log_modulus: tfhe::core_crypto::prelude::CiphertextModulusLog(9),
-            packing_ks_key_noise_distribution: DynamicDistribution::new_t_uniform(0),
-        }),
+        compression_decompression_parameters: Some(CompressionParameters::Classic(
+            ClassicCompressionParameters {
+                br_level: DecompositionLevelCount(1),
+                br_base_log: DecompositionBaseLog(24),
+                packing_ks_level: DecompositionLevelCount(1),
+                packing_ks_base_log: DecompositionBaseLog(27),
+                packing_ks_polynomial_size: PolynomialSize(256),
+                packing_ks_glwe_dimension: GlweDimension(1),
+                lwe_per_glwe: LweCiphertextCount(256),
+                storage_log_modulus: tfhe::core_crypto::prelude::CiphertextModulusLog(9),
+                packing_ks_key_noise_distribution: DynamicDistribution::new_t_uniform(0),
+            },
+        )),
         dedicated_compact_public_key_parameters: Some((
             CompactPublicKeyEncryptionParameters {
                 encryption_lwe_dimension: LweDimension(512),

@@ -31,6 +31,7 @@ use crate::{
     },
 };
 
+use tfhe::shortint::parameters::CompressionParameters;
 use tracing::instrument;
 
 pub struct ResharePreprocRequired {
@@ -481,7 +482,9 @@ where
                                 data,
                                 polynomial_size,
                             },
-                            params: compression_params.raw_compression_parameters,
+                            params: CompressionParameters::Classic(
+                                compression_params.raw_compression_parameters,
+                            ),
                         })
                     })
                 }
@@ -514,7 +517,9 @@ where
                                 data,
                                 polynomial_size,
                             },
-                            params: compression_params.raw_compression_parameters,
+                            params: CompressionParameters::Classic(
+                                compression_params.raw_compression_parameters,
+                            ),
                         })
                     })
                 }

@@ -29,7 +29,7 @@ pub enum MaterialType {
 }
 
 /// Types of cryptographic keys and material
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, strum::EnumIter)]
 pub enum KeyType {
     /// Client keys for encryption/decryption
     ClientKeys,
