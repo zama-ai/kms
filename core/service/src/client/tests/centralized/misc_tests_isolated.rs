@@ -214,6 +214,7 @@ async fn test_largecipher_isolated() -> Result<()> {
             &request_id,
             &DEFAULT_CENTRAL_KEY_ID,
             None, // context_id
+            None, // epoch_id
             PkeSchemeType::MlKem512,
         )
         .unwrap();
