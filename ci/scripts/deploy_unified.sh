@@ -426,8 +426,17 @@ wait_tkms_infra_ready() {
 
     log_info "Waiting for KMS parties to be ready..."
     if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
-        kubectl wait --for=condition=ready Kmsparties "${party_prefix}-1" \
-            -n "${NAMESPACE}" --timeout=120s
+        if kubectl get Kmsparties "${party_prefix}-1" -n "${NAMESPACE}" >/dev/null 2>&1; then
+            kubectl wait --for=condition=ready Kmsparties "${party_prefix}-1" \
+                -n "${NAMESPACE}" --timeout=120s
+        elif kubectl get Kmsparties "${party_prefix}" -n "${NAMESPACE}" >/dev/null 2>&1; then
+            kubectl wait --for=condition=ready Kmsparties "${party_prefix}" \
+                -n "${NAMESPACE}" --timeout=120s
+        else
+            log_warn "No KMS party found with name ${party_prefix} or ${party_prefix}-1"
+            kubectl get Kmsparties -n "${NAMESPACE}" -o name || true
+            return 1
+        fi
     elif [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
         for i in $(seq 1 "${NUM_PARTIES}"); do
             kubectl wait --for=condition=ready Kmsparties "${party_prefix}-${i}" \
@@ -1027,47 +1036,8 @@ wait_indefinitely() {
 }
 
 #=============================================================================
-# Main
+# Collect Logs
 #=============================================================================
-main() {
-    parse_args "$@"
-
-    # Special mode: Collect logs and exit
-    if [[ "${COLLECT_LOGS:-false}" == "true" ]]; then
-        # Minimal context setup if needed
-        if [[ "${TARGET}" == *"kind"* ]]; then
-             kubectl config use-context "kind-${NAMESPACE}" || true
-        fi
-        collect_logs
-        exit 0
-    fi
-
-    if [[ "${TARGET}" == "kind-local" ]]; then
-        check_local_resources
-    fi
-
-    log_info "Starting Deployment"
-    log_info "Target: ${TARGET}"
-    log_info "Namespace: ${NAMESPACE}"
-
-    setup_context
-    setup_infrastructure
-
-    if [[ "${BUILD_IMAGES}" == "true" ]] && [[ "${TARGET}" == *"kind"* ]]; then
-        # Call build function (omitted for brevity, can import from other script or copy)
-        log_warn "Build requested but logic not fully ported yet in this draft."
-    fi
-
-    deploy_kms
-    setup_port_forwarding
-
-    log_info "Deployment Complete!"
-
-    if [[ "${BLOCK:-false}" == "true" ]]; then
-        wait_indefinitely
-    fi
-}
-
 collect_logs() {
     log_info "Collecting logs for ${DEPLOYMENT_TYPE} deployment..."
 
@@ -1107,6 +1077,48 @@ collect_logs() {
         else
              log_warn "  No centralized pod found"
         fi
+    fi
+}
+
+#=============================================================================
+# Main
+#=============================================================================
+main() {
+    parse_args "$@"
+
+    # Special mode: Collect logs and exit
+    if [[ "${COLLECT_LOGS:-false}" == "true" ]]; then
+        # Minimal context setup if needed
+        if [[ "${TARGET}" == *"kind"* ]]; then
+             kubectl config use-context "kind-${NAMESPACE}" || true
+        fi
+        collect_logs
+        exit 0
+    fi
+
+    if [[ "${TARGET}" == "kind-local" ]]; then
+        check_local_resources
+    fi
+
+    log_info "Starting Deployment"
+    log_info "Target: ${TARGET}"
+    log_info "Namespace: ${NAMESPACE}"
+
+    setup_context
+    setup_infrastructure
+
+    if [[ "${BUILD_IMAGES}" == "true" ]] && [[ "${TARGET}" == *"kind"* ]]; then
+        # Call build function (omitted for brevity, can import from other script or copy)
+        log_warn "Build requested but logic not fully ported yet in this draft."
+    fi
+
+    deploy_kms
+    setup_port_forwarding
+
+    log_info "Deployment Complete!"
+
+    if [[ "${BLOCK:-false}" == "true" ]]; then
+        wait_indefinitely
     fi
 }
 
