@@ -1,9 +1,25 @@
 name: kind-testing
 
 on:
-  pull_request:
   schedule:
     - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
+  workflow_call:
+    inputs:
+      image_tag:
+        description: 'Pre-built image tag to use (skips docker-build if provided)'
+        required: false
+        type: string
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN:
+        required: true
+      SLAB_ACTION_TOKEN:
+        required: true
+      SLAB_BASE_URL:
+        required: true
+      JOB_SECRET:
+        required: true
+      ZWS_BOT_TOKEN:
+        required: true
 
 permissions: {}
 
@@ -16,12 +32,11 @@ concurrency:
 
 jobs:
   ############################################################################
-  # Docker Build Job (Commented Out)
-  # This job is currently disabled but can be used to build and publish Docker images
-  # for testing purposes when needed.
+  # Docker Build Job
+  # Only runs when called without a pre-built image_tag (e.g., scheduled runs)
   ############################################################################
   docker-build:
-    if: github.event_name == 'pull_request'
+    if: inputs.image_tag == ''
     name: kind-testing/docker-build
     permissions:
       actions: read # Read workflow run information
@@ -306,8 +321,8 @@ jobs:
         env:
           DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
           GITHUB_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
-          KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
-          KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          KMS_CORE_IMAGE_TAG: ${{ inputs.image_tag || needs.docker-build.outputs.image_tag }}
+          KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.image_tag || needs.docker-build.outputs.image_tag }}
           NAMESPACE: kms-test-${{ matrix.deployment-type }}
           NUM_PARTIES: ${{ matrix.num-parties }} # Number of parties
         run: |

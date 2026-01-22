@@ -4,103 +4,91 @@
 name: pr-preview-deploy
 
 on:
-  pull_request:
-    types: [opened, labeled, synchronize, reopened]
+  workflow_call:
+    inputs:
+      deployment_type:
+        description: 'Deployment type (threshold, centralized, thresholdWithEnclave, centralizedWithEnclave)'
+        required: true
+        type: string
+      pr_number:
+        description: 'Pull request number'
+        required: true
+        type: string
+      image_tag:
+        description: 'Pre-built image tag to use'
+        required: true
+        type: string
+      enclave_pcr0:
+        description: 'Enclave PCR0 value'
+        required: false
+        type: string
+      enclave_pcr1:
+        description: 'Enclave PCR1 value'
+        required: false
+        type: string
+      enclave_pcr2:
+        description: 'Enclave PCR2 value'
+        required: false
+        type: string
+    secrets:
+      ZWS_BOT_TOKEN:
+        required: true
+      TS_OAUTH_CLIENT_ID:
+        required: true
+      TS_OAUTH_SECRET:
+        required: true
+      BLOCKCHAIN_ACTIONS_TOKEN:
+        required: true
 
 permissions: {}
 
 jobs:
   ############################################################################
-  # Docker build pipeline
-  # Triggered by:
-  # - Label : "pr-preview-<deployment-type>" on pull request
-  ############################################################################
-  # docker-build:
-  #   name: docker-build
-  #   if: >-
-  #     contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-threshold') ||
-  #     contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralized') ||
-  #     contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-thresholdWithEnclave') ||
-  #     contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralizedWithEnclave')
-  #   permissions:
-  #     actions: read # Required to read workflow run information
-  #     contents: write # Required to checkout repository code
-  #     id-token: write # Required for OIDC authentication
-  #     pull-requests: read # Required to read pull requests information
-  #     packages: write # Required to publish Docker images
-  #     attestations: write # Required to create build attestations
-  #   uses: ./.github/workflows/docker-build.yml
-  #   secrets:
-  #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-  #     AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-  #     AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-  #     SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #     SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-  #     JOB_SECRET: ${{ secrets.JOB_SECRET }}
-  #     CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-  #     CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
-  ############################################################################
   # PR Preview Job
+  # Now called from pr-ci.yml orchestrator with pre-built images
   ############################################################################
   pr-preview-deploy:
     name: pr-preview-deploy
-    if: >-
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-threshold') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralized') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-thresholdWithEnclave') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralizedWithEnclave')
     permissions:
       pull-requests: write # Required to update pull requests information
-    # needs:
-    #   - docker-build
     runs-on: "runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false"
     timeout-minutes: 1800
 
     # Environment variables used throughout the job
     env:
-      NAMESPACE: 'kms-ci-${{ github.actor }}-${{ github.event.pull_request.number }}'
+      NAMESPACE: 'kms-ci-${{ github.actor }}-${{ inputs.pr_number }}'
       TKMS_INFRA_CHART_VERSION: '0.3.2'
       SYNC_SECRETS_CHART_VERSION: '0.2.1'
       KMS_CORE_ENCLAVE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service-enclave'
       KMS_CORE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service'
       KMS_CORE_CLIENT_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-client'
-      KMS_CORE_IMAGE_TAG: '0ff6b93' # ${{ needs.docker-build.outputs.image_tag }}
-      KMS_CORE_CLIENT_IMAGE_TAG: '0ff6b93' # ${{ needs.docker-build.outputs.image_tag }}
+      KMS_CORE_IMAGE_TAG: ${{ inputs.image_tag }}
+      KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.image_tag }}
       IMAGE_REPO: 'ghcr.io/zama-ai/kms'
       TLS: 'true'
       FHE_PARAMS: 'Test'
-      DEPLOYMENT_TYPE: ''
+      DEPLOYMENT_TYPE: ${{ inputs.deployment_type }}
     steps:
       # ======================================================================
-      # DETERMINE DEPLOYMENT TYPE:
-      # - pr-preview-threshold: threshold
-      # - pr-preview-thresholdWithEnclave: thresholdWithEnclave
-      # - pr-preview-centralized: centralized
-      # - pr-preview-centralizedWithEnclave: centralizedWithEnclave
+      # SET DEPLOYMENT PARAMETERS
+      # Configure party count and thresholds based on deployment type
       # ======================================================================
-      - name: Determine Deployment Type
-        if: contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-')
-        env:
-          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+      - name: Set Deployment Parameters
         run: |
-          echo "PR labels: $PR_LABELS"
-          DEPLOYMENT_TYPE=$(echo "$PR_LABELS" | jq -r '.[] | select(startswith("pr-preview-"))' | head -n 1 | sed 's/.*-//')
+          echo "Deployment type: ${DEPLOYMENT_TYPE}"
           if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
             { echo "NB_KMS_PARTIES=4"; \
               echo "THRESHOLD_VALUE=1"; \
               echo "NUM_MAJORITY=2"; \
-              echo "NUM_RECONSTRUCT=3"; \
-              echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
+              echo "NUM_RECONSTRUCT=3"
             } >> "$GITHUB_ENV"
           elif [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
             { echo "NB_KMS_PARTIES=1"; \
               echo "NUM_MAJORITY=1"; \
-              echo "NUM_RECONSTRUCT=1"; \
-              echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
+              echo "NUM_RECONSTRUCT=1"
             } >> "$GITHUB_ENV"
           fi
-          echo "Deployment type: $DEPLOYMENT_TYPE with $NB_KMS_PARTIES KMS parties"
+          echo "Configured: ${DEPLOYMENT_TYPE} with NB_KMS_PARTIES parties"
 
       # ======================================================================
       # DOCKER BUILD STATUS HANDLING
@@ -112,33 +100,43 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.ZWS_BOT_TOKEN }}
 
-      - name: Handle pre-built images
+      - name: Handle pre-built images and PCR values
         if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'centralizedWithEnclave' }}
         env:
           JQ_VERSION: 1.8.1
+          INPUT_PCR0: ${{ inputs.enclave_pcr0 }}
+          INPUT_PCR1: ${{ inputs.enclave_pcr1 }}
+          INPUT_PCR2: ${{ inputs.enclave_pcr2 }}
         run: |
           ###################################################################
-          # USING PRE-BUILT IMAGES
-          # This handles manual runs with dockerBuild=false, using provided tags
+          # Use PCR values from inputs if provided, otherwise extract from image
           ###################################################################
-          # Download JQ.
-          wget https://github.com/jqlang/jq/releases/download/jq-"${JQ_VERSION}"/jq-linux-amd64 -P /tmp
+          if [[ -n "${INPUT_PCR0}" ]]; then
+            echo "Using PCR values from workflow inputs..."
+            {
+              echo "PCR0=${INPUT_PCR0}"
+              echo "PCR1=${INPUT_PCR1}"
+              echo "PCR2=${INPUT_PCR2}"
+            } >> "$GITHUB_ENV"
+          else
+            echo "Extracting PCR measurements from enclave image..."
+            # Download JQ.
+            wget https://github.com/jqlang/jq/releases/download/jq-"${JQ_VERSION}"/jq-linux-amd64 -P /tmp
+            # Install JQ.
+            sudo mv /tmp/jq-linux-amd64 /usr/local/bin/jq
+            sudo chmod +x /usr/local/bin/jq
+            echo "JQ version: $(jq --version)"
 
-          # Install JQ.
-          sudo mv /tmp/jq-linux-amd64 /usr/local/bin/jq
-          sudo chmod +x /usr/local/bin/jq
-          echo "JQ version: $(jq --version)"
-
-          echo "Extracting PCR measurements for provided enclave image..."
-          docker pull "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
-          PCR0=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
-          PCR1=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
-          PCR2=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
-          {
-            echo "PCR0=${PCR0}"
-            echo "PCR1=${PCR1}"
-            echo "PCR2=${PCR2}"
-          } >> "$GITHUB_ENV"
+            docker pull "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
+            PCR0=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
+            PCR1=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
+            PCR2=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
+            {
+              echo "PCR0=${PCR0}"
+              echo "PCR1=${PCR1}"
+              echo "PCR2=${PCR2}"
+            } >> "$GITHUB_ENV"
+          fi
 
       # ======================================================================
       # TOOLING SETUP

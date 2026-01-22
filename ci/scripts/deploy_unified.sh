@@ -639,7 +639,7 @@ deploy_kms() {
         is_perf=true
         set_path_suffix
     fi
-
+    #=========================================================================
     # 1. Determine base values file
     local BASE_VALUES=""
     local LOCAL_VALUES_USED="false"
@@ -669,6 +669,7 @@ deploy_kms() {
         fi
     fi
 
+    #=========================================================================
     # 2. Generate Peers List (if threshold)
     local PEERS_VALUES="/tmp/kms-peers-values-${NAMESPACE}.yaml"
     if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
@@ -677,10 +678,12 @@ deploy_kms() {
         echo "kmsPeers: { count: 1 }" > "${PEERS_VALUES}"
     fi
 
+    #=========================================================================
     # 3. Generate Dynamic Overrides (Image names, Tolerations, Enclave settings)
     local OVERRIDE_VALUES="/tmp/kms-values-override-${NAMESPACE}.yaml"
     generate_helm_overrides "${OVERRIDE_VALUES}"
 
+    #=========================================================================
     # 4. Deploy
     if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
         local threshold_value="1"

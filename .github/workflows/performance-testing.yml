@@ -11,7 +11,6 @@
 name: performance-testing
 
 on:
-
   workflow_call:
     inputs:
       deployment_type:
@@ -37,7 +36,7 @@ on:
       kms_chart_version:
         description: 'KMS chart version (use repository if you want to use a branch)'
         required: false
-        default: '1.4.14'
+        default: '1.4.17'
         type: string
       tkms_infra_chart_version:
         description: 'TKMS Infra chart version'
@@ -72,8 +71,21 @@ on:
         required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
+      AWS_ACCESS_KEY_S3_USER:
+        required: false
+      AWS_SECRET_KEY_S3_USER:
+        required: false
+      CGR_USERNAME:
+        required: false
+      CGR_PASSWORD:
+        required: false
   workflow_dispatch:
     inputs:
+      build:
+        description: 'Build new Docker images (if true, image tags below are ignored)'
+        required: true
+        default: false
+        type: boolean
       deployment_type:
         description: 'Deployment type'
         required: true
@@ -106,7 +118,6 @@ on:
         required: true
         type: choice
         options:
-          - '1.5.0-beta.9'
           - '1.4.17'
           - 'repository'
         default: '1.4.17'
@@ -116,22 +127,56 @@ on:
         default: '0.3.2'
         type: string
       kms_core_image_tag:
-        description: 'KMS Core image tag'
-        required: true
+        description: 'KMS Core image tag (ignored if build=true)'
+        required: false
+        default: ''
         type: string
       kms_core_client_image_tag:
-        description: 'KMS Core client image tag'
-        required: true
+        description: 'KMS Core client image tag (ignored if build=true)'
+        required: false
+        default: ''
         type: string
 
 permissions: {}
 
 jobs:
   ############################################################################
+  # Docker Build Job (Conditional)
+  # Only runs when:
+  # - workflow_dispatch with build=true
+  # - OR workflow_call without image tags provided
+  ############################################################################
+  docker-build:
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.build == true) ||
+      (github.event_name == 'workflow_call' && inputs.kms_core_image_tag == '')
+    name: performance-testing/docker-build
+    permissions:
+      actions: read # Required to read workflow run information
+      contents: write # Required to checkout repository code
+      id-token: write # Required for OIDC authentication
+      pull-requests: read # Required to read pull requests information
+      packages: write # Required to publish Docker images
+      attestations: write # Required to create build attestations
+    uses: ./.github/workflows/docker-build.yml
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  ############################################################################
   # Start AMD64 Runner
+  # Waits for docker-build if it's running, but always executes
   ############################################################################
   start-amd64-runner:
     name: performance-testing/start-amd64-runner
+    needs: [docker-build]
+    if: always()
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.start-ec2-runner-amd64.outputs.label }}
@@ -152,7 +197,8 @@ jobs:
   # Runs performance tests for KMS in different deployment modes
   ############################################################################
   performance-testing:
-    needs: [start-amd64-runner]
+    needs: [docker-build, start-amd64-runner]
+    if: always() && needs.start-amd64-runner.result == 'success'
     name: performance-testing
     runs-on: ${{ needs.start-amd64-runner.outputs.label }}
     timeout-minutes: 1800
@@ -169,15 +215,48 @@ jobs:
         run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
 
       # ======================================================================
-      # DOCKER BUILD STATUS HANDLING
+      # DETERMINE IMAGE TAGS
+      # Use docker-build outputs if built, otherwise use provided inputs
       # ======================================================================
-      - name: Handle github event and assign environment variables
+      - name: Determine image tags
+        env:
+          DOCKER_BUILD_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          INPUT_CORE_TAG: ${{ inputs.kms_core_image_tag }}
+          INPUT_CLIENT_TAG: ${{ inputs.kms_core_client_image_tag }}
+        run: |
+          # Determine which image tags to use
+          if [[ -n "${DOCKER_BUILD_TAG}" ]]; then
+            echo "Using freshly built images from docker-build job"
+            CORE_TAG="${DOCKER_BUILD_TAG}"
+            CLIENT_TAG="${DOCKER_BUILD_TAG}"
+          else
+            echo "Using provided image tags from inputs"
+            CORE_TAG="${INPUT_CORE_TAG}"
+            CLIENT_TAG="${INPUT_CLIENT_TAG}"
+          fi
+          
+          # Validate that we have image tags
+          if [[ -z "${CORE_TAG}" ]]; then
+            echo "ERROR: No image tag available. Either build images or provide kms_core_image_tag"
+            exit 1
+          fi
+          
+          echo "Core image tag: ${CORE_TAG}"
+          echo "Client image tag: ${CLIENT_TAG}"
+          
+          {
+            echo "KMS_CORE_IMAGE_TAG=${CORE_TAG}"
+            echo "KMS_CORE_CLIENT_IMAGE_TAG=${CLIENT_TAG}"
+          } >> "$GITHUB_ENV"
+
+      # ======================================================================
+      # CONFIGURE DEPLOYMENT PARAMETERS
+      # ======================================================================
+      - name: Configure deployment parameters
         run: |
           if [[ ${{ github.event_name }} == "workflow_dispatch" || ${{ github.event_name }} == "workflow_call" ]]; then
             {
               echo "DEPLOYMENT_TYPE=${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.deployment_type || 'threshold' }}"
-              echo "KMS_CORE_IMAGE_TAG=${{ inputs.kms_core_image_tag }}"
-              echo "KMS_CORE_CLIENT_IMAGE_TAG=${{ inputs.kms_core_client_image_tag }}"
               echo "TLS=${{ inputs.tls || false }}"
               echo "FHE_PARAMS=${{ inputs.fhe_params || 'Test' }}"
               echo "KMS_BRANCH=${{ inputs.kms_branch }}"
@@ -185,8 +264,6 @@ jobs:
           else
             {
               echo "DEPLOYMENT_TYPE=${{ github.event.client_payload.deployment_type }}"
-              echo "KMS_CORE_IMAGE_TAG=${{ github.event.client_payload.kms_core_image_tag }}"
-              echo "KMS_CORE_CLIENT_IMAGE_TAG=${{ github.event.client_payload.kms_core_client_image_tag }}"
               echo "TLS=${{ github.event.client_payload.tls || false }}"
               echo "FHE_PARAMS=${{ github.event.client_payload.fhe_params || 'Test' }}"
               echo "KMS_CHART_VERSION=${{ github.event.client_payload.kms_chart_version }}"
@@ -201,33 +278,44 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.ZWS_BOT_TOKEN }}
 
-      - name: Handle pre-built images
+      - name: Extract PCR values for enclave deployments
         if: "${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'centralizedWithEnclave' }}"
         env:
           JQ_VERSION: 1.8.1
+          DOCKER_BUILD_PCR0: ${{ needs.docker-build.outputs.enclave_pcr0 }}
+          DOCKER_BUILD_PCR1: ${{ needs.docker-build.outputs.enclave_pcr1 }}
+          DOCKER_BUILD_PCR2: ${{ needs.docker-build.outputs.enclave_pcr2 }}
         run: |
           ###################################################################
-          # USING PRE-BUILT IMAGES
-          # This handles manual runs with dockerBuild=false, using provided tags
+          # Use PCR values from docker-build if available, otherwise extract from image
           ###################################################################
-          # Download JQ.
-          wget https://github.com/jqlang/jq/releases/download/jq-"${JQ_VERSION}"/jq-linux-amd64 -P /tmp
+          if [[ -n "${DOCKER_BUILD_PCR0}" ]]; then
+            echo "Using PCR values from docker-build job"
+            {
+              echo "PCR0=${DOCKER_BUILD_PCR0}"
+              echo "PCR1=${DOCKER_BUILD_PCR1}"
+              echo "PCR2=${DOCKER_BUILD_PCR2}"
+            } >> "$GITHUB_ENV"
+          else
+            echo "Extracting PCR measurements from enclave image..."
+            # Download JQ.
+            wget https://github.com/jqlang/jq/releases/download/jq-"${JQ_VERSION}"/jq-linux-amd64 -P /tmp
 
-          # Install JQ.
-          sudo mv /tmp/jq-linux-amd64 /usr/local/bin/jq
-          sudo chmod +x /usr/local/bin/jq
-          echo "JQ version: $(jq --version)"
+            # Install JQ.
+            sudo mv /tmp/jq-linux-amd64 /usr/local/bin/jq
+            sudo chmod +x /usr/local/bin/jq
+            echo "JQ version: $(jq --version)"
 
-          echo "Extracting PCR measurements for provided enclave image..."
-          docker pull ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
-          PCR0=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
-          PCR1=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
-          PCR2=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
-          {
-            echo "PCR0=${PCR0}"
-            echo "PCR1=${PCR1}"
-            echo "PCR2=${PCR2}"
-          } >> "$GITHUB_ENV"
+            docker pull ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
+            PCR0=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
+            PCR1=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
+            PCR2=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
+            {
+              echo "PCR0=${PCR0}"
+              echo "PCR1=${PCR1}"
+              echo "PCR2=${PCR2}"
+            } >> "$GITHUB_ENV"
+          fi
 
       - name: Set up path suffix based on deployment type
         run: |
