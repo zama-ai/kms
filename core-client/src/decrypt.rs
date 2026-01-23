@@ -102,6 +102,7 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     max_iter: usize,
     num_expected_responses: usize,
     inter_request_delay: tokio::time::Duration,
+    parallel_requests: usize,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let mut timings_start = HashMap::new();
     let mut durations = Vec::new();
@@ -109,8 +110,8 @@ pub(crate) async fn do_public_decrypt<R: Rng + CryptoRng>(
     let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
     let start = tokio::time::Instant::now();
     for i in 0..num_requests {
-        // Sleep between requests if a non-zero delay is provided (skip before first)
-        if i > 0 && !inter_request_delay.is_zero() {
+        // Sleep between parallel_requests requests if a non-zero delay is provided (skip before first)
+        if i > 0 && i.checked_rem(parallel_requests) == Some(0) && !inter_request_delay.is_zero() {
             tokio::time::sleep(inter_request_delay).await;
         }
         let req_id = RequestId::new_random(rng);
@@ -206,6 +207,7 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     max_iter: usize,
     num_expected_responses: usize,
     inter_request_delay: tokio::time::Duration,
+    parallel_requests: usize,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
     let mut timings_start = HashMap::new();
@@ -213,8 +215,8 @@ pub(crate) async fn do_user_decrypt<R: Rng + CryptoRng>(
     let start = tokio::time::Instant::now();
 
     for i in 0..num_requests {
-        // Sleep between requests if a non-zero delay is provided (skip before first)
-        if i > 0 && !inter_request_delay.is_zero() {
+        // Sleep between parallel_requests requests if a non-zero delay is provided (skip before first)
+        if i > 0 && i.checked_rem(parallel_requests) == Some(0) && !inter_request_delay.is_zero() {
             tokio::time::sleep(inter_request_delay).await;
         }
         let req_id = RequestId::new_random(rng);
