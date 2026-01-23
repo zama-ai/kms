@@ -1460,7 +1460,7 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
         )
         .await
         .unwrap_err();
-        assert!(err.to_string().contains(&format!("NotFound")));
+        assert!(err.to_string().contains("NotFound"));
     }
 }
 
