@@ -85,10 +85,10 @@ async fn test_threshold_health_endpoint_availability() {
     let status = get_status(&mut main_health_client, core_service_name)
         .await
         .unwrap();
-    // Check that the main server is not serving since it has not been initialized yet
+    // Check that the main server is serving since it should be running
     assert_eq!(
         status,
-        ServingStatus::NotServing as i32,
+        ServingStatus::Serving as i32,
         "Service is not in NOT_SERVING status. Got status: {status}"
     );
     // Get health client for main server 1
@@ -131,14 +131,6 @@ async fn test_threshold_health_endpoint_availability() {
             Err(e) => panic!("Init request failed: {e}"),
         }
     }
-    let status = get_status(&mut main_health_client, core_service_name)
-        .await
-        .unwrap();
-    assert_eq!(
-        status,
-        ServingStatus::Serving as i32,
-        "Service is not in SERVING status. Got status: {status}"
-    );
 
     // Shutdown the servers and check that the health endpoint is no longer serving
     for (_, server) in kms_servers {

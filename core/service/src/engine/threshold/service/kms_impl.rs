@@ -40,7 +40,10 @@ use tokio::{
 use tokio_rustls::rustls::{client::ClientConfig, server::ServerConfig};
 use tokio_util::task::TaskTracker;
 use tonic::transport::{server::TcpIncoming, Server};
-use tonic_health::pb::health_server::{Health, HealthServer};
+use tonic_health::{
+    pb::health_server::{Health, HealthServer},
+    server::HealthReporter,
+};
 use tonic_tls::rustls::TlsIncoming;
 
 use crate::engine::threshold::service::epoch_manager::RealThresholdEpochManager;
@@ -228,7 +231,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     shutdown_signal: F,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS>,
-    HealthServer<impl Health>,
+    (HealthReporter, HealthServer<impl Health>),
     MetaStoreStatusServiceImpl,
 )>
 where
@@ -577,11 +580,6 @@ where
         telemetry_conf.refresh_interval(),
     );
 
-    // We finished the init of the KMS, we can now set the health reporter to serving
-    core_service_health_reporter
-        .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
-        .await;
-
     let kms = ThresholdKms::new(
         epoch_manager,
         user_decryptor,
@@ -597,11 +595,15 @@ where
         backup_operator,
         Arc::clone(&tracker),
         immutable_session_maker,
-        core_service_health_reporter,
+        core_service_health_reporter.clone(),
         abort_handle,
     );
 
-    Ok((kms, core_service_health_service, metastore_status_service))
+    Ok((
+        kms,
+        (core_service_health_reporter, core_service_health_service),
+        metastore_status_service,
+    ))
 }
 
 fn update_threshold_kms_system_metrics(

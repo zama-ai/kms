@@ -179,7 +179,7 @@ pub async fn setup_threshold_no_client<
     servers.sort_by_key(|(idx, _, _, _)| *idx);
     let mut server_handles = HashMap::new();
     for (
-        ((i, cur_server, service_config, cur_health_service), cur_mpc_shutdown),
+        ((i, cur_server, service_config, (health_reporter, cur_health_service)), cur_mpc_shutdown),
         (service_listener, _service_port),
     ) in servers
         .into_iter()
@@ -198,6 +198,7 @@ pub async fn setup_threshold_no_client<
                     None, None, None, None, None, None,
                 )),
                 cur_health_service,
+                health_reporter,
                 server_shutdown_rx.map(drop),
             )
             .await
@@ -488,7 +489,7 @@ pub async fn setup_centralized_no_client<
     create_default_centralized_context_in_storage(&mut priv_storage, &sk)
         .await
         .unwrap();
-    let (kms, health_service) = RealCentralizedKms::new(
+    let (kms, (health_reporter, health_service)) = RealCentralizedKms::new(
         pub_storage,
         priv_storage,
         backup_vault,
@@ -516,6 +517,7 @@ pub async fn setup_centralized_no_client<
                 None, None, None, None, None, None,
             )),
             health_service,
+            health_reporter,
             rx.map(drop),
         )
         .await
