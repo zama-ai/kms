@@ -7,7 +7,7 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
     let specifics = RefreshKind::nothing()
         .with_cpu(CpuRefreshKind::nothing())
         .with_memory(MemoryRefreshKind::nothing().with_ram())
-        .with_processes(ProcessRefreshKind::nothing());
+        .with_processes(ProcessRefreshKind::nothing().with_memory().with_cpu());
     let mut system = sysinfo::System::new_with_specifics(specifics);
 
     let num_cpus = system.cpus().len();
@@ -27,12 +27,21 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             system.refresh_specifics(specifics);
             let cpus_load_avg = System::load_average().one / num_cpus as f64;
 
-            tracing::debug!("CPU Load Average within 1 min {cpus_load_avg}");
+            tracing::debug!("CPU Load Average over all cores within 1 min {cpus_load_avg}");
 
             METRICS.record_cpu_load(cpus_load_avg);
 
             // Update memory metrics
             METRICS.record_memory_usage(system.used_memory());
+
+            // Update process-specific metrics
+            if let Ok(pid) = sysinfo::get_current_pid() {
+                if let Some(process) = system.process(pid) {
+                    METRICS.record_process_memory_usage(process.memory());
+                    // CPU usage is a percentage (0.0 to 100.0) per core
+                    METRICS.record_process_cpu_usage(process.cpu_usage() as f64);
+                }
+            }
 
             // Update network metrics
             networks.refresh(true);
