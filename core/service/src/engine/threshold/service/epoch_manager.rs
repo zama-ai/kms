@@ -82,6 +82,7 @@ const RESHARE_Z128_SESSION_COUNTER: u64 = 2;
 const RESHARE_SESSION_ONLINE_SET_2_COUNTER: u64 = 3;
 const RESHARE_COMMON_SESSION_ONLINE_COUNTER: u64 = 4;
 
+#[derive(Debug)]
 struct VerifiedPreviousEpochInfo {
     /// The KMS context of the parties that will reshare
     /// the shares of the private key
@@ -1089,7 +1090,10 @@ mod tests {
         },
     };
     use aes_prng::AesRng;
-    use kms_grpc::{kms::v1::NewMpcEpochRequest, rpc_types::KMSType};
+    use kms_grpc::{
+        kms::v1::{FheParameter, NewMpcEpochRequest},
+        rpc_types::{alloy_to_protobuf_domain, KMSType},
+    };
     use rand::SeedableRng;
     use threshold_fhe::{
         execution::endpoints::reshare_sk::SecureReshareSecretKeys,
