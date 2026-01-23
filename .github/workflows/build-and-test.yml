@@ -9,7 +9,7 @@
 # - Consistent image tags across all workflows
 # - Parallel test execution after build completes
 ##############################################################################
-name: pr-ci
+name: build-and-test
 
 on:
   pull_request:
@@ -21,7 +21,7 @@ permissions: {}
 # - Groups runs by PR head ref
 # - Cancels in-progress runs when new commits are pushed
 concurrency:
-  group: pr-ci-${{ github.head_ref || github.run_id }}
+  group: build-and-test-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -29,7 +29,7 @@ jobs:
   # Build Docker images once for the entire PR workflow
   ############################################################################
   docker-build:
-    name: pr-ci/docker-build
+    name: build-and-test/docker-build
     permissions:
       actions: read # Required to read workflow run information
       contents: write # Required to checkout repository code
@@ -52,7 +52,7 @@ jobs:
   # Run Kind testing using pre-built images
   ############################################################################
   kind-testing:
-    name: pr-ci/kind-testing
+    name: build-and-test/kind-testing
     needs: [docker-build]
     if: github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened')
     permissions:
@@ -82,7 +82,7 @@ jobs:
   # Determine deployment type from PR labels
   ############################################################################
   check-pr-preview-labels:
-    name: pr-ci/check-labels
+    name: build-and-test/check-labels
     runs-on: ubuntu-latest
     outputs:
       should_deploy: ${{ steps.check.outputs.should_deploy }}
@@ -112,7 +112,7 @@ jobs:
   # Deploy PR preview if labeled (using pre-built images)
   ############################################################################
   pr-preview:
-    name: pr-ci/pr-preview
+    name: build-and-test/pr-preview
     needs: [docker-build, check-pr-preview-labels]
     if: needs.check-pr-preview-labels.outputs.should_deploy == 'true'
     permissions:

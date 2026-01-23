@@ -2,29 +2,8 @@ name: docker-build
 
 on:
   #=======================================================
-  schedule:
-    - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
-  #=======================================================
   release:
     types: [published]
-  #=======================================================
-  workflow_dispatch:
-    inputs:
-      testing:
-        description: 'Launch performance testing'
-        default: false
-        required: true
-        type: boolean
-      deployment_type:
-        description: 'Deployment type'
-        required: true
-        default: 'threshold'
-        type: choice
-        options:
-          - 'threshold'
-          - 'thresholdWithEnclave'
-          - 'centralized'
-          - 'centralizedWithEnclave'
   #=======================================================
   workflow_call:
     secrets:

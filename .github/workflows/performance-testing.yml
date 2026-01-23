@@ -11,74 +11,10 @@
 name: performance-testing
 
 on:
-  workflow_call:
-    inputs:
-      deployment_type:
-        description: 'Deployment type'
-        required: false
-        default: 'threshold'
-        type: string
-      fhe_params:
-        description: 'FHE parameters for preprocessing and keygen'
-        required: false
-        default: 'Test'
-        type: string
-      tls:
-        description: 'TLS enabled by default. Only available for thresholdWithEnclave'
-        required: false
-        default: true
-        type: boolean
-      kms_branch:
-        description: 'KMS branch (empty if you want to use a chart version)'
-        required: false
-        default: ''
-        type: string
-      kms_chart_version:
-        description: 'KMS chart version (use repository if you want to use a branch)'
-        required: false
-        default: '1.4.17'
-        type: string
-      tkms_infra_chart_version:
-        description: 'TKMS Infra chart version'
-        required: false
-        default: '0.3.2'
-        type: string
-      kms_core_image_tag:
-        description: 'KMS Core image tag'
-        required: true
-        type: string
-      kms_core_client_image_tag:
-        description: 'KMS Core client image tag'
-        required: true
-        type: string
-      runs-on:
-        description: 'Runner label for setup checks'
-        required: false
-        default: 'ubuntu-latest'
-        type: string
-    secrets:
-      SLAB_ACTION_TOKEN:
-        required: true
-      SLAB_BASE_URL:
-        required: true
-      JOB_SECRET:
-        required: true
-      ZWS_BOT_TOKEN:
-        required: true
-      TS_OAUTH_CLIENT_ID:
-        required: true
-      TS_OAUTH_SECRET:
-        required: true
-      BLOCKCHAIN_ACTIONS_TOKEN:
-        required: true
-      AWS_ACCESS_KEY_S3_USER:
-        required: false
-      AWS_SECRET_KEY_S3_USER:
-        required: false
-      CGR_USERNAME:
-        required: false
-      CGR_PASSWORD:
-        required: false
+  #=======================================================
+  schedule:
+    - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
+  #=======================================================
   workflow_dispatch:
     inputs:
       build:
@@ -136,6 +72,7 @@ on:
         required: false
         default: ''
         type: string
+  #=======================================================
 
 permissions: {}
 
@@ -144,12 +81,12 @@ jobs:
   # Docker Build Job (Conditional)
   # Only runs when:
   # - workflow_dispatch with build=true
-  # - OR workflow_call without image tags provided
+  # - schedule (nightly)
   ############################################################################
   docker-build:
     if: |
       (github.event_name == 'workflow_dispatch' && inputs.build == true) ||
-      (github.event_name == 'workflow_call' && inputs.kms_core_image_tag == '')
+      (github.event_name == 'schedule')
     name: performance-testing/docker-build
     permissions:
       actions: read # Required to read workflow run information
@@ -202,13 +139,6 @@ jobs:
     name: performance-testing
     runs-on: ${{ needs.start-amd64-runner.outputs.label }}
     timeout-minutes: 1800
-
-    # Environment variables used throughout the job
-    env:
-      NAMESPACE: 'kms-ci'
-      KMS_CHART_VERSION: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.kms_chart_version || '1.4.17' }}
-      TKMS_INFRA_CHART_VERSION: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.tkms_infra_chart_version || '0.3.2' }}
-      SYNC_SECRETS_CHART_VERSION: '0.2.1'
     steps:
       - name: Setup Home
         if: "${{ !contains(inputs.runs-on, 'ubuntu') }}"
@@ -254,33 +184,24 @@ jobs:
       # ======================================================================
       - name: Configure deployment parameters
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'threshold' }}
-          INPUT_TLS: ${{ inputs.tls || false }}
-          INPUT_FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
-          INPUT_KMS_BRANCH: ${{ inputs.kms_branch }}
-          PAYLOAD_DEPLOYMENT_TYPE: ${{ github.event.client_payload.deployment_type }}
-          PAYLOAD_TLS: ${{ github.event.client_payload.tls || false }}
-          PAYLOAD_FHE_PARAMS: ${{ github.event.client_payload.fhe_params || 'Test' }}
-          PAYLOAD_KMS_CHART_VERSION: ${{ github.event.client_payload.kms_chart_version }}
-          PAYLOAD_KMS_BRANCH: ${{ github.event.client_payload.kms_branch }}
+          DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
+          TLS: ${{ inputs.tls || 'true' }}
+          FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
+          KMS_BRANCH: ${{ inputs.kms_branch || github.ref }}
+          NAMESPACE: 'kms-ci'
+          KMS_CHART_VERSION: ${{ inputs.kms_chart_version || 'repository' }}
+          TKMS_INFRA_CHART_VERSION: ${{ inputs.tkms_infra_chart_version || '0.3.2' }}
+          SYNC_SECRETS_CHART_VERSION: '0.2.1'
         run: |
-          if [[ "${EVENT_NAME}" == "workflow_dispatch" || "${EVENT_NAME}" == "workflow_call" ]]; then
-            {
-              echo "DEPLOYMENT_TYPE=${INPUT_DEPLOYMENT_TYPE}"
-              echo "TLS=${INPUT_TLS}"
-              echo "FHE_PARAMS=${INPUT_FHE_PARAMS}"
-              echo "KMS_BRANCH=${INPUT_KMS_BRANCH}"
-            } >> "$GITHUB_ENV"
-          else
-            {
-              echo "DEPLOYMENT_TYPE=${PAYLOAD_DEPLOYMENT_TYPE}"
-              echo "TLS=${PAYLOAD_TLS}"
-              echo "FHE_PARAMS=${PAYLOAD_FHE_PARAMS}"
-              echo "KMS_CHART_VERSION=${PAYLOAD_KMS_CHART_VERSION}"
-              echo "KMS_BRANCH=${PAYLOAD_KMS_BRANCH}"
-            } >> "$GITHUB_ENV"
-          fi
+          {
+            echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
+            echo "TLS=${TLS}"
+            echo "FHE_PARAMS=${FHE_PARAMS}"
+            echo "KMS_BRANCH=${KMS_BRANCH}"
+            echo "KMS_CHART_VERSION=${KMS_CHART_VERSION}"
+            echo "TKMS_INFRA_CHART_VERSION=${TKMS_INFRA_CHART_VERSION}"
+            echo "SYNC_SECRETS_CHART_VERSION=${SYNC_SECRETS_CHART_VERSION}"
+          } >> "$GITHUB_ENV"
 
       - name: Login to zws GitHub Container Registry
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
@@ -436,58 +357,6 @@ jobs:
             --kms-chart-version "${KMS_CHART_VERSION}" \
             --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}" \
             "${EXTRA_PCR_ARGS[@]}"
-
-      - name: Wait tkms-infra to be ready
-        run: |
-          ###################################################################
-          # Wait for TKMS infrastructure components to be ready
-          ###################################################################
-          echo "Waiting for KMS parties to be ready..."
-          if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-            kubectl wait --for=condition=ready Kmsparties kms-party-"${PATH_SUFFIX}-1" \
-              -n "${NAMESPACE}" --timeout=120s
-
-          elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            for i in {1..13}; do
-              kubectl wait --for=condition=ready Kmsparties kms-party-"${PATH_SUFFIX}"-"${i}" \
-                -n "${NAMESPACE}" --timeout=120s
-            done
-          fi
-
-          if [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            echo "Waiting for enclave nodegroups to be ready..."
-            kubectl wait --for=condition=ready enclavenodegroup \
-              kms-party-"${PATH_SUFFIX}"\
-              -n "${NAMESPACE}" --timeout=1200s
-          fi
-
-      ###################################################################
-      # Wait for KMS Core deployment to be ready
-      ###################################################################
-      - name: Wait for KMS Core pods to be ready
-        run: |
-          echo "Waiting for KMS Core pods to be ready..."
-          sleep 60
-          if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-            kubectl wait --for=condition=ready pod kms-service-centralized-"${PATH_SUFFIX}"-core-1 \
-              -n "${NAMESPACE}" --timeout=600s
-          elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            for i in {1..13}; do
-              kubectl wait --for=condition=ready pod kms-service-threshold-"${i}"-"${PATH_SUFFIX}"-core-"${i}" \
-                -n "${NAMESPACE}" --timeout=600s
-            done
-          fi
-
-      - name: Wait for KMS Core initialization to complete
-        if: ${{ env.DEPLOYMENT_TYPE == 'threshold' || env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' }}
-        run: |
-          ###################################################################
-          # Wait for KMS Core initialization to complete
-          ###################################################################
-          echo "Waiting for KMS Core initialization to complete..."
-          sleep 30
-          kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
-            -n "${NAMESPACE}" --timeout=600s
 
       # ======================================================================
       # PERFORMANCE TESTING
