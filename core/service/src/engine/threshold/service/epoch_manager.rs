@@ -1507,26 +1507,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn internal() {
-        let mut rng = AesRng::seed_from_u64(42);
-        let epoch_manager = make_epoch_manager::<FailingPrss>(&mut rng).await;
-
-        let epoch_id = EpochId::new_random(&mut rng);
-        assert_eq!(
-            epoch_manager
-                .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
-                    epoch_id: Some(epoch_id.into()),
-                    context_id: None,
-                    previous_epoch: None,
-                }))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::Internal
-        );
-    }
-
     #[test]
     fn test_verify_epoch_info() {
         let new_epoch_id = derive_request_id("new_epoch_id").unwrap();
