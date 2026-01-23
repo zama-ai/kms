@@ -97,8 +97,9 @@ pub(crate) async fn do_new_epoch(
         results.push((core_conf, result));
     }
 
-    // We need to wait for all responses since an epoch creation  is only successful if _all_ parties respond.
-    assert_eq!(results.len(), num_parties);
+    if cmd_conf.expect_all_responses {
+        assert_eq!(results.len(), num_parties);
+    }
 
     if let Some(previous_epoch) = new_epoch_params.previous_epoch_params {
         // Poll the result endpoint
