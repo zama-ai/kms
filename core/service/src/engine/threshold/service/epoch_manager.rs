@@ -1469,4 +1469,133 @@ mod tests {
             tonic::Code::Internal
         );
     }
+
+    #[test]
+    fn test_verify_epoch_info() {
+        let new_epoch_id = derive_request_id("new_epoch_id").unwrap();
+        let old_epoch_id = derive_request_id("old_epoch_id").unwrap();
+        let context_id = derive_request_id("context_id").unwrap();
+        let key_id = derive_request_id("key_id").unwrap();
+        let preproc_id = derive_request_id("preproc_id").unwrap();
+
+        let alloy_domain = alloy_sol_types::eip712_domain!(
+            name: "Authorization token",
+            version: "1",
+            chain_id: 8006,
+            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        );
+        let domain = alloy_to_protobuf_domain(&alloy_domain).unwrap();
+
+        let valid_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            key_id: Some(key_id.into()),
+            preproc_id: Some(preproc_id.into()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, valid_previous_epoch).unwrap();
+
+        // Define a bad request ID
+        let bad_req_id = kms_grpc::kms::v1::RequestId {
+            request_id: ['x'; crate::consts::ID_LENGTH].iter().collect(),
+        };
+
+        // Test with invalid context id
+        let invalid_previous_epoch = PreviousEpochInfo {
+            context_id: Some(bad_req_id.clone()),
+            epoch_id: Some(old_epoch_id.into()),
+            key_id: Some(key_id.into()),
+            preproc_id: Some(preproc_id.into()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
+
+        // Test with missing context id
+        let missing_field_previous_epoch = PreviousEpochInfo {
+            context_id: None,
+            epoch_id: Some(old_epoch_id.into()),
+            key_id: Some(key_id.into()),
+            preproc_id: Some(preproc_id.into()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
+
+        // Test with invalid epoch id
+        let invalid_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(bad_req_id.clone()),
+            key_id: Some(key_id.into()),
+            preproc_id: Some(preproc_id.into()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
+
+        // Test with missing epoch id
+        let missing_field_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: None,
+            key_id: Some(key_id.into()),
+            preproc_id: Some(preproc_id.into()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
+
+        // Test with invalid key id
+        let invalid_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            key_id: Some(bad_req_id.clone()),
+            preproc_id: Some(preproc_id.into()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
+
+        // Test with missing key id
+        let missing_field_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            key_id: None,
+            preproc_id: Some(preproc_id.into()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
+
+        // Test with invalid preproc id
+        let invalid_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            key_id: Some(key_id.into()),
+            preproc_id: Some(bad_req_id.clone()),
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain.clone()),
+        };
+        verify_epoch_info(&new_epoch_id, invalid_previous_epoch).unwrap_err();
+
+        // Test with missing preproc id
+        let missing_field_previous_epoch = PreviousEpochInfo {
+            context_id: Some(context_id.into()),
+            epoch_id: Some(old_epoch_id.into()),
+            key_id: Some(key_id.into()),
+            preproc_id: None,
+            key_parameters: FheParameter::Test as i32,
+            key_digests: vec![], //Empty vec shouldn't fail verification, although in practice it's an issue
+            domain: Some(domain),
+        };
+        verify_epoch_info(&new_epoch_id, missing_field_previous_epoch).unwrap_err();
+    }
 }
