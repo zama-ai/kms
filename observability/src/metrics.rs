@@ -79,7 +79,7 @@ pub struct CoreMetrics {
     meta_storage_user_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing user decryptions in meta storage
     meta_storage_pub_dec_total_gauge: TaggedMetric<Gauge<u64>>, // Total number of public decryptions in meta storage
     meta_storage_user_dec_total_gauge: TaggedMetric<Gauge<u64>>, // Total number of user decryptions in meta storage
-    process_cpu_load_gauge: TaggedMetric<Gauge<f64>>,            // CPU load for the current process
+    process_cpu_usage_gauge: TaggedMetric<Gauge<f64>>,           // CPU load for the current process
     process_memory_gauge: TaggedMetric<Gauge<u64>>, // Memory usage for the current process
     // Trace guard for file-based logging
     trace_guard: Arc<Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>>,
@@ -343,7 +343,7 @@ impl CoreMetrics {
             meta_storage_user_dec_gauge: TaggedMetric::new(meta_storage_user_dec_gauge),
             meta_storage_pub_dec_total_gauge: TaggedMetric::new(meta_storage_pub_dec_total_gauge),
             meta_storage_user_dec_total_gauge: TaggedMetric::new(meta_storage_user_dec_total_gauge),
-            process_cpu_load_gauge: TaggedMetric::new(process_cpu_load_gauge),
+            process_cpu_usage_gauge: TaggedMetric::new(process_cpu_load_gauge),
             process_memory_gauge: TaggedMetric::new(process_memory_gauge),
             gauge: TaggedMetric::new(gauge),
             trace_guard: Arc::new(Mutex::new(None)),
@@ -536,11 +536,11 @@ impl CoreMetrics {
             .record(count, &self.meta_storage_pub_dec_total_gauge.with_tags(&[]));
     }
 
-    /// Record the current process CPU load into the gauge
-    pub fn record_process_cpu_load(&self, load: f64) {
-        self.process_cpu_load_gauge
+    /// Record the current process CPU usage into the gauge
+    pub fn record_process_cpu_usage(&self, usage: f64) {
+        self.process_cpu_usage_gauge
             .metric
-            .record(load, &self.process_cpu_load_gauge.with_tags(&[]));
+            .record(usage, &self.process_cpu_usage_gauge.with_tags(&[]));
     }
 
     /// Record the current process memory usage into the gauge

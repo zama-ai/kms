@@ -38,8 +38,8 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             if let Ok(pid) = sysinfo::get_current_pid() {
                 if let Some(process) = system.process(pid) {
                     METRICS.record_process_memory_usage(process.memory());
-                    // CPU usage is a percentage (0.0 to 100.0)
-                    METRICS.record_process_cpu_load(process.cpu_usage() as f64);
+                    // CPU usage is a percentage (0.0 to 100.0) per core
+                    METRICS.record_process_cpu_usage(process.cpu_usage() as f64);
                 }
             }
 
