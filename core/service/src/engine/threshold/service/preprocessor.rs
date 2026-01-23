@@ -334,7 +334,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             MetricedError::new(
                 OP_KEYGEN_PREPROC_REQUEST,
                 Some(request_id),
-                e,
+                anyhow::anyhow!("Context {context_id} not found: {e}"),
                 tonic::Code::NotFound,
             )
         })?;
