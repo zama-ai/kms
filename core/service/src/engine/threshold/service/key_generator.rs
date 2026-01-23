@@ -281,8 +281,32 @@ impl<
         let req_id_clone = req_id;
         let epoch_id_clone = epoch_id;
         let opt_compression_key_id = internal_keyset_config.get_compression_id()?;
+        let preproc_bucket = self.preproc_buckets.clone();
 
         let keygen_background = async move {
+            // Remove the preprocessing material, even if the request was cancelled we cannot reuse the preprocessing
+            match &preproc_handle_w_mode {
+                PreprocHandleWithMode::Secure((preproc_id, _)) => {
+                    tracing::info!(
+                        "Deleting preprocessed material with ID {preproc_id} from meta store"
+                    );
+                    let handle = {
+                        let mut meta_store_guard = preproc_bucket.write().await;
+                        meta_store_guard.delete(preproc_id)
+                    };
+                    match handle_res(handle, preproc_id).await {
+                        Ok(_) => {
+                            tracing::info!("Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}");
+                        }
+                        Err(e) => {
+                            MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
+                        }
+                    }
+                }
+                PreprocHandleWithMode::Insecure => {
+                    // Nothing to remove
+                }
+            }
             match internal_keyset_config.keyset_config() {
                 ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
                     Self::key_gen_background(
@@ -320,7 +344,6 @@ impl<
                 }
             }
         };
-        let preproc_bucket = self.preproc_buckets.clone();
         self.tracker
             .spawn(async move {
                 //Start the metric timer, it will end on drop
@@ -340,27 +363,6 @@ impl<
                         // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let guarded_meta_store = meta_store_cancelled.write().await;
                         crypto_storage_cancelled.purge_key_material(&req_id, &epoch_id, guarded_meta_store).await;
-                    },
-                }
-                // Remove the preprocessing material, even if the request was cancelled we cannot reuse the preprocessing
-                match &preproc_handle_w_mode {
-                    PreprocHandleWithMode::Secure((preproc_id, _)) => {
-                        tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
-                        let handle = {
-                            let mut meta_store_guard = preproc_bucket.write().await;
-                            meta_store_guard.delete(preproc_id)
-                        };
-                        match handle_res(handle, preproc_id).await {
-                            Ok(_) => {
-                                tracing::info!("Successfully deleted preprocessing ID {preproc_id} after keygen completion for request ID {req_id}");
-                            },
-                            Err(e) => {
-                                MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
-                            }
-                        }
-                    },
-                    PreprocHandleWithMode::Insecure => {
-                        // Nothing to remove
                     },
                 }
             }.instrument(tracing::Span::current()));

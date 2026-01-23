@@ -157,19 +157,6 @@ pub async fn key_gen_impl<
         async move {
             let _timer = timer;
             let _permit = permit;
-            key_gen_background(
-                &req_id,
-                &preproc_id,
-                &epoch_id,
-                meta_store,
-                crypto_storage,
-                sk,
-                params,
-                internal_keyset_config,
-                eip712_domain,
-                op_tag,
-            )
-            .await;
             // "Remove" the preprocessing material by deleting its entry from the meta store
             tracing::info!("Deleting preprocessed material with ID {preproc_id} from meta store");
             let handle = {
@@ -184,6 +171,19 @@ pub async fn key_gen_impl<
                     MetricedError::handle_unreturnable_error(op_tag, Some(req_id), e);
                 }
             }
+            key_gen_background(
+                &req_id,
+                &preproc_id,
+                &epoch_id,
+                meta_store,
+                crypto_storage,
+                sk,
+                params,
+                internal_keyset_config,
+                eip712_domain,
+                op_tag,
+            )
+            .await;
         }
         .instrument(tracing::Span::current()),
     );
