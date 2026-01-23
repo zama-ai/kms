@@ -1092,7 +1092,6 @@ impl<
     }
 }
 
-// TODO: add negative/dummy protocol testing
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1143,6 +1142,14 @@ mod tests {
                 rate_limiter: RateLimiter::new(RateLimiterConfig::default()),
                 _reshare: PhantomData,
             }
+        }
+
+        fn set_bucket_size(&mut self, bucket_size: usize) {
+            let config = crate::util::rate_limiter::RateLimiterConfig {
+                bucket_size,
+                ..Default::default()
+            };
+            self.rate_limiter = RateLimiter::new(config);
         }
     }
 
@@ -1383,6 +1390,33 @@ mod tests {
             }))
             .await
             .unwrap();
+        let result = epoch_manager
+            .get_epoch_result(tonic::Request::new(epoch_id.into()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(result.epoch_id.unwrap(), epoch_id.into());
+    }
+
+    #[tokio::test]
+    async fn test_resource_exhausted() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let mut epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        epoch_manager.set_bucket_size(0);
+        let epoch_id = EpochId::new_random(&mut rng);
+
+        assert_eq!(
+            epoch_manager
+                .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                    epoch_id: Some(epoch_id.into()),
+                    context_id: None,
+                    previous_epoch: None,
+                }))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::ResourceExhausted
+        );
     }
 
     #[tokio::test]
