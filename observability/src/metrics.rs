@@ -141,8 +141,8 @@ impl CoreMetrics {
             format!("{}_meta_storage_user_decryptions_in_store", config.prefix).into();
         let meta_store_pub_total_metric: Cow<'static, str> =
             format!("{}_meta_storage_pub_decryptions_in_store", config.prefix).into();
-        let process_cpu_load_metric: Cow<'static, str> =
-            format!("{}_process_cpu_load", config.prefix).into();
+        let process_cpu_usage_metric: Cow<'static, str> =
+            format!("{}_process_cpu_usage", config.prefix).into();
         let process_memory_metric: Cow<'static, str> =
             format!("{}_process_memory_usage", config.prefix).into();
         let gauge: Cow<'static, str> = format!("{}_gauge", config.prefix).into();
@@ -299,13 +299,13 @@ impl CoreMetrics {
         //Record 0 just to make sure the gauge is exported
         meta_storage_pub_dec_total_gauge.record(0, &[]);
 
-        let process_cpu_load_gauge = meter
-            .f64_gauge(process_cpu_load_metric)
-            .with_description("CPU load for the current process")
+        let process_cpu_usage_gauge = meter
+            .f64_gauge(process_cpu_usage_metric)
+            .with_description("CPU usage for the current process")
             .with_unit("percentage")
             .build();
         //Record 0 just to make sure the gauge is exported
-        process_cpu_load_gauge.record(0.0, &[]);
+        process_cpu_usage_gauge.record(0.0, &[]);
 
         let process_memory_gauge = meter
             .u64_gauge(process_memory_metric)
@@ -343,7 +343,7 @@ impl CoreMetrics {
             meta_storage_user_dec_gauge: TaggedMetric::new(meta_storage_user_dec_gauge),
             meta_storage_pub_dec_total_gauge: TaggedMetric::new(meta_storage_pub_dec_total_gauge),
             meta_storage_user_dec_total_gauge: TaggedMetric::new(meta_storage_user_dec_total_gauge),
-            process_cpu_usage_gauge: TaggedMetric::new(process_cpu_load_gauge),
+            process_cpu_usage_gauge: TaggedMetric::new(process_cpu_usage_gauge),
             process_memory_gauge: TaggedMetric::new(process_memory_gauge),
             gauge: TaggedMetric::new(gauge),
             trace_guard: Arc::new(Mutex::new(None)),
