@@ -141,7 +141,6 @@ jobs:
     timeout-minutes: 1800
     steps:
       - name: Setup Home
-        if: "${{ !contains(inputs.runs-on, 'ubuntu') }}"
         run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
 
       # ======================================================================
