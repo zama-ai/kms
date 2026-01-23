@@ -41,7 +41,7 @@ setup_infrastructure() {
 #=============================================================================
 fetch_pcrs_from_image() {
     log_info "Fetching PCRs from image: ${KMS_CORE_TAG}"
-    
+
     if ! command -v docker &> /dev/null; then
         log_warn "Docker not found, skipping PCR fetch. Ensure PCR0 env var is set if needed."
         return

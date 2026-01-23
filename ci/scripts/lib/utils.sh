@@ -2,8 +2,55 @@
 
 #=============================================================================
 # Utility Functions
-# Port forwarding, log collection, and other helper functions
+# Port forwarding, log collection, container building, and other helper functions
 #=============================================================================
+
+#=============================================================================
+# Container Build and Load
+# Build Docker images locally and load them into Kind cluster
+#=============================================================================
+build_container() {
+    log_info "========================================="
+    log_info "Building and Loading Docker Images"
+    log_info "========================================="
+
+    # Use RUST_IMAGE_VERSION from environment or default
+    local RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-1.92}"
+
+    #-------------------------------------------------------------------------
+    # Build and load core-service
+    #-------------------------------------------------------------------------
+    log_info "Building container for core-service..."
+    docker buildx build -t "ghcr.io/zama-ai/kms/core-service:latest-dev" \
+        -f "${REPO_ROOT}/docker/core/service/Dockerfile" \
+        --build-arg RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION}" \
+        "${REPO_ROOT}/" \
+        --load
+
+    log_info "Loading core-service container into Kind cluster '${NAMESPACE}'..."
+    kind load docker-image "ghcr.io/zama-ai/kms/core-service:latest-dev" \
+        -n "${NAMESPACE}" \
+        --nodes "${NAMESPACE}-worker"
+
+    #-------------------------------------------------------------------------
+    # Build and load core-client
+    #-------------------------------------------------------------------------
+    log_info "Building container for core-client..."
+    docker buildx build -t "ghcr.io/zama-ai/kms/core-client:latest-dev" \
+        -f "${REPO_ROOT}/docker/core-client/Dockerfile" \
+        --build-arg RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION}" \
+        "${REPO_ROOT}/" \
+        --load
+
+    log_info "Loading core-client container into Kind cluster '${NAMESPACE}'..."
+    kind load docker-image "ghcr.io/zama-ai/kms/core-client:latest-dev" \
+        -n "${NAMESPACE}" \
+        --nodes "${NAMESPACE}-worker"
+
+    log_info "========================================="
+    log_info "Docker images built and loaded successfully"
+    log_info "========================================="
+}
 
 #=============================================================================
 # Setup Port Forwarding

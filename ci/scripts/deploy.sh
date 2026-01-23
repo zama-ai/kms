@@ -45,6 +45,9 @@ SYNC_SECRETS_VERSION="0.2.1"
 PATH_SUFFIX="${PATH_SUFFIX:-kms-ci}"
 TLS="${TLS:-false}"
 
+# Build defaults (for local image building)
+RUST_IMAGE_VERSION="${RUST_IMAGE_VERSION:-1.92}"
+
 # AWS/Tailscale Defaults
 TAILSCALE_HOSTNAME="tailscale-operator-zws-dev.diplodocus-boa.ts.net"
 
@@ -117,8 +120,7 @@ main() {
 
     # Phase 3: Build images if requested (Kind only)
     if [[ "${BUILD_IMAGES}" == "true" ]] && [[ "${TARGET}" == *"kind"* ]]; then
-        log_warn "Image building requested but not yet implemented in unified script"
-        log_warn "Please build images separately before running deployment"
+        build_container
     fi
 
     deploy_kms              # Phase 4: Deploy KMS core services
