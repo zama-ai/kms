@@ -399,6 +399,8 @@ impl GrpcNetworkingManager {
             NetworkMode::Sync => self.conf.get_network_timeout(),
         };
 
+        let connection_channel = self.sending_service.add_connections(&others).await?;
+
         let session = match self.session_store.entry(session_id) {
             // Turn an inactive session into an active one
             dashmap::Entry::Occupied(mut status) => {
@@ -419,8 +421,6 @@ impl GrpcNetworkingManager {
                         owner
                     ));
                 };
-
-                let connection_channel = self.sending_service.add_connections(&others).await?;
 
                 let session = Arc::new(NetworkSession {
                     owner: owner.clone(),
@@ -444,8 +444,6 @@ impl GrpcNetworkingManager {
                 session
             }
             dashmap::Entry::Vacant(vacant) => {
-                let connection_channel = self.sending_service.add_connections(&others).await?;
-
                 let message_queue = MessageQueueStore::new_initialized(
                     self.conf.get_message_limit(),
                     &others,
