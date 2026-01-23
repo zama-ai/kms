@@ -1,18 +1,17 @@
 use alloy_dyn_abi::Eip712Domain;
-use futures_util::TryFutureExt;
+use futures_util::{future::BoxFuture, FutureExt, TryFutureExt};
 use itertools::Itertools;
 use kms_grpc::{
     kms::v1::{
         DestroyMpcEpochRequest, Empty, EpochResultResponse, KeyDigest, NewMpcEpochRequest,
         PreviousEpochInfo, RequestId,
     },
-    kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::{optional_protobuf_to_alloy_domain, PrivDataType, PubDataType},
     utils::tonic_result::BoxedStatus,
     ContextId, EpochId,
 };
 use observability::metrics_names::OP_RESHARING;
-use std::{collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
@@ -36,10 +35,9 @@ use threshold_fhe::{
     },
     networking::NetworkMode,
 };
-use tokio::sync::{OwnedSemaphorePermit, RwLock};
+use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::{Request, Response, Status};
-use tonic_health::server::HealthReporter;
 
 use crate::{
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
@@ -51,8 +49,8 @@ use crate::{
         },
         threshold::service::{
             reshare_utils::get_verified_public_materials,
-            session::{PRSSSetupCombined, SessionMaker},
-            RealThresholdKms, ThresholdFheKeys,
+            session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
+            ThresholdFheKeys,
         },
         traits::EpochManager,
         utils::MetricedError,
@@ -179,6 +177,17 @@ fn verify_epoch_info(
     })
 }
 
+#[derive(Clone)]
+pub enum EpochOutput {
+    PRSSInitOnly,
+    Reshare(KeyGenMetadata),
+}
+
+impl From<KeyGenMetadata> for EpochOutput {
+    fn from(meta: KeyGenMetadata) -> Self {
+        EpochOutput::Reshare(meta)
+    }
+}
 // The Epoch Manager takes over the role of the Initiator and Resharer
 // For now the struct is thus a union of the RealInitiator and RealResharer structs
 pub struct RealThresholdEpochManager<
@@ -189,13 +198,10 @@ pub struct RealThresholdEpochManager<
 > {
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub(crate) session_maker: SessionMaker,
-    pub health_reporter: HealthReporter,
     pub base_kms: crate::engine::base::BaseKmsStruct,
-    pub reshare_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+    pub reshare_pubinfo_meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
-    // Qu: Wondering whether we want to rate limit epoch creation ?
-    // PRSS Init wasn't but reshare was
     pub rate_limiter: RateLimiter,
     pub(crate) _init: PhantomData<Init>,
     pub(crate) _reshare: PhantomData<Reshare>,
@@ -206,8 +212,9 @@ impl<
         PrivS: StorageExt + Send + Sync + 'static,
         Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
             + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
-            + Default,
-        Reshare: ReshareSecretKeys + Default,
+            + Default
+            + 'static,
+        Reshare: ReshareSecretKeys + Default + 'static,
     > RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
 {
     /// This will load all PRSS setups from storage into session maker.
@@ -292,28 +299,37 @@ impl<
             "Loaded PRSS Setup from storage for request ID {}.",
             epoch_id
         );
-        {
-            // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
-            self.health_reporter
-                .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS>>>()
-                .await;
-        }
+
         Ok(())
+    }
+
+    pub async fn init_prss(
+        &self,
+        context_id: &ContextId,
+        epoch_id: &EpochId,
+    ) -> anyhow::Result<()> {
+        Self::internal_init_prss(
+            self.session_maker.clone(),
+            &self.crypto_storage,
+            context_id,
+            epoch_id,
+        )
+        .await
     }
 
     // NOTE: this function will overwrite the existing PRSS state
     // Also, this function doesn't store success in meta store
     // which is OK because it's blocking (only the reshare if any spawns its own task)
-    pub async fn init_prss(
-        &self,
+    async fn internal_init_prss(
+        session_maker: SessionMaker,
+        crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         context_id: &ContextId,
         epoch_id: &EpochId,
     ) -> anyhow::Result<()> {
         // TODO(zama-ai/kms-internal/issues/2721),
         // we never try to store the PRSS in meta_store, so the ID is not guaranteed to be unique
 
-        let own_identity = self
-            .session_maker
+        let own_identity = session_maker
             .my_identity(context_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("own identity not found in context {}", context_id))?;
@@ -323,8 +339,7 @@ impl<
         let session_id = epoch_id.derive_session_id_with_counter(PRSS_SESSION_COUNTER)?;
 
         // PRSS robust init requires broadcast, which is implemented with Sync network assumption
-        let mut base_session = self
-            .session_maker
+        let mut base_session = session_maker
             .make_base_session(session_id, *context_id, NetworkMode::Sync)
             .await?;
 
@@ -352,7 +367,7 @@ impl<
         };
 
         // serialize and write PRSS Setup to storage into private storage
-        let private_storage = Arc::clone(&self.crypto_storage.inner.private_storage);
+        let private_storage = Arc::clone(&crypto_storage.inner.private_storage);
         let mut priv_storage = private_storage.lock().await;
 
         // if PRSS already exists, overwrite it
@@ -383,39 +398,14 @@ impl<
         )
         .await?;
 
-        self.session_maker.add_epoch(*epoch_id, prss).await;
+        session_maker.add_epoch(*epoch_id, prss).await;
 
-        {
-            // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
-            self.health_reporter
-                .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS>>>()
-                .await;
-        }
         tracing::info!(
             "PRSS on epoch ID {} completed successfully for identity {}.",
             epoch_id,
             own_identity
         );
         Ok(())
-    }
-
-    async fn insert_reshare_meta_store(
-        &self,
-        epoch_id_as_request_id: &kms_grpc::RequestId,
-    ) -> Result<(), MetricedError> {
-        let mut guarded_meta_store = self.reshare_pubinfo_meta_store.write().await;
-        guarded_meta_store
-            .insert(epoch_id_as_request_id)
-            .map_err(|e| {
-                MetricedError::new(
-                    OP_RESHARING,
-                    Some(*epoch_id_as_request_id),
-                    e,
-                    // Note that there are other reason why insert can fail, but
-                    // AlreadyExists seems the most appropriate
-                    tonic::Code::AlreadyExists,
-                )
-            })
     }
 
     /// Read the old keys, need ownership because
@@ -451,21 +441,17 @@ impl<
         mut two_sets_session: TwoSetsBaseSession,
         new_epoch_id: EpochId,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
-        permit: OwnedSemaphorePermit,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>, Status>
+    {
         let epoch_id_as_request_id = new_epoch_id.into();
 
         let (mut private_keys, key_metadata) = self
             .fetch_existing_keys(epoch_id_as_request_id, &verified_previous_epoch)
             .await?;
 
-        // Update status
-        self.insert_reshare_meta_store(&epoch_id_as_request_id)
-            .await?;
-
         let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
 
-        let task = move |_permit| async move {
+        let task = async move {
             Reshare::reshare_sk_two_sets_as_s1(
                 &mut two_sets_session,
                 &mut private_keys,
@@ -474,35 +460,20 @@ impl<
             .await?;
 
             // We update the meta store with the same metadata as in the epoch we reshare from
-            meta_store
-                .write()
-                .await
-                .update(&epoch_id_as_request_id, Ok(key_metadata))?;
+            meta_store.write().await.update(
+                &epoch_id_as_request_id,
+                Ok(EpochOutput::Reshare(key_metadata)),
+            )?;
 
-            Ok::<_, anyhow::Error>(())
+            Ok(())
         };
-        self.tracker.spawn(async move {
-            match task(permit).await {
-                Ok(_) => tracing::info!(
-                    "Resharing completed successfully for new epoch ID {:?} and key ID {:?}",
-                    new_epoch_id,
-                    verified_previous_epoch.key_id
-                ),
-                Err(e) => tracing::error!(
-                    "Resharing failed for new epoch ID {:?} and key ID {:?}: {}",
-                    new_epoch_id,
-                    verified_previous_epoch.key_id,
-                    e
-                ),
-            }
-        });
 
-        Ok(Response::new(Empty {}))
+        Ok(task)
     }
 
     /// Creates the sessions needed by parties in set 2 for resharing
     async fn create_set2_sessions(
-        &self,
+        session_maker_immutable: ImmutableSessionMaker,
         new_epoch_id: EpochId,
         new_context_id: ContextId,
         epoch_id_as_request_id: kms_grpc::RequestId,
@@ -512,16 +483,10 @@ impl<
             SmallSession<ResiduePolyF4Z64>,
             BaseSession,
         ),
-        MetricedError,
+        Box<dyn std::error::Error + Send + Sync>,
     > {
-        let session_maker_immutable = self.session_maker.make_immutable();
         let make_err = |e| {
-            MetricedError::new(
-                OP_RESHARING,
-                Some(epoch_id_as_request_id),
-                e,
-                tonic::Code::InvalidArgument,
-            )
+            MetricedError::handle_unreturnable_error(OP_RESHARING, Some(epoch_id_as_request_id), e)
         };
 
         let session_z128 =
@@ -599,7 +564,7 @@ impl<
     /// Stores the reshared keys and updates the meta store
     async fn store_reshared_keys(
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
-        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+        meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
         sk: &PrivateSigKey,
         new_epoch_id: EpochId,
         verified_previous_epoch: &VerifiedPreviousEpochInfo,
@@ -661,10 +626,9 @@ impl<
         new_epoch_id: EpochId,
         new_context_id: ContextId,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
-        permit: OwnedSemaphorePermit,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>, Status>
+    {
         let epoch_id_as_request_id = new_epoch_id.into();
-        let key_id = verified_previous_epoch.key_id;
 
         let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
             &self.crypto_storage,
@@ -676,9 +640,7 @@ impl<
         )
         .await?;
 
-        let (mut session_z128, mut session_z64, session_online) = self
-            .create_set2_sessions(new_epoch_id, new_context_id, epoch_id_as_request_id)
-            .await?;
+        let immutable_session_maker = self.session_maker.make_immutable();
 
         let sk = self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(
@@ -689,13 +651,18 @@ impl<
             )
         })?;
 
-        self.insert_reshare_meta_store(&epoch_id_as_request_id)
-            .await?;
-
         let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
         let crypto_storage = self.crypto_storage.clone();
 
-        let task = move |_permit| async move {
+        let task = async move {
+            let (mut session_z128, mut session_z64, session_online) = Self::create_set2_sessions(
+                immutable_session_maker,
+                new_epoch_id,
+                new_context_id,
+                epoch_id_as_request_id,
+            )
+            .await?;
+
             let num_parties_set_1 = two_sets_session
                 .roles()
                 .iter()
@@ -743,23 +710,23 @@ impl<
             .await
         };
 
-        self.tracker.spawn(async move {
-            match task(permit).await {
-                Ok(_) => tracing::info!(
-                    "Resharing completed successfully for new epoch ID {:?} and key ID {:?}",
-                    new_epoch_id,
-                    key_id
-                ),
-                Err(e) => tracing::error!(
-                    "Resharing failed for new epoch ID {:?} and key ID {:?}: {}",
-                    new_epoch_id,
-                    key_id,
-                    e
-                ),
-            }
-        });
+        //self.tracker.spawn(async move {
+        //    match task(permit).await {
+        //        Ok(_) => tracing::info!(
+        //            "Resharing completed successfully for new epoch ID {:?} and key ID {:?}",
+        //            new_epoch_id,
+        //            key_id
+        //        ),
+        //        Err(e) => tracing::error!(
+        //            "Resharing failed for new epoch ID {:?} and key ID {:?}: {}",
+        //            new_epoch_id,
+        //            key_id,
+        //            e
+        //        ),
+        //    }
+        //});
 
-        Ok(Response::new(Empty {}))
+        Ok(task)
     }
 
     async fn reshare_as_both_sets(
@@ -768,10 +735,9 @@ impl<
         new_epoch_id: EpochId,
         new_context_id: ContextId,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
-        permit: OwnedSemaphorePermit,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>, Status>
+    {
         let epoch_id_as_request_id = new_epoch_id.into();
-        let key_id = verified_previous_epoch.key_id;
 
         let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
             &self.crypto_storage,
@@ -787,10 +753,7 @@ impl<
             .fetch_existing_keys(epoch_id_as_request_id, &verified_previous_epoch)
             .await?;
 
-        let (mut session_z128, mut session_z64, session_online) = self
-            .create_set2_sessions(new_epoch_id, new_context_id, epoch_id_as_request_id)
-            .await?;
-
+        let immutable_session_maker = self.session_maker.make_immutable();
         let sk = self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(
                 OP_RESHARING,
@@ -800,13 +763,18 @@ impl<
             )
         })?;
 
-        self.insert_reshare_meta_store(&epoch_id_as_request_id)
-            .await?;
-
         let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
         let crypto_storage = self.crypto_storage.clone();
 
-        let task = move |_permit| async move {
+        let task = async move {
+            let (mut session_z128, mut session_z64, session_online) = Self::create_set2_sessions(
+                immutable_session_maker,
+                new_epoch_id,
+                new_context_id,
+                epoch_id_as_request_id,
+            )
+            .await?;
+
             let num_parties_set_1 = two_sets_session
                 .roles()
                 .iter()
@@ -854,31 +822,16 @@ impl<
             .await
         };
 
-        self.tracker.spawn(async move {
-            match task(permit).await {
-                Ok(_) => tracing::info!(
-                    "Resharing completed successfully for new epoch ID {:?} and key ID {:?}",
-                    new_epoch_id,
-                    key_id
-                ),
-                Err(e) => tracing::error!(
-                    "Resharing failed for new epoch ID {:?} and key ID {:?}: {}",
-                    new_epoch_id,
-                    key_id,
-                    e
-                ),
-            }
-        });
-
-        Ok(Response::new(Empty {}))
+        Ok(task)
     }
 
-    pub async fn initiate_resharing(
+    async fn initiate_resharing(
         &self,
         new_context_id: &ContextId,
         new_epoch_id: &EpochId,
         previous_epoch: PreviousEpochInfo,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<BoxFuture<'static, Result<(), Box<dyn std::error::Error + Send + Sync>>>, Status>
+    {
         tracing::info!(
             "Received initiate resharing request from context {:?} to context {:?} for Key ID {:?} for epoch ID {:?}",
             previous_epoch.context_id,
@@ -887,9 +840,9 @@ impl<
             new_epoch_id
         );
 
-        let epoch_id_as_request_id = (*new_epoch_id).into();
+        let verified_previous_epoch = verify_epoch_info(&(*new_epoch_id).into(), previous_epoch)?;
 
-        let verified_previous_epoch = verify_epoch_info(&epoch_id_as_request_id, previous_epoch)?;
+        let epoch_id_as_request_id = (*new_epoch_id).into();
 
         let session_maker_immutable = self.session_maker.make_immutable();
 
@@ -914,39 +867,29 @@ impl<
             )
         })?;
 
-        // QU: Do we want to rate limit the resharing now that it's part of epoch creations ?
-        let permit = self.rate_limiter.start_reshare().await?;
-
         Ok(match two_sets_session.my_role() {
-            TwoSetsRole::Set1(_) => {
-                self.reshare_as_set_1(
-                    two_sets_session,
-                    *new_epoch_id,
-                    verified_previous_epoch,
-                    permit,
-                )
+            TwoSetsRole::Set1(_) => self
+                .reshare_as_set_1(two_sets_session, *new_epoch_id, verified_previous_epoch)
                 .await?
-            }
-            TwoSetsRole::Set2(_) => {
-                self.reshare_as_set_2(
+                .boxed(),
+            TwoSetsRole::Set2(_) => self
+                .reshare_as_set_2(
                     two_sets_session,
                     *new_epoch_id,
                     *new_context_id,
                     verified_previous_epoch,
-                    permit,
                 )
                 .await?
-            }
-            TwoSetsRole::Both(_) => {
-                self.reshare_as_both_sets(
+                .boxed(),
+            TwoSetsRole::Both(_) => self
+                .reshare_as_both_sets(
                     two_sets_session,
                     *new_epoch_id,
                     *new_context_id,
                     verified_previous_epoch,
-                    permit,
                 )
                 .await?
-            }
+                .boxed(),
         })
     }
 }
@@ -957,23 +900,40 @@ impl<
         PrivS: StorageExt + Send + Sync + 'static,
         Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
             + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
-            + Default,
-        Reshare: ReshareSecretKeys + Default,
+            + Default
+            + 'static,
+        Reshare: ReshareSecretKeys + Default + 'static,
     > EpochManager for RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
 {
     async fn new_mpc_epoch(
         &self,
         request: Request<NewMpcEpochRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let permit = self.rate_limiter.start_new_epoch().await?;
+
         let inner = request.into_inner();
         // the request ID of the init request is the epoch ID for PRSS and shares
         let epoch_id: EpochId =
             parse_optional_proto_request_id(&inner.epoch_id, RequestIdParsingErr::Init)?.into();
 
+        if !epoch_id.is_valid() {
+            return Err(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                "Epoch ID is not valid".to_string(),
+            ));
+        }
+
         let context_id: ContextId = match inner.context_id {
             Some(ctx_id) => parse_proto_request_id(&ctx_id, RequestIdParsingErr::Init)?.into(),
             None => *DEFAULT_MPC_CONTEXT,
         };
+
+        if !context_id.is_valid() {
+            return Err(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                "MPC Context ID is not valid".to_string(),
+            ));
+        }
 
         if self.session_maker.epoch_exists(&epoch_id).await {
             return Err(tonic::Status::new(
@@ -982,9 +942,17 @@ impl<
             ));
         }
 
+        let resharing_task = match inner.previous_epoch {
+            Some(prev_epoch) => Some(
+                self.initiate_resharing(&context_id, &epoch_id, prev_epoch)
+                    .await?,
+            ),
+            None => None,
+        };
+
         // Only run PRSS initialization if this party is involved in the new MPC context
         // note we also error out if the context does not exist
-        if self
+        let do_prss = self
             .session_maker
             .get_my_role_in_context(&context_id)
             .await
@@ -994,23 +962,60 @@ impl<
                     format!("MPC context ID {context_id} does not exist: {e}"),
                 )
             })?
-            .is_some()
+            .is_some();
+
+        let meta_store = Arc::clone(&self.reshare_pubinfo_meta_store);
+        // Update status
+
         {
-            self.init_prss(&context_id, &epoch_id).await.map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Internal,
-                    format!("PRSS initialization failed with error: {e}"),
+            let mut guarded_meta_store = self.reshare_pubinfo_meta_store.write().await;
+            guarded_meta_store.insert(&epoch_id.into()).map_err(|e| {
+                MetricedError::new(
+                    OP_RESHARING,
+                    Some(epoch_id.into()),
+                    e,
+                    // Note that there are other reason why insert can fail, but
+                    // AlreadyExists seems the most appropriate
+                    tonic::Code::AlreadyExists,
                 )
             })?;
         }
+        let session_maker = self.session_maker.clone();
+        let crypto_storage = self.crypto_storage.clone();
+        self.tracker.spawn(async move {
+            let _permit = permit;
+            let crypto_storage = crypto_storage;
+            let context_id = context_id;
+            let epoch_id = epoch_id;
+            let meta_store = meta_store;
+            if do_prss
+                && Self::internal_init_prss(session_maker, &crypto_storage, &context_id, &epoch_id)
+                    .await
+                    .is_err()
+            {
+                let mut guarded_meta_store = meta_store.write().await;
+                let _ = guarded_meta_store.update(
+                    &epoch_id.into(),
+                    Err("PRSS initialization failed".to_string()),
+                );
+                return;
+            }
+            if let Some(resharing_task) = resharing_task {
+                if resharing_task.await.is_err() {
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store
+                        .update(&epoch_id.into(), Err("Resharing failed".to_string()));
+                }
+            } else {
+                // Can't do much if inserts fails here
+                let _ = meta_store
+                    .write()
+                    .await
+                    .update(&epoch_id.into(), Ok(EpochOutput::PRSSInitOnly));
+            }
+        });
 
-        if let Some(previous_epoch) = inner.previous_epoch {
-            // If previous epoch info is provided, we initiate resharing from previous epoch to this new one
-            self.initiate_resharing(&context_id, &epoch_id, previous_epoch)
-                .await
-        } else {
-            Ok(Response::new(Empty {}))
-        }
+        Ok(Response::new(Empty {}))
     }
 
     async fn destroy_mpc_epoch(
@@ -1035,39 +1040,54 @@ impl<
         let res = handle_res_mapping(status, &request_id, "Epoch").await?;
 
         match res {
-            KeyGenMetadata::Current(res) => {
+            EpochOutput::PRSSInitOnly => {
                 tracing::info!(
-                    "Retrieved reshare result for request ID {:?}. Key id is {}",
-                    request_id,
-                    res.key_id
+                    "New Epoch with only PRSS initialization for request ID {:?}.",
+                    request_id
                 );
-
-                // Note: This relies on the ordering of the PubDataType enum
-                // which must be kept stable (in particular, ServerKey must be before PublicKey)
-                let key_digests = res
-                    .key_digest_map
-                    .into_iter()
-                    .sorted_by_key(|x| x.0)
-                    .map(|(key, digest)| KeyDigest {
-                        key_type: key.to_string(),
-                        digest,
-                    })
-                    .collect::<Vec<_>>();
-
                 Ok(Response::new(EpochResultResponse {
-                    request_id: Some(request_id.into()),
-                    key_id: Some(res.key_id.into()),
-                    preprocessing_id: Some(res.preprocessing_id.into()),
-                    key_digests,
-                    external_signature: res.external_signature,
+                    epoch_id: Some(request_id.into()),
+                    key_id: None,
+                    preprocessing_id: None,
+                    key_digests: vec![],
+                    external_signature: vec![],
                 }))
             }
-            KeyGenMetadata::LegacyV0(_res) => {
-                tracing::error!("Resharing should not return legacy metadata");
-                Err(Status::internal(
-                    "Resharing returned legacy metadata, which should not happen",
-                ))
-            }
+            EpochOutput::Reshare(res) => match res {
+                KeyGenMetadata::Current(res) => {
+                    tracing::info!(
+                        "Retrieved reshare result for request ID {:?}. Key id is {}",
+                        request_id,
+                        res.key_id
+                    );
+
+                    // Note: This relies on the ordering of the PubDataType enum
+                    // which must be kept stable (in particular, ServerKey must be before PublicKey)
+                    let key_digests = res
+                        .key_digest_map
+                        .into_iter()
+                        .sorted_by_key(|x| x.0)
+                        .map(|(key, digest)| KeyDigest {
+                            key_type: key.to_string(),
+                            digest,
+                        })
+                        .collect::<Vec<_>>();
+
+                    Ok(Response::new(EpochResultResponse {
+                        epoch_id: Some(request_id.into()),
+                        key_id: Some(res.key_id.into()),
+                        preprocessing_id: Some(res.preprocessing_id.into()),
+                        key_digests,
+                        external_signature: res.external_signature,
+                    }))
+                }
+                KeyGenMetadata::LegacyV0(_res) => {
+                    tracing::error!("Resharing should not return legacy metadata");
+                    Err(Status::internal(
+                        "Resharing returned legacy metadata, which should not happen",
+                    ))
+                }
+            },
         }
     }
 }
@@ -1109,7 +1129,6 @@ mod tests {
         fn init_test(base_kms: BaseKmsStruct, session_maker: SessionMaker) -> Self {
             Self {
                 session_maker,
-                health_reporter: HealthReporter::new(),
                 _init: PhantomData,
                 base_kms,
                 crypto_storage: ThresholdCryptoMaterialStorage::new(

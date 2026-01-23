@@ -422,13 +422,10 @@ where
 
     let (core_service_health_reporter, core_service_health_service) =
         tonic_health::server::health_reporter();
-    let thread_core_health_reporter = core_service_health_reporter.clone();
-    {
-        // We are only serving after initialization
-        thread_core_health_reporter
-            .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
-            .await;
-    }
+    // We are only serving after initialization
+    core_service_health_reporter
+        .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
+        .await;
 
     let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.new_rng().await);
     let immutable_session_maker = session_maker.make_immutable();
@@ -439,7 +436,6 @@ where
     let epoch_manager = RealThresholdEpochManager {
         crypto_storage: crypto_storage.clone(),
         session_maker: session_maker.clone(),
-        health_reporter: thread_core_health_reporter.clone(),
         base_kms: base_kms.new_instance().await,
         reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
         tracker: Arc::clone(&tracker),
@@ -580,6 +576,12 @@ where
         Arc::clone(&pub_dec_meta_store),
         telemetry_conf.refresh_interval(),
     );
+
+    // We finished the init of the KMS, we can now set the health reporter to serving
+    core_service_health_reporter
+        .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
+        .await;
+
     let kms = ThresholdKms::new(
         epoch_manager,
         user_decryptor,
@@ -595,7 +597,7 @@ where
         backup_operator,
         Arc::clone(&tracker),
         immutable_session_maker,
-        thread_core_health_reporter,
+        core_service_health_reporter,
         abort_handle,
     );
 

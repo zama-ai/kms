@@ -93,7 +93,7 @@ pub(crate) async fn new_epoch_with_reshare(
         crsgen: 1,
         preproc: 100,
         keygen: 100,
-        reshare: 1,
+        new_epoch: 1,
     };
 
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;

@@ -279,12 +279,12 @@ where
 
     /// Tries to delete all the types of key material related to a specific [RequestId].
     /// WARNING: This also deletes the BACKUP of the keys. Hence the method should should only be used as cleanup after a failed DKG.
-    pub async fn purge_key_material(
+    pub async fn purge_key_material<T: From<KeyGenMetadata> + Clone>(
         &self,
         req_id: &RequestId,
         epoch_id: &EpochId,
         kms_type: KMSType,
-        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
+        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<T>>,
     ) {
         // Lock all stores here as storing will be executed concurrently and hence we can otherwise not enforce the locking order
         let mut pub_storage = self.public_storage.lock().await;

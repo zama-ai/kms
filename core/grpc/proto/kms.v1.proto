@@ -755,8 +755,8 @@ message NewMpcEpochRequest {
 }
 
 message EpochResultResponse {
-  // The 32 Byte / 256 Bit ID of the resharing request, without `0x` prefix.
-  RequestId request_id = 1;
+  // The 32 Byte / 256 Bit ID of the epoch request, without `0x` prefix.
+  RequestId epoch_id = 1;
 
   // Key ID of the reshared key
   RequestId key_id = 2;

@@ -165,7 +165,7 @@ async fn test_largecipher_isolated() -> Result<()> {
         crsgen: 1,
         preproc: 1,
         keygen: 1,
-        reshare: 1,
+        new_epoch: 1,
     };
 
     // Setup with RAM storage and custom rate limiter

@@ -52,7 +52,7 @@ async fn do_context_switch(
         crsgen: 1,
         preproc: 1,
         keygen: 1,
-        reshare: 1,
+        new_epoch: 1,
     };
     let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
         dkg_params,

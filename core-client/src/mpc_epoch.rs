@@ -101,49 +101,50 @@ pub(crate) async fn do_new_epoch(
         assert_eq!(results.len(), num_parties);
     }
 
-    if let Some(previous_epoch) = new_epoch_params.previous_epoch_params {
-        // Poll the result endpoint
-        let mut response_tasks = JoinSet::new();
-        for (core_conf, ce) in core_endpoints.iter() {
-            let mut cur_client = ce.clone();
+    // In all cases poll the result endpoint as PRSS init is now non-blocking
+    // Poll the result endpoint
+    let mut response_tasks = JoinSet::new();
+    for (core_conf, ce) in core_endpoints.iter() {
+        let mut cur_client = ce.clone();
 
-            let core_conf = core_conf.clone();
-            response_tasks.spawn(async move {
-                let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
-                    tonic::Request::new(new_epoch_id.into());
+        let core_conf = core_conf.clone();
+        response_tasks.spawn(async move {
+            let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
+                tonic::Request::new(new_epoch_id.into());
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                SLEEP_TIME_BETWEEN_REQUESTS_MS,
+            ))
+            .await;
+            let mut response = cur_client.get_epoch_result(response_request).await;
+
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
                 tokio::time::sleep(tokio::time::Duration::from_millis(
                     SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
                 .await;
-                let mut response = cur_client.get_epoch_result(response_request).await;
-
-                let mut ctr = 0_usize;
-                while response.is_err()
-                    && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-                {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(
-                        SLEEP_TIME_BETWEEN_REQUESTS_MS,
-                    ))
-                    .await;
-                    let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
-                        tonic::Request::new(new_epoch_id.into());
-                    response = cur_client.get_epoch_result(response_request).await;
-                    ctr += 1;
-                    if ctr >= max_iter {
-                        break;
-                    }
+                let response_request: tonic::Request<kms_grpc::kms::v1::RequestId> =
+                    tonic::Request::new(new_epoch_id.into());
+                response = cur_client.get_epoch_result(response_request).await;
+                ctr += 1;
+                if ctr >= max_iter {
+                    break;
                 }
+            }
 
-                (core_conf, response)
-            });
-        }
+            (core_conf, response)
+        });
+    }
 
+    if let Some(previous_epoch) = new_epoch_params.previous_epoch_params {
         let mut response_vec = Vec::new();
         while let Some(response) = response_tasks.join_next().await {
             let (core_conf, response) = response?;
             let response = response?;
             let resp = response.into_inner();
-            assert_eq!(resp.request_id, Some(new_epoch_id.into()));
+            assert_eq!(resp.epoch_id, Some(new_epoch_id.into()));
             assert_eq!(resp.key_id, Some(previous_epoch.key_id.into()));
             assert_eq!(
                 resp.preprocessing_id,
@@ -151,7 +152,6 @@ pub(crate) async fn do_new_epoch(
             );
             response_vec.push((core_conf, resp));
         }
-
         let key_types = vec![
             PubDataType::PublicKey,
             PubDataType::PublicKeyMetadata,
@@ -209,6 +209,14 @@ pub(crate) async fn do_new_epoch(
                 kms_addrs,
             )?;
         }
-    };
+    } else {
+        // If it was just a PRSS init simply make sure all is ok
+        while let Some(response) = response_tasks.join_next().await {
+            let (_core_conf, response) = response?;
+            let response = response?;
+            let resp = response.into_inner();
+            assert_eq!(resp.epoch_id, Some(new_epoch_id.into()));
+        }
+    }
     Ok(new_epoch_id)
 }
