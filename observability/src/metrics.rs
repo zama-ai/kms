@@ -138,9 +138,9 @@ impl CoreMetrics {
         let meta_store_pub_metric: Cow<'static, str> =
             format!("{}_meta_storage_pub_decryptions", config.prefix).into();
         let meta_store_user_total_metric: Cow<'static, str> =
-            format!("{}_meta_storage_user_decryptions_total", config.prefix).into();
+            format!("{}_meta_storage_user_decryptions_in_store", config.prefix).into();
         let meta_store_pub_total_metric: Cow<'static, str> =
-            format!("{}_meta_storage_pub_decryptions_total", config.prefix).into();
+            format!("{}_meta_storage_pub_decryptions_in_store", config.prefix).into();
         let process_cpu_load_metric: Cow<'static, str> =
             format!("{}_process_cpu_load", config.prefix).into();
         let process_memory_metric: Cow<'static, str> =
