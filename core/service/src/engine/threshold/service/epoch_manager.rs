@@ -1116,7 +1116,7 @@ mod tests {
     use rand::SeedableRng;
     use threshold_fhe::{
         execution::endpoints::reshare_sk::SecureReshareSecretKeys,
-        malicious_execution::small_execution::malicious_prss::{EmptyPrss, FailingPrss},
+        malicious_execution::small_execution::malicious_prss::EmptyPrss,
     };
 
     impl<
