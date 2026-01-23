@@ -64,7 +64,7 @@ pub struct CoreMetrics {
     size_histogram: TaggedMetric<Histogram<f64>>,     // TODO currently not used
     // Gauges
     gauge: TaggedMetric<Gauge<i64>>,
-    cpu_load_gauge: TaggedMetric<Gauge<f64>>,
+    cpu_load_gauge: TaggedMetric<Gauge<f64>>, // 1-minute average CPU load, divided by number of cores
     memory_usage_gauge: TaggedMetric<Gauge<u64>>,
     file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of file descriptors of the KMS
     socat_file_descriptor_gauge: TaggedMetric<Gauge<u64>>, // Number of socat file descriptors

@@ -27,7 +27,7 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             system.refresh_specifics(specifics);
             let cpus_load_avg = System::load_average().one / num_cpus as f64;
 
-            tracing::debug!("CPU Load Average within 1 min {cpus_load_avg}");
+            tracing::debug!("CPU Load Average over all cores within 1 min {cpus_load_avg}");
 
             METRICS.record_cpu_load(cpus_load_avg);
 
