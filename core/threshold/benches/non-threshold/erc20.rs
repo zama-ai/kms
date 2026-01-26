@@ -92,6 +92,7 @@ fn main() {
             .expect("Decompression failed")
             .into_raw_parts();
 
+        let mut rng = AesRng::from_entropy();
         let mut from_amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
         let mut to_amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
         let mut amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
