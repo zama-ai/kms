@@ -12,7 +12,7 @@ use crate::{
 use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
 use kms_grpc::identifiers::{ContextId, EpochId};
-use kms_grpc::kms::v1::{CrsGenRequest, InitRequest, KeyGenPreprocRequest, KeyGenRequest};
+use kms_grpc::kms::v1::{CrsGenRequest, KeyGenPreprocRequest, KeyGenRequest};
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::{
     kms::v1::{
@@ -192,22 +192,6 @@ pub(crate) fn parse_grpc_request_id<'a, O: TryFrom<&'a kms_grpc::kms::v1::Reques
             format!("{id_type}: {request_id:?}"),
         ))
     })
-}
-
-#[allow(clippy::type_complexity)]
-pub fn validate_init_req(
-    req: &InitRequest,
-) -> Result<(ContextId, EpochId), Box<dyn std::error::Error + Send + Sync>> {
-    let epoch_id: EpochId =
-        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::Init)?.into();
-    // TODO(zama-ai/kms-internal/issues/2758)
-    // remove the default context when all of context is ready
-    let context_id: ContextId = match &req.context_id {
-        Some(context_id) => context_id.try_into()?,
-        None => *DEFAULT_MPC_CONTEXT,
-    };
-
-    Ok((context_id, epoch_id))
 }
 
 /// Validates a user decryption request and returns ciphertext, FheType, request digest, client

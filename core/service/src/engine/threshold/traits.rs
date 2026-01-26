@@ -1,6 +1,6 @@
 use crate::engine::utils::MetricedError;
 use kms_grpc::kms::v1::*;
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response};
 
 #[tonic::async_trait]
 pub trait UserDecryptor {

@@ -10,7 +10,7 @@ use kms_grpc::{
     utils::tonic_result::BoxedStatus,
     ContextId, EpochId,
 };
-use observability::metrics_names::OP_RESHARING;
+use observability::metrics_names::{OP_NEW_MPC_CONTEXT, OP_RESHARING};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
@@ -60,7 +60,7 @@ use crate::{
         },
     },
     util::{
-        meta_store::{handle_res_mapping, MetaStore},
+        meta_store::{handle_res_mapping, update_err_req_in_meta_store, MetaStore},
         rate_limiter::RateLimiter,
     },
     vault::storage::{
@@ -441,8 +441,7 @@ impl<
         mut two_sets_session: TwoSetsBaseSession,
         new_epoch_id: EpochId,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
-    ) -> Result<impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>, Status>
-    {
+    ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
         let epoch_id_as_request_id = new_epoch_id.into();
 
         let (mut private_keys, key_metadata) = self
@@ -476,19 +475,11 @@ impl<
         session_maker_immutable: ImmutableSessionMaker,
         new_epoch_id: EpochId,
         new_context_id: ContextId,
-        epoch_id_as_request_id: kms_grpc::RequestId,
-    ) -> Result<
-        (
-            SmallSession<ResiduePolyF4Z128>,
-            SmallSession<ResiduePolyF4Z64>,
-            BaseSession,
-        ),
-        Box<dyn std::error::Error + Send + Sync>,
-    > {
-        let make_err = |e| {
-            MetricedError::handle_unreturnable_error(OP_RESHARING, Some(epoch_id_as_request_id), e)
-        };
-
+    ) -> anyhow::Result<(
+        SmallSession<ResiduePolyF4Z128>,
+        SmallSession<ResiduePolyF4Z64>,
+        BaseSession,
+    )> {
         let session_z128 =
             async { new_epoch_id.derive_session_id_with_counter(RESHARE_Z128_SESSION_COUNTER) }
                 .and_then(|id| {
@@ -498,8 +489,7 @@ impl<
                         new_epoch_id,
                     )
                 })
-                .await
-                .map_err(make_err)?;
+                .await?;
 
         let session_z64 =
             async { new_epoch_id.derive_session_id_with_counter(RESHARE_Z64_SESSION_COUNTER) }
@@ -510,8 +500,7 @@ impl<
                         new_epoch_id,
                     )
                 })
-                .await
-                .map_err(make_err)?;
+                .await?;
 
         let session_online = async {
             new_epoch_id.derive_session_id_with_counter(RESHARE_SESSION_ONLINE_SET_2_COUNTER)
@@ -519,45 +508,26 @@ impl<
         .and_then(|id| {
             session_maker_immutable.make_base_session(id, new_context_id, NetworkMode::Sync)
         })
-        .await
-        .map_err(make_err)?;
+        .await?;
 
         Ok((session_z128, session_z64, session_online))
     }
 
     async fn compute_s2_preproc(
-        epoch_id_as_request_id: &kms_grpc::RequestId,
         session_z64: &mut SmallSession<ResiduePolyF4Z64>,
         session_z128: &mut SmallSession<ResiduePolyF4Z128>,
         num_needed_preproc: &ResharePreprocRequired,
-    ) -> Result<
-        (
-            impl BasePreprocessing<ResiduePolyF4Z64>,
-            impl BasePreprocessing<ResiduePolyF4Z128>,
-        ),
-        Box<dyn std::error::Error + Send + Sync>,
-    > {
+    ) -> anyhow::Result<(
+        impl BasePreprocessing<ResiduePolyF4Z64>,
+        impl BasePreprocessing<ResiduePolyF4Z128>,
+    )> {
         Ok((
             SecureSmallPreprocessing::default()
                 .execute(session_z64, num_needed_preproc.batch_params_64)
-                .await
-                .map_err(|e| {
-                    MetricedError::handle_unreturnable_error(
-                        OP_RESHARING,
-                        Some(*epoch_id_as_request_id),
-                        e,
-                    )
-                })?,
+                .await?,
             SecureSmallPreprocessing::default()
                 .execute(session_z128, num_needed_preproc.batch_params_128)
-                .await
-                .map_err(|e| {
-                    MetricedError::handle_unreturnable_error(
-                        OP_RESHARING,
-                        Some(*epoch_id_as_request_id),
-                        e,
-                    )
-                })?,
+                .await?,
         ))
     }
 
@@ -570,9 +540,7 @@ impl<
         verified_previous_epoch: &VerifiedPreviousEpochInfo,
         fhe_pubkeys: &FhePubKeySet,
         new_private_keyset: PrivateKeySet<4>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let epoch_id_as_request_id = new_epoch_id.into();
-
+    ) -> anyhow::Result<()> {
         let info = match compute_info_standard_keygen(
             sk,
             &DSEP_PUBDATA_KEY,
@@ -583,16 +551,7 @@ impl<
         ) {
             Ok(info) => info,
             Err(e) => {
-                let mut guarded_meta_storage = meta_store.write().await;
-                let _ = guarded_meta_storage.update(
-                    &epoch_id_as_request_id,
-                    Err("Failed to compute key info".to_string()),
-                );
-                return Err(MetricedError::handle_unreturnable_error(
-                    OP_RESHARING,
-                    Some(epoch_id_as_request_id),
-                    e,
-                ));
+                return Err(anyhow::anyhow!("Failed to compute key info: {}", e));
             }
         };
 
@@ -608,7 +567,7 @@ impl<
         };
 
         crypto_storage
-            .write_threshold_keys_with_reshare_meta_store(
+            .write_threshold_keys_with_epoch_meta_store(
                 &verified_previous_epoch.key_id,
                 &new_epoch_id,
                 threshold_fhe_keys,
@@ -626,8 +585,7 @@ impl<
         new_epoch_id: EpochId,
         new_context_id: ContextId,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
-    ) -> Result<impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>, Status>
-    {
+    ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
         let epoch_id_as_request_id = new_epoch_id.into();
 
         let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
@@ -655,13 +613,9 @@ impl<
         let crypto_storage = self.crypto_storage.clone();
 
         let task = async move {
-            let (mut session_z128, mut session_z64, session_online) = Self::create_set2_sessions(
-                immutable_session_maker,
-                new_epoch_id,
-                new_context_id,
-                epoch_id_as_request_id,
-            )
-            .await?;
+            let (mut session_z128, mut session_z64, session_online) =
+                Self::create_set2_sessions(immutable_session_maker, new_epoch_id, new_context_id)
+                    .await?;
 
             let num_parties_set_1 = two_sets_session
                 .roles()
@@ -675,13 +629,8 @@ impl<
             );
 
             let (mut correlated_randomness_z64, mut correlated_randomness_z128) =
-                Self::compute_s2_preproc(
-                    &epoch_id_as_request_id,
-                    &mut session_z64,
-                    &mut session_z128,
-                    &num_needed_preproc,
-                )
-                .await?;
+                Self::compute_s2_preproc(&mut session_z64, &mut session_z128, &num_needed_preproc)
+                    .await?;
 
             let new_private_keyset = Reshare::reshare_sk_two_sets_as_s2(
                 &mut (two_sets_session, session_online),
@@ -689,14 +638,7 @@ impl<
                 &mut correlated_randomness_z64,
                 verified_previous_epoch.key_parameters,
             )
-            .await
-            .map_err(|e| {
-                MetricedError::handle_unreturnable_error(
-                    OP_RESHARING,
-                    Some(epoch_id_as_request_id),
-                    e,
-                )
-            })?;
+            .await?;
 
             Self::store_reshared_keys(
                 &crypto_storage,
@@ -710,22 +652,6 @@ impl<
             .await
         };
 
-        //self.tracker.spawn(async move {
-        //    match task(permit).await {
-        //        Ok(_) => tracing::info!(
-        //            "Resharing completed successfully for new epoch ID {:?} and key ID {:?}",
-        //            new_epoch_id,
-        //            key_id
-        //        ),
-        //        Err(e) => tracing::error!(
-        //            "Resharing failed for new epoch ID {:?} and key ID {:?}: {}",
-        //            new_epoch_id,
-        //            key_id,
-        //            e
-        //        ),
-        //    }
-        //});
-
         Ok(task)
     }
 
@@ -735,8 +661,7 @@ impl<
         new_epoch_id: EpochId,
         new_context_id: ContextId,
         verified_previous_epoch: VerifiedPreviousEpochInfo,
-    ) -> Result<impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>, Status>
-    {
+    ) -> Result<impl Future<Output = anyhow::Result<()>>, MetricedError> {
         let epoch_id_as_request_id = new_epoch_id.into();
 
         let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
@@ -767,13 +692,9 @@ impl<
         let crypto_storage = self.crypto_storage.clone();
 
         let task = async move {
-            let (mut session_z128, mut session_z64, session_online) = Self::create_set2_sessions(
-                immutable_session_maker,
-                new_epoch_id,
-                new_context_id,
-                epoch_id_as_request_id,
-            )
-            .await?;
+            let (mut session_z128, mut session_z64, session_online) =
+                Self::create_set2_sessions(immutable_session_maker, new_epoch_id, new_context_id)
+                    .await?;
 
             let num_parties_set_1 = two_sets_session
                 .roles()
@@ -786,13 +707,8 @@ impl<
             );
 
             let (mut correlated_randomness_z64, mut correlated_randomness_z128) =
-                Self::compute_s2_preproc(
-                    &epoch_id_as_request_id,
-                    &mut session_z64,
-                    &mut session_z128,
-                    &num_needed_preproc,
-                )
-                .await?;
+                Self::compute_s2_preproc(&mut session_z64, &mut session_z128, &num_needed_preproc)
+                    .await?;
 
             let new_private_keyset = Reshare::reshare_sk_two_sets_as_both_sets(
                 &mut (two_sets_session, session_online),
@@ -801,14 +717,7 @@ impl<
                 &mut mutable_keys,
                 verified_previous_epoch.key_parameters,
             )
-            .await
-            .map_err(|e| {
-                MetricedError::handle_unreturnable_error(
-                    OP_RESHARING,
-                    Some(epoch_id_as_request_id),
-                    e,
-                )
-            })?;
+            .await?;
 
             Self::store_reshared_keys(
                 &crypto_storage,
@@ -830,8 +739,7 @@ impl<
         new_context_id: &ContextId,
         new_epoch_id: &EpochId,
         previous_epoch: PreviousEpochInfo,
-    ) -> Result<BoxFuture<'static, Result<(), Box<dyn std::error::Error + Send + Sync>>>, Status>
-    {
+    ) -> Result<BoxFuture<'static, anyhow::Result<()>>, MetricedError> {
         tracing::info!(
             "Received initiate resharing request from context {:?} to context {:?} for Key ID {:?} for epoch ID {:?}",
             previous_epoch.context_id,
@@ -988,23 +896,30 @@ impl<
             let context_id = context_id;
             let epoch_id = epoch_id;
             let meta_store = meta_store;
-            if do_prss
-                && Self::internal_init_prss(session_maker, &crypto_storage, &context_id, &epoch_id)
-                    .await
-                    .is_err()
-            {
-                let mut guarded_meta_store = meta_store.write().await;
-                let _ = guarded_meta_store.update(
-                    &epoch_id.into(),
-                    Err("PRSS initialization failed".to_string()),
-                );
-                return;
+            if do_prss {
+                if let Err(e) =
+                    Self::internal_init_prss(session_maker, &crypto_storage, &context_id, &epoch_id)
+                        .await
+                {
+                    let err = format!("PRSS initialization failed during epoch creation: {e:?}");
+                    let _ = update_err_req_in_meta_store(
+                        &mut meta_store.write().await,
+                        &epoch_id.into(),
+                        err,
+                        OP_NEW_MPC_CONTEXT,
+                    );
+                    return;
+                }
             }
             if let Some(resharing_task) = resharing_task {
-                if resharing_task.await.is_err() {
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store
-                        .update(&epoch_id.into(), Err("Resharing failed".to_string()));
+                if let Err(e) = resharing_task.await {
+                    let err = format!("Resharing failed during epoch creation: {e:?}");
+                    let _ = update_err_req_in_meta_store(
+                        &mut meta_store.write().await,
+                        &epoch_id.into(),
+                        err,
+                        OP_NEW_MPC_CONTEXT,
+                    );
                 }
             } else {
                 // Can't do much if inserts fails here

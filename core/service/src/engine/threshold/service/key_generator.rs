@@ -58,7 +58,7 @@ use crate::{
         },
         utils::MetricedError,
         validation::{
-            parse_optional_proto_request_id, proto_request_id, validate_key_gen_request,
+            parse_optional_proto_request_id, parse_proto_request_id, validate_key_gen_request,
             RequestIdParsingErr,
         },
     },
@@ -534,7 +534,7 @@ impl<
             OP_KEYGEN_RESULT
         };
         let request_id =
-            proto_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)
+            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)
                 .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
         let key_gen_res = retrieve_from_meta_store(
             self.dkg_pubinfo_meta_store.read().await,

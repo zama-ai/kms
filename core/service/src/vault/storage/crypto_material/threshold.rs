@@ -267,8 +267,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub async fn write_threshold_keys_with_reshare_meta_store(
+    pub async fn write_threshold_keys_with_epoch_meta_store(
         &self,
         key_id: &RequestId,
         epoch_id: &EpochId,

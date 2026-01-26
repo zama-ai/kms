@@ -40,7 +40,7 @@ use crate::{
         base::{compute_external_signature_preprocessing, BaseKmsStruct},
         threshold::{service::session::ImmutableSessionMaker, traits::KeyGenPreprocessor},
         utils::MetricedError,
-        validation::{proto_request_id, validate_preproc_request, RequestIdParsingErr},
+        validation::{parse_proto_request_id, validate_preproc_request, RequestIdParsingErr},
     },
     util::{
         meta_store::{add_req_to_meta_store, retrieve_from_meta_store, MetaStore},
@@ -417,16 +417,15 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, MetricedError> {
         let request_id =
-            proto_request_id(&request.into_inner(), RequestIdParsingErr::PreprocResponse).map_err(
-                |e| {
+            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::PreprocResponse)
+                .map_err(|e| {
                     MetricedError::new(
                         OP_KEYGEN_PREPROC_RESULT,
                         None,
                         e,
                         tonic::Code::InvalidArgument,
                     )
-                },
-            )?;
+                })?;
 
         let preproc_data = retrieve_from_meta_store(
             self.preproc_buckets.read().await,
