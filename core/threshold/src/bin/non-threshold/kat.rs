@@ -2,6 +2,9 @@ use std::path::Path;
 
 use clap::Parser;
 use tfhe::core_crypto::fft_impl::fft64::math::fft::{setup_custom_fft_plan, FftAlgo, Method, Plan};
+use tfhe::core_crypto::prelude::NormalizedHammingWeightBound;
+use tfhe::xof_key_set::CompressedXofKeySet;
+use tfhe::Tag;
 use tfhe::{
     core_crypto::commons::generators::DeterministicSeeder,
     prelude::{FheDecrypt, FheEncrypt},
@@ -37,11 +40,21 @@ fn generate_and_save_keys(
     params: DKGParams,
     storage_path: &str,
     save: bool,
-) -> (ClientKey, CompressedServerKey) {
+) -> (ClientKey, CompressedXofKeySet) {
     let config = params.to_tfhe_config();
-    //NOTE: REAL KAT SHOULD USE XOFKEYSET BUT WE CAN NOT GENERATE THOSE YET
-    let client_key = ClientKey::generate_with_seed(config, Seed(42));
-    let compressed_server_key = client_key.generate_compressed_server_key();
+    let max_norm_hwt = params
+        .get_params_basics_handle()
+        .get_sk_deviations()
+        .expect("Expect to have pmax params")
+        .pmax;
+    let (client_key, compressed_server_key) = CompressedXofKeySet::generate(
+        config,
+        vec![42, 43, 44, 45],
+        128,
+        NormalizedHammingWeightBound::new(max_norm_hwt).expect("Invalid hwt bound for KAT"),
+        Tag::from("KAT"),
+    )
+    .expect("XofKeySet generation for KAT failed");
 
     if save {
         // Save keys to files
@@ -222,7 +235,13 @@ fn main() {
         println!("✅ Keys are identical !");
     }
 
-    set_server_key(compressed_server_key.decompress());
+    set_server_key(
+        compressed_server_key
+            .decompress()
+            .expect("Decompression failed")
+            .into_raw_parts()
+            .1,
+    );
 
     let (ciphertext_43, ciphertext_4445, ciphertext_add, ciphertext_mult) =
         generate_and_save_ciphertexts(&client_key, &args.path_to_kat_folder, args.generate_kat);

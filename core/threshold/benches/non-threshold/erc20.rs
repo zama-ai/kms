@@ -6,14 +6,12 @@
 #[path = "../utilities.rs"]
 mod utilities;
 
-use crate::utilities::set_plan;
 use aes_prng::AesRng;
 #[cfg(not(feature = "measure_memory"))]
 use criterion::Criterion;
 use rand::prelude::*;
-use tfhe::{prelude::*, CompactPublicKey, ReRandomizationContext};
-use tfhe::{set_server_key, ClientKey, FheUint64, ServerKey};
-use utilities::ALL_PARAMS;
+use tfhe::{prelude::*, set_server_key, CompactPublicKey, FheUint64, ReRandomizationContext};
+use utilities::{generate_tfhe_keys, set_plan, ALL_PARAMS};
 
 /// This one uses overflowing sub to remove the need for comparison
 /// it also uses the 'boolean' multiplication
@@ -87,19 +85,19 @@ fn main() {
             // Rerandomization is required for this bench
             continue;
         }
-        let config = params.to_tfhe_config();
+        let (client_key, compressed_server_key) = generate_tfhe_keys(params);
 
-        let mut rng = AesRng::from_entropy();
-        let cks = ClientKey::generate(config);
-        let sks = ServerKey::new(&cks);
-        let public_key = tfhe::CompactPublicKey::new(&cks);
+        let (public_key, server_key) = compressed_server_key
+            .decompress()
+            .expect("Decompression failed")
+            .into_raw_parts();
 
-        let mut from_amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
-        let mut to_amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
-        let mut amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
+        let mut from_amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
+        let mut to_amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
+        let mut amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
 
-        rayon::broadcast(|_| set_server_key(sks.clone()));
-        set_server_key(sks);
+        rayon::broadcast(|_| set_server_key(server_key.clone()));
+        set_server_key(server_key);
 
         let mut c = Criterion::default().sample_size(10).configure_from_args();
 
@@ -158,19 +156,21 @@ fn main() {
 
         let bench_name = format!("non-threshold_erc20_{name}_memory");
 
-        let config = params.to_tfhe_config();
+        let (client_key, compressed_server_key) = generate_tfhe_keys(params);
 
-        let cks = ClientKey::generate(config);
-        let sks = ServerKey::new(&cks);
-        let public_key = tfhe::CompactPublicKey::new(&cks);
+        let (public_key, server_key) = compressed_server_key
+            .decompress()
+            .expect("Decompression failed")
+            .into_raw_parts();
 
-        rayon::broadcast(|_| set_server_key(sks.clone()));
-        set_server_key(sks);
+        rayon::broadcast(|_| set_server_key(server_key.clone()));
+        set_server_key(server_key);
+
         let mut rng = AesRng::from_entropy();
 
-        let from_amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
-        let to_amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
-        let amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
+        let from_amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
+        let to_amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
+        let amount = FheUint64::encrypt(rng.gen::<u64>(), &client_key);
 
         bench_memory(
             transfer,

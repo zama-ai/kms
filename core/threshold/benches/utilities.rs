@@ -1,4 +1,9 @@
 use tfhe::core_crypto::fft_impl::fft64::math::fft::{setup_custom_fft_plan, FftAlgo, Method, Plan};
+use tfhe::{
+    core_crypto::{prelude::NormalizedHammingWeightBound, seeders::new_seeder},
+    xof_key_set::CompressedXofKeySet,
+    ClientKey, Tag,
+};
 #[cfg(feature = "measure_memory")]
 use threshold_fhe::allocator::MEM_ALLOCATOR;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -78,4 +83,27 @@ pub fn set_plan() {
         );
         setup_custom_fft_plan(my_plan);
     }
+}
+
+pub fn generate_tfhe_keys(params: DKGParams) -> (ClientKey, CompressedXofKeySet) {
+    let config = params.to_tfhe_config();
+
+    // If the params do not have sk deviation, we set a default value of 1.0
+    let max_norm_hwt = params
+        .get_params_basics_handle()
+        .get_sk_deviations()
+        .map(|d| d.pmax)
+        .unwrap_or(1.0);
+
+    let mut seeder = new_seeder();
+    let private_seed_bytes = seeder.seed().0.to_le_bytes().to_vec();
+
+    CompressedXofKeySet::generate(
+        config,
+        private_seed_bytes,
+        128,
+        NormalizedHammingWeightBound::new(max_norm_hwt).expect("Invalid hwt bound for KAT"),
+        Tag::from("BENCH"),
+    )
+    .expect("XofKeySet generation for KAT failed")
 }

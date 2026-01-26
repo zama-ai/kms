@@ -6,7 +6,7 @@
 #[path = "../utilities.rs"]
 mod utilities;
 
-use crate::utilities::set_plan;
+use crate::utilities::{generate_tfhe_keys, set_plan};
 #[cfg(not(feature = "measure_memory"))]
 use criterion::measurement::WallTime;
 #[cfg(not(feature = "measure_memory"))]
@@ -18,7 +18,7 @@ use std::hint::black_box;
 use std::ops::*;
 
 use tfhe::prelude::*;
-use tfhe::{set_server_key, ClientKey, FheUint64, ServerKey};
+use tfhe::{set_server_key, ClientKey, FheUint64};
 
 //use tfhe::{FheUint128, FheUint16, FheUint2, FheUint32, FheUint4,FheUint8,}
 
@@ -167,12 +167,15 @@ pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
 fn main() {
     set_plan();
     for (name, params) in ALL_PARAMS {
-        let config = params.to_tfhe_config();
+        let (client_key, compressed_server_key) = generate_tfhe_keys(params);
 
-        let cks = ClientKey::generate(config);
-        let sks = ServerKey::new(&cks);
+        let (_public_key, server_key) = compressed_server_key
+            .decompress()
+            .expect("Decompression failed")
+            .into_raw_parts();
 
-        set_server_key(sks);
+        rayon::broadcast(|_| set_server_key(server_key.clone()));
+        set_server_key(server_key);
 
         let bench_name = format!("non-threshold_basic-ops_{name}");
 
@@ -197,17 +200,20 @@ fn main() {
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
     for (name, params) in ALL_PARAMS {
-        let config = params.to_tfhe_config();
+        let (client_key, compressed_server_key) = generate_tfhe_keys(params);
 
-        let cks = ClientKey::generate(config);
-        let sks = ServerKey::new(&cks);
+        let (_public_key, server_key) = compressed_server_key
+            .decompress()
+            .expect("Decompression failed")
+            .into_raw_parts();
 
-        set_server_key(sks);
+        rayon::broadcast(|_| set_server_key(server_key.clone()));
+        set_server_key(server_key);
 
         let bench_name = format!("non-threshold_basic-ops_{name}");
 
         {
-            bench_fhe_uint64(&cks, &bench_name);
+            bench_fhe_uint64(&client_key, &bench_name);
         }
     }
 }

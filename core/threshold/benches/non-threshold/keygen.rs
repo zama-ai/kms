@@ -1,31 +1,22 @@
 #[path = "../utilities.rs"]
 mod utilities;
 
+use crate::utilities::generate_tfhe_keys;
 use crate::utilities::set_plan;
 #[cfg(not(feature = "measure_memory"))]
 use criterion::measurement::WallTime;
 #[cfg(not(feature = "measure_memory"))]
 use criterion::{BenchmarkGroup, Criterion};
-use tfhe::{ClientKey, Config, ServerKey};
 #[cfg(not(feature = "measure_memory"))]
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "measure_memory")]
 use utilities::bench_memory;
 use utilities::ALL_PARAMS;
 
-fn keygen(config: Config) -> (ClientKey, ServerKey) {
-    let cks = ClientKey::generate(config);
-    let sks = ServerKey::new(&cks);
-
-    (cks, sks)
-}
-
 #[cfg(not(feature = "measure_memory"))]
 fn bench_keygen(c: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
-    let config = params.to_tfhe_config();
-
     c.bench_function("keygen", |b| {
-        b.iter(|| std::hint::black_box(keygen(config)));
+        b.iter(|| std::hint::black_box(generate_tfhe_keys(params)));
     });
 }
 
@@ -60,7 +51,6 @@ fn main() {
 
     for (name, params) in ALL_PARAMS {
         let bench_name = format!("non-threshold_keygen_{name}_memory");
-        let config = params.to_tfhe_config();
-        bench_memory(keygen, config, bench_name);
+        bench_memory(generate_tfhe_keys, params, bench_name);
     }
 }
