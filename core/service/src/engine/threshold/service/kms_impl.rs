@@ -629,11 +629,17 @@ fn update_threshold_kms_system_metrics(
                 metrics::METRICS.record_meta_storage_user_decryptions(
                     user_meta_store_guard.get_processing_count() as u64,
                 );
+                metrics::METRICS.record_meta_storage_user_decryptions_total(
+                    user_meta_store_guard.get_total_count() as u64,
+                );
             }
             {
                 let public_meta_store_guard = public_meta_store.read().await;
                 metrics::METRICS.record_meta_storage_public_decryptions(
                     public_meta_store_guard.get_processing_count() as u64,
+                );
+                metrics::METRICS.record_meta_storage_public_decryptions_total(
+                    public_meta_store_guard.get_total_count() as u64,
                 );
             }
             tokio::time::sleep(refresh_interval).await;
