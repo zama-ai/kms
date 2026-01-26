@@ -11,7 +11,7 @@ use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
 use crate::engine::validation::{
-    parse_optional_proto_request_id, parse_proto_context_id, RequestIdParsingErr,
+    parse_grpc_request_id, parse_optional_proto_request_id, RequestIdParsingErr,
 };
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
@@ -109,7 +109,7 @@ where
             .context_id
             .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
         let context_id =
-            parse_proto_context_id(&proto_context_id, RequestIdParsingErr::CustodianContext)?;
+            parse_grpc_request_id(&proto_context_id, RequestIdParsingErr::CustodianContext)?;
 
         Ok(context_id)
     }

@@ -18,7 +18,7 @@ fn config_path() -> String {
 async fn insecure_key_gen(test_path: &Path) -> String {
     let path_to_config = root_path().join(config_path());
     let config = CmdConfig {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
         command: CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
             shared_args: SharedKeyGenParameters::default(),
         }),
@@ -45,7 +45,7 @@ async fn crs_gen(test_path: &Path) -> String {
     let path_to_config = root_path().join(config_path());
     let command = CCCommand::CrsGen(CrsParameters { max_num_bits: 2048 });
     let config = CmdConfig {
-        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        file_conf: Some(vec![String::from(path_to_config.to_str().unwrap())]),
         command,
         logs: true,
         max_iter: 200,

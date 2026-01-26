@@ -6,10 +6,10 @@ mod key_gen_tests;
 mod misc_tests;
 mod mpc_context_tests;
 #[cfg(feature = "slow_tests")]
+mod mpc_epoch_tests;
+#[cfg(feature = "slow_tests")]
 mod nightly_tests;
 mod public_decryption_tests;
-#[cfg(feature = "slow_tests")]
-mod reshare_tests;
 #[cfg(feature = "slow_tests")]
 mod restore_from_backup_tests;
 mod user_decryption_tests;

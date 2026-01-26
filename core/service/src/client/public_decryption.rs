@@ -8,7 +8,7 @@ use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::TypedPlaintext;
 use kms_grpc::kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext};
 use kms_grpc::rpc_types::alloy_to_protobuf_domain;
-use kms_grpc::RequestId;
+use kms_grpc::{EpochId, RequestId};
 
 impl Client {
     /// Creates a decryption request to send to the KMS servers.
@@ -22,6 +22,7 @@ impl Client {
         request_id: &RequestId,
         context_id: Option<&ContextId>,
         key_id: &RequestId,
+        epoch_id: Option<&EpochId>,
     ) -> anyhow::Result<PublicDecryptionRequest> {
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
@@ -38,7 +39,7 @@ impl Client {
             request_id: Some((*request_id).into()),
             extra_data: vec![],
             context_id: context_id.map(|c| (*c).into()),
-            epoch_id: None,
+            epoch_id: epoch_id.map(|e| (*e).into()),
         };
         Ok(req)
     }

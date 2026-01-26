@@ -24,7 +24,7 @@ pub struct RateLimiterConfig {
     #[validate(range(min = 1))]
     pub keygen: u32,
     #[validate(range(min = 1))]
-    pub reshare: u32,
+    pub new_epoch: u32,
 }
 
 impl Default for RateLimiterConfig {
@@ -36,7 +36,7 @@ impl Default for RateLimiterConfig {
             crsgen: 100,
             preproc: 25000,
             keygen: 1000,
-            reshare: 1,
+            new_epoch: 1,
         }
     }
 }
@@ -123,7 +123,7 @@ impl RateLimiter {
     impl_rate_limiter_for!(start_crsgen, crsgen, "crsgen");
     impl_rate_limiter_for!(start_preproc, preproc, "preproc");
     impl_rate_limiter_for!(start_keygen, keygen, "keygen");
-    impl_rate_limiter_for!(start_reshare, reshare, "reshare");
+    impl_rate_limiter_for!(start_new_epoch, new_epoch, "new_epoch");
 }
 
 #[cfg(test)]
@@ -180,7 +180,7 @@ mod tests {
             crsgen: 1,
             preproc: 1,
             keygen: 1,
-            reshare: 1,
+            new_epoch: 1,
         });
 
         // first pub_decryptryption is ok, but uses all tokens

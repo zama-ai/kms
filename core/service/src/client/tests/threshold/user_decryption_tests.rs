@@ -511,6 +511,7 @@ pub(crate) async fn user_decryption_threshold(
                     &request_id,
                     &key_id.to_string().try_into().unwrap(),
                     None,
+                    None,
                     encryption_scheme,
                 )
                 .unwrap();
