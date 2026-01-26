@@ -185,7 +185,7 @@ fn main() {
         {
             let bench_name = format!("{bench_name}_FheUint64");
             let mut group = c.benchmark_group(&bench_name);
-            bench_fhe_uint64(&mut group, &cks);
+            bench_fhe_uint64(&mut group, &client_key);
         }
 
         #[cfg(not(feature = "measure_memory"))]
