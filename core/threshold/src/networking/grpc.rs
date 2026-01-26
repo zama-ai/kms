@@ -278,6 +278,25 @@ impl GrpcNetworkingManager {
                         // TODO check fort time out
                         match session.upgrade() {
                             Some(network_session) => {
+                                match network_session.init_time.get() {
+                                    Some(instant) => {
+                                        if instant.elapsed() > discard_inactive_interval {
+                                            tracing::warn!(
+                                                "Discarding Active session {:?} after {:?} seconds.",
+                                                session_id,
+                                                instant.elapsed().as_secs()
+                                            );
+                                            return false;
+                                        }
+                                    }
+                                    None => {
+                                        tracing::error!(
+                                            "Network session {:?} has no init time set.",
+                                            session_id
+                                        );
+                                        return false;
+                                    }
+                                }
                                 if network_session.is_aborted() {
                                     // If the session has been aborted, we mark it as completed
                                     *status = SessionStatus::Completed(Instant::now());
@@ -288,7 +307,7 @@ impl GrpcNetworkingManager {
                             None => {
                                     *status = SessionStatus::Completed(Instant::now());
                             },
-                        };
+                        }
                         true
                     }
                 });
@@ -687,6 +706,7 @@ pub(crate) enum SessionStatus {
     Active(Weak<NetworkSession>),
 }
 
+#[allow(clippy::from_over_into)]
 impl Into<SendValueResponse> for SessionStatus {
     fn into(self) -> SendValueResponse {
         let status = match self {
@@ -699,6 +719,7 @@ impl Into<SendValueResponse> for SessionStatus {
         }
     }
 }
+#[allow(clippy::from_over_into)]
 impl Into<SendValueResponse> for &SessionStatus {
     fn into(self) -> SendValueResponse {
         let status = match self {
