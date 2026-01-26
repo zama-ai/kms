@@ -361,6 +361,10 @@ jobs:
       # PERFORMANCE TESTING
       # ======================================================================
       - name: Run performance testing
+        env:
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           ###################################################################
           # Prepare and execute Argo workflow for performance testing
@@ -383,7 +387,7 @@ jobs:
             ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml \
             -p tls="${TLS_STATUS}" \
             -p fhe-params="${FHE_PARAMS}" \
-            -p run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            -p run_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
 
           echo "Streaming workflow logs..."
           argo logs @latest -f -n "${NAMESPACE}" | tee argo-workflow-logs.txt
