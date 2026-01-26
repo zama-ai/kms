@@ -691,6 +691,7 @@ pub(crate) struct ImmutableSessionMaker {
 }
 
 impl ImmutableSessionMaker {
+    #[allow(dead_code)]
     pub(crate) async fn context_exists(&self, context_id: &ContextId) -> bool {
         self.inner.context_exists(context_id).await
     }

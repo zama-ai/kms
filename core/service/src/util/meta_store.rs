@@ -1,4 +1,5 @@
 use crate::{anyhow_error_and_log, consts::DURATION_WAITING_ON_RESULT_SECONDS, some_or_err};
+use anyhow::bail;
 use async_cell::sync::AsyncCell;
 use kms_grpc::RequestId;
 use std::{
@@ -286,7 +287,7 @@ impl<T: Clone> MetaStore<T> {
 }
 
 #[cfg(feature = "non-wasm")]
-pub(crate) async fn add_req_to_meta_store<T: Clone>(
+pub(crate) fn add_req_to_meta_store<T: Clone>(
     meta_store: &mut RwLockWriteGuard<'_, MetaStore<T>>,
     req_id: &RequestId,
     request_metric: &'static str,
@@ -336,7 +337,6 @@ pub(crate) fn update_ok_req_in_meta_store<T: Clone>(
         Err(e) => {
             // Update error counter for meta-store update failure
             MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), e);
-
             false
         }
     }
@@ -355,7 +355,6 @@ pub(crate) fn update_err_req_in_meta_store<T: Clone>(
     error: String,
     request_metric: &'static str,
 ) -> bool {
-    // Log and increment relevant metrics according to error
     MetricedError::handle_unreturnable_error(request_metric, Some(*req_id), error.clone());
 
     match meta_store.update(req_id, Err(error.clone())) {
@@ -379,6 +378,54 @@ pub(crate) async fn retrieve_from_meta_store<T: Clone>(
 ) -> Result<T, MetricedError> {
     let handle = meta_store.retrieve(req_id);
     drop(meta_store); // Release the read lock early as we otherwise risk holding it for up to DURATION_WAITING_ON_RESULT_SECONDS!
+    handle_res_metriced(handle, req_id, metric_scope).await
+}
+
+#[cfg(feature = "non-wasm")]
+pub async fn handle_res<T: Clone>(
+    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
+    req_id: &RequestId,
+) -> anyhow::Result<T> {
+    match handle {
+        None => {
+            bail!("Could not retrieve the result with request ID {req_id}. It does not exist")
+        }
+        Some(cell) => {
+            let result = tokio::time::timeout(
+                tokio::time::Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS),
+                cell.get(),
+            )
+            .await;
+            // Peel off the potential errors
+            if let Ok(result) = result {
+                match result {
+                    Ok(result) => Ok(result),
+                    Err(e) => {
+                        let msg = format!(
+                                "Could not retrieve the result with request ID {req_id} since it finished with an error: {e}"
+                            );
+                        tracing::warn!(msg);
+                        bail!(msg);
+                    }
+                }
+            } else {
+                let msg = format!(
+                    "Could not retrieve the result with request ID {req_id} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
+                );
+                tracing::info!(msg);
+                bail!(msg);
+            }
+            // Note that this is not logged as an error as we expect calls to take some time to be completed
+        }
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+async fn handle_res_metriced<T: Clone>(
+    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
+    req_id: &RequestId,
+    metric_scope: &'static str,
+) -> Result<T, MetricedError> {
     match handle {
         None => {
             let msg = format!(
