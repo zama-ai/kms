@@ -27,6 +27,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::runtime::party::{Identity, RoleKind, RoleTrait},
     networking::r#gen::Status,
+    networking::constants::NETWORKING_INTERVAL_LOGS_WAITING_SENDER,
 };
 use crate::{execution::runtime::party::RoleAssignment, session_id::SessionId};
 
@@ -499,10 +500,23 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
 
         tracing::debug!("Waiting to receive from {:?}", sender);
 
-        let mut local_packet = rx
-            .recv()
-            .await
-            .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
+        let mut log_interval = tokio::time::interval_at(
+            Instant::now() + Duration::from_secs(NETWORKING_INTERVAL_LOGS_WAITING_SENDER),
+            Duration::from_secs(NETWORKING_INTERVAL_LOGS_WAITING_SENDER),
+        );
+        let mut local_packet = loop {
+            let packet = tokio::select! {
+                    _ = log_interval.tick() => {
+                        tracing::warn!("Still waiting to receive from party {:?} for session {:?}", sender, self.session_id);
+                        None
+                    },
+                    local_packet = rx.recv() => Some(local_packet)
+            };
+            if let Some(local_packet) = packet {
+                break local_packet;
+            }
+        }
+        .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
 
         // drop old messages
         let network_round = *counter_lock;

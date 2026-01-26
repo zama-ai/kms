@@ -25,6 +25,9 @@ pub(crate) const DISCARD_INACTIVE_SESSION_INTERVAL_SECS: u64 = 5 * 60;
 
 // The default maximum waiting time we wait for trying to push the message in the queue
 pub(crate) const MAX_WAITING_TIME_MESSAGE_QUEUE: u64 = 60;
+
+/// The default interval for logging waiting messages in networking
+pub(crate) const NETWORKING_INTERVAL_LOGS_WAITING_SENDER: u64 = 60;
 lazy_static! {
     /// The default maximum internal between retries (Cap at 60s intervals)
     pub static ref MAX_INTERVAL: Duration = Duration::from_secs(60);
