@@ -487,18 +487,19 @@ impl<
             )
         })?;
 
+        // Find the role of the current server and validate the context exists
         let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
             MetricedError::new(
                 OP_USER_DECRYPT_REQUEST,
                 Some(req_id),
                 e,
-                tonic::Code::Internal,
+                tonic::Code::NotFound,
             )
         })?;
         let dec_mode = self.decryption_mode;
         let metric_tags = vec![
             (TAG_PARTY_ID, my_role.to_string()),
-            (TAG_KEY_ID, key_id.as_str()), // TODO will this be too many labels or does it make sense to keep key, conetxt and epoch
+            (TAG_KEY_ID, key_id.as_str()), // TODO will this be too many labels or does it make sense to keep key, context and epoch
             (TAG_CONTEXT_ID, context_id.as_str()),
             (TAG_EPOCH_ID, epoch_id.as_str()),
             (TAG_USER_DECRYPTION_KIND, dec_mode.as_str_name().to_string()),
@@ -517,8 +518,7 @@ impl<
             &mut meta_store.write().await,
             &req_id,
             OP_USER_DECRYPT_REQUEST,
-        )
-        .await?;
+        )?;
 
         let sk = (*self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(

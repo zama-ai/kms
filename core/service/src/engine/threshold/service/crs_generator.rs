@@ -10,10 +10,10 @@ use kms_grpc::{
     RequestId,
 };
 use observability::{
-    metrics,
+    metrics::{self, DurationGuard},
     metrics_names::{
-        ERR_CANCELLED, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST,
-        TAG_CONTEXT_ID, TAG_PARTY_ID,
+        OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_CONTEXT_ID,
+        TAG_CRS_ID, TAG_PARTY_ID,
     },
 };
 use threshold_fhe::{
@@ -33,13 +33,11 @@ use tonic::{Request, Response};
 use tracing::Instrument;
 
 // === Internal Crate ===
-use crate::util::meta_store::update_err_req_in_meta_store;
 use crate::{
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{compute_info_crs, BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS},
         threshold::{service::session::ImmutableSessionMaker, traits::CrsGenerator},
-        utils::MetricedError,
         validation::{parse_proto_request_id, validate_crs_gen_request, RequestIdParsingErr},
     },
     util::{
@@ -48,6 +46,7 @@ use crate::{
     },
     vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage, StorageExt},
 };
+use crate::{engine::utils::MetricedError, util::meta_store::update_err_req_in_meta_store};
 
 // === Insecure Feature-Specific Imports ===
 cfg_if::cfg_if! {
@@ -98,20 +97,16 @@ impl<
         } else {
             OP_CRS_GEN_REQUEST
         };
-        // Check for resource exhaustion once all the other checks are ok
-        // because resource exhaustion can be recovered by sending the exact same request
-        // but the errors above cannot be tried again.
         let permit = self
             .rate_limiter
             .start_crsgen()
             .await
             .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
 
+        let mut timer = metrics::METRICS.time_operation(op_tag).start();
+
         let inner = request.into_inner();
-        tracing::info!(
-            "Starting crs generation on kms for request ID {:?}, context ID {:?}, max_num_bits {:?}",
-            inner.request_id, inner.context_id, inner.max_num_bits
-        );
+
         let (req_id, context_id, witness_dim, dkg_params, eip712_domain) =
             validate_crs_gen_request(inner.clone()).map_err(|e| {
                 MetricedError::new(
@@ -121,6 +116,18 @@ impl<
                     tonic::Code::InvalidArgument,
                 )
             })?;
+        // Find the role of the current server and validate the context exists
+        let my_role = self
+            .session_maker
+            .my_role(&context_id)
+            .await
+            .map_err(|e| MetricedError::new(op_tag, Some(req_id), e, tonic::Code::NotFound))?;
+        let metric_tags = vec![
+            (TAG_PARTY_ID, my_role.to_string()),
+            (TAG_CRS_ID, req_id.as_str()),
+            (TAG_CONTEXT_ID, context_id.as_str()),
+        ];
+        timer.tags(metric_tags.clone());
 
         // Validate the request ID before proceeding
         self.crypto_storage.crs_exists(&req_id).await.map_err(|e| {
@@ -132,8 +139,14 @@ impl<
             )
         })?;
 
-        add_req_to_meta_store(&mut self.crs_meta_store.write().await, &req_id, op_tag).await?;
-
+        add_req_to_meta_store(&mut self.crs_meta_store.write().await, &req_id, op_tag)?;
+        let sigkey = self.base_kms.sig_key().map_err(|e| {
+            MetricedError::new(op_tag, Some(req_id), e, tonic::Code::FailedPrecondition)
+        })?;
+        tracing::info!(
+            "Starting crs generation on kms for request ID {:?}, context ID {:?}, max_num_bits {:?}",
+            inner.request_id, inner.context_id, inner.max_num_bits
+        );
         // NOTE: everything inside this function will cause an Aborted error code
         // so before calling it we should do as much validation as possible without modifying state
         self.inner_crs_gen(
@@ -144,6 +157,8 @@ impl<
             &eip712_domain,
             permit,
             context_id,
+            sigkey,
+            timer,
             insecure,
         )
         .await
@@ -161,6 +176,8 @@ impl<
         eip712_domain: &alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
         context_id: ContextId,
+        sk: Arc<PrivateSigKey>,
+        timer: DurationGuard<'static>,
         insecure: bool,
     ) -> anyhow::Result<()> {
         // Retrieve the correct tag
@@ -169,17 +186,6 @@ impl<
         } else {
             OP_CRS_GEN_REQUEST
         };
-
-        // Prepare the timer before giving it to the tokio task
-        // that runs the computation
-        let timer = metrics::METRICS.time_operation(op_tag).tags(vec![
-            (
-                TAG_PARTY_ID,
-                self.session_maker.my_role(&context_id).await?.to_string(),
-            ),
-            (TAG_CONTEXT_ID, context_id.to_string()),
-        ]);
-
         let session_id = req_id.derive_session_id()?;
         // CRS ceremony requires a sync network
         let session = self
@@ -193,10 +199,6 @@ impl<
         let crypto_storage_cancelled = self.crypto_storage.clone();
         let eip712_domain_copy = eip712_domain.clone();
 
-        // we need to clone the signature key because it needs to be given
-        // the thread that spawns the CRS ceremony
-        let sk = self.base_kms.sig_key()?;
-
         // we do not need to hold the handle,
         // the result of the computation is tracked the crs_meta_store
         let rng = self.base_kms.new_rng().await.to_owned();
@@ -208,21 +210,25 @@ impl<
         let ongoing = Arc::clone(&self.ongoing);
         self.tracker
             .spawn(async move {
-                //Start the metric timer, it will end on drop
-                let _timer = timer.start();
+                // Capture the timer inside the generation tasks, such that when the task
+                // exits, the timer is dropped and thus exported
+                let _inner_timer = timer;
+                let _inner_permit = permit;
                 tokio::select! {
-                   ()  = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, permit,  insecure) => {
+                   ()  = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, insecure) => {
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&req_id);
                         tracing::info!("CRS generation of request {} exiting normally.", req_id);
                     },
                     () = token.cancelled() => {
-                        tracing::error!("CRS generation of request {} exiting before completion because of a cancellation event.", req_id);
+                        MetricedError::handle_unreturnable_error(
+                            op_tag,
+                            Some(req_id),
+                            anyhow::anyhow!("CRS generation of request exiting before completion because of a cancellation event")
+                        );
                         // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let guarded_meta_store= meta_store_cancelled.write().await;
                         crypto_storage_cancelled.purge_crs_material(&req_id, guarded_meta_store).await;
-                        metrics::METRICS.increment_error_counter(op_tag, ERR_CANCELLED);
-                        tracing::info!("Trying to clean up any already written material.")
                     },
                 }
             }.instrument(tracing::Span::current()));
@@ -258,7 +264,7 @@ impl<
                             request_id,
                             crs_data.crs_id
                         ),
-                        tonic::Code::NotFound,
+                        tonic::Code::Internal,
                     ));
                 }
                 Ok(Response::new(CrsGenResult {
@@ -302,7 +308,6 @@ impl<
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
         eip712_domain: alloy_sol_types::Eip712Domain,
-        permit: OwnedSemaphorePermit,
         insecure: bool,
     ) {
         tracing::info!(
@@ -315,7 +320,6 @@ impl<
             OP_CRS_GEN_REQUEST
         };
 
-        let _permit = permit;
         let crs_start_timer = Instant::now();
         let pke_params = params
             .get_params_basics_handle()
