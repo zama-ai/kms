@@ -13,6 +13,7 @@ use crate::networking::constants::{
     NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
     SESSION_CLEANUP_INTERVAL_SECS, SESSION_STATUS_UPDATE_INTERVAL_SECS,
 };
+use crate::networking::gen::Status;
 use crate::networking::health_check::HealthCheckSession;
 use crate::networking::Networking;
 use crate::session_id::SessionId;
@@ -22,7 +23,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
-
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     Mutex, RwLock,
@@ -275,11 +275,20 @@ impl GrpcNetworkingManager {
                         }
                     }
                     SessionStatus::Active(session) => {
-                        if session.upgrade().is_none() {
-                            *status = SessionStatus::Completed(Instant::now());
-                        } else {
-                            internal_active_sessions_count += 1;
-                        }
+                        // TODO check fort time out
+                        match session.upgrade() {
+                            Some(network_session) => {
+                                if network_session.is_aborted() {
+                                    // If the session has been aborted, we mark it as completed
+                                    *status = SessionStatus::Completed(Instant::now());
+                                } else {
+                                    internal_active_sessions_count += 1;
+                                }
+                            },
+                            None => {
+                                    *status = SessionStatus::Completed(Instant::now());
+                            },
+                        };
                         true
                     }
                 });
@@ -678,6 +687,31 @@ pub(crate) enum SessionStatus {
     Active(Weak<NetworkSession>),
 }
 
+impl Into<SendValueResponse> for SessionStatus {
+    fn into(self) -> SendValueResponse {
+        let status = match self {
+            SessionStatus::Completed(_) => Status::Completed,
+            SessionStatus::Inactive(_) => Status::Inactive,
+            SessionStatus::Active(_) => Status::Active,
+        };
+        SendValueResponse {
+            status: status.into(),
+        }
+    }
+}
+impl Into<SendValueResponse> for &SessionStatus {
+    fn into(self) -> SendValueResponse {
+        let status = match self {
+            SessionStatus::Completed(_) => Status::Completed,
+            SessionStatus::Inactive(_) => Status::Inactive,
+            SessionStatus::Active(_) => Status::Active,
+        };
+        SendValueResponse {
+            status: status.into(),
+        }
+    }
+}
+
 // Because we can use a custom TCP Incoming, we need to specify how
 // to extract the TLS extension from the incoming connection
 #[derive(Default)]
@@ -1027,7 +1061,7 @@ impl Gnetworking for NetworkingImpl {
                 Some(tx) => tx,
                 None => {
                     // If the session is completed or inactive, we return early
-                    return Ok(tonic::Response::new(SendValueResponse::default()));
+                    return Ok(tonic::Response::new(session_status.value().into()));
                 }
             }
         } else {
@@ -1039,7 +1073,7 @@ impl Gnetworking for NetworkingImpl {
                         Some(tx) => tx,
                         None => {
                             // If the session is completed or inactive, we return early
-                            return Ok(tonic::Response::new(SendValueResponse::default()));
+                            return Ok(tonic::Response::new(occupied_entry.get().into()));
                         }
                     }
                 }

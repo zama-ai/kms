@@ -26,16 +26,16 @@ use tonic::{async_trait, transport::Channel};
 use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::runtime::party::{Identity, RoleKind, RoleTrait},
+    networking::r#gen::Status,
 };
 use crate::{execution::runtime::party::RoleAssignment, session_id::SessionId};
 
+use super::gen::SendValueRequest;
 #[cfg(feature = "choreographer")]
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
 use super::{NetworkMode, Networking};
 use crate::thread_handles::ThreadHandleGroup;
-
-use super::gen::SendValueRequest;
 
 pub struct ArcSendValueRequest {
     tag: Arc<Vec<u8>>,
@@ -66,13 +66,16 @@ pub trait SendingService: Send + Sync {
     async fn add_connection(
         &self,
         other: &Identity,
+        abort_sender: UnboundedSender<()>,
     ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>>;
 
     ///Adds multiple connections at once
     async fn add_connections<R: RoleTrait>(
         &self,
         others: &RoleAssignment<R>,
-    ) -> anyhow::Result<HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>>;
+    ) -> anyhow::Result<
+        HashMap<RoleKind, (UnboundedSender<ArcSendValueRequest>, UnboundedReceiver<()>)>,
+    >;
 }
 
 type ChannelMap =
@@ -211,20 +214,20 @@ impl GrpcSendingService {
         network_channel: GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
         exponential_backoff: ExponentialBackoff<SystemClock>,
         other: &Identity,
+        abort_sender: UnboundedSender<()>,
     ) {
         let mut received_request = 0;
         let mut incorrectly_sent = 0;
 
         while let Some(value) = receiver.recv().await {
             received_request += 1;
-
             let send_fn = || async {
                 let value = value.deep_clone();
                 network_channel
                     .clone()
                     .send_value(value)
                     .await
-                    .map(|_| ())
+                    .map(|inner| inner.into_inner())
                     .map_err(|status| {
                         // All errors are transient and retryable
                         backoff::Error::Transient {
@@ -242,16 +245,31 @@ impl GrpcSendingService {
             };
 
             // Single unified retry strategy
-            let res = retry_notify(exponential_backoff.clone(), send_fn, on_network_fail).await;
-
-            if let Err(status) = res {
-                incorrectly_sent += 1;
-                tracing::warn!(
+            let res: Result<_, _> =
+                retry_notify(exponential_backoff.clone(), send_fn, on_network_fail).await;
+            match res {
+                Ok(send_response) => {
+                    if send_response.status() == Status::Completed {
+                        // Failed to have receiver accept the message
+                        // Send abort signal and break since we can only send once
+                        if abort_sender.send(()).is_err() {
+                            tracing::warn!(
+                                "Failed to send abort signal to network task for {other}"
+                            );
+                        }
+                        // TODO should we actually break or instead increase error count and continue ?
+                        break;
+                    }
+                }
+                Err(status) => {
+                    incorrectly_sent += 1;
+                    tracing::warn!(
                     "Failed to send message to {other} after {incorrectly_sent} retries: {} - {}",
                     status.code(),
                     status.message()
                 );
-            }
+                }
+            };
         }
 
         if received_request == 0 {
@@ -314,6 +332,7 @@ impl SendingService for GrpcSendingService {
     async fn add_connection(
         &self,
         other: &Identity,
+        abort_sender: UnboundedSender<()>,
     ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>> {
         // 1. Create channel first (no allocation issues)
         let (sender, receiver) = unbounded_channel::<ArcSendValueRequest>();
@@ -334,7 +353,14 @@ impl SendingService for GrpcSendingService {
         let other = other.clone();
         let handle = tokio::spawn(async move {
             // Run the actual network task (already logs completion status)
-            Self::run_network_task(receiver, network_channel, exponential_backoff, &other).await;
+            Self::run_network_task(
+                receiver,
+                network_channel,
+                exponential_backoff,
+                &other,
+                abort_sender,
+            )
+            .await;
         });
 
         // 5. Minimize lock scope - acquire write lock last and release immediately
@@ -348,13 +374,16 @@ impl SendingService for GrpcSendingService {
     async fn add_connections<R: RoleTrait>(
         &self,
         others: &RoleAssignment<R>,
-    ) -> anyhow::Result<HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>> {
+    ) -> anyhow::Result<
+        HashMap<RoleKind, (UnboundedSender<ArcSendValueRequest>, UnboundedReceiver<()>)>,
+    > {
         let mut result = HashMap::with_capacity(others.len());
 
         for (other_role, other_id) in others.iter() {
-            match self.add_connection(other_id).await {
+            let (abort_sender, abort_receiver) = tokio::sync::mpsc::unbounded_channel();
+            match self.add_connection(other_id, abort_sender).await {
                 Ok(sender) => {
-                    result.insert(other_role.get_role_kind(), sender);
+                    result.insert(other_role.get_role_kind(), (sender, abort_receiver));
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -389,7 +418,8 @@ pub struct NetworkSession {
     pub(crate) session_id: SessionId,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`]
     /// Sending channels for this session
-    pub(crate) sending_channels: HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
+    pub(crate) sending_channels:
+        HashMap<RoleKind, (UnboundedSender<ArcSendValueRequest>, UnboundedReceiver<()>)>,
     /// Channels which are filled by the grpc server receiving messages from the other parties
     /// owned by the session and thus automatically cleaned up on drop
     pub(crate) receiving_channels: MessageQueueStore,
@@ -443,7 +473,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
 
         //Retrieve the local channel that corresponds to the party we want to send to and push into it
         match self.sending_channels.get(&receiver.get_role_kind()) {
-            Some(channel) => Ok(channel.send(request)?),
+            Some((sending_channel, _abort_receiver)) => Ok(sending_channel.send(request)?),
             None => Err(anyhow_error_and_log(format!(
                 "Missing local channel for {receiver:?}"
             ))),
@@ -597,6 +627,34 @@ impl NetworkSession {
                 );
             }
         }
+    }
+
+    // Check if the session has been aborted by a quorum of other parties refusing the connection
+    pub fn is_aborted(&self) -> bool {
+        let mut abort_ctr = 0;
+        let keys: Vec<_> = self.sending_channels.keys().cloned().collect();
+        for cur_id in keys {
+            let abort_received = self
+                .sending_channels
+                .get(&cur_id)
+                .map(|(_, abort_receiver)| {
+                    // Check if we have received an abort signal
+                    !abort_receiver.is_empty()
+                })
+                .unwrap_or(false);
+            if abort_received {
+                abort_ctr += 1;
+            }
+        }
+        if abort_ctr >= 4 {
+            // TODO threshold!!!
+            tracing::warn!(
+                "Session {} aborted due to quorum of parties refusing connection",
+                self.session_id
+            );
+            return true;
+        }
+        false
     }
 }
 

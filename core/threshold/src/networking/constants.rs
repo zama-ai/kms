@@ -9,7 +9,7 @@ pub(crate) const MESSAGE_LIMIT: usize = 70;
 pub(crate) const MULTIPLIER: f64 = 1.1;
 
 /// The default maximum number of "Inactive" sessions a party can open
-pub(crate) const MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY: u64 = 100;
+pub(crate) const MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY: u64 = 2000;
 
 /// The default initial interval for exponential backoff in milliseconds
 pub(crate) const INITIAL_INTERVAL_MS: u64 = 100;
@@ -18,10 +18,10 @@ pub(crate) const INITIAL_INTERVAL_MS: u64 = 100;
 pub(crate) const SESSION_STATUS_UPDATE_INTERVAL_SECS: u64 = 60;
 
 // The default time interval after which we completely forget about completed sessions
-pub(crate) const SESSION_CLEANUP_INTERVAL_SECS: u64 = 3600;
+pub(crate) const SESSION_CLEANUP_INTERVAL_SECS: u64 = 86400; // 24 hours
 
 // The default time interval after which we discard inactive sessions
-pub(crate) const DISCARD_INACTIVE_SESSION_INTERVAL_SECS: u64 = 15 * 60;
+pub(crate) const DISCARD_INACTIVE_SESSION_INTERVAL_SECS: u64 = 5 * 60;
 
 // The default maximum waiting time we wait for trying to push the message in the queue
 pub(crate) const MAX_WAITING_TIME_MESSAGE_QUEUE: u64 = 60;
