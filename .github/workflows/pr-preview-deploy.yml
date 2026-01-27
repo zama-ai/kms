@@ -159,6 +159,7 @@ jobs:
 
       # ======================================================================
       - name: Get Rust version
+        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
         env:
           GH_WORKSPACE: ${{ github.workspace }}
         run: |
@@ -169,6 +170,7 @@ jobs:
       # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
       # need to do it right after and then manually pull LFS files
       - name: setup gitlfs from binary
+        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
         env:
           GIT_LFS_VERSION: '3.6.1'
         run: |
@@ -179,6 +181,7 @@ jobs:
           git lfs pull
 
       - name: Set up Rust
+        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
         uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
         with:
           toolchain: ${{ env.RUST_IMAGE_VERSION }}
@@ -186,6 +189,7 @@ jobs:
           cache: false
 
       - name: Install Protoc
+        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           version: '26.x'
