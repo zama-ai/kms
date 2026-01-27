@@ -65,7 +65,7 @@ fn bench_fhe_type<FheType>(
         bench_group.bench_function(&name, |b| {
             b.iter(|| {
                 black_box(
-                    CompactCiphertextList::builder(&public_key)
+                    CompactCiphertextList::builder(public_key)
                         .push(value)
                         .build(),
                 )
