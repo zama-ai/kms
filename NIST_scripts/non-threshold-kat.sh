@@ -5,8 +5,7 @@
 
 
 # Assumes the build.sh script was used
-TARGET_DIR="$HOME/kms/core/threshold"
-OUTPUT_DIR="$TARGET_DIR/tfhe_kat"
+OUTPUT_DIR="./tfhe_kat"
 
 EXPECTED_HASH_CLIENT_KEY="e632247063e3712eb6de0244fdf08bede700dc7052d018fbc9420e60cfceb36b"
 EXPECTED_HASH_SERVER_KEY="5c4c8d372972a13297dc691f90ac2cb9784f44b20d5b090f29c8155b64dff99d"
