@@ -248,7 +248,7 @@ macro_rules! impl_identifiers {
 
                     fn from_str(s: &str) -> Result<Self, Self::Err> {
                         // Trim whitespace and remove 0x prefix if present
-                        let s = s.trim().strip_prefix("0x").unwrap_or(s.trim());
+                        let s = s.trim().strip_prefix("0x").unwrap_or_else(|| s.trim());
 
                         // Decode hex string
                         let bytes = match hex::decode(s) {

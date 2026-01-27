@@ -230,7 +230,6 @@ impl ContextInfo {
                 .map(|inner| inner == &verification_key)
                 .unwrap_or(false)
         });
-
         // check mpc_nodes have unique party_ids
         let party_ids: std::collections::HashSet<_> =
             self.mpc_nodes.iter().map(|node| node.party_id).collect();
