@@ -2,6 +2,7 @@ import os
 import json
 import csv
 import re
+import sys
 # Maps parameters name to the corresponding csv file
 PARAMS_MAP = {
     "NIST_PARAMS_P32_SNS_FGLWE":"TFHE_Clear_P32_FGLWE.csv",
@@ -28,15 +29,6 @@ RESULT_MAP = {}
 UNIT_CONV_TO_MS = {"ns": 1e-6}
 # I think we only have B ?
 UNIT_CONV_TO_KB = {"B": 1e-3}
-
-#Get $HOME env variable
-HOME = os.getenv("HOME")
-TARGET = os.path.join(HOME, "kms", "core", "threshold")
-LATENCY_FILE = os.path.join(TARGET,"bench_results.json")
-MEMORY_FILE = os.path.join(TARGET,"memory_bench_results.txt")
-OUTPUT_DIRECTORY = os.path.join(TARGET, "NIST_results")
-
-
 
 class ResultEntry:
     def __init__(self):
@@ -227,7 +219,17 @@ def output_result_csv_files():
             csv_writer.writerow(["Mult64", result.mul_latency, result.mul_memory])
 
 
+# Take as input from the CLI the folder in which to find the bench results
 def main():
+    global LATENCY_FILE, MEMORY_FILE, OUTPUT_DIRECTORY
+    if len(sys.argv) != 2:
+        print("Usage: {} <folder>".format(sys.argv[0]))
+        sys.exit(1)
+    folder = sys.argv[1]
+    LATENCY_FILE = os.path.join(folder, "bench_results.json")
+    MEMORY_FILE = os.path.join(folder, "memory_bench_results.txt")
+    OUTPUT_DIRECTORY = os.path.join(folder, "output")
+
     parse_latency_file()
     parse_memory_file()
     output_result_csv_files()
