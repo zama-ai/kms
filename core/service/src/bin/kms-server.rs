@@ -147,7 +147,7 @@ async fn build_tls_config(
             panic!("Failed to load default crypto provider");
         });
     let crypto_provider = CryptoProvider::get_default()
-        .ok_or(anyhow::anyhow!("rustls cryptoprovider not initialized"))?;
+        .ok_or_else(|| anyhow::anyhow!("rustls cryptoprovider not initialized"))?;
     // Communication between MPC parties can be optionally protected
     // with mTLS which requires a TLS certificate valid both for server
     // and client authentication.

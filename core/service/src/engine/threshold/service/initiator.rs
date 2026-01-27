@@ -291,12 +291,14 @@ impl<
             .map_err(|e| {
                 MetricedError::new(OP_INIT, Some(epoch_id.into()), e, tonic::Code::NotFound)
             })?
-            .ok_or(MetricedError::new(
-                OP_INIT,
-                Some(epoch_id.into()),
-                anyhow::anyhow!("Role not found for context ID {context_id}"),
-                tonic::Code::NotFound,
-            ))?;
+            .ok_or_else(|| {
+                MetricedError::new(
+                    OP_INIT,
+                    Some(epoch_id.into()),
+                    anyhow::anyhow!("Role not found for context ID {context_id}"),
+                    tonic::Code::NotFound,
+                )
+            })?;
         let metric_tags = vec![
             (TAG_PARTY_ID, my_role.to_string()),
             (TAG_EPOCH_ID, epoch_id.as_str()),

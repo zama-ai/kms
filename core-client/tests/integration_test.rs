@@ -321,7 +321,7 @@ async fn real_preproc(
     preproc_result
         .pop()
         .map(|(preproc_id, _)| preproc_id)
-        .ok_or(anyhow::anyhow!("missing preproc result"))
+        .ok_or_else(|| anyhow::anyhow!("missing preproc result"))
 }
 
 async fn real_preproc_and_keygen(

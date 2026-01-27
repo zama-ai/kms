@@ -1002,7 +1002,7 @@ pub async fn execute_cmd(
     let mut core_endpoints_req = HashMap::with_capacity(num_parties);
     let mut core_endpoints_resp = HashMap::with_capacity(num_parties);
 
-    // use secure default params if nothing is set
+    // use secure default params if nothunwrap_or_else(||
     let fhe_params = cc_conf.fhe_params.unwrap_or(FheParameter::Default);
     let client_param = match fhe_params {
         FheParameter::Test => TEST_PARAM,
