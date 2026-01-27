@@ -18,6 +18,8 @@ use std::hint::black_box;
 use std::ops::*;
 use tfhe::CompactCiphertextList;
 use tfhe::CompactPublicKey;
+#[cfg(feature = "measure_memory")]
+use tfhe::ServerKey;
 
 use tfhe::prelude::*;
 use tfhe::{set_server_key, ClientKey, FheUint64};
@@ -91,6 +93,7 @@ fn bench_fhe_type<FheType>(
 fn bench_fhe_type<FheType>(
     client_key: &ClientKey,
     public_key: &CompactPublicKey,
+    server_key: &ServerKey,
     bench_name: &str,
     type_name: &str,
 ) where
@@ -139,8 +142,15 @@ fn bench_fhe_type<FheType>(
 
     {
         write!(name, "{bench_name}_mul_memory({type_name}, {type_name})").unwrap();
-        let bench_fn = |(lhs, rhs): (FheType, FheType)| &lhs * &rhs;
-        bench_memory(bench_fn, (rhs.clone(), lhs.clone()), name.clone());
+        let bench_fn = |(lhs, rhs, server_key): (FheType, FheType, ServerKey)| {
+            set_server_key(server_key);
+            &lhs * &rhs
+        };
+        bench_memory(
+            bench_fn,
+            (rhs.clone(), lhs.clone(), server_key.clone()),
+            name.clone(),
+        );
         name.clear();
     }
 }
@@ -149,8 +159,8 @@ fn bench_fhe_type<FheType>(
 macro_rules! bench_type {
     ($fhe_type:ident) => {
         ::paste::paste! {
-            fn [<bench_ $fhe_type:snake>]( cks: &ClientKey, public_key: &CompactPublicKey, bench_name: &str) {
-                bench_fhe_type::<$fhe_type>( cks, public_key, bench_name, stringify!($fhe_type));
+            fn [<bench_ $fhe_type:snake>]( cks: &ClientKey, public_key: &CompactPublicKey, server_key: &ServerKey, bench_name: &str) {
+                bench_fhe_type::<$fhe_type>( cks, public_key, server_key, bench_name, stringify!($fhe_type));
             }
         }
     };
@@ -223,13 +233,13 @@ fn main() {
             .expect("Decompression failed")
             .into_raw_parts();
 
-        rayon::broadcast(|_| set_server_key(server_key.clone()));
-        set_server_key(server_key);
+        //rayon::broadcast(|_| set_server_key(server_key.clone()));
+        //set_server_key(server_key);
 
         let bench_name = format!("non-threshold_basic-ops_{name}");
 
         {
-            bench_fhe_uint64(&client_key, &public_key, &bench_name);
+            bench_fhe_uint64(&client_key, &public_key, &server_key, &bench_name);
         }
     }
 }
