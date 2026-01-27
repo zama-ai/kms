@@ -22,7 +22,9 @@ mod user_decryption_tests;
 // They are intended to eventually replace the Docker-based tests above.
 //
 // Run isolated tests with: cargo test --lib --features insecure,testing <test_name>
-// Generate test material first: make generate-test-material-testing
+//
+// Note: Pre-generated material (`make generate-test-material-testing`) is optional
+// and speeds up test startup. PRSS is generated at runtime when `.with_prss()` is used.
 
 #[cfg(any(feature = "testing", feature = "insecure"))]
 mod key_gen_tests_isolated;

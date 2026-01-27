@@ -35,7 +35,7 @@ async fn test_insecure_dkg_isolated() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("insecure_dkg")
         .with_party_count(4)
-        .with_threshold(1) // For 4 parties: nodes = 3*threshold + 1, so threshold = 1
+        .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
         .build()
         .await?;
 
@@ -82,7 +82,7 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
     let env = ThresholdTestEnv::builder()
         .with_test_name("default_insecure_dkg")
         .with_party_count(4)
-        .with_threshold(1) // For 4 parties: nodes = 3*threshold + 1, so threshold = 1
+        .with_threshold(1) // For 4 parties: threshold = ⌈4/3⌉ - 1 = 1
         .with_material_spec(spec)
         .build()
         .await?;
@@ -115,8 +115,9 @@ async fn default_insecure_dkg_isolated() -> Result<()> {
 ///
 /// **IMPORTANT:** Uses secure mode with preprocessing (not insecure mode).
 /// **Requires:**
-/// - `slow_tests` feature flag
-/// - Pre-generated testing material: `make generate-test-material-testing`
+/// - `slow_tests` feature flag (PRSS generation at runtime)
+///
+/// **Note:** PRSS material is generated at runtime by `.with_prss()`
 ///
 /// **Run with:** `cargo test --lib --features slow_tests,testing secure_threshold_keygen_isolated`
 #[tokio::test]
@@ -160,8 +161,7 @@ async fn secure_threshold_keygen_isolated() -> Result<()> {
 ///
 /// **IMPORTANT:** Tests crash recovery - party 2 excluded from keygen.
 /// **Requires:**
-/// - `slow_tests` feature flag
-/// - Pre-generated testing material: `make generate-test-material-testing`
+/// - `slow_tests` feature flag (PRSS generation at runtime)
 ///
 /// **Run with:** `cargo test --lib --features slow_tests,testing secure_threshold_keygen_crash_online_isolated`
 #[tokio::test]
@@ -270,8 +270,7 @@ async fn secure_threshold_keygen_crash_online_isolated() -> Result<()> {
 ///
 /// **IMPORTANT:** Tests crash recovery - party 3 excluded from preprocessing and keygen.
 /// **Requires:**
-/// - `slow_tests` feature flag
-/// - Pre-generated testing material: `make generate-test-material-testing`
+/// - `slow_tests` feature flag (PRSS generation at runtime)
 ///
 /// **Run with:** `cargo test --lib --features slow_tests,testing secure_threshold_keygen_crash_preprocessing_isolated`
 #[tokio::test]
@@ -386,8 +385,7 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
 /// 4. Verify all keys generated successfully
 ///
 /// **Requires:**
-/// - `slow_tests` and `insecure` feature flags
-/// - Pre-generated testing material: `make generate-test-material-testing`
+/// - `slow_tests` and `insecure` feature flags (PRSS generation at runtime)
 ///
 /// **Run with:** `cargo test --lib --features slow_tests,testing,insecure test_insecure_threshold_decompression_keygen_isolated`
 #[tokio::test]
