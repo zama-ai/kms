@@ -6,6 +6,7 @@
 #[path = "../utilities.rs"]
 mod utilities;
 
+use crate::utilities::{generate_tfhe_keys, set_plan};
 #[cfg(not(feature = "measure_memory"))]
 use criterion::measurement::WallTime;
 #[cfg(not(feature = "measure_memory"))]
@@ -15,8 +16,14 @@ use std::fmt::Write;
 #[cfg(not(feature = "measure_memory"))]
 use std::hint::black_box;
 use std::ops::*;
+use tfhe::CompactCiphertextList;
+use tfhe::CompactPublicKey;
+#[cfg(feature = "measure_memory")]
+use tfhe::ServerKey;
+
 use tfhe::prelude::*;
-use tfhe::{set_server_key, ClientKey, FheUint64, ServerKey};
+use tfhe::{set_server_key, ClientKey, FheUint64};
+
 //use tfhe::{FheUint128, FheUint16, FheUint2, FheUint32, FheUint4,FheUint8,}
 
 #[cfg(feature = "measure_memory")]
@@ -27,9 +34,10 @@ use utilities::ALL_PARAMS;
 fn bench_fhe_type<FheType>(
     bench_group: &mut BenchmarkGroup<'_, WallTime>,
     client_key: &ClientKey,
+    public_key: &CompactPublicKey,
     type_name: &str,
 ) where
-    FheType: FheEncrypt<u128, ClientKey> + FheDecrypt<u128>,
+    FheType: FheEncrypt<u64, ClientKey> + FheDecrypt<u64>,
     for<'a> &'a FheType: Add<&'a FheType, Output = FheType>
         + Sub<&'a FheType, Output = FheType>
         + Mul<&'a FheType, Output = FheType>
@@ -52,10 +60,16 @@ fn bench_fhe_type<FheType>(
 
     //Added encrypt and decrypt that was not in original bench in tfhe-rs
     {
-        let value = rng.gen();
+        let value: u64 = rng.gen();
         write!(name, "encrypt({type_name})").unwrap();
         bench_group.bench_function(&name, |b| {
-            b.iter(|| black_box(FheType::encrypt(value, client_key)))
+            b.iter(|| {
+                black_box(
+                    CompactCiphertextList::builder(public_key)
+                        .push(value)
+                        .build(),
+                )
+            })
         });
         name.clear();
     }
@@ -76,9 +90,14 @@ fn bench_fhe_type<FheType>(
 }
 
 #[cfg(feature = "measure_memory")]
-fn bench_fhe_type<FheType>(client_key: &ClientKey, bench_name: &str, type_name: &str)
-where
-    FheType: FheEncrypt<u128, ClientKey> + FheDecrypt<u128> + Clone + Send + Sync + 'static,
+fn bench_fhe_type<FheType>(
+    client_key: &ClientKey,
+    public_key: &CompactPublicKey,
+    server_key: &ServerKey,
+    bench_name: &str,
+    type_name: &str,
+) where
+    FheType: FheEncrypt<u64, ClientKey> + FheDecrypt<u64> + Clone + Send + Sync + 'static,
     for<'a> &'a FheType: Add<&'a FheType, Output = FheType>
         + Sub<&'a FheType, Output = FheType>
         + Mul<&'a FheType, Output = FheType>
@@ -104,10 +123,13 @@ where
         let value = rng.gen();
         write!(name, "{bench_name}_encrypt_memory({type_name})").unwrap();
 
-        let bench_fn =
-            |(value, client_key): (u128, ClientKey)| FheType::encrypt(value, &client_key);
+        let bench_fn = |(value, public_key): (u64, CompactPublicKey)| {
+            CompactCiphertextList::builder(&public_key)
+                .push(value)
+                .build();
+        };
 
-        bench_memory(bench_fn, (value, client_key.clone()), name.clone());
+        bench_memory(bench_fn, (value, public_key.clone()), name.clone());
         name.clear();
     }
 
@@ -120,8 +142,15 @@ where
 
     {
         write!(name, "{bench_name}_mul_memory({type_name}, {type_name})").unwrap();
-        let bench_fn = |(lhs, rhs): (FheType, FheType)| &lhs * &rhs;
-        bench_memory(bench_fn, (rhs.clone(), lhs.clone()), name.clone());
+        let bench_fn = |(lhs, rhs, server_key): (FheType, FheType, ServerKey)| {
+            set_server_key(server_key);
+            &lhs * &rhs
+        };
+        bench_memory(
+            bench_fn,
+            (rhs.clone(), lhs.clone(), server_key.clone()),
+            name.clone(),
+        );
         name.clear();
     }
 }
@@ -130,8 +159,8 @@ where
 macro_rules! bench_type {
     ($fhe_type:ident) => {
         ::paste::paste! {
-            fn [<bench_ $fhe_type:snake>]( cks: &ClientKey, bench_name: &str) {
-                bench_fhe_type::<$fhe_type>( cks, bench_name, stringify!($fhe_type));
+            fn [<bench_ $fhe_type:snake>]( cks: &ClientKey, public_key: &CompactPublicKey, server_key: &ServerKey, bench_name: &str) {
+                bench_fhe_type::<$fhe_type>( cks, public_key, server_key, bench_name, stringify!($fhe_type));
             }
         }
     };
@@ -141,8 +170,8 @@ macro_rules! bench_type {
 macro_rules! bench_type {
     ($fhe_type:ident) => {
         ::paste::paste! {
-            fn [<bench_ $fhe_type:snake>](c: &mut BenchmarkGroup<'_, WallTime>, cks: &ClientKey) {
-                bench_fhe_type::<$fhe_type>(c, cks, stringify!($fhe_type));
+            fn [<bench_ $fhe_type:snake>](c: &mut BenchmarkGroup<'_, WallTime>, cks: &ClientKey, public_key: &CompactPublicKey) {
+                bench_fhe_type::<$fhe_type>(c, cks, public_key, stringify!($fhe_type));
             }
         }
     };
@@ -162,13 +191,17 @@ pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
 
 #[cfg(not(feature = "measure_memory"))]
 fn main() {
+    set_plan();
     for (name, params) in ALL_PARAMS {
-        let config = params.to_tfhe_config();
+        let (client_key, compressed_server_key) = generate_tfhe_keys(params);
 
-        let cks = ClientKey::generate(config);
-        let sks = ServerKey::new(&cks);
+        let (public_key, server_key) = compressed_server_key
+            .decompress()
+            .expect("Decompression failed")
+            .into_raw_parts();
 
-        set_server_key(sks);
+        rayon::broadcast(|_| set_server_key(server_key.clone()));
+        set_server_key(server_key);
 
         let bench_name = format!("non-threshold_basic-ops_{name}");
 
@@ -178,7 +211,7 @@ fn main() {
         {
             let bench_name = format!("{bench_name}_FheUint64");
             let mut group = c.benchmark_group(&bench_name);
-            bench_fhe_uint64(&mut group, &cks);
+            bench_fhe_uint64(&mut group, &client_key, &public_key);
         }
 
         #[cfg(not(feature = "measure_memory"))]
@@ -188,20 +221,22 @@ fn main() {
 
 #[cfg(feature = "measure_memory")]
 fn main() {
+    set_plan();
+
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
     for (name, params) in ALL_PARAMS {
-        let config = params.to_tfhe_config();
+        let (client_key, compressed_server_key) = generate_tfhe_keys(params);
 
-        let cks = ClientKey::generate(config);
-        let sks = ServerKey::new(&cks);
-
-        set_server_key(sks);
+        let (public_key, server_key) = compressed_server_key
+            .decompress()
+            .expect("Decompression failed")
+            .into_raw_parts();
 
         let bench_name = format!("non-threshold_basic-ops_{name}");
 
         {
-            bench_fhe_uint64(&cks, &bench_name);
+            bench_fhe_uint64(&client_key, &public_key, &server_key, &bench_name);
         }
     }
 }

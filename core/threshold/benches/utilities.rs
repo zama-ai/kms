@@ -1,3 +1,9 @@
+use tfhe::core_crypto::fft_impl::fft64::math::fft::{setup_custom_fft_plan, FftAlgo, Method, Plan};
+use tfhe::{
+    core_crypto::{prelude::NormalizedHammingWeightBound, seeders::new_seeder},
+    xof_key_set::CompressedXofKeySet,
+    ClientKey, Tag,
+};
 #[cfg(feature = "measure_memory")]
 use threshold_fhe::allocator::MEM_ALLOCATOR;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -42,6 +48,7 @@ pub fn bench_memory<
     input: I,
     bench_name: String,
 ) {
+    eprintln!("Measuring memory usage for {bench_name}...");
     let mut results = Vec::new();
 
     for _ in 0..10 {
@@ -55,9 +62,48 @@ pub fn bench_memory<
 }
 
 pub const ALL_PARAMS: [(&str, DKGParams); 5] = [
-    ("NIST_PARAMS_P32_SNS_FGLWE", NIST_PARAMS_P32_SNS_FGLWE),
     ("NIST_PARAMS_P32_SNS_LWE", NIST_PARAMS_P32_SNS_LWE),
+    ("NIST_PARAMS_P32_SNS_FGLWE", NIST_PARAMS_P32_SNS_FGLWE),
     ("NIST_PARAMS_P8_SNS_FGLWE", NIST_PARAMS_P8_SNS_FGLWE),
     ("NIST_PARAMS_P8_SNS_LWE", NIST_PARAMS_P8_SNS_LWE),
     ("BC_PARAMS_SNS", BC_PARAMS_SNS),
 ];
+
+pub fn set_plan() {
+    for n in [512, 1024, 2048] {
+        let my_plan = Plan::new(
+            // n / 2 is due to how TFHE-rs handles ffts
+            n / 2,
+            Method::UserProvided {
+                // User responsibility to choose an algorithm compatible with their n
+                // Both for the algorithm and the base_n
+                base_algo: FftAlgo::Dif4,
+                base_n: n / 2,
+            },
+        );
+        setup_custom_fft_plan(my_plan);
+    }
+}
+
+pub fn generate_tfhe_keys(params: DKGParams) -> (ClientKey, CompressedXofKeySet) {
+    let config = params.to_tfhe_config();
+
+    // If the params do not have sk deviation, we set a default value of 1.0
+    let max_norm_hwt = params
+        .get_params_basics_handle()
+        .get_sk_deviations()
+        .map(|d| d.pmax)
+        .unwrap_or(1.0);
+
+    let mut seeder = new_seeder();
+    let private_seed_bytes = seeder.seed().0.to_le_bytes().to_vec();
+
+    CompressedXofKeySet::generate(
+        config,
+        private_seed_bytes,
+        128,
+        NormalizedHammingWeightBound::new(max_norm_hwt).expect("Invalid hwt bound for KAT"),
+        Tag::from("BENCH"),
+    )
+    .expect("XofKeySet generation for KAT failed")
+}
