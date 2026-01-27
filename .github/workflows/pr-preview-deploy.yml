@@ -157,6 +157,39 @@ jobs:
       - name: setup kubectl
         uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
 
+      # ======================================================================
+      - name: Get Rust version
+        env:
+          GH_WORKSPACE: ${{ github.workspace }}
+        run: |
+          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+      # ==========================================================================
+      # LFS files are needed for backward compatibility tests
+      # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
+      # need to do it right after and then manually pull LFS files
+      - name: setup gitlfs from binary
+        env:
+          GIT_LFS_VERSION: '3.6.1'
+        run: |
+          wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
+          tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
+          "./git-lfs-${GIT_LFS_VERSION}/install.sh"
+          # Pull LFS files after installation
+          git lfs pull
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          components: rustfmt, clippy, llvm-tools-preview, llvm-tools
+          cache: false
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: '26.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
 
       # ======================================================================
       # KUBERNETES & HELM SETUP
