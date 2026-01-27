@@ -360,7 +360,7 @@ jobs:
           #============================================================
           #
           # cargo nextest run --test kubernetes_test_"${DEPLOYMENT_TYPE}" --profile ci --no-fail-fast
-          cargo nextest run --test kubernetes_test_"${DEPLOYMENT_TYPE}" --features k8s_tests,testing --profile ci --no-fail-fast
+          cargo nextest run --test kubernetes_test_"${DEPLOYMENT_TYPE}" --features testing --profile ci --no-fail-fast
           echo "TEST_EXIT_CODE=$?" >> "${GITHUB_ENV}"
 
           # Collect logs after tests complete
