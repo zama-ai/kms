@@ -93,7 +93,18 @@ deploy_kms() {
     fi
 
     #=========================================================================
-    # STEP 3: Generate Peers Configuration
+    # STEP 3: Enable TLS by Default for Threshold Mode
+    #=========================================================================
+    # Enable TLS by default for threshold deployments unless explicitly disabled
+    if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
+        export ENABLE_TLS="${ENABLE_TLS:-true}"
+        log_info "TLS for threshold mode: ${ENABLE_TLS}"
+    else
+        export ENABLE_TLS="${ENABLE_TLS:-false}"
+    fi
+
+    #=========================================================================
+    # STEP 4: Generate Peers Configuration
     #=========================================================================
     local PEERS_VALUES="/tmp/kms-peers-values-${NAMESPACE}.yaml"
     if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
@@ -108,14 +119,14 @@ deploy_kms() {
     fi
 
     #=========================================================================
-    # STEP 4: Generate Dynamic Overrides
+    # STEP 5: Generate Dynamic Overrides
     # (Image names, tolerations, enclave settings, etc.)
     #=========================================================================
     local OVERRIDE_VALUES="/tmp/kms-values-override-${NAMESPACE}.yaml"
     generate_helm_overrides "${OVERRIDE_VALUES}"
 
     #=========================================================================
-    # STEP 5: Deploy KMS Core Services
+    # STEP 6: Deploy KMS Core Services
     #=========================================================================
     if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
         deploy_threshold_mode "${BASE_VALUES}" "${PEERS_VALUES}" "${OVERRIDE_VALUES}" \
@@ -269,7 +280,7 @@ deploy_threshold_mode() {
     fi
 
     #=========================================================================
-    # STEP 6: Deploy Initialization Job
+    # STEP 7: Deploy Initialization Job
     #=========================================================================
     if [[ "${is_performance_testing}" == "true" ]]; then
         log_info "Deploying KMS Core initialization job (performance testing)..."

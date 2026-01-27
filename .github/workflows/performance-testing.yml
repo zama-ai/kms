@@ -209,46 +209,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.ZWS_BOT_TOKEN }}
 
-      - name: Extract PCR values for enclave deployments
-        if: "${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'centralizedWithEnclave' }}"
-        env:
-          JQ_VERSION: 1.8.1
-          DOCKER_BUILD_PCR0: ${{ needs.docker-build.outputs.enclave_pcr0 }}
-          DOCKER_BUILD_PCR1: ${{ needs.docker-build.outputs.enclave_pcr1 }}
-          DOCKER_BUILD_PCR2: ${{ needs.docker-build.outputs.enclave_pcr2 }}
-        run: |
-          # shellcheck disable=SC2153
-          ###################################################################
-          # Use PCR values from docker-build if available, otherwise extract from image
-          ###################################################################
-          if [[ -n "${DOCKER_BUILD_PCR0}" ]]; then
-            echo "Using PCR values from docker-build job"
-            {
-              echo "PCR0=${DOCKER_BUILD_PCR0}"
-              echo "PCR1=${DOCKER_BUILD_PCR1}"
-              echo "PCR2=${DOCKER_BUILD_PCR2}"
-            } >> "$GITHUB_ENV"
-          else
-            echo "Extracting PCR measurements from enclave image..."
-            # Download JQ.
-            wget https://github.com/jqlang/jq/releases/download/jq-"${JQ_VERSION}"/jq-linux-amd64 -P /tmp
-
-            # Install JQ.
-            sudo mv /tmp/jq-linux-amd64 /usr/local/bin/jq
-            sudo chmod +x /usr/local/bin/jq
-            echo "JQ version: $(jq --version)"
-
-            docker pull ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
-            PCR0=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
-            PCR1=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
-            PCR2=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
-            {
-              echo "PCR0=${PCR0}"
-              echo "PCR1=${PCR1}"
-              echo "PCR2=${PCR2}"
-            } >> "$GITHUB_ENV"
-          fi
-
       - name: Set up path suffix based on deployment type
         run: |
           ###################################################################
@@ -342,10 +302,6 @@ jobs:
       - name: Deploy KMS using unified script
         run: |
           chmod +x ci/scripts/deploy.sh
-          EXTRA_PCR_ARGS=()
-          if [[ -n "${PCR0:-}" ]]; then
-            EXTRA_PCR_ARGS+=(--pcr0 "${PCR0}" --pcr1 "${PCR1}" --pcr2 "${PCR2}")
-          fi
           ./ci/scripts/deploy.sh \
             --target aws-perf \
             --namespace "${NAMESPACE}" \
@@ -354,8 +310,7 @@ jobs:
             --client-tag "${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --num-parties 13 \
             --kms-chart-version "${KMS_CHART_VERSION}" \
-            --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}" \
-            "${EXTRA_PCR_ARGS[@]}"
+            --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
 
       # ======================================================================
       # PERFORMANCE TESTING
