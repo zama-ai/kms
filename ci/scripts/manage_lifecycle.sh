@@ -27,6 +27,12 @@ KUBE_CONFIG="${HOME}/.kube/kind_config_${DEPLOYMENT_TYPE:-threshold}"
 start_setup() {
     echo "Starting KMS setup in background..."
 
+    # Build TLS flag if enabled
+    local TLS_FLAG=""
+    if [[ "${ENABLE_TLS:-false}" == "true" ]]; then
+        TLS_FLAG="--enable-tls"
+    fi
+
     # Use the new Unified Deploy Script
     # Note: We use --block to ensure it keeps running (for port forwards)
     # We map old args to new args
@@ -36,7 +42,8 @@ start_setup() {
         --tag "${KMS_CORE_IMAGE_TAG:-latest-dev}" \
         --deployment-type "${DEPLOYMENT_TYPE:-threshold}" \
         --num-parties "${NUM_PARTIES:-4}" \
-        --block > "${SETUP_LOG}" 2>&1 &
+        --block \
+        ${TLS_FLAG} > "${SETUP_LOG}" 2>&1 &
 
     SETUP_PID=$!
 

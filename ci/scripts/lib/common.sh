@@ -41,6 +41,7 @@ Options:
   --pcr1 <val>             PCR1 value for Enclave (optional)
   --pcr2 <val>             PCR2 value for Enclave (optional)
   --collect-logs           Only collect logs from pods and exit
+  --enable-tls             Enable TLS for threshold mode peer communication
   --help                   Show this help
 EOF
 }
@@ -67,6 +68,7 @@ parse_args() {
             --pcr1) PCR1="$2"; shift 2 ;;
             --pcr2) PCR2="$2"; shift 2 ;;
             --collect-logs) COLLECT_LOGS="true"; shift ;;
+            --enable-tls) ENABLE_TLS="true"; shift ;;
             --help) usage; exit 0 ;;
             *) log_error "Unknown argument: $1"; usage; exit 1 ;;
         esac

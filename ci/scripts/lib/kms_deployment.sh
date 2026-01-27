@@ -32,9 +32,23 @@ helm_upgrade_with_version() {
 #=============================================================================
 # Deploy KMS
 # Main deployment function for KMS Core services
+#
+# Naming Convention:
+# ------------------
+# For threshold mode, each party is deployed as a separate Helm release:
+#   - Release name:     kms-core-${party_id}
+#   - StatefulSet name: kms-core-${party_id}-core (via kmsCoreName helper)
+#   - Pod name:         kms-core-${party_id}-core-${party_id}
+#
+# The pod name pattern is used for TLS certificate generation and must match
+# the actual pod names created by Kubernetes. The pattern can be customized
+# by setting HELM_RELEASE_PREFIX (defaults to "kms-core").
 #=============================================================================
 deploy_kms() {
     log_info "Deploying KMS Core..."
+
+    # Set Helm release prefix (can be overridden via environment variable)
+    export HELM_RELEASE_PREFIX="${HELM_RELEASE_PREFIX:-kms-core}"
 
     # Determine if this is a performance testing deployment
     local is_performance_testing=false
@@ -84,6 +98,10 @@ deploy_kms() {
     local PEERS_VALUES="/tmp/kms-peers-values-${NAMESPACE}.yaml"
     if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
         generate_peers_config "${PEERS_VALUES}"
+        # Generate and upload TLS certificates if TLS is enabled
+        if [[ "${ENABLE_TLS}" == "true" ]]; then
+            generate_and_upload_tls_certs
+        fi
     else
         # Centralized mode: single party
         echo "kmsPeers: { count: 1 }" > "${PEERS_VALUES}"
@@ -148,6 +166,17 @@ deploy_threshold_mode() {
             --set kmsCore.thresholdMode.thresholdValue="${threshold_value}"
         )
 
+        if [[ "${ENABLE_TLS}" == "true" && "${TARGET}" == *"kind"* ]]; then
+            # Build TLS Helm flags if TLS is enabled
+            # The Helm chart template requires tls.certificate and tls.privateKey objects to exist
+            # even if we're using environment variables for the actual cert/key content.
+            # Use an array to properly handle the arguments with special characters.
+            HELM_ARGS+=(
+                --set kmsCore.thresholdMode.tls.enabled=true
+            )
+            log_info "TLS enabled for threshold mode"
+        fi
+
         # Performance testing specific overrides
         if [[ "${is_performance_testing}" == "true" ]]; then
             HELM_ARGS+=(
@@ -189,7 +218,36 @@ deploy_threshold_mode() {
         fi
 
         # Deploy party in background for parallel execution
-        helm_upgrade_with_version "kms-core-${i}" "${helm_chart_location}" \
+        local release_name="${HELM_RELEASE_PREFIX}-${i}"
+        log_info "=== Deploying Party ${i} - Debug Info ==="
+        log_info "Release: ${release_name}"
+        log_info "Expected pod name: $(get_party_pod_name "${i}")"
+        log_info "Chart: ${helm_chart_location}"
+        log_info "Version args: ${helm_version_args[*]:-none}"
+        log_info "Wait args: ${wait_args[*]}"
+        log_info "Values files used:"
+        for arg_idx in "${!HELM_ARGS[@]}"; do
+            if [[ "${HELM_ARGS[$arg_idx]}" == "--values" ]]; then
+                local values_file="${HELM_ARGS[$((arg_idx + 1))]}"
+                log_info "  - ${values_file}"
+            fi
+        done
+        log_info ""
+        log_info "Contents of values files:"
+        for arg_idx in "${!HELM_ARGS[@]}"; do
+            if [[ "${HELM_ARGS[$arg_idx]}" == "--values" ]]; then
+                local values_file="${HELM_ARGS[$((arg_idx + 1))]}"
+                log_info "--- BEGIN: ${values_file} ---"
+                cat "${values_file}"
+                log_info "--- END: ${values_file} ---"
+                log_info ""
+            fi
+        done
+        log_info "Full helm command:"
+        log_info "  helm upgrade --install ${release_name} ${helm_chart_location} ${helm_version_args[*]:-} ${HELM_ARGS[*]} ${wait_args[*]}"
+        log_info "========================================="
+
+        helm_upgrade_with_version "${release_name}" "${helm_chart_location}" \
             "${HELM_ARGS[@]}" \
             "${wait_args[@]}" &
     done
@@ -203,8 +261,9 @@ deploy_threshold_mode() {
         log_info "Waiting for all KMS Core pods to be ready..."
         sleep 60  # Allow time for pods to start
         for i in $(seq 1 "${NUM_PARTIES}"); do
-            log_info "Waiting for party ${i} pod..."
-            kubectl wait --for=condition=ready pod "kms-core-${i}-core-${i}" \
+            local pod_name="$(get_party_pod_name "${i}")"
+            log_info "Waiting for party ${i} pod: ${pod_name}"
+            kubectl wait --for=condition=ready pod "${pod_name}" \
                 -n "${NAMESPACE}" --timeout=600s
         done
     fi
@@ -542,4 +601,123 @@ deploy_init_job() {
         }
 
     log_info "Initialization job completed successfully"
+}
+
+#=============================================================================
+# Generate Party Name
+# Generates the pod name for a given party ID based on Helm naming conventions
+# Pattern: ${HELM_RELEASE_PREFIX}-${party_id}-core-${party_id}
+# Where HELM_RELEASE_PREFIX defaults to "kms-core"
+#=============================================================================
+get_party_pod_name() {
+    local party_id="$1"
+    local release_prefix="${HELM_RELEASE_PREFIX:-kms-core}"
+    echo "${release_prefix}-${party_id}-core-${party_id}"
+}
+
+#=============================================================================
+# TLS Certificate Generation for threshold mode and upload to S3
+#=============================================================================
+generate_and_upload_tls_certs() {
+    log_info "Generating TLS certificates for ${NUM_PARTIES} parties..."
+
+    local CERTS_DIR="${REPO_ROOT}/ci/kube-testing/certs"
+    mkdir -p "${CERTS_DIR}"
+
+    # Generate CA names for each party
+    # These names must match the pod names that will be created by Helm
+    local CA_NAMES=""
+    for i in $(seq 1 "${NUM_PARTIES}"); do
+        if [[ -n "${CA_NAMES}" ]]; then
+            CA_NAMES="${CA_NAMES} "
+        fi
+        CA_NAMES="${CA_NAMES}$(get_party_pod_name "${i}")"
+    done
+
+    log_info "Generating certificates for: ${CA_NAMES}"
+
+    # Build and run the certificate generator
+    # The kms-gen-tls-certs binary generates self-signed CA certificates
+    cargo run --release --bin kms-gen-tls-certs -- \
+        --ca-names ${CA_NAMES} \
+        --output-dir "${CERTS_DIR}" \
+        --wildcard
+
+    ls -al "${CERTS_DIR}/"
+
+    # Wait for localstack to be ready
+    log_info "Waiting for localstack to be ready..."
+    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=localstack \
+        -n "${NAMESPACE}" --timeout=5m
+
+    # Get localstack pod name for kubectl exec commands
+    local LOCALSTACK_POD
+    LOCALSTACK_POD=$(kubectl get pods -n "${NAMESPACE}" -l app.kubernetes.io/name=localstack \
+        -o jsonpath='{.items[0].metadata.name}')
+    log_info "Using localstack pod: ${LOCALSTACK_POD}"
+
+    # Helper function to run awslocal commands in localstack pod
+    run_awslocal() {
+        kubectl exec -n "${NAMESPACE}" "${LOCALSTACK_POD}" -- \
+            awslocal "$@"
+    }
+
+    # Ensure buckets exist (localstack startup script should create them, but verify)
+    log_info "Ensuring S3 buckets exist..."
+    run_awslocal s3 mb s3://kms-public 2>/dev/null || true
+    run_awslocal s3 mb s3://kms-private 2>/dev/null || true
+
+    # List buckets to verify
+    log_info "Available S3 buckets:"
+    run_awslocal s3 ls
+
+    # Upload certificates and private keys to S3 for each party
+    log_info "Uploading certificates and keys to S3..."
+    for i in $(seq 1 "${NUM_PARTIES}"); do
+        local PARTY_NAME="$(get_party_pod_name "${i}")"
+        local CERT_FILE="${CERTS_DIR}/cert_${PARTY_NAME}.pem"
+        local KEY_FILE="${CERTS_DIR}/key_${PARTY_NAME}.pem"
+
+        if [[ -f "${CERT_FILE}" ]]; then
+            # Copy cert to localstack pod, then upload to S3
+            log_info "Uploading certificate for party ${i} to s3://kms-public/PUB-p${i}/CACert/cert.pem"
+            kubectl cp "${CERT_FILE}" "${NAMESPACE}/${LOCALSTACK_POD}:/tmp/cert_p${i}.pem"
+            if run_awslocal s3 cp /tmp/cert_p${i}.pem "s3://kms-public/PUB-p${i}/CACert/cert.pem"; then
+                log_info "Successfully uploaded certificate for party ${i}"
+            else
+                log_error "Failed to upload certificate for party ${i}"
+            fi
+        else
+            log_error "Certificate file not found: ${CERT_FILE}"
+        fi
+
+        if [[ -f "${KEY_FILE}" ]]; then
+            # Copy key to localstack pod, then upload to S3
+            log_info "Uploading private key for party ${i} to s3://kms-public/PUB-p${i}/PrivateKey/key.pem"
+            kubectl cp "${KEY_FILE}" "${NAMESPACE}/${LOCALSTACK_POD}:/tmp/key_p${i}.pem"
+            if run_awslocal s3 cp /tmp/key_p${i}.pem "s3://kms-public/PUB-p${i}/PrivateKey/key.pem"; then
+                log_info "Successfully uploaded private key for party ${i}"
+            else
+                log_error "Failed to upload private key for party ${i}"
+            fi
+        else
+            log_error "Private key file not found: ${KEY_FILE}"
+        fi
+    done
+
+    # Also upload the combined certificate
+    if [[ -f "${CERTS_DIR}/cert_combined.pem" ]]; then
+        kubectl cp "${CERTS_DIR}/cert_combined.pem" "${NAMESPACE}/${LOCALSTACK_POD}:/tmp/cert_combined.pem"
+        if run_awslocal s3 cp /tmp/cert_combined.pem "s3://kms-public/certs/cert_combined.pem"; then
+            log_info "Successfully uploaded combined certificate"
+        else
+            log_error "Failed to upload combined certificate"
+        fi
+    fi
+
+    # Verify uploads by listing the bucket contents
+    log_info "Verifying uploaded certificates in S3:"
+    run_awslocal s3 ls s3://kms-public/ --recursive
+
+    log_info "TLS certificates generated and uploaded successfully"
 }

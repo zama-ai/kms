@@ -110,6 +110,7 @@ main() {
     log_info "Parties:         ${NUM_PARTIES}"
     log_info "Core Tag:        ${KMS_CORE_TAG}"
     log_info "Client Tag:      ${KMS_CLIENT_TAG}"
+    log_info "TLS:             ${ENABLE_TLS:-false}"
     log_info "========================================="
 
     #=========================================================================
