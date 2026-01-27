@@ -110,6 +110,7 @@ deploy_kms() {
     if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
         generate_peers_config "${PEERS_VALUES}"
         # Generate and upload TLS certificates if TLS is enabled
+        # Supports both localstack (Kind) and AWS S3 (aws-ci/aws-perf)
         if [[ "${ENABLE_TLS}" == "true" ]]; then
             generate_and_upload_tls_certs
         fi
@@ -177,15 +178,13 @@ deploy_threshold_mode() {
             --set kmsCore.thresholdMode.thresholdValue="${threshold_value}"
         )
 
-        if [[ "${ENABLE_TLS}" == "true" && "${TARGET}" == *"kind"* ]]; then
-            # Build TLS Helm flags if TLS is enabled
-            # The Helm chart template requires tls.certificate and tls.privateKey objects to exist
-            # even if we're using environment variables for the actual cert/key content.
-            # Use an array to properly handle the arguments with special characters.
+        # Enable TLS Helm flag for non-enclave deployments when TLS is enabled
+        # Enclave deployments handle TLS separately (see performance testing overrides below)
+        if [[ "${ENABLE_TLS}" == "true" && "${DEPLOYMENT_TYPE}" != *"Enclave"* ]]; then
             HELM_ARGS+=(
                 --set kmsCore.thresholdMode.tls.enabled=true
             )
-            log_info "TLS enabled for threshold mode"
+            log_info "TLS enabled for threshold mode (target: ${TARGET})"
         fi
 
         # Performance testing specific overrides
@@ -629,7 +628,10 @@ get_party_pod_name() {
 #=============================================================================
 # TLS Certificate Generation for threshold mode and upload to S3
 #=============================================================================
-generate_and_upload_tls_certs() {
+# Generate TLS Certificates
+# Generates self-signed CA certificates for each KMS party
+#=============================================================================
+generate_tls_certs() {
     log_info "Generating TLS certificates for ${NUM_PARTIES} parties..."
 
     local CERTS_DIR="${REPO_ROOT}/ci/kube-testing/certs"
@@ -655,7 +657,16 @@ generate_and_upload_tls_certs() {
         --wildcard
 
     ls -al "${CERTS_DIR}/"
+    log_info "TLS certificates generated successfully in ${CERTS_DIR}"
+}
 
+#=============================================================================
+# Upload TLS Certificates to Localstack
+# Uploads certificates and keys to localstack S3 (Kind deployments)
+#=============================================================================
+upload_tls_certs_to_localstack() {
+    local CERTS_DIR="${REPO_ROOT}/ci/kube-testing/certs"
+    
     # Wait for localstack to be ready
     log_info "Waiting for localstack to be ready..."
     kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=localstack \
@@ -683,7 +694,7 @@ generate_and_upload_tls_certs() {
     run_awslocal s3 ls
 
     # Upload certificates and private keys to S3 for each party
-    log_info "Uploading certificates and keys to S3..."
+    log_info "Uploading certificates and keys to localstack S3..."
     for i in $(seq 1 "${NUM_PARTIES}"); do
         local PARTY_NAME="$(get_party_pod_name "${i}")"
         local CERT_FILE="${CERTS_DIR}/cert_${PARTY_NAME}.pem"
@@ -727,8 +738,109 @@ generate_and_upload_tls_certs() {
     fi
 
     # Verify uploads by listing the bucket contents
-    log_info "Verifying uploaded certificates in S3:"
+    log_info "Verifying uploaded certificates in localstack S3:"
     run_awslocal s3 ls s3://kms-public/ --recursive
 
-    log_info "TLS certificates generated and uploaded successfully"
+    log_info "TLS certificates uploaded to localstack successfully"
+}
+
+#=============================================================================
+# Upload TLS Certificates to AWS S3
+# Uploads certificates and keys to real AWS S3 buckets (AWS deployments)
+#=============================================================================
+upload_tls_certs_to_aws_s3() {
+    local CERTS_DIR="${REPO_ROOT}/ci/kube-testing/certs"
+    
+    # Check if AWS CLI is available
+    if ! command -v aws &> /dev/null; then
+        log_error "AWS CLI not found. Please install it to upload certificates to S3."
+        return 1
+    fi
+    
+    log_info "Uploading certificates and keys to AWS S3..."
+
+    # Upload certificates and private keys to S3 for each party
+    for i in $(seq 1 "${NUM_PARTIES}"); do
+        local PARTY_NAME="$(get_party_pod_name "${i}")"
+        local CERT_FILE="${CERTS_DIR}/cert_${PARTY_NAME}.pem"
+        local KEY_FILE="${CERTS_DIR}/key_${PARTY_NAME}.pem"
+        
+        # Get the bucket name from the configmap for this party
+        local CONFIGMAP_NAME="${NAMESPACE}-${i}"
+        log_info "Reading S3 bucket name from configmap: ${CONFIGMAP_NAME}"
+        
+        local PUBLIC_BUCKET
+        PUBLIC_BUCKET=$(kubectl get configmap "${CONFIGMAP_NAME}" -n "${NAMESPACE}" \
+            -o jsonpath='{.data.KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}' 2>/dev/null || echo "")
+        
+        if [[ -z "${PUBLIC_BUCKET}" ]]; then
+            log_error "Failed to get public bucket name from configmap ${CONFIGMAP_NAME}"
+            log_info "Available configmaps in namespace:"
+            kubectl get configmap -n "${NAMESPACE}" || true
+            continue
+        fi
+        
+        log_info "Using S3 bucket for party ${i}: ${PUBLIC_BUCKET}"
+
+        # Upload certificate
+        if [[ -f "${CERT_FILE}" ]]; then
+            log_info "Uploading certificate for party ${i} to s3://${PUBLIC_BUCKET}/PUB-p${i}/CACert/cert.pem"
+            if aws s3 cp "${CERT_FILE}" "s3://${PUBLIC_BUCKET}/PUB-p${i}/CACert/cert.pem"; then
+                log_info "Successfully uploaded certificate for party ${i}"
+            else
+                log_error "Failed to upload certificate for party ${i}"
+            fi
+        else
+            log_error "Certificate file not found: ${CERT_FILE}"
+        fi
+
+        # Upload private key
+        if [[ -f "${KEY_FILE}" ]]; then
+            log_info "Uploading private key for party ${i} to s3://${PUBLIC_BUCKET}/PUB-p${i}/PrivateKey/key.pem"
+            if aws s3 cp "${KEY_FILE}" "s3://${PUBLIC_BUCKET}/PUB-p${i}/PrivateKey/key.pem"; then
+                log_info "Successfully uploaded private key for party ${i}"
+            else
+                log_error "Failed to upload private key for party ${i}"
+            fi
+        else
+            log_error "Private key file not found: ${KEY_FILE}"
+        fi
+    done
+
+    # Upload the combined certificate to the first party's bucket
+    if [[ -f "${CERTS_DIR}/cert_combined.pem" ]]; then
+        local CONFIGMAP_NAME="${NAMESPACE}-1"
+        local PUBLIC_BUCKET
+        PUBLIC_BUCKET=$(kubectl get configmap "${CONFIGMAP_NAME}" -n "${NAMESPACE}" \
+            -o jsonpath='{.data.KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}' 2>/dev/null || echo "")
+        
+        if [[ -n "${PUBLIC_BUCKET}" ]]; then
+            log_info "Uploading combined certificate to s3://${PUBLIC_BUCKET}/certs/cert_combined.pem"
+            if aws s3 cp "${CERTS_DIR}/cert_combined.pem" "s3://${PUBLIC_BUCKET}/certs/cert_combined.pem"; then
+                log_info "Successfully uploaded combined certificate"
+            else
+                log_error "Failed to upload combined certificate"
+            fi
+        fi
+    fi
+
+    log_info "TLS certificates uploaded to AWS S3 successfully"
+}
+
+#=============================================================================
+# Generate and Upload TLS Certificates
+# Main function that generates certs and uploads to appropriate storage
+#=============================================================================
+generate_and_upload_tls_certs() {
+    # Step 1: Generate certificates (common for all targets)
+    generate_tls_certs
+    
+    # Step 2: Upload to appropriate storage based on target
+    if [[ "${TARGET}" == *"kind"* ]]; then
+        upload_tls_certs_to_localstack
+    elif [[ "${TARGET}" == "aws-ci" || "${TARGET}" == "aws-perf" ]]; then
+        upload_tls_certs_to_aws_s3
+    else
+        log_warn "Unknown target ${TARGET}, skipping certificate upload"
+    fi
 }
