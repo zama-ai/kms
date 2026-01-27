@@ -233,9 +233,6 @@ fn main() {
             .expect("Decompression failed")
             .into_raw_parts();
 
-        //rayon::broadcast(|_| set_server_key(server_key.clone()));
-        //set_server_key(server_key);
-
         let bench_name = format!("non-threshold_basic-ops_{name}");
 
         {
