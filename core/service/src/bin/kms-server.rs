@@ -747,6 +747,8 @@ async fn main_exec() -> anyhow::Result<()> {
         }
     }
 
+    tracing::info!("KMS tracing shutting down...");
+
     // Sleep to let some time for the process to export all the spans before exit
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
