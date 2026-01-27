@@ -165,20 +165,6 @@ jobs:
         run: |
           version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
-      # ==========================================================================
-      # LFS files are needed for backward compatibility tests
-      # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
-      # need to do it right after and then manually pull LFS files
-      - name: setup gitlfs from binary
-        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
-        env:
-          GIT_LFS_VERSION: '3.6.1'
-        run: |
-          wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
-          tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
-          "sudo ./git-lfs-${GIT_LFS_VERSION}/install.sh"
-          # Pull LFS files after installation
-          git lfs pull
 
       - name: Set up Rust
         if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
