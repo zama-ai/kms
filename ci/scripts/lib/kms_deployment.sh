@@ -95,14 +95,15 @@ deploy_kms() {
     #=========================================================================
     # STEP 3: Enable TLS by Default for Threshold Mode
     #=========================================================================
-    # Enable TLS by default only for thresholdWithEnclave deployments
-    # For regular threshold mode, TLS is disabled by default unless explicitly enabled
-    if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+    # For threshold deployments (with or without enclave), enable TLS by default
+    # TLS can be explicitly disabled with --disable-tls if needed
+    # For centralized deployments, TLS is disabled by default
+    if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
         export ENABLE_TLS="${ENABLE_TLS:-true}"
-        log_info "TLS for thresholdWithEnclave mode: ${ENABLE_TLS}"
+        log_info "TLS for ${DEPLOYMENT_TYPE} mode: ${ENABLE_TLS} (default: enabled)"
     else
         export ENABLE_TLS="${ENABLE_TLS:-false}"
-        log_info "TLS for ${DEPLOYMENT_TYPE} mode: ${ENABLE_TLS}"
+        log_info "TLS for ${DEPLOYMENT_TYPE} mode: ${ENABLE_TLS} (default: disabled)"
     fi
 
     #=========================================================================
