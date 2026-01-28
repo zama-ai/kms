@@ -282,6 +282,8 @@ spec:
               
               echo "All certificates uploaded successfully"
           env:
+            - name: HOME
+              value: /tmp
             - name: AWS_REGION
               value: {{ .Values.kmsCore.aws.region }}
             - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
