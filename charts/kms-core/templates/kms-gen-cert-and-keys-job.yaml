@@ -1,7 +1,10 @@
 {{- if and .Values.kmsCore.thresholdMode.enabled .Values.kmsGenCertAndKeys.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
-{{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
+{{- $peersStartID := include "kmsPeersStartID" . | int }}
+{{- $currentPeerID := default $peersStartID .Values.kmsPeers.id | int }}
+{{- /* Only run this job for the first party to avoid duplicate cert generation */}}
+{{- if eq $currentPeerID $peersStartID }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -160,11 +163,20 @@ spec:
               set -e
               echo "Generating TLS certificates for threshold parties..."
               
-              # Build CA names from party pod names
+              # Build CA names from peers list
               CA_NAMES=""
-              {{- range $peersIDList }}
-              {{- $partyPodName := printf "%s-%d" $kmsCoreName . }}
+              {{- if .Values.kmsCore.thresholdMode.peersList }}
+              {{- range .Values.kmsCore.thresholdMode.peersList }}
+              CA_NAMES="${CA_NAMES} {{ .host }}"
+              {{- end }}
+              {{- else }}
+              {{- /* Fallback: generate names from party count if peersList is empty */}}
+              {{- $totalParties := .Values.kmsPeers.count | int }}
+              {{- range $i := until $totalParties }}
+              {{- $partyID := add1 $i }}
+              {{- $partyPodName := printf "%s-%d-core-%d" $kmsCoreName $partyID $partyID }}
               CA_NAMES="${CA_NAMES} {{ $partyPodName }}"
+              {{- end }}
               {{- end }}
               
               echo "CA Names: ${CA_NAMES}"
@@ -264,20 +276,40 @@ spec:
               echo "Uploading certificates to S3..."
               
               # Upload certificates and keys to S3
-              {{- range $idx, $peerID := $peersIDList }}
-              {{- $partyPodName := printf "%s-%d" $kmsCoreName $peerID }}
+              {{- if .Values.kmsCore.thresholdMode.peersList }}
+              {{- range .Values.kmsCore.thresholdMode.peersList }}
               
-              # Upload certificate for party {{ $peerID }}
+              # Upload certificate for party {{ .id }}
+              aws s3 cp /tmp/certs/cert_{{ .host }}.pem \
+                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ .id }}/CACert/cert.pem \
+                --region {{ $.Values.kmsCore.aws.region }}
+              echo "Uploaded certificate for party {{ .id }}"
+              
+              # Upload private key for party {{ .id }}
+              aws s3 cp /tmp/certs/key_{{ .host }}.pem \
+                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ .id }}/PrivateKey/key.pem \
+                --region {{ $.Values.kmsCore.aws.region }}
+              echo "Uploaded private key for party {{ .id }}"
+              {{- end }}
+              {{- else }}
+              {{- /* Fallback: iterate based on party count if peersList is empty */}}
+              {{- $totalParties := .Values.kmsPeers.count | int }}
+              {{- range $i := until $totalParties }}
+              {{- $partyID := add1 $i }}
+              {{- $partyPodName := printf "%s-%d-core-%d" $kmsCoreName $partyID $partyID }}
+              
+              # Upload certificate for party {{ $partyID }}
               aws s3 cp /tmp/certs/cert_{{ $partyPodName }}.pem \
-                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $peerID }}/CACert/cert.pem \
+                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $partyID }}/CACert/cert.pem \
                 --region {{ $.Values.kmsCore.aws.region }}
-              echo "Uploaded certificate for party {{ $peerID }}"
+              echo "Uploaded certificate for party {{ $partyID }}"
               
-              # Upload private key for party {{ $peerID }}
+              # Upload private key for party {{ $partyID }}
               aws s3 cp /tmp/certs/key_{{ $partyPodName }}.pem \
-                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $peerID }}/PrivateKey/key.pem \
+                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $partyID }}/PrivateKey/key.pem \
                 --region {{ $.Values.kmsCore.aws.region }}
-              echo "Uploaded private key for party {{ $peerID }}"
+              echo "Uploaded private key for party {{ $partyID }}"
+              {{- end }}
               {{- end }}
               
               echo "All certificates uploaded successfully"
@@ -340,4 +372,5 @@ spec:
         - name: certs
           emptyDir: {}
         {{- end }}
+{{- end }}
 {{- end -}}

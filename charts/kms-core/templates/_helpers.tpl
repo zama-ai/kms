@@ -161,8 +161,8 @@ S3_BASE_URL="${CORE_CLIENT__S3_ENDPOINT}"
 {{- end }}
 echo "Fetching TLS certificates from S3 base URL: ${S3_BASE_URL}"
 {{- range .Values.kmsCore.thresholdMode.peersList }}
-{{- if $.Values.minio.enabled }}
-# For minio/localstack: use direct path to cert.pem
+{{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
+# For minio/localstack or non-enclave threshold: use direct path to cert.pem
 CERT_PATH="PUB-p{{ .id }}/CACert/cert.pem"
 echo "Fetching CA cert for party {{ .id }} from: ${S3_BASE_URL}/${CERT_PATH}"
 if curl -s -f -o ./ca_pem_{{ .id }} "${S3_BASE_URL}/${CERT_PATH}"; then
@@ -172,7 +172,7 @@ else
   echo "WARNING: No CA cert found for party {{ .id }} at ${CERT_PATH}"
 fi
 {{- else }}
-# For AWS: use S3 list to discover the cert path
+# For AWS enclave: use S3 list to discover the cert path
 echo "Looking for CA cert for party {{ .id }} at: ${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .id }}/CACert/"
 BUCKET_PATH_{{ .id }}=$(curl -s "${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .id }}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
 echo "Found bucket path: ${BUCKET_PATH_{{ .id }}}"
@@ -186,8 +186,8 @@ fi
 {{- end }}
 {{- end }}
 # Fetch private key only for this party (party {{ .Values.kmsPeers.id }})
-{{- if $.Values.minio.enabled }}
-# For minio/localstack: use direct path to key.pem
+{{- if or $.Values.minio.enabled (not $.Values.kmsCore.nitroEnclave.enabled) }}
+# For minio/localstack or non-enclave threshold: use direct path to key.pem
 KEY_PATH="PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/key.pem"
 echo "Fetching private key from: ${S3_BASE_URL}/${KEY_PATH}"
 if curl -s -f -o ./key_pem "${S3_BASE_URL}/${KEY_PATH}"; then
@@ -197,7 +197,7 @@ else
   echo "WARNING: No private key found for party {{ .Values.kmsPeers.id }} at ${KEY_PATH}"
 fi
 {{- else }}
-# For AWS: use S3 list to discover the key path
+# For AWS enclave: use S3 list to discover the key path
 echo "Looking for private key at: ${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/"
 KEY_BUCKET_PATH=$(curl -s "${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//" || true)
 echo "Found key bucket path: ${KEY_BUCKET_PATH}"
