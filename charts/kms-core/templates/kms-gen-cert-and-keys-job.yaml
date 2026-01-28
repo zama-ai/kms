@@ -3,8 +3,6 @@
 {{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
 {{- $peersStartID := include "kmsPeersStartID" . | int }}
 {{- $currentPeerID := default $peersStartID .Values.kmsPeers.id | int }}
-{{- /* Only run this job for the first party to avoid duplicate cert generation */}}
-{{- if eq $currentPeerID $peersStartID }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -163,29 +161,29 @@ spec:
               set -e
               echo "Generating TLS certificates for threshold parties..."
               
-              # Build CA names from peers list
-              CA_NAMES=""
+              # Generate certificate for current party only
+              echo "Party ID: {{ $currentPeerID }}"
+              
+              {{- /* Find the current party's hostname from peersList */}}
+              {{- $currentHostname := "" }}
               {{- if .Values.kmsCore.thresholdMode.peersList }}
               {{- range .Values.kmsCore.thresholdMode.peersList }}
-              CA_NAMES="${CA_NAMES} {{ .host }}"
+              {{- if eq (.id | int) $currentPeerID }}
+              {{- $currentHostname = .host }}
               {{- end }}
-              {{- else }}
-              {{- /* Fallback: generate names from party count if peersList is empty */}}
-              {{- /* Note: This should never be used as peersList is always populated */}}
-              {{- $totalParties := .Values.kmsPeers.count | int }}
-              {{- range $i := until $totalParties }}
-              {{- $partyID := add1 $i }}
-              {{- /* Generate correct hostname: kms-core-${id}-core-${id} */}}
-              {{- $partyPodName := printf "kms-core-%d-core-%d" $partyID $partyID }}
-              CA_NAMES="${CA_NAMES} {{ $partyPodName }}"
               {{- end }}
               {{- end }}
               
-              echo "CA Names: ${CA_NAMES}"
+              {{- if not $currentHostname }}
+              {{- /* Fallback if hostname not found in peersList */}}
+              {{- $currentHostname = printf "kms-core-%d-core-%d" $currentPeerID $currentPeerID }}
+              {{- end }}
               
-              # Generate certificates using kms-gen-tls-certs binary
+              echo "Generating certificate for hostname: {{ $currentHostname }}"
+              
+              # Generate certificate using kms-gen-tls-certs binary (only for this party)
               /app/kms/core/service/bin/kms-gen-tls-certs \
-                --ca-names ${CA_NAMES} \
+                --ca-names {{ $currentHostname }} \
                 --output-dir /tmp/certs \
                 --wildcard
               
@@ -193,7 +191,10 @@ spec:
               ls -la /tmp/certs/
               
               # Verify cert/key pairs match (for debugging)
+              echo "========================================="
               echo "Verifying certificate and key pairs..."
+              echo "========================================="
+              VERIFICATION_FAILED=0
               for cert_file in /tmp/certs/cert_*.pem; do
                 hostname=$(basename "$cert_file" .pem | sed 's/^cert_//')
                 key_file="/tmp/certs/key_${hostname}.pem"
@@ -201,15 +202,28 @@ spec:
                   echo "Checking pair: $hostname"
                   cert_modulus=$(openssl x509 -noout -modulus -in "$cert_file" 2>/dev/null | openssl md5 2>/dev/null || echo "cert_error")
                   key_modulus=$(openssl rsa -noout -modulus -in "$key_file" 2>/dev/null | openssl md5 2>/dev/null || openssl ec -noout -modulus -in "$key_file" 2>/dev/null | openssl md5 2>/dev/null || echo "key_error")
+                  cert_sha256=$(sha256sum "$cert_file" | awk '{print $1}')
+                  key_sha256=$(sha256sum "$key_file" | awk '{print $1}')
+                  echo "  Cert file: cert_${hostname}.pem (SHA256: ${cert_sha256:0:16}...)"
+                  echo "  Key file:  key_${hostname}.pem (SHA256: ${key_sha256:0:16}...)"
                   if [ "$cert_modulus" = "$key_modulus" ]; then
                     echo "  ✓ MATCH for $hostname"
                   else
                     echo "  ✗ MISMATCH for $hostname!"
-                    echo "    Cert MD5: $cert_modulus"
-                    echo "    Key MD5:  $key_modulus"
+                    echo "    Cert modulus MD5: $cert_modulus"
+                    echo "    Key modulus MD5:  $key_modulus"
+                    VERIFICATION_FAILED=1
                   fi
+                  echo ""
                 fi
               done
+              
+              if [ $VERIFICATION_FAILED -eq 1 ]; then
+                echo "ERROR: Certificate/key pair verification failed!"
+                exit 1
+              fi
+              echo "✓ All certificate/key pairs verified successfully"
+              echo "========================================="
           env:
             - name: NO_COLOR
               value: "true"
@@ -294,57 +308,51 @@ spec:
             - -c
             - |
               set -e
-              echo "Uploading certificates to S3..."
+              echo "Uploading certificate for party {{ $currentPeerID }} to S3..."
+              
+              {{- /* Find the current party's hostname from peersList */}}
+              {{- $currentHostname := "" }}
+              {{- if .Values.kmsCore.thresholdMode.peersList }}
+              {{- range .Values.kmsCore.thresholdMode.peersList }}
+              {{- if eq (.id | int) $currentPeerID }}
+              {{- $currentHostname = .host }}
+              {{- end }}
+              {{- end }}
+              {{- end }}
+              
+              {{- if not $currentHostname }}
+              {{- /* Fallback if hostname not found in peersList */}}
+              {{- $currentHostname = printf "kms-core-%d-core-%d" $currentPeerID $currentPeerID }}
+              {{- end }}
               
               # Clean up any existing certificates to avoid mismatches
-              {{- if .Values.kmsCore.thresholdMode.peersList }}
-              {{- range .Values.kmsCore.thresholdMode.peersList }}
-              echo "Cleaning up old certificates for party {{ .id }}..."
-              aws s3 rm s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ .id }}/CACert/ \
-                --recursive --region {{ $.Values.kmsCore.aws.region }} || true
-              aws s3 rm s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ .id }}/PrivateKey/ \
-                --recursive --region {{ $.Values.kmsCore.aws.region }} || true
-              {{- end }}
-              {{- end }}
+              echo "Cleaning up old certificates for party {{ $currentPeerID }}..."
+              aws s3 rm s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $currentPeerID }}/CACert/ \
+                --recursive --region {{ .Values.kmsCore.aws.region }} || true
+              aws s3 rm s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $currentPeerID }}/PrivateKey/ \
+                --recursive --region {{ .Values.kmsCore.aws.region }} || true
               
-              # Upload certificates and keys to S3
-              {{- if .Values.kmsCore.thresholdMode.peersList }}
-              {{- range .Values.kmsCore.thresholdMode.peersList }}
+              # Upload certificate for party {{ $currentPeerID }}
+              echo "Uploading certificate for party {{ $currentPeerID }}..."
+              if ! aws s3 cp /tmp/certs/cert_{{ $currentHostname }}.pem \
+                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $currentPeerID }}/CACert/cert.pem \
+                --region {{ .Values.kmsCore.aws.region }}; then
+                echo "ERROR: Failed to upload certificate for party {{ $currentPeerID }}"
+                exit 1
+              fi
+              echo "✓ Uploaded certificate for party {{ $currentPeerID }}"
               
-              # Upload certificate for party {{ .id }}
-              aws s3 cp /tmp/certs/cert_{{ .host }}.pem \
-                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ .id }}/CACert/cert.pem \
-                --region {{ $.Values.kmsCore.aws.region }}
-              echo "Uploaded certificate for party {{ .id }}"
+              # Upload private key for party {{ $currentPeerID }}
+              echo "Uploading private key for party {{ $currentPeerID }}..."
+              if ! aws s3 cp /tmp/certs/key_{{ $currentHostname }}.pem \
+                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $currentPeerID }}/PrivateKey/key.pem \
+                --region {{ .Values.kmsCore.aws.region }}; then
+                echo "ERROR: Failed to upload private key for party {{ $currentPeerID }}"
+                exit 1
+              fi
+              echo "✓ Uploaded private key for party {{ $currentPeerID }}"
               
-              # Upload private key for party {{ .id }}
-              aws s3 cp /tmp/certs/key_{{ .host }}.pem \
-                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ .id }}/PrivateKey/key.pem \
-                --region {{ $.Values.kmsCore.aws.region }}
-              echo "Uploaded private key for party {{ .id }}"
-              {{- end }}
-              {{- else }}
-              {{- /* Fallback: iterate based on party count if peersList is empty */}}
-              {{- $totalParties := .Values.kmsPeers.count | int }}
-              {{- range $i := until $totalParties }}
-              {{- $partyID := add1 $i }}
-              {{- $partyPodName := printf "%s-%d-core-%d" $kmsCoreName $partyID $partyID }}
-              
-              # Upload certificate for party {{ $partyID }}
-              aws s3 cp /tmp/certs/cert_{{ $partyPodName }}.pem \
-                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $partyID }}/CACert/cert.pem \
-                --region {{ $.Values.kmsCore.aws.region }}
-              echo "Uploaded certificate for party {{ $partyID }}"
-              
-              # Upload private key for party {{ $partyID }}
-              aws s3 cp /tmp/certs/key_{{ $partyPodName }}.pem \
-                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $partyID }}/PrivateKey/key.pem \
-                --region {{ $.Values.kmsCore.aws.region }}
-              echo "Uploaded private key for party {{ $partyID }}"
-              {{- end }}
-              {{- end }}
-              
-              echo "All certificates uploaded successfully"
+              echo "Certificate and key uploaded successfully for party {{ $currentPeerID }}"
           env:
             - name: HOME
               value: /tmp
@@ -404,5 +412,4 @@ spec:
         - name: certs
           emptyDir: {}
         {{- end }}
-{{- end }}
 {{- end -}}
