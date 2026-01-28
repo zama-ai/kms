@@ -196,3 +196,190 @@ pub(crate) async fn threshold_handles_custodian_backup(
     )
     .await
 }
+
+// =============================================================================
+// ISOLATED TEST HELPERS
+// =============================================================================
+// These helpers are used by isolated tests that use the consolidated testing
+// module (kms_lib::testing). They provide simplified interfaces for common
+// threshold operations without requiring the full test setup infrastructure.
+
+/// Helper to generate threshold key using insecure mode (for isolated tests)
+///
+/// This function sends insecure_key_gen requests to all clients and waits for
+/// key generation to complete. It's designed for use with ThresholdTestEnv.
+///
+/// # Arguments
+/// * `clients` - Map of party ID to gRPC client
+/// * `request_id` - Unique identifier for this key generation request
+/// * `params` - FHE parameters to use for key generation
+///
+/// # Returns
+/// * `Ok(())` if key generation succeeded on all parties
+/// * `Err` if any party failed
+#[cfg(feature = "insecure")]
+pub async fn threshold_insecure_key_gen_isolated(
+    clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    request_id: &kms_grpc::RequestId,
+    params: kms_grpc::kms::v1::FheParameter,
+) -> anyhow::Result<()> {
+    use crate::dummy_domain;
+    use crate::engine::base::derive_request_id;
+    use crate::testing::helpers::domain_to_msg;
+    use kms_grpc::kms::v1::KeyGenRequest;
+    use tokio::task::JoinSet;
+
+    let domain_msg = domain_to_msg(&dummy_domain());
+
+    // For insecure mode, we need a dummy preproc_id because validate_key_gen_request
+    // requires it, even though insecure mode doesn't actually use preprocessing.
+    let dummy_preproc_id = derive_request_id("dummy_preproc_for_insecure")?;
+
+    // Use insecure_key_gen endpoint which bypasses preprocessing validation
+    let mut keygen_tasks = JoinSet::new();
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let keygen_req = KeyGenRequest {
+            request_id: Some((*request_id).into()),
+            params: Some(params as i32),
+            preproc_id: Some(dummy_preproc_id.into()),
+            domain: Some(domain_msg.clone()),
+            keyset_config: None,
+            keyset_added_info: None,
+            context_id: None,
+            epoch_id: None,
+        };
+        keygen_tasks.spawn(async move {
+            cur_client
+                .insecure_key_gen(tonic::Request::new(keygen_req))
+                .await
+        });
+    }
+
+    while let Some(res) = keygen_tasks.join_next().await {
+        res??;
+    }
+
+    // Wait for key generation to complete on all parties
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let mut result = cur_client
+            .get_insecure_key_gen_result(tonic::Request::new((*request_id).into()))
+            .await;
+        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            result = cur_client
+                .get_insecure_key_gen_result(tonic::Request::new((*request_id).into()))
+                .await;
+        }
+        result?;
+    }
+
+    Ok(())
+}
+
+/// Helper to generate threshold key using secure mode with preprocessing (for isolated tests)
+///
+/// This function runs the full preprocessing + key generation flow using secure mode.
+/// It's designed for use with ThresholdTestEnv when PRSS is enabled.
+///
+/// # Arguments
+/// * `clients` - Map of party ID to gRPC client
+/// * `preproc_id` - Unique identifier for preprocessing request
+/// * `keygen_id` - Unique identifier for key generation request
+/// * `params` - FHE parameters to use
+///
+/// # Returns
+/// * `Ok(())` if preprocessing and key generation succeeded on all parties
+/// * `Err` if any party failed
+#[cfg(feature = "slow_tests")]
+pub async fn threshold_key_gen_secure_isolated(
+    clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    preproc_id: &kms_grpc::RequestId,
+    keygen_id: &kms_grpc::RequestId,
+    params: kms_grpc::kms::v1::FheParameter,
+) -> anyhow::Result<()> {
+    use crate::dummy_domain;
+    use crate::testing::helpers::domain_to_msg;
+    use kms_grpc::kms::v1::{KeyGenPreprocRequest, KeyGenRequest};
+    use tokio::task::JoinSet;
+
+    let domain_msg = domain_to_msg(&dummy_domain());
+
+    // Step 1: Run preprocessing
+    let mut preproc_tasks = JoinSet::new();
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let preproc_req = KeyGenPreprocRequest {
+            request_id: Some((*preproc_id).into()),
+            params: params as i32,
+            domain: Some(domain_msg.clone()),
+            keyset_config: None,
+            context_id: None,
+            epoch_id: None,
+        };
+        preproc_tasks.spawn(async move {
+            cur_client
+                .key_gen_preproc(tonic::Request::new(preproc_req))
+                .await
+        });
+    }
+
+    while let Some(res) = preproc_tasks.join_next().await {
+        res??;
+    }
+
+    // Wait for preprocessing to complete
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let mut result = cur_client
+            .get_key_gen_preproc_result(tonic::Request::new((*preproc_id).into()))
+            .await;
+        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            result = cur_client
+                .get_key_gen_preproc_result(tonic::Request::new((*preproc_id).into()))
+                .await;
+        }
+        result?;
+    }
+
+    // Step 2: Run key generation using the preprocessed material
+    let mut keygen_tasks = JoinSet::new();
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let keygen_req = KeyGenRequest {
+            request_id: Some((*keygen_id).into()),
+            params: Some(params as i32),
+            preproc_id: Some((*preproc_id).into()),
+            domain: Some(domain_msg.clone()),
+            keyset_config: None,
+            keyset_added_info: None,
+            context_id: None,
+            epoch_id: None,
+        };
+        keygen_tasks
+            .spawn(async move { cur_client.key_gen(tonic::Request::new(keygen_req)).await });
+    }
+
+    while let Some(res) = keygen_tasks.join_next().await {
+        res??;
+    }
+
+    // Wait for key generation to complete
+    for client in clients.values() {
+        let mut cur_client = client.clone();
+        let mut result = cur_client
+            .get_key_gen_result(tonic::Request::new((*keygen_id).into()))
+            .await;
+        while result.is_err() && result.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            result = cur_client
+                .get_key_gen_result(tonic::Request::new((*keygen_id).into()))
+                .await;
+        }
+        result?;
+    }
+
+    Ok(())
+}
