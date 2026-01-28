@@ -218,7 +218,7 @@ pub(crate) async fn threshold_handles_custodian_backup(
 /// * `Ok(())` if key generation succeeded on all parties
 /// * `Err` if any party failed
 #[cfg(feature = "insecure")]
-pub async fn threshold_key_gen_isolated(
+pub async fn threshold_insecure_key_gen_isolated(
     clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: &kms_grpc::RequestId,
     params: kms_grpc::kms::v1::FheParameter,
@@ -344,7 +344,7 @@ pub async fn threshold_key_gen_secure_isolated(
         result?;
     }
 
-    // Step 2: Run key generation with preprocessing
+    // Step 2: Run key generation using the preprocessed material
     let mut keygen_tasks = JoinSet::new();
     for client in clients.values() {
         let mut cur_client = client.clone();

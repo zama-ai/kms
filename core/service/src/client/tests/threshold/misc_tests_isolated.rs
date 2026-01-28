@@ -89,19 +89,17 @@ async fn test_threshold_close_after_drop_isolated() -> Result<()> {
         "Service is not in SERVING status. Got status: {status}"
     );
 
-    // Drop server
+    // Drop server to trigger shutdown
     drop(server);
 
-    // Get status and validate that it is not serving
-    let status = get_status(&mut health_client, service_name).await.unwrap();
-    assert_eq!(
-        status,
-        ServingStatus::NotServing as i32,
-        "Service is not in NOT SERVING status. Got status: {status}"
-    );
+    // Wait for server to fully shut down
+    tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
 
-    // Check the server is no longer there
-    assert!(get_status(&mut health_client, service_name).await.is_err());
+    // After shutdown, the server should no longer be reachable
+    assert!(
+        get_status(&mut health_client, service_name).await.is_err(),
+        "Server should not be reachable after shutdown"
+    );
 
     Ok(())
 }

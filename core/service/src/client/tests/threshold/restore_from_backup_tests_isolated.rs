@@ -16,8 +16,11 @@
 //! - Automatic cleanup via RAII (Drop trait)
 
 #[cfg(feature = "insecure")]
-use crate::client::tests::threshold::common::threshold_key_gen_isolated;
-use crate::consts::{BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL};
+use crate::client::tests::threshold::common::threshold_insecure_key_gen_isolated;
+use crate::consts::{
+    BACKUP_STORAGE_PREFIX_THRESHOLD_ALL, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+    PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
+};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::testing::helpers::domain_to_msg;
@@ -27,11 +30,11 @@ use kms_grpc::kms::v1::{Empty, FheParameter};
 use kms_grpc::rpc_types::PrivDataType;
 use tokio::task::JoinSet;
 
-/// Test threshold DKG backup and restore flow.
+/// Test threshold DKG backup and restore flow with decryption validation.
 ///
 /// Generates two threshold FHE keys, deletes them from private storage on all parties,
-/// restores from backup, and verifies restoration succeeded. Tests the complete
-/// backup/restore cycle for threshold key material.
+/// restores from backup, and validates restoration by performing a decryption operation.
+/// Tests the complete backup/restore cycle for threshold key material.
 ///
 /// **Flow:**
 /// 1. Generate two keys using insecure DKG
@@ -39,6 +42,8 @@ use tokio::task::JoinSet;
 /// 3. Verify deletion
 /// 4. Restore from backup (all parties)
 /// 5. Verify restoration (checks FheKeyInfo exists)
+/// 6. Restart servers with restored keys
+/// 7. Perform public decryption to validate restored keys are functional
 ///
 /// **Requires:** `insecure` feature flag
 /// **Run with:** `cargo test --lib --features insecure,testing nightly_test_insecure_threshold_dkg_backup_isolated`
@@ -60,8 +65,8 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
     let key_id_1 = derive_request_id("isolated-threshold-dkg-backup-1")?;
     let key_id_2 = derive_request_id("isolated-threshold-dkg-backup-2")?;
 
-    threshold_key_gen_isolated(&clients, &key_id_1, FheParameter::Test).await?;
-    threshold_key_gen_isolated(&clients, &key_id_2, FheParameter::Test).await?;
+    threshold_insecure_key_gen_isolated(&clients, &key_id_1, FheParameter::Test).await?;
+    threshold_insecure_key_gen_isolated(&clients, &key_id_2, FheParameter::Test).await?;
 
     // Delete private storage for both keys on all parties
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
@@ -120,24 +125,122 @@ async fn nightly_test_insecure_threshold_dkg_backup_isolated() -> Result<()> {
         );
     }
 
+    // Shutdown original servers to restart with restored keys
+    drop(clients);
     for (_, server) in servers {
+        server.assert_shutdown().await;
+    }
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    // Restart servers with the same storage (now containing restored keys)
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
+    let mut pub_storages = Vec::new();
+    let mut priv_storages = Vec::new();
+    for (pub_prefix, priv_prefix) in pub_storage_prefixes.iter().zip(priv_storage_prefixes) {
+        pub_storages.push(FileStorage::new(
+            Some(material_dir.path()),
+            StorageType::PUB,
+            pub_prefix.as_deref(),
+        )?);
+        priv_storages.push(FileStorage::new(
+            Some(material_dir.path()),
+            StorageType::PRIV,
+            priv_prefix.as_deref(),
+        )?);
+    }
+
+    // Create backup vaults for restarted servers
+    let backup_storage_prefixes = &BACKUP_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
+    let mut vaults = Vec::new();
+    for backup_prefix in backup_storage_prefixes {
+        let backup_proxy = crate::vault::storage::StorageProxy::from(FileStorage::new(
+            Some(material_dir.path()),
+            StorageType::BACKUP,
+            backup_prefix.as_deref(),
+        )?);
+        vaults.push(Some(crate::vault::Vault {
+            storage: backup_proxy,
+            keychain: None,
+        }));
+    }
+
+    let config = crate::testing::types::ThresholdTestConfig {
+        run_prss: true, // PRSS required for threshold decryption
+        rate_limiter_conf: None,
+        decryption_mode: None,
+        test_material_path: Some(material_dir.path()),
+    };
+
+    let (mut restarted_servers, mut restarted_clients) =
+        crate::client::test_tools::setup_threshold_isolated(
+            1, // threshold
+            pub_storages,
+            priv_storages,
+            vaults,
+            config,
+        )
+        .await;
+
+    // Create internal client for decryption validation
+    let mut pub_storage_map = std::collections::HashMap::new();
+    for (i, prefix) in pub_storage_prefixes.iter().enumerate() {
+        pub_storage_map.insert(
+            (i + 1) as u32,
+            FileStorage::new(
+                Some(material_dir.path()),
+                StorageType::PUB,
+                prefix.as_deref(),
+            )?,
+        );
+    }
+    let client_storage = FileStorage::new(Some(material_dir.path()), StorageType::CLIENT, None)?;
+    let mut internal_client = crate::client::client_wasm::Client::new_client(
+        client_storage,
+        pub_storage_map,
+        &crate::consts::TEST_PARAM,
+        None,
+    )
+    .await?;
+
+    // Validate restored keys by performing a public decryption
+    use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
+    use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
+
+    run_decryption_threshold(
+        4, // amount_parties
+        &mut restarted_servers,
+        &mut restarted_clients,
+        &mut internal_client,
+        &key_id_1,
+        None, // context_id
+        vec![TestingPlaintext::U32(42)],
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: false,
+        },
+        None, // party_ids_to_crash
+        1,    // parallelism
+        Some(material_dir.path()),
+    )
+    .await;
+
+    // Shutdown restarted servers
+    for (_, server) in restarted_servers {
         server.assert_shutdown().await;
     }
 
     Ok(())
 }
 
-/// Test threshold auto-backup after server restart.
+/// Test threshold auto-backup on key generation.
 ///
-/// Generates a threshold FHE key, shuts down servers, restarts them with the same
-/// storage, and verifies that backup was automatically created on restart. Tests
-/// the auto-backup mechanism that protects against key loss.
+/// Generates a threshold FHE key and verifies that backup was automatically created
+/// during key generation. Tests the auto-backup mechanism that protects against key loss.
 ///
 /// **Flow:**
 /// 1. Generate key using insecure DKG
 /// 2. Shutdown all servers
-/// 3. Restart servers with same storage
-/// 4. Verify backup was auto-created (checks FheKeyInfo in backup storage)
+/// 3. Verify backup was auto-created (checks FheKeyInfo in backup storage)
 ///
 /// **Requires:** `insecure` feature flag
 /// **Run with:** `cargo test --lib --features insecure,testing nightly_test_insecure_threshold_autobackup_after_deletion_isolated`
@@ -158,7 +261,7 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion_isolated() ->
 
     let key_id = derive_request_id("isolated-threshold-autobackup")?;
 
-    threshold_key_gen_isolated(&clients, &key_id, FheParameter::Test).await?;
+    threshold_insecure_key_gen_isolated(&clients, &key_id, FheParameter::Test).await?;
 
     // Shutdown servers
     drop(clients);
