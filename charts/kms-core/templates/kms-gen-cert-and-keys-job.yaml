@@ -171,10 +171,12 @@ spec:
               {{- end }}
               {{- else }}
               {{- /* Fallback: generate names from party count if peersList is empty */}}
+              {{- /* Note: This should never be used as peersList is always populated */}}
               {{- $totalParties := .Values.kmsPeers.count | int }}
               {{- range $i := until $totalParties }}
               {{- $partyID := add1 $i }}
-              {{- $partyPodName := printf "%s-%d-core-%d" $kmsCoreName $partyID $partyID }}
+              {{- /* Generate correct hostname: kms-core-${id}-core-${id} */}}
+              {{- $partyPodName := printf "kms-core-%d-core-%d" $partyID $partyID }}
               CA_NAMES="${CA_NAMES} {{ $partyPodName }}"
               {{- end }}
               {{- end }}
@@ -189,6 +191,25 @@ spec:
               
               echo "Certificates generated successfully"
               ls -la /tmp/certs/
+              
+              # Verify cert/key pairs match (for debugging)
+              echo "Verifying certificate and key pairs..."
+              for cert_file in /tmp/certs/cert_*.pem; do
+                hostname=$(basename "$cert_file" .pem | sed 's/^cert_//')
+                key_file="/tmp/certs/key_${hostname}.pem"
+                if [ -f "$key_file" ]; then
+                  echo "Checking pair: $hostname"
+                  cert_modulus=$(openssl x509 -noout -modulus -in "$cert_file" 2>/dev/null | openssl md5 2>/dev/null || echo "cert_error")
+                  key_modulus=$(openssl rsa -noout -modulus -in "$key_file" 2>/dev/null | openssl md5 2>/dev/null || openssl ec -noout -modulus -in "$key_file" 2>/dev/null | openssl md5 2>/dev/null || echo "key_error")
+                  if [ "$cert_modulus" = "$key_modulus" ]; then
+                    echo "  ✓ MATCH for $hostname"
+                  else
+                    echo "  ✗ MISMATCH for $hostname!"
+                    echo "    Cert MD5: $cert_modulus"
+                    echo "    Key MD5:  $key_modulus"
+                  fi
+                fi
+              done
           env:
             - name: NO_COLOR
               value: "true"
@@ -274,6 +295,17 @@ spec:
             - |
               set -e
               echo "Uploading certificates to S3..."
+              
+              # Clean up any existing certificates to avoid mismatches
+              {{- if .Values.kmsCore.thresholdMode.peersList }}
+              {{- range .Values.kmsCore.thresholdMode.peersList }}
+              echo "Cleaning up old certificates for party {{ .id }}..."
+              aws s3 rm s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ .id }}/CACert/ \
+                --recursive --region {{ $.Values.kmsCore.aws.region }} || true
+              aws s3 rm s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ .id }}/PrivateKey/ \
+                --recursive --region {{ $.Values.kmsCore.aws.region }} || true
+              {{- end }}
+              {{- end }}
               
               # Upload certificates and keys to S3
               {{- if .Values.kmsCore.thresholdMode.peersList }}
