@@ -372,17 +372,18 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
     Ok(())
 }
 
-/// Test insecure threshold decompression key generation.
+/// Test insecure threshold decompression key generation with decryption validation.
 ///
 /// Generates two regular keysets using insecure mode, then generates a decompression key
-/// between them using secure mode (required for decompression keys). Tests the full
-/// decompression workflow.
+/// between them using secure mode (required for decompression keys). Validates the keys
+/// by performing a public decryption operation.
 ///
 /// **Workflow:**
 /// 1. Generate first keyset (insecure mode)
 /// 2. Generate second keyset (insecure mode)
 /// 3. Generate decompression key from keyset 1 to keyset 2 (secure mode with preprocessing)
 /// 4. Verify all keys generated successfully
+/// 5. Perform public decryption to validate keys are functional
 ///
 /// **Requires:**
 /// - `slow_tests` and `insecure` feature flags (PRSS generation at runtime)
@@ -391,6 +392,10 @@ async fn secure_threshold_keygen_crash_preprocessing_isolated() -> Result<()> {
 #[tokio::test]
 #[cfg(all(feature = "slow_tests", feature = "insecure"))]
 async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
+    use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
+    use crate::consts::PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL;
+    use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
+    use crate::vault::storage::StorageType;
     use kms_grpc::kms::v1::{KeySetAddedInfo, KeySetConfig, KeySetType};
 
     let env = ThresholdTestEnv::builder()
@@ -523,7 +528,51 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
         assert_eq!(result3.into_inner().request_id, Some(key_id_3.into()));
     }
 
-    for server in env.into_servers() {
+    // Perform decryption sanity check to validate keys are functional
+    let material_dir = env.material_dir;
+    let mut servers = env.servers;
+    let mut clients = env.clients;
+
+    let material_path = material_dir.path();
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..4];
+
+    // Create internal client for decryption
+    let mut pub_storage_map = std::collections::HashMap::new();
+    for (i, prefix) in pub_storage_prefixes.iter().enumerate() {
+        pub_storage_map.insert(
+            (i + 1) as u32,
+            FileStorage::new(Some(material_path), StorageType::PUB, prefix.as_deref())?,
+        );
+    }
+    let client_storage = FileStorage::new(Some(material_path), StorageType::CLIENT, None)?;
+    let mut internal_client = crate::client::client_wasm::Client::new_client(
+        client_storage,
+        pub_storage_map,
+        &crate::consts::TEST_PARAM,
+        None,
+    )
+    .await?;
+
+    // Validate key_id_1 with a public decryption
+    run_decryption_threshold(
+        4,
+        &mut servers,
+        &mut clients,
+        &mut internal_client,
+        &key_id_1,
+        None,
+        vec![TestingPlaintext::U32(42)],
+        EncryptionConfig {
+            compression: true,
+            precompute_sns: false,
+        },
+        None,
+        1,
+        Some(material_path),
+    )
+    .await;
+
+    for (_, server) in servers {
         server.assert_shutdown().await;
     }
 
