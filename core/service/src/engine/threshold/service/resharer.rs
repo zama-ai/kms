@@ -141,11 +141,11 @@ async fn fetch_public_materials_from_peers<
     // obtain the digests
     let expected_public_key_digest = key_digests
         .get(&PubDataType::PublicKey)
-        .ok_or(anyhow::anyhow!("missing digest for public key"))?;
+        .ok_or_else(|| anyhow::anyhow!("missing digest for public key"))?;
 
     let expected_server_key_digest = key_digests
         .get(&PubDataType::ServerKey)
-        .ok_or(anyhow::anyhow!("missing digest for server key"))?;
+        .ok_or_else(|| anyhow::anyhow!("missing digest for server key"))?;
 
     // fetch the context info
     let context = {

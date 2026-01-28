@@ -2,6 +2,7 @@ name: zama-core-threshold
 # TODO: proper networking between nodes
 
 services:
+
   # 1. We generate signing keys and CA certificates for all nodes
   dev-kms-core-gen-signing-keys-ca-certs:
     image: ghcr.io/zama-ai/kms/core-service:latest-dev
@@ -46,7 +47,7 @@ services:
     depends_on:
       dev-s3-mock-setup:
         condition: service_completed_successfully
-  
+
   # 2. We start all cores
   dev-kms-core-1:
     hostname: abcd.dev-kms-core-1.com

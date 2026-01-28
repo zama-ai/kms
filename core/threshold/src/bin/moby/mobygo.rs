@@ -364,7 +364,7 @@ async fn crs_gen_command(
     choreo_conf: ChoreoConf,
     params: CrsGenArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
 
     let session_id = runtime
         .initiate_crs_gen(
@@ -405,7 +405,7 @@ async fn prss_init_command(
     choreo_conf: ChoreoConf,
     params: PrssInitArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
 
     runtime
         .inititate_prss_init(
@@ -427,7 +427,7 @@ async fn preproc_keygen_command(
     choreo_conf: ChoreoConf,
     params: PreprocKeyGenArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
 
     let session_id = runtime
         .initiate_preproc_keygen(
@@ -452,7 +452,7 @@ async fn threshold_keygen_command(
     choreo_conf: ChoreoConf,
     params: ThresholdKeyGenArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
 
     let session_id = runtime
         .initiate_threshold_keygen(
@@ -499,7 +499,7 @@ async fn preproc_decrypt_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pk_serialized = std::fs::read(params.pub_key_file)?;
     let (key_sid, _): (SessionId, FhePubKeySet) = bc2wrap::deserialize_unsafe(&pk_serialized)?;
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
     let num_ctxts = params.num_ctxts;
     let ctxt_type = params.tfhe_type;
     let session_id = runtime
@@ -631,7 +631,7 @@ async fn threshold_decrypt_from_file_command(
     let (tfhe_type, ctxt): (TfheType, RadixOrBoolCiphertext) =
         bc2wrap::deserialize_unsafe(&ctxt_serialized)?;
 
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
     let session_id = runtime
         .initiate_threshold_decrypt(
             SessionId::from(session_id),
@@ -684,7 +684,7 @@ async fn threshold_decrypt_command(
 
     println!("Encrypted the following message : {messages:?}");
 
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
     let throughput = if let Some(num_copies) = params.throughput_copies {
         let num_sessions = params.throughput_sessions.unwrap_or(1);
         Some(ThroughtputParams {
@@ -742,7 +742,7 @@ async fn reshare_command(
     choreo_conf: ChoreoConf,
     params: ReshareArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let new_key_id = SessionId::from(params.new_key_sid.unwrap_or(random()));
+    let new_key_id = SessionId::from(params.new_key_sid.unwrap_or_else(random));
     let new_sid = runtime
         .initiate_reshare(
             choreo_conf.threshold_topology.threshold,

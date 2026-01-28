@@ -138,9 +138,9 @@ pub(crate) fn optional_proto_request_id(
     request_id: &Option<kms_grpc::kms::v1::RequestId>,
     id_type: RequestIdParsingErr,
 ) -> anyhow::Result<RequestId> {
-    let req_id = request_id.clone().ok_or(anyhow::anyhow!(
-        "Request ID not present: {id_type}: {request_id:?}"
-    ))?;
+    let req_id = request_id
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("Request ID not present: {id_type}: {request_id:?}"))?;
     proto_request_id(&req_id, id_type)
 }
 
@@ -160,14 +160,14 @@ pub(crate) fn parse_optional_proto_request_id(
     request_id: &Option<kms_grpc::kms::v1::RequestId>,
     id_type: RequestIdParsingErr,
 ) -> Result<RequestId, BoxedStatus> {
-    let req_id = request_id
-        .clone()
-        .ok_or(BoxedStatus::from(tonic::Status::new(
+    let req_id = request_id.as_ref().ok_or_else(|| {
+        BoxedStatus::from(tonic::Status::new(
             tonic::Code::InvalidArgument,
             format!("{id_type}: {request_id:?}"),
-        )))?;
+        ))
+    })?;
 
-    parse_proto_request_id(&req_id, id_type)
+    parse_proto_request_id(req_id, id_type)
 }
 
 pub(crate) fn parse_proto_request_id(

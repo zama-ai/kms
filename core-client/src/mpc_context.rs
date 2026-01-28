@@ -114,10 +114,9 @@ pub async fn create_test_context_info_from_core_config(
                         }
                     };
 
-                    let s3_endpoint = aws_conf.s3_endpoint.as_ref().ok_or(anyhow::anyhow!(
-                        "No public S3 endpoint found for core {}",
-                        c.party_id
-                    ))?;
+                    let s3_endpoint = aws_conf.s3_endpoint.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("No public S3 endpoint found for core {}", c.party_id)
+                    })?;
 
                     // we try to detect whether the s3 endpoint is a custom one or a standard AWS one
                     let s3_endpoint = if s3_endpoint.as_str().contains("dev-s3-mock:9000") {
