@@ -140,7 +140,7 @@ wait_tkms_infra_ready() {
     local check_interval=5
 
     while [[ $elapsed -lt $max_wait ]]; do
-        if kubectl get Kmsparties -n "${NAMESPACE}" 2>/dev/null | grep -q "${party_prefix}"; then
+        if kubectl get Kmsparties -n "${NAMESPACE}" 2>/dev/null | grep -qF "${party_prefix}"; then
             log_info "Kmsparties resources found"
             break
         fi

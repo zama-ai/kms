@@ -1,4 +1,4 @@
-{{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsGenCertAndKeys.enabled -}}
+{{- if and .Values.kmsCore.thresholdMode.enabled .Values.kmsGenCertAndKeys.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
@@ -22,8 +22,13 @@ spec:
     spec:
       serviceAccountName: {{ .Values.kmsCore.serviceAccountName }}
       securityContext:
+        {{- if .Values.kmsCore.nitroEnclave.enabled }}
         {{- toYaml .Values.podSecurityContextForEnclave | nindent 8 }}
+        {{- else }}
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- end }}
       restartPolicy: Never
+      {{- if .Values.kmsCore.nitroEnclave.enabled }}
       initContainers:
         - image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
           imagePullPolicy: {{ .Values.kubeUtils.image.pullPolicy }}
@@ -140,8 +145,55 @@ spec:
                      "address" (printf "kms.%s.amazonaws.com" .Values.kmsCore.aws.region)
                      "port" 443
                 ) | indent 10 | trim }}
-        {{- /* Generate signing key and CA certificate */}}
+      {{- end }}
+      {{- /* initContainers section for non-enclave */}}
+      {{- if not .Values.kmsCore.nitroEnclave.enabled }}
+      initContainers:
+        - image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
+          imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
+          name: kms-gen-tls-certs
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              set -e
+              echo "Generating TLS certificates for threshold parties..."
+              
+              # Build CA names from party pod names
+              CA_NAMES=""
+              {{- range $peersIDList }}
+              {{- $partyPodName := printf "%s-%d" $kmsCoreName . }}
+              CA_NAMES="${CA_NAMES} {{ $partyPodName }}"
+              {{- end }}
+              
+              echo "CA Names: ${CA_NAMES}"
+              
+              # Generate certificates using kms-gen-tls-certs binary
+              /app/kms/core/service/bin/kms-gen-tls-certs \
+                --ca-names ${CA_NAMES} \
+                --output-dir /tmp/certs \
+                --wildcard
+              
+              echo "Certificates generated successfully"
+              ls -la /tmp/certs/
+          env:
+            - name: NO_COLOR
+              value: "true"
+          volumeMounts:
+            - mountPath: /tmp/certs
+              name: certs
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 250m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+      {{- end }}
       containers:
+        {{- if .Values.kmsCore.nitroEnclave.enabled }}
+        {{- /* Enclave: Run enclave container */}}
         - image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
           imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
           name: kms-core-enclave-gen-cert-and-keys
@@ -198,15 +250,75 @@ spec:
               memory: 4Gi
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
+        {{- else }}
+        {{- /* Non-Enclave: Upload certs to S3 */}}
+        - image: amazon/aws-cli:latest
+          imagePullPolicy: IfNotPresent
+          name: upload-certs-to-s3
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              set -e
+              echo "Uploading certificates to S3..."
+              
+              # Upload certificates and keys to S3
+              {{- range $idx, $peerID := $peersIDList }}
+              {{- $partyPodName := printf "%s-%d" $kmsCoreName $peerID }}
+              
+              # Upload certificate for party {{ $peerID }}
+              aws s3 cp /tmp/certs/cert_{{ $partyPodName }}.pem \
+                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $peerID }}/CACert/cert.pem \
+                --region {{ $.Values.kmsCore.aws.region }}
+              echo "Uploaded certificate for party {{ $peerID }}"
+              
+              # Upload private key for party {{ $peerID }}
+              aws s3 cp /tmp/certs/key_{{ $partyPodName }}.pem \
+                s3://${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}/PUB-p{{ $peerID }}/PrivateKey/key.pem \
+                --region {{ $.Values.kmsCore.aws.region }}
+              echo "Uploaded private key for party {{ $peerID }}"
+              {{- end }}
+              
+              echo "All certificates uploaded successfully"
+          env:
+            - name: AWS_REGION
+              value: {{ .Values.kmsCore.aws.region }}
+            - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
+          volumeMounts:
+            - mountPath: /tmp/certs
+              name: certs
+              readOnly: true
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 250m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+        {{- end }}
       imagePullSecrets:
         - name: registry-credentials
+      {{- if .Values.kmsCore.nitroEnclave.enabled }}
+      {{- if .Values.kmsCore.nodeSelector }}
       nodeSelector:
         {{- toYaml .Values.kmsCore.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.kmsCore.affinity }}
       affinity:
         {{- toYaml .Values.kmsCore.affinity | nindent 8 }}
+      {{- end }}
+      {{- if .Values.kmsCore.tolerations }}
       tolerations:
         {{- toYaml .Values.kmsCore.tolerations | nindent 8 }}
+      {{- end }}
+      {{- end }}
       volumes:
+        {{- if .Values.kmsCore.nitroEnclave.enabled }}
         - name: keygen
           emptyDir: {}
         - name: workdir
@@ -222,4 +334,8 @@ spec:
           hostPath:
             path: /dev/nitro_enclaves
             type: CharDevice
+        {{- else }}
+        - name: certs
+          emptyDir: {}
+        {{- end }}
 {{- end -}}

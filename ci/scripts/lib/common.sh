@@ -17,6 +17,11 @@ NC='\033[0m'
 log_info() { echo -e "${GREEN}[INFO]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
+log_debug() {
+    if [[ "${DEBUG:-false}" == "true" ]]; then
+        echo -e "${YELLOW}[DEBUG]${NC} $*" >&2
+    fi
+}
 
 #=============================================================================
 # Usage
@@ -43,6 +48,7 @@ Options:
   --collect-logs           Only collect logs from pods and exit
   --enable-tls             Explicitly enable TLS (default for threshold mode)
   --disable-tls            Explicitly disable TLS (overrides default for threshold mode)
+  --debug                  Enable debug logging (port-forward logs to ./logs/port-forward/)
   --help                   Show this help
 EOF
 }
@@ -71,6 +77,7 @@ parse_args() {
             --collect-logs) COLLECT_LOGS="true"; shift ;;
             --enable-tls) ENABLE_TLS="true"; shift ;;
             --disable-tls) ENABLE_TLS="false"; shift ;;
+            --debug) DEBUG="true"; shift ;;
             --help) usage; exit 0 ;;
             *) log_error "Unknown argument: $1"; usage; exit 1 ;;
         esac

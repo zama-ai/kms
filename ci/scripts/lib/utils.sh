@@ -64,11 +64,27 @@ setup_port_forwarding() {
 
     log_info "Setting up port forwarding for local access..."
 
+    # Determine output destination based on DEBUG flag
+    local log_dir=""
+    local output_redirect="/dev/null 2>&1"
+    if [[ "${DEBUG:-false}" == "true" ]]; then
+        log_dir="logs/port-forward"
+        mkdir -p "${log_dir}"
+        log_debug "Port-forward logs will be saved to ${log_dir}/"
+        output_redirect=""
+    fi
+
     #-------------------------------------------------------------------------
     # Forward Localstack S3 endpoint
     #-------------------------------------------------------------------------
     log_info "  - Localstack S3: localhost:9000 -> localstack:4566"
-    kubectl port-forward -n "${NAMESPACE}" svc/localstack 9000:4566 > /dev/null 2>&1 &
+    if [[ "${DEBUG:-false}" == "true" ]]; then
+        kubectl port-forward -n "${NAMESPACE}" svc/localstack 9000:4566 \
+            > "${log_dir}/localstack.log" 2>&1 &
+    else
+        kubectl port-forward -n "${NAMESPACE}" svc/localstack 9000:4566 \
+            > /dev/null 2>&1 &
+    fi
 
     #-------------------------------------------------------------------------
     # Forward KMS Core services
@@ -81,19 +97,34 @@ setup_port_forwarding() {
             local svc_name="kms-core-${i}-core-${i}"
 
             log_info "    - Party ${i}: localhost:${port} -> ${svc_name}:50100"
-            kubectl port-forward -n "${NAMESPACE}" \
-                "svc/${svc_name}" \
-                "${port}:50100" > /dev/null 2>&1 &
+            if [[ "${DEBUG:-false}" == "true" ]]; then
+                kubectl port-forward -n "${NAMESPACE}" \
+                    "svc/${svc_name}" \
+                    "${port}:50100" > "${log_dir}/kms-core-party-${i}.log" 2>&1 &
+            else
+                kubectl port-forward -n "${NAMESPACE}" \
+                    "svc/${svc_name}" \
+                    "${port}:50100" > /dev/null 2>&1 &
+            fi
         done
     else
         # Centralized: Single service on standard port
         log_info "  - Centralized: localhost:50100 -> kms-core-core:50100"
-        kubectl port-forward -n "${NAMESPACE}" \
-            "svc/kms-core-core" \
-            "50100:50100" > /dev/null 2>&1 &
+        if [[ "${DEBUG:-false}" == "true" ]]; then
+            kubectl port-forward -n "${NAMESPACE}" \
+                "svc/kms-core-core" \
+                "50100:50100" > "${log_dir}/kms-core-centralized.log" 2>&1 &
+        else
+            kubectl port-forward -n "${NAMESPACE}" \
+                "svc/kms-core-core" \
+                "50100:50100" > /dev/null 2>&1 &
+        fi
     fi
 
     log_info "Port forwarding established (running in background)"
+    if [[ "${DEBUG:-false}" == "true" ]]; then
+        log_debug "Monitor port-forward status with: tail -f ${log_dir}/*.log"
+    fi
 }
 
 #=============================================================================

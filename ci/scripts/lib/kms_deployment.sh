@@ -111,9 +111,9 @@ deploy_kms() {
     local PEERS_VALUES="/tmp/kms-peers-values-${NAMESPACE}.yaml"
     if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
         generate_peers_config "${PEERS_VALUES}"
-        # Generate and upload TLS certificates if TLS is enabled
-        # Supports both localstack (Kind) and AWS S3 (aws-ci/aws-perf)
-        if [[ "${ENABLE_TLS}" == "true" ]]; then
+        # Generate and upload TLS certificates for Kind deployments with TLS enabled
+        # For AWS deployments, the kms-gen-cert-and-keys Helm job handles this automatically
+        if [[ "${ENABLE_TLS}" == "true" && "${TARGET}" == *"kind"* ]]; then
             generate_and_upload_tls_certs
         fi
     else
@@ -382,10 +382,20 @@ generate_helm_overrides() {
     if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
          IS_ENCLAVE="true"
          KMS_IMAGE_NAME="ghcr.io/zama-ai/kms/core-service-enclave"
-         GEN_KEYS="true"              # Enable key generation for enclave
          TOLERATION_KEY="app"         # Enclave uses app-based taints
          TOLERATION_VALUE="${NAMESPACE}"
          TLS_ENABLED="true"           # TLS required for enclave communication
+    fi
+
+    #=========================================================================
+    # Enable certificate & key generation for AWS threshold deployments with TLS
+    # This applies to both enclave and non-enclave threshold deployments
+    # For Kind deployments, certificates are generated locally via scripts
+    # For AWS deployments, the kms-gen-cert-and-keys Helm job handles it
+    #=========================================================================
+    if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* && "${ENABLE_TLS}" == "true" && "${TARGET}" != *"kind"* ]]; then
+        GEN_KEYS="true"
+        TLS_ENABLED="true"
     fi
 
     #=========================================================================

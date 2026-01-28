@@ -623,9 +623,6 @@ spec:
 
           # Get the webhook URL from the secret
           SLACK_WEBHOOK_URL=$(cat /etc/slack/url)
-          echo "DEBUG################################################"
-          echo $SLACK_WEBHOOK_URL
-          echo "DEBUG################################################"
 
           # Determine emoji based on test results
           if [ $failed -gt 0 ]; then
