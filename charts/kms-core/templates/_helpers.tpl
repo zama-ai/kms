@@ -165,12 +165,25 @@ echo "Fetching TLS certificates from S3 base URL: ${S3_BASE_URL}"
 # For minio/localstack or non-enclave threshold: use direct path to cert.pem
 CERT_PATH="PUB-p{{ .id }}/CACert/cert.pem"
 echo "Fetching CA cert for party {{ .id }} from: ${S3_BASE_URL}/${CERT_PATH}"
-if curl -s -f -o ./ca_pem_{{ .id }} "${S3_BASE_URL}/${CERT_PATH}"; then
-  export KMS_CA_PEM_{{ .id }}="\"\"\"$(cat ./ca_pem_{{ .id }})\"\"\""
-  echo "Successfully fetched CA cert for party {{ .id }}"
-else
-  echo "WARNING: No CA cert found for party {{ .id }} at ${CERT_PATH}"
-fi
+# Retry logic: wait for certificate to appear (for parallel deployments)
+MAX_RETRIES=30
+RETRY_COUNT=0
+RETRY_DELAY=2
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+  if curl -s -f -o ./ca_pem_{{ .id }} "${S3_BASE_URL}/${CERT_PATH}"; then
+    export KMS_CA_PEM_{{ .id }}="\"\"\"$(cat ./ca_pem_{{ .id }})\"\"\""
+    echo "Successfully fetched CA cert for party {{ .id }}"
+    break
+  else
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+      echo "Certificate not found yet, retry $RETRY_COUNT/$MAX_RETRIES in ${RETRY_DELAY}s..."
+      sleep $RETRY_DELAY
+    else
+      echo "WARNING: No CA cert found for party {{ .id }} at ${CERT_PATH} after $MAX_RETRIES retries"
+    fi
+  fi
+done
 {{- else }}
 # For AWS enclave: use S3 list to discover the cert path
 echo "Looking for CA cert for party {{ .id }} at: ${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .id }}/CACert/"
@@ -190,12 +203,25 @@ fi
 # For minio/localstack or non-enclave threshold: use direct path to key.pem
 KEY_PATH="PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/key.pem"
 echo "Fetching private key from: ${S3_BASE_URL}/${KEY_PATH}"
-if curl -s -f -o ./key_pem "${S3_BASE_URL}/${KEY_PATH}"; then
-  export KMS_KEY_PEM_{{ .Values.kmsPeers.id }}="\"\"\"$(cat ./key_pem)\"\"\""
-  echo "Successfully fetched private key for party {{ .Values.kmsPeers.id }}"
-else
-  echo "WARNING: No private key found for party {{ .Values.kmsPeers.id }} at ${KEY_PATH}"
-fi
+# Retry logic: wait for private key to appear (for parallel deployments)
+MAX_RETRIES=30
+RETRY_COUNT=0
+RETRY_DELAY=2
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+  if curl -s -f -o ./key_pem "${S3_BASE_URL}/${KEY_PATH}"; then
+    export KMS_KEY_PEM_{{ .Values.kmsPeers.id }}="\"\"\"$(cat ./key_pem)\"\"\""
+    echo "Successfully fetched private key for party {{ .Values.kmsPeers.id }}"
+    break
+  else
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+      echo "Private key not found yet, retry $RETRY_COUNT/$MAX_RETRIES in ${RETRY_DELAY}s..."
+      sleep $RETRY_DELAY
+    else
+      echo "WARNING: No private key found for party {{ .Values.kmsPeers.id }} at ${KEY_PATH} after $MAX_RETRIES retries"
+    fi
+  fi
+done
 {{- else }}
 # For AWS enclave: use S3 list to discover the key path
 echo "Looking for private key at: ${S3_BASE_URL}?list-type=2&prefix=PUB-p{{ .Values.kmsPeers.id }}/PrivateKey/"
