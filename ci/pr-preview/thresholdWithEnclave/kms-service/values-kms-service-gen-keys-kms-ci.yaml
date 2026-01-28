@@ -5,46 +5,7 @@ kmsCore:
       name: kms-enclave-ci-1
   thresholdMode:
     enabled: true
-    peersList:
-      - id: 1
-        host: kms-service-threshold-1-kms-enclave-ci-core-1
-        port: 50001
-      - id: 2
-        host: kms-service-threshold-2-kms-enclave-ci-core-2
-        port: 50001
-      - id: 3
-        host: kms-service-threshold-3-kms-enclave-ci-core-3
-        port: 50001
-      - id: 4
-        host: kms-service-threshold-4-kms-enclave-ci-core-4
-        port: 50001
-      - id: 5
-        host: kms-service-threshold-5-kms-enclave-ci-core-5
-        port: 50001
-      - id: 6
-        host: kms-service-threshold-6-kms-enclave-ci-core-6
-        port: 50001
-      - id: 7
-        host: kms-service-threshold-7-kms-enclave-ci-core-7
-        port: 50001
-      - id: 8
-        host: kms-service-threshold-8-kms-enclave-ci-core-8
-        port: 50001
-      - id: 9
-        host: kms-service-threshold-9-kms-enclave-ci-core-9
-        port: 50001
-      - id: 10
-        host: kms-service-threshold-10-kms-enclave-ci-core-10
-        port: 50001
-      - id: 11
-        host: kms-service-threshold-11-kms-enclave-ci-core-11
-        port: 50001
-      - id: 12
-        host: kms-service-threshold-12-kms-enclave-ci-core-12
-        port: 50001
-      - id: 13
-        host: kms-service-threshold-13-kms-enclave-ci-core-13
-        port: 50001
+    peersList: []
 
 kmsCoreClient:
   enabled: false

@@ -4,103 +4,91 @@
 name: pr-preview-deploy
 
 on:
-  pull_request:
-    types: [opened, labeled, synchronize, reopened]
+  workflow_call:
+    inputs:
+      deployment_type:
+        description: 'Deployment type (threshold, centralized, thresholdWithEnclave, centralizedWithEnclave)'
+        required: true
+        type: string
+      pr_number:
+        description: 'Pull request number'
+        required: true
+        type: string
+      image_tag:
+        description: 'Pre-built image tag to use'
+        required: true
+        type: string
+      enclave_pcr0:
+        description: 'Enclave PCR0 value'
+        required: false
+        type: string
+      enclave_pcr1:
+        description: 'Enclave PCR1 value'
+        required: false
+        type: string
+      enclave_pcr2:
+        description: 'Enclave PCR2 value'
+        required: false
+        type: string
+    secrets:
+      ZWS_BOT_TOKEN:
+        required: true
+      TS_OAUTH_CLIENT_ID:
+        required: true
+      TS_OAUTH_SECRET:
+        required: true
+      BLOCKCHAIN_ACTIONS_TOKEN:
+        required: true
 
 permissions: {}
 
 jobs:
   ############################################################################
-  # Docker build pipeline
-  # Triggered by:
-  # - Label : "pr-preview-<deployment-type>" on pull request
-  ############################################################################
-  docker-build:
-    name: docker-build
-    if: >-
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-threshold') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralized') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-thresholdWithEnclave') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralizedWithEnclave')
-    permissions:
-      actions: read # Required to read workflow run information
-      contents: write # Required to checkout repository code
-      id-token: write # Required for OIDC authentication
-      pull-requests: read # Required to read pull requests information
-      packages: write # Required to publish Docker images
-      attestations: write # Required to create build attestations
-    uses: ./.github/workflows/docker-build.yml
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
-  ############################################################################
   # PR Preview Job
+  # Now called from pr-ci.yml orchestrator with pre-built images
   ############################################################################
   pr-preview-deploy:
     name: pr-preview-deploy
-    if: >-
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-threshold') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralized') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-thresholdWithEnclave') ||
-      contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-centralizedWithEnclave')
     permissions:
       pull-requests: write # Required to update pull requests information
-    needs:
-      - docker-build
-    runs-on: runs-on=github.run_id/runner=16cpu-linux-x64/spot=false
+    runs-on: "runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false"
     timeout-minutes: 1800
 
     # Environment variables used throughout the job
     env:
-      NAMESPACE: 'kms-ci-${{ github.actor }}-${{ github.event.pull_request.number }}'
+      NAMESPACE: 'kms-ci-${{ github.actor }}-${{ inputs.pr_number }}'
       TKMS_INFRA_CHART_VERSION: '0.3.2'
       SYNC_SECRETS_CHART_VERSION: '0.2.1'
       KMS_CORE_ENCLAVE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service-enclave'
       KMS_CORE_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-service'
       KMS_CORE_CLIENT_IMAGE_NAME: 'ghcr.io/zama-ai/kms/core-client'
-      KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
-      KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+      KMS_CORE_IMAGE_TAG: ${{ inputs.image_tag }}
+      KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.image_tag }}
       IMAGE_REPO: 'ghcr.io/zama-ai/kms'
       TLS: 'true'
       FHE_PARAMS: 'Test'
-      DEPLOYMENT_TYPE: ''
+      DEPLOYMENT_TYPE: ${{ inputs.deployment_type }}
     steps:
       # ======================================================================
-      # DETERMINE DEPLOYMENT TYPE:
-      # - pr-preview-threshold: threshold
-      # - pr-preview-thresholdWithEnclave: thresholdWithEnclave
-      # - pr-preview-centralized: centralized
-      # - pr-preview-centralizedWithEnclave: centralizedWithEnclave
+      # SET DEPLOYMENT PARAMETERS
+      # Configure party count and thresholds based on deployment type
       # ======================================================================
-      - name: Determine Deployment Type
-        if: contains(toJSON(github.event.pull_request.labels.*.name), 'pr-preview-')
-        env:
-          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+      - name: Set Deployment Parameters
         run: |
-          echo "PR labels: $PR_LABELS"
-          DEPLOYMENT_TYPE=$(echo "$PR_LABELS" | jq -r '.[] | select(startswith("pr-preview-"))' | head -n 1 | sed 's/.*-//')
+          echo "Deployment type: ${DEPLOYMENT_TYPE}"
           if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
             { echo "NB_KMS_PARTIES=4"; \
               echo "THRESHOLD_VALUE=1"; \
               echo "NUM_MAJORITY=2"; \
-              echo "NUM_RECONSTRUCT=3"; \
-              echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
+              echo "NUM_RECONSTRUCT=3"
             } >> "$GITHUB_ENV"
           elif [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
             { echo "NB_KMS_PARTIES=1"; \
               echo "NUM_MAJORITY=1"; \
-              echo "NUM_RECONSTRUCT=1"; \
-              echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
+              echo "NUM_RECONSTRUCT=1"
             } >> "$GITHUB_ENV"
           fi
-          echo "Deployment type: $DEPLOYMENT_TYPE with $NB_KMS_PARTIES KMS parties"
+          echo "Configured: ${DEPLOYMENT_TYPE} with NB_KMS_PARTIES parties"
 
       # ======================================================================
       # DOCKER BUILD STATUS HANDLING
@@ -112,33 +100,44 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.ZWS_BOT_TOKEN }}
 
-      - name: Handle pre-built images
+      - name: Handle pre-built images and PCR values
         if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'centralizedWithEnclave' }}
         env:
           JQ_VERSION: 1.8.1
+          INPUT_PCR0: ${{ inputs.enclave_pcr0 }}
+          INPUT_PCR1: ${{ inputs.enclave_pcr1 }}
+          INPUT_PCR2: ${{ inputs.enclave_pcr2 }}
         run: |
+          # shellcheck disable=SC2153
           ###################################################################
-          # USING PRE-BUILT IMAGES
-          # This handles manual runs with dockerBuild=false, using provided tags
+          # Use PCR values from inputs if provided, otherwise extract from image
           ###################################################################
-          # Download JQ.
-          wget https://github.com/jqlang/jq/releases/download/jq-"${JQ_VERSION}"/jq-linux-amd64 -P /tmp
+          if [[ -n "${INPUT_PCR0}" ]]; then
+            echo "Using PCR values from workflow inputs..."
+            {
+              echo "PCR0=${INPUT_PCR0}"
+              echo "PCR1=${INPUT_PCR1}"
+              echo "PCR2=${INPUT_PCR2}"
+            } >> "$GITHUB_ENV"
+          else
+            echo "Extracting PCR measurements from enclave image..."
+            # Download JQ.
+            wget https://github.com/jqlang/jq/releases/download/jq-"${JQ_VERSION}"/jq-linux-amd64 -P /tmp
+            # Install JQ.
+            sudo mv /tmp/jq-linux-amd64 /usr/local/bin/jq
+            sudo chmod +x /usr/local/bin/jq
+            echo "JQ version: $(jq --version)"
 
-          # Install JQ.
-          sudo mv /tmp/jq-linux-amd64 /usr/local/bin/jq
-          sudo chmod +x /usr/local/bin/jq
-          echo "JQ version: $(jq --version)"
-
-          echo "Extracting PCR measurements for provided enclave image..."
-          docker pull "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
-          PCR0=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
-          PCR1=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
-          PCR2=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
-          {
-            echo "PCR0=${PCR0}"
-            echo "PCR1=${PCR1}"
-            echo "PCR2=${PCR2}"
-          } >> "$GITHUB_ENV"
+            docker pull "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
+            PCR0=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
+            PCR1=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
+            PCR2=$(docker inspect "${IMAGE_REPO}"/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
+            {
+              echo "PCR0=${PCR0}"
+              echo "PCR1=${PCR1}"
+              echo "PCR2=${PCR2}"
+            } >> "$GITHUB_ENV"
+          fi
 
       # ======================================================================
       # TOOLING SETUP
@@ -158,6 +157,29 @@ jobs:
       - name: setup kubectl
         uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede
 
+      # ======================================================================
+      - name: Get Rust version
+        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
+        env:
+          GH_WORKSPACE: ${{ github.workspace }}
+        run: |
+          version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Set up Rust
+        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        with:
+          toolchain: ${{ env.RUST_IMAGE_VERSION }}
+          components: rustfmt, clippy, llvm-tools-preview, llvm-tools
+          cache: false
+
+      - name: Install Protoc
+        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: '26.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }} # Add github token to avoid rate limit see docs https://github.com/arduino/setup-protoc
 
       # ======================================================================
       # KUBERNETES & HELM SETUP
@@ -169,12 +191,6 @@ jobs:
           ###################################################################
           echo "Configuring kubeconfig for Tailscale cluster..."
           tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
-
-      - name: Checkout Project KMS
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          persist-credentials: false
 
       # ======================================================================
       # CHECK IF NAMESPACE EXISTS
@@ -196,274 +212,24 @@ jobs:
             kubectl create namespace "${NAMESPACE}"
           fi
 
-      # ======================================================================
-      # REGISTRY & SECRETS CONFIGURATION
-      # ======================================================================
-      - name: Setup registry credentials secrets
+      - name: Checkout Project KMS
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: false
+
+
+      - name: Unified Deployment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # For registry creds if needed
         run: |
-          ###################################################################
-          # Deploy sync-secrets to manage registry credentials
-          ###################################################################
-          echo "Deploying sync-secrets for registry credentials..."
-          helm upgrade --install sync-secrets \
-            oci://ghcr.io/zama-zws/helm-charts/sync-secrets \
+          chmod +x ci/scripts/deploy.sh
+          ./ci/scripts/deploy.sh \
+            --target aws-ci \
             --namespace "${NAMESPACE}" \
-            --version "${SYNC_SECRETS_CHART_VERSION:-"0.2.1"}" \
-            --values ./ci/pr-preview/registry-credential/values-kms-ci.yaml \
-            --create-namespace
-
-      # ======================================================================
-      # TKMS INFRASTRUCTURE DEPLOYMENT
-      # ======================================================================
-      - name: Setup tkms-infra
-        env:
-          PCR0: ${{ env.PCR0 }}
-        run: |
-          ###################################################################
-          # Deploy TKMS infrastructure based on deployment type
-          ###################################################################
-          if [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
-            echo "Deploying standard infrastructure..."
-            helm upgrade --install tkms-infra \
-              oci://ghcr.io/zama-zws/crossplane/tkms-infra \
-              --namespace "${NAMESPACE}" \
-              --version "${TKMS_INFRA_CHART_VERSION}" \
-              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/tkms-infra/values-kms-ci.yaml \
-              --set kmsParties.replicas="${NB_KMS_PARTIES}" \
-              --set fullnameOverride="kms-party-${NAMESPACE}" \
-              --set publicBucketVault.labels.environment="${NAMESPACE}" \
-              --set kmsParties.serviceAccountPrefixName="${NAMESPACE}" \
-              --set kmsParties.publishConnectionDetailsTo.prefixName="${NAMESPACE}" \
-              --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}"
-
-          elif [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
-            echo "Deploying infrastructure with enclave support with PCR0: ${PCR0}"
-            helm upgrade --install tkms-infra \
-              oci://ghcr.io/zama-zws/crossplane/tkms-infra \
-              --namespace "${NAMESPACE}" \
-              --version "${TKMS_INFRA_CHART_VERSION}" \
-              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/tkms-infra/values-kms-ci.yaml \
-              --set kmsParties.awsKms.recipientAttestationImageSHA384="${PCR0}" \
-              --set kmsParties.replicas="${NB_KMS_PARTIES}" \
-              --set fullnameOverride="kms-party-${NAMESPACE}" \
-              --set publicBucketVault.labels.environment="${NAMESPACE}" \
-              --set kmsParties.serviceAccountPrefixName="${NAMESPACE}" \
-              --set kmsParties.publishConnectionDetailsTo.prefixName="${NAMESPACE}" \
-              --set kmsParties.publicBucketVaultRef.matchLabels.environment="${NAMESPACE}" \
-              --set kmsParties.enclaveNodeGroup.taint[0].value="${NAMESPACE}"
-          fi
-
-      - name: Wait tkms-infra to be ready
-        run: |
-          ###################################################################
-          # Wait for TKMS infrastructure components to be ready
-          ###################################################################
-          echo "Waiting for KMS parties to be ready..."
-          if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
-            kubectl wait --for=condition=ready Kmsparties "kms-party-${NAMESPACE}-1" \
-              -n "${NAMESPACE}" --timeout=120s
-
-          elif [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
-            for i in $(seq 1 "${NB_KMS_PARTIES}"); do
-              kubectl wait --for=condition=ready Kmsparties "kms-party-${NAMESPACE}-${i}" \
-                -n "${NAMESPACE}" --timeout=120s
-            done
-          fi
-
-          if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
-            echo "Waiting for enclave nodegroups to be ready..."
-            kubectl wait --for=condition=ready enclavenodegroup \
-              "kms-party-${NAMESPACE}"\
-              -n "${NAMESPACE}" --timeout=1200s
-          fi
-
-      - name: Generate peers list override
-        if: ${{ env.DEPLOYMENT_TYPE == 'thresholdWithEnclave' || env.DEPLOYMENT_TYPE == 'threshold' }}
-        run: |
-          ###################################################################
-          # Build peersList dynamically from NB_KMS_PARTIES for thresholdWithEnclave
-          ###################################################################
-          NB="${NB_KMS_PARTIES}"
-          cat > /tmp/kms-peers-values.yaml <<EOF
-          kmsCore:
-            thresholdMode:
-              peersList:
-          $(for i in $(seq 1 "${NB}"); do
-            echo "      - id: ${i}"
-            echo "        host: kms-core-${i}-core-${i}"
-            echo "        port: 50001"
-          done)
-          EOF
-
-          echo "Generated peers values file:"
-          cat /tmp/kms-peers-values.yaml
-
-      # ======================================================================
-      # KMS CORE DEPLOYMENT
-      # ======================================================================
-      - name: Generate Helm Values Override
-        env:
-          DEPLOYMENT_TYPE: ${{ env.DEPLOYMENT_TYPE }}
-          NB_KMS_PARTIES: ${{ env.NB_KMS_PARTIES }}
-        run: |
-          ###################################################################
-          # Generate a single values file for all Helm upgrades
-          # This simplifies the helm command and consolidates configuration logic
-          ###################################################################
-
-          # Define common variables based on deployment type
-          if [[ "${DEPLOYMENT_TYPE}" == *"Enclave"* ]]; then
-             IS_ENCLAVE="true"
-             KMS_IMAGE_NAME="${KMS_CORE_ENCLAVE_IMAGE_NAME}"
-             GEN_KEYS="true"
-             TOLERATION_KEY="app"
-             TOLERATION_VALUE="${NAMESPACE}"
-          else
-             IS_ENCLAVE="false"
-             KMS_IMAGE_NAME="${KMS_CORE_IMAGE_NAME}"
-             GEN_KEYS="false"
-             TOLERATION_KEY="karpenter.sh/nodepool"
-             TOLERATION_VALUE="kms-bench-spot-64"
-          fi
-
-          # Create the override values file
-          cat <<EOF > /tmp/kms-values-override.yaml
-          kmsCore:
-            image:
-              name: "${KMS_IMAGE_NAME}"
-              tag: "${KMS_CORE_IMAGE_TAG}"
-            serviceAccountName: "${NAMESPACE}-1"
-            envFrom:
-              configmap:
-                name: "${NAMESPACE}-1"
-            tolerations:
-              - key: "${TOLERATION_KEY}"
-                effect: "NoSchedule"
-                operator: "Equal"
-                value: "${TOLERATION_VALUE}"
-          EOF
-
-          # Append Enclave specific settings if needed
-          if [[ "${IS_ENCLAVE}" == "true" && "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
-            cat <<EOF >> /tmp/kms-values-override.yaml
-            thresholdMode:
-              tls:
-                enabled: "${TLS}"
-                trustedReleases:
-                  - pcr0: "${PCR0}"
-                    pcr1: "${PCR1}"
-                    pcr2: "${PCR2}"
-          EOF
-          fi
-
-          cat <<EOF >> /tmp/kms-values-override.yaml
-
-          kmsCoreClient:
-            image:
-              name: "${KMS_CORE_CLIENT_IMAGE_NAME}"
-              tag: "${KMS_CORE_CLIENT_IMAGE_TAG}"
-            envFrom:
-              configmap:
-                name: "${NAMESPACE}-1"
-            tolerations:
-              - key: "karpenter.sh/nodepool"
-                effect: "NoSchedule"
-                operator: "Equal"
-                value: "zws-pool"
-            num_majority: ${NUM_MAJORITY}
-            num_reconstruct: ${NUM_RECONSTRUCT}
-
-          kmsGenCertAndKeys:
-            enabled: ${GEN_KEYS}
-          EOF
-
-          echo "Generated Helm values:"
-          cat /tmp/kms-values-override.yaml
-
-      - name: Setup kms-core
-        env:
-          DEPLOYMENT_TYPE: ${{ env.DEPLOYMENT_TYPE }}
-          NB_KMS_PARTIES: ${{ env.NB_KMS_PARTIES }}
-        run: |
-          ###################################################################
-          # Deploy KMS Core using the generated values file
-          ###################################################################
-
-          if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
-            echo "Deploying KMS Core in threshold mode across ${NB_KMS_PARTIES} parties..."
-
-            # Loop for each party
-            for i in $(seq 1 "${NB_KMS_PARTIES}"); do
-              echo "Deploying KMS Core party ${i}/${NB_KMS_PARTIES}..."
-
-              # Customize per-party settings (some override the shared values file)
-              helm upgrade --install "kms-core-${i}" \
-                "./charts/kms-core" \
-                --namespace "${NAMESPACE}" \
-                --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-ci.yaml \
-                --values /tmp/kms-peers-values.yaml \
-                --values /tmp/kms-values-override.yaml \
-                --set kmsPeers.id="${i}" \
-                --set kmsCore.serviceAccountName="${NAMESPACE}-${i}" \
-                --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}" \
-                --set kmsCore.thresholdMode.thresholdValue="${THRESHOLD_VALUE}" \
-                --set kmsCore.publicVault.s3.prefix="PUB-p${i}" \
-                --set kmsCore.privateVault.s3.prefix="PRIV-p${i}" \
-                --wait \
-                --wait-for-jobs \
-                --timeout=1200s &
-            done
-            wait
-
-          else
-            echo "Deploying KMS Core in centralized mode..."
-            helm upgrade --install kms-core \
-              "./charts/kms-core" \
-              --namespace "${NAMESPACE}" \
-              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}/"kms-service/values-kms-ci.yaml \
-              --values /tmp/kms-values-override.yaml \
-              --set kmsPeers.id="1" \
-              --set kmsCoreClient.nameOverride="kms-core-client"
-          fi
-
-          ###################################################################
-          # Wait for KMS Core deployment to be ready
-          ###################################################################
-          echo "Waiting for KMS Core pods to be ready..."
-          sleep 60
-          if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
-            kubectl wait --for=condition=ready pod kms-core-core-1 \
-              -n "${NAMESPACE}" --timeout=600s
-          else
-            for i in $(seq 1 "${NB_KMS_PARTIES}"); do
-              kubectl wait --for=condition=ready pod kms-core-"${i}"-core-"${i}" \
-                -n "${NAMESPACE}" --timeout=600s
-            done
-          fi
-
-          if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
-            ###################################################################
-            # Deploy KMS Core initialization job
-            ###################################################################
-            echo "Deploying KMS Core initialization job..."
-            helm upgrade --install kms-core-init \
-              "./charts/kms-core" \
-              --namespace "${NAMESPACE}" \
-              --values ./ci/pr-preview/"${DEPLOYMENT_TYPE}"/kms-service/values-kms-service-init-kms-ci.yaml \
-              --values /tmp/kms-peers-values.yaml \
-              --values /tmp/kms-values-override.yaml \
-              --wait \
-              --wait-for-jobs \
-              --timeout=1200s
-
-            ###################################################################
-            # Wait for KMS Core initialization to complete
-            ###################################################################
-            echo "Waiting for KMS Core initialization to complete..."
-            sleep 30
-            kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
-              -n "${NAMESPACE}" --timeout=600s
-          fi
+            --deployment-type "${DEPLOYMENT_TYPE}" \
+            --tag "${KMS_CORE_IMAGE_TAG}" \
+            --num-parties "${NB_KMS_PARTIES}"
 
       - name: Generate PR Comment Body
         if: success()

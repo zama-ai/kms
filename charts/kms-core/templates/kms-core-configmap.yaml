@@ -155,7 +155,7 @@ data:
           {{- if (default dict .Values.kmsCore.thresholdMode.tls.privateKey).path }}
     key.path = {{ .Values.kmsCore.thresholdMode.tls.privateKey.path | quote }}
           {{- else }}
-    key.pem = {{ (default dict .Values.kmsCore.thresholdMode.tls.privateKey).pem | default "" | toToml }}
+    key.pem = ${KMS_KEY_PEM_{{ .Values.kmsPeers.id }}}
           {{- end }}
         {{- end }}
       {{- end }}
