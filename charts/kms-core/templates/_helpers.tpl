@@ -32,11 +32,7 @@ centralized
 {{- end -}}
 
 {{- define "kmsPeersStartID" -}}
-{{- if .Values.kmsCore.thresholdMode.peersList -}}
-{{ (first .Values.kmsCore.thresholdMode.peersList).id }}
-{{- else -}}
-1
-{{- end -}}
+{{ default 1 .Values.kmsPeers.id }}
 {{- end -}}
 
 {{/* takes a (dict "name" string
