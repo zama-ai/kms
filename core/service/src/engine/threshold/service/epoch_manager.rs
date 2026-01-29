@@ -234,6 +234,8 @@ impl<
         Ok(())
     }
 
+    /// This will try to load the legacy PRSS setup [`PRSSSetup`] from storage into session maker
+    /// by using default values for the epoch ID and context ID.
     /// This assumes the default context exists.
     /// It will overwrite the PRSS in session maker if it already exists,
     /// so make sure this is called before the normal (non-legacy) initialization.
