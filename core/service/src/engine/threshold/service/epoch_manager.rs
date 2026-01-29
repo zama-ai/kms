@@ -871,7 +871,7 @@ impl<
                     OP_NEW_EPOCH,
                     Some(epoch_id.into()),
                     e,
-                    tonic::Code::InvalidArgument,
+                    tonic::Code::NotFound,
                 )
             })?
             .is_some();
