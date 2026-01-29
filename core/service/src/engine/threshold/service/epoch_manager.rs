@@ -318,18 +318,15 @@ impl<
         .await
     }
 
-    // NOTE: this function will overwrite the existing PRSS state
-    // Also, this function doesn't store success in meta store
-    // which is OK because it's blocking (only the reshare if any spawns its own task)
+    // NOTE: this function will overwrite the existing PRSS state (on disc and in session maker)
+    // Also, we let the caller store the PRSS in the meta store if needed
+    // as the caller might want to store additional information in case of a resharing
     async fn internal_init_prss(
         session_maker: SessionMaker,
         crypto_storage: &ThresholdCryptoMaterialStorage<PubS, PrivS>,
         context_id: &ContextId,
         epoch_id: &EpochId,
     ) -> anyhow::Result<()> {
-        // TODO(zama-ai/kms-internal/issues/2721),
-        // we never try to store the PRSS in meta_store, so the ID is not guaranteed to be unique
-
         let own_identity = session_maker
             .my_identity(context_id)
             .await?
