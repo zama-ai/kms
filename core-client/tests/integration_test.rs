@@ -1717,6 +1717,8 @@ async fn test_threshold_reshare(ctx: &DockerComposeThresholdTestNoInitSixParty) 
         batch_size: 1,
         num_requests: 1,
         ciphertext_output_path: None,
+        parallel_requests: 1,
+        inter_request_delay_ms: 0,
     }));
 
     let ddec_config = CmdConfig {
