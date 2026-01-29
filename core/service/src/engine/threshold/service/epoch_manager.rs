@@ -862,7 +862,7 @@ impl<
         // note we also error out if the context does not exist
         let do_prss = self
             .session_maker
-            .get_my_role_in_context(&context_id)
+            .my_role(&context_id)
             .await
             .map_err(|e| {
                 MetricedError::new(
