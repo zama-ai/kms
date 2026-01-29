@@ -187,8 +187,11 @@ impl From<KeyGenMetadata> for EpochOutput {
         EpochOutput::Reshare(meta)
     }
 }
-// The Epoch Manager takes over the role of the Initiator and Resharer
-// For now the struct is thus a union of the RealInitiator and RealResharer structs
+/// The Epoch Manager takes over the role of the Initiator and Resharer
+///
+/// At startup, one should call [`RealThresholdEpochManager::init_legacy_prss_from_storage`] and
+///  [`RealThresholdEpochManager::init_all_prss_from_storage`] (in this order) to load the necessary
+///  PRSS setups from the private storage into the session maker.
 pub struct RealThresholdEpochManager<
     PubS: Storage + Send + Sync + 'static,
     PrivS: StorageExt + Send + Sync + 'static,
