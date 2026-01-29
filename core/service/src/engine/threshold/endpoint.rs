@@ -1,32 +1,13 @@
 use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::threshold::traits::{
-    CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, Resharer,
-    UserDecryptor,
+    CrsGenerator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, UserDecryptor,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
-use crate::engine::traits::{BackupOperator, ContextManager};
-use kms_grpc::kms::v1::{
-    CrsGenRequest, CrsGenResult, DestroyMpcContextRequest, Empty, HealthStatus, InitRequest,
-    InitiateResharingRequest, InitiateResharingResponse, KeyGenPreprocRequest, KeyGenPreprocResult,
-    KeyGenRequest, KeyGenResult, KeyMaterialAvailabilityResponse, NewMpcContextRequest, NodeType,
-    PeersFromContext, PublicDecryptionRequest, PublicDecryptionResponse, RequestId,
-    ResharingResultResponse, UserDecryptionRequest, UserDecryptionResponse,
-};
-use kms_grpc::kms::v1::{HealthStatusResponse, PeerHealth};
+use crate::engine::traits::{BackupOperator, ContextManager, EpochManager};
+use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
-use observability::{
-    metrics::METRICS,
-    metrics_names::{
-        map_tonic_code_to_metric_err_tag, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
-        OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_DESTROY_CUSTODIAN_CONTEXT,
-        OP_DESTROY_MPC_CONTEXT, OP_FETCH_PK, OP_GET_INITIATE_RESHARING_RESULT, OP_INIT,
-        OP_INITIATE_RESHARING, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT,
-        OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_MPC_CONTEXT,
-        OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_RESTORE_FROM_BACKUP,
-        OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
-    },
-};
+use observability::{metrics::METRICS, metrics_names::*};
 use threshold_fhe::networking::health_check::HealthCheckStatus;
 use tonic::{Request, Response, Status};
 
@@ -35,7 +16,7 @@ macro_rules! impl_endpoint {
         #[cfg(not(feature="insecure"))]
         #[tonic::async_trait]
         impl<
-                IN: Initiator + Sync + Send + 'static,
+                EP: EpochManager + Sync + Send + 'static,
                 UD: UserDecryptor + Sync + Send + 'static,
                 PD: PublicDecryptor + Sync + Send + 'static,
                 KG: KeyGenerator + Sync + Send + 'static,
@@ -43,13 +24,12 @@ macro_rules! impl_endpoint {
                 CG: CrsGenerator + Sync + Send + 'static,
                 CM: ContextManager + Sync + Send + 'static,
                 BO: BackupOperator + Sync + Send + 'static,
-                RE: Resharer + Sync + Send + 'static,
-            > CoreServiceEndpoint for ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO, RE> $implementations
+            > CoreServiceEndpoint for ThresholdKms<EP, UD, PD, KG, PP, CG, CM, BO> $implementations
 
         #[cfg(feature="insecure")]
         #[tonic::async_trait]
         impl<
-                IN: Initiator + Sync + Send + 'static,
+                EP: EpochManager + Sync + Send + 'static,
                 UD: UserDecryptor + Sync + Send + 'static,
                 PD: PublicDecryptor + Sync + Send + 'static,
                 KG: KeyGenerator + Sync + Send + 'static,
@@ -59,18 +39,13 @@ macro_rules! impl_endpoint {
                 ICG: InsecureCrsGenerator + Sync + Send + 'static,
                 CM: ContextManager + Sync + Send + 'static,
                 BO: BackupOperator + Sync + Send + 'static,
-                RE: Resharer + Sync + Send + 'static,
-            > CoreServiceEndpoint for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO, RE> $implementations
+            > CoreServiceEndpoint for ThresholdKms<EP, UD, PD, KG, IKG, PP, CG, ICG, CM, BO> $implementations
     }
 }
 
 impl_endpoint! {
     // See the proto file for the documentation of each method.
     impl CoreServiceEndpoint {
-        async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
-            METRICS.increment_request_counter(OP_INIT);
-            self.initiator.init(request).await.map_err(|e| e.into())
-        }
 
         #[tracing::instrument(skip(self, request))]
         async fn key_gen_preproc(
@@ -225,30 +200,37 @@ impl_endpoint! {
             request: Request<DestroyMpcContextRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
-            self.context_manager.destroy_mpc_context(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_DESTROY_MPC_CONTEXT, tag);
-            })
-
+            Ok(self.context_manager.destroy_mpc_context(request).await?)
         }
 
-        #[tracing::instrument(skip(self, request))]
-        async fn initiate_resharing(
+        #[tracing::instrument(skip_all)]
+        async fn new_mpc_epoch(
             &self,
-            request: Request<InitiateResharingRequest>,
-        ) -> Result<Response<InitiateResharingResponse>, Status> {
-            METRICS.increment_request_counter(OP_INITIATE_RESHARING);
-            self.resharer.initiate_resharing(request).await
+            request: Request<NewMpcEpochRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            let inner = request.into_inner();
+            METRICS.increment_request_counter(OP_NEW_EPOCH);
+            Ok(self.epoch_manager
+                .new_mpc_epoch(Request::new(inner.clone()))
+                .await?)
         }
 
-        #[tracing::instrument(skip(self, request))]
-        async fn get_resharing_result(
+        #[tracing::instrument(skip_all)]
+        async fn get_epoch_result(
             &self,
             request: Request<RequestId>,
-        ) -> Result<Response<ResharingResultResponse>, Status> {
-            METRICS.increment_request_counter(OP_GET_INITIATE_RESHARING_RESULT);
-            self.resharer.get_resharing_result(request).await
+        ) -> Result<Response<EpochResultResponse>, Status> {
+            METRICS.increment_request_counter(OP_GET_EPOCH_RESULT);
+            Ok(self.epoch_manager.get_epoch_result(request).await?)
+        }
+
+        async fn destroy_mpc_epoch(
+            &self,
+            _request: Request<DestroyMpcEpochRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            METRICS.increment_request_counter(OP_DESTROY_EPOCH);
+            // Currently no-op
+            Ok(Response::new(Empty {}))
         }
 
         #[tracing::instrument(skip(self, request))]

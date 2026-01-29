@@ -18,7 +18,7 @@ cfg_if::cfg_if! {
         use crate::util::rate_limiter::RateLimiterConfig;
     }
 }
-use kms_grpc::kms::v1::InitRequest;
+use kms_grpc::kms::v1::NewMpcEpochRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::RequestId;
 use serial_test::serial;
@@ -85,10 +85,10 @@ async fn test_threshold_health_endpoint_availability() {
     let status = get_status(&mut main_health_client, core_service_name)
         .await
         .unwrap();
-    // Check that the main server is not serving since it has not been initialized yet
+    // Check that the main server is serving since it should be running
     assert_eq!(
         status,
-        ServingStatus::NotServing as i32,
+        ServingStatus::Serving as i32,
         "Service is not in NOT_SERVING status. Got status: {status}"
     );
     // Get health client for main server 1
@@ -114,9 +114,10 @@ async fn test_threshold_health_endpoint_availability() {
         req_tasks.spawn(async move {
             let req_id: RequestId = (*DEFAULT_EPOCH_ID).into();
             cur_client
-                .init(tonic::Request::new(InitRequest {
-                    request_id: Some(req_id.into()),
+                .new_mpc_epoch(tonic::Request::new(NewMpcEpochRequest {
+                    epoch_id: Some(req_id.into()),
                     context_id: None,
+                    previous_epoch: None,
                 }))
                 .await
         });
@@ -130,14 +131,6 @@ async fn test_threshold_health_endpoint_availability() {
             Err(e) => panic!("Init request failed: {e}"),
         }
     }
-    let status = get_status(&mut main_health_client, core_service_name)
-        .await
-        .unwrap();
-    assert_eq!(
-        status,
-        ServingStatus::Serving as i32,
-        "Service is not in SERVING status. Got status: {status}"
-    );
 
     // Shutdown the servers and check that the health endpoint is no longer serving
     for (_, server) in kms_servers {
@@ -324,7 +317,7 @@ async fn test_ratelimiter() {
         crsgen: 100,
         preproc: 1,
         keygen: 1,
-        reshare: 1,
+        new_epoch: 1,
     };
     let (_kms_servers, kms_clients, internal_client) = threshold_handles(
         TEST_PARAM,

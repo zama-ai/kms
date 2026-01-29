@@ -1,7 +1,7 @@
 use super::{Storage, StorageCache, StorageReader, StorageType};
 use crate::vault::storage::{all_data_ids_from_all_epochs_impl, StorageExt, StorageReaderExt};
 use crate::{consts::SAFE_SER_SIZE_LIMIT, vault::storage_prefix_safety};
-use aws_config::{self, SdkConfig};
+use aws_config::{self, Region, SdkConfig};
 use aws_sdk_s3::{error::ProvideErrorMetadata, primitives::ByteStream, Client as S3Client};
 use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
 use aws_smithy_runtime_api::{
@@ -584,16 +584,20 @@ impl Intercept for HostHeaderInterceptor {
 }
 
 // This builds an anonymous S3 client, useful for accessing public S3 buckets.
-pub async fn build_anonymous_s3_client(aws_s3_endpoint: Option<Url>) -> anyhow::Result<S3Client> {
+pub async fn build_anonymous_s3_client(
+    aws_s3_endpoint: Url,
+    region: String,
+) -> anyhow::Result<S3Client> {
+    let aws_region = Region::new(region);
     let sdk_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .region(aws_region)
         .no_credentials()
         .load()
         .await;
 
-    let mut s3_config_builder = aws_sdk_s3::config::Builder::from(&sdk_config);
-    if let Some(p) = aws_s3_endpoint {
-        s3_config_builder = s3_config_builder.endpoint_url(p);
-    }
+    let s3_config_builder = aws_sdk_s3::config::Builder::from(&sdk_config)
+        .endpoint_url(aws_s3_endpoint)
+        .force_path_style(true);
     let s3_config = s3_config_builder.build();
     Ok(S3Client::from_conf(s3_config))
 }
@@ -746,10 +750,13 @@ cfg_if::cfg_if! {
 mod tests {
     use super::*;
     use super::{AWS_S3_ENDPOINT, BUCKET_NAME};
-    use crate::vault::storage::tests::{
-        test_batch_helper_methods, test_epoch_methods, test_storage_read_store_methods,
-        test_store_bytes_does_not_overwrite_existing_bytes,
-        test_store_data_does_not_overwrite_existing_data,
+    use crate::{
+        engine::threshold::service::reshare_utils::find_region_from_s3_url,
+        vault::storage::tests::{
+            test_batch_helper_methods, test_epoch_methods, test_storage_read_store_methods,
+            test_store_bytes_does_not_overwrite_existing_bytes,
+            test_store_data_does_not_overwrite_existing_data,
+        },
     };
     use aes_prng::AesRng;
     use rand::distributions::{Alphanumeric, DistString};
@@ -821,6 +828,28 @@ mod tests {
         assert!(logs_contain(
             "already exists. Keeping the data without overwriting"
         ));
+    }
+
+    #[tokio::test]
+    async fn test_s3_anon() {
+        let url = "https://s3.eu-west-1.amazonaws.com/";
+        let region = find_region_from_s3_url(&url.to_string()).unwrap();
+        assert_eq!(region, "eu-west-1");
+        let s3_client = build_anonymous_s3_client(Url::parse(url).unwrap(), region)
+            .await
+            .unwrap();
+        let pub_storage = ReadOnlyS3Storage::new(
+            s3_client,
+            "zama-zws-dev-kms-fhevm-dev-lh7tg".to_string(),
+            StorageType::PUB,
+            Some("PUB-p1"),
+            None,
+        )
+        .unwrap();
+
+        let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
+        // at least one public key should be present in the bucket
+        assert!(!public_key_ids.is_empty());
     }
 }
 
@@ -915,25 +944,4 @@ impl StorageReader for DummyReadOnlyS3Storage {
     fn info(&self) -> String {
         self.ram_storage.info()
     }
-}
-
-#[tokio::test]
-async fn test_s3_anon() {
-    let s3_client = build_anonymous_s3_client(Some(
-        Url::parse("https://s3.eu-west-1.amazonaws.com/").unwrap(),
-    ))
-    .await
-    .unwrap();
-    let pub_storage = ReadOnlyS3Storage::new(
-        s3_client,
-        "zama-zws-dev-kms-fhevm-dev-lh7tg".to_string(),
-        StorageType::PUB,
-        Some("PUB-p1"),
-        None,
-    )
-    .unwrap();
-
-    let public_key_ids = pub_storage.all_data_ids("PublicKey").await.unwrap();
-    // at least one public key should be present in the bucket
-    assert!(!public_key_ids.is_empty());
 }

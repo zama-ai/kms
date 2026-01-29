@@ -139,7 +139,7 @@ async fn test_largecipher() {
         crsgen: 1,
         preproc: 1,
         keygen: 1,
-        reshare: 1,
+        new_epoch: 1,
     };
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, mut kms_client) = crate::client::test_tools::setup_centralized(
@@ -182,6 +182,7 @@ async fn test_largecipher() {
             typed_ciphertexts,
             &request_id,
             &DEFAULT_CENTRAL_KEY_ID,
+            None,
             None,
             PkeSchemeType::MlKem512,
         )

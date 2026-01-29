@@ -1,6 +1,7 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
 use crate::engine::utils::query_key_material_availability;
+use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::vault::storage::{
     store_versioned_at_request_and_epoch_id, StorageExt, StorageReaderExt,
 };
@@ -21,7 +22,7 @@ use crate::{
         context::ContextInfo,
         threshold::service::ThresholdFheKeys,
         traits::BackupOperator,
-        validation::{parse_optional_proto_request_id, RequestIdParsingErr},
+        validation::RequestIdParsingErr,
     },
     vault::{
         keychain::KeychainProxy,
@@ -262,7 +263,7 @@ where
             }
         };
         let inner = request.into_inner();
-        let context_id: RequestId = parse_optional_proto_request_id(
+        let context_id: RequestId = parse_optional_grpc_request_id(
             &inner.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
         )?;

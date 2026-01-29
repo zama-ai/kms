@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::client::client_wasm::Client;
 use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::base::DSEP_PUBDATA_CRS;
-use crate::engine::validation::parse_optional_proto_request_id;
+use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::engine::validation::RequestIdParsingErr;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
@@ -176,7 +176,7 @@ impl Client {
         domain: &Eip712Domain,
         storage: &R,
     ) -> anyhow::Result<Option<CompactPkeCrs>> {
-        let request_id = parse_optional_proto_request_id(
+        let request_id = parse_optional_grpc_request_id(
             &crs_gen_result.request_id,
             RequestIdParsingErr::Other("invalid request ID while processing CRS".to_string()),
         )

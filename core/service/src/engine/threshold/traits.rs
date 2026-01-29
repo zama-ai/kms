@@ -1,11 +1,6 @@
 use crate::engine::utils::MetricedError;
 use kms_grpc::kms::v1::*;
-use tonic::{Request, Response, Status};
-
-#[tonic::async_trait]
-pub trait Initiator {
-    async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, MetricedError>;
-}
+use tonic::{Request, Response};
 
 #[tonic::async_trait]
 pub trait UserDecryptor {
@@ -99,17 +94,4 @@ pub trait InsecureCrsGenerator {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, MetricedError>;
-}
-
-#[tonic::async_trait]
-pub trait Resharer {
-    // TODO(#2868)
-    async fn initiate_resharing(
-        &self,
-        request: Request<InitiateResharingRequest>,
-    ) -> Result<Response<InitiateResharingResponse>, Status>;
-    async fn get_resharing_result(
-        &self,
-        request: Request<RequestId>,
-    ) -> Result<Response<ResharingResultResponse>, Status>;
 }

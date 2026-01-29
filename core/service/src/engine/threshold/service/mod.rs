@@ -16,10 +16,11 @@ pub use kms_impl::*;
 
 // Module components
 mod crs_generator;
-mod initiator;
+pub(crate) mod epoch_manager;
+//mod initiator;
 mod key_generator;
 mod preprocessor;
 mod public_decryptor;
-mod resharer;
+pub(crate) mod reshare_utils;
 pub mod session;
 mod user_decryptor;

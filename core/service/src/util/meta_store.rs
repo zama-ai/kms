@@ -16,7 +16,6 @@ cfg_if::cfg_if! {
         use anyhow::anyhow;
         use std::fmt::{self};
         use tokio::sync::RwLockWriteGuard;
-        use tonic::Status;
     }
 }
 
@@ -479,53 +478,6 @@ async fn handle_res_metriced<T: Clone>(
     }
 }
 
-/// Helper method for retrieving the result of a request from an appropriate meta store
-/// [req_id] is the request ID to retrieve
-/// [request_type] is a free-form string used only for error logging the origin of the failure
-#[cfg(feature = "non-wasm")]
-pub(crate) async fn handle_res_mapping<T: Clone>(
-    handle: Option<Arc<AsyncCell<Result<T, String>>>>,
-    req_id: &RequestId,
-    request_type_info: &str,
-) -> Result<T, Status> {
-    match handle {
-        None => {
-            let msg = format!(
-                "Could not retrieve {request_type_info} with request ID {req_id}. It does not exist"
-            );
-            tracing::warn!(msg);
-            Err(tonic::Status::new(tonic::Code::NotFound, msg))
-        }
-        Some(cell) => {
-            let result = tokio::time::timeout(
-                tokio::time::Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS),
-                cell.get(),
-            )
-            .await;
-            // Peel off the potential errors
-            if let Ok(result) = result {
-                match result {
-                    Ok(result) => Ok(result),
-                    Err(e) => {
-                        let msg = format!(
-                                "Could not retrieve {request_type_info} with request ID {req_id} since it finished with an error: {e}"
-                            );
-                        tracing::warn!(msg);
-                        Err(tonic::Status::new(tonic::Code::Internal, msg))
-                    }
-                }
-            } else {
-                let msg = format!(
-                    "Could not retrieve {request_type_info} with request ID {req_id} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
-                );
-                tracing::info!(msg);
-                Err(tonic::Status::new(tonic::Code::Unavailable, msg))
-            }
-            // Note that this is not logged as an error as we expect calls to take some time to be completed
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -635,7 +587,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             let meta_store = Arc::clone(&cloned_meta_store);
             let handle = meta_store.read().await.retrieve(&req_1);
-            handle_res_mapping(handle, &req_1, "test").await
+            handle_res_metriced(handle, &req_1, "test").await
         });
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         meta_store

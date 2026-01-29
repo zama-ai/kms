@@ -166,7 +166,7 @@ pub(crate) async fn key_gen_centralized(
         crsgen: 1,
         preproc: 1,
         keygen: 100,
-        reshare: 1,
+        new_epoch: 1,
     };
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, mut kms_client, internal_client) =

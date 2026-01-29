@@ -228,7 +228,7 @@ data:
     crsgen = 100
     preproc = 50000
     keygen = 1000
-    reshare = 25
+    new_epoch = 25
 
     [internal_config]
     num_rayon_threads = {{ .Values.kmsCore.thresholdMode.rayonNumThreads }}
