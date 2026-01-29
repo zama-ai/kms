@@ -21,7 +21,7 @@ use crate::engine::centralized::central_kms::{async_generate_crs, CentralizedKms
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
-    parse_proto_request_id, validate_crs_gen_request, RequestIdParsingErr,
+    parse_grpc_request_id, validate_crs_gen_request, RequestIdParsingErr,
 };
 use crate::util::meta_store::{
     add_req_to_meta_store, retrieve_from_meta_store, update_err_req_in_meta_store, MetaStore,
@@ -148,7 +148,7 @@ pub async fn get_crs_gen_result_impl<
         OP_CRS_GEN_RESULT
     };
     let request_id =
-        parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)
+        parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)
             .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
     tracing::debug!("Received CRS gen result request with id {}", request_id);
 

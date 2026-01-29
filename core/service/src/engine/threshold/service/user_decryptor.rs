@@ -64,7 +64,7 @@ use crate::{
         traits::BaseKms,
         utils::MetricedError,
         validation::{
-            parse_proto_request_id, validate_user_decrypt_req, RequestIdParsingErr,
+            parse_grpc_request_id, validate_user_decrypt_req, RequestIdParsingErr,
             DSEP_USER_DECRYPTION,
         },
     },
@@ -593,7 +593,7 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
         let request_id =
-            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecResponse)
+            parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::UserDecResponse)
                 .map_err(|e| {
                     MetricedError::new(
                         OP_USER_DECRYPT_RESULT,

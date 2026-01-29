@@ -58,7 +58,7 @@ use crate::{
         },
         utils::MetricedError,
         validation::{
-            parse_optional_proto_request_id, parse_proto_request_id, validate_key_gen_request,
+            parse_grpc_request_id, parse_optional_grpc_request_id, validate_key_gen_request,
             RequestIdParsingErr,
         },
     },
@@ -534,7 +534,7 @@ impl<
             OP_KEYGEN_RESULT
         };
         let request_id =
-            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)
+            parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)
                 .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
         let key_gen_res = retrieve_from_meta_store(
             self.dkg_pubinfo_meta_store.read().await,
@@ -609,13 +609,13 @@ impl<
     where
         P: DKGPreprocessing<ResiduePolyF4Z128> + Send + ?Sized,
     {
-        let from_key_id = parse_optional_proto_request_id(
+        let from_key_id = parse_optional_grpc_request_id(
             &keyset_added_info.from_keyset_id_decompression_only,
             RequestIdParsingErr::Other("invalid from keyset ID".to_string()),
         ).inspect_err(|e| {
                 tracing::error!("missing *from* key ID for the keyset that contains the compression secret key share: {}", e)
             })?;
-        let to_key_id = parse_optional_proto_request_id(
+        let to_key_id = parse_optional_grpc_request_id(
             &keyset_added_info.to_keyset_id_decompression_only,
             RequestIdParsingErr::Other("invalid to keyset ID".to_string()),
         )
@@ -673,13 +673,13 @@ impl<
         GlweSecretKeyShare<Z128, 4>,
         CompressionPrivateKeyShares<Z128, 4>,
     )> {
-        let compression_req_id = parse_optional_proto_request_id(
+        let compression_req_id = parse_optional_grpc_request_id(
             &keyset_added_info.from_keyset_id_decompression_only,
             RequestIdParsingErr::Other("invalid from key ID".to_string())
         ).inspect_err(|e| {
                 tracing::error!("missing from key ID for the keyset that contains the compression secret key share: {e}")
             })?;
-        let glwe_req_id = parse_optional_proto_request_id(
+        let glwe_req_id = parse_optional_grpc_request_id(
             &keyset_added_info.to_keyset_id_decompression_only,
             RequestIdParsingErr::Other("invalid to key ID".to_string()),
         )

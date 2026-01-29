@@ -3,9 +3,7 @@ use crate::{
     engine::{
         centralized::central_kms::CentralizedKms,
         traits::{BackupOperator, ContextManager},
-        validation::{
-            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
-        },
+        validation::{parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr},
     },
     vault::storage::{Storage, StorageExt},
 };
@@ -47,9 +45,9 @@ pub async fn init_impl<
     request: Request<NewMpcEpochRequest>,
 ) -> Result<Response<Empty>, Status> {
     let inner = request.into_inner();
-    let epoch_id = parse_optional_proto_request_id(&inner.epoch_id, RequestIdParsingErr::Init)?;
+    let epoch_id = parse_optional_grpc_request_id(&inner.epoch_id, RequestIdParsingErr::Init)?;
     let context_id: ContextId = match inner.context_id {
-        Some(ctx_id) => parse_proto_request_id(&ctx_id, RequestIdParsingErr::Init)?.into(),
+        Some(ctx_id) => parse_grpc_request_id(&ctx_id, RequestIdParsingErr::Init)?,
         None => *DEFAULT_MPC_CONTEXT,
     };
 

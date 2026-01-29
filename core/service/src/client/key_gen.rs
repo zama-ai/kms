@@ -1,7 +1,7 @@
 use crate::client::client_wasm::Client;
 use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::base::DSEP_PUBDATA_KEY;
-use crate::engine::validation::parse_optional_proto_request_id;
+use crate::engine::validation::parse_optional_grpc_request_id;
 use crate::engine::validation::RequestIdParsingErr;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
@@ -144,7 +144,7 @@ impl Client {
         resp: &KeyGenPreprocResult,
     ) -> anyhow::Result<()> {
         let sol_type = PrepKeygenVerification::new(preproc_id);
-        let req_id_from_resp = parse_optional_proto_request_id(
+        let req_id_from_resp = parse_optional_grpc_request_id(
             &resp.preprocessing_id,
             RequestIdParsingErr::Other("cannot parse preprocessing ID".to_string()),
         )?;
@@ -288,7 +288,7 @@ impl Client {
         storage: &R,
     ) -> anyhow::Result<Option<WrappedPublicKeyOwned>> {
         // first we need to read the key type
-        let request_id = parse_optional_proto_request_id(
+        let request_id = parse_optional_grpc_request_id(
             &key_gen_result.request_id,
             RequestIdParsingErr::Other("invalid ID while retrieving public key".to_string()),
         )
@@ -359,7 +359,7 @@ impl Client {
                 )
             })?;
 
-        let request_id = parse_optional_proto_request_id(
+        let request_id = parse_optional_grpc_request_id(
             &key_gen_result.request_id,
             RequestIdParsingErr::Other("invalid request ID while retrieving key".to_string()),
         )

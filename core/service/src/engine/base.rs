@@ -332,9 +332,9 @@ macro_rules! deserialize_to_low_level_helper {
                     SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                let ct: tfhe::SquashedNoiseFheUint = ct_list.get(0)?.ok_or(anyhow::anyhow!(
-                    "expected at least one ciphertext in the compressed list"
-                ))?;
+                let ct: tfhe::SquashedNoiseFheUint = ct_list.get(0)?.ok_or_else(|| {
+                    anyhow::anyhow!("expected at least one ciphertext in the compressed list")
+                })?;
                 let radix_ct = ct.underlying_squashed_noise_ciphertext().clone();
                 LowLevelCiphertext::BigCompressed(SnsRadixOrBoolCiphertext::Radix(radix_ct))
             }
@@ -385,9 +385,9 @@ pub fn deserialize_to_low_level(
                     SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                let ct: tfhe::SquashedNoiseFheBool = ct_list.get(0)?.ok_or(anyhow::anyhow!(
-                    "expected at least one ciphertext in the compressed list"
-                ))?;
+                let ct: tfhe::SquashedNoiseFheBool = ct_list.get(0)?.ok_or_else(|| {
+                    anyhow::anyhow!("expected at least one ciphertext in the compressed list")
+                })?;
                 let radix_ct = ct.underlying_squashed_noise_ciphertext().clone();
                 LowLevelCiphertext::BigCompressed(SnsRadixOrBoolCiphertext::Bool(radix_ct))
             }

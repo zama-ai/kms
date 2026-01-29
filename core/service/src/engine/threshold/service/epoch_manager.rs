@@ -54,10 +54,7 @@ use crate::{
         },
         traits::EpochManager,
         utils::MetricedError,
-        validation::{
-            parse_optional_proto_context_id, parse_optional_proto_epoch_id,
-            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
-        },
+        validation::{parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr},
     },
     util::{
         meta_store::{handle_res_mapping, update_err_req_in_meta_store, MetaStore},
@@ -117,19 +114,21 @@ fn verify_epoch_info(
         )
     };
     let context_id =
-        parse_optional_proto_context_id(&previous_epoch.context_id).map_err(make_metriced_err)?;
+        parse_optional_grpc_request_id(&previous_epoch.context_id, RequestIdParsingErr::Context)
+            .map_err(make_metriced_err)?;
 
     let epoch_id: EpochId =
-        parse_optional_proto_epoch_id(&previous_epoch.epoch_id).map_err(make_metriced_err)?;
+        parse_optional_grpc_request_id(&previous_epoch.epoch_id, RequestIdParsingErr::Epoch)
+            .map_err(make_metriced_err)?;
 
-    let key_id = parse_optional_proto_request_id(
+    let key_id = parse_optional_grpc_request_id(
         &previous_epoch.key_id,
         RequestIdParsingErr::Other("Key ID in PreviousEpochInfo".to_string()),
     )
     .map_err(make_metriced_err)?;
 
     // Using the old PreprocId of the key request for now.
-    let preproc_id = parse_optional_proto_request_id(
+    let preproc_id = parse_optional_grpc_request_id(
         &previous_epoch.preproc_id,
         RequestIdParsingErr::Other("Preproc ID in PreviousEpochInfo".to_string()),
     )
@@ -822,7 +821,7 @@ impl<
         let inner = request.into_inner();
         // the request ID of the init request is the epoch ID for PRSS and shares
         let epoch_id: EpochId =
-            parse_optional_proto_request_id(&inner.epoch_id, RequestIdParsingErr::Init)?.into();
+            parse_optional_grpc_request_id(&inner.epoch_id, RequestIdParsingErr::Epoch)?;
 
         if !epoch_id.is_valid() {
             return Err(tonic::Status::new(
@@ -832,7 +831,7 @@ impl<
         }
 
         let context_id: ContextId = match inner.context_id {
-            Some(ctx_id) => parse_proto_request_id(&ctx_id, RequestIdParsingErr::Init)?.into(),
+            Some(ctx_id) => parse_grpc_request_id(&ctx_id, RequestIdParsingErr::Context)?,
             None => *DEFAULT_MPC_CONTEXT,
         };
 
@@ -945,7 +944,7 @@ impl<
         request: Request<RequestId>,
     ) -> Result<Response<EpochResultResponse>, Status> {
         let request_id =
-            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::EpochResponse)?;
+            parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::EpochResponse)?;
 
         let status = {
             let guarded_meta_store = self.reshare_pubinfo_meta_store.read().await;

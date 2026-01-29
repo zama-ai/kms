@@ -3,7 +3,6 @@ use super::{
     error::BackupError,
     secretsharing,
 };
-use crate::backup::custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput};
 use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
@@ -13,14 +12,15 @@ use crate::{
         Signcrypt, UnifiedSigncryption, UnifiedSigncryptionKey, UnifiedUnsigncryptionKey,
         Unsigncrypt,
     },
-    engine::{
-        base::safe_serialize_hash_element_versioned,
-        validation::{parse_optional_proto_request_id, RequestIdParsingErr},
-    },
+    engine::{base::safe_serialize_hash_element_versioned, validation::RequestIdParsingErr},
 };
 use crate::{
     backup::custodian::DSEP_BACKUP_CUSTODIAN,
     cryptography::signatures::{internal_sign, internal_verify_sig},
+};
+use crate::{
+    backup::custodian::{InternalCustodianContext, InternalCustodianRecoveryOutput},
+    engine::validation::parse_optional_grpc_request_id,
 };
 use kms_grpc::{
     kms::v1::{OperatorBackupOutput, RecoveryRequest},
@@ -168,7 +168,7 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
             cts.insert(role, inner_ct);
         }
         let backup_id: RequestId =
-            parse_optional_proto_request_id(&value.backup_id, RequestIdParsingErr::BackupRecovery)?;
+            parse_optional_grpc_request_id(&value.backup_id, RequestIdParsingErr::BackupRecovery)?;
         let operator_verification_key: PublicSigKey =
             bc2wrap::deserialize_safe(&value.operator_verification_key)?;
         Ok(Self {
@@ -692,10 +692,12 @@ impl Operator {
                 let (_, custodian_verf_key) = self
                     .custodian_keys
                     .get(&custodian_output.custodian_role)
-                    .ok_or(BackupError::OperatorError(format!(
-                        "missing custodian key for {}",
-                        custodian_output.custodian_role
-                    )))?;
+                    .ok_or_else(|| {
+                        BackupError::OperatorError(format!(
+                            "missing custodian key for {}",
+                            custodian_output.custodian_role
+                        ))
+                    })?;
                 let commitment = recovery_material
                     .get(&custodian_output.custodian_role)
                     .map_err(|_| BackupError::OperatorError("missing commitment".to_string()))?;

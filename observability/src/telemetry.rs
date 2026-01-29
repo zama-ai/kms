@@ -9,12 +9,13 @@ use axum::{
     routing::get,
     Router,
 };
+use opentelemetry::propagation::TextMapCompositePropagator;
 use opentelemetry::{global, propagation::Injector, trace::TracerProvider, KeyValue};
 use opentelemetry_http::HeaderExtractor;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_prometheus::exporter;
 pub use opentelemetry_sdk::metrics::SdkMeterProvider;
-use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::propagation::{BaggagePropagator, TraceContextPropagator};
 pub use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::{resource::Resource, trace::Sampler};
 use prometheus::{Encoder, Registry as PrometheusRegistry, TextEncoder};
@@ -79,6 +80,10 @@ async fn metrics_handler(State(state): State<MetricsState>) -> impl IntoResponse
 
 async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, "ok")
+}
+
+async fn version_handler() -> impl IntoResponse {
+    (StatusCode::OK, env!("CARGO_PKG_VERSION").to_string())
 }
 
 async fn readiness_handler(State(state): State<MetricsState>) -> impl IntoResponse {
@@ -158,6 +163,7 @@ pub fn init_metrics(settings: &TelemetryConfig) -> Result<SdkMeterProvider, anyh
             .route("/metrics", get(metrics_handler))
             .route("/health", get(health_handler))
             .route("/ready", get(readiness_handler))
+            .route("/version", get(version_handler))
             .route("/live", get(liveness_handler))
             .with_state(state);
 
@@ -308,10 +314,20 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
             .with_span_processor(batch_processor)
             .with_resource(
                 Resource::builder()
-                    .with_attributes(vec![KeyValue::new(
-                        opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-                        service_name,
-                    )])
+                    .with_attributes(vec![
+                        KeyValue::new(
+                            opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
+                            service_name,
+                        ),
+                        KeyValue::new(
+                            "service.version".to_string(),
+                            env!("CARGO_PKG_VERSION").to_string(),
+                        ),
+                        KeyValue::new(
+                            "deployment.environment".to_string(),
+                            ENVIRONMENT.to_string(),
+                        ),
+                    ])
                     .build(),
             )
             .build()
@@ -333,10 +349,20 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
             .with_simple_exporter(opentelemetry_stdout::SpanExporter::default())
             .with_resource(
                 Resource::builder()
-                    .with_attributes(vec![KeyValue::new(
-                        opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-                        service_name,
-                    )])
+                    .with_attributes(vec![
+                        KeyValue::new(
+                            opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
+                            service_name,
+                        ),
+                        KeyValue::new(
+                            "service.version".to_string(),
+                            env!("CARGO_PKG_VERSION").to_string(),
+                        ),
+                        KeyValue::new(
+                            "deployment.environment".to_string(),
+                            ENVIRONMENT.to_string(),
+                        ),
+                    ])
                     .build(),
             )
             .build()
@@ -370,7 +396,11 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         .try_init()
         .context("Failed to initialize tracing")?;
 
-    global::set_text_map_propagator(TraceContextPropagator::new());
+    // Propagate both W3C tracecontext and baggage
+    global::set_text_map_propagator(TextMapCompositePropagator::new(vec![
+        Box::new(TraceContextPropagator::new()),
+        Box::new(BaggagePropagator::new()),
+    ]));
 
     // Return the provider for explicit shutdown
     Ok(provider)
@@ -433,10 +463,18 @@ pub fn make_span<B>(request: &tonic::codegen::http::Request<B>) -> Span {
         .and_then(|r| r.to_str().ok())
         .map(String::from);
 
-    let span = if let Some(request_id) = request_id {
-        info_span!("grpc_request", ?endpoint, %request_id)
-    } else {
-        info_span!("grpc_request", ?endpoint)
+    let parent_span_id = headers
+        .get(TRACER_PARENT_SPAN_ID)
+        .and_then(|r| r.to_str().ok())
+        .map(String::from);
+
+    let span = match (request_id, parent_span_id) {
+        (Some(request_id), Some(parent_span_id)) => {
+            info_span!("grpc_request", ?endpoint, %request_id, %parent_span_id)
+        }
+        (Some(request_id), None) => info_span!("grpc_request", ?endpoint, %request_id),
+        (None, Some(parent_span_id)) => info_span!("grpc_request", ?endpoint, %parent_span_id),
+        (None, None) => info_span!("grpc_request", ?endpoint),
     };
 
     let parent_context = global::get_text_map_propagator(|propagator| {

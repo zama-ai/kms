@@ -54,6 +54,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Once};
+use std::time::Duration;
 use strum_macros::{Display, EnumString};
 use tfhe::FheTypes as TfheFheType;
 use tokio::sync::RwLock;
@@ -455,6 +456,24 @@ impl CipherArguments {
             CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.num_requests,
         }
     }
+
+    pub fn get_parallel_requests(&self) -> usize {
+        match self {
+            CipherArguments::FromFile(cipher_file) => cipher_file.parallel_requests,
+            CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.parallel_requests,
+        }
+    }
+
+    pub fn get_inter_request_delay_ms(&self) -> Duration {
+        match self {
+            CipherArguments::FromFile(cipher_file) => {
+                tokio::time::Duration::from_millis(cipher_file.inter_request_delay_ms)
+            }
+            CipherArguments::FromArgs(cipher_parameters) => {
+                tokio::time::Duration::from_millis(cipher_parameters.inter_request_delay_ms)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Args, Clone, Serialize, Deserialize)]
@@ -487,7 +506,7 @@ pub struct CipherParameters {
     /// If not specified, the default epoch will be used.
     #[clap(long)]
     pub epoch_id: Option<EpochId>,
-    /// Number of copies of the ciphertext to process in a request.
+    /// Number of copies of the ciphertext to process in a single request.
     /// This is ignored for the encryption command.
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long, short = 'b', default_value_t = 1)]
@@ -501,6 +520,14 @@ pub struct CipherParameters {
     #[serde(skip_serializing, skip_deserializing)]
     #[clap(long)]
     pub ciphertext_output_path: Option<PathBuf>,
+    /// Delay (in ms) between consecutive requests for decrypt operations
+    #[serde(skip_serializing, skip_deserializing)]
+    #[clap(long, short = 'i', default_value_t = 0)]
+    pub inter_request_delay_ms: u64,
+    /// Number of requests to be sent in parallel
+    #[serde(skip_serializing, skip_deserializing)]
+    #[clap(long, short = 'p', default_value_t = 0)]
+    pub parallel_requests: usize,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -508,13 +535,19 @@ pub struct CipherFile {
     /// Input file of the ciphertext.
     #[clap(long)]
     pub input_path: PathBuf,
-    /// Number of copies of the ciphertext to process in a request.
+    /// Number of copies of the ciphertext to process in a single request.
     #[clap(long, short = 'b', default_value_t = 1)]
     pub batch_size: usize,
     /// Numbers of requests to process at once.
     /// Each request uses a copy of the same batch.
     #[clap(long, short = 'n', default_value_t = 1)]
     pub num_requests: usize,
+    /// Delay (in ms) between consecutive requests for decrypt operations
+    #[clap(long, default_value_t = 0)]
+    pub inter_request_delay_ms: u64,
+    /// Number of requests to be sent in parallel
+    #[clap(long, short = 'p', default_value_t = 0)]
+    pub parallel_requests: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1248,6 +1281,8 @@ pub async fn execute_cmd(
                 kms_addrs.to_vec(),
                 max_iter,
                 num_expected_responses,
+                cipher_args.get_inter_request_delay_ms(),
+                cipher_args.get_parallel_requests(),
             )
             .await?
         }
@@ -1326,6 +1361,8 @@ pub async fn execute_cmd(
                 num_parties,
                 max_iter,
                 num_expected_responses,
+                cipher_args.get_inter_request_delay_ms(),
+                cipher_args.get_parallel_requests(),
             )
             .await?
         }

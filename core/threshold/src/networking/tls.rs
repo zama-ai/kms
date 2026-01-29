@@ -134,10 +134,12 @@ impl AttestedVerifier {
         Ok(Self {
             root_hint_subjects: Vec::new(),
             supported_algs: CryptoProvider::get_default()
-                .ok_or(anyhow!(
-                    "
+                .ok_or_else(|| {
+                    anyhow!(
+                        "
 Crypto provider should exist at this point"
-                ))?
+                    )
+                })?
                 .signature_verification_algorithms,
             trust_roots: RwLock::new(HashMap::new()),
             release_pcrs: RwLock::new(HashMap::new()),
@@ -235,10 +237,11 @@ Crypto provider should exist at this point"
             .map_err(|e| Error::General(format!("Failed to acquire read lock: {e}")))?;
         let (client_verifier, server_verifier, contexts) = trust_roots
             .get(&MpcIdentity(subject.clone()))
-            .ok_or(Error::General(format!("{subject} is not a trust anchor")))
             .cloned()
-            .inspect_err(|e| {
+            .ok_or_else(|| {
+                let e = Error::General(format!("{subject} is not a trust anchor"));
                 tracing::error!("{e}");
+                e
             })?;
         let release_pcrs = self
             .release_pcrs

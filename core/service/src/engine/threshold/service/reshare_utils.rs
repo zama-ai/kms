@@ -9,9 +9,7 @@ use crate::{
         },
         threshold::service::{session::ImmutableSessionMaker, ThresholdFheKeys},
         utils::MetricedError,
-        validation::{
-            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
-        },
+        validation::{parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr},
     },
     util::{
         meta_store::{handle_res_mapping, MetaStore},
@@ -180,11 +178,11 @@ async fn fetch_public_materials_from_peers<
     // obtain the digests
     let expected_public_key_digest = key_digests
         .get(&PubDataType::PublicKey)
-        .ok_or(anyhow::anyhow!("missing digest for public key"))?;
+        .ok_or_else(|| anyhow::anyhow!("missing digest for public key"))?;
 
     let expected_server_key_digest = key_digests
         .get(&PubDataType::ServerKey)
-        .ok_or(anyhow::anyhow!("missing digest for server key"))?;
+        .ok_or_else(|| anyhow::anyhow!("missing digest for server key"))?;
 
     // fetch the context info
     let context = {

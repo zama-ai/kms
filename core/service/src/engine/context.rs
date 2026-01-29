@@ -14,7 +14,7 @@ use threshold_fhe::{execution::runtime::party::Role, networking::tls::ReleasePCR
 use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{internal_crypto_types::LegacySerialization, signatures::PublicSigKey},
-    engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr},
+    engine::validation::{parse_optional_grpc_request_id, RequestIdParsingErr},
     vault::storage::{crypto_material::get_core_signing_key, StorageReader},
 };
 
@@ -230,7 +230,6 @@ impl ContextInfo {
                 .map(|inner| inner == &verification_key)
                 .unwrap_or(false)
         });
-
         // check mpc_nodes have unique party_ids
         let party_ids: std::collections::HashSet<_> =
             self.mpc_nodes.iter().map(|node| node.party_id).collect();
@@ -325,11 +324,10 @@ impl TryFrom<kms_grpc::kms::v1::MpcContext> for ContextInfo {
                 .into_iter()
                 .map(NodeInfo::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
-            context_id: parse_optional_proto_request_id(
+            context_id: parse_optional_grpc_request_id(
                 &value.context_id,
                 RequestIdParsingErr::Context,
-            )?
-            .into(),
+            )?,
             software_version,
             threshold: value.threshold as u32,
             pcr_values: value

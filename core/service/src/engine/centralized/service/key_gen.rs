@@ -7,7 +7,7 @@ use crate::engine::keyset_configuration::InternalKeySetConfig;
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
-    parse_proto_request_id, validate_key_gen_request, RequestIdParsingErr,
+    parse_grpc_request_id, validate_key_gen_request, RequestIdParsingErr,
 };
 use crate::util::meta_store::{
     add_req_to_meta_store, handle_res, retrieve_from_meta_store, update_err_req_in_meta_store,
@@ -212,7 +212,7 @@ pub async fn get_key_gen_result_impl<
         OP_KEYGEN_RESULT
     };
     let request_id =
-        parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)
+        parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)
             .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::InvalidArgument))?;
 
     tracing::debug!("Received get key gen result request with id {}", request_id);
