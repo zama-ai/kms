@@ -11,10 +11,7 @@ use crate::{
         utils::MetricedError,
         validation::{parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr},
     },
-    util::{
-        meta_store::{handle_res_mapping, MetaStore},
-        rate_limiter::RateLimiter,
-    },
+    util::{meta_store::MetaStore, rate_limiter::RateLimiter},
     vault::storage::{
         crypto_material::ThresholdCryptoMaterialStorage,
         read_context_at_id,
@@ -31,7 +28,7 @@ use kms_grpc::{
     rpc_types::{optional_protobuf_to_alloy_domain, PubDataType},
     ContextId, EpochId, IdentifierError, RequestId,
 };
-use observability::metrics_names::OP_RESHARING;
+use observability::metrics_names::OP_NEW_EPOCH;
 use std::{collections::HashMap, sync::Arc};
 use tfhe::ServerKey;
 use threshold_fhe::{
@@ -303,7 +300,7 @@ pub(crate) async fn get_verified_public_materials<
     // obtain the digests
     let expected_public_key_digest = key_digests.get(&PubDataType::PublicKey).ok_or_else(|| {
         MetricedError::new(
-            OP_RESHARING,
+            OP_NEW_EPOCH,
             Some(*request_id),
             anyhow::anyhow!("missing digest for public key"),
             tonic::Code::Internal,
@@ -312,7 +309,7 @@ pub(crate) async fn get_verified_public_materials<
 
     let expected_server_key_digest = key_digests.get(&PubDataType::ServerKey).ok_or_else(|| {
         MetricedError::new(
-            OP_RESHARING,
+            OP_NEW_EPOCH,
             Some(*request_id),
             anyhow::anyhow!("missing digest for server key"),
             tonic::Code::Internal,
@@ -350,7 +347,7 @@ pub(crate) async fn get_verified_public_materials<
             )
             .map_err(|e| {
                 MetricedError::new(
-                    OP_RESHARING,
+                    OP_NEW_EPOCH,
                     Some(*request_id),
                     anyhow::anyhow!("Key digest verification failed: {}", e),
                     tonic::Code::Internal,
@@ -364,7 +361,7 @@ pub(crate) async fn get_verified_public_materials<
             )
             .map_err(|e| {
                 MetricedError::new(
-                    OP_RESHARING,
+                    OP_NEW_EPOCH,
                     Some(*request_id),
                     anyhow::anyhow!("Failed to deserialize public key: {}", e),
                     tonic::Code::Internal,
@@ -377,7 +374,7 @@ pub(crate) async fn get_verified_public_materials<
             )
             .map_err(|e| {
                 MetricedError::new(
-                    OP_RESHARING,
+                    OP_NEW_EPOCH,
                     Some(*request_id),
                     anyhow::anyhow!("Failed to deserialize server key: {}", e),
                     tonic::Code::Internal,
@@ -401,7 +398,7 @@ pub(crate) async fn get_verified_public_materials<
             .await
             .map_err(|e| {
                 MetricedError::new(
-                    OP_RESHARING,
+                    OP_NEW_EPOCH,
                     Some(*request_id),
                     anyhow::anyhow!("Failed to fetch public materials from peers: {}", e),
                     tonic::Code::Internal,

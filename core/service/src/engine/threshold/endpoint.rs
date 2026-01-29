@@ -200,12 +200,7 @@ impl_endpoint! {
             request: Request<DestroyMpcContextRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
-            self.context_manager.destroy_mpc_context(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_DESTROY_MPC_CONTEXT, tag);
-            })
-
+            Ok(self.context_manager.destroy_mpc_context(request).await?)
         }
 
         #[tracing::instrument(skip_all)]
@@ -215,13 +210,9 @@ impl_endpoint! {
         ) -> Result<Response<Empty>, Status> {
             let inner = request.into_inner();
             METRICS.increment_request_counter(OP_NEW_EPOCH);
-            self.epoch_manager
+            Ok(self.epoch_manager
                 .new_mpc_epoch(Request::new(inner.clone()))
-                .await
-                .inspect_err(|err| {
-                    let tag = map_tonic_code_to_metric_err_tag(err.code());
-                    let _ = METRICS.increment_error_counter(OP_NEW_EPOCH, tag);
-                })
+                .await?)
         }
 
         #[tracing::instrument(skip_all)]
@@ -230,11 +221,7 @@ impl_endpoint! {
             request: Request<RequestId>,
         ) -> Result<Response<EpochResultResponse>, Status> {
             METRICS.increment_request_counter(OP_GET_EPOCH_RESULT);
-            self.epoch_manager.get_epoch_result(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_GET_EPOCH_RESULT, tag);
-            })
+            Ok(self.epoch_manager.get_epoch_result(request).await?)
         }
 
         async fn destroy_mpc_epoch(

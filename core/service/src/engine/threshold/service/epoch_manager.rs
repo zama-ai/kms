@@ -10,7 +10,7 @@ use kms_grpc::{
     utils::tonic_result::BoxedStatus,
     ContextId, EpochId,
 };
-use observability::metrics_names::{OP_NEW_MPC_CONTEXT, OP_RESHARING};
+use observability::metrics_names::{OP_GET_EPOCH_RESULT, OP_NEW_EPOCH};
 use std::{collections::HashMap, future::Future, marker::PhantomData, sync::Arc};
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
@@ -37,7 +37,7 @@ use threshold_fhe::{
 };
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
-use tonic::{Request, Response, Status};
+use tonic::{Request, Response};
 
 use crate::{
     consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
@@ -57,7 +57,7 @@ use crate::{
         validation::{parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr},
     },
     util::{
-        meta_store::{handle_res_mapping, update_err_req_in_meta_store, MetaStore},
+        meta_store::{retrieve_from_meta_store, update_err_req_in_meta_store, MetaStore},
         rate_limiter::RateLimiter,
     },
     vault::storage::{
@@ -107,7 +107,7 @@ fn verify_epoch_info(
 ) -> Result<VerifiedPreviousEpochInfo, MetricedError> {
     let make_metriced_err = |e: BoxedStatus| {
         MetricedError::new(
-            OP_RESHARING,
+            OP_NEW_EPOCH,
             Some(*epoch_id_as_request_id),
             e,
             tonic::Code::InvalidArgument,
@@ -137,7 +137,7 @@ fn verify_epoch_info(
     let eip712_domain =
         optional_protobuf_to_alloy_domain(previous_epoch.domain.as_ref()).map_err(|e| {
             MetricedError::new(
-                OP_RESHARING,
+                OP_NEW_EPOCH,
                 Some(*epoch_id_as_request_id),
                 e,
                 tonic::Code::InvalidArgument,
@@ -158,7 +158,7 @@ fn verify_epoch_info(
         .collect::<anyhow::Result<HashMap<PubDataType, Vec<u8>>>>()
         .map_err(|e| {
             MetricedError::new(
-                OP_RESHARING,
+                OP_NEW_EPOCH,
                 Some(*epoch_id_as_request_id),
                 e,
                 tonic::Code::InvalidArgument,
@@ -423,7 +423,7 @@ impl<
             .await
             .map_err(|e| {
                 MetricedError::new(
-                    OP_RESHARING,
+                    OP_NEW_EPOCH,
                     Some(epoch_id_as_request_id),
                     e,
                     tonic::Code::InvalidArgument,
@@ -601,7 +601,7 @@ impl<
 
         let sk = self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(
-                OP_RESHARING,
+                OP_NEW_EPOCH,
                 Some(epoch_id_as_request_id),
                 e,
                 tonic::Code::FailedPrecondition,
@@ -680,7 +680,7 @@ impl<
         let immutable_session_maker = self.session_maker.make_immutable();
         let sk = self.base_kms.sig_key().map_err(|e| {
             MetricedError::new(
-                OP_RESHARING,
+                OP_NEW_EPOCH,
                 Some(epoch_id_as_request_id),
                 e,
                 tonic::Code::FailedPrecondition,
@@ -767,7 +767,7 @@ impl<
         .await
         .map_err(|e| {
             MetricedError::new(
-                OP_RESHARING,
+                OP_NEW_EPOCH,
                 Some(epoch_id_as_request_id),
                 e,
                 tonic::Code::InvalidArgument,
@@ -815,37 +815,38 @@ impl<
     async fn new_mpc_epoch(
         &self,
         request: Request<NewMpcEpochRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        let permit = self.rate_limiter.start_new_epoch().await?;
+    ) -> Result<Response<Empty>, MetricedError> {
+        let permit = self.rate_limiter.start_new_epoch().await.map_err(|e| {
+            MetricedError::new(OP_NEW_EPOCH, None, e, tonic::Code::ResourceExhausted)
+        })?;
 
         let inner = request.into_inner();
         // the request ID of the init request is the epoch ID for PRSS and shares
         let epoch_id: EpochId =
-            parse_optional_grpc_request_id(&inner.epoch_id, RequestIdParsingErr::Epoch)?;
-
-        if !epoch_id.is_valid() {
-            return Err(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                "Epoch ID is not valid".to_string(),
-            ));
-        }
+            parse_optional_grpc_request_id(&inner.epoch_id, RequestIdParsingErr::Epoch).map_err(
+                |e| MetricedError::new(OP_NEW_EPOCH, None, e, tonic::Code::InvalidArgument),
+            )?;
 
         let context_id: ContextId = match inner.context_id {
-            Some(ctx_id) => parse_grpc_request_id(&ctx_id, RequestIdParsingErr::Context)?,
+            Some(ctx_id) => {
+                parse_grpc_request_id(&ctx_id, RequestIdParsingErr::Context).map_err(|e| {
+                    MetricedError::new(
+                        OP_NEW_EPOCH,
+                        Some(epoch_id.into()),
+                        e,
+                        tonic::Code::InvalidArgument,
+                    )
+                })?
+            }
             None => *DEFAULT_MPC_CONTEXT,
         };
 
-        if !context_id.is_valid() {
-            return Err(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                "MPC Context ID is not valid".to_string(),
-            ));
-        }
-
         if self.session_maker.epoch_exists(&epoch_id).await {
-            return Err(tonic::Status::new(
-                tonic::Code::AlreadyExists,
-                "PRSS state already exists".to_string(),
+            return Err(MetricedError::new(
+                OP_NEW_EPOCH,
+                Some(epoch_id.into()),
+                anyhow::anyhow!("Epoch ID {} already exists", epoch_id),
+                tonic::Code::InvalidArgument,
             ));
         }
 
@@ -864,9 +865,11 @@ impl<
             .get_my_role_in_context(&context_id)
             .await
             .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::NotFound,
-                    format!("MPC context ID {context_id} does not exist: {e}"),
+                MetricedError::new(
+                    OP_NEW_EPOCH,
+                    Some(epoch_id.into()),
+                    e,
+                    tonic::Code::InvalidArgument,
                 )
             })?
             .is_some();
@@ -878,7 +881,7 @@ impl<
             let mut guarded_meta_store = self.reshare_pubinfo_meta_store.write().await;
             guarded_meta_store.insert(&epoch_id.into()).map_err(|e| {
                 MetricedError::new(
-                    OP_RESHARING,
+                    OP_NEW_EPOCH,
                     Some(epoch_id.into()),
                     e,
                     // Note that there are other reason why insert can fail, but
@@ -905,7 +908,7 @@ impl<
                         &mut meta_store.write().await,
                         &epoch_id.into(),
                         err,
-                        OP_NEW_MPC_CONTEXT,
+                        OP_NEW_EPOCH,
                     );
                     return;
                 }
@@ -917,7 +920,7 @@ impl<
                         &mut meta_store.write().await,
                         &epoch_id.into(),
                         err,
-                        OP_NEW_MPC_CONTEXT,
+                        OP_NEW_EPOCH,
                     );
                 }
             } else {
@@ -935,23 +938,26 @@ impl<
     async fn destroy_mpc_epoch(
         &self,
         _request: Request<DestroyMpcEpochRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<Empty>, MetricedError> {
         todo!()
     }
 
     async fn get_epoch_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<EpochResultResponse>, Status> {
+    ) -> Result<Response<EpochResultResponse>, MetricedError> {
         let request_id =
-            parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::EpochResponse)?;
+            parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::EpochResponse)
+                .map_err(|e| {
+                    MetricedError::new(OP_GET_EPOCH_RESULT, None, e, tonic::Code::InvalidArgument)
+                })?;
 
-        let status = {
-            let guarded_meta_store = self.reshare_pubinfo_meta_store.read().await;
-            guarded_meta_store.retrieve(&request_id)
-        };
-
-        let res = handle_res_mapping(status, &request_id, "Epoch").await?;
+        let res = retrieve_from_meta_store(
+            self.reshare_pubinfo_meta_store.read().await,
+            &request_id,
+            OP_GET_EPOCH_RESULT,
+        )
+        .await?;
 
         match res {
             EpochOutput::PRSSInitOnly => {
@@ -997,8 +1003,14 @@ impl<
                 }
                 KeyGenMetadata::LegacyV0(_res) => {
                     tracing::error!("Resharing should not return legacy metadata");
-                    Err(Status::internal(
-                        "Resharing returned legacy metadata, which should not happen",
+                    Err(MetricedError::new(
+                        OP_GET_EPOCH_RESULT,
+                        Some(request_id),
+                        anyhow::anyhow!(
+                            "Resharing should not return legacy metadata for request ID {:?}",
+                            request_id
+                        ),
+                        tonic::Code::InvalidArgument,
                     ))
                 }
             },

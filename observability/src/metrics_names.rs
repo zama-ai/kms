@@ -46,12 +46,6 @@ pub const OP_NEW_EPOCH: &str = "new_mpc_epoch";
 pub const OP_DESTROY_EPOCH: &str = "destroy_mpc_epoch";
 pub const OP_GET_EPOCH_RESULT: &str = "get_mpc_epoch_result";
 
-// PRSS init
-pub const OP_PRSS_INIT: &str = "prss_init";
-
-// Resharing
-pub const OP_RESHARING: &str = "resharing";
-
 // PK fetch
 pub const OP_FETCH_PK: &str = "fetch_pk";
 

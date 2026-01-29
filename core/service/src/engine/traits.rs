@@ -11,6 +11,7 @@ use tonic::Status;
 
 use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::signatures::{PrivateSigKey, Signature};
+use crate::engine::utils::MetricedError;
 
 use super::base::KmsFheKeyHandles;
 
@@ -81,17 +82,17 @@ pub trait EpochManager {
     async fn new_mpc_epoch(
         &self,
         request: Request<NewMpcEpochRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
 
     async fn destroy_mpc_epoch(
         &self,
         request: Request<DestroyMpcEpochRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
 
     async fn get_epoch_result(
         &self,
         request: Request<RequestId>,
-    ) -> Result<Response<EpochResultResponse>, Status>;
+    ) -> Result<Response<EpochResultResponse>, MetricedError>;
 }
 
 #[tonic::async_trait]
