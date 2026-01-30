@@ -12,12 +12,12 @@ MEMORY_OUTPUT_FILE="$TARGET_DIR/memory_bench_results.txt"
 
 mkdir -p $TARGET_DIR
 
-## Run the latency benchmarks
-#cargo-criterion --bench non-threshold_keygen_speed --message-format json >> $OUTPUT_FILE
-#cargo-criterion --bench non-threshold_basic-ops_speed --message-format json >> $OUTPUT_FILE
-#cargo-criterion --bench non-threshold_erc20_speed --message-format json >> $OUTPUT_FILE
-#
-## Run the memory benchmarks
+# Run the latency benchmarks
+cargo-criterion --bench non-threshold_keygen_speed --message-format json >> $OUTPUT_FILE
+cargo-criterion --bench non-threshold_basic-ops_speed --message-format json >> $OUTPUT_FILE
+cargo-criterion --bench non-threshold_erc20_speed --message-format json >> $OUTPUT_FILE
+
+# Run the memory benchmarks
 cargo bench --bench non-threshold_keygen_memory --features=measure_memory >> $MEMORY_OUTPUT_FILE
 cargo bench --bench non-threshold_basic-ops_memory --features=measure_memory >> $MEMORY_OUTPUT_FILE
 cargo bench --bench non-threshold_erc20_memory --features=measure_memory >> $MEMORY_OUTPUT_FILE
