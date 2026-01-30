@@ -219,6 +219,7 @@ impl ExperimentalGrpcChoreography {
                 .networking_manager
                 .make_network_session(
                     session_id,
+                    threshold,
                     &*role_assignment.read().await,
                     self.my_role,
                     network_mode,
@@ -607,6 +608,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 .networking_manager
                 .make_network_session(
                     session_id,
+                    0, // Dummy value, not used in local keygen
                     &RoleAssignment::from(role_assignment),
                     self.my_role,
                     NetworkMode::Async,

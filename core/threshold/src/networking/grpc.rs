@@ -9,10 +9,11 @@ use crate::execution::runtime::party::{MpcIdentity, RoleAssignment, RoleKind, Ro
 use crate::networking::constants::{
     DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_ELAPSED_TIME,
     MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL, MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY,
-    MAX_WAITING_TIME_MESSAGE_QUEUE, MESSAGE_LIMIT, MULTIPLIER, NETWORK_TIMEOUT_ASYNC,
-    NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
-    SESSION_CLEANUP_INTERVAL_SECS, SESSION_STATUS_UPDATE_INTERVAL_SECS,
+    MAX_WAITING_TIME_MESSAGE_QUEUE, MESSAGE_LIMIT, MULTIPLIER, NETWORK_TIMEOUT_BK,
+    NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG, SESSION_CLEANUP_INTERVAL_SECS,
+    SESSION_STATUS_UPDATE_INTERVAL_SECS,
 };
+use crate::networking::gen::Status;
 use crate::networking::health_check::HealthCheckSession;
 use crate::networking::Networking;
 use crate::session_id::SessionId;
@@ -22,7 +23,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
-
 use tokio::sync::{
     mpsc::{channel, Receiver, Sender},
     Mutex, RwLock,
@@ -256,33 +256,87 @@ impl GrpcNetworkingManager {
             let mut interval = tokio::time::interval(update_interval);
             loop {
                 interval.tick().await;
-
                 let mut internal_inactive_sessions_count = 0;
                 let mut internal_active_sessions_count = 0;
-                session_store.retain(|session_id, status| match status {
-                    SessionStatus::Completed(started) => started.elapsed() < cleanup_interval,
-                    SessionStatus::Inactive((_, started)) => {
-                        if started.elapsed() > discard_inactive_interval {
-                            tracing::warn!(
+                let mut to_remove = Vec::new();
+                for mut cur in session_store.iter_mut() {
+                    let (session_id, status) = cur.pair_mut();
+                    match status {
+                        SessionStatus::Completed(started) => {
+                            // Remove completed sessions that have been completed for a very long time
+                            if started.elapsed() > cleanup_interval {
+                                to_remove.push(session_id.clone());
+                            }
+                        }
+                        SessionStatus::Inactive((_, started)) => {
+                            // Remove inactive sessions that have been inactive for awhile
+                            if started.elapsed() > discard_inactive_interval {
+                                println!("Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.", session_id, started.elapsed().as_secs());
+                                tracing::warn!(
                                 "Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.",
                                 session_id,
                                 started.elapsed().as_secs()
                             );
-                            false
-                        } else {
-                            internal_inactive_sessions_count += 1;
-                            true
+                                to_remove.push(session_id.clone());
+                                break;
+                            } else {
+                                println!("Keeping Inactive session {:?} after {:?} seconds. We never heard about such session.", session_id, started.elapsed().as_secs());
+                                internal_inactive_sessions_count += 1;
+                            }
                         }
-                    }
-                    SessionStatus::Active(session) => {
-                        if session.upgrade().is_none() {
-                            *status = SessionStatus::Completed(Instant::now());
-                        } else {
-                            internal_active_sessions_count += 1;
+                        SessionStatus::Active(session) => {
+                            match session.upgrade() {
+                                Some(network_session) => {
+                                    // Remove active sessions that have not received any activity for awhile
+                                    match network_session
+                                        .last_rec_activity_time
+                                        .read()
+                                        .await
+                                        .as_ref()
+                                    {
+                                        Some(last_receive_time) => {
+                                            if last_receive_time.elapsed()
+                                                > discard_inactive_interval
+                                            {
+                                                println!("Discarding Active session {:?} after {:?} seconds.", session_id, last_receive_time.elapsed().as_secs());
+                                                tracing::warn!(
+                                                "Discarding Active session {:?} after {:?} seconds.",
+                                                session_id,
+                                                last_receive_time.elapsed().as_secs()
+                                            );
+                                                to_remove.push(session_id.clone());
+                                                break;
+                                            }
+                                        }
+                                        None => {
+                                            tracing::warn!(
+                                                "Network session {:?} has no init time set yet.",
+                                                session_id
+                                            );
+                                        }
+                                    };
+                                    // Also remove active sessions that have been aborted
+                                    if network_session.is_aborted() {
+                                        // If the session has been aborted, we mark it as completed
+                                        tracing::info!(
+                                        "Marking session {:?} as completed because it has been aborted.",
+                                        session_id
+                                    );
+                                        *status = SessionStatus::Completed(Instant::now());
+                                    } else {
+                                        internal_active_sessions_count += 1;
+                                    }
+                                }
+                                None => {
+                                    *status = SessionStatus::Completed(Instant::now());
+                                }
+                            }
                         }
-                        true
-                    }
-                });
+                    };
+                }
+                for session_id in to_remove {
+                    session_store.remove(&session_id);
+                }
                 inactive_session_count.store(internal_inactive_sessions_count, Ordering::Relaxed);
                 active_session_count.store(internal_active_sessions_count, Ordering::Relaxed);
             }
@@ -385,6 +439,7 @@ impl GrpcNetworkingManager {
     pub async fn make_network_session<R: RoleTrait>(
         &self,
         session_id: SessionId,
+        threshold: u8,
         role_assignment: &RoleAssignment<R>,
         my_role: R,
         network_mode: NetworkMode,
@@ -407,11 +462,13 @@ impl GrpcNetworkingManager {
         };
 
         let timeout = match network_mode {
-            NetworkMode::Async => *NETWORK_TIMEOUT_ASYNC,
+            // If we have waited for the network as long as we keep inactive sessions, we might as well timeout
+            NetworkMode::Async => self.conf.get_discard_inactive_sessions_interval(),
             NetworkMode::Sync => self.conf.get_network_timeout(),
         };
 
-        let connection_channel = self.sending_service.add_connections(&others).await?;
+        let (connection_channel, completed_parties) =
+            self.sending_service.add_connections(&others).await?;
 
         let session = match self.session_store.entry(session_id) {
             // Turn an inactive session into an active one
@@ -437,12 +494,16 @@ impl GrpcNetworkingManager {
                 let session = Arc::new(NetworkSession {
                     owner: owner.clone(),
                     session_id,
+                    threshold,
                     sending_channels: connection_channel,
                     receiving_channels: message_store.0,
                     round_counter: tokio::sync::RwLock::new(0),
                     network_mode,
                     conf: self.conf,
+                    completed_parties,
+                    aborted: OnceLock::new(),
                     init_time: OnceLock::new(),
+                    last_rec_activity_time: RwLock::new(None),
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),
@@ -464,12 +525,16 @@ impl GrpcNetworkingManager {
                 let session = Arc::new(NetworkSession {
                     owner: owner.clone(),
                     session_id,
+                    threshold,
                     sending_channels: connection_channel,
                     receiving_channels: message_queue,
                     round_counter: tokio::sync::RwLock::new(0),
                     network_mode,
                     conf: self.conf,
+                    completed_parties,
+                    aborted: OnceLock::new(),
                     init_time: OnceLock::new(),
+                    last_rec_activity_time: RwLock::new(None),
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),
@@ -676,6 +741,32 @@ pub(crate) enum SessionStatus {
     Completed(Instant),
     Inactive((MessageQueueStore, Instant)),
     Active(Weak<NetworkSession>),
+}
+
+impl From<SessionStatus> for SendValueResponse {
+    fn from(value: SessionStatus) -> Self {
+        let status = match value {
+            SessionStatus::Completed(_) => Status::Completed,
+            SessionStatus::Inactive(_) => Status::Inactive,
+            SessionStatus::Active(_) => Status::Active,
+        };
+        SendValueResponse {
+            status: status.into(),
+        }
+    }
+}
+
+impl From<&SessionStatus> for SendValueResponse {
+    fn from(value: &SessionStatus) -> Self {
+        let status = match value {
+            SessionStatus::Completed(_) => Status::Completed,
+            SessionStatus::Inactive(_) => Status::Inactive,
+            SessionStatus::Active(_) => Status::Active,
+        };
+        SendValueResponse {
+            status: status.into(),
+        }
+    }
 }
 
 // Because we can use a custom TCP Incoming, we need to specify how
@@ -1023,11 +1114,22 @@ impl Gnetworking for NetworkingImpl {
 
         // First try with only read lock to avoid blocking
         let tx = if let Some(session_status) = self.session_store.get(&tag.session_id) {
-            match self.fetch_tx_channel(session_status.value(), &tag)? {
+            let status = session_status.value();
+            match self.fetch_tx_channel(status, &tag)? {
                 Some(tx) => tx,
                 None => {
                     // If the session is completed or inactive, we return early
-                    return Ok(tonic::Response::new(SendValueResponse::default()));
+                    // if matches!(status, SessionStatus::Completed(_)) {
+                    //     tracing::warn!(
+                    //         "Session {:?} found in session_store but is completed. Will be removed by background cleanup. Returning Aborted status",
+                    //         tag.session_id
+                    //     );
+                    //     return Err(tonic::Status::new(
+                    //         tonic::Code::Aborted,
+                    //         format!("Session {:?} is completed on the receiver.", tag.session_id),
+                    //     ));
+                    // }
+                    return Ok(tonic::Response::new(status.into()));
                 }
             }
         } else {
@@ -1035,11 +1137,25 @@ impl Gnetworking for NetworkingImpl {
             match self.session_store.entry(tag.session_id) {
                 dashmap::Entry::Occupied(occupied_entry) => {
                     // Can be occupied if ever state has changed by the time we reach this branch of the if statement
-                    match self.fetch_tx_channel(occupied_entry.get(), &tag)? {
+                    let status = occupied_entry.get();
+                    match self.fetch_tx_channel(status, &tag)? {
                         Some(tx) => tx,
                         None => {
-                            // If the session is completed or inactive, we return early
-                            return Ok(tonic::Response::new(SendValueResponse::default()));
+                            // If the session is completed or inactive, we return earlys
+                            // if matches!(status, SessionStatus::Completed(_)) {
+                            //     tracing::warn!(
+                            //     "Session {:?} found in session_store but is completed. Will be removed by background cleanup. Returning Aborted status",
+                            //     tag.session_id
+                            // );
+                            //     return Err(tonic::Status::new(
+                            //         tonic::Code::Aborted,
+                            //         format!(
+                            //             "Session {:?} is completed on the receiver.",
+                            //             tag.session_id
+                            //         ),
+                            //     ));
+                            // }
+                            return Ok(tonic::Response::new(status.into()));
                         }
                     }
                 }
@@ -1115,7 +1231,9 @@ impl Gnetworking for NetworkingImpl {
             ));
         }
 
-        Ok(tonic::Response::new(SendValueResponse::default()))
+        Ok(tonic::Response::new(SendValueResponse {
+            status: Status::Active.into(),
+        }))
     }
 }
 
@@ -1129,4 +1247,270 @@ pub struct Tag {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct HealthTag {
     pub(crate) sender: MpcIdentity,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
+    use dashmap::DashMap;
+    use std::sync::Arc;
+    use tokio::sync::mpsc::channel;
+    use tokio::sync::Mutex;
+    use tokio::time::{Duration, Instant};
+
+    #[test]
+    fn test_fetch_tx_channel_completed_session() {
+        let session_store: Arc<SessionStore> = Arc::new(DashMap::new());
+        let opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>> = Arc::new(DashMap::new());
+        let session_id = SessionId::from(1u128);
+
+        // Insert a completed session
+        session_store.insert(session_id, SessionStatus::Completed(Instant::now()));
+
+        let networking_impl = NetworkingImpl::new(
+            session_store.clone(),
+            opened_sessions_tracker,
+            100,
+            50,
+            Duration::from_secs(60),
+            TlsExtensionGetter::default(),
+            #[cfg(feature = "testing")]
+            false,
+        );
+
+        let tag = Tag {
+            session_id,
+            sender: MpcIdentity("party1".to_string()),
+            round_counter: 0,
+        };
+        let session_status = session_store.get(&session_id).unwrap();
+
+        let result = networking_impl.fetch_tx_channel(session_status.value(), &tag);
+
+        // Should return Ok(None) for completed sessions
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_inactive_session_creates_new_channel() {
+        let session_store: Arc<SessionStore> = Arc::new(DashMap::new());
+        let opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>> = Arc::new(DashMap::new());
+        let session_id = SessionId::from(2u128);
+
+        // Insert an inactive session with empty message queue
+        let channel_maps = DashMap::new();
+        session_store.insert(
+            session_id,
+            SessionStatus::Inactive((
+                MessageQueueStore::new_uninitialized(channel_maps),
+                Instant::now(),
+            )),
+        );
+
+        let networking_impl = NetworkingImpl::new(
+            session_store.clone(),
+            opened_sessions_tracker.clone(),
+            100,
+            50,
+            Duration::from_secs(60),
+            TlsExtensionGetter::default(),
+            #[cfg(feature = "testing")]
+            false,
+        );
+
+        let tag = Tag {
+            session_id,
+            sender: MpcIdentity("party1".to_string()), // Sender does not exist
+            round_counter: 0,
+        };
+        let session_status = session_store.get(&session_id).unwrap();
+
+        let result = networking_impl.fetch_tx_channel(session_status.value(), &tag);
+
+        // Should return Ok(Some(tx)) for inactive sessions with new sender
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+
+        // Check that opened_sessions_tracker was updated
+        assert_eq!(
+            *opened_sessions_tracker.get(&tag.sender).unwrap().value(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_inactive_session_existing_sender() {
+        let session_store: Arc<SessionStore> = Arc::new(DashMap::new());
+        let opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>> = Arc::new(DashMap::new());
+        let session_id = SessionId::from(3u128);
+        let sender = MpcIdentity("party1".to_string());
+
+        // Insert an inactive session with existing sender channel
+        let channel_maps = DashMap::new();
+        let (tx, rx) = channel::<NetworkRoundValue>(100);
+        channel_maps.insert(sender.clone(), (Arc::new(tx), Arc::new(Mutex::new(rx))));
+
+        session_store.insert(
+            session_id,
+            SessionStatus::Inactive((
+                MessageQueueStore::new_uninitialized(channel_maps),
+                Instant::now(),
+            )),
+        );
+
+        let networking_impl = NetworkingImpl::new(
+            session_store.clone(),
+            opened_sessions_tracker.clone(),
+            100,
+            50,
+            Duration::from_secs(60),
+            TlsExtensionGetter::default(),
+            #[cfg(feature = "testing")]
+            false,
+        );
+
+        let tag = Tag {
+            session_id,
+            sender: MpcIdentity("party1".to_string()),
+            round_counter: 0,
+        };
+        let session_status = session_store.get(&session_id).unwrap();
+
+        let result = networking_impl.fetch_tx_channel(session_status.value(), &tag);
+
+        // Should return Ok(Some(tx)) for inactive sessions with existing sender
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+
+        // opened_sessions_tracker should NOT be updated since sender already existed
+        assert!(opened_sessions_tracker.get(&tag.sender).is_none());
+    }
+
+    #[test]
+    fn test_too_many_inactive_sessions() {
+        let session_store: Arc<SessionStore> = Arc::new(DashMap::new());
+        let opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>> = Arc::new(DashMap::new());
+        let session_id = SessionId::from(4u128);
+        let sender = MpcIdentity("party1".to_string());
+
+        // Pre-fill the tracker to hit the limit
+        opened_sessions_tracker.insert(sender.clone(), 50);
+
+        // Insert an inactive session with empty message queue
+        let channel_maps = DashMap::new();
+        session_store.insert(
+            session_id,
+            SessionStatus::Inactive((
+                MessageQueueStore::new_uninitialized(channel_maps),
+                Instant::now(),
+            )),
+        );
+
+        let networking_impl = NetworkingImpl::new(
+            session_store.clone(),
+            opened_sessions_tracker.clone(),
+            100,
+            50, // max_opened_inactive_sessions
+            Duration::from_secs(60),
+            TlsExtensionGetter::default(),
+            #[cfg(feature = "testing")]
+            false,
+        );
+
+        let tag = Tag {
+            session_id,
+            sender: MpcIdentity("party1".to_string()),
+            round_counter: 0,
+        };
+        let session_status = session_store.get(&session_id).unwrap();
+
+        let result = networking_impl.fetch_tx_channel(session_status.value(), &tag);
+
+        // Should return Err with ResourceExhausted
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
+    }
+
+    #[test]
+    fn test_active_session_weak_reference_dead() {
+        let session_store: Arc<SessionStore> = Arc::new(DashMap::new());
+        let opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>> = Arc::new(DashMap::new());
+        let session_id = SessionId::from(5u128);
+
+        // Create a weak reference that's already dead (no strong reference)
+        let weak: Weak<NetworkSession> = Weak::new();
+        session_store.insert(session_id, SessionStatus::Active(weak));
+
+        let networking_impl = NetworkingImpl::new(
+            session_store.clone(),
+            opened_sessions_tracker,
+            100,
+            50,
+            Duration::from_secs(60),
+            TlsExtensionGetter::default(),
+            #[cfg(feature = "testing")]
+            false,
+        );
+
+        let tag = Tag {
+            session_id,
+            sender: MpcIdentity("party1".to_string()),
+            round_counter: 0,
+        };
+        let session_status = session_store.get(&session_id).unwrap();
+
+        let result = networking_impl.fetch_tx_channel(session_status.value(), &tag);
+
+        // Should return Ok(None) when weak reference is dead
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_session_status_into_send_value_response() {
+        // Test Completed status
+        let completed = SessionStatus::Completed(Instant::now());
+        let response: SendValueResponse = completed.into();
+        assert_eq!(response.status(), Status::Completed);
+
+        // Test Inactive status
+        let channel_maps = DashMap::new();
+        let inactive = SessionStatus::Inactive((
+            MessageQueueStore::new_uninitialized(channel_maps),
+            Instant::now(),
+        ));
+        let response: SendValueResponse = inactive.into();
+        assert_eq!(response.status(), Status::Inactive);
+
+        // Test Active status (with dead weak reference)
+        let weak: Weak<NetworkSession> = Weak::new();
+        let active = SessionStatus::Active(weak);
+        let response: SendValueResponse = active.into();
+        assert_eq!(response.status(), Status::Active);
+    }
+
+    #[test]
+    fn test_message_queue_store_get_tx_initialized() {
+        let role_1 = Role::indexed_from_one(1);
+        let id_1 = Identity::new("127.0.0.1".to_string(), 6001, Some("party1".to_string()));
+        let mut role_assignment: RoleAssignment<Role> = RoleAssignment::default();
+        role_assignment.insert(role_1, id_1.clone());
+
+        let store =
+            MessageQueueStore::new_initialized(100, &role_assignment, Arc::new(DashMap::new()));
+
+        // Should get Some(tx) for existing identity
+        let result = store.get_tx(&id_1.mpc_identity());
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_some());
+
+        // Should get None for non-existing identity
+        let other_sender = MpcIdentity("party2".to_string());
+        let result = store.get_tx(&other_sender);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
 }

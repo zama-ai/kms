@@ -13,7 +13,17 @@ message SendValueRequest {
     bytes value = 2;
 }
 
-message SendValueResponse {}
+message SendValueResponse {
+    // Used to indicate whether the receiving server rejected the connection. 
+    // E.g. if it is for a session that has already been completed
+    Status status = 1; 
+}
+
+enum Status {
+    ACTIVE = 0; 
+    INACTIVE = 1;
+    COMPLETED = 2;
+}
 
 message HealthCheckRequest {
     bytes tag = 1;
