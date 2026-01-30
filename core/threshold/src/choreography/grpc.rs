@@ -485,6 +485,7 @@ where
                 .networking_manager
                 .make_network_session(
                     session_id,
+                    threshold,
                     &*role_assignment.read().await,
                     self.my_role,
                     network_mode,
@@ -1118,7 +1119,7 @@ where
             let mut base_session = self
                 .create_base_session(
                     session_id,
-                    0,
+                    0, // Dummy value, not used in local keygen
                     role_assignment,
                     NetworkMode::Sync,
                     request.seed,
@@ -1965,6 +1966,7 @@ where
                 .networking_manager
                 .make_network_session(
                     session_id,
+                    threshold,
                     &*role_assignment.read().await,
                     self.my_role,
                     NetworkMode::Async,

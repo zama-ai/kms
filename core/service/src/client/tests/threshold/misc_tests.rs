@@ -5,6 +5,7 @@ use crate::client::test_tools::{
 };
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::tests::threshold::common::threshold_handles;
+use crate::conf::{init_conf, CoreConfig};
 use crate::consts::{
     DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
     TEST_PARAM, TEST_THRESHOLD_KEY_ID, TEST_THRESHOLD_KEY_ID_4P,
@@ -378,27 +379,75 @@ async fn test_complete_session_notification() {
     let msg_amount = 10;
 
     let wait_time = 4;
-
+    let core_config: CoreConfig = init_conf("config/default_1").unwrap();
+    assert_ne!(
+        core_config
+            .threshold
+            .unwrap()
+            .core_to_core_net
+            .unwrap()
+            .session_update_interval_secs
+            .unwrap(),
+        wait_time
+    );
     // Ensure inactive session discard interval is small for the test
     env::set_var(
-        "DDEC__NET_CONF__SESSION_STATUS_UPDATE_INTERVAL_SECS",
+        "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__SESSION_UPDATE_INTERVAL_SECS",
         format!("{}", wait_time + 0),
     );
+    env::set_var(
+        "THRESHOLD__CORE_TO_CORE_NET__SESSION_UPDATE_INTERVAL_SECS",
+        format!("{}", wait_time + 0),
+    );
+    // env::set_var(
+    //     "CORE_TO_CORE_NET__SESSION_UPDATE_INTERVAL_SECS",
+    //     format!("{}", wait_time + 0),
+    // );
+    // env::set_var("SESSION_UPDATE_INTERVAL_SECS", format!("{}", wait_time + 0));
+    // env::set_var(
+    //     "KMS_CORE__SESSION_UPDATE_INTERVAL_SECS",
+    //     format!("{}", wait_time + 0),
+    // );
+
+    let core_config: CoreConfig = init_conf("config/default_1").unwrap();
+
+    // check that the fhe_params value from the env var ("Test") is read correctly, even if the toml contains "Default"
+    assert_eq!(
+        core_config
+            .clone()
+            .threshold
+            .unwrap()
+            .core_to_core_net
+            .unwrap()
+            .session_update_interval_secs
+            .unwrap(),
+        wait_time
+    );
+    println!("DONE checking");
     // Ensure that the session status update interval is small s.t. aborted sessions get removed quickly
     env::set_var(
-        "DDEC__NET_CONF__DISCARD_INACTIVE_SESSION_INTERVAL_SECS",
+        "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__DISCARD_INACTIVE_SESSIONS_INTERVAL",
         format!("{}", wait_time + 1),
     );
     // Ane ensure that checking for abort and received values will happen quickly
     env::set_var(
-        "DDEC__NET_CONF__MAX_WAITING_TIME_MESSAGE_QUEUE",
-        format!("{}", wait_time - 1),
+        "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__MAX_WAITING_TIME_FOR_MESSAGE_QUEUE",
+        format!("{}", wait_time + 2),
     );
 
-    let (mut kms_servers, mut kms_clients, mut internal_client) =
+    let (kms_servers, kms_clients, mut internal_client) =
         threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
     assert_eq!(kms_clients.len(), kms_servers.len());
-
+    assert_eq!(
+        core_config
+            .threshold
+            .unwrap()
+            .core_to_core_net
+            .unwrap()
+            .session_update_interval_secs
+            .unwrap(),
+        wait_time
+    );
     let mut msgs = Vec::new();
     let mut cts = Vec::new();
     for i in 0..msg_amount {
@@ -524,7 +573,7 @@ async fn test_complete_session_notification() {
         // }
         println!("SLEEPING");
         // Now decrypt with the party that skipped the session. Ensure we sleep longer than the update interval s.t. the active session gets processed
-        tokio::time::sleep(tokio::time::Duration::from_secs(wait_time + 2)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(wait_time + 10)).await;
         println!("Starting decryption for the party that skipped the session");
         for i in kms_servers_keys.iter() {
             if party_ids_to_skip.contains(&(*i as usize)) {
@@ -557,7 +606,6 @@ async fn test_complete_session_notification() {
                 let mut response = cur_client
                     .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
                     .await;
-                let mut ctr = 0u64;
                 println!("GOT response");
                 while response.is_err()
                     && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
@@ -583,3 +631,223 @@ async fn test_complete_session_notification() {
     }
     println!("DONE COLLECTING RESPONSES");
 }
+
+// /// Validates the fix that ensures that a session is dropped if it has been inactive for awhile.
+// #[tokio::test(flavor = "current_thread")]
+// // #[tokio::test(flavor = "multi_thread", worker_threads = 16)]
+// // #[cfg(feature = "slow_tests")]
+// #[serial]
+// async fn test_discard_active_session_after_awhile() {
+//     let amount_parties = 4;
+//     let key_id = &TEST_THRESHOLD_KEY_ID_4P;
+//     let enc_config = EncryptionConfig {
+//         compression: true,
+//         precompute_sns: true,
+//     };
+//     let msg_amount = 10;
+
+//     let wait_time = 4;
+
+//     // Ensure inactive session discard interval is small for the test
+//     env::set_var(
+//         "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__SESSION_UPDATE_INTERVAL_SECS",
+//         format!("{}", wait_time + 0),
+//     );
+//     // Ensure that the session status update interval is small s.t. aborted sessions get removed quickly
+//     env::set_var(
+//         "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__DISCARD_INACTIVE_SESSIONS_INTERVAL_SECS",
+//         format!("{}", wait_time + 1),
+//     );
+//     // Ane ensure that checking for abort and received values will happen quickly
+//     env::set_var(
+//         "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__MAX_WAITING_TIME_FOR_MESSAGE_QUEUE",
+//         format!("{}", wait_time + 2),
+//     );
+
+//     let (kms_servers, kms_clients, mut internal_client) =
+//         threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
+//     assert_eq!(kms_clients.len(), kms_servers.len());
+
+//     let mut msgs = Vec::new();
+//     let mut cts = Vec::new();
+//     for i in 0..msg_amount {
+//         let msg = TestingPlaintext::U64(i as u64);
+//         let (ct, ct_format, fhe_type) = compute_cipher_from_stored_key(
+//             None,
+//             msg.clone(),
+//             key_id,
+//             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
+//             enc_config,
+//         )
+//         .await;
+
+//         let ctt = TypedCiphertext {
+//             ciphertext: ct,
+//             fhe_type: fhe_type as i32,
+//             ciphertext_format: ct_format.into(),
+//             external_handle: (i as usize).to_be_bytes().to_vec(),
+//         };
+//         cts.push(ctt);
+//         msgs.push(msg);
+//     }
+//     for j in 1..=1 {
+//         // make parallel requests by calling [decrypt] in a thread
+//         let mut req_tasks = JoinSet::new();
+
+//         // Make it unique wrt key_id as well do be sure there's no clash when running
+//         // the dec test with multiple keys.
+//         // Also, make it depend on the messages because we may use the same function
+//         // to decrypt multiple messages.
+//         let request_id = derive_request_id(&format!("TEST_COMPLETE_SESSION{j}")).unwrap();
+
+//         let req = internal_client
+//             .public_decryption_request(cts.clone(), &dummy_domain(), &request_id, None, key_id)
+//             .unwrap();
+
+//         // Either send the request, or skip the party if it's in
+//         // party_ids_to_skip
+//         let party_ids_to_skip = vec![3];
+//         let kms_servers_keys: Vec<u32> = kms_servers.keys().copied().collect();
+//         for i in kms_servers_keys.iter() {
+//             if !party_ids_to_skip.contains(&(*i as usize)) {
+//                 let req_clone = req.clone();
+//                 let mut cur_client = kms_clients.get(i).unwrap().clone();
+//                 req_tasks.spawn(async move {
+//                     cur_client
+//                         .public_decrypt(tonic::Request::new(req_clone))
+//                         .await
+//                 });
+//             }
+//         }
+
+//         let mut req_response_vec = Vec::new();
+//         while let Some(inner) = req_tasks.join_next().await {
+//             req_response_vec.push(inner.unwrap().unwrap().into_inner());
+//         }
+//         println!("GOT REQ RESPONSES");
+//         assert_eq!(
+//             req_response_vec.len(),
+//             kms_clients.len() - party_ids_to_skip.len()
+//         );
+
+//         // get all responses
+//         let mut resp_tasks = JoinSet::new();
+//         for i in kms_servers_keys.iter() {
+//             if party_ids_to_skip.contains(&(*i as usize)) {
+//                 continue;
+//             }
+//             let mut cur_client = kms_clients.get(i).unwrap().clone();
+//             let req_id_clone = req.request_id.as_ref().unwrap().clone();
+//             resp_tasks.spawn(async move {
+//                 let mut response = cur_client
+//                     .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
+//                     .await;
+//                 while response.is_err()
+//                     && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+//                 {
+//                     // wait for 4*bits ms before the next query, but at least 100ms and at most 1s.
+//                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+//                     response = cur_client
+//                         .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
+//                         .await;
+//                 }
+//                 (req_id_clone, response.unwrap().into_inner())
+//             });
+//         }
+
+//         let mut resp_response_vec = Vec::new();
+//         while let Some(resp) = resp_tasks.join_next().await {
+//             resp_response_vec.push(resp.unwrap());
+//         }
+//         println!("GOT REST OF RESPONSES");
+//         let responses: Vec<_> = resp_response_vec
+//             .iter()
+//             .filter_map(|(req_id, resp)| {
+//                 if req_id == req.request_id.as_ref().unwrap() {
+//                     Some(resp.clone())
+//                 } else {
+//                     None
+//                 }
+//             })
+//             .collect();
+//         // Compute threshold < amount_parties/3
+//         let threshold = max_threshold(amount_parties);
+//         let min_count_agree = (threshold + 1) as u32;
+//         let received_plaintexts = internal_client
+//             .process_decryption_resp(Some(req.clone()), &responses, min_count_agree)
+//             .unwrap();
+
+//         // check that the plaintexts are correct
+//         for i in 0..msg_amount {
+//             crate::client::tests::common::assert_plaintext(&msgs[i], &received_plaintexts[i]);
+//         }
+//         // Shutdown the servers and check that the health endpoint is no longer serving
+//         // let kms_servers_keys: Vec<u32> = kms_servers.keys().copied().collect();
+//         // for i in kms_servers_keys.iter() {
+//         //     if party_ids_to_skip.contains(&(*i as usize)) {
+//         //         // Shut down MPC servers triggers a shutdown of the core server
+//         //         kms_servers.remove(i).unwrap().assert_shutdown().await;
+//         //         // server.assert_shutdown().await;
+//         //         // server.mpc_shutdown_tx.unwrap().send(()).unwrap();
+//         //     }
+//         // }
+//         println!("SLEEPING");
+//         // Now decrypt with the party that skipped the session. Ensure we sleep longer than the update interval s.t. the active session gets processed
+//         tokio::time::sleep(tokio::time::Duration::from_secs(wait_time + 10)).await;
+//         println!("Starting decryption for the party that skipped the session");
+//         for i in kms_servers_keys.iter() {
+//             if party_ids_to_skip.contains(&(*i as usize)) {
+//                 let mut cur_client = kms_clients.get(i).unwrap().clone();
+//                 let req_clone = req.clone();
+//                 req_tasks.spawn(async move {
+//                     cur_client
+//                         .public_decrypt(tonic::Request::new(req_clone))
+//                         .await
+//                 });
+//             }
+//         }
+
+//         let mut req_response_vec = Vec::new();
+//         while let Some(inner) = req_tasks.join_next().await {
+//             req_response_vec.push(inner.unwrap().unwrap().into_inner());
+//         }
+//         assert_eq!(req_response_vec.len(), party_ids_to_skip.len());
+//         println!("LAST PARTY DECRYPTION RESPONSES RECEIVED");
+//         // get all responses
+//         let mut resp_tasks = JoinSet::new();
+//         for i in kms_servers_keys.iter() {
+//             if !party_ids_to_skip.contains(&(*i as usize)) {
+//                 continue;
+//             }
+//             let mut cur_client = kms_clients.get(i).unwrap().clone();
+//             let req_id_clone = req.request_id.as_ref().unwrap().clone();
+//             println!("Spawning response task for party {}", i);
+//             resp_tasks.spawn(async move {
+//                 let mut response = cur_client
+//                     .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
+//                     .await;
+//                 println!("GOT response");
+//                 while response.is_err()
+//                     && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+//                 {
+//                     // wait for 4*bits ms before the next query, but at least 100ms and at most 1s.
+//                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+//                     response = cur_client
+//                         .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
+//                         .await;
+//                 }
+
+//                 (req_id_clone, response.as_ref().unwrap_err().code())
+//             });
+//         }
+
+//         // let mut resp_response_vec = Vec::new();
+//         while let Some(resp) = resp_tasks.join_next().await {
+//             println!("GOT RESPONSE : {:?}", resp);
+//             // Check for an internal failure since the other servers have already completed the session
+//             // The test will fail if the session basically stalls instead of aborting
+//             assert_eq!(resp.unwrap().1, tonic::Code::Internal); // TODO in theory Aborted should be returned but it is a mess to propagate this through the threshold library
+//         }
+//     }
+//     println!("DONE COLLECTING RESPONSES");
+// }

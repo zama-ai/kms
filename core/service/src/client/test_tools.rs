@@ -133,7 +133,10 @@ pub async fn setup_threshold_no_client<
             num_sessions_preproc: Some(5),
             tls: None,
             peers: Some(mpc_conf),
-            core_to_core_net: None,
+            core_to_core_net: core_config
+                .threshold
+                .as_ref()
+                .and_then(|t| t.core_to_core_net.clone()),
             decryption_mode,
         };
         core_config.threshold = Some(threshold_party_config);

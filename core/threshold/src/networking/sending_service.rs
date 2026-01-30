@@ -691,7 +691,7 @@ impl NetworkSession {
             return true;
         }
         // Aborted has not been set yet, so check if it should be set
-        if self.completed_parties.len() >= 2 * self.threshold as usize + 1 {
+        if self.completed_parties.len() > 2 * self.threshold as usize {
             tracing::warn!(
                 "Session {} aborted due to quorum of parties refusing connection",
                 self.session_id
