@@ -39,6 +39,7 @@ fn print_memory_usage(bench_name: String, results: Vec<usize>) {
 }
 
 #[cfg(feature = "measure_memory")]
+#[allow(unused)]
 pub fn bench_memory<
     I: Clone + Send + Sync + 'static,
     O: Send + 'static,
