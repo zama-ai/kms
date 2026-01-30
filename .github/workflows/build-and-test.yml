@@ -1,0 +1,132 @@
+##############################################################################
+# PR CI Orchestrator
+#
+# This workflow orchestrates Docker builds and testing for pull requests.
+# It ensures images are built once and shared across all dependent workflows.
+#
+# Benefits:
+# - Single image build per PR (saves ~20-30 minutes per PR)
+# - Consistent image tags across all workflows
+# - Parallel test execution after build completes
+##############################################################################
+name: build-and-test
+
+on:
+  pull_request:
+    types: [opened, labeled, synchronize, reopened]
+
+permissions: {}
+
+# Controls concurrent workflow runs:
+# - Groups runs by PR head ref
+# - Cancels in-progress runs when new commits are pushed
+concurrency:
+  group: build-and-test-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  ############################################################################
+  # Build Docker images once for the entire PR workflow
+  ############################################################################
+  docker-build:
+    name: build-and-test/docker-build
+    permissions:
+      actions: read # Required to read workflow run information
+      contents: write # Required to checkout repository code
+      id-token: write # Required for OIDC authentication
+      pull-requests: read # Required to read pull requests information
+      packages: write # Required to publish Docker images
+      attestations: write # Required to create build attestations
+    uses: ./.github/workflows/docker-build.yml
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  ############################################################################
+  # Run Kind testing using pre-built images
+  ############################################################################
+  kind-testing:
+    name: build-and-test/kind-testing
+    needs: [docker-build]
+    if: github.event_name == 'pull_request' && (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened')
+    permissions:
+      actions: read # Required to read workflow run information
+      contents: write # Required for nested docker-build job (even if it doesn't run)
+      checks: write # Required to create GitHub checks for test results
+      packages: write # Required for nested docker-build job (even if it doesn't run)
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      id-token: write # Required for nested docker-build job (even if it doesn't run)
+      attestations: write # Required for nested docker-build job (even if it doesn't run)
+    uses: ./.github/workflows/kind-testing.yml
+    with:
+      image_tag: ${{ needs.docker-build.outputs.image_tag }}
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
+  ############################################################################
+  # Determine deployment type from PR labels
+  ############################################################################
+  check-pr-preview-labels:
+    name: build-and-test/check-labels
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.check.outputs.should_deploy }}
+      deployment_type: ${{ steps.check.outputs.deployment_type }}
+    steps:
+      - name: Check PR labels and determine deployment type
+        id: check
+        env:
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          echo "PR labels: $PR_LABELS"
+
+          # Check if any pr-preview label exists
+          if echo "$PR_LABELS" | jq -e '.[] | select(startswith("pr-preview-"))' > /dev/null; then
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+
+            # Extract deployment type from label (e.g., pr-preview-threshold -> threshold)
+            DEPLOYMENT_TYPE=$(echo "$PR_LABELS" | jq -r '.[] | select(startswith("pr-preview-"))' | head -n 1 | sed 's/pr-preview-//')
+            echo "deployment_type=${DEPLOYMENT_TYPE}" >> "$GITHUB_OUTPUT"
+            echo "Found deployment type: ${DEPLOYMENT_TYPE}"
+          else
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            echo "No pr-preview label found"
+          fi
+
+  ############################################################################
+  # Deploy PR preview if labeled (using pre-built images)
+  ############################################################################
+  pr-preview:
+    name: build-and-test/pr-preview
+    needs: [docker-build, check-pr-preview-labels]
+    if: needs.check-pr-preview-labels.outputs.should_deploy == 'true'
+    permissions:
+      pull-requests: write # Required to update pull requests information
+    uses: ./.github/workflows/pr-preview-deploy.yml
+    with:
+      deployment_type: ${{ needs.check-pr-preview-labels.outputs.deployment_type }}
+      pr_number: ${{ github.event.pull_request.number }}
+      image_tag: ${{ needs.docker-build.outputs.image_tag }}
+      enclave_pcr0: ${{ needs.docker-build.outputs.enclave_pcr0 }}
+      enclave_pcr1: ${{ needs.docker-build.outputs.enclave_pcr1 }}
+      enclave_pcr2: ${{ needs.docker-build.outputs.enclave_pcr2 }}
+    secrets:
+      ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+      TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+      TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}

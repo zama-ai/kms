@@ -7,7 +7,7 @@ kmsCore:
     enabled: true
     peersList: []
     tls:
-      enabled: false
+      enabled: true
   nitroEnclave:
     enabled: false
   resources:
