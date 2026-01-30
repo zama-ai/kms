@@ -10,6 +10,7 @@ use crate::utilities::{generate_tfhe_keys, set_plan};
 
 use rand::prelude::*;
 use std::fmt::Write;
+use tfhe::unset_server_key;
 
 use std::ops::*;
 use tfhe::CompactCiphertextList;
@@ -47,7 +48,19 @@ fn bench_fhe_type<FheType>(
 
     let mut name = String::with_capacity(255);
 
-    // We take ownership in the closure, so the bench_memory function will clone all inputs
+    let lhs = FheType::encrypt(rng.gen(), &client_key);
+    let rhs = FheType::encrypt(rng.gen(), &client_key);
+    {
+        write!(name, "{bench_name}_mul_memory({type_name}, {type_name})").unwrap();
+        let bench_fn = |(lhs, rhs): &mut (FheType, FheType)| &*lhs * &*rhs;
+        bench_memory(bench_fn, &mut (rhs, lhs), name.clone());
+        name.clear();
+    }
+
+    // We drop the server key and don't measure its memory usage
+    // as it's not needed for enc/dec
+    unset_server_key();
+
     {
         let value = rng.gen();
         write!(name, "{bench_name}_encrypt_memory({type_name})").unwrap();
@@ -59,15 +72,6 @@ fn bench_fhe_type<FheType>(
         };
 
         bench_memory(bench_fn, &mut (value, public_key), name.clone());
-        name.clear();
-    }
-
-    let lhs = FheType::encrypt(rng.gen(), &client_key);
-    let rhs = FheType::encrypt(rng.gen(), &client_key);
-    {
-        write!(name, "{bench_name}_mul_memory({type_name}, {type_name})").unwrap();
-        let bench_fn = |(lhs, rhs): &mut (FheType, FheType)| &*lhs * &*rhs;
-        bench_memory(bench_fn, &mut (rhs, lhs), name.clone());
         name.clear();
     }
 
