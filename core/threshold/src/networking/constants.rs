@@ -20,16 +20,14 @@ pub(crate) const SESSION_STATUS_UPDATE_INTERVAL_SECS: u64 = 60;
 // The default time interval after which we completely forget about completed sessions
 pub(crate) const SESSION_CLEANUP_INTERVAL_SECS: u64 = 86400; // 24 hours
 
-// The default time interval after which we discard inactive sessions
-pub(crate) const DISCARD_INACTIVE_SESSION_INTERVAL_SECS: u64 = 5 * 60;
+// The default time interval after which we discard inactive sessions, or active sessions that have not seen any activity
+pub(crate) const DISCARD_INACTIVE_SESSION_INTERVAL_SECS: u64 = 15 * 60;
 
-// The default maximum waiting time we wait for trying to push the message in the queue
+// The default maximum waiting time we wait for trying to push or fetch a message in the send/rec queue
 pub(crate) const MAX_WAITING_TIME_MESSAGE_QUEUE: u64 = 60;
 
-/// The default interval for logging waiting messages in networking
-pub(crate) const NETWORKING_INTERVAL_LOGS_WAITING_SENDER: u64 = 60;
 lazy_static! {
-    /// The default maximum internal between retries (Cap at 60s intervals)
+    /// The default maximum interval between retries (Cap at 60s intervals)
     pub static ref MAX_INTERVAL: Duration = Duration::from_secs(60);
 
     /// The default maximum elapsed time before giving up on retrying
