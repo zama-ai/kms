@@ -181,19 +181,35 @@ harness = false
 required-features = ["testing", "extension_degree_8"]
 
 [[bench]]
-name = "non-threshold_erc20"
-path = "benches/non-threshold/erc20.rs"
+name = "non-threshold_erc20_speed"
+path = "benches/non-threshold/speed/erc20.rs"
 harness = false
 
 
 [[bench]]
-name = "non-threshold_basic-ops"
-path = "benches/non-threshold/basic_ops.rs"
+name = "non-threshold_basic-ops_speed"
+path = "benches/non-threshold/speed/basic_ops.rs"
 harness = false
 
 [[bench]]
-name = "non-threshold_keygen"
-path = "benches/non-threshold/keygen.rs"
+name = "non-threshold_keygen_speed"
+path = "benches/non-threshold/speed/keygen.rs"
+harness = false
+
+[[bench]]
+name = "non-threshold_erc20_memory"
+path = "benches/non-threshold/memory/erc20.rs"
+harness = false
+
+
+[[bench]]
+name = "non-threshold_basic-ops_memory"
+path = "benches/non-threshold/memory/basic_ops.rs"
+harness = false
+
+[[bench]]
+name = "non-threshold_keygen_memory"
+path = "benches/non-threshold/memory/keygen.rs"
 harness = false
 
 [features]
