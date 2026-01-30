@@ -298,7 +298,12 @@ jobs:
       - name: Setup cargo nextest and grcov
         if: matrix.cargo-check == false
         run: |
-          cargo install cargo-nextest grcov --locked --force
+          # Force reinstall nextest to ensure we have the required version (0.9.124+)
+          # The cache may contain an older version that doesn't support test-groups
+          cargo install cargo-nextest@0.9.124 --locked --force
+          cargo install grcov --locked --force
+          # Verify the installed version
+          cargo nextest --version
 
       - name: Setup cargo dylint
         if: matrix.cargo-check == true

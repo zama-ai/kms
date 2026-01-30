@@ -199,7 +199,9 @@ jobs:
 
       - name: Install nextest and grcov
         run: |
-          cargo install cargo-nextest --locked
+          # Force reinstall nextest to ensure we have the required version (0.9.124+)
+          # The cache may contain an older version that doesn't support test-groups
+          cargo install cargo-nextest@0.9.124 --locked --force
           cargo install grcov --locked
 
       - name: Install Protoc
