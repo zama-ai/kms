@@ -258,65 +258,85 @@ impl GrpcNetworkingManager {
                 interval.tick().await;
                 let mut internal_inactive_sessions_count = 0;
                 let mut internal_active_sessions_count = 0;
-                session_store.retain(|session_id, status| match status {
-                    SessionStatus::Completed(started) => started.elapsed() < cleanup_interval,
-                    SessionStatus::Inactive((_, started)) => {
-                        if started.elapsed() > discard_inactive_interval {
-                            println!("Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.", session_id, started.elapsed().as_secs());
-                            tracing::warn!(
+                let mut to_remove = Vec::new();
+                for mut cur in session_store.iter_mut() {
+                    let (session_id, status) = cur.pair_mut();
+                    match status {
+                        SessionStatus::Completed(started) => {
+                            // Remove completed sessions that have been completed for a very long time
+                            if started.elapsed() > cleanup_interval {
+                                to_remove.push(session_id.clone());
+                            }
+                        }
+                        SessionStatus::Inactive((_, started)) => {
+                            // Remove inactive sessions that have been inactive for awhile
+                            if started.elapsed() > discard_inactive_interval {
+                                println!("Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.", session_id, started.elapsed().as_secs());
+                                tracing::warn!(
                                 "Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.",
                                 session_id,
                                 started.elapsed().as_secs()
                             );
-                            false
-                        } else {
-                            println!("Keeping Inactive session {:?} after {:?} seconds. We never heard about such session.", session_id, started.elapsed().as_secs());
-                            internal_inactive_sessions_count += 1;
-                            true
+                                to_remove.push(session_id.clone());
+                                break;
+                            } else {
+                                println!("Keeping Inactive session {:?} after {:?} seconds. We never heard about such session.", session_id, started.elapsed().as_secs());
+                                internal_inactive_sessions_count += 1;
+                            }
                         }
-                    }
-                    SessionStatus::Active(session) => {
-                        match session.upgrade() {
-                            Some(network_session) => {
-                                 match network_session.init_time.get() {
-                                    Some(instant) => {
-                                        if instant.elapsed() > discard_inactive_interval {
-                                            //TODO update
-                                            println!("Discarding Active session {:?} after {:?} seconds.", session_id, instant.elapsed().as_secs());
-                                            tracing::warn!(
+                        SessionStatus::Active(session) => {
+                            match session.upgrade() {
+                                Some(network_session) => {
+                                    // Remove active sessions that have not received any activity for awhile
+                                    match network_session
+                                        .last_rec_activity_time
+                                        .read()
+                                        .await
+                                        .as_ref()
+                                    {
+                                        Some(last_receive_time) => {
+                                            if last_receive_time.elapsed()
+                                                > discard_inactive_interval
+                                            {
+                                                println!("Discarding Active session {:?} after {:?} seconds.", session_id, last_receive_time.elapsed().as_secs());
+                                                tracing::warn!(
                                                 "Discarding Active session {:?} after {:?} seconds.",
                                                 session_id,
-                                                instant.elapsed().as_secs()
+                                                last_receive_time.elapsed().as_secs()
                                             );
-                                            return false;
+                                                to_remove.push(session_id.clone());
+                                                break;
+                                            }
                                         }
-                                    }
-                                    None => {
-                                        tracing::warn!(
-                                            "Network session {:?} has no init time set yet.",
-                                            session_id
-                                        );
-                                        return true;
-                                    }
-                                }
-                                if network_session.is_aborted() {
-                                    // If the session has been aborted, we mark it as completed
-                                    tracing::info!(
+                                        None => {
+                                            tracing::warn!(
+                                                "Network session {:?} has no init time set yet.",
+                                                session_id
+                                            );
+                                        }
+                                    };
+                                    // Also remove active sessions that have been aborted
+                                    if network_session.is_aborted() {
+                                        // If the session has been aborted, we mark it as completed
+                                        tracing::info!(
                                         "Marking session {:?} as completed because it has been aborted.",
                                         session_id
                                     );
-                                    *status = SessionStatus::Completed(Instant::now());
-                                } else {
-                                    internal_active_sessions_count += 1;
+                                        *status = SessionStatus::Completed(Instant::now());
+                                    } else {
+                                        internal_active_sessions_count += 1;
+                                    }
                                 }
-                            },
-                            None => {
+                                None => {
                                     *status = SessionStatus::Completed(Instant::now());
-                            },
+                                }
+                            }
                         }
-                        true
-                    }
-                });
+                    };
+                }
+                for session_id in to_remove {
+                    session_store.remove(&session_id);
+                }
                 inactive_session_count.store(internal_inactive_sessions_count, Ordering::Relaxed);
                 active_session_count.store(internal_active_sessions_count, Ordering::Relaxed);
             }
