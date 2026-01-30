@@ -13,8 +13,12 @@ fn main() {
     set_plan();
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
-    for (name, params) in ALL_PARAMS {
+    for (name, mut params) in ALL_PARAMS {
         let bench_name = format!("non-threshold_keygen_{name}_memory");
-        bench_memory(generate_tfhe_keys, params, bench_name);
+        bench_memory(
+            |params| generate_tfhe_keys(&*params),
+            &mut params,
+            bench_name,
+        );
     }
 }

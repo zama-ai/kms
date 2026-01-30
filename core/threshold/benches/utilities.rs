@@ -43,20 +43,28 @@ fn print_memory_usage(bench_name: String, results: Vec<usize>) {
 pub fn bench_memory<
     I: Clone + Send + Sync + 'static,
     O: Send + 'static,
-    F: Fn(I) -> O + Clone + Send + Sync + 'static,
+    F: Fn(&mut I) -> O + Clone + Send + Sync + 'static,
 >(
     bench_fn: F,
-    input: I,
+    input: &mut I,
     bench_name: String,
 ) {
-    eprintln!("Measuring memory usage for {bench_name}...");
+    eprintln!("Measuring memory usage for {bench_name}...\n");
     let mut results = Vec::new();
 
     for _ in 0..10 {
+        // Note this reset to the current load, so we also measure everything that's
+        // already on the heap
         MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
-        let input = input.clone();
-        let bench_fn = bench_fn.clone();
+        eprintln!(
+            "Initial peak usage: {} B",
+            MEM_ALLOCATOR.get().unwrap().peak_usage()
+        );
         std::hint::black_box(bench_fn(input));
+        eprintln!(
+            "Peak usage after operation: {} B",
+            MEM_ALLOCATOR.get().unwrap().peak_usage()
+        );
         results.push(MEM_ALLOCATOR.get().unwrap().peak_usage());
     }
     print_memory_usage(bench_name, results);
@@ -86,7 +94,7 @@ pub fn set_plan() {
     }
 }
 
-pub fn generate_tfhe_keys(params: DKGParams) -> (ClientKey, CompressedXofKeySet) {
+pub fn generate_tfhe_keys(params: &DKGParams) -> (ClientKey, CompressedXofKeySet) {
     let config = params.to_tfhe_config();
 
     // If the params do not have sk deviation, we set a default value of 1.0

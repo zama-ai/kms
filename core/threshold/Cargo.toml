@@ -199,17 +199,20 @@ harness = false
 [[bench]]
 name = "non-threshold_erc20_memory"
 path = "benches/non-threshold/memory/erc20.rs"
+required-features = ["measure_memory"]
 harness = false
 
 
 [[bench]]
 name = "non-threshold_basic-ops_memory"
 path = "benches/non-threshold/memory/basic_ops.rs"
+required-features = ["measure_memory"]
 harness = false
 
 [[bench]]
 name = "non-threshold_keygen_memory"
 path = "benches/non-threshold/memory/keygen.rs"
+required-features = ["measure_memory"]
 harness = false
 
 [features]

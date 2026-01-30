@@ -10,7 +10,7 @@ use utilities::ALL_PARAMS;
 
 fn bench_keygen(c: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
     c.bench_function("keygen", |b| {
-        b.iter(|| std::hint::black_box(generate_tfhe_keys(params)));
+        b.iter(|| std::hint::black_box(generate_tfhe_keys(&params)));
     });
 }
 
