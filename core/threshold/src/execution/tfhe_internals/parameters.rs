@@ -1117,7 +1117,7 @@ impl DKGParamsBasics for DKGParamsRegular {
 
         nb_bits_input
             .map(|nb_bits_input| (nb_bits_output - nb_bits_input) as i8)
-            .unwrap_or(0)
+            .unwrap_or_else(|| 0)
     }
 
     fn lwe_sk_num_bits_to_sample(&self) -> usize {

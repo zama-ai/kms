@@ -220,7 +220,7 @@ pub trait SecurityModule {
         let key_der =
             PrivateKeyDer::try_from(tls_keypair.serialize_der()).map_err(|e| anyhow::anyhow!(e))?;
         let crypto_provider = CryptoProvider::get_default()
-            .ok_or(anyhow::anyhow!("rustls cryptoprovider not initialized"))?;
+            .ok_or_else(|| anyhow::anyhow!("rustls cryptoprovider not initialized"))?;
         Ok(Arc::new(CertifiedKey::from_der(
             cert_chain,
             key_der,
@@ -385,9 +385,9 @@ impl AutoRefreshCertResolver {
             .validity
             .time_to_expiration()
             .map(|x| x.unsigned_abs())
-            .ok_or(anyhow::anyhow!(
-                "Ephemeral TLS certificate must have an expiration date"
-            ))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("Ephemeral TLS certificate must have an expiration date")
+            })?;
         Ok((certified_key, expiration))
     }
 }
