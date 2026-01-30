@@ -102,7 +102,7 @@ bench_type!(FheUint64);
 fn main() {
     set_plan();
     for (name, params) in ALL_PARAMS {
-        let (client_key, compressed_server_key) = generate_tfhe_keys(params);
+        let (client_key, compressed_server_key) = generate_tfhe_keys(&params);
 
         let (public_key, server_key) = compressed_server_key
             .decompress()

@@ -78,7 +78,7 @@ fn main() {
             // Rerandomization is required for this bench
             continue;
         }
-        let (client_key, compressed_server_key) = generate_tfhe_keys(params);
+        let (client_key, compressed_server_key) = generate_tfhe_keys(&params);
 
         let (public_key, server_key) = compressed_server_key
             .decompress()
