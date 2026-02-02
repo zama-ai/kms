@@ -1,9 +1,33 @@
 name: kind-testing
 
 on:
-  pull_request:
   schedule:
     - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
+  workflow_call:
+    inputs:
+      image_tag:
+        description: 'Pre-built image tag to use (skips docker-build if provided)'
+        required: false
+        type: string
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN:
+        required: true
+      SLAB_ACTION_TOKEN:
+        required: true
+      SLAB_BASE_URL:
+        required: true
+      JOB_SECRET:
+        required: true
+      ZWS_BOT_TOKEN:
+        required: true
+      AWS_ACCESS_KEY_S3_USER:
+        required: true
+      AWS_SECRET_KEY_S3_USER:
+        required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
+        required: true
 
 permissions: {}
 
@@ -16,12 +40,11 @@ concurrency:
 
 jobs:
   ############################################################################
-  # Docker Build Job (Commented Out)
-  # This job is currently disabled but can be used to build and publish Docker images
-  # for testing purposes when needed.
+  # Docker Build Job
+  # Only runs when called without a pre-built image_tag (e.g., scheduled runs)
   ############################################################################
   docker-build:
-    if: github.event_name == 'pull_request'
+    if: inputs.image_tag == ''
     name: kind-testing/docker-build
     permissions:
       actions: read # Read workflow run information
@@ -44,12 +67,14 @@ jobs:
   ############################################################################
   # Start EC2 Runner Jobs
   # Initializes self-hosted runners for running tests in parallel
+  # Only starts if we have images available (from input or docker-build)
   ############################################################################
   start-runner-cargo:
     name: kind-testing/start-runner (cargo)
     runs-on: ubuntu-latest
     needs:
       - docker-build
+    if: always() && !cancelled() && (inputs.image_tag != '' || needs.docker-build.result == 'success')
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
     steps:
@@ -69,6 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - docker-build
+    if: always() && !cancelled() && (inputs.image_tag != '' || needs.docker-build.result == 'success')
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
     steps:
@@ -88,6 +114,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - docker-build
+    if: always() && !cancelled() && (inputs.image_tag != '' || needs.docker-build.result == 'success')
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
     steps:
@@ -114,20 +141,30 @@ jobs:
         include:
           - name: cargo-check
             cargo-check: true
+            # runner-label: "runs-on=${{ github.run_id }}/runner=16cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
             runner-label: ${{ needs.start-runner-cargo.outputs.label }}
           - name: threshold
             deployment-type: threshold
             num-parties: 4
+            # runner-label: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
             runner-label: ${{ needs.start-runner-threshold.outputs.label }}
+            enable-tls: true
           - name: centralized
             deployment-type: centralized
             num-parties: 1
+            # runner-label: "runs-on=${{ github.run_id }}/runner=64cpu-linux-x64/spot=false/volume=200gb/extras=s3-cache"
             runner-label: ${{ needs.start-runner-centralized.outputs.label }}
     needs:
       - start-runner-cargo
       - start-runner-threshold
       - start-runner-centralized
       - docker-build
+    if: |
+      always() && !cancelled() &&
+      needs.start-runner-cargo.result == 'success' &&
+      needs.start-runner-threshold.result == 'success' &&
+      needs.start-runner-centralized.result == 'success' &&
+      (inputs.image_tag != '' || needs.docker-build.result == 'success')
     runs-on: ${{ matrix.runner-label }}
 
     steps:
@@ -145,18 +182,17 @@ jobs:
           version="$(grep 'channel' "$GH_WORKSPACE/rust-toolchain.toml" | awk -F' = ' '{print $2}' | tr -d '"')"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
 
-      - name: Setup Home
+      - name: Setup HOME
         run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
 
       # ==========================================================================
-      # Git LFS Setup
-      # Required for handling large files in tests, especially for backward compatibility
-      # ==========================================================================
-      - name: Setup Git LFS
+      # LFS files are needed for backward compatibility tests
+      # Install git LFS before checkout does not seem possible on our self-hosted runners, so we
+      # need to do it right after and then manually pull LFS files
+      - name: setup gitlfs from binary
         env:
-          GIT_LFS_VERSION: '3.6.1' # Pinned version for reproducibility
+          GIT_LFS_VERSION: '3.6.1'
         run: |
-          # Download and install Git LFS
           wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
           tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
           "./git-lfs-${GIT_LFS_VERSION}/install.sh"
@@ -199,7 +235,7 @@ jobs:
           # For ARM64
           [ "$(uname -m)" = "aarch64" ] && curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.30.0/kind-linux-arm64
           chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
+          mv ./kind /usr/local/bin/kind
 
       - name: Install Helm
         if: matrix.cargo-check == false
@@ -262,7 +298,12 @@ jobs:
       - name: Setup cargo nextest and grcov
         if: matrix.cargo-check == false
         run: |
-          cargo install cargo-nextest grcov --locked --force
+          # Force reinstall nextest to ensure we have the required version (0.9.124+)
+          # The cache may contain an older version that doesn't support test-groups
+          cargo install cargo-nextest@0.9.124 --locked --force
+          cargo install grcov --locked --force
+          # Verify the installed version
+          cargo nextest --version
 
       - name: Setup cargo dylint
         if: matrix.cargo-check == true
@@ -277,12 +318,6 @@ jobs:
       - name: Formatting
         if: matrix.cargo-check == true
         run: cargo fmt --all -- --check
-
-      - name: Linting default features
-        if: matrix.cargo-check == true
-        env:
-          PACKAGE_NAME: 'kms-core-client'
-        run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
 
       - name: Linting All features
         if: matrix.cargo-check == true
@@ -304,15 +339,18 @@ jobs:
         env:
           DEPLOYMENT_TYPE: ${{ matrix.deployment-type }} # Deployment type: threshold or centralized
           GITHUB_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
-          KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
-          KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          KMS_CORE_IMAGE_TAG: ${{ inputs.image_tag || needs.docker-build.outputs.image_tag }}
+          KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.image_tag || needs.docker-build.outputs.image_tag }}
           NAMESPACE: kms-test-${{ matrix.deployment-type }}
           NUM_PARTIES: ${{ matrix.num-parties }} # Number of parties
+          ENABLE_TLS: ${{ matrix.enable-tls || 'false' }} # Enable TLS for threshold mode
         run: |
           # Start KMS setup and wait for completion
           # Uses environment variables: NAMESPACE, KMS_CORE_IMAGE_TAG, KMS_CORE_CLIENT_IMAGE_TAG,
-          # DEPLOYMENT_TYPE, NUM_PARTIES
-          ./ci/kube-testing/scripts/manage_kind_setup.sh start
+          # DEPLOYMENT_TYPE, NUM_PARTIES, ENABLE_TLS
+          chmod +x ci/scripts/manage_lifecycle.sh
+          chmod +x ci/scripts/deploy.sh
+          ./ci/scripts/manage_lifecycle.sh start
 
       - name: Run Kubernetes Tests
         if: matrix.cargo-check == false
@@ -326,11 +364,17 @@ jobs:
           # Here we run the tests and capture exit code
           #============================================================
           #
-          cargo nextest run --test kubernetes_test_"${DEPLOYMENT_TYPE}" --profile ci --no-fail-fast
+          # cargo nextest run --test kubernetes_test_"${DEPLOYMENT_TYPE}" --profile ci --no-fail-fast
+          cargo nextest run --test kubernetes_test_"${DEPLOYMENT_TYPE}" --features testing --profile ci --no-fail-fast
           echo "TEST_EXIT_CODE=$?" >> "${GITHUB_ENV}"
 
           # Collect logs after tests complete
-          ./ci/kube-testing/scripts/setup_kms_in_kind.sh --collect-logs
+          chmod +x ci/scripts/deploy.sh
+          ./ci/scripts/deploy.sh \
+            --target kind-ci \
+            --namespace "${NAMESPACE}" \
+            --deployment-type "${DEPLOYMENT_TYPE}" \
+            --collect-logs
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
@@ -362,11 +406,22 @@ jobs:
           NAMESPACE: kms-test-${{ matrix.deployment-type }}
           NUM_PARTIES: ${{ matrix.num-parties }}
         run: |
+          ###################################################################
+          # Collect logs before teardown (especially on failures)
+          ###################################################################
+          chmod +x ci/scripts/deploy.sh
+          ./ci/scripts/deploy.sh \
+            --target kind-ci \
+            --namespace "${NAMESPACE}" \
+            --deployment-type "${DEPLOYMENT_TYPE}" \
+            --collect-logs
+
           # Stop setup script and cleanup resources
           # This will collect logs from pods based on DEPLOYMENT_TYPE and NUM_PARTIES
           SETUP_PID=$(cat .setup_pid 2>/dev/null || echo "")
           TAIL_PID=$(cat .tail_pid 2>/dev/null || echo "")
-          ./ci/kube-testing/scripts/manage_kind_setup.sh stop "${SETUP_PID}" "${TAIL_PID}"
+          chmod +x ci/scripts/manage_lifecycle.sh
+          ./ci/scripts/manage_lifecycle.sh stop "${SETUP_PID}" "${TAIL_PID}"
 
       - name: Upload kms-core logs
         if: always() && matrix.cargo-check == false
@@ -374,7 +429,7 @@ jobs:
         with:
           name: kms-core-${{ matrix.deployment-type }}-logs
           path: |
-            /tmp/kms-service-threshold-*.log
+            /tmp/kms-service-*.log
             /tmp/kms-core-*.log
           retention-days: 7 # Keep logs for 7 days
           if-no-files-found: warn # Only warn if no log files are found
@@ -393,7 +448,7 @@ jobs:
   # Only runs on pull requests to generate test reports
   test-reporter:
     name: kms-testing/test-reporter
-    if: ${{ always() && github.event_name == 'pull_request' }}
+    if: always() && !cancelled()
     needs:
       - kind-testing
     uses: ./.github/workflows/test-reporter.yml
@@ -407,6 +462,7 @@ jobs:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
+  ############################################################################
   ############################################################################
   # Stop EC2 Runner Jobs
   # Cleans up the EC2 runners after tests complete or fail
