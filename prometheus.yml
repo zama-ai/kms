@@ -1,0 +1,8 @@
+global:
+  scrape_interval:     15s # By default, scrape targets every 15 seconds.
+
+scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+  - job_name: 'kms-core'
+    static_configs:
+      - targets: ['dev-kms-core-1:9646', 'dev-kms-core-2:9646', 'dev-kms-core-3:9646', 'dev-kms-core-4:9646']

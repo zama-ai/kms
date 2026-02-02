@@ -112,7 +112,7 @@ pub struct CrsGenSignedPubDataHandleInternalWrapper(pub SignedPubDataHandleInter
 pub fn optional_protobuf_to_alloy_domain(
     domain_ref: Option<&Eip712DomainMsg>,
 ) -> anyhow::Result<Eip712Domain> {
-    let inner = domain_ref.ok_or(anyhow::anyhow!("missing domain"))?;
+    let inner = domain_ref.ok_or_else(|| anyhow::anyhow!("missing domain"))?;
     let out = protobuf_to_alloy_domain(inner)
         .map_err(|e| anyhow::anyhow!("failed to convert protobuf domain to alloy domain: {e}"))?;
     Ok(out)

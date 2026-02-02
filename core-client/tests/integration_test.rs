@@ -321,7 +321,7 @@ async fn real_preproc(
     preproc_result
         .pop()
         .map(|(preproc_id, _)| preproc_id)
-        .ok_or(anyhow::anyhow!("missing preproc result"))
+        .ok_or_else(|| anyhow::anyhow!("missing preproc result"))
 }
 
 async fn real_preproc_and_keygen(
@@ -990,7 +990,9 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 1,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x1".to_string(),
@@ -1001,7 +1003,9 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 1,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x6F".to_string(),
@@ -1012,7 +1016,9 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 3,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x6F".to_string(),
@@ -1023,7 +1029,9 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 3,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0xFFFF".to_string(),
@@ -1034,7 +1042,9 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 1,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x96BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592B"
@@ -1046,7 +1056,9 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 1,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D81CE14B95D225928E4E9B5305EC4592C"
@@ -1058,7 +1070,9 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 1,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::Encrypt(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF0395689B5305EC4592D"
@@ -1070,17 +1084,23 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 1,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: Some(ctxt_path.to_path_buf()),
+            inter_request_delay_ms: 0,
         }),
         CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_path.to_path_buf(),
             batch_size: 1,
             num_requests: 3,
+            parallel_requests: 1,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_path.to_path_buf(),
             batch_size: 1,
             num_requests: 3,
+            parallel_requests: 1,
+            inter_request_delay_ms: 0,
         })),
     ];
 
@@ -1094,7 +1114,9 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 2,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x78".to_string(),
@@ -1105,7 +1127,9 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 2,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x1".to_string(),
@@ -1116,7 +1140,9 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 1,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0x6F".to_string(),
@@ -1127,7 +1153,9 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 1,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::PublicDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13BAD322CF67D8E06CDA1B9ECF03956822D0D186F7820"
@@ -1139,7 +1167,9 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 1,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromArgs(CipherParameters {
             to_encrypt: "0xC9BF913158B2F39228DF1CA037D537E521CE14B95D225928E4E9B5305EC4592F"
@@ -1151,7 +1181,9 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 1,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: None,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::Encrypt(CipherParameters {
             to_encrypt: "0xC958D835E4B1922CE9B13CA037D537E521CE14B95D225928E4E9B5305EC4592E"
@@ -1163,17 +1195,23 @@ async fn integration_test_commands<T: DockerComposeManager>(ctx: &T, key_id: Str
             context_id: None,
             batch_size: 1,
             num_requests: 1,
+            parallel_requests: 1,
             ciphertext_output_path: Some(ctxt_with_sns_path.to_path_buf()),
+            inter_request_delay_ms: 0,
         }),
         CCCommand::PublicDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_with_sns_path.to_path_buf(),
             batch_size: 1,
             num_requests: 3,
+            parallel_requests: 1,
+            inter_request_delay_ms: 0,
         })),
         CCCommand::UserDecrypt(CipherArguments::FromFile(CipherFile {
             input_path: ctxt_with_sns_path.to_path_buf(),
             batch_size: 1,
             num_requests: 3,
+            parallel_requests: 1,
+            inter_request_delay_ms: 0,
         })),
     ];
 
@@ -1346,7 +1384,9 @@ async fn test_threshold_mpc_context_switch(ctx: &DockerComposeThresholdTest) {
         context_id: Some(context_id),
         batch_size: 1,
         num_requests: 1,
+        parallel_requests: 1,
         ciphertext_output_path: None,
+        inter_request_delay_ms: 0,
     }));
     test_template(ctx, vec![ddec_command], test_path).await;
 }
@@ -1460,9 +1500,7 @@ async fn test_threshold_mpc_context_switch_6(ctx: &DockerComposeThresholdTestNoI
         )
         .await
         .unwrap_err();
-        assert!(err
-            .to_string()
-            .contains(&format!("context {context_id} not found")));
+        assert!(err.to_string().contains("NotFound"));
     }
 }
 

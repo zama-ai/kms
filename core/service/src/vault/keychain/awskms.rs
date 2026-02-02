@@ -117,11 +117,13 @@ impl Asymm {
             .await
             .map_err(|e| {
                 let e1 = e.to_string();
-                let e2 = e.into_source().unwrap_or("unknown AWS error".into());
+                let e2 = e
+                    .into_source()
+                    .unwrap_or_else(|_| "unknown AWS error".into());
                 let e3 = e2
                     .source()
                     .map(|e| format!(": {e}"))
-                    .unwrap_or("".to_string());
+                    .unwrap_or_else(|| "".to_string());
                 anyhow!("Could not get public key: {e1}: {e2}{e3}")
             })?;
 
@@ -235,11 +237,13 @@ impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> 
             .await
             .map_err(|e| {
                 let e1 = e.to_string();
-                let e2 = e.into_source().unwrap_or("unknown AWS error".into());
+                let e2 = e
+                    .into_source()
+                    .unwrap_or_else(|_| "unknown AWS error".into());
                 let e3 = e2
                     .source()
                     .map(|e| format!(": {e}"))
-                    .unwrap_or("".to_string());
+                    .unwrap_or_else(|| "".to_string());
                 anyhow!("Could not decrypt data key: {e1}: {e2}{e3}")
             })?;
         let decrypt_data_key_response_ciphertext_bytes = some_or_err(
@@ -305,11 +309,13 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
             .await
             .map_err(|e| {
                 let e1 = e.to_string();
-                let e2 = e.into_source().unwrap_or("unknown AWS error".into());
+                let e2 = e
+                    .into_source()
+                    .unwrap_or_else(|_| "unknown AWS error".into());
                 let e3 = e2
                     .source()
                     .map(|e| format!(": {e}"))
-                    .unwrap_or("".to_string());
+                    .unwrap_or_else(|| "".to_string());
                 anyhow!("Could not generate data key: {e1}: {e2}{e3}")
             })?;
 
@@ -352,7 +358,7 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
             &mut envelope
                 .clone()
                 .try_as_app_key_blob()
-                .ok_or(anyhow::anyhow!("Expected single share encrypted data"))?,
+                .ok_or_else(|| anyhow::anyhow!("Expected single share encrypted data"))?,
         )
         .await
     }
@@ -398,7 +404,7 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
             &mut envelope
                 .clone()
                 .try_as_app_key_blob()
-                .ok_or(anyhow::anyhow!("Expected single share encrypted value",))?,
+                .ok_or_else(|| anyhow::anyhow!("Expected single share encrypted value"))?,
         )
         .await
     }

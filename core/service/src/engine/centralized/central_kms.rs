@@ -361,7 +361,6 @@ pub(crate) struct CentralizedTestingKeys {
 #[cfg(feature = "non-wasm")]
 #[derive(Debug, Clone)]
 pub struct CentralizedPreprocBucket {
-    pub(crate) preprocessing_id: RequestId,
     pub(crate) external_signature: Vec<u8>,
     pub(crate) dkg_param: DKGParams,
 }
@@ -586,7 +585,7 @@ macro_rules! deserialize_to_low_level_and_decrypt_helper {
                     SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                let ct: tfhe::SquashedNoiseFheUint = r.get(0)?.ok_or(anyhow::anyhow!(
+                let ct: tfhe::SquashedNoiseFheUint = r.get(0)?.ok_or_else(|| anyhow::anyhow!(
                     "Failed to get first element from CompressedSquashedNoiseCiphertextList"
                 ))?;
                 let raw_res = ct.decrypt(&$keys.client_key);
@@ -633,9 +632,11 @@ fn unsafe_decrypt(
                     SAFE_SER_SIZE_LIMIT,
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                let ct: tfhe::SquashedNoiseFheBool = r.get(0)?.ok_or(anyhow::anyhow!(
-                    "Failed to get first element from CompressedSquashedNoiseCiphertextList"
-                ))?;
+                let ct: tfhe::SquashedNoiseFheBool = r.get(0)?.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Failed to get first element from CompressedSquashedNoiseCiphertextList"
+                    )
+                })?;
                 let raw_res = ct.decrypt(&keys.client_key);
                 TypedPlaintext::from_bool(raw_res)
             }

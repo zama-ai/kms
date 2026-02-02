@@ -692,10 +692,12 @@ impl Operator {
                 let (_, custodian_verf_key) = self
                     .custodian_keys
                     .get(&custodian_output.custodian_role)
-                    .ok_or(BackupError::OperatorError(format!(
-                        "missing custodian key for {}",
-                        custodian_output.custodian_role
-                    )))?;
+                    .ok_or_else(|| {
+                        BackupError::OperatorError(format!(
+                            "missing custodian key for {}",
+                            custodian_output.custodian_role
+                        ))
+                    })?;
                 let commitment = recovery_material
                     .get(&custodian_output.custodian_role)
                     .map_err(|_| BackupError::OperatorError("missing commitment".to_string()))?;

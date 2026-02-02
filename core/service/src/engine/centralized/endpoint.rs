@@ -20,6 +20,8 @@ use crate::engine::centralized::service::{
     user_decrypt_impl,
 };
 #[cfg(feature = "insecure")]
+use crate::engine::utils::MetricedError;
+#[cfg(feature = "insecure")]
 use observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST;
 use observability::{
     metrics::METRICS,
@@ -55,13 +57,9 @@ impl<
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
-        preprocessing_impl(self, request).await.inspect_err(|err| {
-            let tag = map_tonic_code_to_metric_err_tag(err.code());
-            let _ = METRICS.increment_error_counter(
-                observability::metrics_names::OP_KEYGEN_PREPROC_REQUEST,
-                tag,
-            );
-        })
+        preprocessing_impl(self, request)
+            .await
+            .map_err(|e| e.into())
     }
 
     // In the centralized case it makes no diffrence whether it's partial or not
@@ -72,10 +70,9 @@ impl<
         &self,
         request: Request<kms_grpc::kms::v1::PartialKeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
-        self.key_gen_preproc(Request::new(request.into_inner().base_request.ok_or_else(
-            || tonic::Status::new(tonic::Code::Aborted, "Missing preproc base_request"),
-        )?))
-        .await
+        let base_req = request.into_inner().base_request.ok_or_else(
+            || MetricedError::new(OP_KEYGEN_PREPROC_REQUEST, None, anyhow::anyhow!("Missing preproc base_request in partial preprocessing for a centralized server"), tonic::Code::InvalidArgument))?;
+        self.key_gen_preproc(Request::new(base_req)).await
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -86,13 +83,7 @@ impl<
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_RESULT);
         get_preprocessing_res_impl(self, request)
             .await
-            .inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS.increment_error_counter(
-                    observability::metrics_names::OP_KEYGEN_PREPROC_RESULT,
-                    tag,
-                );
-            })
+            .map_err(|e| e.into())
     }
 
     #[cfg(feature = "insecure")]
@@ -102,10 +93,9 @@ impl<
         request: Request<kms_grpc::kms::v1::KeyGenRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_INSECURE_KEYGEN_REQUEST);
-        key_gen_impl(self, request, false).await.inspect_err(|err| {
-            let tag = map_tonic_code_to_metric_err_tag(err.code());
-            let _ = METRICS.increment_error_counter(OP_INSECURE_KEYGEN_REQUEST, tag);
-        })
+        key_gen_impl(self, request, true)
+            .await
+            .map_err(|e| e.into())
     }
 
     #[cfg(feature = "insecure")]
@@ -115,13 +105,9 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::KeyGenResult>, Status> {
         METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_KEYGEN_RESULT);
-        self.get_key_gen_result(request).await.inspect_err(|err| {
-            let tag = map_tonic_code_to_metric_err_tag(err.code());
-            let _ = METRICS.increment_error_counter(
-                observability::metrics_names::OP_INSECURE_KEYGEN_RESULT,
-                tag,
-            );
-        })
+        get_key_gen_result_impl(self, request, true)
+            .await
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -130,20 +116,9 @@ impl<
         request: Request<kms_grpc::kms::v1::KeyGenRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_REQUEST);
-        // if we're doing a "secure" keygen
-        // even if it's compiled with the "insecure" feature
-        // we still want to check the preprocessing ID
-        key_gen_impl(
-            self,
-            request,
-            #[cfg(feature = "insecure")]
-            true,
-        )
-        .await
-        .inspect_err(|err| {
-            let tag = map_tonic_code_to_metric_err_tag(err.code());
-            let _ = METRICS.increment_error_counter(OP_KEYGEN_REQUEST, tag);
-        })
+        key_gen_impl(self, request, false)
+            .await
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -152,12 +127,9 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::KeyGenResult>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_RESULT);
-        get_key_gen_result_impl(self, request)
+        get_key_gen_result_impl(self, request, false)
             .await
-            .inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_KEYGEN_RESULT, tag);
-            })
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]

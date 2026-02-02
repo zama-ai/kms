@@ -186,7 +186,7 @@ async fn prss_init_command(
     choreo_conf: &ChoreoConf,
     params: PrssInitArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
 
     runtime
         .bgv_inititate_prss_init(
@@ -206,7 +206,7 @@ async fn preproc_keygen_command(
     choreo_conf: ChoreoConf,
     params: PreprocKeyGenArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
 
     let session_id = runtime
         .bgv_initiate_preproc_keygen(
@@ -226,7 +226,7 @@ async fn threshold_keygen_command(
     choreo_conf: ChoreoConf,
     params: ThresholdKeyGenArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
 
     let session_id = runtime
         .bgv_initiate_threshold_keygen(
@@ -292,7 +292,7 @@ async fn threshold_decrypt_command(
 
     println!("Encrypted the following messages : {ms:?}");
 
-    let session_id = params.session_id.unwrap_or(random());
+    let session_id = params.session_id.unwrap_or_else(random);
     let session_id = runtime
         .bgv_initiate_threshold_decrypt(
             SessionId::from(session_id),

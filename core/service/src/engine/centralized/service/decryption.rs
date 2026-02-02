@@ -20,7 +20,7 @@ use kms_grpc::kms::v1::{
 };
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
+    CENTRAL_TAG, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
     OP_USER_DECRYPT_RESULT, TAG_CONTEXT_ID, TAG_EPOCH_ID, TAG_KEY_ID, TAG_PARTY_ID,
 };
 use std::sync::Arc;
@@ -51,7 +51,7 @@ pub async fn user_decrypt_impl<
         })?;
     let mut timer = METRICS
         .time_operation(OP_USER_DECRYPT_REQUEST)
-        .tag(TAG_PARTY_ID, "central".to_string())
+        .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
         .start();
 
     let inner = request.into_inner();
@@ -119,8 +119,7 @@ pub async fn user_decrypt_impl<
         &mut service.user_dec_meta_store.write().await,
         &request_id,
         OP_USER_DECRYPT_REQUEST,
-    )
-    .await?;
+    )?;
     let sig_key = service.base_kms.sig_key().map_err(|e| {
         MetricedError::new(
             OP_USER_DECRYPT_REQUEST,
@@ -278,7 +277,7 @@ pub async fn public_decrypt_impl<
     let mut timer = METRICS
         .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
         // Use a constant party ID since this is the central KMS
-        .tag(TAG_PARTY_ID, "central".to_string())
+        .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
         .start();
     let inner = request.into_inner();
     let (ciphertexts, request_id, key_id, context_id, epoch_id, eip712_domain) =
@@ -351,8 +350,7 @@ pub async fn public_decrypt_impl<
         &mut service.pub_dec_meta_store.write().await,
         &request_id,
         OP_PUBLIC_DECRYPT_REQUEST,
-    )
-    .await?;
+    )?;
 
     let meta_store = Arc::clone(&service.pub_dec_meta_store);
     let crypto_storage = service.crypto_storage.clone();
@@ -423,7 +421,7 @@ pub async fn public_decrypt_impl<
             Err(e) => Err(format!("Error collecting decrypt result: {e:?}")),
             Ok(Err(e)) => Err(format!("Error during decryption computation: {e}")),
         };
-        update_req_in_meta_store(
+        let _ = update_req_in_meta_store(
             &mut meta_store.write().await,
             &request_id,
             res,
@@ -475,7 +473,7 @@ pub async fn get_public_decryption_result_impl<
             OP_PUBLIC_DECRYPT_RESULT,
             Some(request_id),
             anyhow::anyhow!("Request ID mismatch: expected {request_id}, got {retrieved_req_id}"),
-            tonic::Code::NotFound,
+            tonic::Code::Internal,
         ));
     }
 
@@ -560,7 +558,8 @@ pub(crate) mod tests {
         let (kms, verf_key) = setup_test_kms_with_preproc(rng, &preproc_id).await;
 
         // at this point the key is generated
-        test_standard_keygen(&kms, key_id, &preproc_id).await;
+        // We execute in the secure mode, i.e. pretending that the preprocessing is done
+        test_standard_keygen(&kms, key_id, &preproc_id, false).await;
 
         let pk = kms
             .crypto_storage

@@ -180,9 +180,11 @@ pub(crate) async fn fetch_and_check_keygen(
         );
 
         let external_signature = response.external_signature;
-        let prep_id = response.preprocessing_id.ok_or(anyhow::anyhow!(
-            "No preprocessing ID in keygen response, cannot verify external signature"
-        ))?;
+        let prep_id = response.preprocessing_id.ok_or_else(|| {
+            anyhow::anyhow!(
+                "No preprocessing ID in keygen response, cannot verify external signature"
+            )
+        })?;
         check_standard_keyset_ext_signature(
             &public_key,
             &server_key,

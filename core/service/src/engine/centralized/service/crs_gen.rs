@@ -7,11 +7,11 @@ use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST, TAG_CONTEXT_ID,
-    TAG_PARTY_ID,
+    CENTRAL_TAG, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_INSECURE_CRS_GEN_REQUEST,
+    TAG_CONTEXT_ID, TAG_CRS_ID, TAG_PARTY_ID,
 };
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use tokio::sync::{OwnedSemaphorePermit, RwLock};
+use tokio::sync::RwLock;
 use tonic::{Request, Response};
 use tracing::Instrument;
 
@@ -53,7 +53,7 @@ pub async fn crs_gen_impl<
         .map_err(|e| MetricedError::new(op_tag, None, e, tonic::Code::ResourceExhausted))?;
     let mut timer = METRICS
         .time_operation(op_tag)
-        .tag(TAG_PARTY_ID, "central".to_string())
+        .tag(TAG_PARTY_ID, CENTRAL_TAG.to_string())
         .start();
     let inner = request.into_inner();
     let (req_id, context_id, _witness_dimension, params, eip712_domain) =
@@ -65,6 +65,12 @@ pub async fn crs_gen_impl<
                 tonic::Code::InvalidArgument,
             )
         })?;
+    let metric_tags = vec![
+        (TAG_CRS_ID, req_id.to_string()),
+        (TAG_CONTEXT_ID, context_id.to_string()),
+    ];
+    timer.tags(metric_tags.clone());
+
     if !service
         .context_manager
         .mpc_context_exists_in_cache(&context_id)
@@ -78,12 +84,10 @@ pub async fn crs_gen_impl<
         ));
     }
 
-    timer.tag(TAG_CONTEXT_ID, context_id.to_string());
-
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused
     // all validation must be done before inserting the request ID
-    add_req_to_meta_store(&mut service.crs_meta_map.write().await, &req_id, op_tag).await?;
+    add_req_to_meta_store(&mut service.crs_meta_map.write().await, &req_id, op_tag)?;
 
     let meta_store = Arc::clone(&service.crs_meta_map);
     let crypto_storage = service.crypto_storage.clone();
@@ -104,6 +108,7 @@ pub async fn crs_gen_impl<
     let handle = service.tracker.spawn(
         async move {
             let _timer = timer;
+            let _permit = permit;
             crs_gen_background(
                 &req_id,
                 rng,
@@ -113,7 +118,6 @@ pub async fn crs_gen_impl<
                 params,
                 eip712_domain,
                 inner.max_num_bits,
-                permit,
                 op_tag,
             )
             .await;
@@ -178,7 +182,7 @@ pub async fn get_crs_gen_result_impl<
                         "Request ID mismatch: expected {request_id}, got {}",
                         crs_info.crs_id
                     ),
-                    tonic::Code::NotFound,
+                    tonic::Code::Internal,
                 ));
             }
 
@@ -206,10 +210,8 @@ pub(crate) async fn crs_gen_background<
     params: DKGParams,
     eip712_domain: Eip712Domain,
     max_number_bits: Option<u32>,
-    permit: OwnedSemaphorePermit,
     op_tag: &'static str,
 ) {
-    let _permit = permit;
     let start = tokio::time::Instant::now();
 
     let (pp, crs_info) =

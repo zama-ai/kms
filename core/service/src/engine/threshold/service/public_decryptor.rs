@@ -188,7 +188,6 @@ impl<
         })
         .await??;
 
-        let my_role = session_maker.my_role(&context_id).await?;
         let dec = match dec_mode {
             DecryptionMode::NoiseFloodSmall => {
                 let session = session_maker
@@ -218,13 +217,11 @@ impl<
                     .map_err(|e| {
                         anyhow::anyhow!("Could not prepare ddec data for bitdec decryption: {e}",)
                     })?;
-
                 secure_decrypt_using_bitdec(
                     &mut session,
                     &low_level_ct.try_get_small_ct()?,
                     &keys.private_keys,
                     &keys.get_key_switching_key()?,
-                    my_role,
                 )
                 .await
             }
@@ -271,7 +268,7 @@ impl<
             > + 'static,
     > PublicDecryptor for RealPublicDecryptor<PubS, PrivS, Dec>
 {
-    #[tracing::instrument(skip(self, request), fields(
+    #[tracing::instrument(skip_all, fields(
         request_id = ?request.get_ref().request_id,
         operation = "decrypt"
     ))]
@@ -308,15 +305,15 @@ impl<
                 )
             })?;
 
+        // Find the role of the current server and validate the context exists
         let my_role = self.session_maker.my_role(&context_id).await.map_err(|e| {
             MetricedError::new(
                 OP_PUBLIC_DECRYPT_REQUEST,
                 Some(req_id),
                 e,
-                tonic::Code::InvalidArgument,
+                tonic::Code::NotFound,
             )
         })?;
-
         let dec_mode = self.decryption_mode;
         let metric_tags = vec![
             (TAG_PARTY_ID, my_role.to_string()),
@@ -346,8 +343,7 @@ impl<
             &mut self.pub_dec_meta_store.write().await,
             &req_id,
             OP_PUBLIC_DECRYPT_REQUEST,
-        )
-        .await?;
+        )?;
 
         let ext_handles_bytes = ciphertexts
             .iter()
@@ -671,8 +667,10 @@ impl<
             return Err(MetricedError::new(
                 OP_PUBLIC_DECRYPT_RESULT,
                 Some(request_id),
-                anyhow!("Request ID mismatch: expected {request_id}, got {retrieved_req_id}"),
-                tonic::Code::NotFound,
+                anyhow::anyhow!(
+                    "Request ID mismatch: expected {request_id}, got {retrieved_req_id}"
+                ),
+                tonic::Code::Internal,
             ));
         }
 
