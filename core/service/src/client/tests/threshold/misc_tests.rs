@@ -15,7 +15,6 @@ cfg_if::cfg_if! {
         use std::env;
         use kms_grpc::kms::v1::{FheParameter, TypedCiphertext};
         use crate::util::key_setup::max_threshold;
-        use crate::conf::{init_conf, CoreConfig};
         use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
         use crate::dummy_domain;
         use crate::engine::base::derive_request_id;
@@ -373,53 +372,14 @@ async fn test_complete_session_notification() {
         precompute_sns: true,
     };
     let msg_amount = 10;
-
+    let parallel_reqs = 10;
     let wait_time = 4;
-    let core_config: CoreConfig = init_conf("config/default_1").unwrap();
-    assert_ne!(
-        core_config
-            .threshold
-            .unwrap()
-            .core_to_core_net
-            .unwrap()
-            .session_update_interval_secs
-            .unwrap(),
-        wait_time
-    );
+
     // Ensure inactive session discard interval is small for the test
     env::set_var(
         "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__SESSION_UPDATE_INTERVAL_SECS",
         format!("{}", wait_time),
     );
-    env::set_var(
-        "THRESHOLD__CORE_TO_CORE_NET__SESSION_UPDATE_INTERVAL_SECS",
-        format!("{}", wait_time),
-    );
-    // env::set_var(
-    //     "CORE_TO_CORE_NET__SESSION_UPDATE_INTERVAL_SECS",
-    //     format!("{}", wait_time + 0),
-    // );
-    // env::set_var("SESSION_UPDATE_INTERVAL_SECS", format!("{}", wait_time + 0));
-    // env::set_var(
-    //     "KMS_CORE__SESSION_UPDATE_INTERVAL_SECS",
-    //     format!("{}", wait_time + 0),
-    // );
-
-    let core_config: CoreConfig = init_conf("config/default_1").unwrap();
-
-    // check that the fhe_params value from the env var ("Test") is read correctly, even if the toml contains "Default"
-    assert_eq!(
-        core_config
-            .clone()
-            .threshold
-            .unwrap()
-            .core_to_core_net
-            .unwrap()
-            .session_update_interval_secs
-            .unwrap(),
-        wait_time
-    );
-    println!("DONE checking");
     // Ensure that the session status update interval is small s.t. aborted sessions get removed quickly
     env::set_var(
         "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__DISCARD_INACTIVE_SESSIONS_INTERVAL",
@@ -434,16 +394,6 @@ async fn test_complete_session_notification() {
     let (kms_servers, kms_clients, mut internal_client) =
         threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
     assert_eq!(kms_clients.len(), kms_servers.len());
-    assert_eq!(
-        core_config
-            .threshold
-            .unwrap()
-            .core_to_core_net
-            .unwrap()
-            .session_update_interval_secs
-            .unwrap(),
-        wait_time
-    );
     let mut msgs = Vec::new();
     let mut cts = Vec::new();
     for i in 0_usize..msg_amount {
@@ -466,7 +416,7 @@ async fn test_complete_session_notification() {
         cts.push(ctt);
         msgs.push(msg);
     }
-    for j in 1..=1 {
+    for j in 1..=parallel_reqs {
         // make parallel requests by calling [decrypt] in a thread
         let mut req_tasks = JoinSet::new();
 
@@ -500,7 +450,6 @@ async fn test_complete_session_notification() {
         while let Some(inner) = req_tasks.join_next().await {
             req_response_vec.push(inner.unwrap().unwrap().into_inner());
         }
-        println!("GOT REQ RESPONSES");
         assert_eq!(
             req_response_vec.len(),
             kms_clients.len() - party_ids_to_skip.len()
@@ -535,7 +484,6 @@ async fn test_complete_session_notification() {
         while let Some(resp) = resp_tasks.join_next().await {
             resp_response_vec.push(resp.unwrap());
         }
-        println!("GOT REST OF RESPONSES");
         let responses: Vec<_> = resp_response_vec
             .iter()
             .filter_map(|(req_id, resp)| {
@@ -557,19 +505,9 @@ async fn test_complete_session_notification() {
         for i in 0..msg_amount {
             crate::client::tests::common::assert_plaintext(&msgs[i], &received_plaintexts[i]);
         }
-        // Shutdown the servers and check that the health endpoint is no longer serving
-        // let kms_servers_keys: Vec<u32> = kms_servers.keys().copied().collect();
-        // for i in kms_servers_keys.iter() {
-        //     if party_ids_to_skip.contains(&(*i as usize)) {
-        //         // Shut down MPC servers triggers a shutdown of the core server
-        //         kms_servers.remove(i).unwrap().assert_shutdown().await;
-        //         // server.assert_shutdown().await;
-        //         // server.mpc_shutdown_tx.unwrap().send(()).unwrap();
-        //     }
-        // }
-        println!("SLEEPING");
+
         // Now decrypt with the party that skipped the session. Ensure we sleep longer than the update interval s.t. the active session gets processed
-        tokio::time::sleep(tokio::time::Duration::from_secs(wait_time + 10)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(wait_time + 4)).await;
         println!("Starting decryption for the party that skipped the session");
         for i in kms_servers_keys.iter() {
             if party_ids_to_skip.contains(&(*i as usize)) {
@@ -588,7 +526,6 @@ async fn test_complete_session_notification() {
             req_response_vec.push(inner.unwrap().unwrap().into_inner());
         }
         assert_eq!(req_response_vec.len(), party_ids_to_skip.len());
-        println!("LAST PARTY DECRYPTION RESPONSES RECEIVED");
         // get all responses
         let mut resp_tasks = JoinSet::new();
         for i in kms_servers_keys.iter() {
@@ -597,12 +534,10 @@ async fn test_complete_session_notification() {
             }
             let mut cur_client = kms_clients.get(i).unwrap().clone();
             let req_id_clone = req.request_id.as_ref().unwrap().clone();
-            println!("Spawning response task for party {}", i);
             resp_tasks.spawn(async move {
                 let mut response = cur_client
                     .get_public_decryption_result(tonic::Request::new(req_id_clone.clone()))
                     .await;
-                println!("GOT response");
                 while response.is_err()
                     && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
                 {
@@ -619,11 +554,9 @@ async fn test_complete_session_notification() {
 
         // let mut resp_response_vec = Vec::new();
         while let Some(resp) = resp_tasks.join_next().await {
-            println!("GOT RESPONSE : {:?}", resp);
             // Check for an internal failure since the other servers have already completed the session
             // The test will fail if the session basically stalls instead of aborting
             assert_eq!(resp.unwrap().1, tonic::Code::Internal); // TODO in theory Aborted should be returned but it is a mess to propagate this through the threshold library
         }
     }
-    println!("DONE COLLECTING RESPONSES");
 }

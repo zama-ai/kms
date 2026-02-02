@@ -287,7 +287,7 @@ pub(crate) async fn check_port_is_closed(port: u16) {
 
 /// Helper struct for managing servers in testing
 pub struct ServerHandle {
-    pub server: Arc<dyn Shutdown>,
+    pub server: Arc<dyn Shutdown + Send + Sync + 'static>,
     // The service port is the port that is used to connect to the core server
     pub service_port: u16,
     // In the threshold setting the mpc port is the port that is used to connect to the other MPC parties
@@ -300,7 +300,7 @@ pub struct ServerHandle {
 
 impl ServerHandle {
     pub fn new_threshold(
-        server: Arc<dyn Shutdown>,
+        server: Arc<dyn Shutdown + Send + Sync + 'static>,
         service_port: u16,
         mpc_port: u16,
         service_shutdown_tx: tokio::sync::oneshot::Sender<()>,
@@ -316,7 +316,7 @@ impl ServerHandle {
     }
 
     pub fn new_centralized(
-        server: Arc<dyn Shutdown>,
+        server: Arc<dyn Shutdown + Send + Sync + 'static>,
         service_port: u16,
         service_shutdown_tx: tokio::sync::oneshot::Sender<()>,
     ) -> Self {
