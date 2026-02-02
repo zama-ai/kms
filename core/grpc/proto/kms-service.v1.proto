@@ -297,7 +297,9 @@ service CoreServiceEndpoint {
   // #Conditions
   // * `context_id` in `request` must be present, valid, and unique [`RequestId`] of an MPC context that has been constructed with `NewMpcContext`.
   // * `epoch_id` in `request` must be present, valid, and unique. It represents the ID of the new epoch that is created.
-  // * `previous_epoch` is optional, if set we perform a resharing from the previous epoch to the new one. If set, we need all the parties to know about both the old and the new context (because parties talk to each other accross those 2 contexts)
+  // * `previous_epoch` is optional, if set we perform a resharing from the previous epoch to the new one.
+  //   All epoch creation should perform a resharing except the genesis epoch since DKG has not been done yet.
+  //   If set, we need all the parties to know about both the old and the new context (because parties talk to each other accross those 2 contexts)
   //
   rpc NewMpcEpoch(kms.v1.NewMpcEpochRequest) returns (kms.v1.Empty);
 

@@ -1,3 +1,28 @@
+//! This file provides methods to manage epochs, which includes dealing with PRSS setups
+//! as well as resharing of the secret keys.
+//! The main struct is [`RealThresholdEpochManager`] which implements the [`EpochManager`] trait.
+//!
+//! __PRSS__
+//!
+//! If the KMS core is started fresh, then the PRSS setups needs to be initialized
+//! via a protocol; this is done via the [`RealThresholdEpochManager::init_prss`] method.
+//! If the KMS core restarts, then the PRSS setups are loaded from storage,
+//! this is done via calls to [`RealThresholdEpochManager::init_legacy_prss_from_storage`]
+//! and then [`RealThresholdEpochManager::init_all_prss_from_storage`];
+//! the latter will overwrite any any legacy setup sharing the same ID as non-legacy setups.
+//!
+//! __Resharing__
+//!
+//! If there was a previous epoch we need to reshare from, Resharing is done via [`RealThresholdEpochManager::initiate_resharing`]
+//! which blocks until the previous epoch has been verified and then returns the resharing task to be executed.
+//! The caller is responsible for spawning the returned task.
+//! The Reshare protocol is asymetric depending on whether the party is part of the set that reshares (_set 1_),
+//! the set that receives (_set 2_) the reshare or both, hence the returned task is different depending on which set the party belongs to.
+//!
+//! __IMPORTANT__: To be able to reshare, all parties must be able to communicate with each other.
+//! In particular, this means that parties must be aware of both contexts (the old one and the new one) even if
+//! they are not part of one of the two contexts.
+
 use alloy_dyn_abi::Eip712Domain;
 use futures_util::{future::BoxFuture, FutureExt, TryFutureExt};
 use itertools::Itertools;
@@ -307,6 +332,9 @@ impl<
         Ok(())
     }
 
+    /// Wrapper around the internal method [`Self::internal_init_prss`]
+    /// so it's easier to call from the outside if necessary.
+    /// (e.g. when initializing the KMS core with `run_prss` set to true.)
     pub async fn init_prss(
         &self,
         context_id: &ContextId,
