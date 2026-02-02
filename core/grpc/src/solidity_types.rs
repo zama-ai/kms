@@ -85,7 +85,9 @@ impl PrepKeygenVerification {
 alloy_sol_types::sol! {
     enum KeyType {
         SERVER,
-        PUBLIC
+        PUBLIC,
+        COMPRESSED_PUBLIC,
+        COMPRESSED_KEYSET,
     }
 
     struct KeyDigest {
@@ -106,7 +108,7 @@ alloy_sol_types::sol! {
 }
 
 impl KeygenVerification {
-    pub fn new(
+    pub fn new_standard(
         preproc_id: &RequestId,
         key_id: &RequestId,
         server_key_digest: Vec<u8>,
@@ -124,6 +126,28 @@ impl KeygenVerification {
                 KeyDigest {
                     keyType: KeyType::PUBLIC,
                     digest: public_key_digest.into(),
+                },
+            ],
+        }
+    }
+    pub fn new_compressed(
+        preproc_id: &RequestId,
+        key_id: &RequestId,
+        compressed_keyset_digest: Vec<u8>,
+        compressed_pk_digest: Vec<u8>,
+    ) -> Self {
+        Self {
+            prepKeygenId: U256::from_be_slice(preproc_id.as_bytes()),
+            keyId: U256::from_be_slice(key_id.as_bytes()),
+            // NOTE: order should be in the order of the enum KeyType
+            keyDigests: vec![
+                KeyDigest {
+                    keyType: KeyType::COMPRESSED_KEYSET,
+                    digest: compressed_keyset_digest.into(),
+                },
+                KeyDigest {
+                    keyType: KeyType::COMPRESSED_PUBLIC,
+                    digest: compressed_pk_digest.into(),
                 },
             ],
         }

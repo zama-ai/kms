@@ -1114,6 +1114,7 @@ impl<
             Ok(result) => result,
             Err(e) => {
                 //If dkg errored out, update status
+                tracing::error!("DKG for request ID {req_id} failed with error {e}");
                 let mut guarded_meta_storage = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_storage.update(req_id, Err(e.to_string()));

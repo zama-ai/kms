@@ -55,13 +55,7 @@ use tonic::{Response, Status};
 pub(crate) enum TestKeyGenResult {
     DecompressionOnly(DecompressionKey),
     Standard((tfhe::ClientKey, tfhe::CompactPublicKey, tfhe::ServerKey)),
-    Compressed(
-        (
-            tfhe::ClientKey,
-            tfhe::CompressedCompactPublicKey,
-            tfhe::CompressedServerKey,
-        ),
-    ),
+    Compressed((tfhe::ClientKey, tfhe::xof_key_set::CompressedXofKeySet)),
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -83,11 +77,7 @@ impl TestKeyGenResult {
 
     pub(crate) fn get_compressed(
         self,
-    ) -> (
-        tfhe::ClientKey,
-        tfhe::CompressedCompactPublicKey,
-        tfhe::CompressedServerKey,
-    ) {
+    ) -> (tfhe::ClientKey, tfhe::xof_key_set::CompressedXofKeySet) {
         match self {
             TestKeyGenResult::Compressed(inner) => inner,
             _ => panic!("expected to find compressed"),
@@ -108,10 +98,11 @@ impl TestKeyGenResult {
                 let pt: u8 = ct.decrypt(client_key);
                 assert_eq!(pt, expected);
             }
-            TestKeyGenResult::Compressed((client_key, public_key, server_key)) => {
-                tfhe::set_server_key(server_key.clone().decompress());
-                let ct: tfhe::FheUint8 =
-                    expanded_encrypt(&public_key.decompress(), expected, 8).unwrap();
+            TestKeyGenResult::Compressed((client_key, keyset)) => {
+                let (public_key, server_key) =
+                    keyset.clone().decompress().unwrap().into_raw_parts();
+                tfhe::set_server_key(server_key.clone());
+                let ct: tfhe::FheUint8 = expanded_encrypt(&public_key, expected, 8).unwrap();
                 let actual: u8 = ct.decrypt(client_key);
                 assert_eq!(actual, expected);
             }
@@ -986,23 +977,20 @@ pub(crate) async fn preproc_and_keygen(
             .await
             .0;
 
-            if compressed {
+            // blockchain parameters always have mod switch noise reduction key
+            let (client_key, public_key, server_key) = if compressed {
                 // blockchain parameters always have mod switch noise reduction key
-                let (client_key, public_key, server_key) = keyset.get_compressed();
-                let tag: tfhe::Tag = (*key_id).into();
-                assert_eq!(&tag, client_key.tag());
-                assert_eq!(&tag, public_key.tag());
-                assert_eq!(&tag, server_key.tag());
-                crate::client::key_gen::tests::check_conformance_compressed(server_key, client_key);
+                let (client_key, keyset) = keyset.get_compressed();
+                let (public_key, server_key) = keyset.decompress().unwrap().into_raw_parts();
+                (client_key, public_key, server_key)
             } else {
-                // blockchain parameters always have mod switch noise reduction key
-                let (client_key, public_key, server_key) = keyset.get_standard();
-                let tag: tfhe::Tag = (*key_id).into();
-                assert_eq!(&tag, client_key.tag());
-                assert_eq!(&tag, public_key.tag());
-                assert_eq!(&tag, server_key.tag());
-                crate::client::key_gen::tests::check_conformance(server_key, client_key);
-            }
+                keyset.get_standard()
+            };
+            let tag: tfhe::Tag = (*key_id).into();
+            assert_eq!(&tag, client_key.tag());
+            assert_eq!(&tag, public_key.tag());
+            assert_eq!(&tag, server_key.tag());
+            crate::client::key_gen::tests::check_conformance(server_key, client_key);
 
             use crate::{
                 client::tests::threshold::public_decryption_tests::run_decryption_threshold,
@@ -1303,21 +1291,19 @@ fn try_reconstruct_shares(
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 enum RetrievedKeysForVerification {
     Standard(tfhe::ServerKey, tfhe::CompactPublicKey),
-    Compressed(tfhe::CompressedServerKey, tfhe::CompressedCompactPublicKey),
+    Compressed(tfhe::xof_key_set::CompressedXofKeySet),
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 impl RetrievedKeysForVerification {
-    fn serialize(&self) -> (Vec<u8>, Vec<u8>) {
+    fn to_bytes_for_verification(&self) -> Vec<u8> {
         match self {
-            RetrievedKeysForVerification::Standard(sk, pk) => (
+            RetrievedKeysForVerification::Standard(sk, pk) => vec![
                 bc2wrap::serialize(sk).unwrap(),
                 bc2wrap::serialize(pk).unwrap(),
-            ),
-            RetrievedKeysForVerification::Compressed(sk, pk) => (
-                bc2wrap::serialize(sk).unwrap(),
-                bc2wrap::serialize(pk).unwrap(),
-            ),
+            ]
+            .concat(),
+            RetrievedKeysForVerification::Compressed(keyset) => bc2wrap::serialize(keyset).unwrap(),
         }
     }
 }
@@ -1336,8 +1322,7 @@ pub(crate) async fn verify_keygen_responses(
 ) -> Option<(TestKeyGenResult, HashMap<Role, ThresholdFheKeys>)> {
     use itertools::Itertools;
 
-    let mut serialized_ref_pk = Vec::new();
-    let mut serialized_ref_server_key = Vec::new();
+    let mut verification_bytes_ref = Vec::new();
     let mut all_threshold_fhe_keys = HashMap::new();
     let mut final_keys: Option<RetrievedKeysForVerification> = None;
 
@@ -1350,8 +1335,10 @@ pub(crate) async fn verify_keygen_responses(
             FileStorage::new(data_root_path, StorageType::PUB, pub_prefix.as_deref()).unwrap();
 
         let keys = if compressed {
-            let server_key: tfhe::CompressedServerKey = internal_client
-                .retrieve_key_no_verification(&kg_res, PubDataType::CompressedServerKey, &storage)
+            use threshold_fhe::execution::endpoints::keygen::sanity_check_compressed_keyset;
+
+            let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet = internal_client
+                .retrieve_key_no_verification(&kg_res, PubDataType::CompressedXofKeySet, &storage)
                 .await
                 .unwrap()
                 .unwrap();
@@ -1366,10 +1353,16 @@ pub(crate) async fn verify_keygen_responses(
                 .unwrap()
                 .unwrap();
 
-            assert_eq!(&tfhe::Tag::from(req_get_keygen), server_key.tag());
-            assert_eq!(&tfhe::Tag::from(req_get_keygen), public_key.tag());
+            // first make sure the pub keys are the same
+            assert_eq!(
+                bc2wrap::serialize(&public_key).unwrap(),
+                bc2wrap::serialize(&compressed_keyset.clone().into_raw_parts().1).unwrap()
+            );
 
-            RetrievedKeysForVerification::Compressed(server_key, public_key)
+            // we require that decompressing the keyset and decompressing the public key should result in the same
+            sanity_check_compressed_keyset(compressed_keyset.clone());
+
+            RetrievedKeysForVerification::Compressed(compressed_keyset)
         } else {
             let (server_key, public_key) = internal_client
                 .retrieve_server_key_and_public_key(
@@ -1402,13 +1395,11 @@ pub(crate) async fn verify_keygen_responses(
         all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
 
         // Compare serialized keys across parties
-        let (serialized_server_key, serialized_pk) = keys.serialize();
+        let verification_bytes = keys.to_bytes_for_verification();
         if role.one_based() == 1 {
-            serialized_ref_pk = serialized_pk;
-            serialized_ref_server_key = serialized_server_key;
+            verification_bytes_ref = verification_bytes;
         } else {
-            assert_eq!(serialized_ref_pk, serialized_pk);
-            assert_eq!(serialized_ref_server_key, serialized_server_key);
+            assert_eq!(verification_bytes_ref, verification_bytes);
         }
 
         if final_keys.is_none() {
@@ -1439,8 +1430,8 @@ pub(crate) async fn verify_keygen_responses(
         RetrievedKeysForVerification::Standard(server_key, public_key) => {
             TestKeyGenResult::Standard((client_key, public_key, server_key))
         }
-        RetrievedKeysForVerification::Compressed(server_key, public_key) => {
-            TestKeyGenResult::Compressed((client_key, public_key, server_key))
+        RetrievedKeysForVerification::Compressed(keyset) => {
+            TestKeyGenResult::Compressed((client_key, keyset))
         }
     };
 

@@ -283,7 +283,7 @@ impl Client {
         }
 
         let sol_type =
-            KeygenVerification::new(preproc_id, key_id, server_key_digest, public_key_digest);
+            KeygenVerification::new_standard(preproc_id, key_id, server_key_digest, public_key_digest);
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
 
@@ -397,14 +397,6 @@ pub(crate) mod tests {
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
     use tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey;
     use tfhe::shortint::server_key::ModulusSwitchConfiguration;
-
-    #[cfg(feature = "slow_tests")]
-    pub(crate) fn check_conformance_compressed(
-        server_key: tfhe::CompressedServerKey,
-        client_key: tfhe::ClientKey,
-    ) {
-        check_conformance(server_key.decompress(), client_key)
-    }
 
     pub(crate) fn check_conformance(server_key: tfhe::ServerKey, client_key: tfhe::ClientKey) {
         let pbs_params = client_key.computation_parameters();

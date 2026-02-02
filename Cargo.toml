@@ -253,3 +253,8 @@ rustls = { git = 'https://github.com/mkmks/rustls.git', branch = 'k256' }
 rustls-pki-types = { git = 'https://github.com/mkmks/pki-types.git', branch = 'k256' }
 rustls-webpki = { git = 'https://github.com/mkmks/webpki.git', branch = 'k256' }
 tokio-rustls = { git = 'https://github.com/mkmks/tokio-rustls.git', branch = 'k256' }
+
+tfhe = { path = "/Users/kc1212/code/tfhe-rs/tfhe" }
+tfhe-csprng = { path = "/Users/kc1212/code/tfhe-rs/tfhe-csprng" }
+tfhe-versionable = { path = "/Users/kc1212/code/tfhe-rs/utils/tfhe-versionable" }
+tfhe-zk-pok = { path = "/Users/kc1212/code/tfhe-rs/tfhe-zk-pok" }

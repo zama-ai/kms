@@ -203,7 +203,7 @@ fn test_key_gen_metadata(
         safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_server_key).unwrap();
     let pub_key_digest =
         safe_serialize_hash_element_versioned(b"TESTTEST", &pretend_public_key).unwrap();
-    let sol_type = KeygenVerification::new(
+    let sol_type = KeygenVerification::new_standard(
         &preprocessing_id,
         &key_id,
         server_key_digest.clone(),

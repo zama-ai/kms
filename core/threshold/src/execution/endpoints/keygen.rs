@@ -2147,7 +2147,9 @@ pub mod tests {
 
             let my_role = session.my_role();
             let (pk, sk) = if compressed_keygen {
-                let (compressed_pk, sk) =
+                use crate::execution::endpoints::keygen::sanity_check_compressed_keyset;
+
+                let (compressed_keyset, sk) =
                     super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::compressed_keygen(
                         &mut session,
                         &mut dkg_preproc,
@@ -2157,7 +2159,11 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
-                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
+                sanity_check_compressed_keyset(compressed_keyset.clone());
+
+                let (public_key, server_key) =
+                    compressed_keyset.decompress().unwrap().into_raw_parts();
+
                 (
                     FhePubKeySet {
                         public_key,
@@ -2817,4 +2823,87 @@ pub mod tests {
             assert_eq!(clear_a.wrapping_add(clear_b), dec);
         }
     }
+
+    #[test]
+    fn compressed_keyset_sanity_check() {
+        use tfhe::shortint::parameters::v1_5::*;
+        let params = V1_5_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128;
+        let cpk_params = V1_5_PARAM_PKE_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128;
+        let casting_params = key_switching::p_fail_2_minus_128::ks_pbs::V1_5_PARAM_KEYSWITCH_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128;
+        let noise_squashing_params =
+            V1_5_NOISE_SQUASHING_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128;
+        let compression_params = V1_5_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128;
+        let re_rand_ksk_params =
+            V1_5_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128;
+        let noise_squashing_compression_params =
+            V1_5_NOISE_SQUASHING_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128;
+
+        let config = tfhe::ConfigBuilder::with_custom_parameters(params)
+            .use_dedicated_compact_public_key_parameters((cpk_params, casting_params))
+            .enable_noise_squashing(noise_squashing_params)
+            .enable_noise_squashing_compression(noise_squashing_compression_params)
+            .enable_compression(compression_params)
+            .enable_ciphertext_re_randomization(re_rand_ksk_params)
+            .build();
+
+        let mut seeder = tfhe::core_crypto::seeders::new_seeder();
+        let private_seed_bytes = seeder.seed().0.to_le_bytes().to_vec();
+        let security_bits = 128;
+        let max_norm_hwt =
+            tfhe::core_crypto::prelude::NormalizedHammingWeightBound::new(0.8).unwrap();
+        let tag = tfhe::Tag::from("classic_2_2");
+
+        let (_cks, compressed_keyset) = tfhe::xof_key_set::CompressedXofKeySet::generate(
+            config,
+            private_seed_bytes,
+            security_bits,
+            max_norm_hwt,
+            tag.clone(),
+        )
+        .unwrap();
+
+        crate::execution::endpoints::keygen::sanity_check_compressed_keyset(
+            compressed_keyset.clone(),
+        );
+
+        // print sizes
+        {
+            let buf_key_set = bc2wrap::serialize(&compressed_keyset).unwrap();
+            let pk_buf = bc2wrap::serialize(&compressed_keyset.into_raw_parts().1).unwrap();
+            println!("{}, {}", buf_key_set.len(), pk_buf.len());
+        }
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+pub fn sanity_check_compressed_keyset(compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet) {
+    let public_key_actual = {
+        let (_, pk, _) = compressed_keyset.clone().into_raw_parts();
+        let seed = pk
+            .clone()
+            .into_raw_parts()
+            .0
+            .into_raw_parts()
+            .into_raw_parts()
+            .0
+            .compression_seed()
+            .seed;
+        let xof_seed =
+            tfhe::XofSeed::new_u128(seed.0, crate::execution::endpoints::keygen::DSEP_KG);
+        // let xof_seed = tfhe::XofSeed::from_bytes(seed.0.to_le_bytes().to_vec());
+
+        use tfhe::core_crypto::commons::generators::MaskRandomGenerator;
+        use tfhe::core_crypto::prelude::DefaultRandomGenerator;
+        let mut mask_generator = MaskRandomGenerator::<DefaultRandomGenerator>::new(xof_seed);
+        pk.decompress_with_with_pre_seeded_generator(&mut mask_generator)
+    };
+    let (public_key_expected, _server_key) =
+        compressed_keyset.decompress().unwrap().into_raw_parts();
+
+    // sanity check that decompression the public key alone is the same as the public key
+    // we obtain from decompressing the keyset
+    assert_eq!(
+        bc2wrap::serialize(&public_key_actual).unwrap(),
+        bc2wrap::serialize(&public_key_expected).unwrap()
+    );
 }

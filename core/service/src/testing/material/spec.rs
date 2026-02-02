@@ -194,7 +194,7 @@ mod tests {
             PubDataType::DecompressionKey => vec![KeyType::DecompressionKeys],
             PubDataType::CACert => vec![KeyType::ServerSigningKeys], // TLS certs for MPC nodes
             PubDataType::RecoveryMaterial => vec![KeyType::ClientKeys], // Backup recovery
-            PubDataType::CompressedServerKey => vec![KeyType::FheKeys], // Compressed server key
+            PubDataType::CompressedXofKeySet => vec![KeyType::FheKeys], // Compressed server key
             PubDataType::CompressedCompactPublicKey => vec![KeyType::FheKeys], // Compressed public key
         }
     }

@@ -404,7 +404,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     &mut (*pub_storage),
                     key_id,
                     &compressed_server_key,
-                    &PubDataType::CompressedServerKey.to_string(),
+                    &PubDataType::CompressedXofKeySet.to_string(),
                 )
                 .await;
 
@@ -418,7 +418,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     log_storage_success(
                         key_id,
                         pub_storage.info(),
-                        &PubDataType::CompressedServerKey.to_string(),
+                        &PubDataType::CompressedXofKeySet.to_string(),
                         true,
                         true,
                     );

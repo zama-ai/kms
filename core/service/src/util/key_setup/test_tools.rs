@@ -340,24 +340,14 @@ pub async fn compute_cipher_from_stored_key(
 ) -> (Vec<u8>, CiphertextFormat, FheTypes) {
     let (pk, server_key) = if compressed_keys {
         // Load compressed keys and decompress them
-        let compressed_pk: tfhe::CompressedCompactPublicKey = load_material_from_pub_storage(
+        let xof_keyset: tfhe::xof_key_set::CompressedXofKeySet = load_material_from_pub_storage(
             pub_path,
             key_id,
-            PubDataType::CompressedCompactPublicKey,
+            PubDataType::CompressedXofKeySet,
             storage_prefix,
         )
         .await;
-        let compressed_server_key: tfhe::CompressedServerKey = load_material_from_pub_storage(
-            pub_path,
-            key_id,
-            PubDataType::CompressedServerKey,
-            storage_prefix,
-        )
-        .await;
-        (
-            compressed_pk.decompress(),
-            compressed_server_key.decompress(),
-        )
+        xof_keyset.decompress().unwrap().into_raw_parts()
     } else {
         let pk = load_pk_from_pub_storage(pub_path, key_id, storage_prefix).await;
         let server_key: ServerKey = load_material_from_pub_storage(

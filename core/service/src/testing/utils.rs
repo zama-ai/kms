@@ -347,7 +347,7 @@ pub async fn compute_cipher_from_stored_key(
         let compressed_server_key: tfhe::CompressedServerKey = load_material_from_pub_storage(
             pub_path,
             key_id,
-            PubDataType::CompressedServerKey,
+            PubDataType::CompressedXofKeySet,
             storage_prefix,
         )
         .await;
