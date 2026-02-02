@@ -271,7 +271,6 @@ impl GrpcNetworkingManager {
                         SessionStatus::Inactive((_, started)) => {
                             // Remove inactive sessions that have been inactive for awhile
                             if started.elapsed() > discard_inactive_interval {
-                                println!("Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.", session_id, started.elapsed().as_secs());
                                 tracing::warn!(
                                 "Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.",
                                 session_id,
@@ -280,7 +279,6 @@ impl GrpcNetworkingManager {
                                 to_remove.push(*session_id);
                                 break;
                             } else {
-                                println!("Keeping Inactive session {:?} after {:?} seconds. We never heard about such session.", session_id, started.elapsed().as_secs());
                                 internal_inactive_sessions_count += 1;
                             }
                         }
@@ -298,7 +296,6 @@ impl GrpcNetworkingManager {
                                             if last_receive_time.elapsed()
                                                 > discard_inactive_interval
                                             {
-                                                println!("Discarding Active session {:?} after {:?} seconds.", session_id, last_receive_time.elapsed().as_secs());
                                                 tracing::warn!(
                                                 "Discarding Active session {:?} after {:?} seconds.",
                                                 session_id,
@@ -1119,16 +1116,6 @@ impl Gnetworking for NetworkingImpl {
                 Some(tx) => tx,
                 None => {
                     // If the session is completed or inactive, we return early
-                    // if matches!(status, SessionStatus::Completed(_)) {
-                    //     tracing::warn!(
-                    //         "Session {:?} found in session_store but is completed. Will be removed by background cleanup. Returning Aborted status",
-                    //         tag.session_id
-                    //     );
-                    //     return Err(tonic::Status::new(
-                    //         tonic::Code::Aborted,
-                    //         format!("Session {:?} is completed on the receiver.", tag.session_id),
-                    //     ));
-                    // }
                     return Ok(tonic::Response::new(status.into()));
                 }
             }
@@ -1141,20 +1128,7 @@ impl Gnetworking for NetworkingImpl {
                     match self.fetch_tx_channel(status, &tag)? {
                         Some(tx) => tx,
                         None => {
-                            // If the session is completed or inactive, we return earlys
-                            // if matches!(status, SessionStatus::Completed(_)) {
-                            //     tracing::warn!(
-                            //     "Session {:?} found in session_store but is completed. Will be removed by background cleanup. Returning Aborted status",
-                            //     tag.session_id
-                            // );
-                            //     return Err(tonic::Status::new(
-                            //         tonic::Code::Aborted,
-                            //         format!(
-                            //             "Session {:?} is completed on the receiver.",
-                            //             tag.session_id
-                            //         ),
-                            //     ));
-                            // }
+                            // If the session is completed or inactive, we return early
                             return Ok(tonic::Response::new(status.into()));
                         }
                     }

@@ -397,7 +397,6 @@ impl SendingService for GrpcSendingService {
 
         let aborted = Arc::new(DashSet::new());
         for (other_role, other_id) in others.iter() {
-            // let (abort_sender, abort_receiver) = tokio::sync::mpsc::unbounded_channel();
             match self.add_connection(other_id, Arc::clone(&aborted)).await {
                 Ok(sender) => {
                     result.insert(other_role.get_role_kind(), sender);
@@ -509,7 +508,6 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
                 "Missing local channel for {receiver:?}"
             ))),
         }?;
-        println!("Sent message to party {:?} OK.", receiver);
         Ok(())
     }
 
