@@ -299,7 +299,6 @@ service CoreServiceEndpoint {
   // * `epoch_id` in `request` must be present, valid, and unique. It represents the ID of the new epoch that is created.
   // * `previous_epoch` is optional, if set we perform a resharing from the previous epoch to the new one. If set, we need all the parties to know about both the old and the new context (because parties talk to each other accross those 2 contexts)
   //
-  // NOTE: This call is blocking for the PRSS Init part but async for the resharing if any.
   rpc NewMpcEpoch(kms.v1.NewMpcEpochRequest) returns (kms.v1.Empty);
 
   // Retrieves the result of an epoch creation (i.e. the reshared key if any)
@@ -308,7 +307,7 @@ service CoreServiceEndpoint {
   // * The [`RequestId`] that corresponds to the `epoch_id` of the context we want to check up on.
   //
   // # Returns
-  // * If a resharing happened during the epoch creation, this returns the exact same struct as a GetKeyGenResult request.
+  // * If a resharing happened (i.e. `previous_epoch` was set in the `NewMpcEpoch` request) during the epoch creation, this returns the exact same struct as a GetKeyGenResult request.
   // # Conditions
   rpc GetEpochResult(kms.v1.RequestId) returns (kms.v1.EpochResultResponse);
 
