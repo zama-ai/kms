@@ -265,7 +265,7 @@ impl GrpcNetworkingManager {
                         SessionStatus::Completed(started) => {
                             // Remove completed sessions that have been completed for a very long time
                             if started.elapsed() > cleanup_interval {
-                                to_remove.push(session_id.clone());
+                                to_remove.push(*session_id);
                             }
                         }
                         SessionStatus::Inactive((_, started)) => {
@@ -277,7 +277,7 @@ impl GrpcNetworkingManager {
                                 session_id,
                                 started.elapsed().as_secs()
                             );
-                                to_remove.push(session_id.clone());
+                                to_remove.push(*session_id);
                                 break;
                             } else {
                                 println!("Keeping Inactive session {:?} after {:?} seconds. We never heard about such session.", session_id, started.elapsed().as_secs());
@@ -304,7 +304,7 @@ impl GrpcNetworkingManager {
                                                 session_id,
                                                 last_receive_time.elapsed().as_secs()
                                             );
-                                                to_remove.push(session_id.clone());
+                                                to_remove.push(*session_id);
                                                 break;
                                             }
                                         }
