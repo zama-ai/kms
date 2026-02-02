@@ -297,34 +297,22 @@ pub(crate) fn compute_info_compressed_keygen(
     compressed_keyset: &CompressedXofKeySet,
     domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<KeyGenMetadata> {
-    // Extract the compressed public key from the keyset
-    let (_, compressed_public_key, _) = compressed_keyset.clone().into_raw_parts();
-
-    let compressed_keyset_digest = safe_serialize_hash_element_versioned(domain_separator, compressed_keyset)?;
-    let compressed_pk_digest =
-        safe_serialize_hash_element_versioned(domain_separator, &compressed_public_key)?;
+    let compressed_keyset_digest =
+        safe_serialize_hash_element_versioned(domain_separator, compressed_keyset)?;
 
     tracing::info!(
-        "Computed xof keyset digest: {} and compressed public key digest: {}",
+        "Computed xof keyset digest: {}",
         hex::encode(&compressed_keyset_digest),
-        hex::encode(&compressed_pk_digest)
     );
 
-    let sol_type = KeygenVerification::new_compressed(
-        prep_id,
-        key_id,
-        compressed_keyset_digest.clone(),
-        compressed_pk_digest.clone(),
-    );
+    let sol_type =
+        KeygenVerification::new_compressed(prep_id, key_id, compressed_keyset_digest.clone());
     let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
 
     Ok(KeyGenMetadata::new(
         *key_id,
         *prep_id,
-        HashMap::from([
-            (PubDataType::CompressedXofKeySet, compressed_keyset_digest),
-            (PubDataType::CompressedCompactPublicKey, compressed_pk_digest),
-        ]),
+        HashMap::from([(PubDataType::CompressedXofKeySet, compressed_keyset_digest)]),
         external_signature,
     ))
 }

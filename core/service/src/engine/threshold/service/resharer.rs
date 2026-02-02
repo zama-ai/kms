@@ -478,6 +478,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             })
             .collect::<Result<HashMap<PubDataType, Vec<u8>>, Status>>()?;
 
+        // TODO(https://github.com/zama-ai/kms-internal/issues/2881) for now we do not support compressed keys
         // use the real instantiation here for ReadOnlyS3StorageGetter
         let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
             &crypto_storage,
@@ -806,7 +807,6 @@ mod tests {
             RamStorage::new(),
             RamStorage::new(),
             None,
-            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
         );

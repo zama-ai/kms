@@ -13,7 +13,7 @@ use kms_grpc::{
 };
 use tfhe::{
     integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet,
-    zk::CompactPkeCrs, CompactPublicKey, CompressedCompactPublicKey,
+    zk::CompactPkeCrs, CompactPublicKey,
 };
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
@@ -54,7 +54,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         private_storage: PrivS,
         backup_vault: Option<Vault>,
         pk_cache: HashMap<RequestId, CompactPublicKey>,
-        compressed_pk_cache: HashMap<RequestId, CompressedCompactPublicKey>,
         fhe_keys: HashMap<(RequestId, EpochId), ThresholdFheKeys>,
     ) -> Self {
         Self {
@@ -63,7 +62,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 private_storage: Arc::new(Mutex::new(private_storage)),
                 backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
                 pk_cache: Arc::new(RwLock::new(pk_cache)),
-                compressed_pk_cache: Arc::new(RwLock::new(compressed_pk_cache)),
             },
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }
@@ -329,7 +327,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         key_id: &RequestId,
         epoch_id: &EpochId,
         threshold_fhe_keys: ThresholdFheKeys,
-        compressed_keyset: CompressedXofKeySet,
+        compressed_keyset: &CompressedXofKeySet,
         info: KeyGenMetadata,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
@@ -341,10 +339,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 Some(ref x) => Some(x.lock().await),
                 None => None,
             };
-
-            // Extract compressed keys from the keyset
-            let (_, compressed_public_key, compressed_server_key) =
-                compressed_keyset.into_raw_parts();
 
             let f1 = async {
                 let store_result = store_versioned_at_request_and_epoch_id(
@@ -375,35 +369,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             };
 
             let f2 = async {
-                // Store compressed public key
-                let pk_result = store_versioned_at_request_id(
-                    &mut (*pub_storage),
-                    key_id,
-                    &compressed_public_key,
-                    &PubDataType::CompressedCompactPublicKey.to_string(),
-                )
-                .await;
-                if let Err(e) = &pk_result {
-                    tracing::error!(
-                        "Failed to store compressed public key for request {}: {}",
-                        key_id,
-                        e
-                    );
-                } else {
-                    log_storage_success(
-                        key_id,
-                        pub_storage.info(),
-                        &PubDataType::CompressedCompactPublicKey.to_string(),
-                        true,
-                        true,
-                    );
-                }
-
-                // Store compressed server key
+                // Store compressed xof key set
                 let server_result = store_versioned_at_request_id(
                     &mut (*pub_storage),
                     key_id,
-                    &compressed_server_key,
+                    compressed_keyset,
                     &PubDataType::CompressedXofKeySet.to_string(),
                 )
                 .await;
@@ -423,7 +393,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                         true,
                     );
                 }
-                pk_result.is_ok() && server_result.is_ok()
+                server_result.is_ok()
             };
 
             let threshold_key_clone = threshold_fhe_keys.clone();
@@ -597,13 +567,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
     pub async fn read_cloned_pk(&self, req_id: &RequestId) -> anyhow::Result<CompactPublicKey> {
         self.inner.read_cloned_pk(req_id).await
-    }
-
-    pub async fn read_cloned_compressed_pk(
-        &self,
-        req_id: &RequestId,
-    ) -> anyhow::Result<CompressedCompactPublicKey> {
-        self.inner.read_cloned_compressed_pk(req_id).await
     }
 
     pub async fn read_cloned_server_key(

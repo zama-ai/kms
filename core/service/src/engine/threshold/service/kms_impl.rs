@@ -10,7 +10,10 @@ use kms_grpc::{
 };
 use observability::{conf::TelemetryConfig, metrics};
 use serde::{Deserialize, Serialize};
-use tfhe::{core_crypto::prelude::LweKeyswitchKey, named::Named, Versionize};
+use tfhe::{
+    core_crypto::prelude::LweKeyswitchKey, named::Named, xof_key_set::CompressedXofKeySet,
+    Versionize,
+};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
@@ -105,8 +108,7 @@ pub enum PublicKeyMaterial {
     /// Compressed keys - need decompression before use via XOF seed
     Compressed {
         compressed_keyset: Arc<tfhe::xof_key_set::CompressedXofKeySet>,
-        // TODO can we only store standard keyset with the xofseed?
-        // we need the standard keyset for decryptions
+        // We store duplicate of the integer keys for easy access, otherwise we'd need to decompress every time
         integer_server_key: Arc<tfhe::integer::ServerKey>,
         sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
         decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
@@ -114,18 +116,19 @@ pub enum PublicKeyMaterial {
 }
 
 impl PublicKeyMaterial {
-    pub fn new_compressed(compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet) -> Self {
+    pub fn new_compressed(
+        compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet,
+    ) -> anyhow::Result<Self> {
         let compressed_keyset_cloned = compressed_keyset.clone();
-        let (_, _, compressed_server_key) = compressed_keyset_cloned.into_raw_parts();
-        let server_key = compressed_server_key.decompress();
+        let (_public_key, server_key) = compressed_keyset_cloned.decompress()?.into_raw_parts();
         let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
             server_key.into_raw_parts();
-        Self::Compressed {
+        Ok(Self::Compressed {
             compressed_keyset: Arc::new(compressed_keyset),
             integer_server_key: Arc::new(integer_server_key),
             sns_key: sns_key.map(Arc::new),
             decompression_key: decompression_key.map(Arc::new),
-        }
+        })
     }
 }
 
@@ -368,7 +371,6 @@ where
 
     let mut public_key_info = HashMap::new();
     let mut pk_map = HashMap::new();
-    let mut compressed_pk_map = HashMap::new();
     let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
@@ -399,24 +401,24 @@ where
                 false
             }
         };
-        let compressed_pk_ok = match read_versioned_at_request_id(
+        let compressed_keyset_ok = match read_versioned_at_request_id::<_, CompressedXofKeySet>(
             &public_storage,
             &id,
-            &PubDataType::CompressedCompactPublicKey.to_string(),
+            &PubDataType::CompressedXofKeySet.to_string(),
         )
         .await
         {
             Ok(pk) => {
-                compressed_pk_map.insert(id, pk);
+                pk_map.insert(id, pk.decompress()?.into_raw_parts().0);
                 true
             }
             Err(e) => {
-                tracing::warn!("Failed to find CompressedCompactPublicKey for id={id}: {e}");
+                tracing::warn!("Failed to find CompressedXofKeySet for id={id}: {e}");
                 false
             }
         };
 
-        if !compressed_pk_ok && !pk_ok {
+        if !compressed_keyset_ok && !pk_ok {
             anyhow::bail!("Could not find a public key for id={id}")
         }
     }
@@ -558,7 +560,6 @@ where
         private_storage,
         backup_storage,
         pk_map,
-        compressed_pk_map,
         key_info_versioned,
     );
 

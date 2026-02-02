@@ -282,8 +282,12 @@ impl Client {
             ));
         }
 
-        let sol_type =
-            KeygenVerification::new_standard(preproc_id, key_id, server_key_digest, public_key_digest);
+        let sol_type = KeygenVerification::new_standard(
+            preproc_id,
+            key_id,
+            server_key_digest,
+            public_key_digest,
+        );
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
 

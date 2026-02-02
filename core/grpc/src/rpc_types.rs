@@ -232,8 +232,7 @@ pub enum PubDataType {
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
     RecoveryMaterial, // Recovery material for the backup vault
-    CompressedCompactPublicKey, // Compressed compact public key
-    CompressedXofKeySet, // Compressed server key
+    CompressedXofKeySet, // Compressed xof keyset
 }
 
 impl std::str::FromStr for PubDataType {
@@ -265,7 +264,6 @@ impl fmt::Display for PubDataType {
             PubDataType::CACert => write!(f, "CACert"),
             PubDataType::RecoveryMaterial => write!(f, "RecoveryMaterial"),
             PubDataType::CompressedXofKeySet => write!(f, "CompressedXofKeySet"),
-            PubDataType::CompressedCompactPublicKey => write!(f, "CompressedCompactPublicKey"),
         }
     }
 }

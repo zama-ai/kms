@@ -1298,7 +1298,7 @@ enum RetrievedKeysForVerification {
 impl RetrievedKeysForVerification {
     fn to_bytes_for_verification(&self) -> Vec<u8> {
         match self {
-            RetrievedKeysForVerification::Standard(sk, pk) => vec![
+            RetrievedKeysForVerification::Standard(sk, pk) => [
                 bc2wrap::serialize(sk).unwrap(),
                 bc2wrap::serialize(pk).unwrap(),
             ]
@@ -1335,32 +1335,11 @@ pub(crate) async fn verify_keygen_responses(
             FileStorage::new(data_root_path, StorageType::PUB, pub_prefix.as_deref()).unwrap();
 
         let keys = if compressed {
-            use threshold_fhe::execution::endpoints::keygen::sanity_check_compressed_keyset;
-
             let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet = internal_client
                 .retrieve_key_no_verification(&kg_res, PubDataType::CompressedXofKeySet, &storage)
                 .await
                 .unwrap()
                 .unwrap();
-
-            let public_key: tfhe::CompressedCompactPublicKey = internal_client
-                .retrieve_key_no_verification(
-                    &kg_res,
-                    PubDataType::CompressedCompactPublicKey,
-                    &storage,
-                )
-                .await
-                .unwrap()
-                .unwrap();
-
-            // first make sure the pub keys are the same
-            assert_eq!(
-                bc2wrap::serialize(&public_key).unwrap(),
-                bc2wrap::serialize(&compressed_keyset.clone().into_raw_parts().1).unwrap()
-            );
-
-            // we require that decompressing the keyset and decompressing the public key should result in the same
-            sanity_check_compressed_keyset(compressed_keyset.clone());
 
             RetrievedKeysForVerification::Compressed(compressed_keyset)
         } else {

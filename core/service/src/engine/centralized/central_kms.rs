@@ -842,9 +842,10 @@ impl<
             )
             .await?;
         let mut pk_map = HashMap::new();
-        let mut compressed_pk_map = HashMap::new();
         for (id, _) in key_info.keys() {
             // there should be at least one that succeeds
+
+            use tfhe::xof_key_set::CompressedXofKeySet;
             let pk_ok = match read_versioned_at_request_id(
                 &public_storage,
                 id,
@@ -861,24 +862,24 @@ impl<
                     false
                 }
             };
-            let compressed_pk_ok = match read_versioned_at_request_id(
+            let compressed_keyset_ok = match read_versioned_at_request_id::<_, CompressedXofKeySet>(
                 &public_storage,
                 id,
-                &PubDataType::CompressedCompactPublicKey.to_string(),
+                &PubDataType::CompressedXofKeySet.to_string(),
             )
             .await
             {
                 Ok(pk) => {
-                    compressed_pk_map.insert(*id, pk);
+                    pk_map.insert(*id, pk.decompress()?.into_raw_parts().0);
                     true
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to find CompressedCompactPublicKey for id={id}: {e}");
+                    tracing::warn!("Failed to find CompressedXofKeySet for id={id}: {e}");
                     false
                 }
             };
 
-            if !compressed_pk_ok && !pk_ok {
+            if !compressed_keyset_ok && !pk_ok {
                 anyhow::bail!("Could not find a public key for id={id}")
             }
         }
@@ -910,7 +911,6 @@ impl<
             private_storage,
             backup_vault,
             pk_map,
-            compressed_pk_map,
             key_info,
         );
         let base_kms = BaseKmsStruct::new(KMSType::Centralized, sk)?;

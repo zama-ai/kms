@@ -134,22 +134,15 @@ impl KeygenVerification {
         preproc_id: &RequestId,
         key_id: &RequestId,
         compressed_keyset_digest: Vec<u8>,
-        compressed_pk_digest: Vec<u8>,
     ) -> Self {
         Self {
             prepKeygenId: U256::from_be_slice(preproc_id.as_bytes()),
             keyId: U256::from_be_slice(key_id.as_bytes()),
             // NOTE: order should be in the order of the enum KeyType
-            keyDigests: vec![
-                KeyDigest {
-                    keyType: KeyType::COMPRESSED_KEYSET,
-                    digest: compressed_keyset_digest.into(),
-                },
-                KeyDigest {
-                    keyType: KeyType::COMPRESSED_PUBLIC,
-                    digest: compressed_pk_digest.into(),
-                },
-            ],
+            keyDigests: vec![KeyDigest {
+                keyType: KeyType::COMPRESSED_KEYSET,
+                digest: compressed_keyset_digest.into(),
+            }],
         }
     }
 }

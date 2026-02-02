@@ -2147,8 +2147,6 @@ pub mod tests {
 
             let my_role = session.my_role();
             let (pk, sk) = if compressed_keygen {
-                use crate::execution::endpoints::keygen::sanity_check_compressed_keyset;
-
                 let (compressed_keyset, sk) =
                     super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::compressed_keygen(
                         &mut session,
@@ -2159,7 +2157,6 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
-                sanity_check_compressed_keyset(compressed_keyset.clone());
 
                 let (public_key, server_key) =
                     compressed_keyset.decompress().unwrap().into_raw_parts();
@@ -2862,10 +2859,6 @@ pub mod tests {
         )
         .unwrap();
 
-        crate::execution::endpoints::keygen::sanity_check_compressed_keyset(
-            compressed_keyset.clone(),
-        );
-
         // print sizes
         {
             let buf_key_set = bc2wrap::serialize(&compressed_keyset).unwrap();
@@ -2873,37 +2866,4 @@ pub mod tests {
             println!("{}, {}", buf_key_set.len(), pk_buf.len());
         }
     }
-}
-
-#[cfg(any(test, feature = "testing"))]
-pub fn sanity_check_compressed_keyset(compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet) {
-    let public_key_actual = {
-        let (_, pk, _) = compressed_keyset.clone().into_raw_parts();
-        let seed = pk
-            .clone()
-            .into_raw_parts()
-            .0
-            .into_raw_parts()
-            .into_raw_parts()
-            .0
-            .compression_seed()
-            .seed;
-        let xof_seed =
-            tfhe::XofSeed::new_u128(seed.0, crate::execution::endpoints::keygen::DSEP_KG);
-        // let xof_seed = tfhe::XofSeed::from_bytes(seed.0.to_le_bytes().to_vec());
-
-        use tfhe::core_crypto::commons::generators::MaskRandomGenerator;
-        use tfhe::core_crypto::prelude::DefaultRandomGenerator;
-        let mut mask_generator = MaskRandomGenerator::<DefaultRandomGenerator>::new(xof_seed);
-        pk.decompress_with_with_pre_seeded_generator(&mut mask_generator)
-    };
-    let (public_key_expected, _server_key) =
-        compressed_keyset.decompress().unwrap().into_raw_parts();
-
-    // sanity check that decompression the public key alone is the same as the public key
-    // we obtain from decompressing the keyset
-    assert_eq!(
-        bc2wrap::serialize(&public_key_actual).unwrap(),
-        bc2wrap::serialize(&public_key_expected).unwrap()
-    );
 }

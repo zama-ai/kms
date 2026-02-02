@@ -50,7 +50,6 @@ async fn write_crs() {
         private_storage: Arc::new(Mutex::new(RamStorage::new())),
         backup_vault: None,
         pk_cache: Arc::new(RwLock::new(HashMap::new())),
-        compressed_pk_cache: Arc::new(RwLock::new(HashMap::new())),
     };
 
     let mut rng = AesRng::seed_from_u64(100);
@@ -138,7 +137,6 @@ async fn read_public_key() {
         None,
         HashMap::new(),
         HashMap::new(),
-        HashMap::new(),
     );
 
     let pub_storage = crypto_storage.inner.public_storage.clone();
@@ -181,7 +179,6 @@ async fn write_central_keys() {
         FailingRamStorage::new(100),
         RamStorage::new(),
         None,
-        HashMap::new(),
         HashMap::new(),
         HashMap::new(),
     );
@@ -485,7 +482,6 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
         None,
         HashMap::new(),
         HashMap::new(),
-        HashMap::new(),
     );
 
     // Try to read a non-existent key - should return an error
@@ -551,7 +547,6 @@ fn setup_threshold_store(
         FailingRamStorage::new(100),
         RamStorage::new(),
         None,
-        HashMap::new(),
         HashMap::new(),
         HashMap::new(),
     );

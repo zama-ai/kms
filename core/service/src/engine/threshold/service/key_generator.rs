@@ -1221,7 +1221,20 @@ impl<
 
                 let threshold_fhe_keys = ThresholdFheKeys {
                     private_keys: Arc::new(private_keys),
-                    public_material: PublicKeyMaterial::new_compressed(compressed_keyset.clone()),
+                    public_material: match PublicKeyMaterial::new_compressed(
+                        compressed_keyset.clone(),
+                    ) {
+                        Ok(x) => x,
+                        Err(e) => {
+                            update_err_req_in_meta_store(
+                                &mut meta_store.write().await,
+                                req_id,
+                                format!("Failed to create compressed keyset: {e}"),
+                                OP_STANDARD_KEYGEN,
+                            );
+                            return;
+                        }
+                    },
                     meta_data: info.clone(),
                 };
 
@@ -1230,7 +1243,7 @@ impl<
                         req_id,
                         epoch_id,
                         threshold_fhe_keys,
-                        compressed_keyset,
+                        &compressed_keyset,
                         info,
                         meta_store,
                     )
@@ -1306,7 +1319,6 @@ mod tests {
                 pub_storage,
                 priv_storage,
                 None,
-                HashMap::new(),
                 HashMap::new(),
                 HashMap::new(),
             );

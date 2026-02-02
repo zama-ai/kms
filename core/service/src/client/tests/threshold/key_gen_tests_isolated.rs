@@ -569,6 +569,7 @@ async fn test_insecure_threshold_decompression_keygen_isolated() -> Result<()> {
         None,
         1,
         Some(material_path),
+        false,
     )
     .await;
 
