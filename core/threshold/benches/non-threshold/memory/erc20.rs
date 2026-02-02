@@ -57,9 +57,9 @@ fn transfer_overflow(
 
     // Need to reborrow as we have mutable references
     // not sure why compiler does not infer this automatically
-    let from_amount: &tfhe::FheUint<tfhe::FheUint64Id> = from_amount;
-    let amount: &tfhe::FheUint<tfhe::FheUint64Id> = amount;
-    let to_amount: &tfhe::FheUint<tfhe::FheUint64Id> = to_amount;
+    let from_amount: &FheUint64 = from_amount;
+    let amount: &FheUint64 = amount;
+    let to_amount: &FheUint64 = to_amount;
     /* SECOND: Compute the new balances */
     let (new_from, did_not_have_enough) = (from_amount).overflowing_sub(amount);
 
