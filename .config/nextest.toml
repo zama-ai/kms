@@ -1,5 +1,19 @@
-[profile.ci.junit]  # this can be some other profile, too
+# Require nextest 0.9.48+ for test-groups support
+[nextest]
+required-version = "0.9.48"
+
+# Docker-based integration tests must run sequentially because they share
+# Docker Compose infrastructure with fixed container names.
+# The #[serial(docker)] attribute only works within a single process,
+# but nextest runs each test in a separate process.
+[test-groups]
+docker-integration = { max-threads = 1 }
+
+[profile.ci.junit]
 path = "junit.xml"
-# These are the default values, specified for clarity.
 store-success-output = true
 store-failure-output = true
+
+[[profile.ci.overrides]]
+filter = "binary(integration_test)"
+test-group = "docker-integration"
