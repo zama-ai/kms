@@ -1,0 +1,784 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: threshold-kms-ci-test-suite-<version>-
+  namespace: kms-ci
+  labels:
+    app: threshold-kms-ci-test-suite
+spec:
+  serviceAccountName: workflow-runner
+  activeDeadlineSeconds: 691200  # 96 hours total timeout
+  ttlStrategy:
+    secondsAfterCompletion: 86400  # Keep for 1 day after completion
+  tolerations:
+  - key: karpenter.sh/nodepool
+    effect: NoSchedule
+    operator: Equal
+    value: kms-pool
+  volumeClaimTemplates:
+  - metadata:
+      name: test-results-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+  volumes:
+  - name: test-results
+    persistentVolumeClaim:
+      claimName: test-results-data
+  - name: slack-webhook-volume
+    secret:
+      secretName: slack-webhook
+
+
+  # Main entry point
+  entrypoint: threshold-kms-ci-test-suite
+  arguments:
+    parameters:
+    - name: tls
+      value: "disabled"
+    - name: run_url
+      value: "Manually triggered"
+
+  templates:
+    # Main DAG workflow
+    - name: threshold-kms-ci-test-suite
+      dag:
+        tasks:
+          ##########################################################################
+          # Preprocessing
+          ##########################################################################
+          - name: preproc-key-gen
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "preproc-key-gen"
+                - name: test-command
+                  value: "preproc-key-gen"
+                - name: fhe-params
+                  value: "Test"
+
+          ##########################################################################
+          # Keygen
+          ##########################################################################
+          - name: key-gen
+            dependencies: ["preproc-key-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "key-gen"
+                - name: test-command
+                  value: "key-gen -i {{tasks.preproc-key-gen.outputs.parameters.request-id}}"
+                - name: fhe-params
+                  value: "Test"
+
+          ##########################################################################
+          # insecure Keygen
+          ##########################################################################
+          - name: insecure-key-gen
+            dependencies: ["key-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "insecure-key-gen"
+                - name: test-command
+                  value: "insecure-key-gen"
+                - name: fhe-params
+                  value: "Default"
+
+          ##########################################################################
+          # real CRS gen
+          ##########################################################################
+          - name: crs-gen
+            dependencies: ["insecure-key-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "crs-gen"
+                - name: test-command
+                  value: "crs-gen --max-num-bits 2048"
+                - name: fhe-params
+                  value: "Default"
+          ##########################################################################
+          # Public decrypt tests
+          ##########################################################################
+          - name: public-decrypt-euint64-req1
+            dependencies: ["crs-gen"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "public-decrypt-euint64-req1"
+                - name: test-command
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
+                - name: fhe-params
+                  value: "Default"
+          ##########################################################################
+          # User decrypt tests
+          ##########################################################################
+          - name: user-decrypt-euint64-req1
+            dependencies: ["public-decrypt-euint64-req1"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "user-decrypt-euint64-req1"
+                - name: test-command
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 1"
+                - name: fhe-params
+                  value: "Default"
+
+          ##########################################################################
+          # Public decrypt tests
+          ##########################################################################
+          - name: public-decrypt-euint64-req10
+            dependencies: ["user-decrypt-euint64-req1"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "public-decrypt-euint64-req10"
+                - name: test-command
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 10"
+                - name: fhe-params
+                  value: "Default"
+
+          ##########################################################################
+          # User decrypt tests
+          ##########################################################################
+          - name: user-decrypt-euint64-req10
+            dependencies: ["public-decrypt-euint64-req10"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "user-decrypt-euint64-req10"
+                - name: test-command
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 10"
+                - name: fhe-params
+                  value: "Default"
+
+          ##########################################################################
+          # Public decrypt tests
+          ##########################################################################
+          - name: public-decrypt-euint64-req100
+            dependencies: ["user-decrypt-euint64-req10"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "public-decrypt-euint64-req100"
+                - name: test-command
+                  value: "public-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 100"
+                - name: fhe-params
+                  value: "Default"
+
+
+          ##########################################################################
+          # User decrypt tests
+          ##########################################################################
+          - name: user-decrypt-euint64-req100
+            dependencies: ["public-decrypt-euint64-req100"]
+            template: run-test
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+                - name: test-name
+                  value: "user-decrypt-euint64-req100"
+                - name: test-command
+                  value: "user-decrypt from-args -d euint64 -k {{tasks.insecure-key-gen.outputs.parameters.request-id}} -e ffffffffffffffff --num-requests 100"
+                - name: fhe-params
+                  value: "Default"
+
+          # Summary report generation
+          - name: generate-summary
+            dependencies: [
+              "preproc-key-gen",                # Preprocessing keygen with FHE_PARAMS = Test
+              "key-gen",                        # Keygen with FHE_PARAMS = Test
+              "insecure-key-gen",               # Insecure keygen with FHE_PARAMS = Default
+              "crs-gen",                        # CRS gen with FHE_PARAMS = Default
+              "public-decrypt-euint64-req1",    # 1 req euint64 Public decrypt tests with FHE_PARAMS = Default
+              "user-decrypt-euint64-req1",      # 1 req euint64 User decrypt tests with FHE_PARAMS = Default
+              "public-decrypt-euint64-req10",   # 10 req euint64 Public decrypt tests with FHE_PARAMS = Default
+              "user-decrypt-euint64-req10",     # 10 req euint64 User decrypt tests with FHE_PARAMS = Default
+              "public-decrypt-euint64-req100",  # 100 req euint64 Public decrypt tests with FHE_PARAMS = Default
+              "user-decrypt-euint64-req100"     # 100 req euint64 User decrypt tests with FHE_PARAMS = Default
+            ]
+            template: summary-report
+            continueOn:
+              failed: true
+            arguments:
+              parameters:
+              - name: test-result-1
+                value: "{{tasks.preproc-key-gen.outputs.parameters.test-result}}"
+              - name: test-result-2
+                value: "{{tasks.key-gen.outputs.parameters.test-result}}"
+              - name: test-result-3
+                value: "{{tasks.insecure-key-gen.outputs.parameters.test-result}}"
+              - name: test-result-4
+                value: "{{tasks.crs-gen.outputs.parameters.test-result}}"
+              - name: test-result-5
+                value: "{{tasks.public-decrypt-euint64-req1.outputs.parameters.test-result}}"
+              - name: test-result-6
+                value: "{{tasks.user-decrypt-euint64-req1.outputs.parameters.test-result}}"
+              - name: test-result-7
+                value: "{{tasks.public-decrypt-euint64-req10.outputs.parameters.test-result}}"
+              - name: test-result-8
+                value: "{{tasks.user-decrypt-euint64-req10.outputs.parameters.test-result}}"
+              - name: test-result-9
+                value: "{{tasks.public-decrypt-euint64-req100.outputs.parameters.test-result}}"
+              - name: test-result-10
+                value: "{{tasks.user-decrypt-euint64-req100.outputs.parameters.test-result}}"
+              - name: tls
+                value: "{{workflow.parameters.tls}}"
+              - name: run_url
+                value: "{{workflow.parameters.run_url}}"
+    # Templates
+    - name: run-test
+      inputs:
+        parameters:
+          - name: test-name
+          - name: test-command
+          - name: fhe-params
+      outputs:
+        parameters:
+        - name: test-result
+          valueFrom:
+            path: /tmp/artifacts/{{inputs.parameters.test-name}}.json
+        - name: request-id
+          valueFrom:
+            path: /tmp/artifacts/request_id.txt
+      metadata:
+        labels:
+          test: "{{inputs.parameters.test-name}}"
+          app: kms-enclave-test-suite
+      script:
+        image: ghcr.io/zama-ai/kms/core-client:<version>
+        command: ["/bin/bash", "-c"]
+        source: |
+          cat <<EOF >>config.toml
+            kms_type = "threshold"
+            num_majority=${NUM_MAJORITY}
+            num_reconstruct=${NUM_RECONSTRUCT}
+            decryption_mode="${DECRYPTION_MODE}"
+            fhe_params="${FHE_PARAMETER:=Test}"
+            [[cores]]
+            party_id=1
+            address="kms-service-threshold-1-kms-ci-core-1:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p1"
+            [[cores]]
+            party_id=2
+            address="kms-service-threshold-2-kms-ci-core-2:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p2"
+            [[cores]]
+            party_id=3
+            address="kms-service-threshold-3-kms-ci-core-3:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p3"
+            [[cores]]
+            party_id=4
+            address="kms-service-threshold-4-kms-ci-core-4:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p4"
+            [[cores]]
+            party_id=5
+            address="kms-service-threshold-5-kms-ci-core-5:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p5"
+            [[cores]]
+            party_id=6
+            address="kms-service-threshold-6-kms-ci-core-6:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p6"
+            [[cores]]
+            party_id=7
+            address="kms-service-threshold-7-kms-ci-core-7:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p7"
+            [[cores]]
+            party_id=8
+            address="kms-service-threshold-8-kms-ci-core-8:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p8"
+            [[cores]]
+            party_id=9
+            address="kms-service-threshold-9-kms-ci-core-9:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p9"
+            [[cores]]
+            party_id=10
+            address="kms-service-threshold-10-kms-ci-core-10:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p10"
+            [[cores]]
+            party_id=11
+            address="kms-service-threshold-11-kms-ci-core-11:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p11"
+            [[cores]]
+            party_id=12
+            address="kms-service-threshold-12-kms-ci-core-12:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p12"
+            [[cores]]
+            party_id=13
+            address="kms-service-threshold-13-kms-ci-core-13:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p13"
+          EOF
+
+          echo "=========================================="
+          echo "Starting test: {{inputs.parameters.test-command}}"
+          echo "=========================================="
+
+          # Run the specific test with timing and capture logs
+          start_time=$(date +%s)
+          ./bin/kms-core-client --logs -f config.toml {{inputs.parameters.test-command}} 2>&1 | tee /tmp/test_logs.txt
+          test_exit=${PIPESTATUS[0]}
+          end_time=$(date +%s)
+          duration=$((end_time - start_time))
+
+          # Parse performance metrics from logs
+          latency_info=""
+          throughput_info=""
+          avg_latency=""
+          median_latency=""
+          min_latency=""
+          max_latency=""
+          throughput=""
+
+          # Extract latency metrics from JSON logs
+          if grep -q "Latency" /tmp/test_logs.txt; then
+            latency_line=$(grep "Latency for" /tmp/test_logs.txt | tail -1)
+            avg_latency=$(echo "$latency_line" | sed -n 's/.*Avg: \([^,]*\).*/\1/p')
+            median_latency=$(echo "$latency_line" | sed -n 's/.*Median: \([^,]*\).*/\1/p')
+            min_latency=$(echo "$latency_line" | sed -n 's/.*Min: \([^,]*\).*/\1/p')
+            max_latency=$(echo "$latency_line" | sed -n 's/.*Max: \([^,}"]*\).*/\1/p')
+            latency_info="Found latency metrics: Avg=$avg_latency, Median=$median_latency, Min=$min_latency, Max=$max_latency"
+          fi
+
+          # Extract throughput metrics
+          if grep -q "Throughput:" /tmp/test_logs.txt; then
+            throughput_line=$(grep "Throughput:" /tmp/test_logs.txt | tail -1)
+            throughput=$(echo "$throughput_line" | sed -n 's/.*Throughput: \([0-9.]*\) requests\/s.*/\1/p')
+            throughput_info="Found throughput: $throughput requests/s"
+          fi
+
+          # Save test results in JSON format for the summary report and request_id
+          mkdir -p /tmp/artifacts
+
+          # Extract request_id from preprocessing logs
+          request_id=""
+          if grep -q '"request_id"' /tmp/test_logs.txt; then
+            request_id=$(grep -o '"request_id": "[^"]*"' /tmp/test_logs.txt | tail -1 | sed 's/"request_id": "\([^"]*\)"/\1/')
+            echo "Found request_id: $request_id"
+            echo "$request_id" > /tmp/artifacts/request_id.txt
+          else
+            echo "No request_id found in logs"
+            echo "" > /tmp/artifacts/request_id.txt
+          fi
+
+          # Report test result
+          echo ""
+          echo "=========================================="
+          if [ $test_exit -eq 0 ]; then
+            echo "✅ Test '{{inputs.parameters.test-name}}' PASSED (took ${duration}s)"
+            # Display performance metrics if found
+            if [ -n "$latency_info" ]; then
+              echo "📊 $latency_info"
+            fi
+            if [ -n "$throughput_info" ]; then
+              echo "🚀 $throughput_info"
+            fi
+          echo "=========================================="
+          else
+            echo "❌ Test '{{inputs.parameters.test-name}}' FAILED with exit code $test_exit (took ${duration}s)"
+          fi
+
+          # Escape any quotes in the test command to prevent JSON syntax errors
+          escaped_command=$(echo "{{inputs.parameters.test-command}}" | sed 's/"/\\"/g')
+
+          # Create JSON using printf to avoid HERE document issues
+          printf '{\n  "test_name": "{{inputs.parameters.test-name}}",\n  "test_command": "%s",\n  "exit_code": %s,\n  "duration": %s,\n  "timestamp": "%s",\n  "request_id": "%s",\n  "fhe_params": "{{inputs.parameters.fhe-params}}",\n  "performance_metrics": {\n    "latency": {\n      "avg": "%s",\n      "median": "%s",\n      "min": "%s",\n      "max": "%s"\n    },\n    "throughput": "%s"\n  }\n}\n' \
+            "$escaped_command" \
+            "$test_exit" \
+            "$duration" \
+            "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            "$request_id" \
+            "$avg_latency" \
+            "$median_latency" \
+            "$min_latency" \
+            "$max_latency" \
+            "$throughput" \
+            > /tmp/artifacts/{{inputs.parameters.test-name}}.json
+
+          # Exit with the test's exit code
+          exit $test_exit
+        env:
+          - name: S3_ENDPOINT
+            valueFrom:
+              configMapKeyRef:
+                name: kms-ci-1
+                key: CORE_CLIENT__S3_ENDPOINT
+          - name: NUM_MAJORITY
+            value: '5'
+          - name: NUM_RECONSTRUCT
+            value: '9'
+          - name: DECRYPTION_MODE
+            value: 'NoiseFloodSmall'
+          - name: FHE_PARAMETER
+            value: '{{inputs.parameters.fhe-params}}'
+        resources:
+          requests:
+            memory: "24Gi"
+            cpu: "4"
+          limits:
+            memory: "24Gi"
+            cpu: "4"
+
+
+    - name: summary-report
+      inputs:
+        parameters:
+        - name: test-result-1
+        - name: test-result-2
+        - name: test-result-3
+        - name: test-result-4
+        - name: test-result-5
+        - name: test-result-6
+        - name: test-result-7
+        - name: test-result-8
+        - name: test-result-9
+        - name: test-result-10
+        - name: tls
+        - name: run_url
+      script:
+        image: alpine:3.16
+        command: ["/bin/sh", "-c"]
+        env:
+        - name: WORKFLOW_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['workflows.argoproj.io/workflow']
+        volumeMounts:
+        - name: slack-webhook-volume
+          mountPath: /etc/slack
+        source: |
+          apk add --no-cache jq
+          # Make a directory for all the results
+          mkdir -p /mnt/results
+          echo '{{inputs.parameters.test-result-1}}' > /mnt/results/preproc-key-gen.json
+          echo '{{inputs.parameters.test-result-2}}' > /mnt/results/key-gen.json
+          echo '{{inputs.parameters.test-result-3}}' > /mnt/results/insecure-key-gen.json
+          echo '{{inputs.parameters.test-result-4}}' > /mnt/results/crs-gen.json
+          echo '{{inputs.parameters.test-result-5}}' > /mnt/results/public-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-6}}' > /mnt/results/user-decrypt-euint64-req1.json
+          echo '{{inputs.parameters.test-result-7}}' > /mnt/results/public-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-8}}' > /mnt/results/user-decrypt-euint64-req10.json
+          echo '{{inputs.parameters.test-result-9}}' > /mnt/results/public-decrypt-euint64-req100.json
+          echo '{{inputs.parameters.test-result-10}}' > /mnt/results/user-decrypt-euint64-req100.json
+          ls -ali /mnt/results/
+
+          echo "=========================================="
+          echo "🔍 KMS WITH ENCLAVE TEST SUITE SUMMARY REPORT"
+          echo "=========================================="
+          echo "Report generated: $(date -u)"
+          echo ""
+
+          # Initialize counters
+          total=0
+          passed=0
+          failed=0
+          total_time=0
+
+          echo "Test Results:"
+          echo "----------------------------------------"
+
+          # Process result files in execution order
+          for result in \
+            /mnt/results/preproc-key-gen.json \
+            /mnt/results/key-gen.json \
+            /mnt/results/insecure-key-gen.json \
+            /mnt/results/crs-gen.json \
+            /mnt/results/public-decrypt-euint64-req1.json \
+            /mnt/results/user-decrypt-euint64-req1.json \
+            /mnt/results/public-decrypt-euint64-req10.json \
+            /mnt/results/user-decrypt-euint64-req10.json \
+            /mnt/results/public-decrypt-euint64-req100.json \
+            /mnt/results/user-decrypt-euint64-req100.json; do
+            if [ -f "$result" ]; then
+              echo "DEBUG: Processing file: $result"
+              cat $result
+              echo ""
+
+              # Try to fix common JSON syntax issues before validation
+              # Fix missing comma after max field in latency object
+              sed -i 's/"max": "\([^"]*\)""/"max": "\1",/g' "$result"
+
+              echo "DEBUG: After fixing, file contents:"
+              cat $result
+              echo ""
+
+              # Check if file is valid JSON before processing
+              if ! jq empty "$result" 2>/dev/null; then
+                echo "⚠️  JSON validation failed, showing jq error:"
+                jq empty "$result"
+                echo "⚠️  Skipping invalid JSON file: $result"
+                continue
+              else
+                echo "✅ JSON is valid"
+              fi
+
+              total=$((total + 1))
+
+              # Extract data from the JSON file with error handling
+              test_name=$(jq -r '.test_name // "unknown"' "$result" 2>/dev/null || echo "unknown")
+              fhe_params=$(jq -r '.fhe_params // "unknown"' "$result" 2>/dev/null || echo "unknown")
+              exit_code=$(jq -r '.exit_code // "1"' "$result" 2>/dev/null || echo "1")
+              duration=$(jq -r '.duration // "0"' "$result" 2>/dev/null || echo "0")
+              command=$(jq -r '.test_command // "unknown"' "$result" 2>/dev/null || echo "unknown")
+              avg_latency=$(jq -r '.performance_metrics.latency.avg // empty' "$result" 2>/dev/null || echo "")
+              throughput=$(jq -r '.performance_metrics.throughput // empty' "$result" 2>/dev/null || echo "")
+
+              # Ensure duration is numeric
+              if ! [[ "$duration" =~ ^[0-9]+$ ]]; then
+                duration=0
+              fi
+              total_time=$((total_time + duration))
+
+              # Format result line
+              if [ "$exit_code" = "0" ]; then
+                passed=$((passed + 1))
+                perf_info=""
+                if [ -n "$avg_latency" ] && [ "$avg_latency" != "null" ] && [ "$avg_latency" != "" ]; then
+                  perf_info=" | Avg Latency: $avg_latency"
+                fi
+                if [ -n "$throughput" ] && [ "$throughput" != "null" ] && [ "$throughput" != "" ]; then
+                  perf_info="$perf_info | Throughput: $throughput req/s"
+                fi
+                echo "✅ PASS: $test_name ($duration sec$perf_info) | FHE Params: $fhe_params"
+              else
+                failed=$((failed + 1))
+                echo "❌ FAIL: $test_name ($duration sec) | FHE Params: $fhe_params"
+              fi
+            fi
+          done
+
+          # Calculate success rate
+          if [ $total -gt 0 ]; then
+            success_rate=$(( (passed * 100) / total ))
+          else
+            success_rate=0
+          fi
+
+          echo "----------------------------------------"
+          echo "Summary Stats:"
+          echo "- Total Tests: $total"
+          echo "- Passed: $passed"
+          echo "- Failed: $failed"
+          echo "- Success Rate: $success_rate%"
+          echo "- Total Execution Time: $total_time seconds"
+          echo "=========================================="
+
+          # Create a summary file in JSON format
+          cat > /mnt/results/summary.json << EOF
+          {
+            "total": $total,
+            "passed": $passed,
+            "failed": $failed,
+            "success_rate": $success_rate,
+            "total_time": $total_time,
+            "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          }
+          EOF
+
+          # Send notification to Slack
+          echo "Sending notification to Slack..."
+
+          # Get the webhook URL from the secret
+          SLACK_WEBHOOK_URL=$(cat /etc/slack/url)
+
+          # Determine emoji based on test results
+          if [ $failed -gt 0 ]; then
+            STATUS_EMOJI=":x:"
+            COLOR="danger"
+            TITLE_EMOJI=":warning:"
+          else
+            STATUS_EMOJI=":white_check_mark:"
+            COLOR="good"
+            TITLE_EMOJI=":clap-cat:"
+          fi
+
+          # Create a formatted message for Slack
+          SLACK_MESSAGE=$(cat << EOF
+          {
+            "attachments": [
+              {
+                "color": "$COLOR",
+                "title": "$TITLE_EMOJI KMS WITH ENCLAVE (Core-Client) Test Suite Results",
+                "fields": [
+                  {
+                    "title": "Environment",
+                    "value": "kms-ci",
+                    "short": true
+                  },
+                  {
+                    "title": "Status",
+                    "value": "$passed passed, $failed failed ($success_rate% success)",
+                    "short": true
+                  },
+                  {
+                    "title": "Total Duration",
+                    "value": "$total_time seconds",
+                    "short": true
+                  },
+                  {
+                    "title": "Run ID",
+                    "value": "$WORKFLOW_NAME",
+                    "short": true
+                  },
+                  {
+                    "title": ":gear: Instance type",
+                    "value": "c7a.16xlarge",
+                    "short": true
+                  },
+                  {
+                    "title": ":package: Versions",
+                    "value": "• kms-core: <version>\n",
+                    "short": false
+                  },
+                  {
+                    "title": ":gear: Config",
+                    "value": "• tokioWorkerThreads: 10\n• rayonNumThreads: 40\n• numSessionsPreproc: 100\n• TLS: {{inputs.parameters.tls}}\n",
+                    "short": false
+                  },
+                  {
+                    "title": "GH Run URL",
+                    "value": "{{inputs.parameters.run_url}}",
+                    "short": false
+                  }
+                ],
+                "text": "\`\`\`\n$(for result in \
+                  /mnt/results/preproc-key-gen.json \
+                  /mnt/results/key-gen.json \
+                  /mnt/results/insecure-key-gen.json \
+                  /mnt/results/crs-gen.json \
+                  /mnt/results/public-decrypt-euint64-req1.json \
+                  /mnt/results/user-decrypt-euint64-req1.json \
+                  /mnt/results/public-decrypt-euint64-req10.json \
+                  /mnt/results/user-decrypt-euint64-req10.json \
+                  /mnt/results/public-decrypt-euint64-req100.json \
+                  /mnt/results/user-decrypt-euint64-req100.json; do
+                  if [ -f "$result" ]; then
+                    test_name=$(jq -r '.test_name' $result)
+                    fhe_params=$(jq -r '.fhe_params' $result)
+                    exit_code=$(jq -r '.exit_code' $result)
+                    duration=$(jq -r '.duration' $result)
+                    avg_latency=$(jq -r '.performance_metrics.latency.avg // empty' $result)
+                    throughput=$(jq -r '.performance_metrics.throughput // empty' $result)
+
+                    if [ "$exit_code" -eq "0" ]; then
+                      perf_info=""
+                      if [ -n "$avg_latency" ] && [ "$avg_latency" != "null" ] && [ "$avg_latency" != "" ]; then
+                        perf_info="| Avg Latency: $avg_latency"
+                      fi
+                      if [ -n "$throughput" ] && [ "$throughput" != "null" ] && [ "$throughput" != "" ]; then
+                        perf_info="$perf_info | Throughput: $throughput req/s"
+                      fi
+                      echo "✅ PASS: $test_name ($duration sec) | FHE Params: $fhe_params"
+                      echo "$perf_info"
+                    else
+                      echo "❌ FAIL: $test_name ($duration sec) | FHE Params: $fhe_params"
+                    fi
+                  fi
+                done)\n\`\`\`"
+              }
+            ]
+          }
+          EOF
+          )
+
+          # Install curl
+          apk add --no-cache curl
+          # Send the notification
+          curl -s -X POST -H "Content-type: application/json" -d "$SLACK_MESSAGE" $SLACK_WEBHOOK_URL
+
+          # Check for low throughput on 100 request tests
+          for result in /mnt/results/public-decrypt-euint64-req100.json /mnt/results/user-decrypt-euint64-req100.json; do
+            if [ -f "$result" ]; then
+              exit_code=$(jq -r '.exit_code // 1' "$result")
+              if [ "$exit_code" -eq 0 ]; then
+                test_name=$(jq -r '.test_name' "$result")
+                throughput=$(jq -r '.performance_metrics.throughput // 0' "$result")
+
+                # Check if throughput is below 80
+                is_low=$(awk -v t="$throughput" 'BEGIN {print (t < 80 ? 1 : 0)}')
+
+                if [ "$is_low" -eq 1 ]; then
+                  echo "⚠️ Low throughput detected for $test_name: $throughput req/s"
+
+                  LOW_TP_MESSAGE=$(cat << EOF
+          {
+            "attachments": [
+              {
+                "color": "danger",
+                "title": ":warning: Low Throughput Alert",
+                "text": "Test *$test_name* has low throughput: *$throughput req/s* (threshold: 80 req/s)",
+                "fields": [
+                  {
+                    "title": "Run ID",
+                    "value": "$WORKFLOW_NAME",
+                    "short": true
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+                  )
+                  curl -s -X POST -H "Content-type: application/json" -d "$LOW_TP_MESSAGE" $SLACK_WEBHOOK_URL
+                fi
+              fi
+            fi
+          done
+
+          echo "=========================================="
+          if [ $failed -gt 0 ]; then
+            echo "📊 Test Suite Summary: $passed passed, $failed failed ($success_rate% success rate)"
+          else
+            echo "✅ Test Suite Summary: All $total tests passed! ($total_time seconds total)"
+          fi
+          echo "=========================================="
+
+          # Always exit with success - summary reporting completed successfully
+          exit 0
+
+  # Credentials for pulling images
+  imagePullSecrets:
+  - name: registry-credentials
