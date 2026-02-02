@@ -25,6 +25,7 @@ use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::execution::small_execution::prss::PRSSPrimitives;
 use crate::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
+use crate::execution::tfhe_internals::private_keysets::LweSecretKeyShareEnum;
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::{
     runtime::test_runtime::DistributedTestRuntime, small_execution::prf::PRSSConversions,
@@ -1276,7 +1277,17 @@ where
         ct_block.ct.get_mask_and_body()
     };
 
-    let key_share64 = sk_share.lwe_compute_secret_key_share.data_as_raw_iter();
+    let key_share64 =
+        if let LweSecretKeyShareEnum::Z64(key) = &sk_share.lwe_compute_secret_key_share {
+            key.data_as_raw_iter()
+        } else {
+            // NOTE: We could turn the key to it's Z64 representation here instead of erroring out
+            // but would be very inefficient to do this for every decrypt.
+            // If we ever use this path in production, we should consider caching the Z64 version of the key share instead.
+            return Err(anyhow_error_and_log(
+                "Expected Z64 secret key share for partial_decrypt64".to_string(),
+            ));
+        };
     let a_time_s = key_share64.zip_eq(mask.as_ref()).fold(
         ResiduePoly::<Z64, EXTENSION_DEGREE>::ZERO,
         |acc, (sk, m)| {
