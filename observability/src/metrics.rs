@@ -1,9 +1,9 @@
 use opentelemetry::metrics::{Counter, Gauge, Histogram};
 use opentelemetry::{global, KeyValue};
+use serde::Serialize;
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-
 /// Type-safe wrapper for metric tags
 #[derive(Debug, Clone)]
 pub struct MetricTag {
@@ -53,6 +53,9 @@ impl<T> TaggedMetric<T> {
 /// Core metrics for tracking KMS operations
 #[derive(Debug, Clone)]
 pub struct CoreMetrics {
+    // Configuration
+    configuration_gauge: TaggedMetric<Gauge<u64>>, // Gauge whose label will contain the configuration info as json
+
     // Counters
     request_counter: TaggedMetric<Counter<u64>>,
     error_counter: TaggedMetric<Counter<u64>>,
@@ -79,8 +82,11 @@ pub struct CoreMetrics {
     meta_storage_user_dec_gauge: TaggedMetric<Gauge<u64>>, // Number of ongoing user decryptions in meta storage
     meta_storage_pub_dec_total_gauge: TaggedMetric<Gauge<u64>>, // Total number of public decryptions in meta storage
     meta_storage_user_dec_total_gauge: TaggedMetric<Gauge<u64>>, // Total number of user decryptions in meta storage
-    process_cpu_usage_gauge: TaggedMetric<Gauge<f64>>,           // CPU load for the current process
-    process_memory_gauge: TaggedMetric<Gauge<u64>>, // Memory usage for the current process
+    // System metrics
+    total_cpus_gauge: TaggedMetric<Gauge<u64>>, // Total number of CPUs
+    process_cpu_usage_gauge: TaggedMetric<Gauge<f64>>, // CPU load for the current process in percentage
+    total_memory_gauge: TaggedMetric<Gauge<u64>>,      // Total memory available
+    process_memory_gauge: TaggedMetric<Gauge<u64>>,    // Memory usage for the current process
     // Trace guard for file-based logging
     trace_guard: Arc<Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>>,
 }
@@ -106,6 +112,8 @@ impl CoreMetrics {
             .with_unit("version")
             .build()
             .record(1, &[KeyValue::new("version", env!("CARGO_PKG_VERSION"))]);
+        // Config
+        let config_metric: Cow<'static, str> = format!("{}_config", config.prefix).into();
 
         // Store metric names as static strings
         let operations: Cow<'static, str> = format!("{}_operations", config.prefix).into();
@@ -141,11 +149,22 @@ impl CoreMetrics {
             format!("{}_meta_storage_user_decryptions_in_store", config.prefix).into();
         let meta_store_pub_total_metric: Cow<'static, str> =
             format!("{}_meta_storage_pub_decryptions_in_store", config.prefix).into();
+        let total_cpus_metric: Cow<'static, str> = format!("{}_total_cpus", config.prefix).into();
         let process_cpu_usage_metric: Cow<'static, str> =
             format!("{}_process_cpu_usage", config.prefix).into();
+        let total_memory_metric: Cow<'static, str> =
+            format!("{}_total_memory", config.prefix).into();
         let process_memory_metric: Cow<'static, str> =
             format!("{}_process_memory_usage", config.prefix).into();
         let gauge: Cow<'static, str> = format!("{}_gauge", config.prefix).into();
+
+        let config_metric = meter
+            .u64_gauge(config_metric)
+            .with_description("KMS configuration information")
+            .with_unit("config")
+            .build();
+        // Set a placeholder
+        config_metric.record(0, &[]);
 
         let request_counter = meter
             .u64_counter(operations)
@@ -299,6 +318,14 @@ impl CoreMetrics {
         //Record 0 just to make sure the gauge is exported
         meta_storage_pub_dec_total_gauge.record(0, &[]);
 
+        let total_cpus_gauge = meter
+            .u64_gauge(total_cpus_metric)
+            .with_description("Amount of CPU cores available to the system")
+            .with_unit("CPU cores")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        total_cpus_gauge.record(0, &[]);
+
         let process_cpu_usage_gauge = meter
             .f64_gauge(process_cpu_usage_metric)
             .with_description("CPU usage for the current process")
@@ -306,6 +333,14 @@ impl CoreMetrics {
             .build();
         //Record 0 just to make sure the gauge is exported
         process_cpu_usage_gauge.record(0.0, &[]);
+
+        let total_memory_gauge = meter
+            .u64_gauge(total_memory_metric)
+            .with_description("Amount of available memory in the system")
+            .with_unit("bytes")
+            .build();
+        //Record 0 just to make sure the gauge is exported
+        total_memory_gauge.record(0, &[]);
 
         let process_memory_gauge = meter
             .u64_gauge(process_memory_metric)
@@ -324,6 +359,7 @@ impl CoreMetrics {
         gauge.record(0, &[]);
 
         Self {
+            configuration_gauge: TaggedMetric::new(config_metric),
             request_counter: TaggedMetric::new(request_counter),
             error_counter: TaggedMetric::new(error_counter),
             network_rx_counter: TaggedMetric::new(network_rx_counter),
@@ -343,6 +379,8 @@ impl CoreMetrics {
             meta_storage_user_dec_gauge: TaggedMetric::new(meta_storage_user_dec_gauge),
             meta_storage_pub_dec_total_gauge: TaggedMetric::new(meta_storage_pub_dec_total_gauge),
             meta_storage_user_dec_total_gauge: TaggedMetric::new(meta_storage_user_dec_total_gauge),
+            total_cpus_gauge: TaggedMetric::new(total_cpus_gauge),
+            total_memory_gauge: TaggedMetric::new(total_memory_gauge),
             process_cpu_usage_gauge: TaggedMetric::new(process_cpu_usage_gauge),
             process_memory_gauge: TaggedMetric::new(process_memory_gauge),
             gauge: TaggedMetric::new(gauge),
@@ -387,6 +425,22 @@ impl CoreMetrics {
         self.network_tx_counter
             .metric
             .add(bytes, &self.network_tx_counter.with_tags(&[]));
+    }
+
+    pub fn record_config_file<T: Serialize + std::fmt::Debug>(
+        &self,
+        config: &T,
+    ) -> anyhow::Result<()> {
+        // Note that json is NOT deterministic and canonical by default.
+        // We could import the serde_json_canonicalizer crate to ensure this if needed,
+        // however, since we know all the KMS use the same software version with pinned we expect the
+        // same serialization output for the same config.
+        let config_json = serde_json::to_string(config)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize configuration: {:?}", e))?;
+        self.configuration_gauge
+            .metric
+            .record(1, &[KeyValue::new("config", config_json)]);
+        Ok(())
     }
 
     // Histogram methods
@@ -444,11 +498,25 @@ impl CoreMetrics {
         }
     }
 
+    /// Record the amount of CPU cores
+    pub fn record_total_cpus(&self, amount: u64) {
+        self.total_cpus_gauge
+            .metric
+            .record(amount, &self.total_cpus_gauge.with_tags(&[]));
+    }
+
     /// Record the current CPU load into the gauge
     pub fn record_cpu_load(&self, load: f64) {
         self.cpu_load_gauge
             .metric
             .record(load, &self.cpu_load_gauge.with_tags(&[]));
+    }
+
+    /// Record the total memory on the system
+    pub fn record_total_memory(&self, memory: u64) {
+        self.total_memory_gauge
+            .metric
+            .record(memory, &self.total_memory_gauge.with_tags(&[]));
     }
 
     /// Record the current memory usage into the gauge

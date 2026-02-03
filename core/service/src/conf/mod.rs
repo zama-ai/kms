@@ -3,6 +3,7 @@ use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
 use observability::{
     conf::{Settings, TelemetryConfig},
+    metrics::METRICS,
     telemetry::{init_telemetry, SdkMeterProvider, SdkTracerProvider},
 };
 use serde::{Deserialize, Serialize};
@@ -194,19 +195,27 @@ pub enum AwsKmsKeySpec {
 }
 
 /// Initialize the configuration from the given file.
-pub fn init_conf<'a, T: Deserialize<'a> + std::fmt::Debug>(config_file: &str) -> anyhow::Result<T> {
-    Settings::builder()
+pub fn init_conf<'a, T: Serialize + Deserialize<'a> + std::fmt::Debug>(
+    config_file: &str,
+) -> anyhow::Result<T> {
+    match Settings::builder()
         .path(config_file)
         .env_prefix("KMS_CORE")
         .build()
         .init_conf()
-        .map_err(|e| e.into())
+    {
+        Ok(config) => {
+            METRICS.record_config_file(&config)?;
+            Ok(config)
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Initialize and validate the configuration from the given file and initialize tracing.
 pub async fn init_conf_kms_core_telemetry<
     'a,
-    T: Deserialize<'a> + std::fmt::Debug + ConfigTracing + Validate,
+    T: Serialize + Deserialize<'a> + std::fmt::Debug + ConfigTracing + Validate,
 >(
     config_file: &str,
 ) -> anyhow::Result<(T, SdkTracerProvider, SdkMeterProvider)> {

@@ -1,6 +1,9 @@
 use crate::metrics::METRICS;
 use std::{ffi::OsStr, fs, time::Duration};
-use sysinfo::{CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind, RefreshKind, System};
+use sysinfo::{
+    CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System,
+    MINIMUM_CPU_UPDATE_INTERVAL,
+};
 
 pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Result<()> {
     // Only fail for info we'll actually poll later on
@@ -11,8 +14,11 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
     let mut system = sysinfo::System::new_with_specifics(specifics);
 
     let num_cpus = system.cpus().len();
-
     let total_ram = system.total_memory();
+    // Set this info once and for all
+    METRICS.record_total_cpus(num_cpus as u64);
+    METRICS.record_total_memory(total_ram);
+
     let free_ram = system.free_memory();
     tracing::info!("Starting system metrics collection...\n Running on {} CPUs. Total memory: {} bytes, Free memory: {} bytes.",
         num_cpus, total_ram, free_ram);
@@ -36,6 +42,13 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
 
             // Update process-specific metrics
             if let Ok(pid) = sysinfo::get_current_pid() {
+                // Refresh CPU usage to be able to get accurate reading
+                system.refresh_processes_specifics(
+                    ProcessesToUpdate::Some(&[pid]),
+                    true,
+                    ProcessRefreshKind::nothing().with_cpu(),
+                );
+                tokio::time::sleep(MINIMUM_CPU_UPDATE_INTERVAL).await;
                 if let Some(process) = system.process(pid) {
                     METRICS.record_process_memory_usage(process.memory());
                     // CPU usage is a percentage (0.0 to 100.0) per core
