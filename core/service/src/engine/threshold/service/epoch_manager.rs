@@ -925,7 +925,6 @@ impl<
                     request_id
                 );
                 Ok(Response::new(EpochResultResponse {
-                    epoch_id: Some(request_id.into()),
                     key_id: None,
                     preprocessing_id: None,
                     key_digests: vec![],
@@ -953,7 +952,6 @@ impl<
                         .collect::<Vec<_>>();
 
                     Ok(Response::new(EpochResultResponse {
-                        epoch_id: Some(request_id.into()),
                         key_id: Some(res.key_id.into()),
                         preprocessing_id: Some(res.preprocessing_id.into()),
                         key_digests,
@@ -1221,7 +1219,6 @@ pub(crate) mod tests {
             .await
             .unwrap()
             .into_inner();
-        assert_eq!(result.epoch_id.unwrap(), epoch_id.into());
     }
 
     #[tokio::test]

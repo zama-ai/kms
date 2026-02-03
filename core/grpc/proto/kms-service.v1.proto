@@ -309,7 +309,7 @@ service CoreServiceEndpoint {
   // * The [`RequestId`] that corresponds to the `epoch_id` of the context we want to check up on.
   //
   // # Returns
-  // * If a resharing happened (i.e. `previous_epoch` was set in the `NewMpcEpoch` request) during the epoch creation, this returns the exact same struct as a GetKeyGenResult request.
+  // * If a resharing happened (i.e. `previous_epoch` was set in the `NewMpcEpoch` request) during the epoch creation, this returns the same struct as a GetKeyGenResult request except we exclude the `request_id`.
   // # Conditions
   rpc GetEpochResult(kms.v1.RequestId) returns (kms.v1.EpochResultResponse);
 
