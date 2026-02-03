@@ -76,11 +76,24 @@ setup_aws_context() {
         if [[ "${CLEANUP}" == "true" ]]; then
              log_info "Destroying namespace ${NAMESPACE}..."
              kubectl delete namespace "${NAMESPACE}" --wait=true
+
+             # Wait for namespace to be fully deleted
+             log_info "Waiting for namespace deletion to complete..."
+             while kubectl get namespace "${NAMESPACE}" > /dev/null 2>&1; do
+                 sleep 2
+             done
+
+             log_info "Creating fresh namespace ${NAMESPACE}..."
              kubectl create namespace "${NAMESPACE}"
+
+             # Wait for namespace to be fully active
+             kubectl wait --for=condition=Active namespace/"${NAMESPACE}" --timeout=60s
         else
             log_info "Namespace ${NAMESPACE} exists."
         fi
     else
+        log_info "Creating namespace ${NAMESPACE}..."
         kubectl create namespace "${NAMESPACE}"
+        kubectl wait --for=condition=Active namespace/"${NAMESPACE}" --timeout=60s
     fi
 }

@@ -305,6 +305,21 @@ EOF
         registry_values_path="${REPO_ROOT}/ci/perf-testing/registry-credential/values-kms-ci.yaml"
     fi
 
+    # Check if sync-secrets release exists (even in failed state)
+    if helm list -n "${NAMESPACE}" -a | grep -q "^sync-secrets"; then
+        log_info "Found existing sync-secrets release, uninstalling first..."
+        helm uninstall sync-secrets -n "${NAMESPACE}" --wait || true
+        sleep 3  # Give Kubernetes time to clean up resources
+    fi
+
+    # Also check for orphaned Helm secrets (release metadata)
+    if kubectl get secret -n "${NAMESPACE}" -l owner=helm,name=sync-secrets 2>/dev/null | grep -q "sync-secrets"; then
+        log_info "Found orphaned sync-secrets Helm metadata, cleaning up..."
+        kubectl delete secret -n "${NAMESPACE}" -l owner=helm,name=sync-secrets || true
+        sleep 2
+    fi
+
+    log_info "Installing sync-secrets Helm chart..."
     helm upgrade --install sync-secrets \
         oci://ghcr.io/zama-zws/helm-charts/sync-secrets \
         --namespace "${NAMESPACE}" \
