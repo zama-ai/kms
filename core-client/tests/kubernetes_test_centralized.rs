@@ -66,7 +66,7 @@ async fn crs_gen(test_path: &Path) -> String {
 }
 
 #[tokio::test]
-async fn test_centralzd_insecure() {
+async fn test_centralized_insecure() {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -75,7 +75,7 @@ async fn test_centralzd_insecure() {
 }
 
 #[tokio::test]
-async fn full_gen_tests_default_centralzd_sequential_crs() {
+async fn full_gen_tests_default_centralized_sequential_crs() {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
