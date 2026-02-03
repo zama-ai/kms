@@ -303,6 +303,8 @@ jobs:
       # DEPLOYMENT
       # ======================================================================
       - name: Deploy KMS using unified script
+        env:
+          JQ_VERSION: 1.8.1
         run: |
           # Download JQ.
           wget https://github.com/jqlang/jq/releases/download/jq-"${JQ_VERSION}"/jq-linux-amd64 -P /tmp
