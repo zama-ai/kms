@@ -40,46 +40,7 @@ kmsCore:
     cleanupIntervalSecs: 2
     tokioWorkerThreads: 10
     rayonNumThreads: 40
-    peersList:
-      - id: 1
-        host: kms-service-threshold-1-kms-ci-core-1
-        port: 50001
-      - id: 2
-        host: kms-service-threshold-2-kms-ci-core-2
-        port: 50001
-      - id: 3
-        host: kms-service-threshold-3-kms-ci-core-3
-        port: 50001
-      - id: 4
-        host: kms-service-threshold-4-kms-ci-core-4
-        port: 50001
-      - id: 5
-        host: kms-service-threshold-5-kms-ci-core-5
-        port: 50001
-      - id: 6
-        host: kms-service-threshold-6-kms-ci-core-6
-        port: 50001
-      - id: 7
-        host: kms-service-threshold-7-kms-ci-core-7
-        port: 50001
-      - id: 8
-        host: kms-service-threshold-8-kms-ci-core-8
-        port: 50001
-      - id: 9
-        host: kms-service-threshold-9-kms-ci-core-9
-        port: 50001
-      - id: 10
-        host: kms-service-threshold-10-kms-ci-core-10
-        port: 50001
-      - id: 11
-        host: kms-service-threshold-11-kms-ci-core-11
-        port: 50001
-      - id: 12
-        host: kms-service-threshold-12-kms-ci-core-12
-        port: 50001
-      - id: 13
-        host: kms-service-threshold-13-kms-ci-core-13
-        port: 50001
+    peersList: []
   aws:
     region: eu-west-1
   publicVault:

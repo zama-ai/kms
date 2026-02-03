@@ -194,8 +194,8 @@ deploy_threshold_mode() {
         if [[ "${is_performance_testing}" == "true" ]]; then
             HELM_ARGS+=(
                 --values "${performance_values_dir}/values-${PATH_SUFFIX}.yaml"
-                --set kmsCore.serviceAccountName="${NAMESPACE}-${i}"
-                --set kmsCore.envFrom.configmap.name="${NAMESPACE}-${i}"
+                --set kmsCore.serviceAccountName="${PATH_SUFFIX}-${i}"
+                --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-${i}"
                 --set kmsCore.image.tag="${KMS_CORE_TAG}"
             )
             # Add TLS/PCR settings for enclave deployments
@@ -331,6 +331,8 @@ deploy_centralized_mode() {
     if [[ "${is_performance_testing}" == "true" ]]; then
         HELM_ARGS+=(
             --values "${performance_values_dir}/values-${PATH_SUFFIX}.yaml"
+            --set kmsCore.serviceAccountName="${PATH_SUFFIX}-1"
+            --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-1"
             --set kmsCore.image.tag="${KMS_CORE_TAG}"
         )
     fi
@@ -679,7 +681,7 @@ generate_tls_certs() {
 #=============================================================================
 upload_tls_certs_to_localstack() {
     local CERTS_DIR="${REPO_ROOT}/ci/kube-testing/certs"
-    
+
     # Wait for localstack to be ready
     log_info "Waiting for localstack to be ready..."
     kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=localstack \
@@ -763,13 +765,13 @@ upload_tls_certs_to_localstack() {
 #=============================================================================
 upload_tls_certs_to_aws_s3() {
     local CERTS_DIR="${REPO_ROOT}/ci/kube-testing/certs"
-    
+
     # Check if AWS CLI is available
     if ! command -v aws &> /dev/null; then
         log_error "AWS CLI not found. Please install it to upload certificates to S3."
         return 1
     fi
-    
+
     log_info "Uploading certificates and keys to AWS S3..."
 
     # Upload certificates and private keys to S3 for each party
@@ -777,22 +779,22 @@ upload_tls_certs_to_aws_s3() {
         local PARTY_NAME="$(get_party_pod_name "${i}")"
         local CERT_FILE="${CERTS_DIR}/cert_${PARTY_NAME}.pem"
         local KEY_FILE="${CERTS_DIR}/key_${PARTY_NAME}.pem"
-        
+
         # Get the bucket name from the configmap for this party
         local CONFIGMAP_NAME="${NAMESPACE}-${i}"
         log_info "Reading S3 bucket name from configmap: ${CONFIGMAP_NAME}"
-        
+
         local PUBLIC_BUCKET
         PUBLIC_BUCKET=$(kubectl get configmap "${CONFIGMAP_NAME}" -n "${NAMESPACE}" \
             -o jsonpath='{.data.KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}' 2>/dev/null || echo "")
-        
+
         if [[ -z "${PUBLIC_BUCKET}" ]]; then
             log_error "Failed to get public bucket name from configmap ${CONFIGMAP_NAME}"
             log_info "Available configmaps in namespace:"
             kubectl get configmap -n "${NAMESPACE}" || true
             continue
         fi
-        
+
         log_info "Using S3 bucket for party ${i}: ${PUBLIC_BUCKET}"
 
         # Upload certificate
@@ -826,7 +828,7 @@ upload_tls_certs_to_aws_s3() {
         local PUBLIC_BUCKET
         PUBLIC_BUCKET=$(kubectl get configmap "${CONFIGMAP_NAME}" -n "${NAMESPACE}" \
             -o jsonpath='{.data.KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}' 2>/dev/null || echo "")
-        
+
         if [[ -n "${PUBLIC_BUCKET}" ]]; then
             log_info "Uploading combined certificate to s3://${PUBLIC_BUCKET}/certs/cert_combined.pem"
             if aws s3 cp "${CERTS_DIR}/cert_combined.pem" "s3://${PUBLIC_BUCKET}/certs/cert_combined.pem"; then
@@ -847,7 +849,7 @@ upload_tls_certs_to_aws_s3() {
 generate_and_upload_tls_certs() {
     # Step 1: Generate certificates (common for all targets)
     generate_tls_certs
-    
+
     # Step 2: Upload to appropriate storage based on target
     if [[ "${TARGET}" == *"kind"* ]]; then
         upload_tls_certs_to_localstack
