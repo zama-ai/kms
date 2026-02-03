@@ -199,6 +199,7 @@ jobs:
             echo "TLS=${TLS}"
             echo "FHE_PARAMS=${FHE_PARAMS}"
             echo "KMS_BRANCH=${KMS_BRANCH}"
+            echo "NAMESPACE=${NAMESPACE}"
             echo "KMS_CHART_VERSION=${KMS_CHART_VERSION}"
             echo "TKMS_INFRA_CHART_VERSION=${TKMS_INFRA_CHART_VERSION}"
             echo "SYNC_SECRETS_CHART_VERSION=${SYNC_SECRETS_CHART_VERSION}"
