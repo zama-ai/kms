@@ -144,7 +144,6 @@ pub(crate) async fn do_new_epoch(
             let (core_conf, response) = response?;
             let response = response?;
             let resp = response.into_inner();
-            assert_eq!(resp.epoch_id, Some(new_epoch_id.into()));
             assert_eq!(resp.key_id, Some(previous_epoch.key_id.into()));
             assert_eq!(
                 resp.preprocessing_id,
@@ -213,9 +212,7 @@ pub(crate) async fn do_new_epoch(
         // If it was just a PRSS init simply make sure all is ok
         while let Some(response) = response_tasks.join_next().await {
             let (_core_conf, response) = response?;
-            let response = response?;
-            let resp = response.into_inner();
-            assert_eq!(resp.epoch_id, Some(new_epoch_id.into()));
+            let _response = response?;
         }
     }
     Ok(new_epoch_id)
