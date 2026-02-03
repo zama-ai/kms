@@ -47,15 +47,15 @@ helm_upgrade_with_version() {
 deploy_kms() {
     log_info "Deploying KMS Core..."
 
-    # Set Helm release prefix (can be overridden via environment variable)
-    export HELM_RELEASE_PREFIX="${HELM_RELEASE_PREFIX:-kms-core}"
-
     # Determine if this is a performance testing deployment
     local is_performance_testing=false
     if [[ "${TARGET}" == "aws-perf" ]]; then
         is_performance_testing=true
         set_path_suffix
     fi
+
+    # Set Helm release prefix (can be overridden via environment variable)
+    export HELM_RELEASE_PREFIX="${HELM_RELEASE_PREFIX:-kms-core}"
 
     #=========================================================================
     # STEP 1: Determine base values file
@@ -104,7 +104,11 @@ deploy_kms() {
     # For threshold deployments (with or without enclave), enable TLS by default
     # TLS can be explicitly disabled with --disable-tls if needed
     # For centralized deployments, TLS is disabled by default
-    if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
+    # Also respect TLS env var from GitHub workflow (for backward compatibility)
+    if [[ -n "${TLS:-}" ]]; then
+        export ENABLE_TLS="${TLS}"
+        log_info "TLS for ${DEPLOYMENT_TYPE} mode: ${ENABLE_TLS} (from TLS env var)"
+    elif [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
         export ENABLE_TLS="${ENABLE_TLS:-true}"
         log_info "TLS for ${DEPLOYMENT_TYPE} mode: ${ENABLE_TLS} (default: enabled)"
     else
@@ -207,6 +211,7 @@ deploy_threshold_mode() {
 
         # Performance testing specific overrides
         if [[ "${is_performance_testing}" == "true" ]]; then
+            log_info "Performance testing mode - ENABLE_TLS=${ENABLE_TLS}, DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
             HELM_ARGS+=(
                 --values "${performance_values_dir}/values-${PATH_SUFFIX}.yaml"
                 --set kmsCore.serviceAccountName="${PATH_SUFFIX}-${i}"
@@ -215,8 +220,10 @@ deploy_threshold_mode() {
             )
             # Add TLS/PCR settings for threshold deployments with TLS enabled
             if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* && "${ENABLE_TLS}" == "true" ]]; then
+                log_info "Adding TLS and kmsGenCertAndKeys settings for party ${i}"
                 HELM_ARGS+=(
                     --set kmsCore.thresholdMode.tls.enabled=true
+                    --set kmsGenCertAndKeys.enabled=true
                 )
                 # For enclave deployments, also set PCR values for attestation
                 if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
@@ -226,6 +233,8 @@ deploy_threshold_mode() {
                         --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2:-}"
                     )
                 fi
+            else
+                log_info "TLS condition not met - DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}, ENABLE_TLS=${ENABLE_TLS}"
             fi
         fi
 
@@ -564,11 +573,13 @@ kmsCore:
 EOF
 
     # Generate peer entry for each party
-    # Service naming: kms-core-${i}-core-${i} (based on Helm release name)
+    # Service naming: ${RELEASE_NAME}-core-${i} (based on Helm release name)
     for i in $(seq 1 "${NUM_PARTIES}"); do
+        local pod_name="$(get_party_pod_name "${i}")"
+
         cat <<EOF >> "${output_file}"
       - id: ${i}
-        host: kms-core-${i}-core-${i}
+        host: ${pod_name}
         port: 50001
 EOF
     done
