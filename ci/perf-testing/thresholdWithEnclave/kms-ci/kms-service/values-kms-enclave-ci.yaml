@@ -148,8 +148,7 @@ kmsInit:
   enabled: false
 kmsGenKeys:
   enabled: false
-kmsGenCertAndKeys:
-  enabled: false
+# kmsGenCertAndKeys.enabled is set dynamically by deploy.sh based on TLS and target
 kmsCoreClientTesting:
   enabled: false
   # schedule: "5 * * * *"

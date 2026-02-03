@@ -213,14 +213,19 @@ deploy_threshold_mode() {
                 --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-${i}"
                 --set kmsCore.image.tag="${KMS_CORE_TAG}"
             )
-            # Add TLS/PCR settings for enclave deployments
-            if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            # Add TLS/PCR settings for threshold deployments with TLS enabled
+            if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* && "${ENABLE_TLS}" == "true" ]]; then
                 HELM_ARGS+=(
-                    --set kmsCore.thresholdMode.tls.enabled="${TLS}"
-                    --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0:-}"
-                    --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1:-}"
-                    --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2:-}"
+                    --set kmsCore.thresholdMode.tls.enabled=true
                 )
+                # For enclave deployments, also set PCR values for attestation
+                if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+                    HELM_ARGS+=(
+                        --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0:-}"
+                        --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1:-}"
+                        --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2:-}"
+                    )
+                fi
             fi
         fi
 

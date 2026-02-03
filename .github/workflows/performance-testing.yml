@@ -304,6 +304,11 @@ jobs:
       # ======================================================================
       - name: Deploy KMS using unified script
         run: |
+          # Install JQ.
+          sudo mv /tmp/jq-linux-amd64 /usr/local/bin/jq
+          sudo chmod +x /usr/local/bin/jq
+          echo "JQ version: $(jq --version)"
+
           chmod +x ci/scripts/deploy.sh
           ./ci/scripts/deploy.sh \
             --target aws-perf \
