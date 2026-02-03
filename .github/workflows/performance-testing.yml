@@ -313,7 +313,8 @@ jobs:
             --client-tag "${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --num-parties 13 \
             --kms-chart-version "${KMS_CHART_VERSION}" \
-            --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}"
+            --tkms-infra-version "${TKMS_INFRA_CHART_VERSION}" \
+            --cleanup
 
       # ======================================================================
       # PERFORMANCE TESTING
