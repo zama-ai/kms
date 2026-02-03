@@ -15,8 +15,11 @@ kmsCore:
   image:
     name: ghcr.io/zama-ai/kms/core-service-enclave
     tag: <version>
+  # serviceAccountName is set dynamically by deploy.sh via --set
   envFrom:
     configmap:
+      # name is set dynamically by deploy.sh via --set
+      # Note: The key mappings below define which configmap keys to use for each env var
       key:
         coreClientS3Endpoint: CORE_CLIENT__S3_ENDPOINT
         privateVaultStorageBucket: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET

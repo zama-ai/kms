@@ -137,7 +137,7 @@ jobs:
   ############################################################################
   performance-testing:
     needs: [docker-build, start-amd64-runner]
-    if: always() && needs.start-amd64-runner.result == 'success'
+    if: always() && needs.start-amd64-runner.result == 'success' && !cancelled()
     name: performance-testing
     runs-on: ${{ needs.start-amd64-runner.outputs.label }}
     timeout-minutes: 1800
@@ -350,6 +350,9 @@ jobs:
           echo "Updating workflow template with image tag: ${KMS_CORE_IMAGE_TAG}"
           sed -i "s/<version>/${KMS_CORE_IMAGE_TAG}/g" \
             ./ci/perf-testing/argo-workflow/"${DEPLOYMENT_TYPE}"-test-suite-workflow-"${PATH_SUFFIX}".yaml
+
+          # Setup argocd rbac
+          kubectl apply -f ./ci/perf-testing/argo-workflow/rbac-runner-sa-kms-ci.yaml -n "${NAMESPACE}"
 
           echo "Submitting Argo workflow..."
           argo submit -n argo \

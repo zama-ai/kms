@@ -105,6 +105,7 @@ deploy_kms() {
     # TLS can be explicitly disabled with --disable-tls if needed
     # For centralized deployments, TLS is disabled by default
     # Also respect TLS env var from GitHub workflow (for backward compatibility)
+    log_info "DEBUG: TLS env var='${TLS:-<unset>}', ENABLE_TLS='${ENABLE_TLS:-<unset>}', DEPLOYMENT_TYPE='${DEPLOYMENT_TYPE}'"
     if [[ -n "${TLS:-}" ]]; then
         export ENABLE_TLS="${TLS}"
         log_info "TLS for ${DEPLOYMENT_TYPE} mode: ${ENABLE_TLS} (from TLS env var)"
@@ -115,6 +116,7 @@ deploy_kms() {
         export ENABLE_TLS="${ENABLE_TLS:-false}"
         log_info "TLS for ${DEPLOYMENT_TYPE} mode: ${ENABLE_TLS} (default: disabled)"
     fi
+    log_info "DEBUG: Final ENABLE_TLS='${ENABLE_TLS}' (checking if == 'true': $([[ '${ENABLE_TLS}' == 'true' ]] && echo YES || echo NO))"
 
     #=========================================================================
     # STEP 4: Generate Peers Configuration
@@ -225,13 +227,20 @@ deploy_threshold_mode() {
                     --set kmsCore.thresholdMode.tls.enabled=true
                     --set kmsGenCertAndKeys.enabled=true
                 )
-                # For enclave deployments, also set PCR values for attestation
+                # For enclave deployments, also set PCR values for attestation (if available)
                 if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-                    HELM_ARGS+=(
-                        --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0:-}"
-                        --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1:-}"
-                        --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2:-}"
-                    )
+                    # Only override PCR values if they're explicitly set (non-empty)
+                    # Otherwise let the values file's hardcoded PCRs be used
+                    if [[ -n "${PCR0:-}" && -n "${PCR1:-}" && -n "${PCR2:-}" ]]; then
+                        log_info "Using PCR values from environment/image: PCR0=${PCR0:0:16}..."
+                        HELM_ARGS+=(
+                            --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}"
+                            --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}"
+                            --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}"
+                        )
+                    else
+                        log_info "PCR values not set - using hardcoded values from values file"
+                    fi
                 fi
             else
                 log_info "TLS condition not met - DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}, ENABLE_TLS=${ENABLE_TLS}"
