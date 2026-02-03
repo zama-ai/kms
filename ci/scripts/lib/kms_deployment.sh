@@ -178,6 +178,14 @@ deploy_threshold_mode() {
 
         local HELM_ARGS=(
             --namespace "${NAMESPACE}"
+        )
+
+        # Add BASE_VALUES if it should be used
+        if [[ "${USE_BASE_VALUES}" == "true" ]]; then
+            HELM_ARGS+=(--values "${BASE_VALUES}")
+        fi
+
+        HELM_ARGS+=(
             --values "${PEERS_VALUES}"
             --values "${OVERRIDE_VALUES}"
             --set kmsPeers.id="${i}"
@@ -187,11 +195,6 @@ deploy_threshold_mode() {
             --set kmsCore.backupVault.s3.prefix="BACKUP-p${i}"
             --set kmsCore.thresholdMode.thresholdValue="${threshold_value}"
         )
-
-        # Add BASE_VALUES if it should be used
-        if [[ "${USE_BASE_VALUES}" == "true" ]]; then
-            HELM_ARGS=(--namespace "${NAMESPACE}" --values "${BASE_VALUES}" "${HELM_ARGS[@]:1}")
-        fi
 
         # Enable TLS Helm flag for non-enclave deployments when TLS is enabled
         # Enclave deployments handle TLS separately (see performance testing overrides below)
@@ -332,17 +335,20 @@ deploy_centralized_mode() {
 
     local HELM_ARGS=(
         --namespace "${NAMESPACE}"
+    )
+
+    # Add BASE_VALUES if it should be used
+    if [[ "${USE_BASE_VALUES}" == "true" ]]; then
+        HELM_ARGS+=(--values "${BASE_VALUES}")
+    fi
+
+    HELM_ARGS+=(
         --values "${OVERRIDE_VALUES}"
         --set kmsPeers.id="1"
         --set kmsCore.thresholdMode.enabled=false
         --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}"
         --set kmsCoreClient.nameOverride="kms-core-client"
     )
-
-    # Add BASE_VALUES if it should be used
-    if [[ "${USE_BASE_VALUES}" == "true" ]]; then
-        HELM_ARGS=(--namespace "${NAMESPACE}" --values "${BASE_VALUES}" "${HELM_ARGS[@]:1}")
-    fi
 
     # Performance testing specific overrides
     if [[ "${is_performance_testing}" == "true" ]]; then
