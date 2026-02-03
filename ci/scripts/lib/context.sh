@@ -79,21 +79,47 @@ setup_aws_context() {
 
              # Wait for namespace to be fully deleted
              log_info "Waiting for namespace deletion to complete..."
+             local max_wait=120  # 2 minutes timeout
+             local elapsed=0
              while kubectl get namespace "${NAMESPACE}" > /dev/null 2>&1; do
+                 if [[ $elapsed -ge $max_wait ]]; then
+                     log_error "Timeout waiting for namespace deletion after ${max_wait}s"
+                     log_info "Namespace may be stuck in Terminating state. Check for finalizers:"
+                     kubectl get namespace "${NAMESPACE}" -o yaml | grep -A5 finalizers || true
+                     return 1
+                 fi
                  sleep 2
+                 elapsed=$((elapsed + 2))
              done
 
-             log_info "Creating fresh namespace ${NAMESPACE}..."
+             log_info "Namespace deleted. Creating fresh namespace ${NAMESPACE}..."
              kubectl create namespace "${NAMESPACE}"
 
-             # Wait for namespace to be fully active
-             kubectl wait --for=condition=Active namespace/"${NAMESPACE}" --timeout=60s
+             # Verify namespace is ready (not terminating)
+             local status
+             status=$(kubectl get namespace "${NAMESPACE}" -o jsonpath='{.status.phase}')
+             if [[ "${status}" != "Active" ]]; then
+                 log_warn "Namespace created but status is: ${status}"
+             else
+                 log_info "Namespace ${NAMESPACE} is active and ready"
+             fi
         else
             log_info "Namespace ${NAMESPACE} exists."
         fi
     else
         log_info "Creating namespace ${NAMESPACE}..."
         kubectl create namespace "${NAMESPACE}"
-        kubectl wait --for=condition=Active namespace/"${NAMESPACE}" --timeout=60s
+
+        # Give namespace a moment to initialize
+        sleep 10
+
+        # Verify namespace is ready
+        local status
+        status=$(kubectl get namespace "${NAMESPACE}" -o jsonpath='{.status.phase}')
+        if [[ "${status}" != "Active" ]]; then
+            log_warn "Namespace created but status is: ${status}"
+        else
+            log_info "Namespace ${NAMESPACE} is active and ready"
+        fi
     fi
 }
