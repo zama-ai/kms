@@ -65,12 +65,11 @@ use tokio_util::task::TaskTracker;
 use tonic::{Request, Response};
 
 use crate::{
-    consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT},
+    consts::DEFAULT_MPC_CONTEXT,
     cryptography::signatures::PrivateSigKey,
     engine::{
         base::{
-            compute_info_standard_keygen, derive_request_id, retrieve_parameters, KeyGenMetadata,
-            DSEP_PUBDATA_KEY,
+            compute_info_standard_keygen, retrieve_parameters, KeyGenMetadata, DSEP_PUBDATA_KEY,
         },
         threshold::service::{
             reshare_utils::get_verified_public_materials,
@@ -87,7 +86,7 @@ use crate::{
     },
     vault::storage::{
         crypto_material::ThresholdCryptoMaterialStorage,
-        delete_at_request_id, read_versioned_at_request_id,
+        delete_at_request_id,
         s3::{ReadOnlyS3Storage, RealReadOnlyS3StorageGetter},
         store_versioned_at_request_id, Storage, StorageExt,
     },
@@ -259,76 +258,6 @@ impl<
                 epoch_id
             );
         }
-        Ok(())
-    }
-
-    /// This will try to load the legacy PRSS setup [`PRSSSetup`] from storage into session maker
-    /// by using default values for the epoch ID and context ID.
-    /// This assumes the default context exists.
-    /// It will overwrite the PRSS in session maker if it already exists,
-    /// so make sure this is called before the normal (non-legacy) initialization.
-    #[expect(deprecated)]
-    pub async fn init_legacy_prss_from_storage(&self) -> anyhow::Result<()> {
-        // TODO(zama-ai/kms-internal#2530) set the correct context ID here.
-        let epoch_id = *DEFAULT_EPOCH_ID;
-        let context_id = *DEFAULT_MPC_CONTEXT;
-        let threshold = self.session_maker.threshold(&context_id).await?;
-        let num_parties = self.session_maker.num_parties(&context_id).await?;
-
-        let prss_from_storage = {
-            let guarded_private_storage = self.crypto_storage.inner.private_storage.lock().await;
-            let prss_128 = read_versioned_at_request_id::<_, PRSSSetup<ResiduePolyF4Z128>>(
-                &(*guarded_private_storage),
-                &derive_request_id(&format!(
-                    "PRSSSetup_Z128_ID_{}_{}_{}",
-                    epoch_id, num_parties, threshold,
-                ))?,
-                &PrivDataType::PrssSetup.to_string(),
-            )
-            .await
-            .inspect_err(|e| {
-                tracing::warn!("failed to read PRSS Z128 from file with error: {e}");
-            });
-            let prss_64 = read_versioned_at_request_id::<_, PRSSSetup<ResiduePolyF4Z64>>(
-                &(*guarded_private_storage),
-                &derive_request_id(&format!(
-                    "PRSSSetup_Z64_ID_{}_{}_{}",
-                    epoch_id, num_parties, threshold,
-                ))?,
-                &PrivDataType::PrssSetup.to_string(),
-            )
-            .await
-            .inspect_err(|e| {
-                tracing::warn!("failed to read PRSS Z64 from file with error: {e}");
-            });
-
-            (prss_128, prss_64)
-        };
-
-        match prss_from_storage {
-            (Ok(prss_128), Ok(prss_64)) => {
-                self.session_maker
-                    .add_epoch(
-                        epoch_id,
-                        PRSSSetupCombined {
-                            prss_setup_z128: prss_128,
-                            prss_setup_z64: prss_64,
-                            num_parties: num_parties as u8,
-                            threshold,
-                        },
-                    )
-                    .await;
-            }
-            (Err(e), Ok(_)) => return Err(e),
-            (Ok(_), Err(e)) => return Err(e),
-            (Err(_e), Err(e)) => return Err(e),
-        }
-
-        tracing::info!(
-            "Loaded PRSS Setup from storage for request ID {}.",
-            epoch_id
-        );
-
         Ok(())
     }
 
@@ -1049,14 +978,17 @@ impl<
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     use crate::{
         client::test_tools::{self},
-        consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL},
+        consts::{
+            DEFAULT_EPOCH_ID, PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL,
+            PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL,
+        },
         cryptography::signatures::gen_sig_keys,
-        engine::base::BaseKmsStruct,
+        engine::base::{derive_request_id, BaseKmsStruct},
         util::{key_setup::test_tools::purge, rate_limiter::RateLimiterConfig},
         vault::storage::{
             file::FileStorage,
@@ -1210,68 +1142,6 @@ mod tests {
         assert!(logs_contain("Loaded PRSS Setup from storage"));
     }
 
-    // write prss to storage using the legacy method
-    async fn write_legacy_empty_prss_to_storage(private_storage: &mut ram::RamStorage) {
-        let epoch_id = *DEFAULT_EPOCH_ID;
-        let num_parties = 4;
-        let threshold = 1u8;
-
-        let prss_setup_obj_z128 = PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]);
-        let prss_setup_obj_z64 = PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]);
-
-        // serialize and write PRSS Setup to storage into private storage
-        store_versioned_at_request_id(
-            private_storage,
-            &derive_request_id(&format!(
-                "PRSSSetup_Z128_ID_{}_{}_{}",
-                epoch_id, num_parties, threshold,
-            ))
-            .unwrap(),
-            &prss_setup_obj_z128,
-            #[expect(deprecated)]
-            &PrivDataType::PrssSetup.to_string(),
-        )
-        .await
-        .unwrap();
-
-        store_versioned_at_request_id(
-            private_storage,
-            &derive_request_id(&format!(
-                "PRSSSetup_Z64_ID_{}_{}_{}",
-                epoch_id, num_parties, threshold,
-            ))
-            .unwrap(),
-            &prss_setup_obj_z64,
-            #[expect(deprecated)]
-            &PrivDataType::PrssSetup.to_string(),
-        )
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn legacy_prss() {
-        let mut rng = AesRng::seed_from_u64(42);
-
-        // initially the storage should be empty
-        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
-        {
-            let private_storage = epoch_manager.crypto_storage.get_private_storage();
-            let mut guarded_private_storage = private_storage.lock().await;
-            write_legacy_empty_prss_to_storage(&mut guarded_private_storage).await;
-        }
-
-        epoch_manager.init_legacy_prss_from_storage().await.unwrap();
-
-        let default_epoch_id = *DEFAULT_EPOCH_ID;
-        assert!(
-            epoch_manager
-                .session_maker
-                .epoch_exists(&default_epoch_id)
-                .await
-        );
-    }
-
     #[tokio::test]
     async fn load_all_prss() {
         let mut rng = AesRng::seed_from_u64(42);
@@ -1314,7 +1184,7 @@ mod tests {
         }
     }
 
-    async fn make_epoch_manager<
+    pub(crate) async fn make_epoch_manager<
         I: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
             + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>,
     >(
