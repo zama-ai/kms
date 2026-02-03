@@ -3,7 +3,8 @@ cfg_if::cfg_if! {
         use crate::backup::custodian::Custodian;
         use crate::backup::seed_phrase::custodian_from_seed_phrase;
         use crate::client::tests::threshold::crs_gen_tests::run_crs;
-        use crate::client::tests::threshold::key_gen_tests::{run_threshold_keygen, standard_keygen_config};
+        use crate::client::tests::common::standard_keygen_config;
+        use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
         use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
         use crate::consts::SAFE_SER_SIZE_LIMIT;
         use crate::cryptography::signatures::PrivateSigKey;
@@ -252,7 +253,7 @@ async fn test_decrypt_after_recovery_threshold(#[case] custodians: usize, #[case
 
 #[cfg(feature = "insecure")]
 async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
-    use crate::client::tests::threshold::key_gen_tests::OptKeySetConfigAccessor;
+    use crate::client::tests::common::OptKeySetConfigAccessor;
 
     let amount_parties = 4;
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];

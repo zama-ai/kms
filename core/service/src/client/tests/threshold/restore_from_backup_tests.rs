@@ -68,8 +68,7 @@ async fn nightly_test_insecure_threshold_dkg_backup() {
     let (kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
-    let (keyset_config, keyset_added_info) =
-        crate::client::tests::threshold::key_gen_tests::standard_keygen_config();
+    let (keyset_config, keyset_added_info) = crate::client::tests::common::standard_keygen_config();
     let _keys_1 = crate::client::tests::threshold::key_gen_tests::run_threshold_keygen(
         param,
         &kms_clients,
@@ -84,8 +83,7 @@ async fn nightly_test_insecure_threshold_dkg_backup() {
     )
     .await;
 
-    let (keyset_config, keyset_added_info) =
-        crate::client::tests::threshold::key_gen_tests::standard_keygen_config();
+    let (keyset_config, keyset_added_info) = crate::client::tests::common::standard_keygen_config();
     let _keys_2 = crate::client::tests::threshold::key_gen_tests::run_threshold_keygen(
         param,
         &kms_clients,
@@ -196,8 +194,7 @@ async fn nightly_test_insecure_threshold_autobackup_after_deletion() {
     let (kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
-    let (keyset_config, keyset_added_info) =
-        crate::client::tests::threshold::key_gen_tests::standard_keygen_config();
+    let (keyset_config, keyset_added_info) = crate::client::tests::common::standard_keygen_config();
     let _keys = crate::client::tests::threshold::key_gen_tests::run_threshold_keygen(
         param,
         &kms_clients,

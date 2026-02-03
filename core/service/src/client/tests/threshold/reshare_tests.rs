@@ -19,12 +19,11 @@ use crate::{
     client::{
         client_wasm::Client,
         tests::{
-            common::TIME_TO_SLEEP_MS,
+            common::{standard_keygen_config, TIME_TO_SLEEP_MS},
             threshold::{
                 common::threshold_handles,
                 key_gen_tests::{
-                    run_preproc, run_threshold_keygen, standard_keygen_config,
-                    verify_keygen_responses, TestKeyGenResult,
+                    run_preproc, run_threshold_keygen, verify_keygen_responses, TestKeyGenResult,
                 },
                 public_decryption_tests::run_decryption_threshold,
             },

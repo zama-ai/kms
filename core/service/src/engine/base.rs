@@ -155,6 +155,40 @@ impl KmsFheKeyHandles {
             public_key_info,
         })
     }
+
+    /// Computes key handles for compressed public key materials with signatures.
+    ///
+    /// This is similar to [`Self::new`] but for compressed keys using
+    /// [`CompressedXofKeySet`] instead of [`FhePubKeySet`].
+    ///
+    /// # Important
+    /// - Only use with freshly generated compressed keys
+    /// - Not suitable for existing keys due to versioning constraints
+    /// - Version upgrades will invalidate signatures
+    pub fn new_compressed(
+        sig_key: &PrivateSigKey,
+        client_key: FhePrivateKey,
+        key_id: &RequestId,
+        preproc_id: &RequestId,
+        compressed_keyset: &CompressedXofKeySet,
+        decompression_key: Option<DecompressionKey>,
+        eip712_domain: &alloy_sol_types::Eip712Domain,
+    ) -> anyhow::Result<Self> {
+        let public_key_info = compute_info_compressed_keygen(
+            sig_key,
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            preproc_id,
+            key_id,
+            compressed_keyset,
+            eip712_domain,
+        )?;
+
+        Ok(KmsFheKeyHandles {
+            client_key,
+            decompression_key,
+            public_key_info,
+        })
+    }
 }
 
 #[cfg(feature = "non-wasm")]
@@ -1175,7 +1209,7 @@ pub(crate) mod tests {
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
-            StandardKeySetConfig::default(),
+            StandardKeySetConfig::default().compression_config,
             None,
             &key_id,
             &preproc_id,
@@ -1220,7 +1254,7 @@ pub(crate) mod tests {
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
-            StandardKeySetConfig::default(),
+            StandardKeySetConfig::default().compression_config,
             None,
             &key_id,
             &preproc_id,
@@ -1292,7 +1326,7 @@ pub(crate) mod tests {
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
-            StandardKeySetConfig::default(),
+            StandardKeySetConfig::default().compression_config,
             None,
             &key_id,
             &preproc_id,

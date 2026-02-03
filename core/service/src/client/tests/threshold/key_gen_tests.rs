@@ -1,5 +1,6 @@
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
+    use crate::client::tests::common::{OptKeySetConfigAccessor, standard_keygen_config};
     use crate::client::tests::threshold::common::threshold_handles;
     use crate::client::client_wasm::Client;
     use crate::consts::MAX_TRIES;
@@ -12,7 +13,7 @@ cfg_if::cfg_if! {
     use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::crypto_material::PrivateCryptoMaterialReader;
     use crate::vault::storage::{file::FileStorage, StorageType};
-    use kms_grpc::kms::v1::{CompressedKeyConfig, Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};
+    use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::rpc_types::PubDataType;
     use kms_grpc::RequestId;
@@ -30,7 +31,9 @@ cfg_if::cfg_if! {
 }}
 
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::common::TIME_TO_SLEEP_MS;
+use crate::client::tests::common::{
+    compressed_keygen_config, decompression_keygen_config, TIME_TO_SLEEP_MS,
+};
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
 #[cfg(feature = "insecure")]
@@ -42,8 +45,6 @@ use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 use crate::util::rate_limiter::RateLimiterConfig;
 use alloy_dyn_abi::Eip712Domain;
 use kms_grpc::kms::v1::KeyGenResult;
-#[cfg(feature = "slow_tests")]
-use kms_grpc::kms::v1::StandardKeySetConfig;
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use std::path::Path;
 #[cfg(feature = "slow_tests")]
@@ -118,66 +119,6 @@ impl TestKeyGenResult {
 
         let pt: u8 = ct3.decrypt(client_key);
         assert_eq!(pt, pt1 * pt2);
-    }
-}
-
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-pub(crate) fn standard_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
-    (None, None)
-}
-
-#[cfg(feature = "slow_tests")]
-pub(crate) fn compressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
-    (
-        Some(KeySetConfig {
-            keyset_type: KeySetType::Standard.into(),
-            standard_keyset_config: Some(StandardKeySetConfig {
-                compute_key_type: 0,
-                keyset_compression_config: 0,
-                compressed_key_config: CompressedKeyConfig::CompressedAll.into(),
-            }),
-        }),
-        None,
-    )
-}
-
-#[cfg(feature = "slow_tests")]
-pub(crate) fn decompression_keygen_config(
-    from_keyset_id: &RequestId,
-    to_keyset_id: &RequestId,
-) -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
-    (
-        Some(KeySetConfig {
-            keyset_type: KeySetType::DecompressionOnly.into(),
-            standard_keyset_config: None,
-        }),
-        Some(KeySetAddedInfo {
-            compression_keyset_id: None,
-            from_keyset_id_decompression_only: Some((*from_keyset_id).into()),
-            to_keyset_id_decompression_only: Some((*to_keyset_id).into()),
-        }),
-    )
-}
-
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-pub(crate) trait OptKeySetConfigAccessor {
-    fn is_compressed(&self) -> bool;
-    fn is_decompression_only(&self) -> bool;
-}
-
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-impl OptKeySetConfigAccessor for Option<KeySetConfig> {
-    fn is_compressed(&self) -> bool {
-        self.as_ref().is_some_and(|c| {
-            c.standard_keyset_config.as_ref().is_some_and(|sc| {
-                sc.compressed_key_config == CompressedKeyConfig::CompressedAll as i32
-            })
-        })
-    }
-
-    fn is_decompression_only(&self) -> bool {
-        self.as_ref()
-            .is_some_and(|c| c.keyset_type == KeySetType::DecompressionOnly as i32)
     }
 }
 
