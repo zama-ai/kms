@@ -22,6 +22,7 @@ pub use preprocessing::*;
 
 #[cfg(test)]
 mod tests {
+    use crate::conf::{init_conf, CoreConfig};
     use crate::consts::{DEFAULT_MPC_CONTEXT, SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
     use crate::engine::context::{NodeInfo, SoftwareVersion};
     use crate::engine::traits::ContextManager;
@@ -53,11 +54,17 @@ mod tests {
         )
         .await
         .unwrap();
-
-        let (kms, _health_service) =
-            RealCentralizedKms::new(public_storage, private_storage, None, None, sig_key, None)
-                .await
-                .expect("Could not create KMS");
+        let core_config: CoreConfig = init_conf("config/default_centralized").unwrap();
+        let (kms, _health_service) = RealCentralizedKms::new(
+            core_config,
+            public_storage,
+            private_storage,
+            None,
+            None,
+            sig_key,
+        )
+        .await
+        .expect("Could not create KMS");
 
         let kms_node = NodeInfo {
             mpc_identity: "test_node".to_string(),

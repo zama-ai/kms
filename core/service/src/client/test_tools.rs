@@ -119,7 +119,8 @@ pub async fn setup_threshold_no_client<
         ) = tokio::sync::oneshot::channel();
         mpc_shutdown_txs.push(mpc_core_tx);
         // Make a configuration based on the default, but customized with the needed changes for the test setup
-        let mut core_config: CoreConfig = init_conf("config/default_1").expect("config must parse");
+        let mut core_config: CoreConfig =
+            init_conf("config/default_1.toml").expect("config must parse");
         let threshold_party_config = ThresholdPartyConf {
             listen_address: mpc_conf[i - 1].address.clone(),
             listen_port: mpc_conf[i - 1].port,
@@ -487,13 +488,16 @@ pub async fn setup_centralized_no_client<
     create_default_centralized_context_in_storage(&mut priv_storage, &sk)
         .await
         .unwrap();
+    let mut core_config: CoreConfig =
+        init_conf("config/default_centralized.toml").expect("config must parse");
+    core_config.rate_limiter_conf = rate_limiter_conf;
     let (kms, health_service) = RealCentralizedKms::new(
+        core_config,
         pub_storage,
         priv_storage,
         backup_vault,
         None,
         sk,
-        rate_limiter_conf,
     )
     .await
     .expect("Could not create KMS");
