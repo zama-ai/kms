@@ -304,6 +304,9 @@ jobs:
       # ======================================================================
       - name: Deploy KMS using unified script
         run: |
+          # Download JQ.
+          wget https://github.com/jqlang/jq/releases/download/jq-"${JQ_VERSION}"/jq-linux-amd64 -P /tmp
+
           # Install JQ.
           sudo mv /tmp/jq-linux-amd64 /usr/local/bin/jq
           sudo chmod +x /usr/local/bin/jq
