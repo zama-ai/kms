@@ -475,6 +475,9 @@ impl CoreMetrics {
     }
 
     pub fn observe_size(&self, operation: impl Into<String>, size: f64) {
+        if size == 0.0 {
+            return;
+        }
         let tags = vec![Self::create_operation_tag(operation)];
         self.size_histogram
             .metric
@@ -483,6 +486,9 @@ impl CoreMetrics {
 
     // Gauge methods
     pub fn gauge(&self, operation: impl Into<String>, value: i64) {
+        if value == 0 {
+            return;
+        }
         let tags = vec![Self::create_operation_tag(operation)];
         self.gauge
             .metric
@@ -500,6 +506,9 @@ impl CoreMetrics {
 
     /// Record the amount of CPU cores
     pub fn record_total_cpus(&self, amount: u64) {
+        if amount == 0 {
+            return;
+        }
         self.total_cpus_gauge
             .metric
             .record(amount, &self.total_cpus_gauge.with_tags(&[]));
@@ -507,6 +516,9 @@ impl CoreMetrics {
 
     /// Record the current CPU load into the gauge
     pub fn record_cpu_load(&self, load: f64) {
+        if load == 0.0 {
+            return;
+        }
         self.cpu_load_gauge
             .metric
             .record(load, &self.cpu_load_gauge.with_tags(&[]));
@@ -514,6 +526,9 @@ impl CoreMetrics {
 
     /// Record the total memory on the system
     pub fn record_total_memory(&self, memory: u64) {
+        if memory == 0 {
+            return;
+        }
         self.total_memory_gauge
             .metric
             .record(memory, &self.total_memory_gauge.with_tags(&[]));
@@ -521,6 +536,9 @@ impl CoreMetrics {
 
     /// Record the current memory usage into the gauge
     pub fn record_memory_usage(&self, usage: u64) {
+        if usage == 0 {
+            return;
+        }
         self.memory_usage_gauge
             .metric
             .record(usage, &self.memory_usage_gauge.with_tags(&[]));
@@ -528,6 +546,9 @@ impl CoreMetrics {
 
     /// Record the current number of tasks into the gauge
     pub fn record_tasks(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
         self.task_gauge
             .metric
             .record(count, &self.task_gauge.with_tags(&[]));
@@ -535,6 +556,9 @@ impl CoreMetrics {
 
     /// Record the current number of open file descriptors into the gauge
     pub fn record_open_file_descriptors(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
         self.file_descriptor_gauge
             .metric
             .record(count, &self.file_descriptor_gauge.with_tags(&[]));
@@ -542,6 +566,9 @@ impl CoreMetrics {
 
     /// Record the current number of socat file descriptors into the gauge
     pub fn record_socat_file_descriptors(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
         self.socat_file_descriptor_gauge
             .metric
             .record(count, &self.socat_file_descriptor_gauge.with_tags(&[]));
@@ -549,6 +576,9 @@ impl CoreMetrics {
 
     /// Record the current number of socat tasks into the gauge
     pub fn record_socat_tasks(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
         self.socat_task_gauge
             .metric
             .record(count, &self.socat_task_gauge.with_tags(&[]));
@@ -556,6 +586,9 @@ impl CoreMetrics {
 
     /// Record the current rate limiter usage into the gauge
     pub fn record_rate_limiter_usage(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
         self.rate_limiter_gauge
             .metric
             .record(count, &self.rate_limiter_gauge.with_tags(&[]));
@@ -563,6 +596,9 @@ impl CoreMetrics {
 
     /// Record the sum of active sessions done with other parties into the gauge
     pub fn record_active_sessions(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
         self.active_session_gauge
             .metric
             .record(count, &self.active_session_gauge.with_tags(&[]));
@@ -570,6 +606,9 @@ impl CoreMetrics {
 
     /// Record the sum of inactive sessions done with other parties into the gauge
     pub fn record_inactive_sessions(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
         self.inactive_session_gauge
             .metric
             .record(count, &self.inactive_session_gauge.with_tags(&[]));
@@ -577,6 +616,9 @@ impl CoreMetrics {
 
     /// Record the current number of ongoing public decryptions into the gauge
     pub fn record_meta_storage_user_decryptions(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
         self.meta_storage_user_dec_gauge
             .metric
             .record(count, &self.meta_storage_user_dec_gauge.with_tags(&[]));
@@ -584,6 +626,9 @@ impl CoreMetrics {
 
     /// Record the current number of ongoing user decryptions into the gauge
     pub fn record_meta_storage_public_decryptions(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
         self.meta_storage_pub_dec_gauge
             .metric
             .record(count, &self.meta_storage_pub_dec_gauge.with_tags(&[]));
@@ -591,6 +636,9 @@ impl CoreMetrics {
 
     /// Record the total number of user decryptions in meta storage into the gauge
     pub fn record_meta_storage_user_decryptions_total(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
         self.meta_storage_user_dec_total_gauge.metric.record(
             count,
             &self.meta_storage_user_dec_total_gauge.with_tags(&[]),
@@ -599,6 +647,9 @@ impl CoreMetrics {
 
     /// Record the total number of public decryptions in meta storage into the gauge
     pub fn record_meta_storage_public_decryptions_total(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
         self.meta_storage_pub_dec_total_gauge
             .metric
             .record(count, &self.meta_storage_pub_dec_total_gauge.with_tags(&[]));
@@ -606,6 +657,9 @@ impl CoreMetrics {
 
     /// Record the current process CPU usage into the gauge
     pub fn record_process_cpu_usage(&self, usage: f64) {
+        if usage == 0.0 {
+            return;
+        }
         self.process_cpu_usage_gauge
             .metric
             .record(usage, &self.process_cpu_usage_gauge.with_tags(&[]));
@@ -613,6 +667,9 @@ impl CoreMetrics {
 
     /// Record the current process memory usage into the gauge
     pub fn record_process_memory_usage(&self, usage: u64) {
+        if usage == 0 {
+            return;
+        }
         self.process_memory_gauge
             .metric
             .record(usage, &self.process_memory_gauge.with_tags(&[]));
