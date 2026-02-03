@@ -43,7 +43,7 @@ kmsCore:
     cleanupIntervalSecs: 2
     tokioWorkerThreads: 10
     rayonNumThreads: 40
-    peersList: []
+    # peersList is generated dynamically by deploy.sh and should not be set here
     tls:
       enabled: true  # TLS is enabled by default for enclave deployments
       trustedReleases:
