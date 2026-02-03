@@ -62,6 +62,8 @@ deploy_kms() {
     #=========================================================================
     local BASE_VALUES=""
     local LOCAL_VALUES_USED="false"
+    local USE_BASE_VALUES="true"
+
     if [[ "${TARGET}" == *"kind"* ]]; then
         local base_dir="${REPO_ROOT}/ci/kube-testing/kms"
         local kind_values="${base_dir}/values-kms-test.yaml"
@@ -72,7 +74,11 @@ deploy_kms() {
         else
             BASE_VALUES="${kind_values}"
         fi
+    elif [[ "${TARGET}" == "aws-perf" ]]; then
+        # For performance testing, skip BASE_VALUES - performance values are comprehensive
+        USE_BASE_VALUES="false"
     else
+        # For aws-ci (PR previews), use pr-preview values
         BASE_VALUES="${REPO_ROOT}/ci/pr-preview/${DEPLOYMENT_TYPE}/kms-service/values-kms-ci.yaml"
     fi
 
@@ -135,10 +141,11 @@ deploy_kms() {
     if [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
         deploy_threshold_mode "${BASE_VALUES}" "${PEERS_VALUES}" "${OVERRIDE_VALUES}" \
             "${helm_chart_location}" "${LOCAL_VALUES_USED}" "${is_performance_testing}" \
-            "${performance_values_dir}"
+            "${performance_values_dir}" "${USE_BASE_VALUES}"
     else
         deploy_centralized_mode "${BASE_VALUES}" "${OVERRIDE_VALUES}" \
-            "${helm_chart_location}" "${is_performance_testing}" "${performance_values_dir}"
+            "${helm_chart_location}" "${is_performance_testing}" "${performance_values_dir}" \
+            "${USE_BASE_VALUES}"
     fi
 }
 
@@ -153,6 +160,7 @@ deploy_threshold_mode() {
     local LOCAL_VALUES_USED="$5"
     local is_performance_testing="$6"
     local performance_values_dir="$7"
+    local USE_BASE_VALUES="${8:-true}"
 
     log_info "Deploying KMS Core in threshold mode with ${NUM_PARTIES} parties..."
 
@@ -170,7 +178,6 @@ deploy_threshold_mode() {
 
         local HELM_ARGS=(
             --namespace "${NAMESPACE}"
-            --values "${BASE_VALUES}"
             --values "${PEERS_VALUES}"
             --values "${OVERRIDE_VALUES}"
             --set kmsPeers.id="${i}"
@@ -180,6 +187,11 @@ deploy_threshold_mode() {
             --set kmsCore.backupVault.s3.prefix="BACKUP-p${i}"
             --set kmsCore.thresholdMode.thresholdValue="${threshold_value}"
         )
+
+        # Add BASE_VALUES if it should be used
+        if [[ "${USE_BASE_VALUES}" == "true" ]]; then
+            HELM_ARGS=(--namespace "${NAMESPACE}" --values "${BASE_VALUES}" "${HELM_ARGS[@]:1}")
+        fi
 
         # Enable TLS Helm flag for non-enclave deployments when TLS is enabled
         # Enclave deployments handle TLS separately (see performance testing overrides below)
@@ -308,6 +320,7 @@ deploy_centralized_mode() {
     local helm_chart_location="$3"
     local is_performance_testing="$4"
     local performance_values_dir="$5"
+    local USE_BASE_VALUES="${6:-true}"
 
     log_info "Deploying KMS Core in centralized mode..."
 
@@ -319,13 +332,17 @@ deploy_centralized_mode() {
 
     local HELM_ARGS=(
         --namespace "${NAMESPACE}"
-        --values "${BASE_VALUES}"
         --values "${OVERRIDE_VALUES}"
         --set kmsPeers.id="1"
         --set kmsCore.thresholdMode.enabled=false
         --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}"
         --set kmsCoreClient.nameOverride="kms-core-client"
     )
+
+    # Add BASE_VALUES if it should be used
+    if [[ "${USE_BASE_VALUES}" == "true" ]]; then
+        HELM_ARGS=(--namespace "${NAMESPACE}" --values "${BASE_VALUES}" "${HELM_ARGS[@]:1}")
+    fi
 
     # Performance testing specific overrides
     if [[ "${is_performance_testing}" == "true" ]]; then
@@ -386,7 +403,12 @@ generate_helm_overrides() {
          IS_ENCLAVE="true"
          KMS_IMAGE_NAME="ghcr.io/zama-ai/kms/core-service-enclave"
          TOLERATION_KEY="app"         # Enclave uses app-based taints
-         TOLERATION_VALUE="${NAMESPACE}"
+         # For aws-perf, use PATH_SUFFIX for toleration value; otherwise use NAMESPACE
+         if [[ "${TARGET}" == "aws-perf" ]]; then
+             TOLERATION_VALUE="${PATH_SUFFIX}"
+         else
+             TOLERATION_VALUE="${NAMESPACE}"
+         fi
          TLS_ENABLED="true"           # TLS required for enclave communication
     fi
 
@@ -404,7 +426,7 @@ generate_helm_overrides() {
     #=========================================================================
     # Configure target-specific settings
     #=========================================================================
-    if [[ "${TARGET}" == "aws-ci" ]]; then
+    if [[ "${TARGET}" == "aws-ci" || "${TARGET}" == "aws-perf" ]]; then
         INCLUDE_TOLERATIONS="true"
     fi
 

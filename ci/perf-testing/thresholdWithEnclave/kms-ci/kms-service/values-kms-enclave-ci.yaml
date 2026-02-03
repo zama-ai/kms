@@ -45,7 +45,7 @@ kmsCore:
     rayonNumThreads: 40
     peersList: []
     tls:
-      enabled: false
+      enabled: true  # TLS is enabled by default for enclave deployments
       trustedReleases:
         - pcr0: '9435d28857a31b883f9ed0ccd690d2ba5ffc9693937132bc9e83c32d00aa12adbff05f8e7ba7a769937b43ce74631a27'
           pcr1: '4b4d5b3661b3efc12920900c80e126e4ce783c522de6c02a2a5bf7af3a2b9327b86776f188e4be1c1c404a129dbda493'
