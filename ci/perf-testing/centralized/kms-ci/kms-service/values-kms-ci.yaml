@@ -11,21 +11,7 @@ kmsCore:
     tag: <version>
   thresholdMode:
     enabled: false
-  envFrom:
-    configmap:
-      name: kms-ci-1
-      key:
-        coreClientS3Endpoint: CORE_CLIENT__S3_ENDPOINT
-        privateVaultStorageBucket: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
-        privateVaultStoragePrefix: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
-        privateVaultKeychainAWSKMSRootKeySpec: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
-        privateVaultKeychainAWSKMSRootKeyID: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
-        publicVaultStorageBucket: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
-        publicVaultStoragePrefix: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX
-        backupVaultStorageBucket: KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET
-        backupVaultStoragePrefix: KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX
-        backupVaultKeychainAWSKMSRootKeySpec: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
-        backupVaultKeychainAWSKMSRootKeyID: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
+
   aws:
     region: eu-west-1
   storage:
@@ -56,11 +42,6 @@ kmsCoreClient:
   image:
     name: ghcr.io/zama-ai/kms/core-client
     tag: <version>
-  envFrom:
-    configmap:
-      name: kms-ci-1
-  num_majority: 5 # 2 when 4 parties and 5 when 13 parties
-  num_reconstruct: 9 # 3 when 4 parties and 9 when 13 parties
   decryption_mode: NoiseFloodSmall
   fhe_parameter: Default
   resources:
