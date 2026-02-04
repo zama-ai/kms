@@ -164,8 +164,8 @@ has_value "keygen" && \
 		PARTY_ID_ARG=""
 		has_value "threshold.my_id" && \
 		    PARTY_ID_ARG="--signing-key-party-id $(get_value "threshold.my_id")"
-		eval "$KMS_GEN_KEYS_CMD threshold \
-                       --cmd signing-keys $PARTY_ID_ARG \
+		eval "$KMS_GEN_KEYS_CMD \
+                       --cmd signing-keys threshold $PARTY_ID_ARG \
                        --num-parties $(get_value "threshold.num_parties") \
                        --tls-subject $(get_value "threshold.tls_subject")" \
 		    |& logger || fail "cannot generate keys"
