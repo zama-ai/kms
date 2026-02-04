@@ -5,7 +5,7 @@ kmsCore:
       name: kms-enclave-ci-1
   thresholdMode:
     enabled: true
-    peersList: []
+    # peersList is generated dynamically by deploy.sh and should not be set here
 
 kmsCoreClient:
   enabled: false
