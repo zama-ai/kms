@@ -66,8 +66,9 @@ pub trait SendingService: Send + Sync {
     /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
     async fn add_connection(
         &self,
-        other: &Identity,
-        aborted: Arc<DashSet<Identity>>,
+        other_identity: &Identity,
+        other_role_kind: RoleKind,
+        aborted: Arc<DashSet<RoleKind>>,
     ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>>;
 
     ///Adds multiple connections at once
@@ -76,7 +77,7 @@ pub trait SendingService: Send + Sync {
         others: &RoleAssignment<R>,
     ) -> anyhow::Result<(
         HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
-        Arc<DashSet<Identity>>,
+        Arc<DashSet<RoleKind>>,
     )>;
 }
 
@@ -215,8 +216,8 @@ impl GrpcSendingService {
         mut receiver: UnboundedReceiver<ArcSendValueRequest>,
         network_channel: GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
         exponential_backoff: ExponentialBackoff<SystemClock>,
-        other: &Identity,
-        aborted: Arc<DashSet<Identity>>,
+        other_role_kind: RoleKind,
+        aborted: Arc<DashSet<RoleKind>>,
     ) {
         let mut received_request = 0;
         let mut incorrectly_sent = 0;
@@ -241,7 +242,7 @@ impl GrpcSendingService {
 
             let on_network_fail = |e, duration: Duration| {
                 tracing::debug!(
-                    "Network retry for message: {e:?} - Duration {:?} secs. Talking to {other}.",
+                    "Network retry for message: {e:?} - Duration {:?} secs. Talking to {other_role_kind}.",
                     duration.as_secs()
                 );
             };
@@ -257,21 +258,23 @@ impl GrpcSendingService {
                         }
                         Status::Inactive => {
                             // The receiver is inactive, we cannot send messages
-                            tracing::warn!("Receiver {other} is inactive, cannot send message.");
+                            tracing::warn!(
+                                "Receiver {other_role_kind} is inactive, cannot send message."
+                            );
                         }
                         Status::Completed => {
                             // Failed to have receiver accept the message
                             // Send abort signal and break since we can only send once
-                            if !aborted.insert(other.clone()) {
+                            if !aborted.insert(other_role_kind) {
                                 tracing::warn!(
-                                    "Abort signal for network task to {other} was already sent"
+                                    "Abort signal for network task to {other_role_kind} was already sent"
                                 );
                             }
                             // TODO should we actually return or instead increase error count and continue ?}
                             // Abort the session for this party
                             incorrectly_sent += 1;
                             tracing::warn!(
-                                "Failed to send message to {other} party since it claims the session is already complete");
+                                "Failed to send message to {other_role_kind} party since it claims the session is already complete");
                             break;
                         }
                     };
@@ -279,7 +282,7 @@ impl GrpcSendingService {
                 Err(status) => {
                     incorrectly_sent += 1;
                     tracing::warn!(
-                    "Failed to send message to {other} after {incorrectly_sent} retries: {} - {}",
+                    "Failed to send message to {other_role_kind} after {incorrectly_sent} retries: {} - {}",
                     status.code(),
                     status.message()
                 );
@@ -290,17 +293,17 @@ impl GrpcSendingService {
         if received_request == 0 {
             // This is not necessarily an error since we may use the network to only receive in certain protocols
             tracing::debug!(
-                "No more listeners on {other}, nothing happened, shutting down network task without errors."
+                "No more listeners on {other_role_kind}, nothing happened, shutting down network task without errors."
             );
         } else if incorrectly_sent == received_request {
-            tracing::error!("No more listeners on {other}, everything failed, {incorrectly_sent} errors, shutting down network task");
+            tracing::error!("No more listeners on {other_role_kind}, everything failed, {incorrectly_sent} errors, shutting down network task");
         } else if incorrectly_sent > 0 {
             tracing::warn!(
-                "Network task with {other} finished with: {incorrectly_sent}/{received_request} errors"
+                "Network task with {other_role_kind} finished with: {incorrectly_sent}/{received_request} errors"
             );
         } else {
             tracing::debug!(
-                "Network task with {other} succeeded and transmitted {received_request} values"
+                "Network task with {other_role_kind} succeeded and transmitted {received_request} values"
             );
         }
     }
@@ -346,14 +349,15 @@ impl SendingService for GrpcSendingService {
     /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
     async fn add_connection(
         &self,
-        other: &Identity,
-        aborted: Arc<DashSet<Identity>>,
+        other_identity: &Identity,
+        other_role_kind: RoleKind,
+        aborted: Arc<DashSet<RoleKind>>,
     ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>> {
         // 1. Create channel first (no allocation issues)
         let (sender, receiver) = unbounded_channel::<ArcSendValueRequest>();
 
         // 2. Connect to party (can fail, so do before any spawning)
-        let network_channel = self.connect_to_party(other).await?;
+        let network_channel = self.connect_to_party(other_identity).await?;
 
         // 3. Configurable backoff with initial_interval from config
         let exponential_backoff = ExponentialBackoff::<SystemClock> {
@@ -365,14 +369,13 @@ impl SendingService for GrpcSendingService {
         };
 
         // 4. Single spawn with integrated error handling (eliminates double-spawn overhead)
-        let other = other.clone();
         let handle = tokio::spawn(async move {
             // Run the actual network task (already logs completion status)
             Self::run_network_task(
                 receiver,
                 network_channel,
                 exponential_backoff,
-                &other,
+                other_role_kind,
                 aborted,
             )
             .await;
@@ -391,15 +394,19 @@ impl SendingService for GrpcSendingService {
         others: &RoleAssignment<R>,
     ) -> anyhow::Result<(
         HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
-        Arc<DashSet<Identity>>,
+        Arc<DashSet<RoleKind>>,
     )> {
         let mut result = HashMap::with_capacity(others.len());
 
         let aborted = Arc::new(DashSet::new());
         for (other_role, other_id) in others.iter() {
-            match self.add_connection(other_id, Arc::clone(&aborted)).await {
+            let other_role_kind = other_role.get_role_kind();
+            match self
+                .add_connection(other_id, other_role_kind, Arc::clone(&aborted))
+                .await
+            {
                 Ok(sender) => {
-                    result.insert(other_role.get_role_kind(), sender);
+                    result.insert(other_role_kind, sender);
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -432,7 +439,6 @@ pub struct NetworkSession {
     pub(crate) owner: Identity,
     /// [`SessionId`] of this Network session
     pub(crate) session_id: SessionId,
-    pub(crate) threshold: u8,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`]
     /// Sending channels for this session
     pub(crate) sending_channels: HashMap<RoleKind, UnboundedSender<ArcSendValueRequest>>,
@@ -443,9 +449,7 @@ pub struct NetworkSession {
     // Observe tokio lock is needed since it must be held across an await point
     pub(crate) round_counter: tokio::sync::RwLock<usize>,
     // Set keeping track of all servers that have already completed the session (i.e. servers which we are out-of-sync with)
-    pub(crate) completed_parties: Arc<DashSet<Identity>>,
-    // If set, it indicates that the session has been aborted and hence should be cleaned up
-    pub aborted: OnceLock<()>,
+    pub(crate) completed_parties: Arc<DashSet<RoleKind>>,
     // Measure the number of bytes sent by this session
     #[cfg(feature = "choreographer")]
     pub(crate) num_byte_sent: RwLock<usize>,
@@ -464,9 +468,9 @@ pub struct NetworkSession {
 impl Drop for NetworkSession {
     fn drop(&mut self) {
         // Ensure that dropping a session will ensure that `is_aborted` will return true s.t. the session will get removed at clean up
-        if self.aborted.get().is_none() {
-            let _ = self.aborted.set(());
-        }
+        // if self.aborted.get().is_none() {
+        //     let _ = self.aborted.set(());
+        // }
     }
 }
 
@@ -533,13 +537,12 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             Instant::now() + self.conf.get_max_waiting_time_for_message_queue(),
             self.conf.get_max_waiting_time_for_message_queue(),
         );
-
         let mut local_packet = loop {
             let packet = tokio::select! {
                     _ = tick_interval.tick() => {
                         tracing::warn!("Still waiting to receive from party {:?} for session {:?}", sender, self.session_id);
-                        if self.is_aborted() {
-                            return Err(anyhow_error_and_log("Session has been aborted"));
+                        if self.is_aborted(&sender.get_role_kind()) {
+                            return Err(anyhow_error_and_log(format!("Session has been aborted with {}", sender.get_role_kind())));
                         }
                         None
                     },
@@ -684,19 +687,19 @@ impl NetworkSession {
     }
 
     // Check if the session has been aborted by a quorum of other parties refusing the connection
-    pub fn is_aborted(&self) -> bool {
-        if self.aborted.get().is_some() {
+    pub fn is_aborted(&self, role_kind: &RoleKind) -> bool {
+        if self.completed_parties.get(role_kind).is_some() {
             return true;
         }
-        // Aborted has not been set yet, so check if it should be set
-        if self.completed_parties.len() > 2 * self.threshold as usize {
-            tracing::warn!(
-                "Session {} aborted due to quorum of parties refusing connection",
-                self.session_id
-            );
-            let _ = self.aborted.set(());
-            return true;
-        }
+        // // Aborted has not been set yet, so check if it should be set
+        // if self.completed_parties.len() > 2 * self.threshold as usize {
+        //     tracing::warn!(
+        //         "Session {} aborted due to quorum of parties refusing connection",
+        //         self.session_id
+        //     );
+        //     let _ = self.aborted.set(());
+        //     return true;
+        // }
         false
     }
 }
@@ -777,7 +780,7 @@ mod tests {
             tokio::spawn(async move {
                 let networking = GrpcNetworkingManager::new(None, None, false).unwrap();
                 let network_session = networking
-                    .make_network_session(sid, 0, &role_assignment, role_1, NetworkMode::Sync)
+                    .make_network_session(sid, &role_assignment, role_1, NetworkMode::Sync)
                     .await
                     .unwrap();
 
@@ -818,7 +821,7 @@ mod tests {
                 tokio::time::sleep(Duration::from_secs(3)).await;
 
                 let network_session = networking
-                    .make_network_session(sid, 0, &role_assignment, role_2, NetworkMode::Sync)
+                    .make_network_session(sid, &role_assignment, role_2, NetworkMode::Sync)
                     .await
                     .unwrap();
 
@@ -857,7 +860,7 @@ mod tests {
                 tokio::time::sleep(Duration::from_secs(3)).await;
 
                 let network_session = networking
-                    .make_network_session(sid, 0, &role_assignment, role_2, NetworkMode::Sync)
+                    .make_network_session(sid, &role_assignment, role_2, NetworkMode::Sync)
                     .await
                     .unwrap();
 
@@ -954,13 +957,11 @@ mod tests {
         let session = NetworkSession {
             owner: id_1,
             session_id: SessionId::from(0),
-            threshold: 0,
             // no need to fill this channel because we're not forwading
             // messages to the networking service in this test
             sending_channels: HashMap::new(),
             receiving_channels: message_store,
             completed_parties: Arc::new(DashSet::new()),
-            aborted: OnceLock::new(),
             round_counter: tokio::sync::RwLock::new(0),
             #[cfg(feature = "choreographer")]
             num_byte_sent: RwLock::new(0),
@@ -1104,7 +1105,6 @@ mod tests {
                 let network_session = networking
                     .make_network_session(
                         sid,
-                        0,
                         &role_assignment,
                         role,
                         crate::networking::NetworkMode::Sync,

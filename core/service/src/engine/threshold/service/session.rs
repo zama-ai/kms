@@ -519,13 +519,7 @@ impl SessionMaker {
 
         if let Some(role) = my_role {
             let networking = nm
-                .make_network_session(
-                    session_id,
-                    self.threshold(&context_id).await?,
-                    &role_assignment,
-                    role,
-                    network_mode,
-                )
+                .make_network_session(session_id, &role_assignment, role, network_mode)
                 .await?;
             tracing::debug!(
                 "Getting networking for session_id={}, context_id={:?}, my_role={:?}, network_mode={:?}",
@@ -556,13 +550,7 @@ impl SessionMaker {
     > {
         let nm = self.networking_manager.read().await;
         let networking = nm
-            .make_network_session(
-                session_id,
-                self.threshold(&context_id_set1).await? + self.threshold(&context_id_set2).await?, // TODO reviewer
-                &role_assignment,
-                my_role,
-                network_mode,
-            )
+            .make_network_session(session_id, &role_assignment, my_role, network_mode)
             .await?;
         tracing::debug!(
             "Getting networking for session_id={}, context_id_1={:?}, context_id_2={:?}, my_role={:?}, network_mode={:?}",

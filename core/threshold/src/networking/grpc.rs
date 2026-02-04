@@ -312,17 +312,16 @@ impl GrpcNetworkingManager {
                                             );
                                         }
                                     };
-                                    // Also remove active sessions that have been aborted
-                                    if network_session.is_aborted() {
-                                        // If the session has been aborted, we mark it as completed
-                                        tracing::info!(
-                                        "Marking session {:?} as completed because it has been aborted.",
-                                        session_id
-                                    );
-                                        *status = SessionStatus::Completed(Instant::now());
-                                    } else {
-                                        internal_active_sessions_count += 1;
-                                    }
+                                    // // Also remove active sessions that have been aborted
+                                    // if network_session.is_aborted() {
+                                    //     // If the session has been aborted, we mark it as completed
+                                    //     tracing::info!(
+                                    //     "Marking session {:?} as completed because it has been aborted.",
+                                    //     session_id
+                                    // );
+                                    //     *status = SessionStatus::Completed(Instant::now());
+                                    // } else {
+                                    internal_active_sessions_count += 1;
                                 }
                                 None => {
                                     *status = SessionStatus::Completed(Instant::now());
@@ -436,7 +435,6 @@ impl GrpcNetworkingManager {
     pub async fn make_network_session<R: RoleTrait>(
         &self,
         session_id: SessionId,
-        threshold: u8,
         role_assignment: &RoleAssignment<R>,
         my_role: R,
         network_mode: NetworkMode,
@@ -491,14 +489,12 @@ impl GrpcNetworkingManager {
                 let session = Arc::new(NetworkSession {
                     owner: owner.clone(),
                     session_id,
-                    threshold,
                     sending_channels: connection_channel,
                     receiving_channels: message_store.0,
                     round_counter: tokio::sync::RwLock::new(0),
                     network_mode,
                     conf: self.conf,
                     completed_parties,
-                    aborted: OnceLock::new(),
                     init_time: OnceLock::new(),
                     last_rec_activity_time: RwLock::new(None),
                     current_network_timeout: RwLock::new(timeout),
@@ -522,14 +518,12 @@ impl GrpcNetworkingManager {
                 let session = Arc::new(NetworkSession {
                     owner: owner.clone(),
                     session_id,
-                    threshold,
                     sending_channels: connection_channel,
                     receiving_channels: message_queue,
                     round_counter: tokio::sync::RwLock::new(0),
                     network_mode,
                     conf: self.conf,
                     completed_parties,
-                    aborted: OnceLock::new(),
                     init_time: OnceLock::new(),
                     last_rec_activity_time: RwLock::new(None),
                     current_network_timeout: RwLock::new(timeout),
