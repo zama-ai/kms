@@ -156,7 +156,7 @@ wait_tkms_infra_ready() {
     #-------------------------------------------------------------------------
     log_info "Waiting for Kmsparties to be ready..."
 
-    if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
+    if [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
         # Centralized: Try both possible naming patterns
         if kubectl get Kmsparties "${party_prefix}-1" -n "${NAMESPACE}" >/dev/null 2>&1; then
             kubectl wait --for=condition=ready Kmsparties "${party_prefix}-1" \
