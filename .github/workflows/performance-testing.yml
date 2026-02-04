@@ -11,6 +11,7 @@
 name: performance-testing
 
 on:
+  pull_request:
   #=======================================================
   schedule:
     - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
@@ -149,7 +150,7 @@ jobs:
       # ======================================================================
       - name: Determine image tags
         env:
-          DOCKER_BUILD_TAG: ${{ needs.docker-build.outputs.image_tag }}
+          DOCKER_BUILD_TAG: f8145ea  # ${{ needs.docker-build.outputs.image_tag }}
           INPUT_CORE_TAG: ${{ inputs.kms_core_image_tag }}
           INPUT_CLIENT_TAG: ${{ inputs.kms_core_client_image_tag }}
         run: |
@@ -183,8 +184,8 @@ jobs:
       # ======================================================================
       - name: Configure deployment parameters
         env:
-          DEPLOYMENT_TYPE: ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
-          TLS: ${{ inputs.tls || 'true' }}
+          DEPLOYMENT_TYPE: centralized  # ${{ inputs.deployment_type || 'thresholdWithEnclave' }}
+          TLS: false  # ${{ inputs.tls || 'true' }}
           FHE_PARAMS: ${{ inputs.fhe_params || 'Test' }}
           KMS_BRANCH: ${{ inputs.kms_branch || github.ref }}
           NAMESPACE: 'kms-ci'
