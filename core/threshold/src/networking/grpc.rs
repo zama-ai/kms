@@ -277,7 +277,7 @@ impl GrpcNetworkingManager {
                                 started.elapsed().as_secs()
                             );
                                 to_remove.push(*session_id);
-                                break;
+                                continue;
                             } else {
                                 internal_inactive_sessions_count += 1;
                             }
@@ -302,7 +302,7 @@ impl GrpcNetworkingManager {
                                                 last_receive_time.elapsed().as_secs()
                                             );
                                                 to_remove.push(*session_id);
-                                                break;
+                                                continue;
                                             }
                                         }
                                         None => {

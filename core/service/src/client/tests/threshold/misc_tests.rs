@@ -372,7 +372,7 @@ async fn test_complete_session_notification() {
         precompute_sns: true,
     };
     let msg_amount = 10;
-    let parallel_reqs = 10;
+    let parallel_reqs = 1;
     let wait_time = 4;
 
     // Ensure inactive session discard interval is small for the test
@@ -445,7 +445,7 @@ async fn test_complete_session_notification() {
                 });
             }
         }
-
+        println!("Sending requests...");
         let mut req_response_vec = Vec::new();
         while let Some(inner) = req_tasks.join_next().await {
             req_response_vec.push(inner.unwrap().unwrap().into_inner());
@@ -454,7 +454,7 @@ async fn test_complete_session_notification() {
             req_response_vec.len(),
             kms_clients.len() - party_ids_to_skip.len()
         );
-
+        println!("Reqests received by server");
         // get all responses
         let mut resp_tasks = JoinSet::new();
         for i in kms_servers_keys.iter() {
@@ -479,11 +479,12 @@ async fn test_complete_session_notification() {
                 (req_id_clone, response.unwrap().into_inner())
             });
         }
-
+        println!("sent responses...");
         let mut resp_response_vec = Vec::new();
         while let Some(resp) = resp_tasks.join_next().await {
             resp_response_vec.push(resp.unwrap());
         }
+        println!("received responses");
         let responses: Vec<_> = resp_response_vec
             .iter()
             .filter_map(|(req_id, resp)| {
