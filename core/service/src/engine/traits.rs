@@ -22,6 +22,7 @@ use tonic::Status;
 
 use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::signatures::{PrivateSigKey, Signature};
+use crate::engine::utils::MetricedError;
 
 use super::base::KmsFheKeyHandles;
 
@@ -92,23 +93,25 @@ pub trait BackupOperator {
     async fn get_operator_public_key(
         &self,
         request: Request<Empty>,
-    ) -> Result<Response<OperatorPublicKey>, Status>;
+    ) -> Result<Response<OperatorPublicKey>, MetricedError>;
 
     async fn custodian_recovery_init(
         &self,
         request: Request<CustodianRecoveryInitRequest>,
-    ) -> Result<Response<RecoveryRequest>, Status>;
+    ) -> Result<Response<RecoveryRequest>, MetricedError>;
 
     async fn custodian_backup_recovery(
         &self,
         request: Request<CustodianRecoveryRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
 
-    async fn restore_from_backup(&self, request: Request<Empty>)
-        -> Result<Response<Empty>, Status>;
+    async fn restore_from_backup(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<Empty>, MetricedError>;
 
     async fn get_key_material_availability(
         &self,
         request: Request<Empty>,
-    ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status>;
+    ) -> Result<Response<KeyMaterialAvailabilityResponse>, MetricedError>;
 }

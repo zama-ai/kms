@@ -43,6 +43,7 @@ pub const OP_DESTROY_CUSTODIAN_CONTEXT: &str = "destroy_custodian_context";
 pub const OP_CUSTODIAN_BACKUP_RECOVERY: &str = "custodian_backup_recovery";
 pub const OP_CUSTODIAN_RECOVERY_INIT: &str = "custodian_recovery_init";
 pub const OP_RESTORE_FROM_BACKUP: &str = "restore_from_backup";
+pub const OP_KEY_MATERIAL_AVAILABILITY: &str = "key_material_availability";
 
 // Resharing
 pub const OP_INITIATE_RESHARING: &str = "initiate_resharing";

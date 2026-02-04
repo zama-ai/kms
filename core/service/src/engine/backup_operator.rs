@@ -1,6 +1,6 @@
 use crate::backup::custodian::InternalCustodianRecoveryOutput;
 use crate::backup::operator::DSEP_BACKUP_RECOVERY;
-use crate::engine::utils::query_key_material_availability;
+use crate::engine::utils::{query_key_material_availability, MetricedError};
 use crate::vault::storage::{
     store_versioned_at_request_and_epoch_id, StorageExt, StorageReaderExt,
 };
@@ -43,6 +43,9 @@ use kms_grpc::{
     kms::v1::{Empty, KeyMaterialAvailabilityResponse, OperatorPublicKey},
     rpc_types::PrivDataType,
 };
+use observability::metrics_names::{
+    OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_FETCH_PK, OP_RESTORE_FROM_BACKUP,
+};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
@@ -51,7 +54,7 @@ use strum::IntoEnumIterator;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::{Mutex, MutexGuard};
-use tonic::{Code, Request, Response, Status};
+use tonic::{Request, Response};
 
 pub struct RealBackupOperator<
     PubS: Storage + Sync + Send + 'static,
@@ -129,6 +132,52 @@ where
             ephem_operator_pub_key,
         ))
     }
+
+    pub(crate) async fn validate_custodian_backup_recovery_request(
+        &self,
+        ephemeral_dec_key: &UnifiedPrivateEncKey,
+        ephemeral_enc_key: &UnifiedPublicEncKey,
+        req: CustodianRecoveryRequest,
+    ) -> anyhow::Result<(
+        RequestId,
+        RecoveryValidationMaterial,
+        HashMap<Role, InternalCustodianRecoveryOutput>,
+    )> {
+        let context_id = parse_optional_proto_request_id(
+            &req.custodian_context_id,
+            RequestIdParsingErr::BackupRecovery,
+        )?;
+        let recovery_material = {
+            load_recovery_validation_material(
+                &self.crypto_storage.get_public_storage(),
+                &context_id,
+                &self.base_kms.verf_key(),
+            )
+            .await?
+        };
+        let parsed_custodian_rec = {
+            filter_custodian_data(
+                req.custodian_recovery_outputs,
+                &recovery_material,
+                &self.base_kms.verf_key(),
+                &ephemeral_dec_key,
+                &ephemeral_enc_key,
+            )
+            .await?
+        };
+        // Check that we have enough valid recovery outputs
+        if parsed_custodian_rec.len()
+            < (recovery_material.custodian_context().threshold as usize) + 1
+        {
+            return Err(anyhow::anyhow!(
+                        "Only received {} valid recovery outputs, but threshold is {}. Cannot recover the backup decryption key.",
+                        parsed_custodian_rec.len(),
+                        recovery_material.custodian_context().threshold
+                    ));
+        }
+
+        Ok((context_id, recovery_material, parsed_custodian_rec))
+    }
 }
 
 #[tonic::async_trait]
@@ -140,20 +189,30 @@ where
     async fn get_operator_public_key(
         &self,
         _request: Request<Empty>,
-    ) -> Result<Response<OperatorPublicKey>, Status> {
+    ) -> Result<Response<OperatorPublicKey>, MetricedError> {
         match self.crypto_storage.backup_vault {
             Some(ref v) => {
                 let v = v.lock().await;
                 match v.keychain {
                     Some(KeychainProxy::SecretSharing(ref k)) => {
                         let public_key = k.operator_public_key_bytes().map_err(|e| {
-                            Status::new(
+                            MetricedError::new(
+                                OP_FETCH_PK,
+                                None,
+                                anyhow::anyhow!("Could not get operator public key: {e}"),
                                 tonic::Code::Internal,
-                                format!("Could not get operator public key: {e}"),
                             )
                         })?;
                         let attestation_document = match &self.security_module {
-                            Some(sm) => sm.attest(public_key.clone(), None).await.map_err(|e| Status::new(Code::Internal, format!("Could not issue attestation document for operator backup public key: {e}")))?,
+                            Some(sm) => {
+                                sm.attest(public_key.clone(), None).await
+                                .map_err(|e|
+                                    MetricedError::new(
+                                        OP_FETCH_PK,
+                                        None,
+                                        anyhow::anyhow!("Could not issue attestation document for operator backup public key: {e}"),
+                                        tonic::Code::Internal))?
+                            },
                             None => vec![],
                         };
                         Ok(Response::new(OperatorPublicKey {
@@ -161,15 +220,21 @@ where
                             attestation_document,
                         }))
                     }
-                    _ => Err(Status::new(
+                    _ => Err(MetricedError::new(
+                        OP_FETCH_PK,
+                        None,
+                        anyhow::anyhow!(
+                            "Backup vault does not support operator public key retrieval"
+                        ),
                         tonic::Code::Unimplemented,
-                        "Backup vault does not support operator public key retrieval",
                     )),
                 }
             }
-            None => Err(Status::new(
+            None => Err(MetricedError::new(
+                OP_FETCH_PK,
+                None,
+                anyhow::anyhow!("Backup vault is not configured"),
                 tonic::Code::Unavailable,
-                "Backup vault is not configured",
             )),
         }
     }
@@ -178,7 +243,7 @@ where
     async fn custodian_recovery_init(
         &self,
         request: Request<CustodianRecoveryInitRequest>,
-    ) -> Result<Response<RecoveryRequest>, Status> {
+    ) -> Result<Response<RecoveryRequest>, MetricedError> {
         let inner = request.into_inner();
         // Lock the ephemeral key for the entire duration of the method
         let mut guarded_priv_key = self.ephemeral_keys.lock().await;
@@ -188,9 +253,13 @@ where
                     tracing::warn!("Ephemeral decryption key already exists. OVERWRITING the old ephemeral key, thus invalidating any previous recovery initialization!");
                 }
                 false => {
-                    return Err(Status::new(
+                    return Err(MetricedError::new(
+                        OP_CUSTODIAN_RECOVERY_INIT,
+                        None,
+                        anyhow::anyhow!(
+                            "Ephemeral decryption key already exists. Use the `overwrite_ephemeral_key` flag to overwrite it, thus invalidating any previous recovery initialization!"
+                        ),
                         tonic::Code::AlreadyExists,
-                        "Ephemeral decryption key already exists. Use the `overwrite_ephemeral_key` flag to overwrite it, thus invalidating any previous recovery initialization!",
                     ));
                 }
             }
@@ -198,9 +267,11 @@ where
         let backup_id = get_latest_backup_id(&self.crypto_storage.backup_vault)
             .await
             .map_err(|e| {
-                Status::new(
+                MetricedError::new(
+                    OP_CUSTODIAN_RECOVERY_INIT,
+                    None,
+                    anyhow::anyhow!("Failed to get latest backup id: {e}"),
                     tonic::Code::Internal,
-                    format!("Failed to get latest backup id: {e}"),
                 )
             })?;
         let recovery_material: RecoveryValidationMaterial = {
@@ -210,26 +281,32 @@ where
                 .read_data(&backup_id, &PubDataType::RecoveryMaterial.to_string())
                 .await
                 .map_err(|e| {
-                    Status::new(
+                    MetricedError::new(
+                        OP_CUSTODIAN_RECOVERY_INIT,
+                        None,
+                        anyhow::anyhow!("Failed to read inner recovery request: {e}"),
                         tonic::Code::Internal,
-                        format!("Failed to read inner recovery request: {e}"),
                     )
                 })?
         };
         // Validate that the recovery material is correct
         if !recovery_material.validate(&self.base_kms.verf_key()) {
-            return Err(Status::new(
+            return Err(MetricedError::new(
+                OP_CUSTODIAN_RECOVERY_INIT,
+                None,
+                anyhow::anyhow!("Could not validate the signature on the recovery material"),
                 tonic::Code::InvalidArgument,
-                "Could not validate the signature on the recovery material",
             ));
         }
         let (recovery_request, ephem_op_dec_key, ephem_op_enc_key) = self
             .gen_outer_recovery_request(backup_id, recovery_material.payload.cts)
             .await
             .map_err(|e| {
-                Status::new(
+                MetricedError::new(
+                    OP_CUSTODIAN_RECOVERY_INIT,
+                    None,
+                    anyhow::anyhow!("Failed to generate recovery request: {e}"),
                     tonic::Code::Internal,
-                    format!("Failed to generate recovery request: {e}"),
                 )
             })?;
         // We already ensured that no key is previously set, so ignore the result
@@ -246,7 +323,7 @@ where
     async fn custodian_backup_recovery(
         &self,
         request: Request<CustodianRecoveryRequest>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<Empty>, MetricedError> {
         let (ephemeral_dec_key, ephemeral_enc_key) = {
             let guarded_ephemeral_keys = self.ephemeral_keys.lock().await;
             match guarded_ephemeral_keys.clone() {
@@ -254,61 +331,31 @@ where
                     (ephemeral_dec_key, ephemeral_enc_key)
                 }
                 None => {
-                    return Err(Status::new(
+                    return Err(MetricedError::new(
+                        OP_CUSTODIAN_BACKUP_RECOVERY,
+                        None,
+                        anyhow::anyhow!("Ephemeral decryption key has not been generated"),
                         tonic::Code::FailedPrecondition,
-                        "Ephemeral decryption key has not been generated",
                     ));
                 }
             }
         };
         let inner = request.into_inner();
-        let context_id: RequestId = parse_optional_proto_request_id(
-            &inner.custodian_context_id,
-            RequestIdParsingErr::BackupRecovery,
-        )?;
-        let recovery_material = {
-            load_recovery_validation_material(
-                &self.crypto_storage.get_public_storage(),
-                &context_id,
-                &self.base_kms.verf_key(),
-            )
-            .await
-            .map_err(|e| {
-                Status::new(
-                    tonic::Code::Internal,
-                    format!("Failed to load recovery validation material: {e}"),
-                )
-            })?
-        };
-        let parsed_custodian_rec = {
-            filter_custodian_data(
-                inner.custodian_recovery_outputs,
-                &recovery_material,
-                &self.base_kms.verf_key(),
+        let (context_id, recovery_material, parsed_custodian_rec) = self
+            .validate_custodian_backup_recovery_request(
                 &ephemeral_dec_key,
                 &ephemeral_enc_key,
+                inner,
             )
             .await
             .map_err(|e| {
-                Status::new(
-                    tonic::Code::Internal,
-                    format!("Failed to prune custodian recovery outputs: {e}"),
-                )
-            })?
-        };
-        // Check that we have enough valid recovery outputs
-        if parsed_custodian_rec.len()
-            < (recovery_material.custodian_context().threshold as usize) + 1
-        {
-            return Err(Status::new(
+                MetricedError::new(
+                    OP_CUSTODIAN_BACKUP_RECOVERY,
+                    None,
+                    anyhow::anyhow!("Failed to validate custodian backup recovery request: {e}"),
                     tonic::Code::InvalidArgument,
-                    format!(
-                        "Only received {} valid recovery outputs, but threshold is {}. Cannot recover the backup decryption key.",
-                        parsed_custodian_rec.len(),
-                        recovery_material.custodian_context().threshold
-                    ),
-                ));
-        }
+                )
+            })?;
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
@@ -323,36 +370,47 @@ where
                             recovery_material.custodian_context().threshold as usize,
                             amount_custodians,
                         ).map_err(|e| {
-                            Status::new(
+                            MetricedError::new(
+                                OP_CUSTODIAN_BACKUP_RECOVERY,
+                                None,
+                                anyhow::anyhow!("Failed to create operator for secret sharing based decryption: {e}"),
                                 tonic::Code::Internal,
-                                format!("Failed to create operator for secret sharing based decryption: {e}"),
                             )
                         })?;
                         let custodian_outputs: Vec<InternalCustodianRecoveryOutput> = parsed_custodian_rec.values().cloned().collect();
                         let serialized_dec_key = operator.verify_and_recover(&custodian_outputs, &recovery_material, context_id, &ephemeral_dec_key, &ephemeral_enc_key).map_err(|e| {
-                            Status::new(
+                            MetricedError::new(
+                                OP_CUSTODIAN_BACKUP_RECOVERY,
+                                None,
+                                anyhow::anyhow!("Failed to verify the backup decryption request: {e}"),
                                 tonic::Code::Unauthenticated,
-                                format!("Failed to verify the backup decryption request: {e}"),
                             )
                         })?;
                         let backup_dec_key: UnifiedPrivateEncKey = safe_deserialize(std::io::Cursor::new(&serialized_dec_key), SAFE_SER_SIZE_LIMIT).map_err(|e| {
-                            Status::new(
+                            MetricedError::new(
+                                OP_CUSTODIAN_BACKUP_RECOVERY,
+                                None,
+                                anyhow::anyhow!("Failed to deserialize backup decryption key: {e}"),
                                 tonic::Code::Internal,
-                                format!("Failed to deserialize backup decryption key: {e}"),
                             )
                         })?;
                         keychain.set_dec_key(Some(backup_dec_key));
                         Ok(Response::new(Empty {}))
                     }
-                    _ => Err(Status::new(
+                    _ => Err(
+                        MetricedError::new(
+                        OP_CUSTODIAN_BACKUP_RECOVERY,
+                        None,
+                        anyhow::anyhow!("Backup vault is not setup with a keychain for custodian-based backup recovery"),
                         tonic::Code::Unavailable,
-                        "Backup vault is not setup with a keychain for custodian-based backup recovery",
                     )),
                 }
             }
-            None => Err(Status::new(
+            None => Err(MetricedError::new(
+                OP_CUSTODIAN_BACKUP_RECOVERY,
+                None,
+                anyhow::anyhow!("Backup vault is not configured"),
                 tonic::Code::Unavailable,
-                "Backup vault is not configured",
             )),
         }
     }
@@ -370,7 +428,7 @@ where
     async fn restore_from_backup(
         &self,
         _request: Request<Empty>,
-    ) -> Result<Response<Empty>, Status> {
+    ) -> Result<Response<Empty>, MetricedError> {
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 // Do the actual restoring
@@ -382,9 +440,11 @@ where
                     restore_data(&backup_vault, &mut private_storage)
                         .await
                         .map_err(|e| {
-                            Status::new(
+                            MetricedError::new(
+                                OP_RESTORE_FROM_BACKUP,
+                                None,
+                                anyhow::anyhow!("Failed to restore backup data: {e}"),
                                 tonic::Code::Internal,
-                                format!("Failed to restore backup data: {e}"),
                             )
                         })?;
                 }
@@ -397,9 +457,11 @@ where
                 tracing::info!("Successfully restored private data from backup vault");
                 Ok(Response::new(Empty {}))
             }
-            None => Err(Status::new(
+            None => Err(MetricedError::new(
+                OP_RESTORE_FROM_BACKUP,
+                None,
+                anyhow::anyhow!("Backup vault is not configured"),
                 tonic::Code::Unavailable,
-                "Backup vault is not configured",
             )),
         }
     }
@@ -407,7 +469,7 @@ where
     async fn get_key_material_availability(
         &self,
         _request: Request<Empty>,
-    ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status> {
+    ) -> Result<Response<KeyMaterialAvailabilityResponse>, MetricedError> {
         let priv_storage = self.crypto_storage.get_private_storage();
         let priv_guard = priv_storage.lock().await;
 
@@ -423,6 +485,7 @@ where
         Ok(Response::new(response))
     }
 }
+
 /// Load and validate the recovery validation material associated with the provided context ID
 async fn load_recovery_validation_material<S>(
     public_storage: &Mutex<S>,
