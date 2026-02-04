@@ -13,6 +13,7 @@ use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint
 use kms_grpc::rpc_types::KMSType;
 use observability::metrics_names::{
     OP_INSECURE_CRS_GEN_REQUEST, OP_INSECURE_CRS_GEN_RESULT, OP_INSECURE_KEYGEN_RESULT,
+    OP_KEY_MATERIAL_AVAILABILITY,
 };
 use tonic::{Request, Response, Status};
 
@@ -227,10 +228,7 @@ impl<
         request: Request<kms_grpc::kms::v1::NewMpcContextRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
         METRICS.increment_request_counter(OP_NEW_MPC_CONTEXT);
-        self.context_manager
-            .new_mpc_context(request)
-            .await
-            .map_err(|e| e.into())
+        self.context_manager.new_mpc_context(request).await
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -239,10 +237,7 @@ impl<
         request: Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
-        self.context_manager
-            .destroy_mpc_context(request)
-            .await
-            .map_err(|e| e.into())
+        self.context_manager.destroy_mpc_context(request).await
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -251,10 +246,7 @@ impl<
         request: Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_NEW_CUSTODIAN_CONTEXT);
-        self.context_manager
-            .new_custodian_context(request)
-            .await
-            .map_err(|e| e.into())
+        self.context_manager.new_custodian_context(request).await
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -266,7 +258,6 @@ impl<
         self.context_manager
             .destroy_custodian_context(request)
             .await
-            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -322,6 +313,7 @@ impl<
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status> {
+        METRICS.increment_request_counter(OP_KEY_MATERIAL_AVAILABILITY);
         // Get storage references
         let priv_storage = self.crypto_storage.inner.get_private_storage();
         let priv_guard = priv_storage.lock().await;
@@ -331,7 +323,8 @@ impl<
             KMSType::Centralized,
             Vec::new(), // Centralized KMS doesn't support preprocessing material
         )
-        .await?;
+        .await
+        .map_err(Into::<Status>::into)?;
 
         Ok(Response::new(response))
     }
