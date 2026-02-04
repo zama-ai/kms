@@ -257,7 +257,7 @@ impl<
                                 }
                                 None => {
                                     return Err(anyhow!(
-                                        "User decryption with session ID {session_id} could not be retrived for {dec_mode}"
+                                        "User decryption with session ID {session_id} could not be retrieved for {dec_mode}"
                                     ))
                                 }
                             };
@@ -298,7 +298,7 @@ impl<
                                 }
                                 None => {
                                     return Err(anyhow!(
-                                        "User decryption with session ID {session_id} could not be retrived for {dec_mode}"
+                                        "User decryption with session ID {session_id} could not be retrieved for {dec_mode}"
                                     ))
                                 }
                             };

@@ -240,7 +240,7 @@ impl<
                     Some(raw_decryption) => *raw_decryption,
                     None => {
                         return Err(anyhow!(
-                            "Public Decryption with session ID {session_id} could not be retrived"
+                            "Public Decryption with session ID {session_id} could not be retrieved"
                         ))
                     }
                 };

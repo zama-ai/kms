@@ -83,7 +83,7 @@ alloy-primitives = "=1.4.1"  # Ethereum primitives - LOW RISK: Alloy/Paradigm te
 alloy-signer = "=1.4.3"  # Ethereum signing abstraction - LOW RISK: Alloy/Paradigm team
 alloy-signer-local = "=1.4.3"  # Local Ethereum signer - LOW RISK: Alloy/Paradigm team
 alloy-sol-types = "=1.4.1"  # Solidity types & EIP-712 - LOW RISK: Alloy/Paradigm team
-anyhow = "=1.0.100"  # Error handling - MEDIUM RISK: Reputable individual maintainer (dtolnay), 410M downloadss
+anyhow = "=1.0.100"  # Error handling - MEDIUM RISK: Reputable individual maintainer (dtolnay), 410M downloads
 assert_cmd = "=2.0.17"  # Assert command for testing - LOW RISK: assert-rs team, 1M+ downloads
 async-std = { version = "=1.13.1", features = ["attributes", "tokio1"] }  # Async runtime for testing - LOW RISK: async-rs team, 55M+ downloads
 async-trait = "=0.1.89"  # Async trait support -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 292M downloads
@@ -203,7 +203,7 @@ tracing-subscriber = { version = "=0.3.20", features = ["fmt", "std"] }  # Traci
 tracing-test = "=0.2.5"  # Tracing test utilities - LOW RISK: tokio-rs team
 trait-variant = "0.1.2"  # Trait variant generation - LOW RISK: rust-lang team utility
 typed-builder = "=0.21.0"  # Builder pattern macro - HIGH RISK: Individual maintainer (idanarye), despite 48M+ downloads
-url = { version = "=2.5.8", features = ["serde"] }  # URL parsing and manipulation - LOW RISK: servo tea,
+url = { version = "=2.5.8", features = ["serde"] }  # URL parsing and manipulation - LOW RISK: servo team,
 uuid = { version = "=1.19.0", features = ["v4", "fast-rng"] }  # UUID generation - LOW RISK: uuid-rs team
 validator = { version = "=0.20.0", features = ["derive"] }  # Struct validation - HIGH RISK: Individual maintainer (Keats), less active maintenance
 wasm-bindgen = { version = "=0.2.108", features = ["serde-serialize"] }  # WASM bindings - LOW RISK: rustwasm team
