@@ -285,12 +285,7 @@ impl_endpoint! {
             request: Request<kms_grpc::kms::v1::Empty>,
         ) -> Result<Response<kms_grpc::kms::v1::OperatorPublicKey>, Status> {
             METRICS.increment_request_counter(OP_FETCH_PK);
-            self.backup_operator.get_operator_public_key(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_FETCH_PK, tag);
-            })
-
+            self.backup_operator.get_operator_public_key(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -299,11 +294,7 @@ impl_endpoint! {
             request: Request<kms_grpc::kms::v1::CustodianRecoveryRequest>,
         ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
             METRICS.increment_request_counter(OP_CUSTODIAN_BACKUP_RECOVERY);
-            self.backup_operator.custodian_backup_recovery(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_CUSTODIAN_BACKUP_RECOVERY, tag);
-            })
+            self.backup_operator.custodian_backup_recovery(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -312,11 +303,7 @@ impl_endpoint! {
             request: Request<kms_grpc::kms::v1::Empty>,
         ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
             METRICS.increment_request_counter(OP_RESTORE_FROM_BACKUP);
-            self.backup_operator.restore_from_backup(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_RESTORE_FROM_BACKUP, tag);
-            })
+            self.backup_operator.restore_from_backup(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, _request))]
@@ -343,11 +330,7 @@ impl_endpoint! {
             request: Request<kms_grpc::kms::v1::CustodianRecoveryInitRequest>,
         ) -> Result<Response<kms_grpc::kms::v1::RecoveryRequest>, Status> {
             METRICS.increment_request_counter(OP_CUSTODIAN_RECOVERY_INIT);
-            self.backup_operator.custodian_recovery_init(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_CUSTODIAN_RECOVERY_INIT, tag);
-            })
+            self.backup_operator.custodian_recovery_init(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, _request))]

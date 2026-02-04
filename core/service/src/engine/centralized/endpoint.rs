@@ -11,6 +11,9 @@ use kms_grpc::kms::v1::{
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::KMSType;
+use observability::metrics_names::{
+    OP_INSECURE_CRS_GEN_REQUEST, OP_INSECURE_CRS_GEN_RESULT, OP_INSECURE_KEYGEN_RESULT,
+};
 use tonic::{Request, Response, Status};
 
 use crate::engine::centralized::service::{crs_gen_impl, get_crs_gen_result_impl};
@@ -26,12 +29,12 @@ use observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST;
 use observability::{
     metrics::METRICS,
     metrics_names::{
-        map_tonic_code_to_metric_err_tag, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
-        OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_DESTROY_CUSTODIAN_CONTEXT,
-        OP_DESTROY_MPC_CONTEXT, OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST,
-        OP_KEYGEN_PREPROC_RESULT, OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT,
-        OP_NEW_MPC_CONTEXT, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
-        OP_RESTORE_FROM_BACKUP, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
+        OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_CUSTODIAN_BACKUP_RECOVERY,
+        OP_CUSTODIAN_RECOVERY_INIT, OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT,
+        OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT,
+        OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_MPC_CONTEXT,
+        OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_RESTORE_FROM_BACKUP,
+        OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
     },
 };
 
@@ -45,10 +48,7 @@ impl<
 {
     async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_INIT);
-        init_impl(self, request).await.inspect_err(|err| {
-            let tag = map_tonic_code_to_metric_err_tag(err.code());
-            let _ = METRICS.increment_error_counter(observability::metrics_names::OP_INIT, tag);
-        })
+        init_impl(self, request).await.map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -70,6 +70,7 @@ impl<
         &self,
         request: Request<kms_grpc::kms::v1::PartialKeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
+        METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
         let base_req = request.into_inner().base_request.ok_or_else(
             || MetricedError::new(OP_KEYGEN_PREPROC_REQUEST, None, anyhow::anyhow!("Missing preproc base_request in partial preprocessing for a centralized server"), tonic::Code::InvalidArgument))?;
         self.key_gen_preproc(Request::new(base_req)).await
@@ -104,7 +105,7 @@ impl<
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::KeyGenResult>, Status> {
-        METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_KEYGEN_RESULT);
+        METRICS.increment_request_counter(OP_INSECURE_KEYGEN_RESULT);
         get_key_gen_result_impl(self, request, true)
             .await
             .map_err(|e| e.into())
@@ -202,8 +203,7 @@ impl<
         &self,
         request: Request<kms_grpc::kms::v1::CrsGenRequest>,
     ) -> Result<Response<Empty>, Status> {
-        METRICS
-            .increment_request_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_REQUEST);
+        METRICS.increment_request_counter(OP_INSECURE_CRS_GEN_REQUEST);
         crs_gen_impl(self, request, true)
             .await
             .map_err(|e| e.into())
@@ -215,7 +215,7 @@ impl<
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::CrsGenResult>, Status> {
-        METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_RESULT);
+        METRICS.increment_request_counter(OP_INSECURE_CRS_GEN_RESULT);
         get_crs_gen_result_impl(self, request, true)
             .await
             .map_err(|e| e.into())
@@ -230,10 +230,7 @@ impl<
         self.context_manager
             .new_mpc_context(request)
             .await
-            .inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_NEW_MPC_CONTEXT, tag);
-            })
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -245,10 +242,7 @@ impl<
         self.context_manager
             .destroy_mpc_context(request)
             .await
-            .inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_DESTROY_MPC_CONTEXT, tag);
-            })
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -260,10 +254,7 @@ impl<
         self.context_manager
             .new_custodian_context(request)
             .await
-            .inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_NEW_CUSTODIAN_CONTEXT, tag);
-            })
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -275,10 +266,7 @@ impl<
         self.context_manager
             .destroy_custodian_context(request)
             .await
-            .inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_DESTROY_CUSTODIAN_CONTEXT, tag);
-            })
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -290,10 +278,7 @@ impl<
         self.backup_operator
             .get_operator_public_key(request)
             .await
-            .inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_FETCH_PK, tag);
-            })
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -305,10 +290,7 @@ impl<
         self.backup_operator
             .custodian_backup_recovery(request)
             .await
-            .inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_CUSTODIAN_BACKUP_RECOVERY, tag);
-            })
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -320,10 +302,7 @@ impl<
         self.backup_operator
             .restore_from_backup(request)
             .await
-            .inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_RESTORE_FROM_BACKUP, tag);
-            })
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -335,10 +314,7 @@ impl<
         self.backup_operator
             .custodian_recovery_init(request)
             .await
-            .inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS.increment_error_counter(OP_CUSTODIAN_RECOVERY_INIT, tag);
-            })
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, _request))]
