@@ -842,45 +842,32 @@ impl<
             )
             .await?;
         let mut pk_map = HashMap::new();
-        for (id, _) in key_info.keys() {
-            // there should be at least one that succeeds
-
-            use tfhe::xof_key_set::CompressedXofKeySet;
-            let pk_ok = match read_versioned_at_request_id(
-                &public_storage,
-                id,
-                &PubDataType::PublicKey.to_string(),
-            )
-            .await
+        for ((id, _), handle) in key_info.iter() {
+            if handle
+                .public_key_info
+                .pub_data_types()
+                .contains(&PubDataType::PublicKey)
             {
-                Ok(pk) => {
-                    pk_map.insert(*id, pk);
-                    true
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to find CompactPublicKey for id={id}: {e}");
-                    false
-                }
-            };
-            let compressed_keyset_ok = match read_versioned_at_request_id::<_, CompressedXofKeySet>(
-                &public_storage,
-                id,
-                &PubDataType::CompressedXofKeySet.to_string(),
-            )
-            .await
+                let pk = read_versioned_at_request_id(
+                    &public_storage,
+                    id,
+                    &PubDataType::PublicKey.to_string(),
+                )
+                .await?;
+                pk_map.insert(*id, pk);
+            } else if handle
+                .public_key_info
+                .pub_data_types()
+                .contains(&PubDataType::CompressedXofKeySet)
             {
-                Ok(pk) => {
-                    pk_map.insert(*id, pk.decompress()?.into_raw_parts().0);
-                    true
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to find CompressedXofKeySet for id={id}: {e}");
-                    false
-                }
-            };
-
-            if !compressed_keyset_ok && !pk_ok {
-                anyhow::bail!("Could not find a public key for id={id}")
+                let xof_keyset =
+                    read_versioned_at_request_id::<_, tfhe::xof_key_set::CompressedXofKeySet>(
+                        &public_storage,
+                        id,
+                        &PubDataType::CompressedXofKeySet.to_string(),
+                    )
+                    .await?;
+                pk_map.insert(*id, xof_keyset.decompress()?.into_raw_parts().0);
             }
         }
         tracing::info!(

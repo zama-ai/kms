@@ -252,7 +252,7 @@ async fn test_decrypt_after_recovery_threshold(#[case] custodians: usize, #[case
 
 #[cfg(feature = "insecure")]
 async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
-    use crate::client::tests::threshold::key_gen_tests::KeySetConfigExt;
+    use crate::client::tests::threshold::key_gen_tests::OptKeySetConfigAccessor;
 
     let amount_parties = 4;
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];

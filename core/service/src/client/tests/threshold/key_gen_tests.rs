@@ -31,9 +31,13 @@ cfg_if::cfg_if! {
 
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
+#[cfg(feature = "slow_tests")]
+use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
 #[cfg(feature = "insecure")]
 use crate::consts::TEST_PARAM;
 use crate::consts::{PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL, PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL};
+#[cfg(feature = "slow_tests")]
+use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 #[cfg(feature = "slow_tests")]
 use crate::util::rate_limiter::RateLimiterConfig;
 use alloy_dyn_abi::Eip712Domain;
@@ -44,6 +48,8 @@ use kms_grpc::kms::v1::StandardKeySetConfig;
 use std::path::Path;
 #[cfg(feature = "slow_tests")]
 use std::sync::Arc;
+#[cfg(feature = "slow_tests")]
+use tfhe::core_crypto::commons::utils::ZipChecked;
 #[cfg(feature = "slow_tests")]
 use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
 use tonic::{Response, Status};
@@ -85,28 +91,33 @@ impl TestKeyGenResult {
     }
 
     fn sanity_check(&self) {
-        // encrypt some value, and then decrypt to sanity check the client key
-        let expected = 27u8;
-
         use tfhe::prelude::FheDecrypt;
         use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
-        match &self {
-            TestKeyGenResult::DecompressionOnly(_) => { /* cannot sanity check */ }
+        let (client_key, public_key, server_key) = match &self {
+            TestKeyGenResult::DecompressionOnly(_) => {
+                /* cannot sanity check */
+                return;
+            }
             TestKeyGenResult::Standard((client_key, public_key, server_key)) => {
-                tfhe::set_server_key(server_key.clone());
-                let ct: tfhe::FheUint8 = expanded_encrypt(public_key, expected, 8).unwrap();
-                let pt: u8 = ct.decrypt(client_key);
-                assert_eq!(pt, expected);
+                (client_key, public_key.clone(), server_key.clone())
             }
             TestKeyGenResult::Compressed((client_key, keyset)) => {
                 let (public_key, server_key) =
                     keyset.clone().decompress().unwrap().into_raw_parts();
-                tfhe::set_server_key(server_key.clone());
-                let ct: tfhe::FheUint8 = expanded_encrypt(&public_key, expected, 8).unwrap();
-                let actual: u8 = ct.decrypt(client_key);
-                assert_eq!(actual, expected);
+                (client_key, public_key, server_key)
             }
-        }
+        };
+
+        let pt1 = 27u8;
+        let pt2 = 2u8;
+
+        tfhe::set_server_key(server_key);
+        let ct1: tfhe::FheUint8 = expanded_encrypt(&public_key, pt1, 8).unwrap();
+        let ct2: tfhe::FheUint8 = expanded_encrypt(&public_key, pt2, 8).unwrap();
+        let ct3 = ct1 * ct2;
+
+        let pt: u8 = ct3.decrypt(client_key);
+        assert_eq!(pt, pt1 * pt2);
     }
 }
 
@@ -149,13 +160,13 @@ pub(crate) fn decompression_keygen_config(
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-pub(crate) trait KeySetConfigExt {
+pub(crate) trait OptKeySetConfigAccessor {
     fn is_compressed(&self) -> bool;
     fn is_decompression_only(&self) -> bool;
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-impl KeySetConfigExt for Option<KeySetConfig> {
+impl OptKeySetConfigAccessor for Option<KeySetConfig> {
     fn is_compressed(&self) -> bool {
         self.as_ref().is_some_and(|c| {
             c.standard_keyset_config.as_ref().is_some_and(|sc| {
@@ -763,6 +774,47 @@ pub(crate) async fn preproc_and_keygen(
     partial_preproc: Option<kms_grpc::kms::v1::PartialKeyGenPreprocParams>,
     compressed: bool,
 ) {
+    fn validate_keyset(keyset: TestKeyGenResult, key_id: &RequestId, compressed: bool) {
+        let (client_key, public_key, server_key) = if compressed {
+            let (client_key, keyset) = keyset.get_compressed();
+            let (public_key, server_key) = keyset.decompress().unwrap().into_raw_parts();
+            (client_key, public_key, server_key)
+        } else {
+            keyset.get_standard()
+        };
+        let tag: tfhe::Tag = (*key_id).into();
+        assert_eq!(&tag, client_key.tag());
+        assert_eq!(&tag, public_key.tag());
+        assert_eq!(&tag, server_key.tag());
+        crate::client::key_gen::tests::check_conformance(server_key, client_key);
+    }
+
+    /// Crashes specified parties during keygen, returning the count of newly crashed parties.
+    /// Skips parties that were already crashed during preprocessing.
+    async fn crash_parties_for_keygen(
+        party_ids_to_crash: Option<Vec<usize>>,
+        party_ids_crashed_in_preproc: &Option<Vec<usize>>,
+        kms_servers: &mut HashMap<u32, crate::testing::types::ServerHandle>,
+        kms_clients: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    ) -> usize {
+        let mut newly_crashed = 0;
+        for party_id in party_ids_to_crash.unwrap_or_default() {
+            if party_ids_crashed_in_preproc
+                .clone()
+                .unwrap_or_default()
+                .contains(&party_id)
+            {
+                continue;
+            }
+            tracing::warn!("Crashin party {party_id} during keygen (on purpose)");
+            let kms_server = kms_servers.remove(&(party_id as u32)).unwrap();
+            kms_server.assert_shutdown().await;
+            let _kms_client = kms_clients.remove(&(party_id as u32)).unwrap();
+            newly_crashed += 1;
+        }
+        newly_crashed
+    }
+
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let mut preproc_ids = vec![];
@@ -834,8 +886,6 @@ pub(crate) async fn preproc_and_keygen(
     }
 
     if concurrent {
-        use tfhe::core_crypto::commons::utils::ZipChecked;
-
         let arc_clients = Arc::new(kms_clients);
         let arc_internalclient = Arc::new(internal_client);
         let mut preprocset = JoinSet::new();
@@ -864,29 +914,24 @@ pub(crate) async fn preproc_and_keygen(
 
         // Taking back ownership of the clients to remove those we need to crash
         let mut kms_clients = Arc::try_unwrap(arc_clients).unwrap();
-        // Now crash the parties that should be crashed during keygen
-        for party_id in party_ids_to_crash_keygen.unwrap_or_default() {
-            if party_ids_to_crash_preproc
-                .clone()
-                .unwrap_or_default()
-                .contains(&party_id)
-            {
-                // party already crashed during preproc
-                continue;
-            }
-            tracing::warn!("Crashin party {party_id} during keygen (on purpose)");
-            let kms_server = kms_servers.remove(&(party_id as u32)).unwrap();
-            kms_server.assert_shutdown().await;
-            let _kms_client = kms_clients.remove(&(party_id as u32)).unwrap();
-            expected_num_parties_crashed += 1;
-        }
+        expected_num_parties_crashed += crash_parties_for_keygen(
+            party_ids_to_crash_keygen,
+            &party_ids_to_crash_preproc,
+            &mut kms_servers,
+            &mut kms_clients,
+        )
+        .await;
 
         let arc_clients = Arc::new(kms_clients);
         let mut keyset = JoinSet::new();
         for (key_id, preproc_id) in key_ids.iter().zip_checked(&preproc_ids) {
             let key_id = *key_id;
             let preproc_id = *preproc_id;
-            let (keyset_config, keyset_added_info) = standard_keygen_config();
+            let (keyset_config, keyset_added_info) = if compressed {
+                compressed_keygen_config()
+            } else {
+                standard_keygen_config()
+            };
             keyset.spawn({
                 let clients_clone = Arc::clone(&arc_clients);
                 let internalclient_clone = Arc::clone(&arc_internalclient);
@@ -914,19 +959,34 @@ pub(crate) async fn preproc_and_keygen(
         }
         let all_key_sets = keyset.join_all().await;
         for (key_id, keyset) in all_key_sets {
-            // blockchain parameters always have mod switch noise reduction key
+            validate_keyset(keyset, &key_id, compressed);
+        }
 
-            let (client_key, public_key, server_key) = keyset.get_standard();
-            let tag: tfhe::Tag = key_id.into();
-            assert_eq!(&tag, client_key.tag());
-            assert_eq!(&tag, public_key.tag());
-            assert_eq!(&tag, server_key.tag());
-            crate::client::key_gen::tests::check_conformance(server_key, client_key);
+        // Run decryption tests after keygen completes
+        let mut kms_clients = Arc::try_unwrap(arc_clients).unwrap();
+        let mut internal_client = Arc::try_unwrap(arc_internalclient).unwrap();
+        for key_id in key_ids.iter() {
+            run_decryption_threshold(
+                amount_parties,
+                &mut kms_servers,
+                &mut kms_clients,
+                &mut internal_client,
+                key_id,
+                None,
+                vec![TestingPlaintext::U8(u8::MAX)],
+                EncryptionConfig {
+                    compression: true,
+                    precompute_sns: true,
+                },
+                None,
+                1,
+                None,
+                compressed,
+            )
+            .await;
         }
         tracing::info!("Finished concurrent preproc and keygen");
     } else {
-        use tfhe::core_crypto::commons::utils::ZipChecked;
-
         for preproc_id in preproc_ids.iter() {
             run_preproc(
                 amount_parties,
@@ -940,22 +1000,13 @@ pub(crate) async fn preproc_and_keygen(
             )
             .await;
         }
-        // Now crash the parties that should be crashed during keygen
-        for party_id in party_ids_to_crash_keygen.unwrap_or_default() {
-            if party_ids_to_crash_preproc
-                .clone()
-                .unwrap_or_default()
-                .contains(&party_id)
-            {
-                // party already crashed during preproc
-                continue;
-            }
-            tracing::warn!("Crashin party {party_id} during keygen (on purpose)");
-            let kms_server = kms_servers.remove(&(party_id as u32)).unwrap();
-            kms_server.assert_shutdown().await;
-            let _kms_client = kms_clients.remove(&(party_id as u32)).unwrap();
-            expected_num_parties_crashed += 1;
-        }
+        expected_num_parties_crashed += crash_parties_for_keygen(
+            party_ids_to_crash_keygen,
+            &party_ids_to_crash_preproc,
+            &mut kms_servers,
+            &mut kms_clients,
+        )
+        .await;
         for (key_id, preproc_id) in key_ids.iter().zip_checked(&preproc_ids) {
             let (keyset_config, keyset_added_info) = if compressed {
                 compressed_keygen_config()
@@ -977,25 +1028,8 @@ pub(crate) async fn preproc_and_keygen(
             .await
             .0;
 
-            // blockchain parameters always have mod switch noise reduction key
-            let (client_key, public_key, server_key) = if compressed {
-                // blockchain parameters always have mod switch noise reduction key
-                let (client_key, keyset) = keyset.get_compressed();
-                let (public_key, server_key) = keyset.decompress().unwrap().into_raw_parts();
-                (client_key, public_key, server_key)
-            } else {
-                keyset.get_standard()
-            };
-            let tag: tfhe::Tag = (*key_id).into();
-            assert_eq!(&tag, client_key.tag());
-            assert_eq!(&tag, public_key.tag());
-            assert_eq!(&tag, server_key.tag());
-            crate::client::key_gen::tests::check_conformance(server_key, client_key);
+            validate_keyset(keyset, key_id, compressed);
 
-            use crate::{
-                client::tests::threshold::public_decryption_tests::run_decryption_threshold,
-                util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext},
-            };
             // Run a DDec
             run_decryption_threshold(
                 amount_parties,
@@ -1369,8 +1403,7 @@ pub(crate) async fn verify_keygen_responses(
             ThresholdFheKeys::read_from_storage_at_epoch(&priv_storage, &key_id, &DEFAULT_EPOCH_ID)
                 .await
                 .unwrap();
-        // Note: The sns_key is now part of PublicKeyMaterial enum and cannot be easily cleared.
-        // This optimization is skipped, but the test should still work (with more memory usage).
+        // Note: The sns_key is a part of threshold_fhe_keys, consider optimizing this if it uses too much memory
         all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
 
         // Compare serialized keys across parties

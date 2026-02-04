@@ -1103,6 +1103,8 @@ impl<
                             .map(|(compressed_keyset, sk)| KeyGenDkgResult::Compressed(compressed_keyset, sk))
                     }
                     // Compressed keygen with UseExisting is not supported
+                    // In theory it is easy to add but we do not need this feature for now
+                    // and adding it would mean adding more infrastructure around testing and client support.
                     (
                         ddec_keyset_config::KeySetCompressionConfig::UseExisting,
                         _,

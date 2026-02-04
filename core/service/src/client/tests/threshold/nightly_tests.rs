@@ -349,6 +349,27 @@ async fn secure_threshold_concurrent_keygen_test(#[case] amount_parties: usize) 
     .await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+#[tracing_test::traced_test]
+#[rstest::rstest]
+#[case(4)]
+#[case(DEFAULT_AMOUNT_PARTIES)]
+#[serial]
+async fn secure_threshold_concurrent_compressed_keygen_test(#[case] amount_parties: usize) {
+    preproc_and_keygen(
+        amount_parties,
+        FheParameter::Test,
+        false,
+        2,
+        true,
+        None,
+        None,
+        None,
+        true,
+    )
+    .await;
+}
+
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
 #[tracing_test::traced_test]

@@ -32,6 +32,7 @@ use kms_grpc::RequestId;
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use tfhe::integer::compression_keys::DecompressionKey;
@@ -864,6 +865,17 @@ impl KeyGenMetadata {
                 // we cannot return a single external signature because there might be multiple
                 &[]
             }
+        }
+    }
+
+    pub fn pub_data_types(&self) -> HashSet<PubDataType> {
+        match self {
+            KeyGenMetadata::Current(key_gen_metadata_inner) => key_gen_metadata_inner
+                .key_digest_map
+                .keys()
+                .cloned()
+                .collect(),
+            KeyGenMetadata::LegacyV0(hash_map) => hash_map.keys().cloned().collect(),
         }
     }
 }
