@@ -632,7 +632,7 @@ deploy_init_job() {
     elif [[ "${TARGET}" == "aws-ci" ]]; then
         INIT_VALUES="${REPO_ROOT}/ci/pr-preview/${DEPLOYMENT_TYPE}/kms-service/values-kms-service-init-kms-ci.yaml"
     elif [[ "${TARGET}" == "aws-perf" ]]; then
-        INIT_VALUES="${REPO_ROOT}/ci/perf-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-init-${PATH_SUFFIX}-ci.yaml"
+        INIT_VALUES="${REPO_ROOT}/ci/perf-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-init-${PATH_SUFFIX}.yaml"
     fi
 
     #-------------------------------------------------------------------------
