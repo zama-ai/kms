@@ -485,7 +485,6 @@ where
                 .networking_manager
                 .make_network_session(
                     session_id,
-                    threshold,
                     &*role_assignment.read().await,
                     self.my_role,
                     network_mode,
@@ -1966,7 +1965,6 @@ where
                 .networking_manager
                 .make_network_session(
                     session_id,
-                    threshold,
                     &*role_assignment.read().await,
                     self.my_role,
                     NetworkMode::Async,
