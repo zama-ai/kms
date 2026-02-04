@@ -419,7 +419,7 @@ spec:
         - name: tls
         - name: run_url
       script:
-        image: alpine:3.16
+        image: public.ecr.aws/docker/library/alpine:3.16
         command: ["/bin/sh", "-c"]
         env:
         - name: WORKFLOW_NAME

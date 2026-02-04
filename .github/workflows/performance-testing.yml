@@ -422,18 +422,9 @@ jobs:
           ###################################################################
           echo "Starting cleanup of KMS resources..."
 
-          # Uninstall KMS Core instances
-          echo "Uninstalling KMS Core instances..."
-          if [[ ${DEPLOYMENT_TYPE} == "threshold" || ${DEPLOYMENT_TYPE} == "thresholdWithEnclave" ]]; then
-            for i in {1..13}; do
-              echo "Uninstalling KMS Core instance ${i}/13..."
-              helm uninstall "kms-service-threshold-${i}-${PATH_SUFFIX}" -n "${NAMESPACE}" || true
-            done
-          fi
-          if [[ ${DEPLOYMENT_TYPE} == "centralized" || ${DEPLOYMENT_TYPE} == "centralizedWithEnclave" ]]; then
-            echo "Uninstalling KMS Core instance..."
-            helm uninstall "kms-service-centralized-${PATH_SUFFIX}" -n "${NAMESPACE}" || true
-          fi
+          # Uninstall all Helm releases in the namespace
+          echo "Uninstalling all Helm releases in namespace ${NAMESPACE}..."
+          helm list -n "${NAMESPACE}" -q | xargs -r -n1 helm uninstall -n "${NAMESPACE}" || true
 
           # Clean up ConfigMaps
           echo "Cleaning up ConfigMaps..."
@@ -452,12 +443,6 @@ jobs:
           # Clean up workflow
           echo "Cleaning up workflow..."
           argo delete @latest -n kms-ci -n "${NAMESPACE}" || true
-
-          # Uninstall Helm releases
-          echo "Uninstalling Helm releases..."
-          helm uninstall kms-core-init -n "${NAMESPACE}" || true
-          helm uninstall tkms-infra -n "${NAMESPACE}" || true
-          helm uninstall sync-secrets -n "${NAMESPACE}" || true
 
           echo "✅ Cleanup completed successfully"
 
