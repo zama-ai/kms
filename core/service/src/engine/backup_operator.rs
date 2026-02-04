@@ -160,8 +160,8 @@ where
                 req.custodian_recovery_outputs,
                 &recovery_material,
                 &self.base_kms.verf_key(),
-                &ephemeral_dec_key,
-                &ephemeral_enc_key,
+                ephemeral_dec_key,
+                ephemeral_enc_key,
             )
             .await?
         };
