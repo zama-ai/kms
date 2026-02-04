@@ -134,27 +134,34 @@ wait_tkms_infra_ready() {
 
     #-------------------------------------------------------------------------
     # Phase 2: Wait for Kmsparties resources to be created
+    # Skip for centralized (non-enclave) deployments
     #-------------------------------------------------------------------------
-    log_info "Waiting for Kmsparties resources to be created..."
+    if [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]] || [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
+        log_info "Waiting for Kmsparties resources to be created..."
 
-    local max_wait=120
-    local elapsed=0
-    local check_interval=5
+        local max_wait=120
+        local elapsed=0
+        local check_interval=5
 
-    while [[ $elapsed -lt $max_wait ]]; do
-        if kubectl get Kmsparties -n "${NAMESPACE}" 2>/dev/null | grep -qF "${party_prefix}"; then
-            log_info "Kmsparties resources found"
-            break
-        fi
-        log_info "Waiting for Kmsparties to be created... ($elapsed/$max_wait seconds)"
-        sleep $check_interval
-        elapsed=$((elapsed + check_interval))
-    done
+        while [[ $elapsed -lt $max_wait ]]; do
+            if kubectl get Kmsparties -n "${NAMESPACE}" 2>/dev/null | grep -qF "${party_prefix}"; then
+                log_info "Kmsparties resources found"
+                break
+            fi
+            log_info "Waiting for Kmsparties to be created... ($elapsed/$max_wait seconds)"
+            sleep $check_interval
+            elapsed=$((elapsed + check_interval))
+        done
+    else
+        log_info "Skipping Kmsparties wait for deployment type: ${DEPLOYMENT_TYPE}"
+    fi
 
     #-------------------------------------------------------------------------
     # Phase 3: Wait for Kmsparties to become ready
     #-------------------------------------------------------------------------
-    log_info "Waiting for Kmsparties to be ready..."
+    if [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]] || [[ "${DEPLOYMENT_TYPE}" == *"threshold"* ]]; then
+        log_info "Waiting for Kmsparties to be ready..."
+    fi
 
     if [[ "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
         # Centralized: Try both possible naming patterns
