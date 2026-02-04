@@ -1,116 +1,17 @@
 kmsPeers:
   # Number of replicas managed by each statefulset
   count: 1
-kmsConnector:
-  enabled: false
-kmsCoreClient:
-  enabled: false
-  envFrom:
-    configmap:
-      name: kms-enclave-ci-1
-  image:
-    tag: <version>
 
 kmsCore:
-  image:
-    name: ghcr.io/zama-ai/kms/core-service-enclave
-    tag: <version>
-  envFrom:
-    configmap:
-      key:
-        coreClientS3Endpoint: CORE_CLIENT__S3_ENDPOINT
-        privateVaultStorageBucket: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
-        privateVaultStoragePrefix: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
-        privateVaultKeychainAWSKMSRootKeySpec: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
-        privateVaultKeychainAWSKMSRootKeyID: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
-        publicVaultStorageBucket: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
-        publicVaultStoragePrefix: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX
-        backupVaultStorageBucket: KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET
-        backupVaultStoragePrefix: KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX
-        backupVaultKeychainAWSKMSRootKeySpec: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
-        backupVaultKeychainAWSKMSRootKeyID: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
-  rateLimiter:
-    bucketSize: 50000
   thresholdMode:
     enabled: true
-    initializationScript:
-      enabled: true
-    thresholdValue: 4 # 1 if 4 parties or 4 if 13 parties
-    numSessionsPreproc: 100
-    multiplier: 2.0
-    maxInterval: 60
-    initialIntervalMs: 100
-    cleanupIntervalSecs: 2
-    tokioWorkerThreads: 10
-    rayonNumThreads: 40
-    peersList:
-      - id: 1
-        host: kms-service-threshold-1-kms-enclave-ci-core-1
-        port: 50001
-      - id: 2
-        host: kms-service-threshold-2-kms-enclave-ci-core-2
-        port: 50001
-      - id: 3
-        host: kms-service-threshold-3-kms-enclave-ci-core-3
-        port: 50001
-      - id: 4
-        host: kms-service-threshold-4-kms-enclave-ci-core-4
-        port: 50001
-      - id: 5
-        host: kms-service-threshold-5-kms-enclave-ci-core-5
-        port: 50001
-      - id: 6
-        host: kms-service-threshold-6-kms-enclave-ci-core-6
-        port: 50001
-      - id: 7
-        host: kms-service-threshold-7-kms-enclave-ci-core-7
-        port: 50001
-      - id: 8
-        host: kms-service-threshold-8-kms-enclave-ci-core-8
-        port: 50001
-      - id: 9
-        host: kms-service-threshold-9-kms-enclave-ci-core-9
-        port: 50001
-      - id: 10
-        host: kms-service-threshold-10-kms-enclave-ci-core-10
-        port: 50001
-      - id: 11
-        host: kms-service-threshold-11-kms-enclave-ci-core-11
-        port: 50001
-      - id: 12
-        host: kms-service-threshold-12-kms-enclave-ci-core-12
-        port: 50001
-      - id: 13
-        host: kms-service-threshold-13-kms-enclave-ci-core-13
-        port: 50001
+    # peersList is generated dynamically by deploy.sh and should not be set here
     tls:
-      enabled: false
-      trustedReleases:
-        - pcr0: '9435d28857a31b883f9ed0ccd690d2ba5ffc9693937132bc9e83c32d00aa12adbff05f8e7ba7a769937b43ce74631a27'
-          pcr1: '4b4d5b3661b3efc12920900c80e126e4ce783c522de6c02a2a5bf7af3a2b9327b86776f188e4be1c1c404a129dbda493'
-          pcr2: '4132b2e353636fb6c3ef3440805bec897e88580fba4454c2dde9bc788c90786fa4d3631eae701441b72501311b2186c3'
+      enabled: true  # TLS is enabled by default for enclave deployments
   nitroEnclave:
     enabled: true
-    socat:
-      timeout: 180
     cpuCount: 48
     memoryGiB: 96
-    # grpcPeerProxy:
-    #   resources:
-    #     requests:
-    #       memory: 1Gi
-    #       cpu: 0.5
-    #     limits:
-    #       memory: 1Gi
-    #       cpu: 0.5
-    # enclavePeerProxy:
-    #   resources:
-    #     requests:
-    #       memory: 1Gi
-    #       cpu: 0.5
-    #     limits:
-    #       memory: 1Gi
-    #       cpu: 0.5
   resources:
     requests:
       memory: 12Gi
@@ -120,20 +21,16 @@ kmsCore:
       ephemeralStorage: 10Gi
       grpcTimeout: 360
       grpcMaxMessageSize: 104857600
-  readinessProbe:
-    failureThreshold: 10
-    initialDelaySeconds: 10
-    periodSeconds: 15
-  startupProbe:
-    failureThreshold: 10
-    initialDelaySeconds: 30
-    periodSeconds: 10
-  livenessProbe:
-    failureThreshold: 5
-    initialDelaySeconds: 10
-    timeoutSeconds: 30
-  aws:
-    region: eu-west-1
+  publicVault:
+    s3:
+      enabled: true
+      prefix:
+  privateVault:
+    awskms:
+      enabled: true
+    s3:
+      enabled: true
+      prefix:
   storage:
     storageClassName: gp3
     capacity: 15Gi
@@ -162,37 +59,3 @@ kmsCore:
       effect: NoSchedule
       operator: Equal
       value: kms-enclave-ci
-mtls:
-  enabled: false
-environment: integration
-runMode: integration
-redis:
-  enabled: false
-  host: "redis://redis-master.common.svc.cluster.local"
-
-tracing:
-  enabled: true
-  endpoint: "http://observability-zws-tls.observability-alloy.observability.svc.cluster.local:4317"
-
-socat:
-  image:
-    name: alpine/socat
-    tag: latest
-rustLog: debug
-minio:
-  enabled: false
-kyverno:
-  enabled: false
-kmsInit:
-  enabled: false
-kmsGenKeys:
-  enabled: false
-kmsGenCertAndKeys:
-  enabled: false
-kmsCoreClientTesting:
-  enabled: false
-  # schedule: "5 * * * *"
-  shell_command: []
-  # - date
-  # - export CORE_CLIENT__FHE_PARAMS=Default && ./bin/kms-core-client --logs -f config.toml decrypt -d euint8 -k 8e53e2d84ecdd37e344ec414fe6804b57c1eb8f26a2bbcc2818ebabe81b58673 -e ff --precompute-sns
-  # - date
