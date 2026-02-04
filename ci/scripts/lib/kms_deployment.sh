@@ -366,8 +366,6 @@ deploy_centralized_mode() {
     if [[ "${is_performance_testing}" == "true" ]]; then
         HELM_ARGS+=(
             --values "${performance_values_dir}/values-${PATH_SUFFIX}.yaml"
-            --set kmsCore.serviceAccountName="${PATH_SUFFIX}-1"
-            --set kmsCore.envFrom.configmap.name="${PATH_SUFFIX}-1"
             --set kmsCore.image.tag="${KMS_CORE_TAG}"
         )
     fi

@@ -19,7 +19,7 @@ publicBucketVault:
     environment: kms-ci
   configMapTargetRef:
     enabled: true
-    name: kms-bucket-vault
+    name: kms-ci
   tags:
     Environment: zws-dev
     ManagedBy: zama
