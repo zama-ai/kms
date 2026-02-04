@@ -369,10 +369,7 @@ impl Client {
             .extract_if(.., |kd| kd.key_type == key_type.to_string())
             .next()
             .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Key type {} not found in key generation result",
-                    key_type.to_string()
-                )
+                anyhow::anyhow!("Key type {key_type} not found in key generation result")
             })?;
 
         let request_id = parse_optional_proto_request_id(
