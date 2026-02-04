@@ -322,19 +322,8 @@ deploy_threshold_mode() {
     #=========================================================================
     # STEP 7: Deploy Initialization Job
     #=========================================================================
-    if [[ "${is_performance_testing}" == "true" ]]; then
-        log_info "Deploying KMS Core initialization job (performance testing)..."
-        helm_upgrade_with_version kms-core-init "${helm_chart_location}" \
-            --namespace "${NAMESPACE}" \
-            --values "${performance_values_dir}/values-kms-service-init-${PATH_SUFFIX}.yaml" \
-            --set kmsCoreClient.image.tag="${KMS_CLIENT_TAG}" \
-            --set kmsCore.image.tag="${KMS_CORE_TAG}" \
-            --wait \
-            --wait-for-jobs \
-            --timeout=1200s
-    else
-        deploy_init_job "${BASE_VALUES}" "${PEERS_VALUES}" "${OVERRIDE_VALUES}"
-    fi
+    deploy_init_job "${BASE_VALUES}" "${PEERS_VALUES}" "${OVERRIDE_VALUES}" \
+        "${helm_chart_location}" "${is_performance_testing}" "${performance_values_dir}"
 }
 
 #=============================================================================
@@ -499,6 +488,13 @@ EOF
     configmap:
       name: "${NAMESPACE}-1"
 EOF
+    elif [[ "${TARGET}" == "aws-perf" ]]; then
+        cat <<EOF >> "${output_file}"
+  serviceAccountName: "${PATH_SUFFIX}-1"
+  envFrom:
+    configmap:
+      name: "${PATH_SUFFIX}-1"
+EOF
     fi
 
     # Add pod tolerations for AWS deployments
@@ -540,6 +536,12 @@ EOF
   envFrom:
     configmap:
       name: "${NAMESPACE}-1"
+EOF
+    elif [[ "${TARGET}" == "aws-perf" ]]; then
+        cat <<EOF >> "${output_file}"
+  envFrom:
+    configmap:
+      name: "${PATH_SUFFIX}-1"
 EOF
     fi
 
@@ -604,12 +606,11 @@ deploy_init_job() {
     local base_values="$1"
     local peers_values="$2"
     local override_values="$3"
+    local helm_chart_location="$4"
+    local is_performance_testing="${5:-false}"
+    local performance_values_dir="$6"
 
-    # Set threshold value based on party count
-    local threshold_value="1"
-    if [[ "${NUM_PARTIES}" -ge 13 ]]; then
-        threshold_value="4"
-    fi
+    log_info "Deploying KMS Core initialization job..."
 
     #-------------------------------------------------------------------------
     # Determine init values file location
@@ -628,20 +629,23 @@ deploy_init_job() {
         else
             INIT_VALUES="${init_values}"
         fi
-    else
+    elif [[ "${TARGET}" == "aws-ci" ]]; then
         INIT_VALUES="${REPO_ROOT}/ci/pr-preview/${DEPLOYMENT_TYPE}/kms-service/values-kms-service-init-kms-ci.yaml"
+    elif [[ "${TARGET}" == "aws-perf" ]]; then
+        INIT_VALUES="${REPO_ROOT}/ci/perf-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-init-${PATH_SUFFIX}-ci.yaml"
     fi
 
     #-------------------------------------------------------------------------
     # Build Helm arguments
     #-------------------------------------------------------------------------
-    log_info "Deploying initialization job..."
+    log_info "Deploying initialization job for ${TARGET} ..."
 
     local HELM_ARGS=(
         --namespace "${NAMESPACE}"
         --values "${INIT_VALUES}"
         --values "${peers_values}"
         --values "${override_values}"
+        --set kmsGenCertAndKeys.enabled=false # This is set to false to avoid generating cert for init job.
         --wait
         --wait-for-jobs
         --timeout=1200s
@@ -662,9 +666,14 @@ deploy_init_job() {
     # Deploy and wait for completion
     #-------------------------------------------------------------------------
     log_info "Installing kms-core-init job..."
-    helm upgrade --install kms-core-init \
-        "${REPO_ROOT}/charts/kms-core" \
-        "${HELM_ARGS[@]}"
+    if [[ "${TARGET}" == "aws-perf" ]]; then  # For performance testing, use the helm chart location
+        helm upgrade --install kms-core-init "${helm_chart_location}" \
+            "${HELM_ARGS[@]}"
+    else
+        helm upgrade --install kms-core-init \
+            "${REPO_ROOT}/charts/kms-core" \
+            "${HELM_ARGS[@]}"
+    fi
 
     log_info "Waiting for initialization job to complete (may take several minutes)..."
     sleep 30  # Allow time for job to be created
