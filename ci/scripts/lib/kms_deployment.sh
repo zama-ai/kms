@@ -489,12 +489,21 @@ EOF
       name: "${NAMESPACE}-1"
 EOF
     elif [[ "${TARGET}" == "aws-perf" ]]; then
-        cat <<EOF >> "${output_file}"
+        if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
+            cat <<EOF >> "${output_file}"
+  serviceAccountName: "${PATH_SUFFIX}"
+  envFrom:
+    configmap:
+      name: "${PATH_SUFFIX}"
+EOF
+        else
+            cat <<EOF >> "${output_file}"
   serviceAccountName: "${PATH_SUFFIX}-1"
   envFrom:
     configmap:
       name: "${PATH_SUFFIX}-1"
 EOF
+        fi
     fi
 
     # Add pod tolerations for AWS deployments
@@ -538,11 +547,19 @@ EOF
       name: "${NAMESPACE}-1"
 EOF
     elif [[ "${TARGET}" == "aws-perf" ]]; then
-        cat <<EOF >> "${output_file}"
+        if [[ "${DEPLOYMENT_TYPE}" == *"centralized"* ]]; then
+            cat <<EOF >> "${output_file}"
+  envFrom:
+    configmap:
+      name: "${PATH_SUFFIX}"
+EOF
+        else
+            cat <<EOF >> "${output_file}"
   envFrom:
     configmap:
       name: "${PATH_SUFFIX}-1"
 EOF
+        fi
     fi
 
     # Client tolerations for AWS
