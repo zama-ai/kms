@@ -385,7 +385,7 @@ async fn test_complete_session_notification() {
         "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__DISCARD_INACTIVE_SESSIONS_INTERVAL",
         format!("{}", wait_time + 1),
     );
-    // Ane ensure that checking for abort and received values will happen quickly
+    // And ensure that checking for abort and received values will happen quickly
     env::set_var(
         "KMS_CORE__THRESHOLD__CORE_TO_CORE_NET__MAX_WAITING_TIME_FOR_MESSAGE_QUEUE",
         format!("{}", wait_time + 2),
