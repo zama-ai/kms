@@ -558,13 +558,17 @@ spec:
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
             {{- if and .Values.kmsCore.envFrom.configmap.name (not .Values.minio.enabled) }}
+            {{- if and .Values.kmsCore.privateVault.s3.enabled .Values.kmsCore.thresholdMode.enabled }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
+            {{- end }}
+            {{- if and .Values.kmsCore.privateVault.s3.enabled .Values.kmsCore.thresholdMode.enabled .Values.kmsCore.privateVault.s3.prefix }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.privateVault.s3.prefix }}
+            {{- end }}
             - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
               valueFrom:
                 configMapKeyRef:
