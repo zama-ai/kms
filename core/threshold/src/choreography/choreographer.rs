@@ -22,7 +22,9 @@ use crate::{
     session_id::SessionId,
 };
 use observability::telemetry::ContextPropagator;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tfhe::xof_key_set::CompressedXofKeySet;
 use tokio::{task::JoinSet, time::Duration};
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Channel, Uri};
@@ -51,6 +53,13 @@ pub struct GrpcOutputs {
 }
 
 pub type NetworkTopology = HashMap<Role, Uri>;
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Serialize, Deserialize, Clone)]
+pub enum KeySetMaybeCompressed {
+    Compressed(CompressedXofKeySet),
+    Uncompressed(FhePubKeySet),
+}
 
 impl ChoreoRuntime {
     pub fn new_from_conf(conf: &ChoreoConf) -> Result<ChoreoRuntime, Box<dyn std::error::Error>> {
@@ -261,7 +270,7 @@ impl ChoreoRuntime {
         dkg_params: Option<DkgParamsAvailable>,
         seed: Option<u64>,
         malicious_roles: Vec<Role>,
-    ) -> anyhow::Result<FhePubKeySet> {
+    ) -> anyhow::Result<KeySetMaybeCompressed> {
         let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
 
         let threshold_keygen_result_params = bc2wrap::serialize(&ThresholdKeyGenResultParams {
@@ -301,7 +310,15 @@ impl ChoreoRuntime {
         //    assert_eq!(response, ref_response);
         //}
         let pub_key = responses.pop().unwrap();
-        let pub_key = bc2wrap::deserialize_safe(&pub_key)?;
+        // First try to deserialize into a compressed keyset
+        // if it fails, try to deserialize into uncompressed keyset
+        let pub_key = match bc2wrap::deserialize_safe::<CompressedXofKeySet>(&pub_key) {
+            Ok(keyset) => KeySetMaybeCompressed::Compressed(keyset),
+            Err(_) => {
+                let keyset = bc2wrap::deserialize_safe::<FhePubKeySet>(&pub_key)?;
+                KeySetMaybeCompressed::Uncompressed(keyset)
+            }
+        };
         Ok(pub_key)
     }
 
