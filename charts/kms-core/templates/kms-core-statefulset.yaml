@@ -437,11 +437,13 @@ spec:
               value: {{ .Values.minio.password}}
             - name: CORE_CLIENT__S3_ENDPOINT
               value: {{ .Values.minio.endpoint }}
+            {{- if kmsCore.nitroEnclave.enabled }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.privateVault.s3.bucket | quote }}
             {{- if .Values.kmsCore.privateVault.s3.prefix }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.privateVault.s3.prefix | quote }}
+            {{- end }}
             {{- end }}
             - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.publicVault.s3.bucket | quote }}
@@ -606,11 +608,13 @@ spec:
               value: {{ .Values.minio.password}}
             - name: AWS_ENDPOINT_URL_S3
               value: {{ .Values.minio.endpoint }}
+            {{- if kmsCore.nitroEnclave.enabled }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.privateVault.s3.bucket | quote }}
             {{- if .Values.kmsCore.privateVault.s3.prefix }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.privateVault.s3.prefix | quote }}
+            {{- end }}
             {{- end }}
             - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.publicVault.s3.bucket | quote }}
