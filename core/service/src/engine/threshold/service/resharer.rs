@@ -628,7 +628,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                     &old_epoch_id,
                     threshold_fhe_keys,
                     fhe_pubkeys,
-                    info.clone(),
                     Arc::clone(&meta_store),
                 )
                 .await;

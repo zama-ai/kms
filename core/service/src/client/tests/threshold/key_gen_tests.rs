@@ -13,7 +13,7 @@ cfg_if::cfg_if! {
     use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::crypto_material::PrivateCryptoMaterialReader;
     use crate::vault::storage::{file::FileStorage, StorageType};
-    use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};
+    use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig};
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::rpc_types::PubDataType;
     use kms_grpc::RequestId;
@@ -45,6 +45,8 @@ use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 use crate::util::rate_limiter::RateLimiterConfig;
 use alloy_dyn_abi::Eip712Domain;
 use kms_grpc::kms::v1::KeyGenResult;
+#[cfg(feature = "slow_tests")]
+use kms_grpc::kms::v1::KeySetType;
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use std::path::Path;
 #[cfg(feature = "slow_tests")]

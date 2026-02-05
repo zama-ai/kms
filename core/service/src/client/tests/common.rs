@@ -7,8 +7,7 @@ use crate::util::key_setup::test_tools::{
 };
 use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::{
-    CompressedKeyConfig, KeySetAddedInfo, KeySetConfig, KeySetType, StandardKeySetConfig,
-    TypedCiphertext, TypedPlaintext,
+    CompressedKeyConfig, KeySetAddedInfo, KeySetConfig, KeySetType, TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::fhe_types_to_num_blocks;
@@ -29,11 +28,12 @@ pub(crate) fn standard_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAd
 }
 
 /// Returns compressed keygen config with `CompressedKeyConfig::CompressedAll`
+#[cfg(feature = "slow_tests")]
 pub(crate) fn compressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySetAddedInfo>) {
     (
         Some(KeySetConfig {
             keyset_type: KeySetType::Standard.into(),
-            standard_keyset_config: Some(StandardKeySetConfig {
+            standard_keyset_config: Some(kms_grpc::kms::v1::StandardKeySetConfig {
                 compute_key_type: 0,
                 keyset_compression_config: 0,
                 compressed_key_config: CompressedKeyConfig::CompressedAll.into(),
@@ -44,6 +44,7 @@ pub(crate) fn compressed_keygen_config() -> (Option<KeySetConfig>, Option<KeySet
 }
 
 /// Returns decompression-only keygen config
+#[cfg(feature = "slow_tests")]
 pub(crate) fn decompression_keygen_config(
     from_keyset_id: &RequestId,
     to_keyset_id: &RequestId,

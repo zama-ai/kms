@@ -257,13 +257,15 @@ fn generate_compressed_fhe_keys(
     let security_bits = 128;
     let tag = key_id.into();
 
-    // Parameters passed to this function should always be valid,
-    // so it's ok to panic/unwrap.
+    // if the pmax value is not set, e.g., for test parameters, we do not do the HW check
+    // and use a pmax=1 which should allow for any HW.
     let max_norm_hwt = params
         .get_params_basics_handle()
         .get_sk_deviations()
-        .expect("Expect to have pmax params")
-        .pmax;
+        .map(|x| x.pmax)
+        .unwrap_or(1.0);
+
+    // unwrap is ok here because parameters should always have a correct pmax
     let max_norm_hwt =
         tfhe::core_crypto::prelude::NormalizedHammingWeightBound::new(max_norm_hwt).unwrap();
 

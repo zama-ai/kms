@@ -1181,7 +1181,7 @@ impl<
                         sns_key: sns_key.map(Arc::new),
                         decompression_key: decompression_key.map(Arc::new),
                     },
-                    meta_data: info.clone(),
+                    meta_data: info,
                 };
 
                 //Note: We can't easily check here whether we succeeded writing to the meta store
@@ -1192,7 +1192,6 @@ impl<
                         epoch_id,
                         threshold_fhe_keys,
                         pub_key_set,
-                        info,
                         meta_store,
                     )
                     .await;
@@ -1237,7 +1236,7 @@ impl<
                             return;
                         }
                     },
-                    meta_data: info.clone(),
+                    meta_data: info,
                 };
 
                 crypto_storage
@@ -1246,7 +1245,6 @@ impl<
                         epoch_id,
                         threshold_fhe_keys,
                         &compressed_keyset,
-                        info,
                         meta_store,
                     )
                     .await;

@@ -245,110 +245,17 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         compressed_keyset: &CompressedXofKeySet,
         meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
-        let mut guarded_meta_store = meta_store.write().await;
-
-        tracing::info!(
-            "Attempting to store centralized compressed keygen material for key ID {}",
-            key_id
-        );
-
-        let f1 = async {
-            let mut priv_storage = self.inner.private_storage.lock().await;
-            let back_vault = match self.inner.backup_vault {
-                Some(ref x) => Some(x.lock().await),
-                None => None,
-            };
-            let store_result_1 = store_versioned_at_request_and_epoch_id(
-                &mut (*priv_storage),
+        self.inner
+            .write_compressed_keys_with_dkg_meta_store(
                 key_id,
                 epoch_id,
-                &key_info,
-                &PrivDataType::FhePrivateKey.to_string(),
-            )
-            .await;
-            if let Err(e) = &store_result_1 {
-                tracing::error!(
-                    "Failed to store FHE key info to private storage for request {}: {}",
-                    key_id,
-                    e
-                );
-            }
-            let store_err_1 = store_result_1.is_err();
-
-            let store_err_2 = match back_vault {
-                Some(mut x) => {
-                    let result = store_versioned_at_request_and_epoch_id(
-                        &mut (*x),
-                        key_id,
-                        epoch_id,
-                        &key_info,
-                        &PrivDataType::FhePrivateKey.to_string(),
-                    )
-                    .await;
-                    if let Err(e) = &result {
-                        tracing::error!(
-                            "Failed to store FHE key info to backup storage for request {}: {}",
-                            key_id,
-                            e
-                        );
-                    }
-                    result.is_err()
-                }
-                None => false,
-            };
-            !(store_err_1 || store_err_2)
-        };
-
-        let f2 = async {
-            tracing::info!("Storing compressed xof key set");
-            let mut pub_storage = self.inner.public_storage.lock().await;
-            let result = store_versioned_at_request_id(
-                &mut (*pub_storage),
-                key_id,
+                key_info,
+                PrivDataType::FhePrivateKey,
                 compressed_keyset,
-                &PubDataType::CompressedXofKeySet.to_string(),
+                meta_store,
+                Arc::clone(&self.fhe_keys),
             )
-            .await;
-            if let Err(e) = &result {
-                tracing::error!(
-                    "Failed to store compressed xof key set for request {}: {}",
-                    key_id,
-                    e
-                );
-            }
-            result.is_ok()
-        };
-
-        let (r1, r2) = tokio::join!(f1, f2);
-        if r1
-            && r2
-            && guarded_meta_store
-                .update(key_id, Ok(key_info.public_key_info.to_owned()))
-                .inspect_err(|e| {
-                    tracing::error!("Error ({e}) while updating PK meta store for {}", key_id)
-                })
-                .is_ok()
-        {
-            // Update fhe_keys cache (no pk_cache update for compressed keys - they need decompression)
-            {
-                let mut guarded_fhe_keys = self.fhe_keys.write().await;
-                let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), key_info);
-                if previous.is_some() {
-                    tracing::warn!(
-                        "FHE keys already exist in cache for {}, overwriting",
-                        key_id
-                    );
-                }
-                tracing::info!(
-                    "Successfully stored centralized compressed keygen material for request {}",
-                    key_id
-                );
-            }
-        } else {
-            self.inner
-                .purge_key_material(key_id, epoch_id, KMSType::Centralized, guarded_meta_store)
-                .await;
-        }
+            .await
     }
 
     /// Read the key materials for decryption in the centralized case.

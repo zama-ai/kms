@@ -7,6 +7,7 @@ use crate::cryptography::signatures::compute_eip712_signature;
 
 use crate::cryptography::signatures::internal_sign;
 use crate::cryptography::signatures::{PrivateSigKey, PublicSigKey, Signature};
+use crate::engine::traits::PrivateKeyMaterialMetadata;
 use crate::util::key_setup::FhePrivateKey;
 use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
@@ -113,6 +114,12 @@ pub struct KmsFheKeyHandles {
 
     /// Maps public key types to their corresponding signed handles and metadata
     pub public_key_info: KeyGenMetadata,
+}
+
+impl PrivateKeyMaterialMetadata for KmsFheKeyHandles {
+    fn get_metadata(&self) -> &KeyGenMetadata {
+        &self.public_key_info
+    }
 }
 
 impl Named for KmsFheKeyHandles {
