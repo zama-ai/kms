@@ -405,6 +405,7 @@ async fn test_complete_session_notification() {
             key_id,
             PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0].as_deref(),
             enc_config,
+            false,
         )
         .await;
 
