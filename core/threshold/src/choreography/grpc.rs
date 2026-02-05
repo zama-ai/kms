@@ -94,6 +94,7 @@ use std::sync::{Arc, Mutex};
 use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::ServerKey;
 use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
+use tfhe::xof_key_set::CompressedXofKeySet;
 use tokio::{
     sync::RwLock,
     task::{JoinHandle, JoinSet},
@@ -169,15 +170,33 @@ type DKGPreprocSnsStore<const EXTENSION_DEGREE: usize> = DashMap<
 >;
 
 struct KeyBucket<const EXTENSION_DEGREE: usize> {
-    pub_keyset: Arc<FhePubKeySet>,
+    pub_keyset: Arc<Option<CompressedXofKeySet>>,
+    pub_keyset_decompressed: Arc<FhePubKeySet>,
     priv_keyset: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
     params: DKGParams,
 }
 
 impl<const EXTENSION_DEGREE: usize> KeyBucket<EXTENSION_DEGREE> {
+    pub fn new_compressed(
+        keys: (CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>),
+        params: DKGParams,
+    ) -> Self {
+        let (public_key, server_key) = keys.0.clone().decompress().unwrap().into_raw_parts();
+        Self {
+            pub_keyset: Arc::new(Some(keys.0)),
+            pub_keyset_decompressed: Arc::new(FhePubKeySet {
+                public_key,
+                server_key,
+            }),
+            priv_keyset: Arc::new(keys.1),
+            params,
+        }
+    }
+
     pub fn new(keys: (FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>), params: DKGParams) -> Self {
         Self {
-            pub_keyset: Arc::new(keys.0),
+            pub_keyset: Arc::new(None),
+            pub_keyset_decompressed: Arc::new(keys.0),
             priv_keyset: Arc::new(keys.1),
             params,
         }
@@ -975,7 +994,7 @@ where
                 }
 
                 let my_future = || async move {
-                    let keys = SecureOnlineDistributedKeyGen::keygen(
+                    let keys = SecureOnlineDistributedKeyGen::compressed_keygen(
                         &mut base_session,
                         preproc.as_mut(),
                         dkg_params,
@@ -984,7 +1003,10 @@ where
                     )
                     .await
                     .unwrap();
-                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
+                    key_store.insert(
+                        session_id,
+                        Arc::new(KeyBucket::new_compressed(keys, dkg_params)),
+                    );
                     fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
@@ -999,7 +1021,7 @@ where
                     &base_session,
                 );
                 let my_future = || async move {
-                    let keys = SecureOnlineDistributedKeyGen::keygen(
+                    let keys = SecureOnlineDistributedKeyGen::compressed_keygen(
                         &mut base_session,
                         &mut preproc,
                         dkg_params,
@@ -1008,7 +1030,10 @@ where
                     )
                     .await
                     .unwrap();
-                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
+                    key_store.insert(
+                        session_id,
+                        Arc::new(KeyBucket::new_compressed(keys, dkg_params)),
+                    );
                     fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
@@ -1032,7 +1057,7 @@ where
                 }
 
                 let my_future = || async move {
-                    let keys = SecureOnlineDistributedKeyGen::keygen(
+                    let keys = SecureOnlineDistributedKeyGen::compressed_keygen(
                         &mut base_session,
                         preproc.as_mut(),
                         dkg_params,
@@ -1041,7 +1066,10 @@ where
                     )
                     .await
                     .unwrap();
-                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
+                    key_store.insert(
+                        session_id,
+                        Arc::new(KeyBucket::new_compressed(keys, dkg_params)),
+                    );
                     fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
@@ -1056,7 +1084,7 @@ where
                     &base_session,
                 );
                 let my_future = || async move {
-                    let keys = SecureOnlineDistributedKeyGen::keygen(
+                    let keys = SecureOnlineDistributedKeyGen::compressed_keygen(
                         &mut base_session,
                         &mut preproc,
                         dkg_params,
@@ -1065,7 +1093,10 @@ where
                     )
                     .await
                     .unwrap();
-                    key_store.insert(session_id, Arc::new(KeyBucket::new(keys, dkg_params)));
+                    key_store.insert(
+                        session_id,
+                        Arc::new(KeyBucket::new_compressed(keys, dkg_params)),
+                    );
                     fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
@@ -1155,12 +1186,21 @@ where
             let keys = self.data.key_store.get(&session_id);
             if let Some(keys) = keys {
                 return Ok(tonic::Response::new(ThresholdKeyGenResultResponse {
-                    pub_keyset: bc2wrap::serialize(&keys.pub_keyset).map_err(|e| {
-                        tonic::Status::new(
+                    pub_keyset: keys
+                        .pub_keyset
+                        .as_ref()
+                        .as_ref()
+                        .map(bc2wrap::serialize)
+                        .ok_or(tonic::Status::new(
                             tonic::Code::Aborted,
-                            format!("Failed to serialize pubkey: {e:?}"),
-                        )
-                    })?,
+                            "Failed to retrieve compressed pubkey",
+                        ))?
+                        .map_err(|e| {
+                            tonic::Status::new(
+                                tonic::Code::Aborted,
+                                format!("Failed to serialize pubkey: {e:?}"),
+                            )
+                        })?,
                 }));
             } else {
                 return Err(tonic::Status::new(
@@ -1582,14 +1622,14 @@ where
             let prss_setup = self.data.prss_setup.clone();
             let sns_key = Arc::new(
                 key_ref
-                    .pub_keyset
+                    .pub_keyset_decompressed
                     .server_key
                     .noise_squashing_key()
                     .expect("Failed to get noise squashing key"),
             );
-            let server_key = Arc::new(key_ref.pub_keyset.server_key.as_ref());
-            let ks =
-                get_key_switching_key(key_ref.pub_keyset.server_key.as_ref()).map_err(|_| {
+            let server_key = Arc::new(key_ref.pub_keyset_decompressed.server_key.as_ref());
+            let ks = get_key_switching_key(key_ref.pub_keyset_decompressed.server_key.as_ref())
+                .map_err(|_| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
                         "Failed to retrieve ksk from server key",
@@ -2042,13 +2082,14 @@ where
                             .for_each(|(block, ctxts)| ctxts.push(block));
                     });
 
-                    let ks = get_key_switching_key(key_ref.pub_keyset.server_key.as_ref())
-                        .map_err(|_| {
-                            tonic::Status::new(
-                                tonic::Code::Aborted,
-                                "Failed to retrieve ksk from server key",
-                            )
-                        })?;
+                    let ks =
+                        get_key_switching_key(key_ref.pub_keyset_decompressed.server_key.as_ref())
+                            .map_err(|_| {
+                                tonic::Status::new(
+                                    tonic::Code::Aborted,
+                                    "Failed to retrieve ksk from server key",
+                                )
+                            })?;
                     let my_future = || async move {
                         let mut tasks = JoinSet::new();
                         for (block_idx, (ctxts_blocks, (mut session, mut inner_preprocessings))) in
@@ -2124,7 +2165,7 @@ where
                 }
                 DecryptionMode::NoiseFloodSmall | DecryptionMode::NoiseFloodLarge => {
                     if key_ref
-                        .pub_keyset
+                        .pub_keyset_decompressed
                         .server_key
                         .noise_squashing_key()
                         .is_none()
@@ -2153,9 +2194,12 @@ where
                             .collect_vec()
                     };
                     let my_future = || async move {
-                        let server_key = key_ref.pub_keyset.server_key.as_ref();
+                        let server_key = key_ref.pub_keyset_decompressed.server_key.as_ref();
                         let mut res = Vec::new();
-                        let sns_key = key_ref.pub_keyset.server_key.noise_squashing_key();
+                        let sns_key = key_ref
+                            .pub_keyset_decompressed
+                            .server_key
+                            .noise_squashing_key();
                         for (ctxt, preprocessing) in
                             ctxts.into_iter().zip_eq(preprocessings.into_iter())
                         // May panic
@@ -2513,6 +2557,7 @@ where
             //however since this is a clone it doesn't do much...
             //Wondering whether it really should be reshare's role to zeroize stuff ?
             let public_key_set = key_ref.pub_keyset.clone();
+            let public_key_set_decompressed = key_ref.pub_keyset_decompressed.clone();
             let old_private_key_set = key_ref.priv_keyset.as_ref().clone();
             let params = key_ref.as_ref().params;
 
@@ -2610,6 +2655,7 @@ where
                 reshare_params.new_key_sid,
                 Arc::new(KeyBucket {
                     pub_keyset: public_key_set,
+                    pub_keyset_decompressed: public_key_set_decompressed,
                     priv_keyset: Arc::new(new_private_key_set),
                     params,
                 }),

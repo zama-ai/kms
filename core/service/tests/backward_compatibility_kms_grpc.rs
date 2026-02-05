@@ -5,10 +5,10 @@ use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
-    PrivDataTypeTest, PubDataTypeTest, PublicKeyTypeTest, SignedPubDataHandleInternalTest,
-    TestMetadataKmsGrpc, TestType, Testcase,
+    PrivDataTypeTest, PubDataTypeTest, SignedPubDataHandleInternalTest, TestMetadataKmsGrpc,
+    TestType, Testcase,
 };
-use kms_grpc::rpc_types::{PrivDataType, PubDataType, PublicKeyType, SignedPubDataHandleInternal};
+use kms_grpc::rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal};
 use std::path::Path;
 
 fn test_signed_pub_data_handle_internal(
@@ -24,27 +24,6 @@ fn test_signed_pub_data_handle_internal(
         test.signature.to_vec(),
         test.external_signature.to_vec(),
     );
-
-    if original_versionized != new_versionized {
-        Err(test.failure(
-            format!(
-                "Invalid signed pub data handle (internal):\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
-            ),
-            format,
-        ))
-    } else {
-        Ok(test.success(format))
-    }
-}
-
-fn test_public_key_type(
-    dir: &Path,
-    test: &PublicKeyTypeTest,
-    format: DataFormat,
-) -> Result<TestSuccess, TestFailure> {
-    let original_versionized: PublicKeyType = load_and_unversionize(dir, test, format)?;
-
-    let new_versionized = PublicKeyType::Compact;
 
     if original_versionized != new_versionized {
         Err(test.failure(
@@ -115,9 +94,6 @@ impl TestedModule for KmsGrpc {
         match &testcase.metadata {
             Self::Metadata::SignedPubDataHandleInternal(test) => {
                 test_signed_pub_data_handle_internal(test_dir.as_ref(), test, format).into()
-            }
-            Self::Metadata::PublicKeyType(test) => {
-                test_public_key_type(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::PubDataType(test) => {
                 test_pub_data_type(test_dir.as_ref(), test, format).into()

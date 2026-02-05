@@ -218,7 +218,7 @@ impl<
                 hex::encode(&typed_ciphertext.external_handle)
             );
 
-            let decomp_key = keys.decompression_key.clone();
+            let decomp_key = keys.get_decompression_key();
             let low_level_ct = spawn_compute_bound(move || {
                 deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
             })
@@ -238,10 +238,9 @@ impl<
 
                     let pdec = Dec::partial_decrypt(
                         &mut noiseflood_session,
-                        keys.integer_server_key.clone(),
-                        keys.sns_key
-                            .clone()
-                            .ok_or_else(|| anyhow::anyhow!("missing sns key"))?,
+                        keys.get_integer_server_key(),
+                        keys.get_sns_key()
+                            .ok_or(anyhow::anyhow!("Missing sns key"))?,
                         low_level_ct,
                         &keys.private_keys,
                     )
@@ -257,8 +256,7 @@ impl<
                                 }
                                 None => {
                                     return Err(anyhow!(
-                                        "User decryption with session ID {} could not be retrived for {dec_mode}",
-                                        session_id.to_string()
+                                        "User decryption with session ID {session_id} could not be retrieved for {dec_mode}"
                                     ))
                                 }
                             };
@@ -285,7 +283,7 @@ impl<
                         &mut session,
                         &low_level_ct.try_get_small_ct()?,
                         &keys.private_keys,
-                        keys.get_key_switching_key()?,
+                        &keys.get_key_switching_key()?,
                     )
                     .await;
 
@@ -299,8 +297,7 @@ impl<
                                 }
                                 None => {
                                     return Err(anyhow!(
-                                        "User decryption with session ID {} could not be retrived for {dec_mode}",
-                                        session_id.to_string()
+                                        "User decryption with session ID {session_id} could not be retrieved for {dec_mode}"
                                     ))
                                 }
                             };
@@ -399,13 +396,8 @@ impl<
         priv_storage: PrivS,
         session_maker: ImmutableSessionMaker,
     ) -> Self {
-        let crypto_storage = ThresholdCryptoMaterialStorage::new(
-            pub_storage,
-            priv_storage,
-            None,
-            HashMap::new(),
-            HashMap::new(),
-        );
+        let crypto_storage =
+            ThresholdCryptoMaterialStorage::new(pub_storage, priv_storage, None, HashMap::new());
 
         let tracker = Arc::new(TaskTracker::new());
         let rate_limiter = RateLimiter::default();

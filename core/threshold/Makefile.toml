@@ -3,7 +3,7 @@ unstable_features = ["CTRL_C_HANDLING"]
 
 [env]
 CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true # Remove this if it's not in a workspace
-THRESHOLD_FHE_DOCKER_FOLDER = "docker/local.dockerfile"
+THRESHOLD_FHE_DOCKER_FILE = "docker/local.dockerfile"
 THRESHOLD_FHE_DOCKER_ROOT = "../../" # use "../../" when in a workspace, "." otherwise.
 
 ###Generic commands to be used for local deployment with docker

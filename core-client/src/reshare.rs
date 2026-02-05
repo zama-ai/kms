@@ -132,11 +132,8 @@ pub(crate) async fn do_reshare(
     // Process and verify the responses
     assert_eq!(response_vec.len(), num_parties); // check that we have responses from all parties
 
-    let key_types = vec![
-        PubDataType::PublicKey,
-        PubDataType::PublicKeyMetadata,
-        PubDataType::ServerKey,
-    ];
+    // TODO: handle compressed keys
+    let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
     // We try to download all because all parties needed to respond for a successful resharing
     let party_ids = fetch_public_elements(
         &key_id.to_string(),
