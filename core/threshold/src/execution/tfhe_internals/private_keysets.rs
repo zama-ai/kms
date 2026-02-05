@@ -1,5 +1,6 @@
 use crate::algebra::base_ring::{Z128, Z64};
-use crate::algebra::structure_traits::ErrorCorrect;
+use crate::algebra::structure_traits::{ErrorCorrect, Ring};
+use crate::execution::sharing::share::Share;
 use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
 #[cfg(feature = "testing")]
 use crate::execution::tfhe_internals::parameters::DKGParams;
@@ -167,6 +168,37 @@ impl<const EXTENSION_DEGREE: usize> CompressionPrivateKeySharesEnum<EXTENSION_DE
         }
     }
 
+    // It's always possible to convert a Z128 key to Z64 by locally reducing mod 2^64
+    pub fn convert_to_z64(self) -> CompressionPrivateKeyShares<Z64, EXTENSION_DEGREE>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+    {
+        match self {
+            CompressionPrivateKeySharesEnum::Z64(inner) => inner,
+            CompressionPrivateKeySharesEnum::Z128(inner) => {
+                let (data, polynomial_size) = {
+                    let GlweSecretKeyShare {
+                        data,
+                        polynomial_size,
+                    } = inner.post_packing_ks_key;
+                    let data = data
+                        .into_iter()
+                        .map(|x| Share::new(x.owner(), x.value().to_residuepoly64()))
+                        .collect();
+                    (data, polynomial_size)
+                };
+                CompressionPrivateKeyShares {
+                    post_packing_ks_key: GlweSecretKeyShare {
+                        data,
+                        polynomial_size,
+                    },
+                    params: inner.params,
+                }
+            }
+        }
+    }
+
     pub fn try_cast_mut_to_z128(
         &mut self,
     ) -> anyhow::Result<&mut CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>> {
@@ -215,10 +247,35 @@ impl<const EXTENSION_DEGREE: usize> LweSecretKeyShareEnum<EXTENSION_DEGREE> {
 impl<const EXTENSION_DEGREE: usize> LweSecretKeyShareEnum<EXTENSION_DEGREE> {
     pub fn try_cast_mut_to_z64(
         &mut self,
-    ) -> anyhow::Result<&mut LweSecretKeyShare<Z64, EXTENSION_DEGREE>> {
+    ) -> anyhow::Result<&mut LweSecretKeyShare<Z64, EXTENSION_DEGREE>>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+    {
         match self {
             LweSecretKeyShareEnum::Z64(inner) => Ok(inner),
-            LweSecretKeyShareEnum::Z128(_) => anyhow::bail!("not z64"),
+            LweSecretKeyShareEnum::Z128(_) => {
+                anyhow::bail!("not z64")
+            }
+        }
+    }
+
+    // It's always possible to convert a Z128 key to Z64 by locally reducing mod 2^64
+    pub fn convert_to_z64(self) -> LweSecretKeyShare<Z64, EXTENSION_DEGREE>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+    {
+        match self {
+            LweSecretKeyShareEnum::Z64(inner) => inner,
+            LweSecretKeyShareEnum::Z128(inner) => {
+                let data = inner
+                    .data
+                    .into_iter()
+                    .map(|x| Share::new(x.owner(), x.value().to_residuepoly64()))
+                    .collect();
+                LweSecretKeyShare { data }
+            }
         }
     }
 
@@ -277,6 +334,28 @@ impl<const EXTENSION_DEGREE: usize> GlweSecretKeyShareEnum<EXTENSION_DEGREE> {
         match self {
             GlweSecretKeyShareEnum::Z64(_) => panic!("not z128"),
             GlweSecretKeyShareEnum::Z128(inner) => inner,
+        }
+    }
+
+    // It's always possible to convert a Z128 key to Z64 by locally reducing mod 2^64
+    pub fn convert_to_z64(self) -> GlweSecretKeyShare<Z64, EXTENSION_DEGREE>
+    where
+        ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+    {
+        match self {
+            GlweSecretKeyShareEnum::Z64(inner) => inner,
+            GlweSecretKeyShareEnum::Z128(inner) => {
+                let data = inner
+                    .data
+                    .into_iter()
+                    .map(|x| Share::new(x.owner(), x.value().to_residuepoly64()))
+                    .collect();
+                GlweSecretKeyShare {
+                    data,
+                    polynomial_size: inner.polynomial_size,
+                }
+            }
         }
     }
 
