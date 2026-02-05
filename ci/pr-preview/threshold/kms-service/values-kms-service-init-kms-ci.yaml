@@ -17,7 +17,7 @@ kmsCore:
     tokioWorkerThreads: 24
     initializationScript:
       enabled: true
-    peersList: []
+    # peersList is generated dynamically by deploy.sh and should not be set here
 
 
 kmsCoreClient:

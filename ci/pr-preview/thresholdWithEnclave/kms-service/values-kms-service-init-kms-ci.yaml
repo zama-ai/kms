@@ -7,23 +7,12 @@ kmsCore:
     enabled: true
     tls:
       enabled: true
-    thresholdValue: 4 # 1 if 4 parties or 4 if 13 parties
-    numSessionsPreproc: 72
-    multiplier: 2.0
-    maxInterval: 60
-    initialIntervalMs: 100
-    cleanupIntervalSecs: 2
-    rayonNumThreads: 40
-    tokioWorkerThreads: 24
-    initializationScript:
+    nitroEnclave:
       enabled: true
-    peersList: []
 
 kmsCoreClient:
   enabled: true
   nameOverride: kms-core-client
-  num_majority: 2 # 2 when 4 parties and 5 when 13 parties
-  num_reconstruct: 3 # 3 when 4 parties and 9 when 13 parties
   decryption_mode: NoiseFloodSmall
   fhe_parameter: Default
   resources:
@@ -59,8 +48,3 @@ kmsGenCertAndKeys:
 
 kmsCoreClientTesting:
   enabled: false
-  # schedule: "5 * * * *"
-  shell_command: []
-    # - date
-    # - export CORE_CLIENT__FHE_PARAMS=Default && ./bin/kms-core-client --logs -f config.toml decrypt -d euint8 -k 8e53e2d84ecdd37e344ec414fe6804b57c1eb8f26a2bbcc2818ebabe81b58673 -e ff --precompute-sns
-    # - date
