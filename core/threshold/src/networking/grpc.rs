@@ -307,7 +307,7 @@ impl GrpcNetworkingManager {
                                         }
                                         None => {
                                             tracing::warn!(
-                                                "Network session {:?} has no init time set yet.",
+                                                "Network session {:?} has no last receive activity time set yet.",
                                                 session_id
                                             );
                                         }
