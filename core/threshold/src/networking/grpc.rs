@@ -290,41 +290,17 @@ impl GrpcNetworkingManager {
                                         network_session.current_network_timeout.read().await,
                                     );
                                     // Remove active sessions that have not received any activity for awhile
-                                    match network_session
-                                        .last_rec_activity_time
-                                        .read()
-                                        .await
-                                        .as_ref()
-                                    {
-                                        Some(last_receive_time) => {
-                                            if last_receive_time.elapsed()
-                                                > discard_inactive_interval
-                                            {
-                                                tracing::warn!(
-                                                "Discarding Active session {:?} after {:?} seconds.",
-                                                session_id,
-                                                last_receive_time.elapsed().as_secs()
-                                            );
-                                                to_remove.push(*session_id);
-                                                continue;
-                                            }
-                                        }
-                                        None => {
-                                            tracing::warn!(
-                                                "Discarding Active session {:?} due to timeout.",
-                                                session_id
-                                            );
-                                        }
-                                    };
-                                    // // Also remove active sessions that have been aborted
-                                    // if network_session.is_aborted() {
-                                    //     // If the session has been aborted, we mark it as completed
-                                    //     tracing::info!(
-                                    //     "Marking session {:?} as completed because it has been aborted.",
-                                    //     session_id
-                                    // );
-                                    //     *status = SessionStatus::Completed(Instant::now());
-                                    // } else {treamlined dropping active sessions)
+                                    if network_session.init_time.get().is_some_and(|init_time| {
+                                        *init_time + *network_timeout + *max_elapsed_time
+                                            > Instant::now()
+                                    }) {
+                                        tracing::warn!(
+                                            "Discarding Active session {:?} due to timeout.",
+                                            session_id,
+                                        );
+                                        to_remove.push(*session_id);
+                                        continue;
+                                    }
                                     internal_active_sessions_count += 1;
                                 }
                                 None => {
