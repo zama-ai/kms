@@ -11,6 +11,7 @@ use kms_grpc::kms::v1::{
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::KMSType;
+#[cfg(feature = "insecure")]
 use observability::metrics_names::{
     OP_INSECURE_CRS_GEN_REQUEST, OP_INSECURE_CRS_GEN_RESULT, OP_INSECURE_KEYGEN_RESULT,
     OP_KEY_MATERIAL_AVAILABILITY,
