@@ -77,38 +77,38 @@ threshold-fhe = { path = "./core/threshold/", default-features = false }  # Thre
 aes = "=0.8.4"  # AES encryption - LOW RISK: RustCrypto org, very popular (135M+ downloads), actively maintained
 aes-gcm = { version = "=0.10.3", features = ["std"] }  # AES-GCM authenticated encryption - LOW RISK: RustCrypto org, 62M+ downloads
 aes-gcm-siv = "=0.11.1"  # AES-GCM-SIV authenticated encryption - LOW RISK: RustCrypto org, nonce misuse resistant, 9M+ downloads
-aes-prng = "=0.2.1"  # AES-based PRNG for deterministic randomness - LOW RISK: Maintained by @mortendahl (ZAMA) and Dragos
+aes-prng = "=0.2.1"  # AES-based PRNG for deterministic randomness - LOW RISK: Maintained by @mortendahl (Zama) and Dragos (ex Zama)
 alloy-dyn-abi = "=1.4.1"  # Ethereum ABI encoding - LOW RISK: Alloy/Paradigm team, reputable, growing ecosystem
 alloy-primitives = "=1.4.1"  # Ethereum primitives - LOW RISK: Alloy/Paradigm team
-alloy-signer = "=1.1.2"  # Ethereum signing abstraction - LOW RISK: Alloy/Paradigm team
-alloy-signer-local = "=1.1.2"  # Local Ethereum signer - LOW RISK: Alloy/Paradigm team
+alloy-signer = "=1.4.3"  # Ethereum signing abstraction - LOW RISK: Alloy/Paradigm team
+alloy-signer-local = "=1.4.3"  # Local Ethereum signer - LOW RISK: Alloy/Paradigm team
 alloy-sol-types = "=1.4.1"  # Solidity types & EIP-712 - LOW RISK: Alloy/Paradigm team
-anyhow = "=1.0.98"  # Error handling - MEDIUM RISK: Reputable individual maintainer (dtolnay), 410M downloadss
+anyhow = "=1.0.100"  # Error handling - MEDIUM RISK: Reputable individual maintainer (dtolnay), 410M downloads
 assert_cmd = "=2.0.17"  # Assert command for testing - LOW RISK: assert-rs team, 1M+ downloads
 async-std = { version = "=1.13.1", features = ["attributes", "tokio1"] }  # Async runtime for testing - LOW RISK: async-rs team, 55M+ downloads
-async-trait = "=0.1.88"  # Async trait support -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 292M downloads
+async-trait = "=0.1.89"  # Async trait support -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 292M downloads
 async_cell = "0.2.2"  # Async cell implementation - HIGH RISK: Individual maintainer, very low popularity
 attestation-doc-validation = { version = "=0.10.0" }  # AWS Nitro attestation validation - LOW RISK: Evervault (reputable security company), security-critical but trusted
-aws-config = { version = "=1.5.9" }  # AWS SDK configuration - LOW RISK: Official AWS SDK, actively maintained
+aws-config = { version = "=1.8.12" }  # AWS SDK configuration - LOW RISK: Official AWS SDK, actively maintained
 aws-nitro-enclaves-nsm-api = { version = "=0.4.0" }  # AWS Nitro Enclaves NSM API - LOW RISK: Official AWS SDK
-aws-sdk-kms = { version = "=1.50.0" }  # AWS KMS client - LOW RISK: Official AWS SDK for key management
-aws-sdk-s3 = { version = "=1.62.0" }  # AWS S3 client - LOW RISK: Official AWS SDK for object storage
-aws-smithy-runtime = { version = "=1.7.3", features = ["client", "connector-hyper-0-14-x"] }  # AWS Smithy runtime - LOW RISK: Official AWS runtime library
-aws-smithy-runtime-api = { version = "=1.7.3" }  # AWS Smithy runtime API - LOW RISK: Official AWS runtime API
-aws-smithy-types = { version = "=1.2.9" }  # AWS Smithy types - LOW RISK: Official AWS type definitions
-axum = { version = "=0.8.4", features = ["tokio"] }  # Web framework - LOW RISK: tokio-rs team, 168M+ downloads, actively maintained
+aws-sdk-kms = { version = "=1.98.0" }  # AWS KMS client - LOW RISK: Official AWS SDK for key management
+aws-sdk-s3 = { version = "=1.120.0" }  # AWS S3 client - LOW RISK: Official AWS SDK for object storage
+aws-smithy-runtime = { version = "=1.9.8", features = ["client", "connector-hyper-0-14-x"] }  # AWS Smithy runtime - LOW RISK: Official AWS runtime library
+aws-smithy-runtime-api = { version = "=1.10.0" }  # AWS Smithy runtime API - LOW RISK: Official AWS runtime API
+aws-smithy-types = { version = "=1.3.6" }  # AWS Smithy types - LOW RISK: Official AWS type definitions
+axum = { version = "=0.8.8", features = ["tokio"] }  # Web framework - LOW RISK: tokio-rs team, 168M+ downloads, actively maintained
 backoff = "=0.4.0"  # Retry with exponential backoff - HIGH RISK: Individual maintainer (ihrwein), despite 50M+ downloads
 base64 = "=0.22.1"  # Base64 encoding - HIGH RISK: Individual maintainer (marshallpierce), despite 718M downloads
 # WARNING: Bincode beyond 2.0.1 may never be used! Due to actions by the project we consider newer versions compromised
 # See https://www.reddit.com/r/rust/comments/1pnz1iz/bincode_development_has_ceased_permanently/
 bincode = { version = "=2.0.1", features = ["serde"] }  # Binary serialization - CRITICAL RISK: bincode-org, 147M+ downloads
-bip39 = { version = "=2.2.0", features = ["alloc"] }  # BIP39 mnemonic seed phrases - LOW RISK: rust-bitcoin org (reputable), CI enabled
-bytes = "=1.10.1"  # Byte buffer utilities - LOW RISK: tokio team, 100M+ downloads
+bip39 = { version = "=2.2.2", features = ["alloc"] }  # BIP39 mnemonic seed phrases - LOW RISK: rust-bitcoin org (reputable), CI enabled
+bytes = "=1.11.1"  # Byte buffer utilities - LOW RISK: tokio team, 100M+ downloads
 cbc = { version = "=0.1.2", features = ["alloc"] }  # CBC block cipher mode - LOW RISK: RustCrypto org, standard cipher mode
-cfg-if = "=1.0.3"  # Conditional compilation - LOW RISK: Rust-lang org owned
+cfg-if = "=1.0.4"  # Conditional compilation - LOW RISK: Rust-lang org owned
 clap = { version = "=4.5.47", features = ["derive"] }  # CLI argument parsing - LOW RISK: clap-rs team
 ciborium = "0.2.2" # CBOR support for serde - LOW RISK: Enarx team, 100M+ downloads
-config = "=0.15.15"  # Configuration management - LOW RISK: rust-cli org (team maintained)
+config = "=0.15.19"  # Configuration management - LOW RISK: rust-cli org (team maintained)
 const_format = "=0.2.34"  # Compile-time string formatting - HIGH RISK: Individual maintainer (rodrimati1992), despite 55M+ downloads
 console_error_panic_hook = { version = "=0.1.7" }  # WASM panic hook for better error messages - LOW RISK: rustwasm team
 criterion = { version = "=0.5.1", features = ["async_tokio"] }  # Benchmarking framework - MEDIUM RISK: Individual maintainers (bheisler, lemmih, rust-bus), despite 120M+ downloads, test-only dependency
@@ -194,8 +194,8 @@ tonic = "=0.13.1"  # gRPC framework - LOW RISK: hyperium team
 tonic-build = "=0.13.1"  # gRPC code generation - LOW RISK: hyperium team
 tonic-health = "=0.13.1"  # gRPC health checking - LOW RISK: hyperium team
 tonic-tls = "=0.3.0"  # TLS support for tonic - LOW RISK: hyperium team
-tower = "=0.5.2"  # Service framework - LOW RISK: tower-rs team
-tower-http = "=0.6.6"  # HTTP middleware - LOW RISK: tower-rs team
+tower = "=0.5.3"  # Service framework - LOW RISK: tower-rs team
+tower-http = "=0.6.8"  # HTTP middleware - LOW RISK: tower-rs team
 tracing = { version = "=0.1.41", features = ["log"] }  # Application instrumentation - LOW RISK: tokio-rs team
 tracing-appender = "=0.2.3"  # Log file rotation - LOW RISK: tokio-rs team
 tracing-opentelemetry = "=0.30.0"  # OpenTelemetry integration - LOW RISK: tokio-rs team
@@ -203,12 +203,12 @@ tracing-subscriber = { version = "=0.3.20", features = ["fmt", "std"] }  # Traci
 tracing-test = "=0.2.5"  # Tracing test utilities - LOW RISK: tokio-rs team
 trait-variant = "0.1.2"  # Trait variant generation - LOW RISK: rust-lang team utility
 typed-builder = "=0.21.0"  # Builder pattern macro - HIGH RISK: Individual maintainer (idanarye), despite 48M+ downloads
-url = { version = "=2.5.4", features = ["serde"] }  # URL parsing and manipulation - LOW RISK: servo tea,
-uuid = { version = "=1.16.0", features = ["v4", "fast-rng"] }  # UUID generation - LOW RISK: uuid-rs team
+url = { version = "=2.5.8", features = ["serde"] }  # URL parsing and manipulation - LOW RISK: servo team,
+uuid = { version = "=1.19.0", features = ["v4", "fast-rng"] }  # UUID generation - LOW RISK: uuid-rs team
 validator = { version = "=0.20.0", features = ["derive"] }  # Struct validation - HIGH RISK: Individual maintainer (Keats), less active maintenance
-wasm-bindgen = { version = "=0.2.100", features = ["serde-serialize"] }  # WASM bindings - LOW RISK: rustwasm team
+wasm-bindgen = { version = "=0.2.108", features = ["serde-serialize"] }  # WASM bindings - LOW RISK: rustwasm team
 x509-parser = { version = "=0.18.0", features = ["verify-aws"] }  # X.509 certificate parsing - LOW RISK: rusticata team
-zeroize = { version = "=1.8.1", features = ["zeroize_derive"] }  # Secure memory wiping - LOW RISK: RustCrypto org, critical for key management
+zeroize = { version = "=1.8.2", features = ["zeroize_derive"] }  # Secure memory wiping - LOW RISK: RustCrypto org, critical for key management
 
 [profile.wasm]
 inherits = "release"

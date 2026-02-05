@@ -6,7 +6,7 @@ use crate::{
             DSEP_PUBDATA_KEY,
         },
         threshold::{
-            service::{session::ImmutableSessionMaker, ThresholdFheKeys},
+            service::{session::ImmutableSessionMaker, PublicKeyMaterial, ThresholdFheKeys},
             traits::Resharer,
         },
         utils::MetricedError,
@@ -478,6 +478,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             })
             .collect::<Result<HashMap<PubDataType, Vec<u8>>, Status>>()?;
 
+        // TODO(https://github.com/zama-ai/kms-internal/issues/2881) for now we do not support compressed keys
         // use the real instantiation here for ReadOnlyS3StorageGetter
         let fhe_pubkeys = get_verified_public_materials::<_, _, _, ReadOnlyS3Storage>(
             &crypto_storage,
@@ -596,9 +597,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
             let threshold_fhe_keys = ThresholdFheKeys {
                 private_keys: Arc::new(new_private_key_set),
-                integer_server_key: Arc::new(integer_server_key),
-                sns_key: sns_key.map(Arc::new),
-                decompression_key: decompression_key.map(Arc::new),
+                public_material: PublicKeyMaterial::Uncompressed {
+                    integer_server_key: Arc::new(integer_server_key),
+                    sns_key: sns_key.map(Arc::new),
+                    decompression_key: decompression_key.map(Arc::new),
+                },
                 meta_data: info.clone(),
             };
 
@@ -721,11 +724,9 @@ mod tests {
     use crate::vault::storage::ram::RamStorage;
     use crate::vault::storage::s3::DummyReadOnlyS3Storage;
     use crate::vault::storage::s3::DummyReadOnlyS3StorageGetter;
-    use crate::vault::storage::store_pk_at_request_id;
     use crate::vault::storage::store_versioned_at_request_id;
     use aes_prng::AesRng;
     use kms_grpc::rpc_types::PubDataType;
-    use kms_grpc::rpc_types::WrappedPublicKey;
     use kms_grpc::ContextId;
     use kms_grpc::RequestId;
     use rand::SeedableRng;
@@ -783,10 +784,11 @@ mod tests {
         ]);
 
         // store the keys in ram storage
-        store_pk_at_request_id(
+        store_versioned_at_request_id(
             &mut ram_storage,
             &key_id,
-            WrappedPublicKey::Compact(&public_key),
+            &public_key,
+            &PubDataType::PublicKey.to_string(),
         )
         .await
         .unwrap();
@@ -805,7 +807,6 @@ mod tests {
             RamStorage::new(),
             RamStorage::new(),
             None,
-            HashMap::new(),
             HashMap::new(),
         );
 
@@ -989,10 +990,11 @@ mod tests {
             let public_storage = crypto_storage.inner.get_public_storage();
             {
                 let mut guard_storage = public_storage.lock().await;
-                store_pk_at_request_id(
+                store_versioned_at_request_id(
                     &mut (*guard_storage),
                     &key_id,
-                    WrappedPublicKey::Compact(&public_key),
+                    &public_key,
+                    &PubDataType::PublicKey.to_string(),
                 )
                 .await
                 .unwrap();
@@ -1044,10 +1046,11 @@ mod tests {
             let public_storage = crypto_storage.inner.get_public_storage();
             {
                 let mut guard_storage = public_storage.lock().await;
-                store_pk_at_request_id(
+                store_versioned_at_request_id(
                     &mut (*guard_storage),
                     &key_id,
-                    WrappedPublicKey::Compact(&public_key),
+                    &public_key,
+                    &PubDataType::PublicKey.to_string(),
                 )
                 .await
                 .unwrap();

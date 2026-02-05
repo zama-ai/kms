@@ -263,12 +263,8 @@ impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> 
             &envelope.auth_tag,
         )?;
         let mut buf = std::io::Cursor::new(&envelope.ciphertext);
-        safe_deserialize::<T>(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| {
-            anyhow::anyhow!(
-                "Could not deserialize backed up ciphertext: {}",
-                e.to_string()
-            )
-        })
+        safe_deserialize::<T>(&mut buf, SAFE_SER_SIZE_LIMIT)
+            .map_err(|e| anyhow::anyhow!("Could not deserialize backed up ciphertext: {e}"))
     }
 
     fn root_key_measurements(&self) -> Arc<RootKeyMeasurements> {
