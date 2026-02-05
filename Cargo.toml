@@ -103,7 +103,7 @@ base64 = "=0.22.1"  # Base64 encoding - HIGH RISK: Individual maintainer (marsha
 # See https://www.reddit.com/r/rust/comments/1pnz1iz/bincode_development_has_ceased_permanently/
 bincode = { version = "=2.0.1", features = ["serde"] }  # Binary serialization - CRITICAL RISK: bincode-org, 147M+ downloads
 bip39 = { version = "=2.2.0", features = ["alloc"] }  # BIP39 mnemonic seed phrases - LOW RISK: rust-bitcoin org (reputable), CI enabled
-bytes = "=1.10.1"  # Byte buffer utilities - LOW RISK: tokio team, 100M+ downloads
+bytes = "=1.11.1"  # Byte buffer utilities - LOW RISK: tokio team, 100M+ downloads
 cbc = { version = "=0.1.2", features = ["alloc"] }  # CBC block cipher mode - LOW RISK: RustCrypto org, standard cipher mode
 cfg-if = "=1.0.3"  # Conditional compilation - LOW RISK: Rust-lang org owned
 clap = { version = "=4.5.47", features = ["derive"] }  # CLI argument parsing - LOW RISK: clap-rs team
