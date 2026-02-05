@@ -16,6 +16,7 @@ use crate::{
     },
 };
 
+#[allow(dead_code)]
 #[derive(Default, Clone)]
 pub struct InMemoryBitLiftPreprocessing<const EXTENSION_DEGREE: usize> {
     bit_preproc: InMemoryBitPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>,

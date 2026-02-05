@@ -243,7 +243,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 (Err(e), _) => Err(e),
                 (Ok((sessions, handle)), Some(partial_params)) => {
                     if partial_params.store_dummy_preprocessing {
-                        let preproc = Box::new(DummyPreprocessing::<ResiduePolyF4Z128>::new(
+                        let preproc = Box::new(DummyPreprocessing::new(
                             0,
                             sessions.first().ok_or_else(|| {
                                 tracing::error!(

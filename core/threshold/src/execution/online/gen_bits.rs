@@ -130,7 +130,7 @@ mod tests {
                     let threshold = 1;
                     const AMOUNT: usize = 10;
                     async fn task(mut session: SmallSession<$z>, _bot: Option<String>) -> Vec<$z> {
-                        let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
+                        let mut preprocessing = DummyPreprocessing::new(42, &session);
                         let bits = SecureBitGenEven::gen_bits_even(AMOUNT, &mut preprocessing, &mut session)
                             .await
                             .unwrap();
@@ -152,7 +152,7 @@ mod tests {
                     let bad_party: Role = Role::indexed_from_one(2);
                     const AMOUNT: usize = 10;
                     let mut task = |mut session: SmallSession<$z>, _bot: Option<String>| async move {
-                        let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
+                        let mut preprocessing = DummyPreprocessing::new(42, &session);
                         // Execute with dummy prepreocessing for honest parties and a mock for the bad one
                         let bits = if session.my_role() == bad_party {
                             let mut mock =

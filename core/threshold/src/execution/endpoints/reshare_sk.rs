@@ -905,24 +905,21 @@ mod tests {
             .unwrap();
 
             let party_keyshare = session.my_role().get_from(&key_shares).unwrap().clone();
-            let mut preproc128 =
-                DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(42, &session);
-            let mut preproc64 =
-                DummyPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(43, &session);
+            let mut preproc = DummyPreprocessing::new(42, &session);
 
             //Testing ResharePreprocRequired
             let preproc_required = ResharePreprocRequired::new(session.num_parties(), new_params);
 
             let mut new_preproc_64 = InMemoryBasePreprocessing {
                 available_triples: Vec::new(),
-                available_randoms: preproc64
+                available_randoms: preproc
                     .next_random_vec(preproc_required.batch_params_64.randoms)
                     .unwrap(),
             };
 
             let mut new_preproc_128 = InMemoryBasePreprocessing {
                 available_triples: Vec::new(),
-                available_randoms: preproc128
+                available_randoms: preproc
                     .next_random_vec(preproc_required.batch_params_128.randoms)
                     .unwrap(),
             };
@@ -1035,14 +1032,7 @@ mod tests {
             let (mut preproc_64, mut preproc_128) = if let Some(session_set_2) =
                 session_set_2.as_ref()
             {
-                let mut preproc128 = DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
-                    42,
-                    session_set_2,
-                );
-                let mut preproc64 = DummyPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
-                    43,
-                    session_set_2,
-                );
+                let mut preproc = DummyPreprocessing::new(42, session_set_2);
 
                 //Testing ResharePreprocRequired
                 let num_parties_set_1 = common_session
@@ -1055,14 +1045,14 @@ mod tests {
 
                 let new_preproc_64 = InMemoryBasePreprocessing {
                     available_triples: Vec::new(),
-                    available_randoms: preproc64
+                    available_randoms: preproc
                         .next_random_vec(preproc_required.batch_params_64.randoms)
                         .unwrap(),
                 };
 
                 let new_preproc_128 = InMemoryBasePreprocessing {
                     available_triples: Vec::new(),
-                    available_randoms: preproc128
+                    available_randoms: preproc
                         .next_random_vec(preproc_required.batch_params_128.randoms)
                         .unwrap(),
                 };

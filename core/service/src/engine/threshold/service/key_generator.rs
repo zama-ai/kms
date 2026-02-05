@@ -1396,10 +1396,8 @@ mod tests {
             let dummy_prep = BucketMetaStore {
                 preprocessing_id: *prep_id,
                 external_signature: vec![],
-                preprocessing_store: Arc::new(Mutex::new(Box::new(DummyPreprocessing::<
-                    ResiduePolyF4Z128,
-                >::new(
-                    42, &session
+                preprocessing_store: Arc::new(Mutex::new(Box::new(DummyPreprocessing::new(
+                    42, &session,
                 )))),
                 dkg_param: TEST_PARAM,
             };

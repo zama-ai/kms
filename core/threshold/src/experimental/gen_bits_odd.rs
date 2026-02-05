@@ -162,7 +162,7 @@ mod tests {
         let threshold = 1;
         let amount = 100;
         let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
-            let mut preproc = DummyPreprocessing::<LevelKsw>::new(0, &session);
+            let mut preproc = DummyPreprocessing::new(0, &session);
 
             RealBitGenOdd::gen_bits_odd(amount, &mut preproc, &mut session)
                 .await

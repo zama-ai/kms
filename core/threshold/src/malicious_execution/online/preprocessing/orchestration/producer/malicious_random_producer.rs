@@ -10,10 +10,10 @@ use crate::{
 };
 
 pub type DummySmallSessionRandomProducer<Z> =
-    GenericRandomProducer<Z, SmallSession<Z>, DummyPreprocessing<Z>>;
+    GenericRandomProducer<Z, SmallSession<Z>, DummyPreprocessing>;
 
 pub type DummyLargeSessionRandomProducer<Z> =
-    GenericRandomProducer<Z, LargeSession, DummyPreprocessing<Z>>;
+    GenericRandomProducer<Z, LargeSession, DummyPreprocessing>;
 
 pub type FailingSmallSessionRandomProducer<Z> =
     GenericRandomProducer<Z, SmallSession<Z>, FailingPreprocessing<Z>>;
