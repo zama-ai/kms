@@ -11,6 +11,12 @@ kmsCore:
     tag: <version>
   thresholdMode:
     enabled: false
+  envFrom:
+    configmap:
+      key:
+        coreClientS3Endpoint: CORE_CLIENT__S3_ENDPOINT
+        publicVaultStorageBucket: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
+        publicVaultStoragePrefix: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX
 
   aws:
     region: eu-west-1
