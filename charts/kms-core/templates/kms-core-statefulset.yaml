@@ -146,11 +146,11 @@ spec:
               value: {{ .Values.minio.password}}
             - name: CORE_CLIENT__S3_ENDPOINT
               value: {{ .Values.minio.endpoint }}
-            {{- if and .Values.kmsCore.privateVault.s3.enabled .Values.kmsCore.nitroEnclave.enabled }}
+            {{- if .Values.kmsCore.privateVault.s3.enabled }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               value: {{ .Values.kmsCore.privateVault.s3.bucket | quote }}
             {{- end }}
-            {{- if and .Values.kmsCore.privateVault.s3.enabled .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.privateVault.s3.prefix }}
+            {{- if .Values.kmsCore.privateVault.s3.enabled .Values.kmsCore.privateVault.s3.prefix }}
             - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
               value: {{ .Values.kmsCore.privateVault.s3.prefix | quote }}
             {{- end }}
