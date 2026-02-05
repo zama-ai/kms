@@ -1322,7 +1322,6 @@ mod tests {
                 priv_storage,
                 None,
                 HashMap::new(),
-                HashMap::new(),
             );
 
             let tracker = Arc::new(TaskTracker::new());

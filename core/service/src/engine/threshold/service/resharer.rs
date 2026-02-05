@@ -808,7 +808,6 @@ mod tests {
             RamStorage::new(),
             None,
             HashMap::new(),
-            HashMap::new(),
         );
 
         let context_info = ContextInfo {

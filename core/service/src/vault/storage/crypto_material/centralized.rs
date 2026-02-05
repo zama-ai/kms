@@ -11,7 +11,7 @@ use kms_grpc::{
     rpc_types::{KMSType, PrivDataType, PubDataType},
     RequestId,
 };
-use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs, CompactPublicKey};
+use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
@@ -46,7 +46,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         public_storage: PubS,
         private_storage: PrivS,
         backup_vault: Option<Vault>,
-        pk_cache: HashMap<RequestId, CompactPublicKey>,
         fhe_keys: HashMap<(RequestId, EpochId), KmsFheKeyHandles>,
     ) -> Self {
         Self {
@@ -54,7 +53,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 public_storage: Arc::new(Mutex::new(public_storage)),
                 private_storage: Arc::new(Mutex::new(private_storage)),
                 backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
-                pk_cache: Arc::new(RwLock::new(pk_cache)),
             },
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }
@@ -205,17 +203,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 })
                 .is_ok()
         {
-            // updating the cache is not critical to system functionality,
-            // so we do not consider it as an error
-            {
-                let mut guarded_pk_cache = self.inner.pk_cache.write().await;
-                let previous = guarded_pk_cache.insert(*key_id, fhe_key_set.public_key.clone());
-                if previous.is_some() {
-                    tracing::warn!("PK already exists in pk_cache for {}, overwriting", key_id);
-                } else {
-                    tracing::debug!("Added new PK to pk_cache for {}", key_id);
-                }
-            }
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
                 let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), key_info);

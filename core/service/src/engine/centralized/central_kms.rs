@@ -24,6 +24,8 @@ use crate::engine::context_manager::CentralizedContextManager;
 #[cfg(feature = "non-wasm")]
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::traits::{BaseKms, Kms};
+#[cfg(feature = "non-wasm")]
+use crate::engine::utils::sanity_check_public_materials;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::engine::Shutdown;
 #[cfg(feature = "non-wasm")]
@@ -37,7 +39,6 @@ use crate::vault::storage::{read_all_data_from_all_epochs_versioned, StorageExt}
 use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
 use crate::vault::storage::{
     crypto_material::CentralizedCryptoMaterialStorage, read_all_data_versioned,
-    read_versioned_at_request_id,
 };
 #[cfg(feature = "non-wasm")]
 use crate::vault::{storage::Storage, Vault};
@@ -841,35 +842,13 @@ impl<
                 &PrivDataType::FhePrivateKey.to_string(),
             )
             .await?;
-        let mut pk_map = HashMap::new();
-        for ((id, _), handle) in key_info.iter() {
-            if handle
-                .public_key_info
-                .pub_data_types()
-                .contains(&PubDataType::PublicKey)
-            {
-                let pk = read_versioned_at_request_id(
-                    &public_storage,
-                    id,
-                    &PubDataType::PublicKey.to_string(),
-                )
-                .await?;
-                pk_map.insert(*id, pk);
-            } else if handle
-                .public_key_info
-                .pub_data_types()
-                .contains(&PubDataType::CompressedXofKeySet)
-            {
-                let xof_keyset =
-                    read_versioned_at_request_id::<_, tfhe::xof_key_set::CompressedXofKeySet>(
-                        &public_storage,
-                        id,
-                        &PubDataType::CompressedXofKeySet.to_string(),
-                    )
-                    .await?;
-                pk_map.insert(*id, xof_keyset.decompress()?.into_raw_parts().0);
-            }
-        }
+
+        // sanity check the public materials
+        let entries: Vec<_> = key_info
+            .iter()
+            .map(|((id, _), handle)| (*id, handle.public_key_info.pub_data_types()))
+            .collect();
+        sanity_check_public_materials(&public_storage, &entries).await?;
         tracing::info!(
             "loaded key_info with key_ids: {:?}",
             key_info.keys().collect::<Vec<_>>()
@@ -897,7 +876,6 @@ impl<
             public_storage,
             private_storage,
             backup_vault,
-            pk_map,
             key_info,
         );
         let base_kms = BaseKmsStruct::new(KMSType::Centralized, sk)?;

@@ -62,14 +62,14 @@ use crate::{
             },
             threshold_kms::ThresholdKms,
         },
+        utils::sanity_check_public_materials,
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
     vault::{
         storage::{
             crypto_material::ThresholdCryptoMaterialStorage,
-            read_all_data_from_all_epochs_versioned, read_all_data_versioned,
-            read_versioned_at_request_id, Storage, StorageExt,
+            read_all_data_from_all_epochs_versioned, read_all_data_versioned, Storage, StorageExt,
         },
         Vault,
     },
@@ -367,7 +367,6 @@ where
         .await?;
 
     let mut public_key_info = HashMap::new();
-    let mut pk_map = HashMap::new();
     let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
@@ -378,35 +377,18 @@ where
             anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
         }
     }
-    for ((id, _), info) in key_info_versioned.clone().into_iter() {
-        public_key_info.insert(id, info.meta_data.clone());
-        if info
-            .meta_data
-            .pub_data_types()
-            .contains(&PubDataType::PublicKey)
-        {
-            let pk = read_versioned_at_request_id(
-                &public_storage,
-                &id,
-                &PubDataType::PublicKey.to_string(),
-            )
-            .await?;
-            pk_map.insert(id, pk);
-        } else if info
-            .meta_data
-            .pub_data_types()
-            .contains(&PubDataType::CompressedXofKeySet)
-        {
-            let xof_keyset =
-                read_versioned_at_request_id::<_, tfhe::xof_key_set::CompressedXofKeySet>(
-                    &public_storage,
-                    &id,
-                    &PubDataType::CompressedXofKeySet.to_string(),
-                )
-                .await?;
-            pk_map.insert(id, xof_keyset.decompress()?.into_raw_parts().0);
-        }
+
+    // Build public_key_info map
+    for ((id, _), info) in &key_info_versioned {
+        public_key_info.insert(*id, info.meta_data.clone());
     }
+
+    // sanity check the public materials
+    let entries: Vec<_> = key_info_versioned
+        .iter()
+        .map(|((id, _), info)| (*id, info.meta_data.pub_data_types()))
+        .collect();
+    sanity_check_public_materials(&public_storage, &entries).await?;
 
     // load crs_info (roughly hashes of CRS) from storage
     let crs_info: HashMap<RequestId, CrsGenMetadata> =
@@ -544,7 +526,6 @@ where
         public_storage,
         private_storage,
         backup_storage,
-        pk_map,
         key_info_versioned,
     );
 

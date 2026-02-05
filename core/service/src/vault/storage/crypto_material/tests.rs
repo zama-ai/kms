@@ -49,7 +49,6 @@ async fn write_crs() {
         public_storage: pub_storage.clone(),
         private_storage: Arc::new(Mutex::new(RamStorage::new())),
         backup_vault: None,
-        pk_cache: Arc::new(RwLock::new(HashMap::new())),
     };
 
     let mut rng = AesRng::seed_from_u64(100);
@@ -136,11 +135,9 @@ async fn read_public_key() {
         RamStorage::new(),
         None,
         HashMap::new(),
-        HashMap::new(),
     );
 
     let pub_storage = crypto_storage.inner.public_storage.clone();
-    let pk_cache = crypto_storage.inner.pk_cache.clone();
 
     let pbs_params: ClassicPBSParameters = TEST_PARAM
         .get_params_basics_handle()
@@ -165,10 +162,6 @@ async fn read_public_key() {
 
     // reading the public key without cache should succeed
     let _pk = crypto_storage.inner.read_cloned_pk(&req_id).await.unwrap();
-
-    // check that there's an item in the cache
-    let guard = pk_cache.read().await;
-    assert!(guard.contains_key(&req_id));
 }
 
 #[tokio::test]
@@ -179,7 +172,6 @@ async fn write_central_keys() {
         FailingRamStorage::new(100),
         RamStorage::new(),
         None,
-        HashMap::new(),
         HashMap::new(),
     );
     let pub_storage = crypto_storage.inner.public_storage.clone();
@@ -481,7 +473,6 @@ async fn read_guarded_threshold_fhe_keys_not_found() {
         RamStorage::new(),
         None,
         HashMap::new(),
-        HashMap::new(),
     );
 
     // Try to read a non-existent key - should return an error
@@ -547,7 +538,6 @@ fn setup_threshold_store(
         FailingRamStorage::new(100),
         RamStorage::new(),
         None,
-        HashMap::new(),
         HashMap::new(),
     );
 

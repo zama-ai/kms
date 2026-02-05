@@ -13,7 +13,7 @@ use kms_grpc::{
 };
 use tfhe::{
     integer::compression_keys::DecompressionKey, xof_key_set::CompressedXofKeySet,
-    zk::CompactPkeCrs, CompactPublicKey,
+    zk::CompactPkeCrs,
 };
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
@@ -53,7 +53,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         public_storage: PubS,
         private_storage: PrivS,
         backup_vault: Option<Vault>,
-        pk_cache: HashMap<RequestId, CompactPublicKey>,
         fhe_keys: HashMap<(RequestId, EpochId), ThresholdFheKeys>,
     ) -> Self {
         Self {
@@ -61,7 +60,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 public_storage: Arc::new(Mutex::new(public_storage)),
                 private_storage: Arc::new(Mutex::new(private_storage)),
                 backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
-                pk_cache: Arc::new(RwLock::new(pk_cache)),
             },
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }
@@ -230,17 +228,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
             tracing::error!("Error ({}) while updating meta store for {}", e, key_id);
         }
         if r1 && r2 && r3 && meta_update_result.is_ok() {
-            // updating the cache is not critical to system functionality,
-            // so we do not consider it as an error
-            {
-                let mut guarded_pk_cache = self.inner.pk_cache.write().await;
-                let previous = guarded_pk_cache.insert(*key_id, fhe_key_set.public_key.clone());
-                if previous.is_some() {
-                    tracing::warn!("PK already exists in pk_cache for {}, overwriting", key_id);
-                } else {
-                    tracing::debug!("Added new PK to pk_cache for {}", key_id);
-                }
-            }
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
                 let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), threshold_fhe_keys);
@@ -563,17 +550,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         self.inner
             .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)
             .await
-    }
-
-    pub async fn read_cloned_pk(&self, req_id: &RequestId) -> anyhow::Result<CompactPublicKey> {
-        self.inner.read_cloned_pk(req_id).await
-    }
-
-    pub async fn read_cloned_server_key(
-        &self,
-        req_id: &RequestId,
-    ) -> anyhow::Result<tfhe::ServerKey> {
-        self.inner.read_cloned_server_key(req_id).await
     }
 }
 
