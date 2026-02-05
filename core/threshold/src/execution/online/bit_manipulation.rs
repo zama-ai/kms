@@ -63,7 +63,7 @@ fn shift_right_2d<Z: Ring + ZConsts>(
 
 impl<Z> BatchedBits<Z>
 where
-    Z: Ring + ZConsts + Send + Sync + ErrorCorrect,
+    Z: ZConsts + Send + Sync + ErrorCorrect,
 {
     /// Takes a 1D array and arranges it into a 2D of size B (batch_size).
     /// Does this by taking consecutive CHAR_LOG2 (64/128) entries and puts them in a single batch
@@ -334,7 +334,7 @@ where
 
 impl<Z> Bits<Z>
 where
-    Z: Ring + ZConsts + Send + Sync + ErrorCorrect,
+    Z: ZConsts + Send + Sync + ErrorCorrect,
 {
     /// Computes XOR(\<a\>,\<b\>) for a and b vecs given AND(\<a\>,\<b\>)
     fn xor_with_prods(
