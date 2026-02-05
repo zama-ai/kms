@@ -10,10 +10,7 @@ use kms_grpc::{
 };
 use observability::{conf::TelemetryConfig, metrics};
 use serde::{Deserialize, Serialize};
-use tfhe::{
-    core_crypto::prelude::LweKeyswitchKey, integer::compression_keys::DecompressionKey,
-    named::Named, Versionize,
-};
+use tfhe::{core_crypto::prelude::LweKeyswitchKey, named::Named, Versionize};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
@@ -65,14 +62,14 @@ use crate::{
             },
             threshold_kms::ThresholdKms,
         },
+        utils::sanity_check_public_materials,
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     util::{meta_store::MetaStore, rate_limiter::RateLimiter},
     vault::{
         storage::{
             crypto_material::ThresholdCryptoMaterialStorage,
-            read_all_data_from_all_epochs_versioned, read_all_data_versioned,
-            read_pk_at_request_id, Storage, StorageExt,
+            read_all_data_from_all_epochs_versioned, read_all_data_versioned, Storage, StorageExt,
         },
         Vault,
     },
@@ -89,40 +86,92 @@ use super::{
 #[cfg(feature = "insecure")]
 use super::{crs_generator::RealInsecureCrsGenerator, key_generator::RealInsecureKeyGenerator};
 
+/// Enum to hold either compressed or uncompressed public key material.
+/// This allows a single ThresholdFheKeys type to support both modes.
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum PublicKeyMaterialVersioned {
+    V0(PublicKeyMaterial),
+}
+
+#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[versionize(PublicKeyMaterialVersioned)]
+pub enum PublicKeyMaterial {
+    /// Uncompressed keys - ready for immediate use
+    Uncompressed {
+        integer_server_key: Arc<tfhe::integer::ServerKey>,
+        sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
+        decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
+    },
+    /// Compressed keys - need decompression before use via XOF seed
+    Compressed {
+        compressed_keyset: Arc<tfhe::xof_key_set::CompressedXofKeySet>,
+        // We store duplicate of the integer keys for easy access, otherwise we'd need to decompress every time
+        integer_server_key: Arc<tfhe::integer::ServerKey>,
+        sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
+        decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
+    },
+}
+
+impl PublicKeyMaterial {
+    pub fn new_compressed(
+        compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet,
+    ) -> anyhow::Result<Self> {
+        let compressed_keyset_cloned = compressed_keyset.clone();
+        let (_public_key, server_key) = compressed_keyset_cloned.decompress()?.into_raw_parts();
+        let (integer_server_key, _, _, decompression_key, sns_key, _, _, _) =
+            server_key.into_raw_parts();
+        Ok(Self::Compressed {
+            compressed_keyset: Arc::new(compressed_keyset),
+            integer_server_key: Arc::new(integer_server_key),
+            sns_key: sns_key.map(Arc::new),
+            decompression_key: decompression_key.map(Arc::new),
+        })
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum ThresholdFheKeysVersioned {
     V0(ThresholdFheKeysV0),
-    V1(ThresholdFheKeys),
+    V1(ThresholdFheKeysV1),
+    V2(ThresholdFheKeys),
 }
 
+/// V2: Unified key storage supporting both compressed and uncompressed keys.
 /// These are the internal key materials (public and private)
 /// that's needed for decryption, user decryption and verifying a proven input.
 #[derive(Clone, Serialize, Deserialize, Versionize)]
 #[versionize(ThresholdFheKeysVersioned)]
 pub struct ThresholdFheKeys {
     pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
-    pub integer_server_key: Arc<tfhe::integer::ServerKey>,
-    pub sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
-    pub decompression_key: Option<Arc<DecompressionKey>>,
+    pub public_material: PublicKeyMaterial,
     pub meta_data: KeyGenMetadata,
 }
 
-/// These are the internal key materials (public and private)
-/// that's needed for decryption, user decryption and verifying a proven input.
+/// V1: Original structure with separate fields for public keys.
+#[derive(Clone, Serialize, Deserialize, Version)]
+pub struct ThresholdFheKeysV1 {
+    pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
+    pub integer_server_key: Arc<tfhe::integer::ServerKey>,
+    pub sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
+    pub decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
+    pub meta_data: KeyGenMetadata,
+}
+
+/// V0: Legacy structure with pk_meta_data instead of meta_data.
 #[derive(Clone, Serialize, Deserialize, Version)]
 pub struct ThresholdFheKeysV0 {
     pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     pub integer_server_key: Arc<tfhe::integer::ServerKey>,
     pub sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
-    pub decompression_key: Option<Arc<DecompressionKey>>,
+    pub decompression_key: Option<Arc<tfhe::integer::compression_keys::DecompressionKey>>,
     pub pk_meta_data: HashMap<PubDataType, SignedPubDataHandleInternal>,
 }
 
-impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV0 {
+impl Upgrade<ThresholdFheKeysV1> for ThresholdFheKeysV0 {
     type Error = std::convert::Infallible;
 
-    fn upgrade(self) -> Result<ThresholdFheKeys, Self::Error> {
-        Ok(ThresholdFheKeys {
+    fn upgrade(self) -> Result<ThresholdFheKeysV1, Self::Error> {
+        Ok(ThresholdFheKeysV1 {
             private_keys: Arc::clone(&self.private_keys),
             integer_server_key: Arc::clone(&self.integer_server_key),
             sns_key: self.sns_key.map(|sns_key| Arc::clone(&sns_key)),
@@ -134,12 +183,66 @@ impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV0 {
     }
 }
 
+impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV1 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<ThresholdFheKeys, Self::Error> {
+        Ok(ThresholdFheKeys {
+            private_keys: self.private_keys,
+            public_material: PublicKeyMaterial::Uncompressed {
+                integer_server_key: self.integer_server_key,
+                sns_key: self.sns_key,
+                decompression_key: self.decompression_key,
+            },
+            meta_data: self.meta_data,
+        })
+    }
+}
+
 impl ThresholdFheKeys {
-    pub fn get_key_switching_key(&self) -> anyhow::Result<&LweKeyswitchKey<Vec<u64>>> {
-        match &self.integer_server_key.as_ref().as_ref().atomic_pattern {
+    /// Get the integer server key from the public material.
+    /// Returns an error if the keys are compressed (need decompression first).
+    pub fn get_integer_server_key(&self) -> Arc<tfhe::integer::ServerKey> {
+        match &self.public_material {
+            PublicKeyMaterial::Uncompressed {
+                integer_server_key, ..
+            } => integer_server_key.clone(),
+            PublicKeyMaterial::Compressed {
+                integer_server_key, ..
+            } => integer_server_key.clone(),
+        }
+    }
+
+    /// Get the SNS key from the public material.
+    /// Returns an error if the keys are compressed (need decompression first).
+    pub fn get_sns_key(&self) -> Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>> {
+        match &self.public_material {
+            PublicKeyMaterial::Uncompressed { sns_key, .. } => sns_key.clone(),
+            PublicKeyMaterial::Compressed { sns_key, .. } => sns_key.clone(),
+        }
+    }
+
+    /// Get the decompression key from the public material.
+    /// Returns an error if the keys are compressed (need decompression first).
+    pub fn get_decompression_key(
+        &self,
+    ) -> Option<Arc<tfhe::integer::compression_keys::DecompressionKey>> {
+        match &self.public_material {
+            PublicKeyMaterial::Uncompressed {
+                decompression_key, ..
+            } => decompression_key.clone(),
+            PublicKeyMaterial::Compressed {
+                decompression_key, ..
+            } => decompression_key.clone(),
+        }
+    }
+
+    pub fn get_key_switching_key(&self) -> anyhow::Result<LweKeyswitchKey<Vec<u64>>> {
+        let integer_server_key = self.get_integer_server_key();
+        match &integer_server_key.as_ref().as_ref().atomic_pattern {
             tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Standard(
                 standard_atomic_pattern_server_key,
-            ) => Ok(&standard_atomic_pattern_server_key.key_switching_key),
+            ) => Ok(standard_atomic_pattern_server_key.key_switching_key.clone()),
             tfhe::shortint::atomic_pattern::AtomicPatternServerKey::KeySwitch32(_) => {
                 anyhow::bail!("No support for KeySwitch32 server key")
             }
@@ -147,6 +250,11 @@ impl ThresholdFheKeys {
                 anyhow::bail!("No support for dynamic atomic pattern server key")
             }
         }
+    }
+
+    /// Check if this ThresholdFheKeys contains compressed keys.
+    pub fn is_compressed(&self) -> bool {
+        matches!(self.public_material, PublicKeyMaterial::Compressed { .. })
     }
 }
 
@@ -157,11 +265,16 @@ impl Named for ThresholdFheKeys {
 impl std::fmt::Debug for ThresholdFheKeys {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ThresholdFheKeys")
-            .field("private_keys", &"ommitted")
-            .field("server_key", &"ommitted")
-            .field("decompression_key", &"ommitted")
-            .field("pk_meta_data", &self.meta_data)
-            .field("ksk", &"ommitted")
+            .field("private_keys", &"omitted")
+            .field(
+                "public_material",
+                &if self.is_compressed() {
+                    "Compressed(omitted)"
+                } else {
+                    "Uncompressed(omitted)"
+                },
+            )
+            .field("meta_data", &self.meta_data)
             .finish()
     }
 }
@@ -254,7 +367,6 @@ where
         .await?;
 
     let mut public_key_info = HashMap::new();
-    let mut pk_map = HashMap::new();
     let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
             .await?;
@@ -265,12 +377,18 @@ where
             anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
         }
     }
-    for ((id, _), info) in key_info_versioned.clone().into_iter() {
-        public_key_info.insert(id, info.meta_data.clone());
 
-        let pk = read_pk_at_request_id(&public_storage, &id).await?;
-        pk_map.insert(id, pk);
+    // Build public_key_info map
+    for ((id, _), info) in &key_info_versioned {
+        public_key_info.insert(*id, info.meta_data.clone());
     }
+
+    // sanity check the public materials
+    let entries: Vec<_> = key_info_versioned
+        .iter()
+        .map(|((id, _), info)| (*id, info.meta_data.pub_data_types()))
+        .collect();
+    sanity_check_public_materials(&public_storage, &entries).await?;
 
     // load crs_info (roughly hashes of CRS) from storage
     let crs_info: HashMap<RequestId, CrsGenMetadata> =
@@ -408,7 +526,6 @@ where
         public_storage,
         private_storage,
         backup_storage,
-        pk_map,
         key_info_versioned,
     );
 
@@ -687,9 +804,11 @@ mod tests {
 
             let priv_key_set = Self {
                 private_keys: Arc::new(priv_key_set),
-                integer_server_key: Arc::new(integer_server_key),
-                sns_key: sns_key.map(Arc::new),
-                decompression_key: decompression_key.map(Arc::new),
+                public_material: PublicKeyMaterial::Uncompressed {
+                    integer_server_key: Arc::new(integer_server_key),
+                    sns_key: sns_key.map(Arc::new),
+                    decompression_key: decompression_key.map(Arc::new),
+                },
                 meta_data: KeyGenMetadata::new(
                     RequestId::zeros(),
                     RequestId::zeros(),

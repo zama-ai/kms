@@ -143,11 +143,8 @@ pub(crate) async fn fetch_and_check_keygen(
     );
 
     // Download the generated keys.
-    let key_types = vec![
-        PubDataType::PublicKey,
-        PubDataType::PublicKeyMetadata,
-        PubDataType::ServerKey,
-    ];
+    // TODO: handle compressed keys
+    let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
 
     let party_ids = fetch_public_elements(
         &request_id.to_string(),
@@ -294,7 +291,8 @@ pub(crate) fn check_standard_keyset_ext_signature(
     let server_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
     let public_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
-    let sol_type = KeygenVerification::new(prep_id, key_id, server_key_digest, public_key_digest);
+    let sol_type =
+        KeygenVerification::new_standard(prep_id, key_id, server_key_digest, public_key_digest);
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
     // check that the address is in the list of known KMS addresses
