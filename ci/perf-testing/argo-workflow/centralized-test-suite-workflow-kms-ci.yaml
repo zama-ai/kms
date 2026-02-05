@@ -288,7 +288,7 @@ spec:
             fhe_params="${FHE_PARAMETER:=Test}"
             [[cores]]
             party_id=1
-            address="kms-service-centralized-1-kms-ci-core-1:50100"
+            address="kms-core-core-1:50100"
             s3_endpoint="${S3_ENDPOINT}"
             object_folder="PUB"
           EOF
@@ -384,7 +384,7 @@ spec:
           - name: S3_ENDPOINT
             valueFrom:
               configMapKeyRef:
-                name: kms-ci-1
+                name: kms-ci
                 key: CORE_CLIENT__S3_ENDPOINT
           - name: NUM_MAJORITY
             value: '1'
