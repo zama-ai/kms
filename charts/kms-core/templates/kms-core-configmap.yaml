@@ -42,7 +42,7 @@ data:
     path = "/keys"
     {{- end }}
 
-    {{- if .Values.kmsCore.privateVault.s3.enabled }}
+    {{- if and .Values.kmsCore.privateVault.s3.enabled .Values.kmsCore.thresholdMode.enabled }}
     [private_vault.storage.s3]
     bucket = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET}"
       {{- if .Values.kmsCore.privateVault.s3.prefix }}
