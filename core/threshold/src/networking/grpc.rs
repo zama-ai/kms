@@ -40,21 +40,21 @@ pub struct CoreToCoreNetworkConfig {
     pub multiplier: f64,
     pub max_interval: u64,
     pub max_elapsed_time: Option<u64>,
-    /// Initial interval for exponential backoff in milliseconds (default: 1000ms)
+    /// Initial interval for exponential backoff in milliseconds
     pub initial_interval_ms: Option<u64>,
     pub network_timeout: u64,
     pub network_timeout_bk: u64,
     pub network_timeout_bk_sns: u64,
     pub max_en_decode_message_size: u64,
-    /// Background interval for updating session status (default: 60)
+    /// Background interval for updating session status
     pub session_update_interval_secs: Option<u64>,
-    /// Background interval for cleaning up completed sessions (default: 3600)
+    /// Background interval for cleaning up completed sessions
     pub session_cleanup_interval_secs: Option<u64>,
-    /// Background interval for discarding inactive sessions (default: 900)
+    /// Background interval for discarding inactive sessions
     pub discard_inactive_sessions_interval: Option<u64>,
-    /// Maximum waiting time for trying to push the message in the queue (default: 60 seconds)
+    /// Maximum waiting time for trying to push the message in the queue
     pub max_waiting_time_for_message_queue: Option<u64>,
-    /// Maximum number of "Inactive" sessions a party can open before I refuse to open more (default: 100)
+    /// Maximum number of "Inactive" sessions a party can open before I refuse to open more
     pub max_opened_inactive_sessions_per_party: Option<u64>,
 }
 
@@ -282,32 +282,30 @@ impl GrpcNetworkingManager {
                                 internal_inactive_sessions_count += 1;
                             }
                         }
-                        SessionStatus::Active(session) => {
-                            match session.upgrade() {
-                                Some(network_session) => {
-                                    let (max_elapsed_time, network_timeout) = (
-                                        network_session.max_elapsed_time.read().await,
-                                        network_session.current_network_timeout.read().await,
+                        SessionStatus::Active(session) => match session.upgrade() {
+                            Some(network_session) => {
+                                let time_since_last_rec = {
+                                    network_session
+                                        .last_rec_activity_time
+                                        .read()
+                                        .await
+                                        .elapsed()
+                                };
+                                if time_since_last_rec > discard_inactive_interval {
+                                    tracing::warn!(
+                                        "Discarding Active session {:?} after {:?} seconds.",
+                                        session_id,
+                                        time_since_last_rec.as_secs()
                                     );
-                                    // Remove active sessions that have not received any activity for awhile
-                                    if network_session.init_time.get().is_some_and(|init_time| {
-                                        *init_time + *network_timeout + *max_elapsed_time
-                                            > Instant::now()
-                                    }) {
-                                        tracing::warn!(
-                                            "Discarding Active session {:?} due to timeout.",
-                                            session_id,
-                                        );
-                                        to_remove.push(*session_id);
-                                        continue;
-                                    }
-                                    internal_active_sessions_count += 1;
+                                    to_remove.push(*session_id);
+                                    continue;
                                 }
-                                None => {
-                                    *status = SessionStatus::Completed(Instant::now());
-                                }
+                                internal_active_sessions_count += 1;
                             }
-                        }
+                            None => {
+                                *status = SessionStatus::Completed(Instant::now());
+                            }
+                        },
                     };
                 }
                 for session_id in to_remove {
@@ -476,6 +474,7 @@ impl GrpcNetworkingManager {
                     conf: self.conf,
                     completed_parties,
                     init_time: OnceLock::new(),
+                    last_rec_activity_time: RwLock::new(Instant::now()),
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),
@@ -504,6 +503,7 @@ impl GrpcNetworkingManager {
                     conf: self.conf,
                     completed_parties,
                     init_time: OnceLock::new(),
+                    last_rec_activity_time: RwLock::new(Instant::now()),
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),

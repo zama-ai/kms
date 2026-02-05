@@ -365,6 +365,7 @@ async fn test_ratelimiter() {
 #[cfg(feature = "slow_tests")]
 #[serial]
 async fn test_complete_session_notification() {
+    //nightly_
     let amount_parties = 4;
     let key_id = &TEST_THRESHOLD_KEY_ID_4P;
     let enc_config = EncryptionConfig {
@@ -372,7 +373,7 @@ async fn test_complete_session_notification() {
         precompute_sns: true,
     };
     let msg_amount = 10;
-    let parallel_reqs = 1;
+    let parallel_reqs = 3;
     let wait_time = 4;
 
     // Ensure inactive session discard interval is small for the test

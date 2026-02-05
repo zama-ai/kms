@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, HashMap, HashSet},
     net::IpAddr,
     str::FromStr,
     sync::{Arc, OnceLock},
@@ -217,10 +217,11 @@ impl GrpcSendingService {
         network_channel: GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
         exponential_backoff: ExponentialBackoff<SystemClock>,
         other_role_kind: RoleKind,
-        aborted: Arc<DashSet<RoleKind>>,
+        completed_parties: Arc<DashSet<RoleKind>>,
     ) {
         let mut received_request = 0;
         let mut incorrectly_sent = 0;
+        let mut parties_to_mark_completed = HashSet::new();
 
         while let Some(value) = receiver.recv().await {
             received_request += 1;
@@ -264,18 +265,8 @@ impl GrpcSendingService {
                         }
                         Status::Completed => {
                             // Failed to have receiver accept the message
-                            // Send abort signal and break since we can only send once
-                            if !aborted.insert(other_role_kind) {
-                                tracing::warn!(
-                                    "Abort signal for network task to {other_role_kind} was already sent"
-                                );
-                            }
-                            // TODO should we actually return or instead increase error count and continue ?}
-                            // Abort the session for this party
-                            incorrectly_sent += 1;
-                            tracing::warn!(
-                                "Failed to send message to {other_role_kind} party since it claims the session is already complete");
-                            break;
+                            // Should be marked as completed
+                            let _ = parties_to_mark_completed.insert(other_role_kind);
                         }
                     };
                 }
@@ -290,6 +281,15 @@ impl GrpcSendingService {
             };
         }
 
+        // Wait until all sending is done and then send the abort signals
+        for cur_role in parties_to_mark_completed {
+            // Send abort signal and break since we can only send once
+            if !completed_parties.insert(cur_role) {
+                tracing::warn!("Party {cur_role} was already marked as completed by another message, skipping redundant completion signal");
+            }
+            incorrectly_sent += 1;
+            tracing::warn!("Failed to send message to {cur_role} party since it claims the session is already completed");
+        }
         if received_request == 0 {
             // This is not necessarily an error since we may use the network to only receive in certain protocols
             tracing::debug!(
@@ -459,17 +459,12 @@ pub struct NetworkSession {
     // we are within time bound
     pub(crate) conf: OptionConfigWrapper,
     pub(crate) init_time: OnceLock<Instant>,
+    /// Time when the last message was received, or when the session was made active if no message has been received yet.
+    /// Used to discard inactive sessions.
+    pub(crate) last_rec_activity_time: RwLock<Instant>,
     pub(crate) current_network_timeout: RwLock<Duration>,
     pub(crate) next_network_timeout: RwLock<Duration>,
     pub(crate) max_elapsed_time: RwLock<Duration>,
-}
-impl Drop for NetworkSession {
-    fn drop(&mut self) {
-        // Ensure that dropping a session will ensure that `is_aborted` will return true s.t. the session will get removed at clean up
-        // if self.aborted.get().is_none() {
-        //     let _ = self.aborted.set(());
-        // }
-    }
 }
 
 #[async_trait]
@@ -539,8 +534,14 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             let packet = tokio::select! {
                     _ = tick_interval.tick() => {
                         tracing::warn!("Still waiting to receive from party {:?} for session {:?}", sender, self.session_id);
-                        if self.is_aborted(&sender.get_role_kind()) {
-                            return Err(anyhow_error_and_log(format!("Session has been aborted with {}", sender.get_role_kind())));
+                        if self.is_complete(&sender.get_role_kind()) {
+                            // The sender has said the session is complete, wait for the timeout time to ensure there is no more messages lingering
+                            tokio::select! {
+                                _ = tokio::time::sleep(self.conf.get_max_waiting_time_for_message_queue()) => {
+                                    return Err(anyhow_error_and_log(format!("Session {} has been aborted with {}", self.session_id, sender.get_role_kind())));
+                                }
+                                local_packet = rx.recv() => Some(local_packet)
+                            };
                         }
                         None
                     },
@@ -551,7 +552,10 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             }
         }
         .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
-
+        // Update the time we received a message
+        {
+            *self.last_rec_activity_time.write().await = Instant::now();
+        }
         // drop old messages
         let network_round = *counter_lock;
         while local_packet.round_counter < network_round {
@@ -677,20 +681,11 @@ impl NetworkSession {
         }
     }
 
-    // Check if the session has been aborted by a quorum of other parties refusing the connection
-    pub fn is_aborted(&self, role_kind: &RoleKind) -> bool {
+    // Check if the session has been marked as completed by a specific party
+    pub fn is_complete(&self, role_kind: &RoleKind) -> bool {
         if self.completed_parties.get(role_kind).is_some() {
             return true;
         }
-        // // Aborted has not been set yet, so check if it should be set
-        // if self.completed_parties.len() > 2 * self.threshold as usize {
-        //     tracing::warn!(
-        //         "Session {} aborted due to quorum of parties refusing connection",
-        //         self.session_id
-        //     );
-        //     let _ = self.aborted.set(());
-        //     return true;
-        // }
         false
     }
 }
@@ -701,6 +696,7 @@ mod tests {
     use tokio::sync::mpsc::channel;
     use tokio::sync::{Mutex, RwLock};
     use tokio::task::JoinSet;
+    use tokio::time::Instant;
 
     use crate::execution::runtime::party::TwoSetsRole;
     use crate::networking::grpc::{
@@ -959,7 +955,7 @@ mod tests {
             network_mode: crate::networking::NetworkMode::Async,
             conf: OptionConfigWrapper { conf: None },
             init_time: OnceLock::new(),
-            last_rec_activity_time: RwLock::new(None),
+            last_rec_activity_time: RwLock::new(Instant::now()),
             current_network_timeout: RwLock::new(Duration::from_secs(10)),
             next_network_timeout: RwLock::new(Duration::from_secs(10)),
             max_elapsed_time: RwLock::new(Duration::from_secs(0)),
