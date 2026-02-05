@@ -285,6 +285,10 @@ impl GrpcNetworkingManager {
                         SessionStatus::Active(session) => {
                             match session.upgrade() {
                                 Some(network_session) => {
+                                    let (max_elapsed_time, network_timeout) = (
+                                        network_session.max_elapsed_time.read().await,
+                                        network_session.current_network_timeout.read().await,
+                                    );
                                     // Remove active sessions that have not received any activity for awhile
                                     match network_session
                                         .last_rec_activity_time
@@ -307,7 +311,7 @@ impl GrpcNetworkingManager {
                                         }
                                         None => {
                                             tracing::warn!(
-                                                "Network session {:?} has no last receive activity time set yet.",
+                                                "Discarding Active session {:?} due to timeout.",
                                                 session_id
                                             );
                                         }
@@ -320,7 +324,7 @@ impl GrpcNetworkingManager {
                                     //     session_id
                                     // );
                                     //     *status = SessionStatus::Completed(Instant::now());
-                                    // } else {
+                                    // } else {treamlined dropping active sessions)
                                     internal_active_sessions_count += 1;
                                 }
                                 None => {
@@ -496,7 +500,6 @@ impl GrpcNetworkingManager {
                     conf: self.conf,
                     completed_parties,
                     init_time: OnceLock::new(),
-                    last_rec_activity_time: RwLock::new(None),
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),
@@ -525,7 +528,6 @@ impl GrpcNetworkingManager {
                     conf: self.conf,
                     completed_parties,
                     init_time: OnceLock::new(),
-                    last_rec_activity_time: RwLock::new(None),
                     current_network_timeout: RwLock::new(timeout),
                     next_network_timeout: RwLock::new(timeout),
                     max_elapsed_time: RwLock::new(Duration::ZERO),

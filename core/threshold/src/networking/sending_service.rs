@@ -459,8 +459,6 @@ pub struct NetworkSession {
     // we are within time bound
     pub(crate) conf: OptionConfigWrapper,
     pub(crate) init_time: OnceLock<Instant>,
-    /// Time when the last message was received
-    pub(crate) last_rec_activity_time: RwLock<Option<Instant>>,
     pub(crate) current_network_timeout: RwLock<Duration>,
     pub(crate) next_network_timeout: RwLock<Duration>,
     pub(crate) max_elapsed_time: RwLock<Duration>,
@@ -553,13 +551,6 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             }
         }
         .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
-        // Update the time we received a message
-        {
-            self.last_rec_activity_time
-                .write()
-                .await
-                .replace(Instant::now());
-        }
 
         // drop old messages
         let network_round = *counter_lock;
