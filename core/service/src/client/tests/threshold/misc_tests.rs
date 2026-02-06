@@ -364,8 +364,7 @@ async fn test_ratelimiter() {
 #[tokio::test(flavor = "current_thread")]
 #[cfg(feature = "slow_tests")]
 #[serial]
-async fn test_complete_session_notification() {
-    //nightly_
+async fn nightly_test_complete_session_notification() {
     let amount_parties = 4;
     let key_id = &TEST_THRESHOLD_KEY_ID_4P;
     let enc_config = EncryptionConfig {

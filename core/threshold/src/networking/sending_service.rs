@@ -264,7 +264,6 @@ impl GrpcSendingService {
                             // Failed to have receiver accept the message
                             // Should be marked as completed
                             completed_parties.insert(other_role_kind);
-                            println!("COMPLETED: {other_role_kind}");
                             tracing::warn!("Failed to send message to {other_role_kind} party since it claims the session is already completed");
                             incorrectly_sent += 1;
                             break;
@@ -526,7 +525,7 @@ impl<R: RoleTrait> Networking<R> for NetworkSession {
             let packet = tokio::select! {
                     _ = tick_interval.tick() => {
                         tracing::warn!("Still waiting to receive from party {:?} for session {:?}", sender, self.session_id);
-                        if self.is_complete(&sender.get_role_kind()) {
+                        if self.completed_parties.contains(&sender.get_role_kind()) {
                             // The sender has said the session is complete, wait for the timeout time to ensure there is no more messages lingering
                             tokio::select! {
                                 _ = tokio::time::sleep(self.conf.get_max_waiting_time_for_message_queue()) => {
@@ -671,14 +670,6 @@ impl NetworkSession {
                 );
             }
         }
-    }
-
-    // Check if the session has been marked as completed by a specific party
-    pub fn is_complete(&self, role_kind: &RoleKind) -> bool {
-        if self.completed_parties.contains(role_kind) {
-            return true;
-        }
-        false
     }
 }
 
