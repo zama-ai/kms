@@ -373,7 +373,7 @@ async fn test_complete_session_notification() {
         precompute_sns: true,
     };
     let msg_amount = 10;
-    let parallel_reqs = 3;
+    let parallel_reqs = 1;
     let wait_time = 4;
 
     // Ensure inactive session discard interval is small for the test

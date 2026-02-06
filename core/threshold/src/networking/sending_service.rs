@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{hash_map::Entry, HashMap},
     net::IpAddr,
     str::FromStr,
     sync::{Arc, OnceLock},
@@ -221,7 +221,6 @@ impl GrpcSendingService {
     ) {
         let mut received_request = 0;
         let mut incorrectly_sent = 0;
-        let mut parties_to_mark_completed = HashSet::new();
 
         while let Some(value) = receiver.recv().await {
             received_request += 1;
@@ -258,15 +257,17 @@ impl GrpcSendingService {
                             // All good, nothing to do
                         }
                         Status::Inactive => {
-                            // The receiver is inactive, we cannot send messages
-                            tracing::warn!(
-                                "Receiver {other_role_kind} is inactive, cannot send message."
-                            );
+                            // The receiver is inactive
+                            tracing::warn!("Receiver {other_role_kind} is inactive.");
                         }
                         Status::Completed => {
                             // Failed to have receiver accept the message
                             // Should be marked as completed
-                            let _ = parties_to_mark_completed.insert(other_role_kind);
+                            completed_parties.insert(other_role_kind);
+                            println!("COMPLETED: {other_role_kind}");
+                            tracing::warn!("Failed to send message to {other_role_kind} party since it claims the session is already completed");
+                            incorrectly_sent += 1;
+                            break;
                         }
                     };
                 }
@@ -281,15 +282,6 @@ impl GrpcSendingService {
             };
         }
 
-        // Wait until all sending is done and then send the abort signals
-        for cur_role in parties_to_mark_completed {
-            // Send abort signal and break since we can only send once
-            if !completed_parties.insert(cur_role) {
-                tracing::warn!("Party {cur_role} was already marked as completed by another message, skipping redundant completion signal");
-            }
-            incorrectly_sent += 1;
-            tracing::warn!("Failed to send message to {cur_role} party since it claims the session is already completed");
-        }
         if received_request == 0 {
             // This is not necessarily an error since we may use the network to only receive in certain protocols
             tracing::debug!(
@@ -683,7 +675,7 @@ impl NetworkSession {
 
     // Check if the session has been marked as completed by a specific party
     pub fn is_complete(&self, role_kind: &RoleKind) -> bool {
-        if self.completed_parties.get(role_kind).is_some() {
+        if self.completed_parties.contains(role_kind) {
             return true;
         }
         false
