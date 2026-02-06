@@ -18,7 +18,6 @@ use tfhe::FheTypes;
 use threshold_fhe::hashing::DomainSep;
 use tonic::Request;
 use tonic::Response;
-use tonic::Status;
 
 use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::signatures::{PrivateSigKey, Signature};
@@ -64,27 +63,28 @@ pub trait ContextManager {
     async fn new_mpc_context(
         &self,
         request: Request<NewMpcContextRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
 
     async fn destroy_mpc_context(
         &self,
         request: Request<DestroyMpcContextRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
 
     async fn new_custodian_context(
         &self,
         request: Request<NewCustodianContextRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
 
     async fn destroy_custodian_context(
         &self,
         request: Request<DestroyCustodianContextRequest>,
-    ) -> Result<Response<Empty>, Status>;
+    ) -> Result<Response<Empty>, MetricedError>;
 
     async fn mpc_context_exists_and_consistent(
         &self,
         context_id: &ContextId,
-    ) -> Result<bool, Status>;
+    ) -> anyhow::Result<bool>;
+
     async fn mpc_context_exists_in_cache(&self, context_id: &ContextId) -> bool;
 }
 

@@ -18,13 +18,13 @@ use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint
 use observability::{
     metrics::METRICS,
     metrics_names::{
-        map_tonic_code_to_metric_err_tag, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
-        OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_DESTROY_CUSTODIAN_CONTEXT,
-        OP_DESTROY_MPC_CONTEXT, OP_FETCH_PK, OP_GET_INITIATE_RESHARING_RESULT, OP_INIT,
-        OP_INITIATE_RESHARING, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT,
-        OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_MPC_CONTEXT,
-        OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_RESTORE_FROM_BACKUP,
-        OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
+        OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT, OP_CUSTODIAN_BACKUP_RECOVERY,
+        OP_CUSTODIAN_RECOVERY_INIT, OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT,
+        OP_FETCH_PK, OP_GET_INITIATE_RESHARING_RESULT, OP_INIT, OP_INITIATE_RESHARING,
+        OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT, OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT,
+        OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_MPC_CONTEXT, OP_PUBLIC_DECRYPT_REQUEST,
+        OP_PUBLIC_DECRYPT_RESULT, OP_RESTORE_FROM_BACKUP, OP_USER_DECRYPT_REQUEST,
+        OP_USER_DECRYPT_RESULT,
     },
 };
 use threshold_fhe::networking::health_check::HealthCheckStatus;
@@ -211,12 +211,7 @@ impl_endpoint! {
             request: Request<NewMpcContextRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_NEW_MPC_CONTEXT);
-            self.context_manager.new_mpc_context(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_NEW_MPC_CONTEXT, tag);
-            })
-
+            self.context_manager.new_mpc_context(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -225,12 +220,7 @@ impl_endpoint! {
             request: Request<DestroyMpcContextRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
-            self.context_manager.destroy_mpc_context(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_DESTROY_MPC_CONTEXT, tag);
-            })
-
+            self.context_manager.destroy_mpc_context(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -257,12 +247,7 @@ impl_endpoint! {
             request: Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_NEW_CUSTODIAN_CONTEXT);
-            self.context_manager.new_custodian_context(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_NEW_CUSTODIAN_CONTEXT, tag);
-            })
-
+            self.context_manager.new_custodian_context(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]
@@ -271,12 +256,7 @@ impl_endpoint! {
             request: Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
         ) -> Result<Response<Empty>, Status> {
             METRICS.increment_request_counter(OP_DESTROY_CUSTODIAN_CONTEXT);
-            self.context_manager.destroy_custodian_context(request).await.inspect_err(|err| {
-                let tag = map_tonic_code_to_metric_err_tag(err.code());
-                let _ = METRICS
-                    .increment_error_counter(OP_DESTROY_CUSTODIAN_CONTEXT, tag);
-            })
-
+            self.context_manager.destroy_custodian_context(request).await.map_err(|e| e.into())
         }
 
         #[tracing::instrument(skip(self, request))]

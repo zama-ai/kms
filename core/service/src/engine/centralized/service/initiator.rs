@@ -57,13 +57,9 @@ pub async fn init_impl<
         .mpc_context_exists_and_consistent(&context_id)
         .await
         .map_err(|e| {
-            MetricedError::new(
-                OP_INIT,
-                Some(context_id.into()),
-                anyhow::anyhow!("Could not validate context consistency: {e}"),
-                e.code(),
-            )
+            MetricedError::new(OP_INIT, Some(context_id.into()), e, tonic::Code::Internal)
         })?
+    // Error while checking context existence
     {
         return Err(MetricedError::new(
             OP_INIT,

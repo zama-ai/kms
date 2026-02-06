@@ -10,6 +10,7 @@ use crate::engine::context::{ContextInfo, NodeInfo, SoftwareVersion};
 use crate::engine::threshold::service::session::SessionMaker;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
+use crate::engine::utils::MetricedError;
 use crate::engine::validation::{
     parse_optional_proto_request_id, parse_proto_context_id, RequestIdParsingErr,
 };
@@ -27,16 +28,23 @@ use crate::{
 use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::identifiers::ContextId;
-use kms_grpc::kms::v1::CustodianContext;
+use kms_grpc::kms::v1::Empty;
+use kms_grpc::kms::v1::{
+    CustodianContext, DestroyCustodianContextRequest, DestroyMpcContextRequest,
+    NewCustodianContextRequest, NewMpcContextRequest,
+};
 use kms_grpc::rpc_types::PrivDataType;
-use kms_grpc::{kms::v1::Empty, utils::tonic_result::ok_or_tonic_abort};
+use observability::metrics_names::{
+    OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_MPC_CONTEXT, OP_NEW_CUSTODIAN_CONTEXT,
+    OP_NEW_MPC_CONTEXT,
+};
 use std::collections::HashSet;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use tfhe::safe_serialization::safe_serialize;
 use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::RwLock;
-use tonic::{Response, Status};
+use tonic::Response;
 
 const CENTRALIZED_MPC_IDENTITY: &str = "centralized-zama-kms";
 const CENTRALIZED_PARTY_ID: u32 = 1;
@@ -59,15 +67,13 @@ where
 {
     async fn verify_and_extract_new_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::NewMpcContextRequest>,
-    ) -> Result<(Option<Role>, ContextInfo), tonic::Status> {
+        request: tonic::Request<NewMpcContextRequest>,
+    ) -> anyhow::Result<(Option<Role>, ContextInfo)> {
         // first verify that the context is valid
         let kms_grpc::kms::v1::NewMpcContextRequest { new_context } = request.into_inner();
 
-        let new_context =
-            new_context.ok_or_else(|| Status::invalid_argument("new_context is required"))?;
-        let new_context = ContextInfo::try_from(new_context)
-            .map_err(|e| Status::invalid_argument(format!("Invalid context info: {e}")))?;
+        let new_context = new_context.ok_or_else(|| anyhow::anyhow!("new_context is required"))?;
+        let new_context = ContextInfo::try_from(new_context)?;
         // verify new context
         let my_role = self.extract_my_role_from_context(&new_context).await?;
 
@@ -77,13 +83,10 @@ where
     async fn extract_my_role_from_context(
         &self,
         context: &ContextInfo,
-    ) -> Result<Option<Role>, tonic::Status> {
+    ) -> anyhow::Result<Option<Role>> {
         let storage_ref = self.crypto_storage.private_storage.clone();
         let guarded_priv_storage = storage_ref.lock().await;
-        context
-            .verify(&(*guarded_priv_storage))
-            .await
-            .map_err(|e| Status::invalid_argument(format!("Failed to verify new context: {e}")))
+        context.verify(&(*guarded_priv_storage)).await
     }
 
     async fn mpc_context_exists_in_storage(&self, context_id: &ContextId) -> anyhow::Result<bool> {
@@ -103,11 +106,11 @@ where
     async fn parse_mpc_context_for_destruction(
         &self,
         request: tonic::Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
-    ) -> Result<ContextId, tonic::Status> {
+    ) -> anyhow::Result<ContextId> {
         let proto_context_id = request
             .into_inner()
             .context_id
-            .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
+            .ok_or_else(|| anyhow::anyhow!("context_id is required"))?;
         let context_id =
             parse_proto_context_id(&proto_context_id, RequestIdParsingErr::CustodianContext)?;
 
@@ -117,9 +120,14 @@ where
     async fn new_custodian_context(
         &self,
         request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
-    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, MetricedError> {
         let inner = request.into_inner().new_context.ok_or_else(|| {
-            tonic::Status::invalid_argument("new_context is required in NewCustodianContextRequest")
+            MetricedError::new(
+                "new_custodian_context",
+                None,
+                anyhow::anyhow!("new_context is required in NewCustodianContextRequest"),
+                tonic::Code::InvalidArgument,
+            )
         })?;
         tracing::info!(
             "Custodian context addition starting with context_id={:?}, threshold={} from {} custodians",
@@ -127,10 +135,15 @@ where
             inner.threshold,
             inner.custodian_nodes.len()
         );
-        ok_or_tonic_abort(
-            self.inner_new_custodian_context(inner).await,
-            "Could not create new custodian context".to_string(),
-        )?;
+
+        self.inner_new_custodian_context(inner).await.map_err(|e| {
+            MetricedError::new(
+                OP_NEW_CUSTODIAN_CONTEXT,
+                None, // TODO
+                e,
+                tonic::Code::Internal,
+            )
+        })?;
 
         //Always answer with Empty
         Ok(Response::new(Empty {}))
@@ -139,12 +152,20 @@ where
     /// Removes a custodian context from disk storage and RAM (the meta-store).
     async fn destroy_custodian_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
-    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        request: tonic::Request<DestroyCustodianContextRequest>,
+    ) -> Result<tonic::Response<Empty>, MetricedError> {
         let context_id = parse_optional_proto_request_id(
             &request.into_inner().context_id,
             RequestIdParsingErr::CustodianContextDestruction,
-        )?;
+        )
+        .map_err(|e| {
+            MetricedError::new(
+                OP_DESTROY_CUSTODIAN_CONTEXT,
+                None,
+                e,
+                tonic::Code::InvalidArgument,
+            )
+        })?;
 
         // Note that care must be taken in the order of getting locks here
         // Use meta store as sync point
@@ -152,10 +173,12 @@ where
         match cus_meta_store.delete(&context_id) {
             Some(cell) => {
                 if cell.get().await.as_ref().is_err() {
-                    return Err(Status::internal(format!(
-                        "Custodian context with id {:?} could not be removed from meta store",
-                        context_id
-                    )));
+                    return Err(MetricedError::new(
+                        OP_DESTROY_CUSTODIAN_CONTEXT,
+                        Some(context_id),
+                        anyhow::anyhow!("Custodian context could not be removed from meta store",),
+                        tonic::Code::Internal,
+                    ));
                 }
             }
             None => {
@@ -170,9 +193,11 @@ where
         let mut guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
         let guarded_backup_storage_ref =
             self.crypto_storage.backup_vault.as_ref().ok_or_else(|| {
-                Status::new(
+                MetricedError::new(
+                    OP_DESTROY_CUSTODIAN_CONTEXT,
+                    Some(context_id),
+                    anyhow::anyhow!("Backup vault is not configured"),
                     tonic::Code::FailedPrecondition,
-                    "Backup vault is not configured",
                 )
             })?;
         let mut guarded_backup_storage = guarded_backup_storage_ref.lock().await;
@@ -185,7 +210,14 @@ where
             &context_id,
         )
         .await
-        .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
+        .map_err(|e| {
+            MetricedError::new(
+                OP_DESTROY_CUSTODIAN_CONTEXT,
+                Some(context_id),
+                anyhow::anyhow!("Failed to delete context: {e}"),
+                tonic::Code::Internal,
+            )
+        })?;
         Ok(Response::new(Empty {}))
     }
 
@@ -516,12 +548,15 @@ where
 {
     async fn new_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::NewMpcContextRequest>,
-    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        request: tonic::Request<NewMpcContextRequest>,
+    ) -> Result<Response<Empty>, MetricedError> {
         let (_my_role, new_context) = self
             .inner
             .verify_and_extract_new_mpc_context(request)
-            .await?;
+            .await
+            .map_err(|e| {
+                MetricedError::new(OP_NEW_MPC_CONTEXT, None, e, tonic::Code::InvalidArgument)
+            })?;
         // Check if the context already exists
         if self
             .inner
@@ -530,10 +565,12 @@ where
             .await
             .is_ok()
         {
-            return Err(Status::already_exists(format!(
-                "Context with ID {} already exists",
-                new_context.context_id()
-            )));
+            return Err(MetricedError::new(
+                OP_NEW_MPC_CONTEXT,
+                Some((*new_context.context_id()).into()),
+                anyhow::anyhow!("Context already exists"),
+                tonic::Code::AlreadyExists,
+            ));
         }
 
         // store the new context
@@ -554,32 +591,48 @@ where
             }
         }
 
-        ok_or_tonic_abort(
-            res,
-            format!(
-                "Failed to write new KMS context for ID {}",
-                new_context.context_id()
-            ),
-        )?;
+        res.map_err(|e| {
+            MetricedError::new(
+                OP_NEW_MPC_CONTEXT,
+                Some((*new_context.context_id()).into()),
+                anyhow::anyhow!("Failed to store new context: {}", e),
+                tonic::Code::Internal,
+            )
+        })?;
 
         Ok(Response::new(Empty {}))
     }
 
     async fn destroy_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
-    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        request: tonic::Request<DestroyMpcContextRequest>,
+    ) -> Result<Response<Empty>, MetricedError> {
         let context_id = self
             .inner
             .parse_mpc_context_for_destruction(request)
-            .await?;
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_MPC_CONTEXT,
+                    None,
+                    anyhow::anyhow!("Could not parse destroy MPC context request {e}"),
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
 
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
 
         delete_context_at_id(&mut *guarded_priv_storage, &context_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_MPC_CONTEXT,
+                    Some(context_id.into()),
+                    anyhow::anyhow!("Failed to delete context: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?;
 
         {
             let mut write_guard = self.cache.write().await;
@@ -597,35 +650,32 @@ where
 
     async fn new_custodian_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
-    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        request: tonic::Request<NewCustodianContextRequest>,
+    ) -> Result<Response<Empty>, MetricedError> {
         self.inner.new_custodian_context(request).await
     }
 
     async fn destroy_custodian_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
-    ) -> Result<Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        request: tonic::Request<DestroyCustodianContextRequest>,
+    ) -> Result<Response<Empty>, MetricedError> {
         self.inner.destroy_custodian_context(request).await
     }
 
     async fn mpc_context_exists_and_consistent(
         &self,
         context_id: &ContextId,
-    ) -> Result<bool, Status> {
+    ) -> anyhow::Result<bool> {
         let exists_in_cache = {
             let guard = self.cache.read().await;
             (*guard).contains(context_id)
         };
-        let exists_in_storage = ok_or_tonic_abort(
-            self.inner.mpc_context_exists_in_storage(context_id).await,
-            "Failed to check if context exists".to_string(),
-        )?;
+        let exists_in_storage = self.inner.mpc_context_exists_in_storage(context_id).await?;
         if exists_in_storage != exists_in_cache {
-            Err(Status::internal(format!(
-                "inconsistent context state for ID {context_id} while checking existance,
-                exists_in_storage={exists_in_storage}, eexsits_in_cache={exists_in_cache}"
-            )))
+            anyhow::bail!(
+                "inconsistent context state for context while checking existance,
+                   exists_in_storage={exists_in_storage}, eexsits_in_cache={exists_in_cache}"
+            )
         } else {
             Ok(exists_in_cache && exists_in_storage)
         }
@@ -737,12 +787,15 @@ where
 {
     async fn new_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::NewMpcContextRequest>,
-    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        request: tonic::Request<NewMpcContextRequest>,
+    ) -> Result<tonic::Response<Empty>, MetricedError> {
         let (my_role, new_context) = self
             .inner
             .verify_and_extract_new_mpc_context(request)
-            .await?;
+            .await
+            .map_err(|e| {
+                MetricedError::new(OP_NEW_MPC_CONTEXT, None, e, tonic::Code::InvalidArgument)
+            })?;
 
         // First check if the context already exists
         if self
@@ -756,37 +809,48 @@ where
                 .context_exists(new_context.context_id())
                 .await
         {
-            return Err(Status::already_exists(format!(
-                "Context with ID {} already exists",
-                new_context.context_id()
-            )));
+            return Err(MetricedError::new(
+                OP_NEW_MPC_CONTEXT,
+                Some(new_context.context_id.into()),
+                anyhow::anyhow!("Context with ID already exists"),
+                tonic::Code::AlreadyExists,
+            ));
         }
-        let res = atomic_update_context(
+        atomic_update_context(
             &self.session_maker,
             &self.inner.crypto_storage,
             my_role,
             &new_context,
         )
-        .await;
-        ok_or_tonic_abort(
-            res,
-            format!(
-                "Failed to write new KMS context for ID {}",
-                new_context.context_id()
-            ),
-        )?;
+        .await
+        .map_err(|e| {
+            MetricedError::new(
+                OP_NEW_MPC_CONTEXT,
+                Some(new_context.context_id.into()),
+                e,
+                tonic::Code::Internal,
+            )
+        })?;
 
         Ok(Response::new(Empty {}))
     }
 
     async fn destroy_mpc_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
-    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        request: tonic::Request<DestroyMpcContextRequest>,
+    ) -> Result<tonic::Response<Empty>, MetricedError> {
         let context_id = self
             .inner
             .parse_mpc_context_for_destruction(request)
-            .await?;
+            .await
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_MPC_CONTEXT,
+                    None,
+                    e,
+                    tonic::Code::InvalidArgument,
+                )
+            })?;
 
         let storage_ref = self.inner.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
@@ -796,38 +860,40 @@ where
         // Note that it cannot fail if the context does not exist.
         delete_context_at_id(&mut *guarded_priv_storage, &context_id)
             .await
-            .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
+            .map_err(|e| {
+                MetricedError::new(
+                    OP_DESTROY_MPC_CONTEXT,
+                    Some(context_id.into()),
+                    anyhow::anyhow!("Failed to delete context: {e}"),
+                    tonic::Code::Internal,
+                )
+            })?;
         Ok(Response::new(Empty {}))
     }
 
     async fn new_custodian_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
-    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        request: tonic::Request<NewCustodianContextRequest>,
+    ) -> Result<tonic::Response<Empty>, MetricedError> {
         self.inner.new_custodian_context(request).await
     }
 
     async fn destroy_custodian_context(
         &self,
-        request: tonic::Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
-    ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
+        request: tonic::Request<DestroyCustodianContextRequest>,
+    ) -> Result<tonic::Response<Empty>, MetricedError> {
         self.inner.destroy_custodian_context(request).await
     }
 
     async fn mpc_context_exists_and_consistent(
         &self,
         context_id: &ContextId,
-    ) -> Result<bool, Status> {
+    ) -> anyhow::Result<bool> {
         let exsits_in_session_maker = self.session_maker.context_exists(context_id).await;
-        let exists_in_storage = ok_or_tonic_abort(
-            self.inner.mpc_context_exists_in_storage(context_id).await,
-            "Failed to check if context exists".to_string(),
-        )?;
+        let exists_in_storage = self.inner.mpc_context_exists_in_storage(context_id).await?;
         if exists_in_storage != exsits_in_session_maker {
-            Err(Status::internal(format!(
-                "inconsistent context state for ID {context_id} while checking existance,
-                exists_in_storage={exists_in_storage}, exsits_in_session_maker={exsits_in_session_maker}"
-            )))
+            anyhow::bail!(
+                 "inconsistent context state for context while checking existance, exists_in_storage={exists_in_storage}, exsits_in_session_maker={exsits_in_session_maker}")
         } else {
             Ok(exsits_in_session_maker && exists_in_storage)
         }

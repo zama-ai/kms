@@ -229,7 +229,10 @@ impl<
         request: Request<kms_grpc::kms::v1::NewMpcContextRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
         METRICS.increment_request_counter(OP_NEW_MPC_CONTEXT);
-        self.context_manager.new_mpc_context(request).await
+        self.context_manager
+            .new_mpc_context(request)
+            .await
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -238,7 +241,10 @@ impl<
         request: Request<kms_grpc::kms::v1::DestroyMpcContextRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_DESTROY_MPC_CONTEXT);
-        self.context_manager.destroy_mpc_context(request).await
+        self.context_manager
+            .destroy_mpc_context(request)
+            .await
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -247,7 +253,10 @@ impl<
         request: Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_NEW_CUSTODIAN_CONTEXT);
-        self.context_manager.new_custodian_context(request).await
+        self.context_manager
+            .new_custodian_context(request)
+            .await
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
@@ -259,6 +268,7 @@ impl<
         self.context_manager
             .destroy_custodian_context(request)
             .await
+            .map_err(|e| e.into())
     }
 
     #[tracing::instrument(skip(self, request))]
