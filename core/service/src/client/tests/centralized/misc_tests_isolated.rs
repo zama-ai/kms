@@ -165,7 +165,7 @@ async fn test_largecipher_isolated() -> Result<()> {
         crsgen: 1,
         preproc: 1,
         keygen: 1,
-        reshare: 1,
+        new_epoch: 1,
     };
 
     // Setup with RAM storage and custom rate limiter
@@ -214,6 +214,7 @@ async fn test_largecipher_isolated() -> Result<()> {
             &request_id,
             &DEFAULT_CENTRAL_KEY_ID,
             None, // context_id
+            None, // epoch_id
             PkeSchemeType::MlKem512,
         )
         .unwrap();

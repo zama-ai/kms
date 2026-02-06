@@ -7,8 +7,8 @@ use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::kms::v1::{TypedCiphertext, UserDecryptionRequest};
 use kms_grpc::rpc_types::alloy_to_protobuf_domain;
-use kms_grpc::ContextId;
 use kms_grpc::RequestId;
+use kms_grpc::{ContextId, EpochId};
 
 impl Client {
     /// Creates a user decryption request to send to the KMS servers.
@@ -21,7 +21,7 @@ impl Client {
     /// Note that we only support MlKem512 in the latest version and not other variants of MlKem.
     #[allow(unknown_lints)]
     // We allow modifying the internal rng before return
-    #[allow(non_local_effect_before_error_return)]
+    #[allow(non_local_effect_before_error_return, clippy::too_many_arguments)]
     pub fn user_decryption_request(
         &mut self,
         domain: &Eip712Domain,
@@ -29,6 +29,7 @@ impl Client {
         request_id: &RequestId,
         key_id: &RequestId,
         context_id: Option<&ContextId>,
+        epoch_id: Option<&EpochId>,
         encryption_scheme: PkeSchemeType,
     ) -> anyhow::Result<(
         UserDecryptionRequest,
@@ -63,7 +64,7 @@ impl Client {
                 domain: Some(domain_msg),
                 extra_data: vec![],
                 context_id: context_id.map(|c| (*c).into()),
-                epoch_id: None,
+                epoch_id: epoch_id.map(|e| (*e).into()),
             },
             enc_pk,
             enc_sk,

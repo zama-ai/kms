@@ -189,6 +189,7 @@ pub(crate) async fn run_decryption_centralized(
                     &request_id,
                     context_id,
                     key_id,
+                    None,
                 )
                 .unwrap()
         })

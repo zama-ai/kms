@@ -12,6 +12,7 @@ use observability::{conf::TelemetryConfig, metrics};
 use serde::{Deserialize, Serialize};
 use tfhe::{core_crypto::prelude::LweKeyswitchKey, named::Named, Versionize};
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
+use threshold_fhe::execution::endpoints::reshare_sk::SecureReshareSecretKeys;
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
     execution::{
@@ -36,9 +37,13 @@ use tokio::{
 use tokio_rustls::rustls::{client::ClientConfig, server::ServerConfig};
 use tokio_util::task::TaskTracker;
 use tonic::transport::{server::TcpIncoming, Server};
-use tonic_health::pb::health_server::{Health, HealthServer};
+use tonic_health::{
+    pb::health_server::{Health, HealthServer},
+    server::HealthReporter,
+};
 use tonic_tls::rustls::TlsIncoming;
 
+use crate::engine::threshold::service::epoch_manager::RealThresholdEpochManager;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
@@ -56,7 +61,6 @@ use crate::{
         threshold::{
             service::{
                 public_decryptor::SecureNoiseFloodDecryptor,
-                resharer::RealResharer,
                 session::{ImmutableSessionMaker, SessionMaker},
                 user_decryptor::SecureNoiseFloodPartialDecryptor,
             },
@@ -77,7 +81,7 @@ use crate::{
 
 // === Current Module Imports ===
 use super::{
-    crs_generator::RealCrsGenerator, initiator::RealInitiator, key_generator::RealKeyGenerator,
+    crs_generator::RealCrsGenerator, key_generator::RealKeyGenerator,
     preprocessor::RealPreprocessor, public_decryptor::RealPublicDecryptor,
     user_decryptor::RealUserDecryptor,
 };
@@ -289,7 +293,7 @@ pub struct BucketMetaStore {
 
 #[cfg(not(feature = "insecure"))]
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
-    RealInitiator<PrivS, RobustSecurePrssInit>,
+    RealThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
     RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
     RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     RealKeyGenerator<
@@ -301,12 +305,11 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
     ThresholdContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
-    RealResharer<PubS, PrivS>,
 >;
 
 #[cfg(feature = "insecure")]
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
-    RealInitiator<PrivS, RobustSecurePrssInit>,
+    RealThresholdEpochManager<PubS, PrivS, RobustSecurePrssInit, SecureReshareSecretKeys>,
     RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
     RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     RealKeyGenerator<
@@ -324,7 +327,6 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
     ThresholdContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
-    RealResharer<PubS, PrivS>,
 >;
 
 #[allow(clippy::too_many_arguments)]
@@ -342,7 +344,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     shutdown_signal: F,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS>,
-    HealthServer<impl Health>,
+    (HealthReporter, HealthServer<impl Health>),
     MetaStoreStatusServiceImpl,
 )>
 where
@@ -540,23 +542,26 @@ where
 
     let (core_service_health_reporter, core_service_health_service) =
         tonic_health::server::health_reporter();
-    let thread_core_health_reporter = core_service_health_reporter.clone();
-    {
-        // We are only serving after initialization
-        thread_core_health_reporter
-            .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
-            .await;
-    }
+    // We are only serving after initialization
+    core_service_health_reporter
+        .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
+        .await;
 
     let session_maker = SessionMaker::new(networking_manager, verifier, base_kms.new_rng().await);
     let immutable_session_maker = session_maker.make_immutable();
 
-    let initiator = RealInitiator {
-        private_storage: crypto_storage.get_private_storage(),
+    let tracker = Arc::new(TaskTracker::new());
+    let rate_limiter = RateLimiter::new(rate_limiter_conf);
+
+    let epoch_manager = RealThresholdEpochManager {
+        crypto_storage: crypto_storage.clone(),
         session_maker: session_maker.clone(),
-        health_reporter: thread_core_health_reporter.clone(),
-        _init: PhantomData,
         base_kms: base_kms.new_instance().await,
+        reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+        tracker: Arc::clone(&tracker),
+        rate_limiter: rate_limiter.clone(),
+        _init: PhantomData,
+        _reshare: PhantomData,
     };
 
     // NOTE: context must be loaded before attempting to automatically start the PRSS
@@ -578,14 +583,14 @@ where
         })?;
 
     // Load existing PRSS from storage and optionally run a new setup with default IDs.
-    if let Err(e) = initiator.init_legacy_prss_from_storage().await {
+    if let Err(e) = epoch_manager.init_legacy_prss_from_storage().await {
         tracing::warn!(
             "Could not read legacy PRSS Setup from private storage {:?}: {}.",
             private_storage_info,
             e
         );
     }
-    if let Err(e) = initiator.init_all_prss_from_storage().await {
+    if let Err(e) = epoch_manager.init_all_prss_from_storage().await {
         tracing::warn!(
             "Could not read all PRSS Setups from storage from private storage {:?}: {}. You may need to call the init end-point later before you can use the KMS server",
             private_storage_info,
@@ -600,14 +605,12 @@ where
             "Initializing threshold KMS server and generating a new PRSS Setup for private storage {:?}",
             private_storage_info,
         );
-        initiator
+        epoch_manager
             .init_prss(&default_context_id, &epoch_id_prss)
             .await?;
     }
 
-    let tracker = Arc::new(TaskTracker::new());
     let slow_events = Arc::new(Mutex::new(HashMap::new()));
-    let rate_limiter = RateLimiter::new(rate_limiter_conf);
 
     let user_decryptor = RealUserDecryptor {
         base_kms: base_kms.new_instance().await,
@@ -679,19 +682,6 @@ where
         security_module,
     );
 
-    let resharer = RealResharer {
-        base_kms: base_kms.new_instance().await,
-        crypto_storage: crypto_storage.clone(),
-        session_maker: immutable_session_maker.clone(),
-        tracker: Arc::clone(&tracker),
-        rate_limiter: rate_limiter.clone(),
-        // Provide reshare its own meta store, not tracked by the metastore status service
-        // as this is currently a temporary fix.
-        // Also not filled with existing keys as we will use the same key_id as the DKG one
-        // for reshared key (so the meta store has to be empty for that key id)
-        reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-    };
-
     // Update backup vault if it exists
     // This ensures that all files in the private storage are also in the backup vault
     // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
@@ -706,8 +696,9 @@ where
         Arc::clone(&pub_dec_meta_store),
         telemetry_conf.refresh_interval(),
     );
+
     let kms = ThresholdKms::new(
-        initiator,
+        epoch_manager,
         user_decryptor,
         public_decryptor,
         keygenerator,
@@ -719,14 +710,17 @@ where
         insecure_crs_generator,
         context_manager,
         backup_operator,
-        resharer,
         Arc::clone(&tracker),
         immutable_session_maker,
-        thread_core_health_reporter,
+        core_service_health_reporter.clone(),
         abort_handle,
     );
 
-    Ok((kms, core_service_health_service, metastore_status_service))
+    Ok((
+        kms,
+        (core_service_health_reporter, core_service_health_service),
+        metastore_status_service,
+    ))
 }
 
 fn update_threshold_kms_system_metrics(
