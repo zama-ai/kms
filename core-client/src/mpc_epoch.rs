@@ -151,11 +151,7 @@ pub(crate) async fn do_new_epoch(
             );
             response_vec.push((core_conf, resp));
         }
-        let key_types = vec![
-            PubDataType::PublicKey,
-            PubDataType::PublicKeyMetadata,
-            PubDataType::ServerKey,
-        ];
+        let key_types = vec![PubDataType::PublicKey, PubDataType::ServerKey];
 
         // We try to download all because all parties needed to respond for a successful resharing
         let element_id: RequestId = previous_epoch.key_id.into();
