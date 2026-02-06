@@ -37,6 +37,10 @@ pub enum KeySetConfig {
     /// The standard configuration is the one that generates the full keyset.
     /// Which includes the public key, server key, compression keys, private key shares and so on.
     Standard(StandardKeySetConfig),
+    /// The same as the Standard keygen except the secret component (private keys or shares)
+    /// already exists and must be given. This does not mean the "intermediate" secret components are given,
+    /// only the initial LWE secret is given.
+    UseExistingSecret(StandardKeySetConfig),
     DecompressionOnly,
 }
 

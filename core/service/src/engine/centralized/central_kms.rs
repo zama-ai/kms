@@ -82,6 +82,7 @@ pub(crate) enum CentralizedKeyGenResult {
     Compressed(CompressedXofKeySet, KmsFheKeyHandles),
 }
 
+/// Used for key generation of standard keysets, which may or may not use an existing secret key.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn async_generate_fhe_keys<PubS, PrivS>(
     sk: &PrivateSigKey,
@@ -303,8 +304,8 @@ fn generate_compressed_fhe_keys(
 pub fn generate_fhe_keys(
     sk: &PrivateSigKey,
     params: DKGParams,
-    keyset_config: KeySetCompressionConfig,
-    existing_key_handle: Option<KmsFheKeyHandles>,
+    compression_config: KeySetCompressionConfig,
+    existing_key_handle_for_compression_key: Option<KmsFheKeyHandles>,
     key_id: &RequestId,
     preproc_id: &RequestId,
     seed: Option<Seed>,
@@ -312,10 +313,10 @@ pub fn generate_fhe_keys(
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
         let tag = key_id.into();
-        let client_key = match keyset_config {
+        let client_key = match compression_config {
             KeySetCompressionConfig::Generate => generate_client_fhe_key(params, tag, seed),
             KeySetCompressionConfig::UseExisting => {
-                match existing_key_handle {
+                match existing_key_handle_for_compression_key {
                     Some(key_handle) => {
                         // we generate the client key as usual,
                         // but we replace the compression private key using an existing compression private key

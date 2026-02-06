@@ -274,6 +274,9 @@ impl<
                 PreprocHandleWithMode::Insecure,
                 ddec_keyset_config::KeySetConfig::DecompressionOnly,
             ) => OP_INSECURE_DECOMPRESSION_KEYGEN,
+            (_, ddec_keyset_config::KeySetConfig::UseExistingSecret(_)) => {
+                todo!()
+            }
         };
 
         // On top of the global KG request counter, we also increment the specific operation counter
@@ -359,6 +362,9 @@ impl<
                         op_tag,
                     )
                     .await
+                }
+                ddec_keyset_config::KeySetConfig::UseExistingSecret(_inner_config) => {
+                    todo!()
                 }
                 ddec_keyset_config::KeySetConfig::DecompressionOnly => {
                     Self::decompression_key_gen_background(

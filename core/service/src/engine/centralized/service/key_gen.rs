@@ -360,7 +360,9 @@ pub(crate) async fn key_gen_background<
 
             tracing::info!("⏱️ Core Event Time for Keygen: {:?}", start.elapsed());
         }
-
+        KeySetConfig::UseExistingSecret(_) => {
+            todo!()
+        }
         KeySetConfig::DecompressionOnly => {
             let (from, to) = match internal_keyset_config.get_from_and_to() {
                 Ok((from, to)) => (from, to),

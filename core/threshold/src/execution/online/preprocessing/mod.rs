@@ -321,7 +321,7 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
 
     // Generate noise for sns compression key if needed
     match keyset_config {
-        KeySetConfig::Standard(_) => match params {
+        KeySetConfig::Standard(_) | KeySetConfig::UseExistingSecret(_) => match params {
             DKGParams::WithSnS(sns_params) => {
                 let noise_info = sns_params.num_needed_noise_sns_compression_key();
                 let bound = noise_info.bound;
