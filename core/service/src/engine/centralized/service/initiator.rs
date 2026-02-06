@@ -1,15 +1,19 @@
 use crate::{
+    consts::DEFAULT_MPC_CONTEXT,
     engine::{
         centralized::central_kms::CentralizedKms,
         traits::{BackupOperator, ContextManager},
         utils::MetricedError,
-        validation::validate_init_req,
+        validation::{parse_grpc_request_id, parse_optional_grpc_request_id, RequestIdParsingErr},
     },
     util::meta_store::{add_req_to_meta_store, update_req_in_meta_store},
     vault::storage::{Storage, StorageExt},
 };
-use kms_grpc::kms::v1::{Empty, InitRequest};
-use observability::metrics_names::OP_INIT;
+use kms_grpc::{
+    kms::v1::{Empty, NewMpcEpochRequest},
+    ContextId, EpochId,
+};
+use observability::metrics_names::OP_NEW_EPOCH;
 use tonic::{Request, Response};
 
 /// Initializes the centralized KMS service.
@@ -40,29 +44,48 @@ pub async fn init_impl<
     BO: BackupOperator + Sync + Send + 'static,
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
-    request: Request<InitRequest>,
+    request: Request<NewMpcEpochRequest>,
 ) -> Result<Response<Empty>, MetricedError> {
     let inner = request.into_inner();
-    let (context_id, epoch_id) = validate_init_req(&inner).map_err(|e| {
-        MetricedError::new(
-            OP_INIT,
-            None,
-            e, // Validation error
-            tonic::Code::InvalidArgument,
-        )
-    })?;
+    let epoch_id: EpochId =
+        parse_optional_grpc_request_id(&inner.epoch_id, RequestIdParsingErr::Init).map_err(
+            |e| {
+                MetricedError::new(
+                    OP_NEW_EPOCH,
+                    None,
+                    anyhow::anyhow!("Coudl not parse epoch ID {e}"),
+                    tonic::Code::InvalidArgument,
+                )
+            },
+        )?;
+    let context_id: ContextId = match inner.context_id {
+        Some(ctx_id) => parse_grpc_request_id(&ctx_id, RequestIdParsingErr::Init).map_err(|e| {
+            MetricedError::new(
+                OP_NEW_EPOCH,
+                None,
+                anyhow::anyhow!("Could not parse context ID {e}"),
+                tonic::Code::InvalidArgument,
+            )
+        })?,
+        None => *DEFAULT_MPC_CONTEXT,
+    };
 
     if !service
         .context_manager
         .mpc_context_exists_and_consistent(&context_id)
         .await
         .map_err(|e| {
-            MetricedError::new(OP_INIT, Some(context_id.into()), e, tonic::Code::Internal)
+            MetricedError::new(
+                OP_NEW_EPOCH,
+                Some(context_id.into()),
+                e,
+                tonic::Code::Internal,
+            )
         })?
     // Error while checking context existence
     {
         return Err(MetricedError::new(
-            OP_INIT,
+            OP_NEW_EPOCH,
             Some(context_id.into()),
             format!("Context {context_id} not found"),
             tonic::Code::NotFound,
@@ -79,7 +102,7 @@ pub async fn init_impl<
             .is_empty()
         {
             return Err(MetricedError::new(
-                OP_INIT,
+                OP_NEW_EPOCH,
                 Some(context_id.into()),
                 "Initialization already complete`".to_string(),
                 tonic::Code::AlreadyExists,
@@ -89,13 +112,13 @@ pub async fn init_impl<
     add_req_to_meta_store(
         &mut service.epoch_ids.write().await,
         &epoch_id.into(),
-        OP_INIT,
+        OP_NEW_EPOCH,
     )?;
     update_req_in_meta_store::<(), anyhow::Error>(
         &mut service.epoch_ids.write().await,
         &epoch_id.into(),
         Ok(()),
-        OP_INIT,
+        OP_NEW_EPOCH,
     );
     tracing::warn!(
         "Init called on centralized KMS with ID {} - no action taken",
@@ -120,9 +143,10 @@ mod tests {
         let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_init_sunshine").unwrap();
 
-        let preproc_req = InitRequest {
-            request_id: Some((req_id).into()),
+        let preproc_req = NewMpcEpochRequest {
             context_id: None,
+            epoch_id: Some(req_id.into()),
+            previous_epoch: None,
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         let _ = result.unwrap();
@@ -132,21 +156,22 @@ mod tests {
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
-        let req_id1 = derive_request_id("test_init_already_exists_1").unwrap();
-        let req_id2 = derive_request_id("test_init_already_exists_2").unwrap();
+        let req_id1 = derive_request_id("test_init_already_exists").unwrap();
 
         // First initialization should succeed
-        let preproc_req1 = InitRequest {
-            request_id: Some(req_id1.into()),
+        let preproc_req1 = NewMpcEpochRequest {
             context_id: None,
+            epoch_id: Some(req_id1.into()),
+            previous_epoch: None,
         };
         let result1 = init_impl(&kms, Request::new(preproc_req1)).await;
         let _ = result1.unwrap();
 
         // Second initialization should fail with AlreadyExists
-        let preproc_req2 = InitRequest {
-            request_id: Some(req_id2.into()),
+        let preproc_req2 = NewMpcEpochRequest {
             context_id: None,
+            epoch_id: Some(req_id1.into()),
+            previous_epoch: None,
         };
         let result2 = init_impl(&kms, Request::new(preproc_req2)).await;
         let status = result2.unwrap_err();
@@ -157,9 +182,10 @@ mod tests {
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(1234);
         let (kms, _) = setup_central_test_kms(&mut rng).await;
-        let preproc_req = InitRequest {
-            request_id: None,
+        let preproc_req = NewMpcEpochRequest {
             context_id: None,
+            epoch_id: None,
+            previous_epoch: None,
         };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         let status = result.unwrap_err();

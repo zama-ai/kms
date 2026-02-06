@@ -52,7 +52,7 @@ async fn do_context_switch(
         crsgen: 1,
         preproc: 1,
         keygen: 1,
-        reshare: 1,
+        new_epoch: 1,
     };
     let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
         dkg_params,
@@ -67,7 +67,7 @@ async fn do_context_switch(
     //
     // NOTE: once we remove the default context (zama-ai/kms-internal/issues/2758),
     // we need to change this test to create a new context first before switching contexts.
-    let previous_context_id = *DEFAULT_MPC_CONTEXT;
+    let previous_epoch_id = *DEFAULT_MPC_CONTEXT;
 
     let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
     let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
@@ -81,13 +81,13 @@ async fn do_context_switch(
         .map(|prefix| FileStorage::new(None, StorageType::PUB, prefix.as_deref()).unwrap())
         .collect::<Vec<_>>();
 
-    let previous_context = read_context_at_id(&all_private_storage[0], &previous_context_id)
+    let previous_epoch = read_context_at_id(&all_private_storage[0], &previous_epoch_id)
         .await
         .unwrap();
-    println!("previous context: {:?}", previous_context);
+    println!("previous context: {:?}", previous_epoch);
 
     let new_context = {
-        let mut new_context = previous_context.clone();
+        let mut new_context = previous_epoch.clone();
         let mut rng = AesRng::seed_from_u64(78);
         let context_id = RequestId::new_random(&mut rng);
         new_context.context_id = context_id.into();
@@ -197,7 +197,7 @@ async fn do_context_switch(
         &mut kms_clients,
         &mut internal_client,
         key_id,
-        Some(&previous_context_id),
+        Some(&previous_epoch_id),
         vec![TestingPlaintext::Bool(false); 3],
         enc_config,
         None,

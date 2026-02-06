@@ -70,6 +70,7 @@ pub(crate) async fn send_dec_reqs(
             &request_id,
             context_id,
             key_id,
+            None,
         )
         .unwrap();
     let mut join_set = JoinSet::new();
