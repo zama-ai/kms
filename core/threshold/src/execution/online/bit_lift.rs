@@ -104,6 +104,9 @@ impl BitLift for SecureBitLift {
             .collect_vec(),
         );
 
+        // NOTE: This won't work because we need to pack the Z::TWO over all the extension coeffs
+        // due to packing above
+        // i.e. have to reimplement XOR here for the packed case
         let masked_packed_secret_bits = Bits::xor_list_secret_secret(
             Arc::clone(&packed_secret_bits),
             Arc::clone(&packed_random_bits_z64),
