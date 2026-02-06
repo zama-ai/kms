@@ -1,7 +1,13 @@
-use crate::consts::DEFAULT_EPOCH_ID;
-use crate::vault::storage::StorageExt;
+use crate::consts::{DEFAULT_EPOCH_ID, DEFAULT_MPC_CONTEXT};
+use crate::engine::base::derive_request_id;
+use crate::engine::threshold::service::epoch_manager::RealThresholdEpochManager;
+use crate::engine::threshold::service::session::PRSSSetupCombined;
+use crate::vault::storage::{read_versioned_at_request_id, Storage, StorageExt};
 use kms_grpc::identifiers::EpochId;
 use kms_grpc::rpc_types::{KMSType, PrivDataType};
+use threshold_fhe::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
+use threshold_fhe::execution::endpoints::reshare_sk::ReshareSecretKeys;
+use threshold_fhe::execution::small_execution::prss::{PRSSInit, PRSSSetup};
 
 /// Migrate FHE key material from legacy storage format to epoch-aware format.
 /// The migration should be applied to private storage created in v0.12.x,
@@ -96,16 +102,101 @@ where
     Ok(migrated_count)
 }
 
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: StorageExt + Send + Sync + 'static,
+        Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
+            + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
+            + Default
+            + 'static,
+        Reshare: ReshareSecretKeys + Default + 'static,
+    > RealThresholdEpochManager<PubS, PrivS, Init, Reshare>
+{
+    /// This will try to load the legacy PRSS setup [`PRSSSetup`] from storage into session maker
+    /// by using default values for the epoch ID and context ID.
+    /// This assumes the default context exists.
+    /// It will overwrite the PRSS in session maker if it already exists,
+    /// so make sure this is called before the normal (non-legacy) initialization.
+    #[expect(deprecated)]
+    pub async fn init_legacy_prss_from_storage(&self) -> anyhow::Result<()> {
+        // TODO(zama-ai/kms-internal#2530) set the correct context ID here.
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let context_id = *DEFAULT_MPC_CONTEXT;
+        let threshold = self.session_maker.threshold(&context_id).await?;
+        let num_parties = self.session_maker.num_parties(&context_id).await?;
+
+        let prss_from_storage = {
+            let guarded_private_storage = self.crypto_storage.inner.private_storage.lock().await;
+            let prss_128 = read_versioned_at_request_id::<_, PRSSSetup<ResiduePolyF4Z128>>(
+                &(*guarded_private_storage),
+                &derive_request_id(&format!(
+                    "PRSSSetup_Z128_ID_{}_{}_{}",
+                    epoch_id, num_parties, threshold,
+                ))?,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await
+            .inspect_err(|e| {
+                tracing::warn!("failed to read PRSS Z128 from file with error: {e}");
+            });
+            let prss_64 = read_versioned_at_request_id::<_, PRSSSetup<ResiduePolyF4Z64>>(
+                &(*guarded_private_storage),
+                &derive_request_id(&format!(
+                    "PRSSSetup_Z64_ID_{}_{}_{}",
+                    epoch_id, num_parties, threshold,
+                ))?,
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await
+            .inspect_err(|e| {
+                tracing::warn!("failed to read PRSS Z64 from file with error: {e}");
+            });
+
+            (prss_128, prss_64)
+        };
+
+        match prss_from_storage {
+            (Ok(prss_128), Ok(prss_64)) => {
+                self.session_maker
+                    .add_epoch(
+                        epoch_id,
+                        PRSSSetupCombined {
+                            prss_setup_z128: prss_128,
+                            prss_setup_z64: prss_64,
+                            num_parties: num_parties as u8,
+                            threshold,
+                        },
+                    )
+                    .await;
+            }
+            (Err(e), Ok(_)) => return Err(e),
+            (Ok(_), Err(e)) => return Err(e),
+            (Err(_e), Err(e)) => return Err(e),
+        }
+
+        tracing::info!(
+            "Loaded PRSS Setup from storage for request ID {}.",
+            epoch_id
+        );
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
 
+    use aes_prng::AesRng;
     use kms_grpc::RequestId;
+    use rand::SeedableRng;
+    use threshold_fhe::malicious_execution::small_execution::malicious_prss::EmptyPrss;
 
     use super::*;
+    use crate::engine::threshold::service::epoch_manager::tests::make_epoch_manager;
     use crate::vault::storage::file::FileStorage;
-    use crate::vault::storage::ram::RamStorage;
-    use crate::vault::storage::{StorageExt, StorageType};
+    use crate::vault::storage::ram::{self, RamStorage};
+    use crate::vault::storage::{store_versioned_at_request_id, StorageExt, StorageType};
 
     /// Test migration of threshold FHE keys (FheKeyInfo)
     pub async fn test_migrate_legacy_fhe_keys_threshold<S: StorageExt + Sync + Send>(
@@ -376,6 +467,68 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut storage = FileStorage::new(Some(temp_dir.path()), StorageType::PRIV, None).unwrap();
         test_migrate_legacy_fhe_keys_idempotent(&mut storage).await;
+    }
+
+    // write prss to storage using the legacy method
+    async fn write_legacy_empty_prss_to_storage(private_storage: &mut ram::RamStorage) {
+        let epoch_id = *DEFAULT_EPOCH_ID;
+        let num_parties = 4;
+        let threshold = 1u8;
+
+        let prss_setup_obj_z128 = PRSSSetup::<ResiduePolyF4Z128>::new_testing_prss(vec![], vec![]);
+        let prss_setup_obj_z64 = PRSSSetup::<ResiduePolyF4Z64>::new_testing_prss(vec![], vec![]);
+
+        // serialize and write PRSS Setup to storage into private storage
+        store_versioned_at_request_id(
+            private_storage,
+            &derive_request_id(&format!(
+                "PRSSSetup_Z128_ID_{}_{}_{}",
+                epoch_id, num_parties, threshold,
+            ))
+            .unwrap(),
+            &prss_setup_obj_z128,
+            #[expect(deprecated)]
+            &PrivDataType::PrssSetup.to_string(),
+        )
+        .await
+        .unwrap();
+
+        store_versioned_at_request_id(
+            private_storage,
+            &derive_request_id(&format!(
+                "PRSSSetup_Z64_ID_{}_{}_{}",
+                epoch_id, num_parties, threshold,
+            ))
+            .unwrap(),
+            &prss_setup_obj_z64,
+            #[expect(deprecated)]
+            &PrivDataType::PrssSetup.to_string(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn legacy_prss() {
+        let mut rng = AesRng::seed_from_u64(42);
+
+        // initially the storage should be empty
+        let epoch_manager = make_epoch_manager::<EmptyPrss>(&mut rng).await;
+        {
+            let private_storage = epoch_manager.crypto_storage.get_private_storage();
+            let mut guarded_private_storage = private_storage.lock().await;
+            write_legacy_empty_prss_to_storage(&mut guarded_private_storage).await;
+        }
+
+        epoch_manager.init_legacy_prss_from_storage().await.unwrap();
+
+        let default_epoch_id = *DEFAULT_EPOCH_ID;
+        assert!(
+            epoch_manager
+                .session_maker
+                .epoch_exists(&default_epoch_id)
+                .await
+        );
     }
 
     // S3 storage tests

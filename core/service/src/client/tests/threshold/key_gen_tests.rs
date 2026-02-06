@@ -553,6 +553,7 @@ async fn wait_for_keygen_result(
             &req_get_keygen,
             &domain,
             kms_clients.len() + expected_num_parties_crashed,
+            None,
             compressed,
         )
         .await
@@ -861,7 +862,7 @@ pub(crate) async fn preproc_and_keygen(
         crsgen: 1,
         preproc: 100,
         keygen: 100,
-        reshare: 1,
+        new_epoch: 1,
     };
 
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
@@ -1352,6 +1353,7 @@ pub(crate) async fn verify_keygen_responses(
     req_get_keygen: &RequestId,
     domain: &Eip712Domain,
     total_num_parties: usize,
+    read_key_at_epoch: Option<kms_grpc::EpochId>,
     compressed: bool,
 ) -> Option<(TestKeyGenResult, HashMap<Role, ThresholdFheKeys>)> {
     use itertools::Itertools;
@@ -1399,10 +1401,14 @@ pub(crate) async fn verify_keygen_responses(
         let key_id = RequestId::from_str(kg_res.request_id.unwrap().request_id.as_str()).unwrap();
         let priv_storage =
             FileStorage::new(data_root_path, StorageType::PRIV, priv_prefix.as_deref()).unwrap();
-        let threshold_fhe_keys =
-            ThresholdFheKeys::read_from_storage_at_epoch(&priv_storage, &key_id, &DEFAULT_EPOCH_ID)
-                .await
-                .unwrap();
+        //Need to read at the correct epoch id
+        let threshold_fhe_keys = ThresholdFheKeys::read_from_storage_at_epoch(
+            &priv_storage,
+            &key_id,
+            &read_key_at_epoch.unwrap_or(*DEFAULT_EPOCH_ID),
+        )
+        .await
+        .unwrap();
         // Note: The sns_key is a part of threshold_fhe_keys, consider optimizing this if it uses too much memory
         all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
 

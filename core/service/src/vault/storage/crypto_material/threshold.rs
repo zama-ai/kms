@@ -20,7 +20,7 @@ use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::{
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
-        threshold::service::ThresholdFheKeys,
+        threshold::service::{epoch_manager::EpochOutput, ThresholdFheKeys},
     },
     util::meta_store::MetaStore,
     vault::{
@@ -94,7 +94,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn inner_write_threshold_keys(
+    async fn inner_write_threshold_keys<T: From<KeyGenMetadata> + Clone>(
         &self,
         reshare_id: Option<&RequestId>,
         key_id: &RequestId,
@@ -102,7 +102,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         threshold_fhe_keys: ThresholdFheKeys,
         fhe_key_set: FhePubKeySet,
         info: KeyGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+        meta_store: Arc<RwLock<MetaStore<T>>>,
     ) {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
@@ -223,7 +223,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         tracing::info!("Storing Keys objects for key ID {}", key_id);
 
         let meta_update_result =
-            guarded_meta_storage.update(reshare_id.unwrap_or(key_id), Ok(info));
+            guarded_meta_storage.update(reshare_id.unwrap_or(key_id), Ok(T::from(info)));
         if let Err(e) = &meta_update_result {
             tracing::error!("Error ({}) while updating meta store for {}", e, key_id);
         }
@@ -255,19 +255,17 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub async fn write_threshold_keys_with_reshare_meta_store(
+    pub async fn write_threshold_keys_with_epoch_meta_store(
         &self,
-        reshare_id: &RequestId,
         key_id: &RequestId,
         epoch_id: &EpochId,
         threshold_fhe_keys: ThresholdFheKeys,
         fhe_key_set: FhePubKeySet,
         info: KeyGenMetadata,
-        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
+        meta_store: Arc<RwLock<MetaStore<EpochOutput>>>,
     ) {
         self.inner_write_threshold_keys(
-            Some(reshare_id),
+            Some(&(*epoch_id).into()),
             key_id,
             epoch_id,
             threshold_fhe_keys,
@@ -516,11 +514,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
 
     /// Tries to delete all the types of key material related to a specific [RequestId] and [EpochId].
     /// WARNING: This also deletes the BACKUP of the keys. Hence the method should should only be used as cleanup after a failed DKG.
-    pub async fn purge_key_material(
+    pub async fn purge_key_material<T: From<KeyGenMetadata> + Clone>(
         &self,
         req_id: &RequestId,
         epoch_id: &EpochId,
-        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
+        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<T>>,
     ) {
         self.inner
             .purge_key_material(req_id, epoch_id, KMSType::Threshold, guarded_meta_store)

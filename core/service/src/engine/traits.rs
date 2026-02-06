@@ -1,15 +1,4 @@
-use kms_grpc::kms::v1::CiphertextFormat;
-use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
-use kms_grpc::kms::v1::CustodianRecoveryRequest;
-use kms_grpc::kms::v1::DestroyCustodianContextRequest;
-use kms_grpc::kms::v1::DestroyMpcContextRequest;
-use kms_grpc::kms::v1::Empty;
-use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
-use kms_grpc::kms::v1::NewCustodianContextRequest;
-use kms_grpc::kms::v1::NewMpcContextRequest;
-use kms_grpc::kms::v1::OperatorPublicKey;
-use kms_grpc::kms::v1::RecoveryRequest;
-use kms_grpc::kms::v1::TypedPlaintext;
+use kms_grpc::kms::v1::*;
 use kms_grpc::ContextId;
 use rand::CryptoRng;
 use rand::RngCore;
@@ -22,6 +11,7 @@ use tonic::Status;
 
 use crate::cryptography::encryption::UnifiedPublicEncKey;
 use crate::cryptography::signatures::{PrivateSigKey, Signature};
+use crate::engine::utils::MetricedError;
 
 use super::base::KmsFheKeyHandles;
 
@@ -85,6 +75,24 @@ pub trait ContextManager {
         context_id: &ContextId,
     ) -> Result<bool, Status>;
     async fn mpc_context_exists_in_cache(&self, context_id: &ContextId) -> bool;
+}
+
+#[tonic::async_trait]
+pub trait EpochManager {
+    async fn new_mpc_epoch(
+        &self,
+        request: Request<NewMpcEpochRequest>,
+    ) -> Result<Response<Empty>, MetricedError>;
+
+    async fn destroy_mpc_epoch(
+        &self,
+        request: Request<DestroyMpcEpochRequest>,
+    ) -> Result<Response<Empty>, MetricedError>;
+
+    async fn get_epoch_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<EpochResultResponse>, MetricedError>;
 }
 
 #[tonic::async_trait]

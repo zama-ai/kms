@@ -64,7 +64,8 @@ use crate::{
         traits::BaseKms,
         utils::MetricedError,
         validation::{
-            proto_request_id, validate_user_decrypt_req, RequestIdParsingErr, DSEP_USER_DECRYPTION,
+            parse_grpc_request_id, validate_user_decrypt_req, RequestIdParsingErr,
+            DSEP_USER_DECRYPTION,
         },
     },
     util::{
@@ -584,16 +585,15 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<UserDecryptionResponse>, MetricedError> {
         let request_id =
-            proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecResponse).map_err(
-                |e| {
+            parse_grpc_request_id(&request.into_inner(), RequestIdParsingErr::UserDecResponse)
+                .map_err(|e| {
                     MetricedError::new(
                         OP_USER_DECRYPT_RESULT,
                         None,
                         e,
                         tonic::Code::InvalidArgument,
                     )
-                },
-            )?;
+                })?;
 
         // Retrieve the UserDecryptMetaStore object
         let (payload, external_signature, extra_data) = retrieve_from_meta_store(

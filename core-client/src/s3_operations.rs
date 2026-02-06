@@ -10,7 +10,7 @@ use kms_lib::{
     cryptography::signatures::PublicSigKey,
 };
 
-use crate::CoreClientConfig;
+use crate::{CoreClientConfig, CoreConf};
 
 /// Fetch all remote elements and store them locally for the core client
 /// Return the server IDs of all servers that were successfully contacted
@@ -27,9 +27,9 @@ pub async fn fetch_public_elements(
     sim_conf: &CoreClientConfig,
     destination_prefix: &Path,
     download_all: bool,
-) -> anyhow::Result<Vec<usize>> {
+) -> anyhow::Result<Vec<CoreConf>> {
     // set of core ids, to track which cores we successfully contacted
-    let mut successful_core_ids: HashSet<usize> = HashSet::new();
+    let mut successful_core_ids: HashSet<CoreConf> = HashSet::new();
 
     // go over list of cores to retrieve the public elements from
     'cores: for cur_core in &sim_conf.cores {
@@ -59,7 +59,7 @@ pub async fn fetch_public_elements(
         }
         // if we were able to retrieve all elements, add the core id to the set of successful nodes
         if all_elements {
-            successful_core_ids.insert(cur_core.party_id);
+            successful_core_ids.insert(cur_core.clone());
             // if we only want to download from one core, break here
             if !download_all {
                 break 'cores;

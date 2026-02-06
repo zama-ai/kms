@@ -20,10 +20,10 @@ use threshold_fhe::hashing::{hash_element, DomainSep};
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
-use crate::{s3_operations::fetch_kms_verification_keys, CoreClientConfig};
+use crate::{s3_operations::fetch_kms_verification_keys, CoreClientConfig, CoreConf};
 
 pub(crate) async fn do_get_operator_pub_keys(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
 ) -> anyhow::Result<Vec<String>> {
     let mut req_tasks = JoinSet::new();
     for (_party_id, ce) in core_endpoints.iter() {
@@ -59,7 +59,7 @@ pub(crate) async fn do_get_operator_pub_keys(
 }
 
 pub(crate) async fn do_new_custodian_context(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     threshold: u32,
     custodian_setup_msg: Vec<InternalCustodianSetupMessage>,
@@ -94,16 +94,16 @@ pub(crate) async fn do_new_custodian_context(
 }
 
 pub(crate) async fn do_custodian_recovery_init(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     overwrite_ephemeral_key: bool,
 ) -> anyhow::Result<Vec<InternalRecoveryRequest>> {
     let mut req_tasks = JoinSet::new();
-    for (client_id, ce) in core_endpoints.iter() {
+    for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
-        let client_id = *client_id;
+        let core_conf = core_conf.clone();
         req_tasks.spawn(async move {
             (
-                client_id,
+                core_conf,
                 cur_client
                     .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
                         overwrite_ephemeral_key,
@@ -115,17 +115,17 @@ pub(crate) async fn do_custodian_recovery_init(
 
     let mut res = Vec::new();
     while let Some(inner) = req_tasks.join_next().await {
-        let (id, cur_rec_req) = inner?;
+        let (core_conf, cur_rec_req) = inner?;
         let cur_inner_rec = cur_rec_req?.into_inner();
-        res.push((id, cur_inner_rec.try_into()?));
+        res.push((core_conf, cur_inner_rec.try_into()?));
     }
-    res.sort_by(|a, b| a.0.cmp(&b.0));
+    res.sort_by(|a, b| a.0.party_id.cmp(&b.0.party_id));
 
     Ok(res.into_iter().map(|(_, v)| v).collect())
 }
 
 pub(crate) async fn do_custodian_backup_recovery(
-    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
     sim_conf: &CoreClientConfig,
     custodian_context_id: RequestId,
     custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
@@ -137,13 +137,13 @@ pub(crate) async fn do_custodian_backup_recovery(
     let mut req_tasks = JoinSet::new();
     // TODO(zama-ai/kms-internal#2837)
     // we should change the key in the [core_endpoints] hashmap to be the verification key
-    for (endpoint_id, ce) in core_endpoints.iter() {
+    for (core_conf, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         // We assume the core client endpoints are ordered by the server identity
         let mut cur_recoveries = Vec::new();
         for cur_recover in custodian_recovery_outputs.iter() {
             // Find the recoveries designated for the correct server
-            let verf_key = &verf_keys[&(*endpoint_id as usize)];
+            let verf_key = &verf_keys[&core_conf.party_id];
 
             if &cur_recover.operator_verification_key == verf_key {
                 cur_recoveries.push(CustodianRecoveryOutput {
@@ -177,7 +177,7 @@ pub(crate) async fn do_custodian_backup_recovery(
 }
 
 pub(crate) async fn do_restore_from_backup(
-    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &mut HashMap<CoreConf, CoreServiceEndpointClient<Channel>>,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
     for (_party_id, ce) in core_endpoints.iter_mut() {
