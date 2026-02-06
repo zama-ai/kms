@@ -74,7 +74,7 @@ use crate::{
         threshold::service::{
             reshare_utils::get_verified_public_materials,
             session::{ImmutableSessionMaker, PRSSSetupCombined, SessionMaker},
-            ThresholdFheKeys,
+            PublicKeyMaterial, ThresholdFheKeys,
         },
         traits::EpochManager,
         utils::MetricedError,
@@ -518,9 +518,11 @@ impl<
 
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: Arc::new(new_private_keyset),
-            integer_server_key: Arc::new(integer_server_key),
-            sns_key: sns_key.map(Arc::new),
-            decompression_key: decompression_key.map(Arc::new),
+            public_material: PublicKeyMaterial::Uncompressed {
+                integer_server_key: Arc::new(integer_server_key),
+                sns_key: sns_key.map(Arc::new),
+                decompression_key: decompression_key.map(Arc::new),
+            },
             meta_data: info.clone(),
         };
 
@@ -1020,7 +1022,6 @@ pub(crate) mod tests {
                     RamStorage::new(),
                     RamStorage::new(),
                     None,
-                    HashMap::new(),
                     HashMap::new(),
                 ),
                 reshare_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new(10, 10))),

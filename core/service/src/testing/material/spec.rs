@@ -41,8 +41,6 @@ pub enum KeyType {
     FheKeys,
     /// Common Reference String for zero-knowledge proofs
     CrsKeys,
-    /// Public keys for verification
-    PublicKeys,
     /// Decompression keys for compressed ciphertexts
     DecompressionKeys,
     /// PRSS setup for threshold protocols
@@ -89,7 +87,6 @@ impl TestMaterialSpec {
         required_keys.insert(KeyType::SigningKeys);
         required_keys.insert(KeyType::FheKeys);
         required_keys.insert(KeyType::CrsKeys);
-        required_keys.insert(KeyType::PublicKeys);
         required_keys.insert(KeyType::DecompressionKeys);
 
         if party_count.is_some() {
@@ -188,14 +185,16 @@ mod tests {
     fn pub_data_type_to_key_types(pdt: PubDataType) -> Vec<KeyType> {
         match pdt {
             PubDataType::ServerKey => vec![KeyType::FheKeys],
-            PubDataType::PublicKey => vec![KeyType::PublicKeys],
-            PubDataType::PublicKeyMetadata => vec![KeyType::PublicKeys],
+            PubDataType::PublicKey => vec![KeyType::FheKeys],
+            #[allow(deprecated)]
+            PubDataType::PublicKeyMetadata => vec![KeyType::FheKeys],
             PubDataType::CRS => vec![KeyType::CrsKeys],
             PubDataType::VerfKey => vec![KeyType::SigningKeys],
             PubDataType::VerfAddress => vec![KeyType::SigningKeys],
             PubDataType::DecompressionKey => vec![KeyType::DecompressionKeys],
             PubDataType::CACert => vec![KeyType::ServerSigningKeys], // TLS certs for MPC nodes
             PubDataType::RecoveryMaterial => vec![KeyType::ClientKeys], // Backup recovery
+            PubDataType::CompressedXofKeySet => vec![KeyType::FheKeys], // Compressed server key
         }
     }
 

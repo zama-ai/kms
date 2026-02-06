@@ -6,12 +6,11 @@ use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
     delete_all_at_request_id, delete_at_request_and_epoch_id, make_storage,
-    read_versioned_at_request_id, StorageReader, StorageReaderExt,
+    read_versioned_at_request_id, StorageReader, StorageReaderExt, StorageType,
 };
-use crate::vault::storage::{read_pk_at_request_id, StorageType};
 use crate::vault::{Vault, VaultDataType};
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
-use kms_grpc::rpc_types::{PrivDataType, PubDataType, WrappedPublicKeyOwned};
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
 use serde::de::DeserializeOwned;
 use std::path::Path;
@@ -322,11 +321,9 @@ pub async fn load_pk_from_pub_storage(
     )
     .await;
     tracing::info!("loading pk from storage root dir: {:?}", storage.root_dir());
-    let wrapped_pk = read_pk_at_request_id(&storage, key_id)
+    read_versioned_at_request_id(&storage, key_id, &PubDataType::PublicKey.to_string())
         .await
-        .expect("load_pk_from_pub_storage failed");
-    let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
-    pk
+        .expect("load_pk_from_pub_storage failed")
 }
 
 /// This function should be used for testing only and it can panic.
@@ -336,12 +333,30 @@ pub async fn compute_cipher_from_stored_key(
     key_id: &RequestId,
     storage_prefix: Option<&str>,
     enc_config: EncryptionConfig,
+    compressed_keys: bool,
 ) -> (Vec<u8>, CiphertextFormat, FheTypes) {
-    let pk = load_pk_from_pub_storage(pub_path, key_id, storage_prefix).await;
-    //Setting the server key as we may need id to expand the ciphertext during compute_cipher
-    let server_key: ServerKey =
-        load_material_from_pub_storage(pub_path, key_id, PubDataType::ServerKey, storage_prefix)
+    let (pk, server_key) = if compressed_keys {
+        // Load compressed keys and decompress them
+        let compressed_keyset: tfhe::xof_key_set::CompressedXofKeySet =
+            load_material_from_pub_storage(
+                pub_path,
+                key_id,
+                PubDataType::CompressedXofKeySet,
+                storage_prefix,
+            )
             .await;
+        compressed_keyset.decompress().unwrap().into_raw_parts()
+    } else {
+        let pk = load_pk_from_pub_storage(pub_path, key_id, storage_prefix).await;
+        let server_key: ServerKey = load_material_from_pub_storage(
+            pub_path,
+            key_id,
+            PubDataType::ServerKey,
+            storage_prefix,
+        )
+        .await;
+        (pk, server_key)
+    };
 
     // compute_cipher can take a long time since it may do SnS
     let (send, recv) = tokio::sync::oneshot::channel();

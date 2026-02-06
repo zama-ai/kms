@@ -534,11 +534,7 @@ pub async fn get_public_decryption_result_impl<
 #[cfg(test)]
 pub(crate) mod tests {
     use aes_prng::AesRng;
-    use kms_grpc::{
-        kms::v1::TypedCiphertext,
-        rpc_types::{PubDataType, WrappedPublicKeyOwned},
-        RequestId,
-    };
+    use kms_grpc::{kms::v1::TypedCiphertext, RequestId};
 
     use crate::{
         cryptography::signatures::PublicSigKey,
@@ -547,7 +543,7 @@ pub(crate) mod tests {
             service::key_gen::tests::{setup_test_kms_with_preproc, test_standard_keygen},
         },
         util::key_setup::test_tools::{compute_cipher, EncryptionConfig, TestingPlaintext},
-        vault::storage::{ram::RamStorage, read_versioned_at_request_id},
+        vault::storage::ram::RamStorage,
     };
 
     // This function will also output a public key and load the server key into memory
@@ -567,21 +563,19 @@ pub(crate) mod tests {
         // We execute in the secure mode, i.e. pretending that the preprocessing is done
         test_standard_keygen(&kms, key_id, &preproc_id, false).await;
 
-        let wrapped_pk = kms
+        let pk = kms
             .crypto_storage
             .inner
             .read_cloned_pk(key_id)
             .await
             .unwrap();
-        let key: tfhe::ServerKey = {
-            let storage = kms.crypto_storage.inner.get_public_storage();
-            let guard = storage.lock().await;
-            read_versioned_at_request_id(&(*guard), key_id, &PubDataType::ServerKey.to_string())
-                .await
-                .unwrap()
-        };
+        let key = kms
+            .crypto_storage
+            .inner
+            .read_cloned_server_key(key_id)
+            .await
+            .unwrap();
         tfhe::set_server_key(key);
-        let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
 
         (kms, pk, verf_key)
     }

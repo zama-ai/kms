@@ -221,6 +221,10 @@ pub enum PubDataTypeVersioned {
 pub enum PubDataType {
     ServerKey,
     PublicKey,
+    #[deprecated(
+        since = "0.14.0",
+        note = "PublicKeyMetadata is no longer stored - use PubDataType::PublicKey directly"
+    )]
     PublicKeyMetadata,
     CRS,
     VerfKey,     // Type for the servers public verification keys
@@ -228,6 +232,7 @@ pub enum PubDataType {
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
     RecoveryMaterial, // Recovery material for the backup vault
+    CompressedXofKeySet, // Compressed xof keyset
 }
 
 impl std::str::FromStr for PubDataType {
@@ -246,6 +251,7 @@ impl std::str::FromStr for PubDataType {
 }
 
 impl fmt::Display for PubDataType {
+    #[allow(deprecated)]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             PubDataType::PublicKey => write!(f, "PublicKey"),
@@ -257,6 +263,7 @@ impl fmt::Display for PubDataType {
             PubDataType::DecompressionKey => write!(f, "DecompressionKey"),
             PubDataType::CACert => write!(f, "CACert"),
             PubDataType::RecoveryMaterial => write!(f, "RecoveryMaterial"),
+            PubDataType::CompressedXofKeySet => write!(f, "CompressedXofKeySet"),
         }
     }
 }
@@ -1025,38 +1032,6 @@ impl FheTypeResponse for UserDecryptionResponsePayload {
             .iter()
             .map(|x| x.fhe_type())
             .collect::<Result<Vec<_>, _>>()
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, VersionsDispatch)]
-pub enum PublicKeyTypeVersioned {
-    V0(PublicKeyType),
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Versionize, PartialEq)]
-#[versionize(PublicKeyTypeVersioned)]
-pub enum PublicKeyType {
-    Compact,
-}
-
-impl Named for PublicKeyType {
-    const NAME: &'static str = "PublicKeyType";
-}
-
-pub enum WrappedPublicKey<'a> {
-    Compact(&'a tfhe::CompactPublicKey),
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub enum WrappedPublicKeyOwned {
-    Compact(tfhe::CompactPublicKey),
-}
-
-impl<'a> From<&'a WrappedPublicKeyOwned> for WrappedPublicKey<'a> {
-    fn from(value: &'a WrappedPublicKeyOwned) -> Self {
-        match value {
-            WrappedPublicKeyOwned::Compact(pk) => WrappedPublicKey::Compact(pk),
-        }
     }
 }
 

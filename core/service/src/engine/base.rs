@@ -32,12 +32,14 @@ use kms_grpc::RequestId;
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::integer::BooleanBlock;
 use tfhe::named::Named;
 use tfhe::safe_serialization::safe_deserialize;
+use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::zk::CompactPkeCrs;
 use tfhe::FheUint80;
 use tfhe::{
@@ -244,7 +246,7 @@ pub(crate) fn compute_info_standard_keygen(
         hex::encode(&public_key_digest)
     );
 
-    let sol_type = KeygenVerification::new(
+    let sol_type = KeygenVerification::new_standard(
         prep_id,
         key_id,
         server_key_digest.clone(),
@@ -282,6 +284,36 @@ pub(crate) fn compute_info_decompression_keygen(
         *key_id,
         *prep_id,
         HashMap::from([(PubDataType::DecompressionKey, key_digest)]),
+        external_signature,
+    ))
+}
+
+/// Computes key generation metadata for compressed keygen.
+/// This is similar to compute_info_standard_keygen but for CompressedXofKeySet.
+pub(crate) fn compute_info_compressed_keygen(
+    sk: &PrivateSigKey,
+    domain_separator: &DomainSep,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    compressed_keyset: &CompressedXofKeySet,
+    domain: &alloy_sol_types::Eip712Domain,
+) -> anyhow::Result<KeyGenMetadata> {
+    let compressed_keyset_digest =
+        safe_serialize_hash_element_versioned(domain_separator, compressed_keyset)?;
+
+    tracing::info!(
+        "Computed xof keyset digest: {}",
+        hex::encode(&compressed_keyset_digest),
+    );
+
+    let sol_type =
+        KeygenVerification::new_compressed(prep_id, key_id, compressed_keyset_digest.clone());
+    let external_signature = compute_eip712_signature(sk, &sol_type, domain)?;
+
+    Ok(KeyGenMetadata::new(
+        *key_id,
+        *prep_id,
+        HashMap::from([(PubDataType::CompressedXofKeySet, compressed_keyset_digest)]),
         external_signature,
     ))
 }
@@ -835,6 +867,17 @@ impl KeyGenMetadata {
             }
         }
     }
+
+    pub fn pub_data_types(&self) -> HashSet<PubDataType> {
+        match self {
+            KeyGenMetadata::Current(key_gen_metadata_inner) => key_gen_metadata_inner
+                .key_digest_map
+                .keys()
+                .cloned()
+                .collect(),
+            KeyGenMetadata::LegacyV0(hash_map) => hash_map.keys().cloned().collect(),
+        }
+    }
 }
 
 #[cfg(feature = "non-wasm")]
@@ -1335,7 +1378,7 @@ pub(crate) mod tests {
 
         {
             // do the verification correctly
-            let sol_struct = KeygenVerification::new(
+            let sol_struct = KeygenVerification::new_standard(
                 &prep_id,
                 &key_id,
                 server_key_digest.clone(),
@@ -1360,7 +1403,7 @@ pub(crate) mod tests {
                 chain_id: 8006,
                 verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
             );
-            let sol_struct = KeygenVerification::new(
+            let sol_struct = KeygenVerification::new_standard(
                 &prep_id,
                 &key_id,
                 server_key_digest.clone(),
@@ -1380,7 +1423,7 @@ pub(crate) mod tests {
         {
             // should fail if we use a wrong prep_id
             let bad_prep_id = RequestId::new_random(&mut rng);
-            let sol_struct = KeygenVerification::new(
+            let sol_struct = KeygenVerification::new_standard(
                 &bad_prep_id,
                 &key_id,
                 server_key_digest.clone(),
@@ -1399,7 +1442,7 @@ pub(crate) mod tests {
         {
             // should fail if we use the wrong key_id
             let bad_key_id = RequestId::new_random(&mut rng);
-            let sol_struct = KeygenVerification::new(
+            let sol_struct = KeygenVerification::new_standard(
                 &prep_id,
                 &bad_key_id,
                 server_key_digest.clone(),
@@ -1419,7 +1462,7 @@ pub(crate) mod tests {
             // should fail if we use the wrong digest
             let mut bad_server_key_digest = server_key_digest.clone();
             bad_server_key_digest[0] ^= 1;
-            let sol_struct = KeygenVerification::new(
+            let sol_struct = KeygenVerification::new_standard(
                 &prep_id,
                 &key_id,
                 bad_server_key_digest.clone(),
@@ -1449,7 +1492,7 @@ pub(crate) mod tests {
             )
             .unwrap();
             let bad_signature = meta_data.external_signature();
-            let sol_struct = KeygenVerification::new(
+            let sol_struct = KeygenVerification::new_standard(
                 &prep_id,
                 &key_id,
                 server_key_digest.clone(),

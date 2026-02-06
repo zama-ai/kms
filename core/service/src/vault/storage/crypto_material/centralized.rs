@@ -8,7 +8,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use kms_grpc::{
     identifiers::EpochId,
-    rpc_types::{KMSType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
+    rpc_types::{KMSType, PrivDataType, PubDataType},
     RequestId,
 };
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
@@ -19,8 +19,8 @@ use crate::{
     util::meta_store::MetaStore,
     vault::{
         storage::{
-            store_pk_at_request_id, store_versioned_at_request_and_epoch_id,
-            store_versioned_at_request_id, Storage, StorageExt,
+            store_versioned_at_request_and_epoch_id, store_versioned_at_request_id, Storage,
+            StorageExt,
         },
         Vault,
     },
@@ -46,7 +46,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         public_storage: PubS,
         private_storage: PrivS,
         backup_vault: Option<Vault>,
-        pk_cache: HashMap<RequestId, WrappedPublicKeyOwned>,
         fhe_keys: HashMap<(RequestId, EpochId), KmsFheKeyHandles>,
     ) -> Self {
         Self {
@@ -54,7 +53,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 public_storage: Arc::new(Mutex::new(public_storage)),
                 private_storage: Arc::new(Mutex::new(private_storage)),
                 backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
-                pk_cache: Arc::new(RwLock::new(pk_cache)),
             },
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }
@@ -164,11 +162,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
         };
 
         let f2 = async {
+            tracing::info!("Storing public key");
             let mut pub_storage = self.inner.public_storage.lock().await;
-            let result = store_pk_at_request_id(
+            let result = store_versioned_at_request_id(
                 &mut (*pub_storage),
                 key_id,
-                WrappedPublicKey::Compact(&fhe_key_set.public_key),
+                &fhe_key_set.public_key,
+                &PubDataType::PublicKey.to_string(),
             )
             .await;
             if let Err(e) = &result {
@@ -203,20 +203,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: StorageExt + Send + Sync + 's
                 })
                 .is_ok()
         {
-            // updating the cache is not critical to system functionality,
-            // so we do not consider it as an error
-            {
-                let mut guarded_pk_cache = self.inner.pk_cache.write().await;
-                let previous = guarded_pk_cache.insert(
-                    *key_id,
-                    WrappedPublicKeyOwned::Compact(fhe_key_set.public_key.clone()),
-                );
-                if previous.is_some() {
-                    tracing::warn!("PK already exists in pk_cache for {}, overwriting", key_id);
-                } else {
-                    tracing::debug!("Added new PK to pk_cache for {}", key_id);
-                }
-            }
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
                 let previous = guarded_fhe_keys.insert((*key_id, *epoch_id), key_info);

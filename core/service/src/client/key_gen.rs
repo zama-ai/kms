@@ -13,9 +13,7 @@ use kms_grpc::kms::v1::{
     FheParameter, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
     KeySetAddedInfo, KeySetConfig,
 };
-use kms_grpc::rpc_types::{
-    alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
-};
+use kms_grpc::rpc_types::{alloy_to_protobuf_domain, PubDataType};
 use kms_grpc::solidity_types::{KeygenVerification, PrepKeygenVerification};
 use kms_grpc::ContextId;
 use kms_grpc::RequestId;
@@ -201,8 +199,6 @@ impl Client {
             }
         };
 
-        let WrappedPublicKeyOwned::Compact(public_key) = public_key;
-
         let server_key_digest =
             safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key)?;
         let public_key_digest =
@@ -270,8 +266,12 @@ impl Client {
             ));
         }
 
-        let sol_type =
-            KeygenVerification::new(preproc_id, key_id, server_key_digest, public_key_digest);
+        let sol_type = KeygenVerification::new_standard(
+            preproc_id,
+            key_id,
+            server_key_digest,
+            public_key_digest,
+        );
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
 
@@ -286,36 +286,19 @@ impl Client {
         &self,
         key_gen_result: &KeyGenResult,
         storage: &R,
-    ) -> anyhow::Result<Option<WrappedPublicKeyOwned>> {
-        // first we need to read the key type
-        let request_id = parse_optional_grpc_request_id(
+    ) -> anyhow::Result<Option<CompactPublicKey>> {
+        let request_id: RequestId = parse_optional_grpc_request_id(
             &key_gen_result.request_id,
             RequestIdParsingErr::Other("invalid ID while retrieving public key".to_string()),
         )
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         tracing::debug!(
-            "getting public key metadata using storage {} with request id {}",
+            "getting compact public key using storage {} with request id {}",
             storage.info(),
             &request_id
         );
-        let pk_type: PublicKeyType = crate::vault::storage::read_versioned_at_request_id(
-            storage,
-            &request_id,
-            &PubDataType::PublicKeyMetadata.to_string(),
-        )
-        .await?;
-        tracing::debug!(
-            "getting wrapped public key using storage {} with request id {}",
-            storage.info(),
-            &request_id
-        );
-        let wrapped_pk = match pk_type {
-            PublicKeyType::Compact => self
-                .retrieve_key_no_verification(key_gen_result, PubDataType::PublicKey, storage)
-                .await?
-                .map(WrappedPublicKeyOwned::Compact),
-        };
-        Ok(wrapped_pk)
+        self.retrieve_key_no_verification(key_gen_result, PubDataType::PublicKey, storage)
+            .await
     }
 
     /// Retrieve and validate a decompression key based on the result from storage.
@@ -353,10 +336,7 @@ impl Client {
             .extract_if(.., |kd| kd.key_type == key_type.to_string())
             .next()
             .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Key type {} not found in key generation result",
-                    key_type.to_string()
-                )
+                anyhow::anyhow!("Key type {key_type} not found in key generation result")
             })?;
 
         let request_id = parse_optional_grpc_request_id(

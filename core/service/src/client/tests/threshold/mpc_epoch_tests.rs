@@ -23,7 +23,8 @@ use crate::{
             threshold::{
                 common::threshold_handles,
                 key_gen_tests::{
-                    run_preproc, run_threshold_keygen, verify_keygen_responses, TestKeyGenResult,
+                    run_preproc, run_threshold_keygen, standard_keygen_config,
+                    verify_keygen_responses, TestKeyGenResult,
                 },
                 public_decryption_tests::run_decryption_threshold,
             },
@@ -123,13 +124,15 @@ pub(crate) async fn new_epoch_with_reshare(
     )
     .await;
 
+    let (keyset_config, keyset_added_info) = standard_keygen_config();
     let (keyset, all_private_keys) = run_threshold_keygen(
         parameters,
         &kms_clients,
         &internal_client,
         &preproc_req_id,
         &key_req_id,
-        None,
+        keyset_config,
+        keyset_added_info,
         false,
         None,
         expected_num_parties_crashed,
@@ -281,6 +284,7 @@ pub(crate) async fn new_epoch_with_reshare(
         None,
         1,
         None,
+        false, // compressed_keys
     )
     .await;
 }
@@ -356,6 +360,7 @@ async fn run_new_epoch(
             &dummy_domain(),
             amount_parties,
             Some(new_epoch_id.into()),
+            false, // compressed
         )
         .await
         .expect("Failed to verify reshare responses");

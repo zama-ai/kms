@@ -9,9 +9,7 @@ use aws_sdk_s3::Client as S3Client;
 use enum_dispatch::enum_dispatch;
 use kms_grpc::{
     identifiers::{ContextId, EpochId},
-    rpc_types::{
-        PrivDataType, PubDataType, PublicKeyType, WrappedPublicKey, WrappedPublicKeyOwned,
-    },
+    rpc_types::{PrivDataType, PubDataType},
     RequestId,
 };
 use ordermap::OrderMap;
@@ -401,12 +399,14 @@ pub async fn delete_pk_at_request_id<S: Storage>(
     request_id: &RequestId,
 ) -> anyhow::Result<()> {
     delete_at_request_id(storage, request_id, &PubDataType::PublicKey.to_string()).await?;
-    delete_at_request_id(
+    // Best-effort delete of legacy PublicKeyMetadata (ignore errors if not found)
+    #[allow(deprecated)]
+    let _ = delete_at_request_id(
         storage,
         request_id,
         &PubDataType::PublicKeyMetadata.to_string(),
     )
-    .await?;
+    .await;
     Ok(())
 }
 
@@ -443,55 +443,6 @@ where
     storage
         .read_data_at_epoch(request_id, epoch_id, data_type)
         .await
-}
-
-/// This function will perform verionize on the type.
-pub async fn store_pk_at_request_id<S: Storage>(
-    storage: &mut S,
-    request_id: &RequestId,
-    pk: WrappedPublicKey<'_>,
-) -> anyhow::Result<()> {
-    tracing::info!("Storing public key");
-    match pk {
-        WrappedPublicKey::Compact(inner_pk) => {
-            store_versioned_at_request_id(
-                storage,
-                request_id,
-                inner_pk,
-                &PubDataType::PublicKey.to_string(),
-            )
-            .await?;
-            store_versioned_at_request_id(
-                storage,
-                request_id,
-                &PublicKeyType::Compact,
-                &PubDataType::PublicKeyMetadata.to_string(),
-            )
-            .await?;
-        }
-    }
-    Ok(())
-}
-
-pub async fn read_pk_at_request_id<S: StorageReader>(
-    storage: &S,
-    request_id: &RequestId,
-) -> anyhow::Result<WrappedPublicKeyOwned> {
-    let pk_type: PublicKeyType = read_versioned_at_request_id(
-        storage,
-        request_id,
-        &PubDataType::PublicKeyMetadata.to_string(),
-    )
-    .await?;
-
-    let out = match pk_type {
-        PublicKeyType::Compact => WrappedPublicKeyOwned::Compact(
-            read_versioned_at_request_id(storage, request_id, &PubDataType::PublicKey.to_string())
-                .await?,
-        ),
-    };
-
-    Ok(out)
 }
 
 /// Simple wrapper around [store_versioned_at_request_id]
