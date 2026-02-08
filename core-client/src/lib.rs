@@ -557,6 +557,7 @@ pub struct CipherWithParams {
     cipher: Vec<u8>,
 }
 
+/// This should match the KeySetType in the protofile
 #[derive(ValueEnum, Debug, Clone, Default)]
 pub enum KeySetType {
     #[default]

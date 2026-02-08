@@ -30,10 +30,10 @@ cfg_if::cfg_if! {
     use tonic::transport::Channel;
 }}
 
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+use crate::client::tests::common::compressed_keygen_config;
 #[cfg(feature = "slow_tests")]
-use crate::client::tests::common::{
-    compressed_keygen_config, decompression_keygen_config, TIME_TO_SLEEP_MS,
-};
+use crate::client::tests::common::{decompression_keygen_config, TIME_TO_SLEEP_MS};
 #[cfg(feature = "slow_tests")]
 use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
 #[cfg(feature = "insecure")]
@@ -163,6 +163,57 @@ async fn test_insecure_dkg(#[case] amount_parties: usize) {
     .0;
     _ = keys.clone().get_standard();
 
+    let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
+    assert!(panic_res.is_err());
+}
+
+/// Test insecure compressed keygen with Test parameters.
+/// This tests the insecure `initialize_compressed_key_material` code path where
+/// party 1 generates compressed keys locally and shares private key shares with other parties.
+#[cfg(feature = "insecure")]
+#[rstest::rstest]
+#[case(4)]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
+    let pub_storage_prefixes = &PUBLIC_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let priv_storage_prefixes = &PRIVATE_STORAGE_PREFIX_THRESHOLD_ALL[0..amount_parties];
+    let key_id: RequestId = derive_request_id(&format!(
+        "test_insecure_compressed_dkg_key_{amount_parties}_{TEST_PARAM:?}"
+    ))
+    .unwrap();
+    purge(
+        None,
+        None,
+        &key_id,
+        pub_storage_prefixes,
+        priv_storage_prefixes,
+    )
+    .await;
+    let (_kms_servers, kms_clients, internal_client) =
+        threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
+    let (keyset_config, keyset_added_info) = compressed_keygen_config();
+    let _keys = run_threshold_keygen(
+        FheParameter::Test,
+        &kms_clients,
+        &internal_client,
+        &INSECURE_PREPROCESSING_ID,
+        &key_id,
+        keyset_config,
+        keyset_added_info,
+        true,
+        None,
+        0,
+    )
+    .await
+    .0;
+
+    // Verify we got compressed keys
+    let _ = keys.clone().get_compressed();
+
+    // Verify it panics when trying to get as standard or decompression
+    let panic_res = std::panic::catch_unwind(|| keys.clone().get_standard());
+    assert!(panic_res.is_err());
     let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
     assert!(panic_res.is_err());
 }

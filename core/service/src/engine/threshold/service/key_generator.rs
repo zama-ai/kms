@@ -103,8 +103,9 @@ use crate::engine::threshold::traits::InsecureKeyGenerator;
 use threshold_fhe::execution::runtime::sessions::session_parameters::GenericParameterHandles;
 #[cfg(feature = "insecure")]
 use threshold_fhe::execution::tfhe_internals::{
-    compression_decompression_key::CompressionPrivateKeyShares, glwe_key::GlweSecretKeyShare,
-    test_feature::initialize_key_material,
+    compression_decompression_key::CompressionPrivateKeyShares,
+    glwe_key::GlweSecretKeyShare,
+    test_feature::{initialize_compressed_key_material, initialize_key_material},
 };
 
 pub struct RealKeyGenerator<
@@ -1041,6 +1042,7 @@ impl<
                             keyset_config.computation_key_type,
                             keyset_config.compressed_key_config,
                         ) {
+                            // Insecure standard keygen
                             (
                                 ddec_keyset_config::KeySetCompressionConfig::Generate,
                                 ddec_keyset_config::ComputeKeyType::Cpu,
@@ -1048,8 +1050,22 @@ impl<
                             ) => initialize_key_material(&mut base_session, params, req_id.into())
                                 .await
                                 .map(|(pk, sk)| ThresholdKeyGenResult::Uncompressed(pk, sk)),
+                            // Insecure compressed keygen
+                            (
+                                ddec_keyset_config::KeySetCompressionConfig::Generate,
+                                ddec_keyset_config::ComputeKeyType::Cpu,
+                                ddec_keyset_config::CompressedKeyConfig::All,
+                            ) => initialize_compressed_key_material(
+                                &mut base_session,
+                                params,
+                                req_id.into(),
+                            )
+                            .await
+                            .map(|(compressed_keyset, sk)| {
+                                ThresholdKeyGenResult::Compressed(compressed_keyset, sk)
+                            }),
                             _ => {
-                                // TODO insecure keygen from existing compression key is not supported
+                                // insecure keygen from existing compression key is not supported
                                 update_err_req_in_meta_store(&mut meta_store.write().await, req_id,  "insecure keygen from existing compression key is not supported".to_string(),OP_STANDARD_KEYGEN);
                                 return;
                             }
