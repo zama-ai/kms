@@ -265,6 +265,35 @@ async fn insecure_key_gen<T: DockerComposeManager>(ctx: &T, test_path: &Path) ->
     key_id.to_string()
 }
 
+async fn insecure_compressed_key_gen<T: DockerComposeManager>(ctx: &T, test_path: &Path) -> String {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+    let config = CmdConfig {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command: CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
+            shared_args: SharedKeyGenParameters {
+                keyset_type: Some(KeySetType::Standard),
+                compressed: true,
+                context_id: None,
+                epoch_id: None,
+            },
+        }),
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+        download_all: false,
+    };
+
+    println!("Doing insecure compressed key-gen");
+    let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
+    println!("Insecure compressed key-gen done");
+
+    assert_eq!(key_gen_results.len(), 1);
+    match key_gen_results.first().unwrap() {
+        (Some(value), _) => value.to_string(),
+        _ => panic!("Error doing insecure compressed keygen"),
+    }
+}
+
 async fn crs_gen<T: DockerComposeManager>(
     ctx: &T,
     test_path: &Path,
@@ -340,6 +369,7 @@ async fn real_preproc_and_keygen(
             preproc_id: preproc_id.unwrap(),
             shared_args: SharedKeyGenParameters {
                 keyset_type: None,
+                compressed: false,
                 context_id,
                 epoch_id,
             },
@@ -1762,4 +1792,29 @@ async fn full_gen_tests_default_threshold_sequential_crs(ctx: &DockerComposeThre
     let crs_id_1 = crs_gen(ctx, keys_folder, false).await;
     let crs_id_2 = crs_gen(ctx, keys_folder, false).await;
     assert_ne!(crs_id_1, crs_id_2);
+}
+
+///////// COMPRESSED KEYGEN TESTS//////////
+///////////////////////////////////////////
+
+#[test_context(DockerComposeCentralized)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_centralized_insecure_compressed_keygen(ctx: &DockerComposeCentralized) {
+    init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let key_id = insecure_compressed_key_gen(ctx, keys_folder).await;
+    assert!(!key_id.is_empty());
+}
+
+#[test_context(DockerComposeThresholdTest)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_insecure_compressed_keygen(ctx: &DockerComposeThresholdTest) {
+    init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let key_id = insecure_compressed_key_gen(ctx, keys_folder).await;
+    assert!(!key_id.is_empty());
 }

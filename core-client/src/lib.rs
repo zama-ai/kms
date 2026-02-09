@@ -578,6 +578,9 @@ impl From<KeySetType> for kms_grpc::kms::v1::KeySetType {
 pub struct SharedKeyGenParameters {
     #[clap(value_enum, long, short = 't')]
     pub keyset_type: Option<KeySetType>,
+    /// Generate compressed keys using XOF-seeded compression
+    #[clap(long, short = 'c', default_value_t = false)]
+    pub compressed: bool,
     // TODO(#2799)
     // #[command(flatten)]
     // pub keyset_added_info: Option<KeySetAddedInfo>,
@@ -1564,6 +1567,8 @@ pub async fn execute_cmd(
 
             //NOTE: We assume the request comes from the core client too
             //which (for now) uses the dummy_domain
+            // NOTE: KeyGenResult queries existing results, so we pass false for compressed
+            // since we don't know what type of keys were generated.
             fetch_and_check_keygen(
                 num_expected_responses,
                 &cc_conf,
@@ -1573,6 +1578,7 @@ pub async fn execute_cmd(
                 dummy_domain(),
                 resp_response_vec,
                 cmd_config.download_all,
+                false,
             )
             .await?;
             vec![(Some(req_id), "keygen result queried".to_string())]
@@ -1595,6 +1601,8 @@ pub async fn execute_cmd(
 
             //NOTE: We assume the request comes from the core client too
             //which (for now) uses the dummy_domain
+            // NOTE: InsecureKeyGenResult queries existing results, so we pass false for compressed
+            // since we don't know what type of keys were generated.
             fetch_and_check_keygen(
                 num_expected_responses,
                 &cc_conf,
@@ -1604,6 +1612,7 @@ pub async fn execute_cmd(
                 dummy_domain(),
                 resp_response_vec,
                 cmd_config.download_all,
+                false,
             )
             .await?;
             vec![(Some(req_id), "insecure keygen result queried".to_string())]

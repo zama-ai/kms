@@ -193,7 +193,7 @@ async fn test_insecure_compressed_dkg(#[case] amount_parties: usize) {
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
     let (keyset_config, keyset_added_info) = compressed_keygen_config();
-    let _keys = run_threshold_keygen(
+    let keys = run_threshold_keygen(
         FheParameter::Test,
         &kms_clients,
         &internal_client,
